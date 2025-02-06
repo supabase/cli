@@ -17,10 +17,10 @@ type (
 		// Local only config
 		Image     string  `toml:"-"`
 		KongImage string  `toml:"-"`
-		Port      uint16  `toml:"port"`
+		Port      uint16  `toml:"port" validate:"gt=0"`
 		Tls       tlsKong `toml:"tls"`
 		// TODO: replace [auth|studio].api_url
-		ExternalUrl string `toml:"external_url"`
+		ExternalUrl string `toml:"external_url" validate:"http_url"`
 	}
 
 	tlsKong struct {

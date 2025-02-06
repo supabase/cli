@@ -8,13 +8,13 @@ import (
 
 type (
 	storage struct {
-		Enabled             bool                 `toml:"enabled"`
+		Enabled             bool                 `toml:"enabled" validate:"required_with=ImageTransformation.Enabled"`
 		Image               string               `toml:"-"`
 		ImgProxyImage       string               `toml:"-"`
 		FileSizeLimit       sizeInBytes          `toml:"file_size_limit"`
 		ImageTransformation *imageTransformation `toml:"image_transformation"`
 		S3Credentials       storageS3Credentials `toml:"-"`
-		Buckets             BucketConfig         `toml:"buckets"`
+		Buckets             BucketConfig         `toml:"buckets" validate:"dive"`
 	}
 
 	imageTransformation struct {
@@ -33,7 +33,7 @@ type (
 		Public           *bool       `toml:"public"`
 		FileSizeLimit    sizeInBytes `toml:"file_size_limit"`
 		AllowedMimeTypes []string    `toml:"allowed_mime_types"`
-		ObjectsPath      string      `toml:"objects_path"`
+		ObjectsPath      string      `toml:"objects_path" validate:"omitempty,dir|file"`
 	}
 )
 
@@ -61,11 +61,7 @@ func (s *storage) FromRemoteStorageConfig(remoteConfig v1API.StorageConfigRespon
 }
 
 func (s *storage) DiffWithRemote(remoteConfig v1API.StorageConfigResponse) ([]byte, error) {
-	copy := *s
-	if s.ImageTransformation != nil {
-		img := *s.ImageTransformation
-		copy.ImageTransformation = &img
-	}
+	copy := s.Clone()
 	// Convert the config values into easily comparable remoteConfig values
 	currentValue, err := ToTomlBytes(copy)
 	if err != nil {

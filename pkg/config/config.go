@@ -16,6 +16,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -26,6 +27,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
 	"github.com/go-errors/errors"
+	"github.com/go-playground/validator/v10"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
 	"github.com/mitchellh/mapstructure"
@@ -152,7 +154,7 @@ type (
 		Storage      storage        `toml:"storage"`
 		Auth         auth           `toml:"auth" mapstructure:"auth"`
 		EdgeRuntime  edgeRuntime    `toml:"edge_runtime"`
-		Functions    FunctionConfig `toml:"functions"`
+		Functions    FunctionConfig `toml:"functions" validate:"dive"`
 		Analytics    analytics      `toml:"analytics"`
 		Experimental experimental   `toml:"experimental"`
 	}
@@ -165,8 +167,8 @@ type (
 	realtime struct {
 		Enabled         bool          `toml:"enabled"`
 		Image           string        `toml:"-"`
-		IpVersion       AddressFamily `toml:"ip_version"`
-		MaxHeaderLength uint          `toml:"max_header_length"`
+		IpVersion       AddressFamily `toml:"ip_version" validate:"required"`
+		MaxHeaderLength uint          `toml:"max_header_length" validate:"required"`
 		TenantId        string        `toml:"-"`
 		EncryptionKey   string        `toml:"-"`
 		SecretKeyBase   string        `toml:"-"`
@@ -175,9 +177,9 @@ type (
 	studio struct {
 		Enabled      bool   `toml:"enabled"`
 		Image        string `toml:"-"`
-		Port         uint16 `toml:"port"`
-		ApiUrl       string `toml:"api_url"`
-		OpenaiApiKey string `toml:"openai_api_key"`
+		Port         uint16 `toml:"port" validate:"gt=0"`
+		ApiUrl       string `toml:"api_url" validate:"http_url"`
+		OpenaiApiKey Secret `toml:"openai_api_key"`
 		PgmetaImage  string `toml:"-"`
 	}
 
@@ -187,59 +189,54 @@ type (
 		Port       uint16 `toml:"port"`
 		SmtpPort   uint16 `toml:"smtp_port"`
 		Pop3Port   uint16 `toml:"pop3_port"`
-		AdminEmail string `toml:"admin_email"`
-		SenderName string `toml:"sender_name"`
+		AdminEmail string `toml:"admin_email" validate:"email"`
+		SenderName string `toml:"sender_name" validate:"required"`
 	}
 
 	edgeRuntime struct {
 		Enabled       bool          `toml:"enabled"`
 		Image         string        `toml:"-"`
-		Policy        RequestPolicy `toml:"policy"`
-		InspectorPort uint16        `toml:"inspector_port"`
+		Policy        RequestPolicy `toml:"policy" validate:"required"`
+		InspectorPort uint16        `toml:"inspector_port" validate:"gt=0"`
 	}
 
 	FunctionConfig map[string]function
 
 	function struct {
-		Enabled     *bool    `toml:"enabled" json:"-"`
+		Enabled     bool     `toml:"enabled" json:"-"`
 		VerifyJWT   *bool    `toml:"verify_jwt" json:"verifyJWT"`
-		ImportMap   string   `toml:"import_map" json:"importMapPath,omitempty"`
-		Entrypoint  string   `toml:"entrypoint" json:"entrypointPath,omitempty"`
-		StaticFiles []string `toml:"static_files" json:"staticFiles,omitempty"`
+		ImportMap   string   `toml:"import_map" json:"importMapPath,omitempty" validate:"omitempty,file"`
+		Entrypoint  string   `toml:"entrypoint" json:"entrypointPath,omitempty" validate:"file"`
+		StaticFiles []string `toml:"static_files" json:"staticFiles,omitempty" validate:"dive,filepath"`
 	}
 
 	analytics struct {
 		Enabled          bool            `toml:"enabled"`
 		Image            string          `toml:"-"`
 		VectorImage      string          `toml:"-"`
-		Port             uint16          `toml:"port"`
-		Backend          LogflareBackend `toml:"backend"`
-		GcpProjectId     string          `toml:"gcp_project_id"`
-		GcpProjectNumber string          `toml:"gcp_project_number"`
-		GcpJwtPath       string          `toml:"gcp_jwt_path"`
+		Port             uint16          `toml:"port" validate:"gt=0"`
+		Backend          LogflareBackend `toml:"backend" validate:"required"`
+		GcpProjectId     string          `toml:"gcp_project_id" validate:"required_if=Enabled true Backend bigquery"`
+		GcpProjectNumber string          `toml:"gcp_project_number" validate:"required_if=Enabled true Backend bigquery"`
+		GcpJwtPath       string          `toml:"gcp_jwt_path" validate:"required_if=Enabled true Backend bigquery"`
 		ApiKey           string          `toml:"-" mapstructure:"api_key"`
 		// Deprecated together with syslog
 		VectorPort uint16 `toml:"vector_port"`
 	}
 
 	webhooks struct {
-		Enabled bool `toml:"enabled"`
+		Enabled bool `toml:"enabled" validate:"required"`
 	}
 
 	experimental struct {
 		OrioleDBVersion string    `toml:"orioledb_version"`
-		S3Host          string    `toml:"s3_host"`
-		S3Region        string    `toml:"s3_region"`
-		S3AccessKey     string    `toml:"s3_access_key"`
-		S3SecretKey     string    `toml:"s3_secret_key"`
+		S3Host          string    `toml:"s3_host" validate:"required_with=OrioleDBVersion"`
+		S3Region        string    `toml:"s3_region" validate:"required_with=OrioleDBVersion"`
+		S3AccessKey     string    `toml:"s3_access_key" validate:"required_with=OrioleDBVersion"`
+		S3SecretKey     string    `toml:"s3_secret_key" validate:"required_with=OrioleDBVersion"`
 		Webhooks        *webhooks `toml:"webhooks"`
 	}
 )
-
-func (f function) IsEnabled() bool {
-	// If Enabled is not defined, or defined and set to true
-	return f.Enabled == nil || *f.Enabled
-}
 
 func (a *auth) Clone() auth {
 	copy := *a
@@ -277,9 +274,19 @@ func (a *auth) Clone() auth {
 	return copy
 }
 
+func (s *storage) Clone() storage {
+	copy := *s
+	copy.Buckets = maps.Clone(s.Buckets)
+	if s.ImageTransformation != nil {
+		img := *s.ImageTransformation
+		copy.ImageTransformation = &img
+	}
+	return copy
+}
+
 func (c *baseConfig) Clone() baseConfig {
 	copy := *c
-	copy.Storage.Buckets = maps.Clone(c.Storage.Buckets)
+	copy.Storage = c.Storage.Clone()
 	copy.Functions = maps.Clone(c.Functions)
 	copy.Auth = c.Auth.Clone()
 	if c.Experimental.Webhooks != nil {
@@ -445,10 +452,13 @@ func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 		}
 	}
 	// Manually parse [functions.*] to empty struct for backwards compatibility
-	for key, value := range v.GetStringMap("functions") {
-		if m, ok := value.(map[string]any); ok && len(m) == 0 {
-			v.Set("functions."+key, function{})
+	for slug := range v.GetStringMap("functions") {
+		if key := fmt.Sprintf("functions.%s.enabled", slug); !v.IsSet(key) {
+			v.Set(key, true)
 		}
+	}
+	if key := "auth.email.smtp"; v.IsSet(key) && !v.IsSet(key+".enabled") {
+		v.Set(key+".enabled", true)
 	}
 	if err := v.UnmarshalExact(c, func(dc *mapstructure.DecoderConfig) {
 		dc.TagName = "toml"
@@ -575,7 +585,49 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if err := c.baseConfig.resolve(builder, fsys); err != nil {
 		return err
 	}
+	validate := validator.New(validator.WithRequiredStructEnabled())
+	validate.RegisterTagNameFunc(getTagName)
+	validate.RegisterStructValidation(func(sl validator.StructLevel) {
+		b := sl.Current().Interface().(bucket)
+		if s, ok := sl.Parent().Interface().(storage); ok && b.FileSizeLimit > s.FileSizeLimit {
+			fname := "FileSizeLimit"
+			bf, _ := sl.Current().Type().FieldByName(fname)
+			sf, _ := sl.Parent().Type().FieldByName(fname)
+			limit := fmt.Sprintf(
+				"%s (= %s.%s)",
+				units.BytesSize(float64(s.FileSizeLimit)),
+				sl.Parent().Type().Name(),
+				getTagName(sf),
+			)
+			sl.ReportError(b.FileSizeLimit, getTagName(bf), fname, "max", limit)
+		}
+	}, bucket{})
+	if err := validate.Struct(c); err != nil {
+		// TODO: warn unused env?
+		if all, ok := err.(validator.ValidationErrors); ok {
+			var formatted []error
+			for _, verr := range all {
+				formatted = append(formatted, errors.Errorf(
+					"* error decoding '%s': must be %s %s",
+					strings.TrimPrefix(verr.Namespace(), "config.baseConfig."),
+					verr.ActualTag(),
+					verr.Param(),
+				))
+			}
+			return errors.Join(formatted...)
+		}
+		return err
+	}
 	return c.Validate(fsys)
+}
+
+func getTagName(field reflect.StructField) string {
+	name := strings.SplitN(field.Tag.Get("toml"), ",", 2)[0]
+	// skip if tag key says it should be ignored
+	if name == "-" {
+		return ""
+	}
+	return name
 }
 
 func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
@@ -894,7 +946,7 @@ func (e *email) validate(fsys fs.FS) (err error) {
 		}
 		e.Template[name] = tmpl
 	}
-	if e.Smtp != nil && e.Smtp.IsEnabled() {
+	if e.Smtp != nil && e.Smtp.Enabled {
 		if len(e.Smtp.Host) == 0 {
 			return errors.New("Missing required field in config: auth.email.smtp.host")
 		}
