@@ -57,6 +57,14 @@ const (
 	LogflareBigQuery LogflareBackend = "bigquery"
 )
 
+func (b *LogflareBackend) UnmarshalText(text []byte) error {
+	allowed := []LogflareBackend{LogflarePostgres, LogflareBigQuery}
+	if *b = LogflareBackend(text); !sliceContains(allowed, *b) {
+		return errors.Errorf("must be one of %v", allowed)
+	}
+	return nil
+}
+
 type AddressFamily string
 
 const (
@@ -64,12 +72,28 @@ const (
 	AddressIPv4 AddressFamily = "IPv4"
 )
 
+func (f *AddressFamily) UnmarshalText(text []byte) error {
+	allowed := []AddressFamily{AddressIPv6, AddressIPv4}
+	if *f = AddressFamily(text); !sliceContains(allowed, *f) {
+		return errors.Errorf("must be one of %v", allowed)
+	}
+	return nil
+}
+
 type RequestPolicy string
 
 const (
 	PolicyPerWorker RequestPolicy = "per_worker"
 	PolicyOneshot   RequestPolicy = "oneshot"
 )
+
+func (p *RequestPolicy) UnmarshalText(text []byte) error {
+	allowed := []RequestPolicy{PolicyPerWorker, PolicyOneshot}
+	if *p = RequestPolicy(text); !sliceContains(allowed, *p) {
+		return errors.Errorf("must be one of %v", allowed)
+	}
+	return nil
+}
 
 type CustomClaims struct {
 	// Overrides Issuer to maintain json order when marshalling
@@ -623,12 +647,6 @@ func (c *config) Validate(fsys fs.FS) error {
 		}
 	}
 	// Validate db config
-	if c.Db.Settings.SessionReplicationRole != nil {
-		allowedRoles := []SessionReplicationRole{SessionReplicationRoleOrigin, SessionReplicationRoleReplica, SessionReplicationRoleLocal}
-		if !sliceContains(allowedRoles, *c.Db.Settings.SessionReplicationRole) {
-			return errors.Errorf("Invalid config for db.session_replication_role. Must be one of: %v", allowedRoles)
-		}
-	}
 	if c.Db.Port == 0 {
 		return errors.New("Missing required field in config: db.port")
 	}
@@ -659,20 +677,6 @@ func (c *config) Validate(fsys fs.FS) error {
 		}
 	default:
 		return errors.Errorf("Failed reading config: Invalid %s: %v.", "db.major_version", c.Db.MajorVersion)
-	}
-	// Validate pooler config
-	if c.Db.Pooler.Enabled {
-		allowed := []PoolMode{TransactionMode, SessionMode}
-		if !sliceContains(allowed, c.Db.Pooler.PoolMode) {
-			return errors.Errorf("Invalid config for db.pooler.pool_mode. Must be one of: %v", allowed)
-		}
-	}
-	// Validate realtime config
-	if c.Realtime.Enabled {
-		allowed := []AddressFamily{AddressIPv6, AddressIPv4}
-		if !sliceContains(allowed, c.Realtime.IpVersion) {
-			return errors.Errorf("Invalid config for realtime.ip_version. Must be one of: %v", allowed)
-		}
 	}
 	// Validate storage config
 	for name := range c.Storage.Buckets {
@@ -710,14 +714,9 @@ func (c *config) Validate(fsys fs.FS) error {
 				return errors.Errorf("Invalid config for auth.additional_redirect_urls[%d]: %v", i, err)
 			}
 		}
-		allowed := []PasswordRequirements{NoRequirements, LettersDigits, LowerUpperLettersDigits, LowerUpperLettersDigitsSymbols}
-		if !sliceContains(allowed, c.Auth.PasswordRequirements) {
-			return errors.Errorf("Invalid config for auth.password_requirements. Must be one of: %v", allowed)
-		}
 		if c.Auth.Captcha != nil && c.Auth.Captcha.Enabled {
-			allowed := []CaptchaProvider{HCaptchaProvider, TurnstileProvider}
-			if !sliceContains(allowed, c.Auth.Captcha.Provider) {
-				return errors.Errorf("Invalid config for auth.captcha.provider. Must be one of: %v", allowed)
+			if len(c.Auth.Captcha.Provider) == 0 {
+				return errors.New("Missing required field in config: auth.captcha.provider")
 			}
 			if len(c.Auth.Captcha.Secret.Value) == 0 {
 				return errors.Errorf("Missing required field in config: auth.captcha.secret")
@@ -746,12 +745,6 @@ func (c *config) Validate(fsys fs.FS) error {
 		}
 	}
 	// Validate functions config
-	if c.EdgeRuntime.Enabled {
-		allowed := []RequestPolicy{PolicyPerWorker, PolicyOneshot}
-		if !sliceContains(allowed, c.EdgeRuntime.Policy) {
-			return errors.Errorf("Invalid config for edge_runtime.policy. Must be one of: %v", allowed)
-		}
-	}
 	for name := range c.Functions {
 		if err := ValidateFunctionSlug(name); err != nil {
 			return err
@@ -759,8 +752,7 @@ func (c *config) Validate(fsys fs.FS) error {
 	}
 	// Validate logflare config
 	if c.Analytics.Enabled {
-		switch c.Analytics.Backend {
-		case LogflareBigQuery:
+		if c.Analytics.Backend == LogflareBigQuery {
 			if len(c.Analytics.GcpProjectId) == 0 {
 				return errors.New("Missing required field in config: analytics.gcp_project_id")
 			}
@@ -770,11 +762,6 @@ func (c *config) Validate(fsys fs.FS) error {
 			if len(c.Analytics.GcpJwtPath) == 0 {
 				return errors.New("Path to GCP Service Account Key must be provided in config, relative to config.toml: analytics.gcp_jwt_path")
 			}
-		case LogflarePostgres:
-			break
-		default:
-			allowed := []LogflareBackend{LogflarePostgres, LogflareBigQuery}
-			return errors.Errorf("Invalid config for analytics.backend. Must be one of: %v", allowed)
 		}
 	}
 	if err := c.Experimental.validate(); err != nil {
