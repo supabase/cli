@@ -69,30 +69,30 @@ type (
 
 	db struct {
 		Image        string            `toml:"-"`
-		Port         uint16            `toml:"port"`
-		ShadowPort   uint16            `toml:"shadow_port"`
-		MajorVersion uint              `toml:"major_version"`
+		Port         uint16            `toml:"port" validate:"gt=0"`
+		ShadowPort   uint16            `toml:"shadow_port" validate:"gt=0"`
+		MajorVersion uint              `toml:"major_version" validate:"min=12,max=15"`
 		Password     string            `toml:"-"`
 		RootKey      string            `toml:"-" mapstructure:"root_key"`
 		Pooler       pooler            `toml:"pooler"`
 		Seed         seed              `toml:"seed"`
 		Settings     settings          `toml:"settings"`
-		Vault        map[string]Secret `toml:"vault"`
+		Vault        map[string]Secret `toml:"vault" validate:"dive,required"`
 	}
 
 	seed struct {
 		Enabled      bool     `toml:"enabled"`
-		GlobPatterns []string `toml:"sql_paths"`
+		GlobPatterns []string `toml:"sql_paths" validate:"dive,filepath"`
 		SqlPaths     []string `toml:"-"`
 	}
 
 	pooler struct {
 		Enabled          bool     `toml:"enabled"`
 		Image            string   `toml:"-"`
-		Port             uint16   `toml:"port"`
-		PoolMode         PoolMode `toml:"pool_mode"`
-		DefaultPoolSize  uint     `toml:"default_pool_size"`
-		MaxClientConn    uint     `toml:"max_client_conn"`
+		Port             uint16   `toml:"port" validate:"gt=0"`
+		PoolMode         PoolMode `toml:"pool_mode" validate:"required"`
+		DefaultPoolSize  uint     `toml:"default_pool_size" validate:"required"`
+		MaxClientConn    uint     `toml:"max_client_conn" validate:"required"`
 		ConnectionString string   `toml:"-"`
 		TenantId         string   `toml:"-"`
 		EncryptionKey    string   `toml:"-"`

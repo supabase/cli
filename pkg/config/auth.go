@@ -72,15 +72,15 @@ type (
 		Enabled bool   `toml:"enabled"`
 		Image   string `toml:"-"`
 
-		SiteUrl                    string               `toml:"site_url" mapstructure:"site_url"`
-		AdditionalRedirectUrls     []string             `toml:"additional_redirect_urls"`
+		SiteUrl                    string               `toml:"site_url" mapstructure:"site_url" validate:"http_url"`
+		AdditionalRedirectUrls     []string             `toml:"additional_redirect_urls" validate:"dive,http_url"`
 		JwtExpiry                  uint                 `toml:"jwt_expiry"`
 		EnableRefreshTokenRotation bool                 `toml:"enable_refresh_token_rotation"`
 		RefreshTokenReuseInterval  uint                 `toml:"refresh_token_reuse_interval"`
 		EnableManualLinking        bool                 `toml:"enable_manual_linking"`
 		EnableSignup               bool                 `toml:"enable_signup"`
 		EnableAnonymousSignIns     bool                 `toml:"enable_anonymous_sign_ins"`
-		MinimumPasswordLength      uint                 `toml:"minimum_password_length"`
+		MinimumPasswordLength      uint                 `toml:"minimum_password_length" validate:"min=6"`
 		PasswordRequirements       PasswordRequirements `toml:"password_requirements"`
 
 		Captcha  *captcha `toml:"captcha"`
@@ -89,7 +89,7 @@ type (
 		Sessions sessions `toml:"sessions"`
 		Email    email    `toml:"email"`
 		Sms      sms      `toml:"sms"`
-		External external `toml:"external"`
+		External external `toml:"external" validate:"dive"`
 
 		// Custom secrets can be injected from .env file
 		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
@@ -102,29 +102,26 @@ type (
 	external map[string]provider
 
 	thirdParty struct {
-		Firebase tpaFirebase `toml:"firebase"`
-		Auth0    tpaAuth0    `toml:"auth0"`
-		Cognito  tpaCognito  `toml:"aws_cognito"`
+		Firebase tpaFirebase `toml:"firebase" validate:"excluded_with=Auth0.Enabled Cognito.Enabled"`
+		Auth0    tpaAuth0    `toml:"auth0" validate:"excluded_with=Firebase.Enabled Cognito.Enabled"`
+		Cognito  tpaCognito  `toml:"aws_cognito" validate:"excluded_with=Auth0.Enabled Firebase.Enabled"`
 	}
 
 	tpaFirebase struct {
-		Enabled bool `toml:"enabled"`
-
-		ProjectID string `toml:"project_id"`
+		Enabled   bool   `toml:"enabled"`
+		ProjectID string `toml:"project_id" validate:"required_with=Enabled"`
 	}
 
 	tpaAuth0 struct {
-		Enabled bool `toml:"enabled"`
-
-		Tenant       string `toml:"tenant"`
+		Enabled      bool   `toml:"enabled"`
+		Tenant       string `toml:"tenant" validate:"required_with=Enabled"`
 		TenantRegion string `toml:"tenant_region"`
 	}
 
 	tpaCognito struct {
-		Enabled bool `toml:"enabled"`
-
-		UserPoolID     string `toml:"user_pool_id"`
-		UserPoolRegion string `toml:"user_pool_region"`
+		Enabled        bool   `toml:"enabled"`
+		UserPoolID     string `toml:"user_pool_id" validate:"required_with=Enabled"`
+		UserPoolRegion string `toml:"user_pool_region" validate:"required_with=Enabled"`
 	}
 
 	email struct {
@@ -132,47 +129,47 @@ type (
 		DoubleConfirmChanges bool                     `toml:"double_confirm_changes"`
 		EnableConfirmations  bool                     `toml:"enable_confirmations"`
 		SecurePasswordChange bool                     `toml:"secure_password_change"`
-		Template             map[string]emailTemplate `toml:"template"`
+		Template             map[string]emailTemplate `toml:"template" validate:"dive"`
 		Smtp                 *smtp                    `toml:"smtp"`
 		MaxFrequency         time.Duration            `toml:"max_frequency"`
-		OtpLength            uint                     `toml:"otp_length"`
+		OtpLength            uint                     `toml:"otp_length" validate:"min=6"`
 		OtpExpiry            uint                     `toml:"otp_expiry"`
 	}
 
 	smtp struct {
-		Enabled    *bool  `toml:"enabled"`
-		Host       string `toml:"host"`
-		Port       uint16 `toml:"port"`
-		User       string `toml:"user"`
-		Pass       Secret `toml:"pass"`
-		AdminEmail string `toml:"admin_email"`
+		Enabled    bool   `toml:"enabled"`
+		Host       string `toml:"host" validate:"required_with=Enabled"`
+		Port       uint16 `toml:"port" validate:"required_with=Enabled"`
+		User       string `toml:"user" validate:"required_with=Enabled"`
+		Pass       Secret `toml:"pass" validate:"required_with=Enabled"`
+		AdminEmail string `toml:"admin_email" validate:"required_with=Enabled"`
 		SenderName string `toml:"sender_name"`
 	}
 
 	emailTemplate struct {
 		Subject *string `toml:"subject"`
-		Content *string `toml:"content"`
+		Content *string `toml:"content" validate:"isdefault"`
 		// Only content path is accepted in config.toml
-		ContentPath string `toml:"content_path"`
+		ContentPath string `toml:"content_path" validate:"omitempty,file"`
 	}
 
 	sms struct {
 		EnableSignup        bool              `toml:"enable_signup"`
 		EnableConfirmations bool              `toml:"enable_confirmations"`
-		Template            string            `toml:"template"`
-		Twilio              twilioConfig      `toml:"twilio" mapstructure:"twilio"`
-		TwilioVerify        twilioConfig      `toml:"twilio_verify" mapstructure:"twilio_verify"`
-		Messagebird         messagebirdConfig `toml:"messagebird" mapstructure:"messagebird"`
-		Textlocal           textlocalConfig   `toml:"textlocal" mapstructure:"textlocal"`
-		Vonage              vonageConfig      `toml:"vonage" mapstructure:"vonage"`
+		Template            string            `toml:"template" validate:"required"`
+		Twilio              twilioConfig      `toml:"twilio" mapstructure:"twilio" validate:"excluded_with=TwilioVerify.Enabled Messagebird.Enabled Textlocal.Enabled Vonage.Enabled"`
+		TwilioVerify        twilioConfig      `toml:"twilio_verify" mapstructure:"twilio_verify" validate:"excluded_with=Twilio.Enabled Messagebird.Enabled Textlocal.Enabled Vonage.Enabled"`
+		Messagebird         messagebirdConfig `toml:"messagebird" mapstructure:"messagebird" validate:"excluded_with=Twilio.Enabled TwilioVerify.Enabled Textlocal.Enabled Vonage.Enabled"`
+		Textlocal           textlocalConfig   `toml:"textlocal" mapstructure:"textlocal" validate:"excluded_with=Twilio.Enabled TwilioVerify.Enabled Messagebird.Enabled Vonage.Enabled"`
+		Vonage              vonageConfig      `toml:"vonage" mapstructure:"vonage" validate:"excluded_with=Twilio.Enabled TwilioVerify.Enabled Messagebird.Enabled Textlocal.Enabled"`
 		TestOTP             map[string]string `toml:"test_otp"`
 		MaxFrequency        time.Duration     `toml:"max_frequency"`
 	}
 
 	captcha struct {
 		Enabled  bool            `toml:"enabled"`
-		Provider CaptchaProvider `toml:"provider"`
-		Secret   Secret          `toml:"secret"`
+		Provider CaptchaProvider `toml:"provider" validate:"required_with=Enabled"`
+		Secret   Secret          `toml:"secret" validate:"required_with=Enabled"`
 	}
 
 	hook struct {
@@ -185,13 +182,13 @@ type (
 
 	factorTypeConfiguration struct {
 		EnrollEnabled bool `toml:"enroll_enabled"`
-		VerifyEnabled bool `toml:"verify_enabled"`
+		VerifyEnabled bool `toml:"verify_enabled" validate:"required_with=EnrollEnabled"`
 	}
 
 	phoneFactorTypeConfiguration struct {
 		factorTypeConfiguration
-		OtpLength    uint          `toml:"otp_length"`
-		Template     string        `toml:"template"`
+		OtpLength    uint          `toml:"otp_length" validate:"min=6"`
+		Template     string        `toml:"template" validate:"required"`
 		MaxFrequency time.Duration `toml:"max_frequency"`
 	}
 
@@ -204,7 +201,7 @@ type (
 
 	hookConfig struct {
 		Enabled bool   `toml:"enabled"`
-		URI     string `toml:"uri"`
+		URI     string `toml:"uri" validate:"required_with=Enabled,http_url|startswith=pg-functions://postgres/"`
 		Secrets Secret `toml:"secrets"`
 	}
 
@@ -215,33 +212,33 @@ type (
 
 	twilioConfig struct {
 		Enabled           bool   `toml:"enabled"`
-		AccountSid        string `toml:"account_sid"`
-		MessageServiceSid string `toml:"message_service_sid"`
-		AuthToken         Secret `toml:"auth_token" mapstructure:"auth_token"`
+		AccountSid        string `toml:"account_sid" validate:"required_with=Enabled"`
+		MessageServiceSid string `toml:"message_service_sid" validate:"required_with=Enabled"`
+		AuthToken         Secret `toml:"auth_token" mapstructure:"auth_token" validate:"required_with=Enabled"`
 	}
 
 	messagebirdConfig struct {
 		Enabled    bool   `toml:"enabled"`
-		Originator string `toml:"originator"`
-		AccessKey  Secret `toml:"access_key" mapstructure:"access_key"`
+		Originator string `toml:"originator" validate:"required_with=Enabled"`
+		AccessKey  Secret `toml:"access_key" mapstructure:"access_key" validate:"required_with=Enabled"`
 	}
 
 	textlocalConfig struct {
 		Enabled bool   `toml:"enabled"`
-		Sender  string `toml:"sender"`
-		ApiKey  Secret `toml:"api_key" mapstructure:"api_key"`
+		Sender  string `toml:"sender" validate:"required_with=Enabled"`
+		ApiKey  Secret `toml:"api_key" mapstructure:"api_key" validate:"required_with=Enabled"`
 	}
 
 	vonageConfig struct {
 		Enabled   bool   `toml:"enabled"`
-		From      string `toml:"from"`
-		ApiKey    string `toml:"api_key" mapstructure:"api_key"`
-		ApiSecret Secret `toml:"api_secret" mapstructure:"api_secret"`
+		From      string `toml:"from" validate:"required_with=Enabled"`
+		ApiKey    string `toml:"api_key" mapstructure:"api_key" validate:"required_with=Enabled"`
+		ApiSecret Secret `toml:"api_secret" mapstructure:"api_secret" validate:"required_with=Enabled"`
 	}
 
 	provider struct {
 		Enabled        bool   `toml:"enabled"`
-		ClientId       string `toml:"client_id"`
+		ClientId       string `toml:"client_id" validate:"required_with=Enabled"`
 		Secret         Secret `toml:"secret"`
 		Url            string `toml:"url"`
 		RedirectUri    string `toml:"redirect_uri"`
@@ -558,13 +555,8 @@ func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	}
 }
 
-func (s smtp) IsEnabled() bool {
-	// If Enabled is not defined, or defined and set to true
-	return cast.Val(s.Enabled, true)
-}
-
 func (s smtp) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
-	if !s.IsEnabled() {
+	if !s.Enabled {
 		// Setting a single empty string disables SMTP
 		body.SmtpHost = cast.Ptr("")
 		return
@@ -580,14 +572,12 @@ func (s smtp) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 }
 
 func (s *smtp) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
-	showDiff := s.IsEnabled()
-	// Api resets all values when SMTP is disabled
-	if enabled := remoteConfig.SmtpHost != nil; s.Enabled != nil {
-		*s.Enabled = enabled
-	}
-	if !showDiff {
+	// When local config is not set, we assume platform defaults should not change
+	if s == nil {
 		return
 	}
+	// Api resets all values when SMTP is disabled
+	s.Enabled = remoteConfig.SmtpHost != nil
 	s.Host = cast.Val(remoteConfig.SmtpHost, "")
 	s.User = cast.Val(remoteConfig.SmtpUser, "")
 	if len(s.Pass.SHA256) > 0 {
