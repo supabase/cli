@@ -61,7 +61,7 @@ func (s *storage) FromRemoteStorageConfig(remoteConfig v1API.StorageConfigRespon
 }
 
 func (s *storage) DiffWithRemote(remoteConfig v1API.StorageConfigResponse) ([]byte, error) {
-	copy := *s
+	copy := s.Clone()
 	if s.ImageTransformation != nil {
 		img := *s.ImageTransformation
 		copy.ImageTransformation = &img

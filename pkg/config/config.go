@@ -277,9 +277,19 @@ func (a *auth) Clone() auth {
 	return copy
 }
 
+func (s *storage) Clone() storage {
+	copy := *s
+	copy.Buckets = maps.Clone(s.Buckets)
+	if s.ImageTransformation != nil {
+		img := *s.ImageTransformation
+		copy.ImageTransformation = &img
+	}
+	return copy
+}
+
 func (c *baseConfig) Clone() baseConfig {
 	copy := *c
-	copy.Storage.Buckets = maps.Clone(c.Storage.Buckets)
+	copy.Storage = c.Storage.Clone()
 	copy.Functions = maps.Clone(c.Functions)
 	copy.Auth = c.Auth.Clone()
 	if c.Experimental.Webhooks != nil {
