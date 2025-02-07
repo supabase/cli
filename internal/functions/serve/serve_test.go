@@ -44,13 +44,14 @@ func TestServeCommand(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("throws error on missing config", func(t *testing.T) {
+	t.Run("throws error on malformed config", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
 		// Run test
 		err := Run(context.Background(), "", nil, "", RuntimeOption{}, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "open supabase/config.toml: file does not exist")
+		assert.ErrorContains(t, err, "toml: expected = after a key, but the document ends there")
 	})
 
 	t.Run("throws error on missing db", func(t *testing.T) {

@@ -28,6 +28,14 @@ func TestConfigParsing(t *testing.T) {
 		assert.NoError(t, config.Load("config.toml", fsys))
 	})
 
+	t.Run("optional config file", func(t *testing.T) {
+		config := NewConfig()
+		// Run test
+		err := config.Load("", fs.MapFS{})
+		// Check error
+		assert.NoError(t, err)
+	})
+
 	t.Run("config file with environment variables", func(t *testing.T) {
 		config := NewConfig()
 		// Setup in-memory fs

@@ -261,16 +261,6 @@ func WriteFile(path string, contents []byte, fsys afero.Fs) error {
 	return nil
 }
 
-func AssertSupabaseCliIsSetUpFS(fsys afero.Fs) error {
-	if _, err := fsys.Stat(ConfigPath); errors.Is(err, os.ErrNotExist) {
-		return errors.Errorf("Cannot find %s in the current directory. Have you set up the project with %s?", Bold(ConfigPath), Aqua("supabase init"))
-	} else if err != nil {
-		return errors.Errorf("failed to read config file: %w", err)
-	}
-
-	return nil
-}
-
 func AssertProjectRefIsValid(projectRef string) error {
 	if !ProjectRefPattern.MatchString(projectRef) {
 		return errors.New(ErrInvalidRef)

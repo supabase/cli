@@ -415,8 +415,8 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 	v.SetConfigType("toml")
 	// Load default values
 	var buf bytes.Buffer
-	if err := initConfigTemplate.Option("missingkey=zero").Execute(&buf, c); err != nil {
-		return errors.Errorf("failed to initialise template config: %w", err)
+	if err := c.Eject(&buf); err != nil {
+		return err
 	} else if err := c.loadFromReader(v, &buf); err != nil {
 		return err
 	}
@@ -425,7 +425,9 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 		v.SetConfigType(ext[1:])
 	}
 	f, err := fsys.Open(filename)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
 		return errors.Errorf("failed to read file config: %w", err)
 	}
 	defer f.Close()
