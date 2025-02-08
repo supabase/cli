@@ -544,16 +544,18 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if connString, err := fs.ReadFile(fsys, builder.PoolerUrlPath); err == nil && len(connString) > 0 {
 		c.Db.Pooler.ConnectionString = string(connString)
 	}
-	// Update external api url
-	apiUrl := url.URL{Host: net.JoinHostPort(c.Hostname,
-		strconv.FormatUint(uint64(c.Api.Port), 10),
-	)}
-	if c.Api.Tls.Enabled {
-		apiUrl.Scheme = "https"
-	} else {
-		apiUrl.Scheme = "http"
+	if len(c.Api.ExternalUrl) == 0 {
+		// Update external api url
+		apiUrl := url.URL{Host: net.JoinHostPort(c.Hostname,
+			strconv.FormatUint(uint64(c.Api.Port), 10),
+		)}
+		if c.Api.Tls.Enabled {
+			apiUrl.Scheme = "https"
+		} else {
+			apiUrl.Scheme = "http"
+		}
+		c.Api.ExternalUrl = apiUrl.String()
 	}
-	c.Api.ExternalUrl = apiUrl.String()
 	// Update image versions
 	if version, err := fs.ReadFile(fsys, builder.PostgresVersionPath); err == nil {
 		if strings.HasPrefix(string(version), "15.") && semver.Compare(string(version[3:]), "1.0.55") >= 0 {
