@@ -514,7 +514,7 @@ EOF
 		} else if utils.Config.Inbucket.Enabled {
 			env = append(env,
 				"GOTRUE_SMTP_HOST="+utils.InbucketId,
-				"GOTRUE_SMTP_PORT=2500",
+				"GOTRUE_SMTP_PORT=1025",
 				fmt.Sprintf("GOTRUE_SMTP_ADMIN_EMAIL=%s", utils.Config.Inbucket.AdminEmail),
 				fmt.Sprintf("GOTRUE_SMTP_SENDER_NAME=%s", utils.Config.Inbucket.SenderName),
 			)
@@ -696,14 +696,14 @@ EOF
 		started = append(started, utils.GotrueId)
 	}
 
-	// Start Inbucket.
+	// Start Mailpit
 	if utils.Config.Inbucket.Enabled && !isContainerExcluded(utils.Config.Inbucket.Image, excluded) {
-		inbucketPortBindings := nat.PortMap{"9000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}}
+		inbucketPortBindings := nat.PortMap{"8025/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}}
 		if utils.Config.Inbucket.SmtpPort != 0 {
-			inbucketPortBindings["2500/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10)}}
+			inbucketPortBindings["1025/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10)}}
 		}
 		if utils.Config.Inbucket.Pop3Port != 0 {
-			inbucketPortBindings["1100/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Pop3Port), 10)}}
+			inbucketPortBindings["1110/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Pop3Port), 10)}}
 		}
 		if _, err := utils.DockerStart(
 			ctx,
@@ -712,10 +712,7 @@ EOF
 			},
 			container.HostConfig{
 				Binds: []string{
-					// Override default mount points to avoid creating multiple anonymous volumes
-					// Ref: https://github.com/inbucket/inbucket/blob/v3.0.4/Dockerfile#L52
-					utils.InbucketId + ":/config",
-					utils.InbucketId + ":/storage",
+					utils.InbucketId + ":/data",
 				},
 				PortBindings:  inbucketPortBindings,
 				RestartPolicy: container.RestartPolicy{Name: "always"},

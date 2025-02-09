@@ -7,7 +7,7 @@ const (
 	// Append to ServiceImages when adding new dependencies below
 	// TODO: try https://github.com/axllent/mailpit
 	kongImage        = "library/kong:2.8.1"
-	inbucketImage    = "inbucket/inbucket:3.0.3"
+	inbucketImage    = "axllent/mailpit:v1.22.2"
 	postgrestImage   = "postgrest/postgrest:v12.2.0"
 	pgmetaImage      = "supabase/postgres-meta:v0.84.2"
 	studioImage      = "supabase/studio:20250130-b048539"
