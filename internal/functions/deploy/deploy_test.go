@@ -14,12 +14,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/config"
 )
 
 func TestDeployCommand(t *testing.T) {
+	flags.ProjectRef = apitest.RandomProjectRef()
 	const slug = "test-func"
 	const containerId = "test-container"
 	imageUrl := utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image)
@@ -29,8 +31,6 @@ func TestDeployCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
@@ -40,13 +40,13 @@ func TestDeployCommand(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/functions").
+			Get("/v1/projects/" + flags.ProjectRef + "/functions").
 			Reply(http.StatusOK).
 			JSON([]api.FunctionResponse{})
 		for i := range functions {
 			// Do not match slug to avoid flakey tests
 			gock.New(utils.DefaultApiHost).
-				Post("/v1/projects/" + project + "/functions").
+				Post("/v1/projects/" + flags.ProjectRef + "/functions").
 				Reply(http.StatusCreated).
 				JSON(api.FunctionResponse{Id: fmt.Sprintf("%d", i)})
 			// Setup mock docker
@@ -61,7 +61,7 @@ func TestDeployCommand(t *testing.T) {
 		}
 		// Run test
 		noVerifyJWT := true
-		err = Run(context.Background(), functions, project, &noVerifyJWT, "", fsys)
+		err = Run(context.Background(), functions, true, &noVerifyJWT, "", fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -88,8 +88,6 @@ import_map = "./import_map.json"
 		require.NoError(t, afero.WriteFile(fsys, entrypointPath, []byte{}, 0644))
 		ignorePath := filepath.Join(utils.FunctionsDir, "_ignore", "index.ts")
 		require.NoError(t, afero.WriteFile(fsys, ignorePath, []byte{}, 0644))
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
@@ -99,11 +97,11 @@ import_map = "./import_map.json"
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/functions").
+			Get("/v1/projects/" + flags.ProjectRef + "/functions").
 			Reply(http.StatusOK).
 			JSON([]api.FunctionResponse{})
 		gock.New(utils.DefaultApiHost).
-			Post("/v1/projects/"+project+"/functions").
+			Post("/v1/projects/"+flags.ProjectRef+"/functions").
 			MatchParam("slug", slug).
 			ParamPresent("import_map_path").
 			Reply(http.StatusCreated).
@@ -116,7 +114,7 @@ import_map = "./import_map.json"
 		outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		// Run test
-		err = Run(context.Background(), nil, project, nil, "", fsys)
+		err = Run(context.Background(), nil, true, nil, "", fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -142,8 +140,6 @@ import_map = "./import_map.json"
 		// Setup function entrypoints
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "enabled-func", "index.ts"), []byte{}, 0644))
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "disabled-func", "index.ts"), []byte{}, 0644))
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
@@ -153,11 +149,11 @@ import_map = "./import_map.json"
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/functions").
+			Get("/v1/projects/" + flags.ProjectRef + "/functions").
 			Reply(http.StatusOK).
 			JSON([]api.FunctionResponse{})
 		gock.New(utils.DefaultApiHost).
-			Post("/v1/projects/"+project+"/functions").
+			Post("/v1/projects/"+flags.ProjectRef+"/functions").
 			MatchParam("slug", "enabled-func").
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
@@ -168,7 +164,7 @@ import_map = "./import_map.json"
 		outputDir := filepath.Join(utils.TempDir, ".output_enabled-func")
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		// Run test
-		err = Run(context.Background(), nil, project, nil, "", fsys)
+		err = Run(context.Background(), nil, true, nil, "", fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -179,7 +175,7 @@ import_map = "./import_map.json"
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Run test
-		err := Run(context.Background(), []string{"_invalid"}, "", nil, "", fsys)
+		err := Run(context.Background(), []string{"_invalid"}, true, nil, "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Invalid Function name.")
 	})
@@ -189,7 +185,7 @@ import_map = "./import_map.json"
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Run test
-		err := Run(context.Background(), nil, "", nil, "", fsys)
+		err := Run(context.Background(), nil, true, nil, "", fsys)
 		// Check error
 		assert.ErrorContains(t, err, "No Functions specified or found in supabase/functions")
 	})
@@ -207,8 +203,6 @@ verify_jwt = false
 `)
 		require.NoError(t, err)
 		require.NoError(t, f.Close())
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
@@ -218,11 +212,11 @@ verify_jwt = false
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/functions").
+			Get("/v1/projects/" + flags.ProjectRef + "/functions").
 			Reply(http.StatusOK).
 			JSON([]api.FunctionResponse{})
 		gock.New(utils.DefaultApiHost).
-			Post("/v1/projects/"+project+"/functions").
+			Post("/v1/projects/"+flags.ProjectRef+"/functions").
 			MatchParam("verify_jwt", "false").
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
@@ -234,7 +228,7 @@ verify_jwt = false
 		outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		// Run test
-		assert.NoError(t, Run(context.Background(), []string{slug}, project, nil, "", fsys))
+		assert.NoError(t, Run(context.Background(), []string{slug}, true, nil, "", fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -252,8 +246,6 @@ verify_jwt = false
 `)
 		require.NoError(t, err)
 		require.NoError(t, f.Close())
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
@@ -263,11 +255,11 @@ verify_jwt = false
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/functions").
+			Get("/v1/projects/" + flags.ProjectRef + "/functions").
 			Reply(http.StatusOK).
 			JSON([]api.FunctionResponse{})
 		gock.New(utils.DefaultApiHost).
-			Post("/v1/projects/"+project+"/functions").
+			Post("/v1/projects/"+flags.ProjectRef+"/functions").
 			MatchParam("verify_jwt", "true").
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
@@ -280,7 +272,7 @@ verify_jwt = false
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		// Run test
 		noVerifyJwt := false
-		assert.NoError(t, Run(context.Background(), []string{slug}, project, &noVerifyJwt, "", fsys))
+		assert.NoError(t, Run(context.Background(), []string{slug}, true, &noVerifyJwt, "", fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})

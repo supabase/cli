@@ -52,6 +52,8 @@ var (
 		},
 	}
 
+	useApi          bool
+	useDocker       bool
 	noVerifyJWT     = new(bool)
 	useLegacyBundle bool
 	importMapPath   string
@@ -65,7 +67,7 @@ var (
 			if !cmd.Flags().Changed("no-verify-jwt") {
 				noVerifyJWT = nil
 			}
-			return deploy.Run(cmd.Context(), args, flags.ProjectRef, noVerifyJWT, importMapPath, afero.NewOsFs())
+			return deploy.Run(cmd.Context(), args, useDocker, noVerifyJWT, importMapPath, afero.NewOsFs())
 		},
 	}
 
@@ -123,11 +125,15 @@ var (
 func init() {
 	functionsListCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsDeleteCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
-	functionsDeployCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
-	functionsDeployCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
-	functionsDeployCmd.Flags().BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
-	functionsDeployCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
-	cobra.CheckErr(functionsDeployCmd.Flags().MarkHidden("legacy-bundle"))
+	deployFlags := functionsDeployCmd.Flags()
+	deployFlags.BoolVar(&useApi, "use-api", true, "Use Management API to bundle functions.")
+	deployFlags.BoolVar(&useDocker, "use-docker", false, "Use Docker to bundle functions.")
+	functionsDeployCmd.MarkFlagsMutuallyExclusive("use-api", "use-docker")
+	deployFlags.BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
+	deployFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
+	deployFlags.BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
+	deployFlags.StringVar(&importMapPath, "import-map", "", "Path to import map file.")
+	cobra.CheckErr(deployFlags.MarkHidden("legacy-bundle"))
 	functionsServeCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsServeCmd.Flags().StringVar(&envFilePath, "env-file", "", "Path to an env file to be populated to the Function environment.")
 	functionsServeCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")

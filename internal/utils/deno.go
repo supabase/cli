@@ -220,11 +220,9 @@ func NewImportMap(absJsonPath string, fsys afero.Fs) (*ImportMap, error) {
 	if err != nil {
 		return nil, errors.Errorf("failed to load import map: %w", err)
 	}
-	data = jsonc.ToJSONInPlace(data)
 	result := ImportMap{}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	if err := decoder.Decode(&result); err != nil {
-		return nil, errors.Errorf("failed to parse import map: %w", err)
+	if err := result.Parse(data); err != nil {
+		return nil, err
 	}
 	// Resolve all paths relative to current file
 	for k, v := range result.Imports {
@@ -236,6 +234,15 @@ func NewImportMap(absJsonPath string, fsys afero.Fs) (*ImportMap, error) {
 		}
 	}
 	return &result, nil
+}
+
+func (m *ImportMap) Parse(data []byte) error {
+	data = jsonc.ToJSONInPlace(data)
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := decoder.Decode(&m); err != nil {
+		return errors.Errorf("failed to parse import map: %w", err)
+	}
+	return nil
 }
 
 func resolveHostPath(jsonPath, hostPath string, fsys afero.Fs) string {
