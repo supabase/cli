@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"testing"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
@@ -94,13 +97,12 @@ func TestStartCommand(t *testing.T) {
 	})
 
 	t.Run("loads custom config path", func(t *testing.T) {
-		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		customPath := "custom/path/config.toml"
+		customPath := filepath.ToSlash("custom/path/config.toml")
 		projectId := "test_project"
 
 		// Create directories and required files
-		require.NoError(t, fsys.MkdirAll("custom/path", 0755))
+		require.NoError(t, fsys.MkdirAll(filepath.Dir(customPath), 0755))
 		require.NoError(t, fsys.MkdirAll("supabase", 0755))
 		require.NoError(t, afero.WriteFile(fsys, "supabase/seed.sql", []byte(""), 0644))
 		require.NoError(t, afero.WriteFile(fsys, "supabase/roles.sql", []byte(""), 0644))
@@ -108,44 +110,21 @@ func TestStartCommand(t *testing.T) {
 		// Store original values
 		originalDbId := utils.DbId
 		originalConfigFile := flags.ConfigFile
+		originalWorkdir := viper.GetString("WORKDIR")
 
-		// Restore original values after test
 		t.Cleanup(func() {
 			utils.DbId = originalDbId
 			flags.ConfigFile = originalConfigFile
+			viper.Set("WORKDIR", originalWorkdir)
 			gock.Off()
 		})
 
 		// Write config file
-		require.NoError(t, afero.WriteFile(fsys, customPath, []byte(`# Test configuration
+		require.NoError(t, afero.WriteFile(fsys, customPath, []byte(`
 		project_id = "`+projectId+`"
-
-		[api]
-		enabled = true
-		port = 54331
-		schemas = ["public", "storage", "graphql_public"]
-		extra_search_path = ["public", "extensions"]
-		max_rows = 1000
-
 		[db]
 		port = 54332
-		shadow_port = 54330
-		major_version = 15
-
-		[studio]
-		port = 54333
-
-		[inbucket]
-		port = 54334
-
-		[storage]
-		file_size_limit = "50MiB"
-
-		[auth]
-		site_url = "http://localhost:54331"
-		additional_redirect_urls = ["http://localhost:54331"]
-		jwt_expiry = 3600
-		enable_signup = true`), 0644))
+		major_version = 15`), 0644))
 
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
@@ -156,25 +135,137 @@ func TestStartCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON([]types.Container{})
 
-		// Mock container checks
+		// Mock container health check
 		utils.DbId = "supabase_db_" + projectId
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Times(2).
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{
-					Running: true,
-					Health:  &types.Health{Status: types.Healthy},
+			JSON(types.ContainerJSON{
+				ContainerJSONBase: &types.ContainerJSONBase{
+					State: &types.ContainerState{
+						Running: true,
+						Health:  &types.Health{Status: types.Healthy},
+					},
 				},
-			}})
+			})
+
+		flags.ConfigFile = customPath
+
+		err := Run(context.Background(), fsys, []string{}, false)
+		assert.NoError(t, err)
+		assert.Equal(t, filepath.ToSlash("custom/path"), viper.GetString("WORKDIR"))
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("handles absolute config path", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		absPath := "/absolute/path/config.toml"
+		projectId := "abs_project"
+
+		// Create directories and required files
+		require.NoError(t, fsys.MkdirAll("/absolute/path", 0755))
+		require.NoError(t, fsys.MkdirAll("/supabase", 0755))
+		require.NoError(t, afero.WriteFile(fsys, "/supabase/seed.sql", []byte(""), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "/supabase/roles.sql", []byte(""), 0644))
+
+		// Store original values
+		originalDbId := utils.DbId
+		originalConfigFile := flags.ConfigFile
+		originalWorkdir := viper.GetString("WORKDIR")
+
+		t.Cleanup(func() {
+			utils.DbId = originalDbId
+			flags.ConfigFile = originalConfigFile
+			viper.Set("WORKDIR", originalWorkdir)
+			gock.Off()
+		})
+
+		// Write config file
+		require.NoError(t, afero.WriteFile(fsys, absPath, []byte(`
+		project_id = "`+projectId+`"
+		[db]
+		port = 54332
+		major_version = 15`), 0644))
+
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+
+		// Mock container list check
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
+			Reply(http.StatusOK).
+			JSON([]types.Container{})
+
+		// Mock container health check
+		utils.DbId = "supabase_db_" + projectId
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
+			Times(2).
+			Reply(http.StatusOK).
+			JSON(types.ContainerJSON{
+				ContainerJSONBase: &types.ContainerJSONBase{
+					State: &types.ContainerState{
+						Running: true,
+						Health:  &types.Health{Status: types.Healthy},
+					},
+				},
+			})
 
 		// Set the custom config path
-		flags.ConfigFile = customPath
+		flags.ConfigFile = absPath
+
 		// Run test
 		err := Run(context.Background(), fsys, []string{}, false)
 		assert.NoError(t, err)
+		assert.Equal(t, "/absolute/path", viper.GetString("WORKDIR"))
 		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("handles non-existent config directory", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		nonExistentPath := "non/existent/path/config.toml"
+
+		// Store original values
+		originalConfigFile := flags.ConfigFile
+
+		t.Cleanup(func() {
+			flags.ConfigFile = originalConfigFile
+		})
+
+		// Set the custom config path
+		flags.ConfigFile = nonExistentPath
+
+		// Run test
+		err := Run(context.Background(), fsys, []string{}, false)
+		assert.ErrorIs(t, err, os.ErrNotExist)
+	})
+
+	t.Run("handles malformed config in custom path", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		customPath := "custom/config.toml"
+
+		// Create directory and malformed config
+		require.NoError(t, fsys.MkdirAll("custom", 0755))
+		require.NoError(t, afero.WriteFile(fsys, customPath, []byte("malformed toml content"), 0644))
+
+		// Store original values
+		originalConfigFile := flags.ConfigFile
+
+		t.Cleanup(func() {
+			flags.ConfigFile = originalConfigFile
+		})
+
+		// Set the custom config path
+		flags.ConfigFile = customPath
+
+		// Run test
+		err := Run(context.Background(), fsys, []string{}, false)
+		assert.ErrorContains(t, err, "toml: ")
 	})
 }
 
@@ -367,4 +458,25 @@ func TestFormatMapForEnvConfig(t *testing.T) {
 			assert.Regexp(t, regexp.MustCompile(expected[i]), result)
 		}
 	})
+}
+
+// Helper function to reduce duplication
+func setupTestConfig(t *testing.T, fsys afero.Fs, configPath, projectId string, isAbsolute bool) {
+	// Create directories and required files
+	require.NoError(t, fsys.MkdirAll(filepath.Dir(configPath), 0755))
+	supabasePath := "supabase"
+	if isAbsolute {
+		supabasePath = "/supabase"
+	}
+	require.NoError(t, fsys.MkdirAll(supabasePath, 0755))
+	require.NoError(t, afero.WriteFile(fsys, filepath.Join(supabasePath, "seed.sql"), []byte(""), 0644))
+	require.NoError(t, afero.WriteFile(fsys, filepath.Join(supabasePath, "roles.sql"), []byte(""), 0644))
+
+	// Write minimal config file
+	configContent := fmt.Sprintf(`
+	project_id = "%s"
+	[db]
+	port = 54332
+	major_version = 15`, projectId)
+	require.NoError(t, afero.WriteFile(fsys, configPath, []byte(configContent), 0644))
 }
