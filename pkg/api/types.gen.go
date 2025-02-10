@@ -5,6 +5,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -179,6 +180,7 @@ const (
 	ProjectAvailableRestoreVersionPostgresEngineN13       ProjectAvailableRestoreVersionPostgresEngine = "13"
 	ProjectAvailableRestoreVersionPostgresEngineN14       ProjectAvailableRestoreVersionPostgresEngine = "14"
 	ProjectAvailableRestoreVersionPostgresEngineN15       ProjectAvailableRestoreVersionPostgresEngine = "15"
+	ProjectAvailableRestoreVersionPostgresEngineN17       ProjectAvailableRestoreVersionPostgresEngine = "17"
 	ProjectAvailableRestoreVersionPostgresEngineN17Oriole ProjectAvailableRestoreVersionPostgresEngine = "17-oriole"
 )
 
@@ -200,22 +202,6 @@ const (
 	ReleaseChannelInternal  ReleaseChannel = "internal"
 	ReleaseChannelPreview   ReleaseChannel = "preview"
 	ReleaseChannelWithdrawn ReleaseChannel = "withdrawn"
-)
-
-// Defines values for RestoreProjectBodyDtoPostgresEngine.
-const (
-	RestoreProjectBodyDtoPostgresEngineN15       RestoreProjectBodyDtoPostgresEngine = "15"
-	RestoreProjectBodyDtoPostgresEngineN17Oriole RestoreProjectBodyDtoPostgresEngine = "17-oriole"
-)
-
-// Defines values for RestoreProjectBodyDtoReleaseChannel.
-const (
-	RestoreProjectBodyDtoReleaseChannelAlpha     RestoreProjectBodyDtoReleaseChannel = "alpha"
-	RestoreProjectBodyDtoReleaseChannelBeta      RestoreProjectBodyDtoReleaseChannel = "beta"
-	RestoreProjectBodyDtoReleaseChannelGa        RestoreProjectBodyDtoReleaseChannel = "ga"
-	RestoreProjectBodyDtoReleaseChannelInternal  RestoreProjectBodyDtoReleaseChannel = "internal"
-	RestoreProjectBodyDtoReleaseChannelPreview   RestoreProjectBodyDtoReleaseChannel = "preview"
-	RestoreProjectBodyDtoReleaseChannelWithdrawn RestoreProjectBodyDtoReleaseChannel = "withdrawn"
 )
 
 // Defines values for SetUpReadReplicaBodyReadReplicaRegion.
@@ -354,12 +340,6 @@ const (
 	V1CreateProjectBodyDtoPlanPro  V1CreateProjectBodyDtoPlan = "pro"
 )
 
-// Defines values for V1CreateProjectBodyDtoPostgresEngine.
-const (
-	V1CreateProjectBodyDtoPostgresEngineN15       V1CreateProjectBodyDtoPostgresEngine = "15"
-	V1CreateProjectBodyDtoPostgresEngineN17Oriole V1CreateProjectBodyDtoPostgresEngine = "17-oriole"
-)
-
 // Defines values for V1CreateProjectBodyDtoRegion.
 const (
 	V1CreateProjectBodyDtoRegionApEast1      V1CreateProjectBodyDtoRegion = "ap-east-1"
@@ -380,16 +360,6 @@ const (
 	V1CreateProjectBodyDtoRegionUsEast2      V1CreateProjectBodyDtoRegion = "us-east-2"
 	V1CreateProjectBodyDtoRegionUsWest1      V1CreateProjectBodyDtoRegion = "us-west-1"
 	V1CreateProjectBodyDtoRegionUsWest2      V1CreateProjectBodyDtoRegion = "us-west-2"
-)
-
-// Defines values for V1CreateProjectBodyDtoReleaseChannel.
-const (
-	V1CreateProjectBodyDtoReleaseChannelAlpha     V1CreateProjectBodyDtoReleaseChannel = "alpha"
-	V1CreateProjectBodyDtoReleaseChannelBeta      V1CreateProjectBodyDtoReleaseChannel = "beta"
-	V1CreateProjectBodyDtoReleaseChannelGa        V1CreateProjectBodyDtoReleaseChannel = "ga"
-	V1CreateProjectBodyDtoReleaseChannelInternal  V1CreateProjectBodyDtoReleaseChannel = "internal"
-	V1CreateProjectBodyDtoReleaseChannelPreview   V1CreateProjectBodyDtoReleaseChannel = "preview"
-	V1CreateProjectBodyDtoReleaseChannelWithdrawn V1CreateProjectBodyDtoReleaseChannel = "withdrawn"
 )
 
 // Defines values for V1OrganizationSlugResponseOptInTags.
@@ -922,6 +892,21 @@ type Domain struct {
 	UpdatedAt *string `json:"updated_at,omitempty"`
 }
 
+// FunctionDeployBody defines model for FunctionDeployBody.
+type FunctionDeployBody struct {
+	File     []openapi_types.File `json:"file"`
+	Metadata FunctionMetadata     `json:"metadata"`
+}
+
+// FunctionMetadata defines model for FunctionMetadata.
+type FunctionMetadata struct {
+	EntrypointPath string    `json:"entrypoint_path"`
+	ImportMapPath  *string   `json:"import_map_path,omitempty"`
+	Name           *string   `json:"name,omitempty"`
+	StaticPatterns *[]string `json:"static_patterns,omitempty"`
+	VerifyJwt      *bool     `json:"verify_jwt,omitempty"`
+}
+
 // FunctionResponse defines model for FunctionResponse.
 type FunctionResponse struct {
 	ComputeMultiplier *float32               `json:"compute_multiplier,omitempty"`
@@ -963,6 +948,24 @@ type FunctionSlugResponseStatus string
 // GetProjectAvailableRestoreVersionsResponse defines model for GetProjectAvailableRestoreVersionsResponse.
 type GetProjectAvailableRestoreVersionsResponse struct {
 	AvailableVersions []ProjectAvailableRestoreVersion `json:"available_versions"`
+}
+
+// GetProjectDbMetadataResponseDto defines model for GetProjectDbMetadataResponseDto.
+type GetProjectDbMetadataResponseDto struct {
+	Databases []GetProjectDbMetadataResponseDto_Databases_Item `json:"databases"`
+}
+
+// GetProjectDbMetadataResponseDto_Databases_Schemas_Item defines model for GetProjectDbMetadataResponseDto.Databases.Schemas.Item.
+type GetProjectDbMetadataResponseDto_Databases_Schemas_Item struct {
+	Name                 string                 `json:"name"`
+	AdditionalProperties map[string]interface{} `json:"-"`
+}
+
+// GetProjectDbMetadataResponseDto_Databases_Item defines model for GetProjectDbMetadataResponseDto.databases.Item.
+type GetProjectDbMetadataResponseDto_Databases_Item struct {
+	Name                 string                                                   `json:"name"`
+	Schemas              []GetProjectDbMetadataResponseDto_Databases_Schemas_Item `json:"schemas"`
+	AdditionalProperties map[string]interface{}                                   `json:"-"`
 }
 
 // GetProviderResponse defines model for GetProviderResponse.
@@ -1173,19 +1176,7 @@ type RemoveReadReplicaBody struct {
 }
 
 // RestoreProjectBodyDto defines model for RestoreProjectBodyDto.
-type RestoreProjectBodyDto struct {
-	// PostgresEngine Postgres engine version. If not provided, the latest version from the given release channel will be used.
-	PostgresEngine *RestoreProjectBodyDtoPostgresEngine `json:"postgres_engine,omitempty"`
-
-	// ReleaseChannel Release channel version. If not provided, GeneralAvailability will be used.
-	ReleaseChannel *RestoreProjectBodyDtoReleaseChannel `json:"release_channel,omitempty"`
-}
-
-// RestoreProjectBodyDtoPostgresEngine Postgres engine version. If not provided, the latest version from the given release channel will be used.
-type RestoreProjectBodyDtoPostgresEngine string
-
-// RestoreProjectBodyDtoReleaseChannel Release channel version. If not provided, GeneralAvailability will be used.
-type RestoreProjectBodyDtoReleaseChannel string
+type RestoreProjectBodyDto = map[string]interface{}
 
 // SamlDescriptor defines model for SamlDescriptor.
 type SamlDescriptor struct {
@@ -1748,14 +1739,8 @@ type V1CreateProjectBodyDto struct {
 	// Deprecated:
 	Plan *V1CreateProjectBodyDtoPlan `json:"plan,omitempty"`
 
-	// PostgresEngine Postgres engine version. If not provided, the latest version will be used.
-	PostgresEngine *V1CreateProjectBodyDtoPostgresEngine `json:"postgres_engine,omitempty"`
-
 	// Region Region you want your server to reside in
 	Region V1CreateProjectBodyDtoRegion `json:"region"`
-
-	// ReleaseChannel Release channel. If not provided, GA will be used.
-	ReleaseChannel *V1CreateProjectBodyDtoReleaseChannel `json:"release_channel,omitempty"`
 
 	// TemplateUrl Template URL used to create the project from the CLI.
 	TemplateUrl *string `json:"template_url,omitempty"`
@@ -1767,14 +1752,8 @@ type V1CreateProjectBodyDtoDesiredInstanceSize string
 // V1CreateProjectBodyDtoPlan Subscription Plan is now set on organization level and is ignored in this request
 type V1CreateProjectBodyDtoPlan string
 
-// V1CreateProjectBodyDtoPostgresEngine Postgres engine version. If not provided, the latest version will be used.
-type V1CreateProjectBodyDtoPostgresEngine string
-
 // V1CreateProjectBodyDtoRegion Region you want your server to reside in
 type V1CreateProjectBodyDtoRegion string
-
-// V1CreateProjectBodyDtoReleaseChannel Release channel. If not provided, GA will be used.
-type V1CreateProjectBodyDtoReleaseChannel string
 
 // V1DatabaseResponse defines model for V1DatabaseResponse.
 type V1DatabaseResponse struct {
@@ -2026,6 +2005,11 @@ type V1CreateAFunctionParams struct {
 	ComputeMultiplier *float32 `form:"compute_multiplier,omitempty" json:"compute_multiplier,omitempty"`
 }
 
+// V1DeployAFunctionParams defines parameters for V1DeployAFunction.
+type V1DeployAFunctionParams struct {
+	Slug *string `form:"slug,omitempty" json:"slug,omitempty"`
+}
+
 // V1UpdateAFunctionParams defines parameters for V1UpdateAFunction.
 type V1UpdateAFunctionParams struct {
 	Slug              *string  `form:"slug,omitempty" json:"slug,omitempty"`
@@ -2134,6 +2118,9 @@ type V1RunAQueryJSONRequestBody = V1RunQueryBody
 // V1CreateAFunctionJSONRequestBody defines body for V1CreateAFunction for application/json ContentType.
 type V1CreateAFunctionJSONRequestBody = V1CreateFunctionBody
 
+// V1DeployAFunctionMultipartRequestBody defines body for V1DeployAFunction for multipart/form-data ContentType.
+type V1DeployAFunctionMultipartRequestBody = FunctionDeployBody
+
 // V1UpdateAFunctionJSONRequestBody defines body for V1UpdateAFunction for application/json ContentType.
 type V1UpdateAFunctionJSONRequestBody = V1UpdateFunctionBody
 
@@ -2175,6 +2162,151 @@ type V1ActivateVanitySubdomainConfigJSONRequestBody = VanitySubdomainBody
 
 // V1CheckVanitySubdomainAvailabilityJSONRequestBody defines body for V1CheckVanitySubdomainAvailability for application/json ContentType.
 type V1CheckVanitySubdomainAvailabilityJSONRequestBody = VanitySubdomainBody
+
+// Getter for additional properties for GetProjectDbMetadataResponseDto_Databases_Schemas_Item. Returns the specified
+// element and whether it was found
+func (a GetProjectDbMetadataResponseDto_Databases_Schemas_Item) Get(fieldName string) (value interface{}, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for GetProjectDbMetadataResponseDto_Databases_Schemas_Item
+func (a *GetProjectDbMetadataResponseDto_Databases_Schemas_Item) Set(fieldName string, value interface{}) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]interface{})
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for GetProjectDbMetadataResponseDto_Databases_Schemas_Item to handle AdditionalProperties
+func (a *GetProjectDbMetadataResponseDto_Databases_Schemas_Item) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["name"]; found {
+		err = json.Unmarshal(raw, &a.Name)
+		if err != nil {
+			return fmt.Errorf("error reading 'name': %w", err)
+		}
+		delete(object, "name")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]interface{})
+		for fieldName, fieldBuf := range object {
+			var fieldVal interface{}
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for GetProjectDbMetadataResponseDto_Databases_Schemas_Item to handle AdditionalProperties
+func (a GetProjectDbMetadataResponseDto_Databases_Schemas_Item) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	object["name"], err = json.Marshal(a.Name)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'name': %w", err)
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for GetProjectDbMetadataResponseDto_Databases_Item. Returns the specified
+// element and whether it was found
+func (a GetProjectDbMetadataResponseDto_Databases_Item) Get(fieldName string) (value interface{}, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for GetProjectDbMetadataResponseDto_Databases_Item
+func (a *GetProjectDbMetadataResponseDto_Databases_Item) Set(fieldName string, value interface{}) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]interface{})
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for GetProjectDbMetadataResponseDto_Databases_Item to handle AdditionalProperties
+func (a *GetProjectDbMetadataResponseDto_Databases_Item) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["name"]; found {
+		err = json.Unmarshal(raw, &a.Name)
+		if err != nil {
+			return fmt.Errorf("error reading 'name': %w", err)
+		}
+		delete(object, "name")
+	}
+
+	if raw, found := object["schemas"]; found {
+		err = json.Unmarshal(raw, &a.Schemas)
+		if err != nil {
+			return fmt.Errorf("error reading 'schemas': %w", err)
+		}
+		delete(object, "schemas")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]interface{})
+		for fieldName, fieldBuf := range object {
+			var fieldVal interface{}
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for GetProjectDbMetadataResponseDto_Databases_Item to handle AdditionalProperties
+func (a GetProjectDbMetadataResponseDto_Databases_Item) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	object["name"], err = json.Marshal(a.Name)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'name': %w", err)
+	}
+
+	object["schemas"], err = json.Marshal(a.Schemas)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'schemas': %w", err)
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
 
 // AsAttributeValueDefault0 returns the union data inside the AttributeValue_Default as a AttributeValueDefault0
 func (t AttributeValue_Default) AsAttributeValueDefault0() (AttributeValueDefault0, error) {
