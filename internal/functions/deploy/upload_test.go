@@ -1,11 +1,15 @@
 package deploy
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"errors"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"path"
 	"testing"
 
 	"github.com/h2non/gock"
@@ -16,6 +20,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/config"
 )
 
@@ -69,6 +74,53 @@ func TestImportPaths(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		fsys.AssertExpectations(t)
+	})
+}
+
+func assertFormEqual(t *testing.T, actual []byte) {
+	snapshot := path.Join("testdata", path.Base(t.Name())+".form")
+	expected, err := testImports.ReadFile(snapshot)
+	if errors.Is(err, os.ErrNotExist) {
+		assert.NoError(t, os.WriteFile(snapshot, actual, 0600))
+	}
+	assert.Equal(t, string(expected), string(actual))
+}
+
+func TestWriteForm(t *testing.T) {
+	t.Run("writes import map", func(t *testing.T) {
+		var buf bytes.Buffer
+		form := multipart.NewWriter(&buf)
+		form.SetBoundary("test")
+		// Setup in-memory fs
+		fsys := afero.FromIOFS{FS: testImports}
+		// Run test
+		err := writeForm(form, api.FunctionDeployMetadata{
+			Name:           cast.Ptr("nested"),
+			VerifyJwt:      cast.Ptr(true),
+			EntrypointPath: "testdata/nested/index.ts",
+			ImportMapPath:  cast.Ptr("testdata/nested/deno.json"),
+			StaticPatterns: cast.Ptr([]string{
+				"testdata/*/*.js",
+				"testdata/shared",
+			}),
+		}, fsys)
+		// Check error
+		assert.NoError(t, err)
+		assertFormEqual(t, buf.Bytes())
+	})
+
+	t.Run("throws error on missing file", func(t *testing.T) {
+		var buf bytes.Buffer
+		form := multipart.NewWriter(&buf)
+		form.SetBoundary("test")
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Run test
+		err := writeForm(form, api.FunctionDeployMetadata{
+			ImportMapPath: cast.Ptr("testdata/import_map.json"),
+		}, fsys)
+		// Check error
+		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
 }
 
