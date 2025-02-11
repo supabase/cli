@@ -74,18 +74,17 @@ func deploy(ctx context.Context, functionConfig config.FunctionConfig, fsys afer
 func upload(ctx context.Context, param api.V1DeployAFunctionParams, meta api.FunctionDeployMetadata, fsys afero.Fs) (*api.DeployFunctionResponse, error) {
 	body, w := io.Pipe()
 	form := multipart.NewWriter(w)
-	errchan := make(chan error, 1)
+	ctx, cancel := context.WithCancelCause(ctx)
 	go func() {
-		defer close(errchan)
 		defer w.Close()
 		defer form.Close()
 		if err := writeForm(form, meta, fsys); err != nil {
-			errchan <- err
+			cancel(err)
 		}
 	}()
 	resp, err := utils.GetSupabase().V1DeployAFunctionWithBodyWithResponse(ctx, flags.ProjectRef, &param, form.FormDataContentType(), body)
-	if merr := <-errchan; merr != nil {
-		return nil, err
+	if cause := context.Cause(ctx); cause != ctx.Err() {
+		return nil, cause
 	} else if err != nil {
 		return nil, errors.Errorf("failed to deploy function: %w", err)
 	} else if resp.JSON201 == nil {

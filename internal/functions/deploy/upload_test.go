@@ -1,13 +1,22 @@
 package deploy
 
 import (
+	"context"
 	"embed"
+	"errors"
 	"io"
+	"net/http"
 	"testing"
 
+	"github.com/h2non/gock"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/config"
 )
 
 //go:embed testdata
@@ -60,5 +69,80 @@ func TestImportPaths(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		fsys.AssertExpectations(t)
+	})
+}
+
+func TestDeployAll(t *testing.T) {
+	flags.ProjectRef = apitest.RandomProjectRef()
+	// Setup valid access token
+	token := apitest.RandomAccessToken(t)
+	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
+	t.Run("deploys single slug", func(t *testing.T) {
+		c := config.FunctionConfig{"demo": {
+			Entrypoint: "testdata/shared/whatever.ts",
+		}}
+		// Setup in-memory fs
+		fsys := afero.FromIOFS{FS: testImports}
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Post("/v1/projects/"+flags.ProjectRef+"/functions/deploy").
+			MatchParam("slug", "demo").
+			Reply(http.StatusCreated).
+			JSON(api.DeployFunctionResponse{})
+		// Run test
+		err := deploy(context.Background(), c, fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("deploys multiple slugs", func(t *testing.T) {
+		c := config.FunctionConfig{
+			"test-ts": {Entrypoint: "testdata/shared/whatever.ts"},
+			"test-js": {Entrypoint: "testdata/geometries/Geometries.js"},
+		}
+		// Setup in-memory fs
+		fsys := afero.FromIOFS{FS: testImports}
+		// Setup mock api
+		defer gock.OffAll()
+		body := api.V1BulkUpdateFunctionsJSONBody{}
+		for slug := range c {
+			gock.New(utils.DefaultApiHost).
+				Post("/v1/projects/"+flags.ProjectRef+"/functions/deploy").
+				MatchParam("slug", slug).
+				Reply(http.StatusCreated).
+				JSON(api.DeployFunctionResponse{Id: slug})
+			body = append(body, api.BulkUpdateFunctionBody{Id: slug})
+		}
+		gock.New(utils.DefaultApiHost).
+			Put("/v1/projects/" + flags.ProjectRef + "/functions").
+			JSON(body).
+			Reply(http.StatusOK).
+			JSON(api.BulkUpdateFunctionResponse{})
+		// Run test
+		err := deploy(context.Background(), c, fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("throws error on network failure", func(t *testing.T) {
+		errNetwork := errors.New("network")
+		c := config.FunctionConfig{"demo": {}}
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Post("/v1/projects/"+flags.ProjectRef+"/functions/deploy").
+			MatchParam("slug", "demo").
+			ReplyError(errNetwork)
+		// Run test
+		err := deploy(context.Background(), c, fsys)
+		// Check error
+		assert.ErrorIs(t, err, errNetwork)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
