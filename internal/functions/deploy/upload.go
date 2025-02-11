@@ -79,6 +79,8 @@ func upload(ctx context.Context, param api.V1DeployAFunctionParams, meta api.Fun
 		defer w.Close()
 		defer form.Close()
 		if err := writeForm(form, meta, fsys); err != nil {
+			// Since we are streaming files to the POST request body, any errors
+			// should be propagated to the request context to cancel the upload.
 			cancel(err)
 		}
 	}()
@@ -111,8 +113,7 @@ func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys afe
 		if fi, err := f.Stat(); err != nil {
 			return errors.Errorf("failed to stat file: %w", err)
 		} else if fi.IsDir() {
-			fmt.Fprintln(os.Stderr, "Skipping directory:", srcPath)
-			return nil
+			return errors.New("file path is a directory: " + srcPath)
 		}
 		fmt.Fprintln(os.Stderr, "Uploading asset:", srcPath)
 		r := io.TeeReader(f, w)

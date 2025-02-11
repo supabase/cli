@@ -120,6 +120,20 @@ func TestWriteForm(t *testing.T) {
 		// Check error
 		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
+
+	t.Run("throws error on directory path", func(t *testing.T) {
+		var buf bytes.Buffer
+		form := multipart.NewWriter(&buf)
+		require.NoError(t, form.SetBoundary("test"))
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Run test
+		err := writeForm(form, api.FunctionDeployMetadata{
+			StaticPatterns: cast.Ptr([]string{"testdata"}),
+		}, fsys)
+		// Check error
+		assert.ErrorContains(t, err, "file path is a directory:")
+	})
 }
 
 func TestDeployAll(t *testing.T) {
