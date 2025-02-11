@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
@@ -90,7 +91,7 @@ func TestWriteForm(t *testing.T) {
 	t.Run("writes import map", func(t *testing.T) {
 		var buf bytes.Buffer
 		form := multipart.NewWriter(&buf)
-		form.SetBoundary("test")
+		require.NoError(t, form.SetBoundary("test"))
 		// Setup in-memory fs
 		fsys := afero.FromIOFS{FS: testImports}
 		// Run test
@@ -99,10 +100,7 @@ func TestWriteForm(t *testing.T) {
 			VerifyJwt:      cast.Ptr(true),
 			EntrypointPath: "testdata/nested/index.ts",
 			ImportMapPath:  cast.Ptr("testdata/nested/deno.json"),
-			StaticPatterns: cast.Ptr([]string{
-				"testdata/*/*.js",
-				"testdata/shared",
-			}),
+			StaticPatterns: cast.Ptr([]string{"testdata/*/*.js"}),
 		}, fsys)
 		// Check error
 		assert.NoError(t, err)
@@ -112,7 +110,7 @@ func TestWriteForm(t *testing.T) {
 	t.Run("throws error on missing file", func(t *testing.T) {
 		var buf bytes.Buffer
 		form := multipart.NewWriter(&buf)
-		form.SetBoundary("test")
+		require.NoError(t, form.SetBoundary("test"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
