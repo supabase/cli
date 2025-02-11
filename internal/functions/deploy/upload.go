@@ -23,13 +23,19 @@ import (
 )
 
 func deploy(ctx context.Context, functionConfig config.FunctionConfig, fsys afero.Fs) error {
+	bundleOnly := len(functionConfig) > 1
+	var toUpdate []api.BulkUpdateFunctionBody
 	for slug, fc := range functionConfig {
 		if !fc.IsEnabled() {
 			fmt.Fprintln(os.Stderr, "Skipped deploying Function:", slug)
 			continue
 		}
 		fmt.Fprintln(os.Stderr, "Deploying Function:", slug)
-		meta := api.FunctionMetadata{
+		param := api.V1DeployAFunctionParams{Slug: &slug}
+		if bundleOnly {
+			param.BundleOnly = &bundleOnly
+		}
+		meta := api.FunctionDeployMetadata{
 			Name:           &slug,
 			EntrypointPath: fc.Entrypoint,
 			ImportMapPath:  &fc.ImportMap,
@@ -38,14 +44,34 @@ func deploy(ctx context.Context, functionConfig config.FunctionConfig, fsys afer
 		if len(fc.StaticFiles) > 0 {
 			meta.StaticPatterns = &fc.StaticFiles
 		}
-		if err := upload(ctx, slug, meta, fsys); err != nil {
+		resp, err := upload(ctx, param, meta, fsys)
+		if err != nil {
 			return err
+		}
+		toUpdate = append(toUpdate, api.BulkUpdateFunctionBody{
+			CreatedAt:      resp.CreatedAt,
+			EntrypointPath: resp.EntrypointPath,
+			Id:             resp.Id,
+			ImportMap:      resp.ImportMap,
+			ImportMapPath:  resp.ImportMapPath,
+			Name:           resp.Name,
+			Slug:           resp.Slug,
+			Status:         api.BulkUpdateFunctionBodyStatus(resp.Status),
+			VerifyJwt:      resp.VerifyJwt,
+			Version:        resp.Version,
+		})
+	}
+	if len(toUpdate) > 1 {
+		if resp, err := utils.GetSupabase().V1BulkUpdateFunctionsWithResponse(ctx, flags.ProjectRef, toUpdate); err != nil {
+			return errors.Errorf("failed to bulk update: %w", err)
+		} else if resp.JSON200 == nil {
+			return errors.Errorf("unexpected bulk update status %d: %s", resp.StatusCode(), string(resp.Body))
 		}
 	}
 	return nil
 }
 
-func upload(ctx context.Context, slug string, meta api.FunctionMetadata, fsys afero.Fs) error {
+func upload(ctx context.Context, param api.V1DeployAFunctionParams, meta api.FunctionDeployMetadata, fsys afero.Fs) (*api.DeployFunctionResponse, error) {
 	body, w := io.Pipe()
 	form := multipart.NewWriter(w)
 	errchan := make(chan error, 1)
@@ -57,24 +83,18 @@ func upload(ctx context.Context, slug string, meta api.FunctionMetadata, fsys af
 			errchan <- err
 		}
 	}()
-	resp, err := utils.GetSupabase().V1DeployAFunctionWithBodyWithResponse(
-		ctx,
-		flags.ProjectRef,
-		&api.V1DeployAFunctionParams{Slug: &slug},
-		form.FormDataContentType(),
-		body,
-	)
+	resp, err := utils.GetSupabase().V1DeployAFunctionWithBodyWithResponse(ctx, flags.ProjectRef, &param, form.FormDataContentType(), body)
 	if merr := <-errchan; merr != nil {
-		return err
+		return nil, err
 	} else if err != nil {
-		return errors.Errorf("failed to deploy function: %w", err)
+		return nil, errors.Errorf("failed to deploy function: %w", err)
 	} else if resp.JSON201 == nil {
-		return errors.Errorf("unexpected deploy status %d: %s", resp.StatusCode(), string(resp.Body))
+		return nil, errors.Errorf("unexpected deploy status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
-	return nil
+	return resp.JSON201, nil
 }
 
-func writeForm(form *multipart.Writer, meta api.FunctionMetadata, fsys afero.Fs) error {
+func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys afero.Fs) error {
 	m, err := form.CreateFormField("metadata")
 	if err != nil {
 		return errors.Errorf("failed to create metadata: %w", err)
