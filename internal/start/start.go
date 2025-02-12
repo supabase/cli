@@ -992,7 +992,7 @@ EOF
 					"HOSTNAME=0.0.0.0",
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD-SHELL", `node --eval="fetch('http://localhost:3000/api/platform/profile').then((r) => {if (!r.ok) throw new Error(r.status)})"`},
+					Test:     []string{"CMD-SHELL", `node --eval="fetch('http://127.0.0.1:3000/api/profile').then((r) => {if (!r.ok) throw new Error(r.status)})"`},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
