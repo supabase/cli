@@ -4,7 +4,14 @@ error_log logs/error.log ${{LOG_LEVEL}}; # can be set by kong.conf
 daemon ${{NGINX_DAEMON}};                     # can be set by kong.conf
 worker_processes ${{NGINX_WORKER_PROCESSES}}; # can be set by kong.conf
 
+# https://github.com/Kong/kong/discussions/9548#discussioncomment-6174906
+lmdb_environment_path dbless.lmdb;
+lmdb_map_size 128m;
+
 events {
+    # Must be greater or equal to the default value of lua_max_pending_timers
+    # https://github.com/openresty/lua-nginx-module?tab=readme-ov-file#lua_max_pending_timers
+    worker_connections 1024;
     multi_accept on;
 }
 
@@ -20,7 +27,7 @@ http {
 
         location /email {
             autoindex on;
-            root /home/kong/templates;
+            root /etc/kong/templates;
         }
     }
 
