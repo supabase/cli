@@ -65,6 +65,13 @@ const (
 	BranchResponseStatusRUNNINGMIGRATIONS BranchResponseStatus = "RUNNING_MIGRATIONS"
 )
 
+// Defines values for BulkUpdateFunctionBodyStatus.
+const (
+	BulkUpdateFunctionBodyStatusACTIVE    BulkUpdateFunctionBodyStatus = "ACTIVE"
+	BulkUpdateFunctionBodyStatusREMOVED   BulkUpdateFunctionBodyStatus = "REMOVED"
+	BulkUpdateFunctionBodyStatusTHROTTLED BulkUpdateFunctionBodyStatus = "THROTTLED"
+)
+
 // Defines values for CreateApiKeyBodyType.
 const (
 	CreateApiKeyBodyTypePublishable CreateApiKeyBodyType = "publishable"
@@ -109,6 +116,13 @@ const (
 	N0 DatabaseUpgradeStatusStatus = 0
 	N1 DatabaseUpgradeStatusStatus = 1
 	N2 DatabaseUpgradeStatusStatus = 2
+)
+
+// Defines values for DeployFunctionResponseStatus.
+const (
+	DeployFunctionResponseStatusACTIVE    DeployFunctionResponseStatus = "ACTIVE"
+	DeployFunctionResponseStatusREMOVED   DeployFunctionResponseStatus = "REMOVED"
+	DeployFunctionResponseStatusTHROTTLED DeployFunctionResponseStatus = "THROTTLED"
 )
 
 // Defines values for DesiredInstanceSize.
@@ -764,6 +778,28 @@ type BranchUpdateResponse struct {
 	WorkflowRunId string `json:"workflow_run_id"`
 }
 
+// BulkUpdateFunctionBody defines model for BulkUpdateFunctionBody.
+type BulkUpdateFunctionBody struct {
+	CreatedAt      *int64                       `json:"created_at,omitempty"`
+	EntrypointPath *string                      `json:"entrypoint_path,omitempty"`
+	Id             string                       `json:"id"`
+	ImportMap      *bool                        `json:"import_map,omitempty"`
+	ImportMapPath  *string                      `json:"import_map_path,omitempty"`
+	Name           string                       `json:"name"`
+	Slug           string                       `json:"slug"`
+	Status         BulkUpdateFunctionBodyStatus `json:"status"`
+	VerifyJwt      *bool                        `json:"verify_jwt,omitempty"`
+	Version        int                          `json:"version"`
+}
+
+// BulkUpdateFunctionBodyStatus defines model for BulkUpdateFunctionBody.Status.
+type BulkUpdateFunctionBodyStatus string
+
+// BulkUpdateFunctionResponse defines model for BulkUpdateFunctionResponse.
+type BulkUpdateFunctionResponse struct {
+	Functions []FunctionResponse `json:"functions"`
+}
+
 // CfResponse defines model for CfResponse.
 type CfResponse struct {
 	Errors   []map[string]interface{} `json:"errors"`
@@ -881,6 +917,25 @@ type DeleteProviderResponse struct {
 	UpdatedAt *string         `json:"updated_at,omitempty"`
 }
 
+// DeployFunctionResponse defines model for DeployFunctionResponse.
+type DeployFunctionResponse struct {
+	ComputeMultiplier *float32                     `json:"compute_multiplier,omitempty"`
+	CreatedAt         *int64                       `json:"created_at,omitempty"`
+	EntrypointPath    *string                      `json:"entrypoint_path,omitempty"`
+	Id                string                       `json:"id"`
+	ImportMap         *bool                        `json:"import_map,omitempty"`
+	ImportMapPath     *string                      `json:"import_map_path,omitempty"`
+	Name              string                       `json:"name"`
+	Slug              string                       `json:"slug"`
+	Status            DeployFunctionResponseStatus `json:"status"`
+	UpdatedAt         *int64                       `json:"updated_at,omitempty"`
+	VerifyJwt         *bool                        `json:"verify_jwt,omitempty"`
+	Version           int                          `json:"version"`
+}
+
+// DeployFunctionResponseStatus defines model for DeployFunctionResponse.Status.
+type DeployFunctionResponseStatus string
+
 // DesiredInstanceSize defines model for DesiredInstanceSize.
 type DesiredInstanceSize string
 
@@ -894,12 +949,12 @@ type Domain struct {
 
 // FunctionDeployBody defines model for FunctionDeployBody.
 type FunctionDeployBody struct {
-	File     []openapi_types.File `json:"file"`
-	Metadata FunctionMetadata     `json:"metadata"`
+	File     []openapi_types.File   `json:"file"`
+	Metadata FunctionDeployMetadata `json:"metadata"`
 }
 
-// FunctionMetadata defines model for FunctionMetadata.
-type FunctionMetadata struct {
+// FunctionDeployMetadata defines model for FunctionDeployMetadata.
+type FunctionDeployMetadata struct {
 	EntrypointPath string    `json:"entrypoint_path"`
 	ImportMapPath  *string   `json:"import_map_path,omitempty"`
 	Name           *string   `json:"name,omitempty"`
@@ -2005,9 +2060,13 @@ type V1CreateAFunctionParams struct {
 	ComputeMultiplier *float32 `form:"compute_multiplier,omitempty" json:"compute_multiplier,omitempty"`
 }
 
+// V1BulkUpdateFunctionsJSONBody defines parameters for V1BulkUpdateFunctions.
+type V1BulkUpdateFunctionsJSONBody = []BulkUpdateFunctionBody
+
 // V1DeployAFunctionParams defines parameters for V1DeployAFunction.
 type V1DeployAFunctionParams struct {
-	Slug *string `form:"slug,omitempty" json:"slug,omitempty"`
+	Slug       *string `form:"slug,omitempty" json:"slug,omitempty"`
+	BundleOnly *bool   `form:"bundleOnly,omitempty" json:"bundleOnly,omitempty"`
 }
 
 // V1UpdateAFunctionParams defines parameters for V1UpdateAFunction.
@@ -2117,6 +2176,9 @@ type V1RunAQueryJSONRequestBody = V1RunQueryBody
 
 // V1CreateAFunctionJSONRequestBody defines body for V1CreateAFunction for application/json ContentType.
 type V1CreateAFunctionJSONRequestBody = V1CreateFunctionBody
+
+// V1BulkUpdateFunctionsJSONRequestBody defines body for V1BulkUpdateFunctions for application/json ContentType.
+type V1BulkUpdateFunctionsJSONRequestBody = V1BulkUpdateFunctionsJSONBody
 
 // V1DeployAFunctionMultipartRequestBody defines body for V1DeployAFunction for multipart/form-data ContentType.
 type V1DeployAFunctionMultipartRequestBody = FunctionDeployBody

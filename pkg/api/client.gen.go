@@ -293,6 +293,11 @@ type ClientInterface interface {
 
 	V1CreateAFunction(ctx context.Context, ref string, params *V1CreateAFunctionParams, body V1CreateAFunctionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1BulkUpdateFunctionsWithBody request with any body
+	V1BulkUpdateFunctionsWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1BulkUpdateFunctions(ctx context.Context, ref string, body V1BulkUpdateFunctionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1DeployAFunctionWithBody request with any body
 	V1DeployAFunctionWithBody(ctx context.Context, ref string, params *V1DeployAFunctionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1314,6 +1319,30 @@ func (c *Client) V1CreateAFunctionWithBody(ctx context.Context, ref string, para
 
 func (c *Client) V1CreateAFunction(ctx context.Context, ref string, params *V1CreateAFunctionParams, body V1CreateAFunctionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1CreateAFunctionRequest(c.Server, ref, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1BulkUpdateFunctionsWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1BulkUpdateFunctionsRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1BulkUpdateFunctions(ctx context.Context, ref string, body V1BulkUpdateFunctionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1BulkUpdateFunctionsRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4456,6 +4485,53 @@ func NewV1CreateAFunctionRequestWithBody(server string, ref string, params *V1Cr
 	return req, nil
 }
 
+// NewV1BulkUpdateFunctionsRequest calls the generic V1BulkUpdateFunctions builder with application/json body
+func NewV1BulkUpdateFunctionsRequest(server string, ref string, body V1BulkUpdateFunctionsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1BulkUpdateFunctionsRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1BulkUpdateFunctionsRequestWithBody generates requests for V1BulkUpdateFunctions with any type of body
+func NewV1BulkUpdateFunctionsRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/functions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewV1DeployAFunctionRequestWithBody generates requests for V1DeployAFunction with any type of body
 func NewV1DeployAFunctionRequestWithBody(server string, ref string, params *V1DeployAFunctionParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
@@ -4488,6 +4564,22 @@ func NewV1DeployAFunctionRequestWithBody(server string, ref string, params *V1De
 		if params.Slug != nil {
 
 			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "slug", runtime.ParamLocationQuery, *params.Slug); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.BundleOnly != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "bundleOnly", runtime.ParamLocationQuery, *params.BundleOnly); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -6503,6 +6595,11 @@ type ClientWithResponsesInterface interface {
 
 	V1CreateAFunctionWithResponse(ctx context.Context, ref string, params *V1CreateAFunctionParams, body V1CreateAFunctionJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateAFunctionResponse, error)
 
+	// V1BulkUpdateFunctionsWithBodyWithResponse request with any body
+	V1BulkUpdateFunctionsWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1BulkUpdateFunctionsResponse, error)
+
+	V1BulkUpdateFunctionsWithResponse(ctx context.Context, ref string, body V1BulkUpdateFunctionsJSONRequestBody, reqEditors ...RequestEditorFn) (*V1BulkUpdateFunctionsResponse, error)
+
 	// V1DeployAFunctionWithBodyWithResponse request with any body
 	V1DeployAFunctionWithBodyWithResponse(ctx context.Context, ref string, params *V1DeployAFunctionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1DeployAFunctionResponse, error)
 
@@ -7849,10 +7946,32 @@ func (r V1CreateAFunctionResponse) StatusCode() int {
 	return 0
 }
 
+type V1BulkUpdateFunctionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *BulkUpdateFunctionResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1BulkUpdateFunctionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1BulkUpdateFunctionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1DeployAFunctionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *FunctionResponse
+	JSON201      *DeployFunctionResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -9319,6 +9438,23 @@ func (c *ClientWithResponses) V1CreateAFunctionWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseV1CreateAFunctionResponse(rsp)
+}
+
+// V1BulkUpdateFunctionsWithBodyWithResponse request with arbitrary body returning *V1BulkUpdateFunctionsResponse
+func (c *ClientWithResponses) V1BulkUpdateFunctionsWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1BulkUpdateFunctionsResponse, error) {
+	rsp, err := c.V1BulkUpdateFunctionsWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1BulkUpdateFunctionsResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1BulkUpdateFunctionsWithResponse(ctx context.Context, ref string, body V1BulkUpdateFunctionsJSONRequestBody, reqEditors ...RequestEditorFn) (*V1BulkUpdateFunctionsResponse, error) {
+	rsp, err := c.V1BulkUpdateFunctions(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1BulkUpdateFunctionsResponse(rsp)
 }
 
 // V1DeployAFunctionWithBodyWithResponse request with arbitrary body returning *V1DeployAFunctionResponse
@@ -11135,6 +11271,32 @@ func ParseV1CreateAFunctionResponse(rsp *http.Response) (*V1CreateAFunctionRespo
 	return response, nil
 }
 
+// ParseV1BulkUpdateFunctionsResponse parses an HTTP response from a V1BulkUpdateFunctionsWithResponse call
+func ParseV1BulkUpdateFunctionsResponse(rsp *http.Response) (*V1BulkUpdateFunctionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1BulkUpdateFunctionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BulkUpdateFunctionResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseV1DeployAFunctionResponse parses an HTTP response from a V1DeployAFunctionWithResponse call
 func ParseV1DeployAFunctionResponse(rsp *http.Response) (*V1DeployAFunctionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -11150,7 +11312,7 @@ func ParseV1DeployAFunctionResponse(rsp *http.Response) (*V1DeployAFunctionRespo
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest FunctionResponse
+		var dest DeployFunctionResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

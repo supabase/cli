@@ -16,7 +16,7 @@ import (
 	"github.com/supabase/cli/pkg/function"
 )
 
-func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
+func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
 	// Load function config and project id
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
@@ -37,12 +37,16 @@ func Run(ctx context.Context, slugs []string, projectRef string, noVerifyJWT *bo
 	if err != nil {
 		return err
 	}
-	api := function.NewEdgeRuntimeAPI(projectRef, *utils.GetSupabase(), NewDockerBundler(fsys))
-	if err := api.UpsertFunctions(ctx, functionConfig); err != nil {
+	if useDocker {
+		api := function.NewEdgeRuntimeAPI(flags.ProjectRef, *utils.GetSupabase(), NewDockerBundler(fsys))
+		if err := api.UpsertFunctions(ctx, functionConfig); err != nil {
+			return err
+		}
+	} else if err := deploy(ctx, functionConfig, fsys); err != nil {
 		return err
 	}
-	fmt.Printf("Deployed Functions on project %s: %s\n", utils.Aqua(projectRef), strings.Join(slugs, ", "))
-	url := fmt.Sprintf("%s/project/%v/functions", utils.GetSupabaseDashboardURL(), projectRef)
+	fmt.Printf("Deployed Functions on project %s: %s\n", utils.Aqua(flags.ProjectRef), strings.Join(slugs, ", "))
+	url := fmt.Sprintf("%s/project/%v/functions", utils.GetSupabaseDashboardURL(), flags.ProjectRef)
 	fmt.Println("You can inspect your deployment in the Dashboard: " + url)
 	return nil
 }
