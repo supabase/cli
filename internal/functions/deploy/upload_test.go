@@ -66,6 +66,7 @@ func TestImportPaths(t *testing.T) {
 		fsys.On("ReadFile", "testdata/modules/imports.ts").Once()
 		fsys.On("ReadFile", "testdata/geometries/Geometries.js").Once()
 		fsys.On("ReadFile", "testdata/shared/whatever.ts").Once()
+		fsys.On("ReadFile", "testdata/shared/mod.ts").Once()
 		fsys.On("ReadFile", "testdata/nested/index.ts").Once()
 		// Run test
 		im := utils.ImportMap{Imports: map[string]string{
