@@ -281,7 +281,7 @@ EOF
 			return errors.Errorf("failed to parse docker host: %w", err)
 		}
 		// Ref: https://vector.dev/docs/reference/configuration/sources/docker_logs/#docker_host
-		dindHost := url.URL{Scheme: "http", Host: net.JoinHostPort(utils.DinDHost, "2375")}
+		dindHost := &url.URL{Scheme: "http", Host: net.JoinHostPort(utils.DinDHost, "2375")}
 		switch parsed.Scheme {
 		case "tcp":
 			if _, port, err := net.SplitHostPort(parsed.Host); err == nil {
@@ -292,13 +292,10 @@ EOF
 			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires docker daemon exposed on tcp://localhost:2375")
 			env = append(env, "DOCKER_HOST="+dindHost.String())
 		case "unix":
-			if parsed, err = client.ParseHostURL(client.DefaultDockerHost); err != nil {
+			if dindHost, err = client.ParseHostURL(client.DefaultDockerHost); err != nil {
 				return errors.Errorf("failed to parse default host: %w", err)
 			}
-			if utils.Docker.DaemonHost() != client.DefaultDockerHost {
-				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires mounting default docker socket:", parsed.Host)
-			}
-			binds = append(binds, fmt.Sprintf("%[1]s:%[1]s:ro", parsed.Host))
+			binds = append(binds, fmt.Sprintf("%s:%s:ro", parsed.Host, dindHost.Host))
 		}
 		if _, err := utils.DockerStart(
 			ctx,
