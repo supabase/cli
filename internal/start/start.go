@@ -294,8 +294,6 @@ EOF
 		case "unix":
 			if dindHost, err = client.ParseHostURL(client.DefaultDockerHost); err != nil {
 				return errors.Errorf("failed to parse default host: %w", err)
-			} else if parsed.Host != dindHost.Host {
-				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires mounting default docker socket:", dindHost.Host)
 			}
 			binds = append(binds, fmt.Sprintf("%s:%s:ro", parsed.Host, dindHost.Host))
 		}
