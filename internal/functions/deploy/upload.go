@@ -162,7 +162,7 @@ func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys afe
 }
 
 // Ref: https://regex101.com/r/DfBdJA/1
-var importPathPattern = regexp.MustCompile(`(?i)import\s+(?:{[^{}]+}|.*?)\s*(?:from)?\s*['"](.*?)['"]|import\(\s*['"](.*?)['"]\)`)
+var importPathPattern = regexp.MustCompile(`(?i)(?:import|export)\s+(?:{[^{}]+}|.*?)\s*(?:from)?\s*['"](.*?)['"]|import\(\s*['"](.*?)['"]\)`)
 
 func walkImportPaths(srcPath string, importMap utils.ImportMap, readFile func(curr string, w io.Writer) error) error {
 	seen := map[string]struct{}{}
