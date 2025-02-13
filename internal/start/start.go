@@ -281,7 +281,7 @@ EOF
 			return errors.Errorf("failed to parse docker host: %w", err)
 		}
 		// Ref: https://vector.dev/docs/reference/configuration/sources/docker_logs/#docker_host
-		dindHost := url.URL{Scheme: "http", Host: net.JoinHostPort(utils.DinDHost, "2375")}
+		dindHost := &url.URL{Scheme: "http", Host: net.JoinHostPort(utils.DinDHost, "2375")}
 		switch parsed.Scheme {
 		case "tcp":
 			if _, port, err := net.SplitHostPort(parsed.Host); err == nil {
