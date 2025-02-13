@@ -292,13 +292,12 @@ EOF
 			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires docker daemon exposed on tcp://localhost:2375")
 			env = append(env, "DOCKER_HOST="+dindHost.String())
 		case "unix":
-			if parsed, err = client.ParseHostURL(utils.Docker.DaemonHost()); err != nil {
+			if dindHost, err = client.ParseHostURL(client.DefaultDockerHost); err != nil {
 				return errors.Errorf("failed to parse default host: %w", err)
+			} else if parsed.Host != dindHost.Host {
+				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires mounting default docker socket:", dindHost.Host)
 			}
-			if utils.Docker.DaemonHost() != client.DefaultDockerHost {
-				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires mounting default docker socket:", parsed.Host)
-			}
-			binds = append(binds, fmt.Sprintf("%[1]s:%[2]s:ro", parsed.Host, "/var/run/docker.sock"))
+			binds = append(binds, fmt.Sprintf("%s:%s:ro", parsed.Host, dindHost.Host))
 		}
 		if _, err := utils.DockerStart(
 			ctx,
