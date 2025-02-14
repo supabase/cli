@@ -763,11 +763,14 @@ func (c *config) Validate(fsys fs.FS) error {
 		return errors.New("Missing required field in config: db.major_version")
 	case 12:
 		return errors.New("Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.")
-	case 13, 14, 17:
-		// TODO: support oriole db 17 eventually
-	case 15:
+	case 13, 14:
+	case 15, 17:
 		if len(c.Experimental.OrioleDBVersion) > 0 {
-			c.Db.Image = "supabase/postgres:orioledb-" + c.Experimental.OrioleDBVersion
+			if VersionCompare(c.Experimental.OrioleDBVersion, "15.1.1.13") > 0 {
+				c.Db.Image = fmt.Sprintf("supabase/postgres:%s-orioledb", c.Experimental.OrioleDBVersion)
+			} else {
+				c.Db.Image = "supabase/postgres:orioledb-" + c.Experimental.OrioleDBVersion
+			}
 			if err := assertEnvLoaded(c.Experimental.S3Host); err != nil {
 				return err
 			}
