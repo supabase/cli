@@ -275,6 +275,7 @@ EOF
 			return errors.Errorf("failed to exec template: %w", err)
 		}
 		var binds, env []string
+		var securityOpts []string
 		// Special case for GitLab pipeline
 		parsed, err := client.ParseHostURL(utils.Docker.DaemonHost())
 		if err != nil {
@@ -296,6 +297,7 @@ EOF
 				return errors.Errorf("failed to parse default host: %w", err)
 			}
 			binds = append(binds, fmt.Sprintf("%s:%s:ro", parsed.Host, dindHost.Host))
+			securityOpts = append(securityOpts, "label=disable")
 		}
 		if _, err := utils.DockerStart(
 			ctx,
@@ -318,6 +320,7 @@ EOF
 			container.HostConfig{
 				Binds:         binds,
 				RestartPolicy: container.RestartPolicy{Name: "always"},
+				SecurityOpt:   securityOpts,
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
