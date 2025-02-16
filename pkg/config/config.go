@@ -16,7 +16,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -58,6 +57,14 @@ const (
 	LogflareBigQuery LogflareBackend = "bigquery"
 )
 
+func (b *LogflareBackend) UnmarshalText(text []byte) error {
+	allowed := []LogflareBackend{LogflarePostgres, LogflareBigQuery}
+	if *b = LogflareBackend(text); !sliceContains(allowed, *b) {
+		return errors.Errorf("must be one of %v", allowed)
+	}
+	return nil
+}
+
 type AddressFamily string
 
 const (
@@ -65,12 +72,28 @@ const (
 	AddressIPv4 AddressFamily = "IPv4"
 )
 
+func (f *AddressFamily) UnmarshalText(text []byte) error {
+	allowed := []AddressFamily{AddressIPv6, AddressIPv4}
+	if *f = AddressFamily(text); !sliceContains(allowed, *f) {
+		return errors.Errorf("must be one of %v", allowed)
+	}
+	return nil
+}
+
 type RequestPolicy string
 
 const (
 	PolicyPerWorker RequestPolicy = "per_worker"
 	PolicyOneshot   RequestPolicy = "oneshot"
 )
+
+func (p *RequestPolicy) UnmarshalText(text []byte) error {
+	allowed := []RequestPolicy{PolicyPerWorker, PolicyOneshot}
+	if *p = RequestPolicy(text); !sliceContains(allowed, *p) {
+		return errors.Errorf("must be one of %v", allowed)
+	}
+	return nil
+}
 
 type CustomClaims struct {
 	// Overrides Issuer to maintain json order when marshalling
@@ -220,11 +243,16 @@ func (f function) IsEnabled() bool {
 
 func (a *auth) Clone() auth {
 	copy := *a
+	if copy.Captcha != nil {
+		capt := *a.Captcha
+		copy.Captcha = &capt
+	}
 	copy.External = maps.Clone(a.External)
 	if a.Email.Smtp != nil {
 		mailer := *a.Email.Smtp
 		copy.Email.Smtp = &mailer
 	}
+	copy.Email.Template = maps.Clone(a.Email.Template)
 	if a.Hook.MFAVerificationAttempt != nil {
 		hook := *a.Hook.MFAVerificationAttempt
 		copy.Hook.MFAVerificationAttempt = &hook
@@ -245,14 +273,23 @@ func (a *auth) Clone() auth {
 		hook := *a.Hook.SendEmail
 		copy.Hook.SendEmail = &hook
 	}
-	copy.Email.Template = maps.Clone(a.Email.Template)
 	copy.Sms.TestOTP = maps.Clone(a.Sms.TestOTP)
+	return copy
+}
+
+func (s *storage) Clone() storage {
+	copy := *s
+	copy.Buckets = maps.Clone(s.Buckets)
+	if s.ImageTransformation != nil {
+		img := *s.ImageTransformation
+		copy.ImageTransformation = &img
+	}
 	return copy
 }
 
 func (c *baseConfig) Clone() baseConfig {
 	copy := *c
-	copy.Storage.Buckets = maps.Clone(c.Storage.Buckets)
+	copy.Storage = c.Storage.Clone()
 	copy.Functions = maps.Clone(c.Functions)
 	copy.Auth = c.Auth.Clone()
 	if c.Experimental.Webhooks != nil {
@@ -352,7 +389,6 @@ var (
 	initConfigTemplate = template.Must(template.New("initConfig").Parse(initConfigEmbed))
 
 	invalidProjectId = regexp.MustCompile("[^a-zA-Z0-9_.-]+")
-	envPattern       = regexp.MustCompile(`^env\((.*)\)$`)
 	refPattern       = regexp.MustCompile(`^[a-z]{20}$`)
 )
 
@@ -379,8 +415,8 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 	v.SetConfigType("toml")
 	// Load default values
 	var buf bytes.Buffer
-	if err := initConfigTemplate.Option("missingkey=zero").Execute(&buf, c); err != nil {
-		return errors.Errorf("failed to initialise template config: %w", err)
+	if err := c.Eject(&buf); err != nil {
+		return err
 	} else if err := c.loadFromReader(v, &buf); err != nil {
 		return err
 	}
@@ -389,7 +425,9 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 		v.SetConfigType(ext[1:])
 	}
 	f, err := fsys.Open(filename)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
 		return errors.Errorf("failed to read file config: %w", err)
 	}
 	defer f.Close()
@@ -428,7 +466,7 @@ func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 		dc.TagName = "toml"
 		dc.Squash = true
 		dc.ZeroFields = true
-		dc.DecodeHook = c.newDecodeHook(LoadEnvHook)
+		dc.DecodeHook = c.newDecodeHook(LoadEnvHook, ValidateFunctionsHook)
 	}); err != nil {
 		return errors.Errorf("failed to parse config: %w", err)
 	}
@@ -506,16 +544,18 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if connString, err := fs.ReadFile(fsys, builder.PoolerUrlPath); err == nil && len(connString) > 0 {
 		c.Db.Pooler.ConnectionString = string(connString)
 	}
-	// Update external api url
-	apiUrl := url.URL{Host: net.JoinHostPort(c.Hostname,
-		strconv.FormatUint(uint64(c.Api.Port), 10),
-	)}
-	if c.Api.Tls.Enabled {
-		apiUrl.Scheme = "https"
-	} else {
-		apiUrl.Scheme = "http"
+	if len(c.Api.ExternalUrl) == 0 {
+		// Update external api url
+		apiUrl := url.URL{Host: net.JoinHostPort(c.Hostname,
+			strconv.FormatUint(uint64(c.Api.Port), 10),
+		)}
+		if c.Api.Tls.Enabled {
+			apiUrl.Scheme = "https"
+		} else {
+			apiUrl.Scheme = "http"
+		}
+		c.Api.ExternalUrl = apiUrl.String()
 	}
-	c.Api.ExternalUrl = apiUrl.String()
 	// Update image versions
 	if version, err := fs.ReadFile(fsys, builder.PostgresVersionPath); err == nil {
 		if strings.HasPrefix(string(version), "15.") && semver.Compare(string(version[3:]), "1.0.55") >= 0 {
@@ -621,12 +661,6 @@ func (c *config) Validate(fsys fs.FS) error {
 		}
 	}
 	// Validate db config
-	if c.Db.Settings.SessionReplicationRole != nil {
-		allowedRoles := []SessionReplicationRole{SessionReplicationRoleOrigin, SessionReplicationRoleReplica, SessionReplicationRoleLocal}
-		if !sliceContains(allowedRoles, *c.Db.Settings.SessionReplicationRole) {
-			return errors.Errorf("Invalid config for db.session_replication_role. Must be one of: %v", allowedRoles)
-		}
-	}
 	if c.Db.Port == 0 {
 		return errors.New("Missing required field in config: db.port")
 	}
@@ -657,20 +691,6 @@ func (c *config) Validate(fsys fs.FS) error {
 		}
 	default:
 		return errors.Errorf("Failed reading config: Invalid %s: %v.", "db.major_version", c.Db.MajorVersion)
-	}
-	// Validate pooler config
-	if c.Db.Pooler.Enabled {
-		allowed := []PoolMode{TransactionMode, SessionMode}
-		if !sliceContains(allowed, c.Db.Pooler.PoolMode) {
-			return errors.Errorf("Invalid config for db.pooler.pool_mode. Must be one of: %v", allowed)
-		}
-	}
-	// Validate realtime config
-	if c.Realtime.Enabled {
-		allowed := []AddressFamily{AddressIPv6, AddressIPv4}
-		if !sliceContains(allowed, c.Realtime.IpVersion) {
-			return errors.Errorf("Invalid config for realtime.ip_version. Must be one of: %v", allowed)
-		}
 	}
 	// Validate storage config
 	for name := range c.Storage.Buckets {
@@ -708,9 +728,16 @@ func (c *config) Validate(fsys fs.FS) error {
 				return errors.Errorf("Invalid config for auth.additional_redirect_urls[%d]: %v", i, err)
 			}
 		}
-		allowed := []PasswordRequirements{NoRequirements, LettersDigits, LowerUpperLettersDigits, LowerUpperLettersDigitsSymbols}
-		if !sliceContains(allowed, c.Auth.PasswordRequirements) {
-			return errors.Errorf("Invalid config for auth.password_requirements. Must be one of: %v", allowed)
+		if c.Auth.Captcha != nil && c.Auth.Captcha.Enabled {
+			if len(c.Auth.Captcha.Provider) == 0 {
+				return errors.New("Missing required field in config: auth.captcha.provider")
+			}
+			if len(c.Auth.Captcha.Secret.Value) == 0 {
+				return errors.Errorf("Missing required field in config: auth.captcha.secret")
+			}
+			if err := assertEnvLoaded(c.Auth.Captcha.Secret.Value); err != nil {
+				return err
+			}
 		}
 		if err := c.Auth.Hook.validate(); err != nil {
 			return err
@@ -732,12 +759,6 @@ func (c *config) Validate(fsys fs.FS) error {
 		}
 	}
 	// Validate functions config
-	if c.EdgeRuntime.Enabled {
-		allowed := []RequestPolicy{PolicyPerWorker, PolicyOneshot}
-		if !sliceContains(allowed, c.EdgeRuntime.Policy) {
-			return errors.Errorf("Invalid config for edge_runtime.policy. Must be one of: %v", allowed)
-		}
-	}
 	for name := range c.Functions {
 		if err := ValidateFunctionSlug(name); err != nil {
 			return err
@@ -745,8 +766,7 @@ func (c *config) Validate(fsys fs.FS) error {
 	}
 	// Validate logflare config
 	if c.Analytics.Enabled {
-		switch c.Analytics.Backend {
-		case LogflareBigQuery:
+		if c.Analytics.Backend == LogflareBigQuery {
 			if len(c.Analytics.GcpProjectId) == 0 {
 				return errors.New("Missing required field in config: analytics.gcp_project_id")
 			}
@@ -756,11 +776,6 @@ func (c *config) Validate(fsys fs.FS) error {
 			if len(c.Analytics.GcpJwtPath) == 0 {
 				return errors.New("Path to GCP Service Account Key must be provided in config, relative to config.toml: analytics.gcp_jwt_path")
 			}
-		case LogflarePostgres:
-			break
-		default:
-			allowed := []LogflareBackend{LogflarePostgres, LogflareBigQuery}
-			return errors.Errorf("Invalid config for analytics.backend. Must be one of: %v", allowed)
 		}
 	}
 	if err := c.Experimental.validate(); err != nil {
@@ -771,22 +786,9 @@ func (c *config) Validate(fsys fs.FS) error {
 
 func assertEnvLoaded(s string) error {
 	if matches := envPattern.FindStringSubmatch(s); len(matches) > 1 {
-		return errors.Errorf(`Error evaluating "%s": environment variable %s is unset.`, s, matches[1])
+		fmt.Fprintln(os.Stderr, "WARN: environment variable is unset:", matches[1])
 	}
 	return nil
-}
-
-func LoadEnvHook(f reflect.Kind, t reflect.Kind, data interface{}) (interface{}, error) {
-	if f != reflect.String {
-		return data, nil
-	}
-	value := data.(string)
-	if matches := envPattern.FindStringSubmatch(value); len(matches) > 1 {
-		if env := os.Getenv(matches[1]); len(env) > 0 {
-			value = env
-		}
-	}
-	return value, nil
 }
 
 func truncateText(text string, maxLen int) string {

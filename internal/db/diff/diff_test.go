@@ -85,13 +85,14 @@ func TestRun(t *testing.T) {
 		assert.Equal(t, []byte(diff), contents)
 	})
 
-	t.Run("throws error on missing config", func(t *testing.T) {
+	t.Run("throws error on malformed config", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
 		// Run test
 		err := Run(context.Background(), []string{"public"}, "", pgconn.Config{}, DiffSchemaMigra, fsys)
 		// Check error
-		assert.ErrorIs(t, err, os.ErrNotExist)
+		assert.ErrorContains(t, err, "toml: expected = after a key, but the document ends there")
 	})
 
 	t.Run("throws error on failure to load user schemas", func(t *testing.T) {
@@ -283,7 +284,8 @@ func TestDiffDatabase(t *testing.T) {
 		// Check error
 		assert.Empty(t, diff)
 		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)
-At statement 0: create schema public`)
+At statement 0:
+create schema public`)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
@@ -340,4 +342,22 @@ At statement 0: create schema public`)
 func TestDropStatements(t *testing.T) {
 	drops := findDropStatements("create table t(); drop table t; alter table t drop column c")
 	assert.Equal(t, []string{"drop table t", "alter table t drop column c"}, drops)
+}
+
+func TestLoadSchemas(t *testing.T) {
+	expected := []string{
+		filepath.Join(utils.SchemasDir, "comment", "model.sql"),
+		filepath.Join(utils.SchemasDir, "model.sql"),
+		filepath.Join(utils.SchemasDir, "reaction", "dislike", "model.sql"),
+		filepath.Join(utils.SchemasDir, "reaction", "like", "model.sql"),
+	}
+	fsys := afero.NewMemMapFs()
+	for _, fp := range expected {
+		require.NoError(t, afero.WriteFile(fsys, fp, nil, 0644))
+	}
+	// Run test
+	schemas, err := loadDeclaredSchemas(fsys)
+	// Check error
+	assert.NoError(t, err)
+	assert.ElementsMatch(t, expected, schemas)
 }

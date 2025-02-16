@@ -25,6 +25,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
+	"github.com/supabase/cli/pkg/vault"
 )
 
 var (
@@ -370,6 +371,10 @@ func SetupLocalDatabase(ctx context.Context, version string, fsys afero.Fs, w io
 
 func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer, fsys afero.Fs) error {
 	if err := initSchema(ctx, conn, host, w); err != nil {
+		return err
+	}
+	// Create vault secrets first so roles.sql can reference them
+	if err := vault.UpsertVaultSecrets(ctx, utils.Config.Db.Vault, conn); err != nil {
 		return err
 	}
 	err := migration.SeedGlobals(ctx, []string{utils.CustomRolesPath}, conn, afero.NewIOFS(fsys))

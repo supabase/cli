@@ -3,7 +3,6 @@ package switch_
 import (
 	"context"
 	"net/http"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -61,15 +60,6 @@ func TestSwitchCommand(t *testing.T) {
 		contents, err := afero.ReadFile(fsys, utils.CurrBranchPath)
 		assert.NoError(t, err)
 		assert.Equal(t, []byte(branch), contents)
-	})
-
-	t.Run("throws error on missing config", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Run test
-		err := Run(context.Background(), "target", fsys)
-		// Check error
-		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
 
 	t.Run("throws error on malformed config", func(t *testing.T) {

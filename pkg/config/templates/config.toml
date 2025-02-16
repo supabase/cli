@@ -42,6 +42,9 @@ default_pool_size = 20
 # Maximum number of client connections allowed.
 max_client_conn = 100
 
+# [db.vault]
+# secret_key = "env(SECRET_VALUE)"
+
 [db.seed]
 # If enabled, seeds the database after migrations during a db reset.
 enabled = true
@@ -118,6 +121,12 @@ minimum_password_length = 6
 # Passwords that do not meet the following requirements will be rejected as weak. Supported values
 # are: `letters_digits`, `lower_upper_letters_digits`, `lower_upper_letters_digits_symbols`
 password_requirements = ""
+
+# Configure one of the supported captcha providers: `hcaptcha`, `turnstile`.
+# [auth.captcha]
+# enabled = true
+# provider = "hcaptcha"
+# secret = ""
 
 [auth.email]
 # Allow/disallow new user signups via email to your project.

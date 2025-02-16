@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	SET_LOCK_TIMEOUT         = "SET LOCAL lock_timeout = '4s'"
+	SET_LOCK_TIMEOUT         = "SET lock_timeout = '4s'"
 	CREATE_VERSION_SCHEMA    = "CREATE SCHEMA IF NOT EXISTS supabase_migrations"
 	CREATE_VERSION_TABLE     = "CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (version text NOT NULL PRIMARY KEY)"
 	ADD_STATEMENTS_COLUMN    = "ALTER TABLE supabase_migrations.schema_migrations ADD COLUMN IF NOT EXISTS statements text[]"
@@ -58,7 +58,7 @@ func CreateSeedTable(ctx context.Context, conn *pgx.Conn) error {
 	batch.ExecParams(CREATE_VERSION_SCHEMA, nil, nil, nil, nil)
 	batch.ExecParams(CREATE_SEED_TABLE, nil, nil, nil, nil)
 	if _, err := conn.PgConn().ExecBatch(ctx, &batch).ReadAll(); err != nil {
-		return errors.Errorf("failed to create migration table: %w", err)
+		return errors.Errorf("failed to create seed table: %w", err)
 	}
 	return nil
 }

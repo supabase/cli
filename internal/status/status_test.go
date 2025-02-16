@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"os"
 	"testing"
 
 	"github.com/docker/docker/api/types"
@@ -47,12 +46,7 @@ func TestStatusCommand(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("throws error on missing config", func(t *testing.T) {
-		err := Run(context.Background(), CustomName{}, utils.OutputPretty, afero.NewMemMapFs())
-		assert.ErrorIs(t, err, os.ErrNotExist)
-	})
-
-	t.Run("throws error on invalid config", func(t *testing.T) {
+	t.Run("throws error on malformed config", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))

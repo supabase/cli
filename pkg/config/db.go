@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 
+	"github.com/go-errors/errors"
 	v1API "github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/diff"
@@ -15,6 +16,14 @@ const (
 	SessionMode     PoolMode = "session"
 )
 
+func (m *PoolMode) UnmarshalText(text []byte) error {
+	allowed := []PoolMode{TransactionMode, SessionMode}
+	if *m = PoolMode(text); !sliceContains(allowed, *m) {
+		return errors.Errorf("must be one of %v", allowed)
+	}
+	return nil
+}
+
 type SessionReplicationRole string
 
 const (
@@ -22,6 +31,14 @@ const (
 	SessionReplicationRoleReplica SessionReplicationRole = "replica"
 	SessionReplicationRoleLocal   SessionReplicationRole = "local"
 )
+
+func (r *SessionReplicationRole) UnmarshalText(text []byte) error {
+	allowed := []SessionReplicationRole{SessionReplicationRoleOrigin, SessionReplicationRoleReplica, SessionReplicationRoleLocal}
+	if *r = SessionReplicationRole(text); !sliceContains(allowed, *r) {
+		return errors.Errorf("must be one of %v", allowed)
+	}
+	return nil
+}
 
 type (
 	settings struct {
@@ -51,15 +68,16 @@ type (
 	}
 
 	db struct {
-		Image        string   `toml:"-"`
-		Port         uint16   `toml:"port"`
-		ShadowPort   uint16   `toml:"shadow_port"`
-		MajorVersion uint     `toml:"major_version"`
-		Password     string   `toml:"-"`
-		RootKey      string   `toml:"-" mapstructure:"root_key"`
-		Pooler       pooler   `toml:"pooler"`
-		Seed         seed     `toml:"seed"`
-		Settings     settings `toml:"settings"`
+		Image        string            `toml:"-"`
+		Port         uint16            `toml:"port"`
+		ShadowPort   uint16            `toml:"shadow_port"`
+		MajorVersion uint              `toml:"major_version"`
+		Password     string            `toml:"-"`
+		RootKey      string            `toml:"-" mapstructure:"root_key"`
+		Pooler       pooler            `toml:"pooler"`
+		Seed         seed              `toml:"seed"`
+		Settings     settings          `toml:"settings"`
+		Vault        map[string]Secret `toml:"vault"`
 	}
 
 	seed struct {

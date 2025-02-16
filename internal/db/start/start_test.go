@@ -157,13 +157,14 @@ func TestStartDatabase(t *testing.T) {
 }
 
 func TestStartCommand(t *testing.T) {
-	t.Run("throws error on missing config", func(t *testing.T) {
+	t.Run("throws error on malformed config", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
 		// Run test
 		err := Run(context.Background(), "", fsys)
 		// Check error
-		assert.ErrorIs(t, err, os.ErrNotExist)
+		assert.ErrorContains(t, err, "toml: expected = after a key, but the document ends there")
 	})
 
 	t.Run("throws error on missing docker", func(t *testing.T) {
