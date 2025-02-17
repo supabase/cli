@@ -37,12 +37,13 @@ func deploy(ctx context.Context, functionConfig config.FunctionConfig, fsys afer
 		}
 		meta := api.FunctionDeployMetadata{
 			Name:           &slug,
-			EntrypointPath: fc.Entrypoint,
-			ImportMapPath:  &fc.ImportMap,
+			EntrypointPath: filepath.ToSlash(fc.Entrypoint),
+			ImportMapPath:  cast.Ptr(filepath.ToSlash(fc.ImportMap)),
 			VerifyJwt:      &fc.VerifyJWT,
 		}
-		if len(fc.StaticFiles) > 0 {
-			meta.StaticPatterns = &fc.StaticFiles
+		files := make([]string, len(fc.StaticFiles))
+		for i, sf := range fc.StaticFiles {
+			files[i] = filepath.ToSlash(sf)
 		}
 		resp, err := upload(ctx, param, meta, fsys)
 		if err != nil {
