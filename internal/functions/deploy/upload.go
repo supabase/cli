@@ -148,12 +148,18 @@ func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys afe
 		}
 	}
 	// Add static files
+	seen := make(map[string]struct{})
 	for _, pattern := range cast.Val(meta.StaticPatterns, []string{}) {
 		matches, err := afero.Glob(fsys, pattern)
 		if err != nil {
 			return errors.Errorf("failed to glob files: %w", err)
 		}
 		for _, sfPath := range matches {
+			// Ignore duplicates
+			if _, ok := seen[sfPath]; ok {
+				continue
+			}
+			seen[sfPath] = struct{}{}
 			if err := addFile(sfPath, io.Discard); err != nil {
 				return err
 			}
