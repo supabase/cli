@@ -13,6 +13,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// normalizeLineEndings replaces all \r\n with \n in a string
+func normalizeLineEndings(s string) string {
+	return strings.ReplaceAll(s, "\r\n", "\n")
+}
+
 func TestSplit(t *testing.T) {
 	const testdata = "testdata"
 
@@ -32,12 +37,22 @@ func TestSplit(t *testing.T) {
 		return nil
 	}))
 	require.Len(t, fixture, 18)
-	fixture = append(fixture, "\n")
 
 	sql, err := os.Open(filepath.Join(testdata, "all.sql"))
 	require.NoError(t, err)
 	stats, err := Split(sql)
 	require.NoError(t, err)
+
+	// Add single newline to match expected output
+	fixture = append(fixture, "\n")
+
+	// Before each comparison:
+	for i := range fixture {
+		fixture[i] = normalizeLineEndings(fixture[i])
+	}
+	for i := range stats {
+		stats[i] = normalizeLineEndings(stats[i])
+	}
 
 	assert.ElementsMatch(t, fixture, stats)
 }

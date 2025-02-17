@@ -401,7 +401,12 @@ func TestLineByLine(t *testing.T) {
 		err = lineByLineDiff(before, after, &out)
 		// Check error
 		assert.NoError(t, err)
-		assert.Equal(t, expected, out.Bytes())
+
+		// Normalize line endings before comparison
+		expected = bytes.ReplaceAll(expected, []byte("\r\n"), []byte("\n"))
+		actual := bytes.ReplaceAll(out.Bytes(), []byte("\r\n"), []byte("\n"))
+
+		assert.Equal(t, expected, actual)
 	})
 
 	t.Run("diffs shorter before", func(t *testing.T) {

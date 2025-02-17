@@ -187,7 +187,8 @@ import_map = "./import_map.json"
 		// Run test
 		err := Run(context.Background(), nil, true, nil, "", fsys)
 		// Check error
-		assert.ErrorContains(t, err, "No Functions specified or found in supabase/functions")
+		errMsg := filepath.ToSlash(err.Error())
+		assert.Contains(t, errMsg, "No Functions specified or found in supabase/functions")
 	})
 
 	t.Run("verify_jwt param falls back to config", func(t *testing.T) {
@@ -337,7 +338,7 @@ func TestImportMapPath(t *testing.T) {
 	})
 
 	t.Run("preserves absolute path", func(t *testing.T) {
-		path := "/tmp/import_map.json"
+		path := filepath.FromSlash("/tmp/import_map.json")
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))

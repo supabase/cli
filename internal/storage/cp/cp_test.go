@@ -4,6 +4,7 @@ import (
 	"context"
 	"io/fs"
 	"net/http"
+	"path/filepath"
 	"testing"
 
 	"github.com/h2non/gock"
@@ -233,8 +234,10 @@ func TestUploadAll(t *testing.T) {
 	t.Run("uploads directory to existing prefix", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		// Use forward slashes for all paths
 		require.NoError(t, afero.WriteFile(fsys, "/tmp/readme.md", []byte{}, 0644))
 		require.NoError(t, afero.WriteFile(fsys, "/tmp/docs/api.md", []byte{}, 0644))
+
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New("http://127.0.0.1").
@@ -243,12 +246,15 @@ func TestUploadAll(t *testing.T) {
 			JSON([]storage.ObjectResponse{{
 				Name: "dir",
 			}})
+
+		// Use forward slashes for URL paths
 		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/private/dir/tmp/readme.md").
 			Reply(http.StatusOK)
 		gock.New("http://127.0.0.1").
 			Post("/storage/v1/object/private/dir/tmp/docs/api.md").
 			Reply(http.StatusOK)
+
 		// Run test
 		err := UploadStorageObjectAll(context.Background(), mockApi, "/private/dir/", "/tmp", 1, fsys)
 		// Check error
@@ -489,4 +495,9 @@ func TestDownloadAll(t *testing.T) {
 		assert.NoError(t, err)
 		assert.True(t, exists)
 	})
+}
+
+// toURLPath converts a filesystem path to a URL path with forward slashes
+func toURLPath(path string) string {
+	return filepath.ToSlash(path)
 }

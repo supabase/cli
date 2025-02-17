@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestResolveImports(t *testing.T) {
+func TestResolveImportsWithMap(t *testing.T) {
 	t.Run("resolves relative directory", func(t *testing.T) {
 		importMap := []byte(`{
 	"imports": {
@@ -35,9 +35,9 @@ func TestResolveImports(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		assert.Equal(t, "/tmp/", resolved.Imports["abs/"])
-		assert.Equal(t, cwd+"/common", resolved.Imports["root"])
-		assert.Equal(t, cwd+"/supabase/tests", resolved.Imports["parent"])
-		assert.Equal(t, cwd+"/supabase/functions/child/", resolved.Imports["child"])
+		assert.Equal(t, filepath.ToSlash(cwd+"/common"), filepath.ToSlash(resolved.Imports["root"]))
+		assert.Equal(t, filepath.ToSlash(cwd+"/supabase/tests"), filepath.ToSlash(resolved.Imports["parent"]))
+		assert.Equal(t, filepath.ToSlash(cwd+"/supabase/functions/child/"), filepath.ToSlash(resolved.Imports["child"]))
 		assert.Equal(t, "../missing", resolved.Imports["missing"])
 	})
 
