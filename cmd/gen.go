@@ -73,7 +73,7 @@ var (
 		Short: "Generate types from Postgres schema",
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			if postgrestV9Compat && !cmd.Flags().Changed("db-url") {
-				return errors.New("--postgrest-v9-compat can only be used together with --db-url")
+				return errors.New("--postgrest-v9-compat must used together with --db-url")
 			}
 			// Legacy commands specify language using arg, eg. gen types typescript
 			if len(args) > 0 && args[0] != types.LangTypescript && !cmd.Flags().Changed("lang") {

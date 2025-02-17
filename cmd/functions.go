@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/functions/delete"
@@ -69,8 +70,10 @@ var (
 			}
 			if useApi {
 				useDocker = false
+			} else if maxJobs > 1 {
+				return errors.New("--jobs must be used together with --use-api")
 			}
-			return deploy.Run(cmd.Context(), args, useDocker, noVerifyJWT, importMapPath, afero.NewOsFs())
+			return deploy.Run(cmd.Context(), args, useDocker, noVerifyJWT, importMapPath, maxJobs, afero.NewOsFs())
 		},
 	}
 
@@ -134,6 +137,7 @@ func init() {
 	deployFlags.BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
 	functionsDeployCmd.MarkFlagsMutuallyExclusive("use-api", "use-docker", "legacy-bundle")
 	cobra.CheckErr(deployFlags.MarkHidden("legacy-bundle"))
+	deployFlags.UintVarP(&maxJobs, "jobs", "j", 1, "Maximum number of parallel jobs.")
 	deployFlags.BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	deployFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	deployFlags.StringVar(&importMapPath, "import-map", "", "Path to import map file.")

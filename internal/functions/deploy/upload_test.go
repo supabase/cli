@@ -145,6 +145,7 @@ func TestDeployAll(t *testing.T) {
 
 	t.Run("deploys single slug", func(t *testing.T) {
 		c := config.FunctionConfig{"demo": {
+			Enabled:    true,
 			Entrypoint: "testdata/shared/whatever.ts",
 		}}
 		// Setup in-memory fs
@@ -157,7 +158,7 @@ func TestDeployAll(t *testing.T) {
 			Reply(http.StatusCreated).
 			JSON(api.DeployFunctionResponse{})
 		// Run test
-		err := deploy(context.Background(), c, fsys)
+		err := deploy(context.Background(), c, 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -165,8 +166,14 @@ func TestDeployAll(t *testing.T) {
 
 	t.Run("deploys multiple slugs", func(t *testing.T) {
 		c := config.FunctionConfig{
-			"test-ts": {Entrypoint: "testdata/shared/whatever.ts"},
-			"test-js": {Entrypoint: "testdata/geometries/Geometries.js"},
+			"test-ts": {
+				Enabled:    true,
+				Entrypoint: "testdata/shared/whatever.ts",
+			},
+			"test-js": {
+				Enabled:    true,
+				Entrypoint: "testdata/geometries/Geometries.js",
+			},
 		}
 		// Setup in-memory fs
 		fsys := afero.FromIOFS{FS: testImports}
@@ -187,7 +194,7 @@ func TestDeployAll(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(api.BulkUpdateFunctionResponse{})
 		// Run test
-		err := deploy(context.Background(), c, fsys)
+		err := deploy(context.Background(), c, 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -205,7 +212,7 @@ func TestDeployAll(t *testing.T) {
 			MatchParam("slug", "demo").
 			ReplyError(errNetwork)
 		// Run test
-		err := deploy(context.Background(), c, fsys)
+		err := deploy(context.Background(), c, 1, fsys)
 		// Check error
 		assert.ErrorIs(t, err, errNetwork)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
