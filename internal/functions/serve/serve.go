@@ -218,7 +218,7 @@ func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 	}
 	binds := []string{}
 	for slug, fc := range functionsConfig {
-		if !fc.IsEnabled() {
+		if !fc.Enabled {
 			fmt.Fprintln(os.Stderr, "Skipped serving Function:", slug)
 			continue
 		}

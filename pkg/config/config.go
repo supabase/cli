@@ -201,8 +201,8 @@ type (
 	FunctionConfig map[string]function
 
 	function struct {
-		Enabled     *bool    `toml:"enabled" json:"-"`
-		VerifyJWT   *bool    `toml:"verify_jwt" json:"verifyJWT"`
+		Enabled     bool     `toml:"enabled" json:"-"`
+		VerifyJWT   bool     `toml:"verify_jwt" json:"verifyJWT"`
 		ImportMap   string   `toml:"import_map" json:"importMapPath,omitempty"`
 		Entrypoint  string   `toml:"entrypoint" json:"entrypointPath,omitempty"`
 		StaticFiles []string `toml:"static_files" json:"staticFiles,omitempty"`
@@ -235,11 +235,6 @@ type (
 		Webhooks        *webhooks `toml:"webhooks"`
 	}
 )
-
-func (f function) IsEnabled() bool {
-	// If Enabled is not defined, or defined and set to true
-	return f.Enabled == nil || *f.Enabled
-}
 
 func (a *auth) Clone() auth {
 	copy := *a
@@ -456,10 +451,17 @@ func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 			v.Set("project_id", baseId)
 		}
 	}
-	// Manually parse [functions.*] to empty struct for backwards compatibility
+	// Set default values for [functions.*] when config struct is empty
 	for key, value := range v.GetStringMap("functions") {
-		if m, ok := value.(map[string]any); ok && len(m) == 0 {
-			v.Set("functions."+key, function{})
+		if _, ok := value.(map[string]any); !ok {
+			// Leave validation to decode hook
+			continue
+		}
+		if k := fmt.Sprintf("functions.%s.enabled", key); !v.IsSet(k) {
+			v.Set(k, true)
+		}
+		if k := fmt.Sprintf("functions.%s.verify_jwt", key); !v.IsSet(k) {
+			v.Set(k, true)
 		}
 	}
 	if err := v.UnmarshalExact(c, func(dc *mapstructure.DecoderConfig) {
