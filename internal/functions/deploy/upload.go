@@ -20,20 +20,17 @@ import (
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/config"
+	"github.com/supabase/cli/pkg/queue"
 )
 
-func deploy(ctx context.Context, functionConfig config.FunctionConfig, fsys afero.Fs) error {
-	bundleOnly := len(functionConfig) > 1
-	var toUpdate []api.BulkUpdateFunctionBody
+var errNoDeploy = errors.New("All Functions are up to date.")
+
+func deploy(ctx context.Context, functionConfig config.FunctionConfig, maxJobs uint, fsys afero.Fs) error {
+	var toDeploy []api.FunctionDeployMetadata
 	for slug, fc := range functionConfig {
 		if !fc.Enabled {
 			fmt.Fprintln(os.Stderr, "Skipped deploying Function:", slug)
 			continue
-		}
-		fmt.Fprintln(os.Stderr, "Deploying Function:", slug)
-		param := api.V1DeployAFunctionParams{Slug: &slug}
-		if bundleOnly {
-			param.BundleOnly = &bundleOnly
 		}
 		meta := api.FunctionDeployMetadata{
 			Name:           &slug,
@@ -45,29 +42,55 @@ func deploy(ctx context.Context, functionConfig config.FunctionConfig, fsys afer
 		for i, sf := range fc.StaticFiles {
 			files[i] = filepath.ToSlash(sf)
 		}
-		resp, err := upload(ctx, param, meta, fsys)
-		if err != nil {
+		toDeploy = append(toDeploy, meta)
+	}
+	if len(toDeploy) == 0 {
+		return errors.New(errNoDeploy)
+	} else if len(toDeploy) == 1 {
+		param := api.V1DeployAFunctionParams{Slug: toDeploy[0].Name}
+		_, err := upload(ctx, param, toDeploy[0], fsys)
+		return err
+	}
+	return bulkUpload(ctx, toDeploy, maxJobs, fsys)
+}
+
+func bulkUpload(ctx context.Context, toDeploy []api.FunctionDeployMetadata, maxJobs uint, fsys afero.Fs) error {
+	jq := queue.NewJobQueue(maxJobs)
+	toUpdate := make([]api.BulkUpdateFunctionBody, len(toDeploy))
+	for i, meta := range toDeploy {
+		fmt.Fprintln(os.Stderr, "Deploying Function:", *meta.Name)
+		param := api.V1DeployAFunctionParams{
+			Slug:       meta.Name,
+			BundleOnly: cast.Ptr(true),
+		}
+		bundle := func() error {
+			resp, err := upload(ctx, param, meta, fsys)
+			if err != nil {
+				return err
+			}
+			toUpdate[i].Id = resp.Id
+			toUpdate[i].Name = resp.Name
+			toUpdate[i].Slug = resp.Slug
+			toUpdate[i].Version = resp.Version
+			toUpdate[i].EntrypointPath = resp.EntrypointPath
+			toUpdate[i].ImportMap = resp.ImportMap
+			toUpdate[i].ImportMapPath = resp.ImportMapPath
+			toUpdate[i].VerifyJwt = resp.VerifyJwt
+			toUpdate[i].Status = api.BulkUpdateFunctionBodyStatus(resp.Status)
+			toUpdate[i].CreatedAt = resp.CreatedAt
+			return nil
+		}
+		if err := jq.Put(bundle); err != nil {
 			return err
 		}
-		toUpdate = append(toUpdate, api.BulkUpdateFunctionBody{
-			CreatedAt:      resp.CreatedAt,
-			EntrypointPath: resp.EntrypointPath,
-			Id:             resp.Id,
-			ImportMap:      resp.ImportMap,
-			ImportMapPath:  resp.ImportMapPath,
-			Name:           resp.Name,
-			Slug:           resp.Slug,
-			Status:         api.BulkUpdateFunctionBodyStatus(resp.Status),
-			VerifyJwt:      resp.VerifyJwt,
-			Version:        resp.Version,
-		})
 	}
-	if len(toUpdate) > 1 {
-		if resp, err := utils.GetSupabase().V1BulkUpdateFunctionsWithResponse(ctx, flags.ProjectRef, toUpdate); err != nil {
-			return errors.Errorf("failed to bulk update: %w", err)
-		} else if resp.JSON200 == nil {
-			return errors.Errorf("unexpected bulk update status %d: %s", resp.StatusCode(), string(resp.Body))
-		}
+	if err := jq.Collect(); err != nil {
+		return err
+	}
+	if resp, err := utils.GetSupabase().V1BulkUpdateFunctionsWithResponse(ctx, flags.ProjectRef, toUpdate); err != nil {
+		return errors.Errorf("failed to bulk update: %w", err)
+	} else if resp.JSON200 == nil {
+		return errors.Errorf("unexpected bulk update status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 	return nil
 }
@@ -116,7 +139,7 @@ func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys afe
 		} else if fi.IsDir() {
 			return errors.New("file path is a directory: " + srcPath)
 		}
-		fmt.Fprintln(os.Stderr, "Uploading asset:", srcPath)
+		fmt.Fprintf(os.Stderr, "Uploading asset (%s): %s\n", *meta.Name, srcPath)
 		r := io.TeeReader(f, w)
 		dst, err := form.CreateFormFile("file", srcPath)
 		if err != nil {
@@ -138,7 +161,7 @@ func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys afe
 			return err
 		}
 		// TODO: replace with addFile once edge runtime supports jsonc
-		fmt.Fprintln(os.Stderr, "Uploading asset:", imPath)
+		fmt.Fprintf(os.Stderr, "Uploading asset (%s): %s\n", *meta.Name, imPath)
 		f, err := form.CreateFormFile("file", imPath)
 		if err != nil {
 			return errors.Errorf("failed to create import map: %w", err)

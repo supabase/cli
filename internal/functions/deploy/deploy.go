@@ -15,7 +15,7 @@ import (
 	"github.com/supabase/cli/pkg/function"
 )
 
-func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool, importMapPath string, fsys afero.Fs) error {
+func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool, importMapPath string, maxJobs uint, fsys afero.Fs) error {
 	// Load function config and project id
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
@@ -41,7 +41,10 @@ func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool,
 		if err := api.UpsertFunctions(ctx, functionConfig); err != nil {
 			return err
 		}
-	} else if err := deploy(ctx, functionConfig, fsys); err != nil {
+	} else if err := deploy(ctx, functionConfig, maxJobs, fsys); errors.Is(err, errNoDeploy) {
+		fmt.Fprintln(os.Stderr, err)
+		return nil
+	} else if err != nil {
 		return err
 	}
 	fmt.Printf("Deployed Functions on project %s: %s\n", utils.Aqua(flags.ProjectRef), strings.Join(slugs, ", "))

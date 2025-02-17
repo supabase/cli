@@ -61,7 +61,7 @@ func TestDeployCommand(t *testing.T) {
 		}
 		// Run test
 		noVerifyJWT := true
-		err = Run(context.Background(), functions, true, &noVerifyJWT, "", fsys)
+		err = Run(context.Background(), functions, true, &noVerifyJWT, "", 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -114,7 +114,7 @@ import_map = "./import_map.json"
 		outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		// Run test
-		err = Run(context.Background(), nil, true, nil, "", fsys)
+		err = Run(context.Background(), nil, true, nil, "", 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -164,7 +164,7 @@ import_map = "./import_map.json"
 		outputDir := filepath.Join(utils.TempDir, ".output_enabled-func")
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		// Run test
-		err = Run(context.Background(), nil, true, nil, "", fsys)
+		err = Run(context.Background(), nil, true, nil, "", 1, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -175,7 +175,7 @@ import_map = "./import_map.json"
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Run test
-		err := Run(context.Background(), []string{"_invalid"}, true, nil, "", fsys)
+		err := Run(context.Background(), []string{"_invalid"}, true, nil, "", 1, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Invalid Function name.")
 	})
@@ -185,7 +185,7 @@ import_map = "./import_map.json"
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Run test
-		err := Run(context.Background(), nil, true, nil, "", fsys)
+		err := Run(context.Background(), nil, true, nil, "", 1, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "No Functions specified or found in supabase/functions")
 	})
@@ -228,7 +228,7 @@ verify_jwt = false
 		outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		// Run test
-		assert.NoError(t, Run(context.Background(), []string{slug}, true, nil, "", fsys))
+		assert.NoError(t, Run(context.Background(), []string{slug}, true, nil, "", 1, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -272,7 +272,7 @@ verify_jwt = false
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		// Run test
 		noVerifyJwt := false
-		assert.NoError(t, Run(context.Background(), []string{slug}, true, &noVerifyJwt, "", fsys))
+		assert.NoError(t, Run(context.Background(), []string{slug}, true, &noVerifyJwt, "", 1, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
