@@ -319,6 +319,7 @@ func TestLoadSeedPaths(t *testing.T) {
 			"supabase/seeds/another.sql",
 		}, config.SqlPaths)
 	})
+
 	t.Run("returns seed files matching patterns skip duplicates", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := fs.MapFS{
@@ -454,9 +455,9 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		// Run test
 		err := config.Load("", fsys)
 		// Check error contains both decode errors
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), invalidFunctionsConfigFormat)
+		assert.ErrorContains(t, err, invalidFunctionsConfigFormat)
 	})
+
 	t.Run("returns error with function slug for invalid non-existent field", func(t *testing.T) {
 		config := NewConfig()
 		fsys := fs.MapFS{
@@ -469,9 +470,9 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		// Run test
 		err := config.Load("", fsys)
 		// Check error contains both decode errors
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "'functions[hello]' has invalid keys: unknown_field")
+		assert.ErrorContains(t, err, "* 'functions[hello]' has invalid keys: unknown_field")
 	})
+
 	t.Run("returns error with function slug for invalid field value", func(t *testing.T) {
 		config := NewConfig()
 		fsys := fs.MapFS{
@@ -484,9 +485,9 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		// Run test
 		err := config.Load("", fsys)
 		// Check error contains both decode errors
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "cannot parse 'functions[hello].verify_jwt' as bool: strconv.ParseBool: parsing \"not-a-bool\"")
+		assert.ErrorContains(t, err, `* cannot parse 'functions[hello].verify_jwt' as bool: strconv.ParseBool: parsing "not-a-bool"`)
 	})
+
 	t.Run("returns error for unknown function fields", func(t *testing.T) {
 		config := NewConfig()
 		fsys := fs.MapFS{
@@ -499,7 +500,7 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		}
 		// Run test
 		err := config.Load("", fsys)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), invalidFunctionsConfigFormat)
+		assert.ErrorContains(t, err, `* 'functions[name]' expected a map, got 'string'`)
+		assert.ErrorContains(t, err, `* 'functions[verify_jwt]' expected a map, got 'bool'`)
 	})
 }

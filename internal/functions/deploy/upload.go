@@ -26,7 +26,7 @@ func deploy(ctx context.Context, functionConfig config.FunctionConfig, fsys afer
 	bundleOnly := len(functionConfig) > 1
 	var toUpdate []api.BulkUpdateFunctionBody
 	for slug, fc := range functionConfig {
-		if !fc.IsEnabled() {
+		if !fc.Enabled {
 			fmt.Fprintln(os.Stderr, "Skipped deploying Function:", slug)
 			continue
 		}
@@ -39,7 +39,7 @@ func deploy(ctx context.Context, functionConfig config.FunctionConfig, fsys afer
 			Name:           &slug,
 			EntrypointPath: fc.Entrypoint,
 			ImportMapPath:  &fc.ImportMap,
-			VerifyJwt:      fc.VerifyJWT,
+			VerifyJwt:      &fc.VerifyJWT,
 		}
 		if len(fc.StaticFiles) > 0 {
 			meta.StaticPatterns = &fc.StaticFiles

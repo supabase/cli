@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
-	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/function"
 )
@@ -87,7 +86,11 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 	}
 	functionConfig := make(config.FunctionConfig, len(slugs))
 	for _, name := range slugs {
-		function := utils.Config.Functions[name]
+		function, ok := utils.Config.Functions[name]
+		if !ok {
+			function.Enabled = true
+			function.VerifyJWT = true
+		}
 		// Precedence order: flag > config > fallback
 		functionDir := filepath.Join(utils.FunctionsDir, name)
 		if len(function.Entrypoint) == 0 {
@@ -112,7 +115,7 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 			}
 		}
 		if noVerifyJWT != nil {
-			function.VerifyJWT = cast.Ptr(!*noVerifyJWT)
+			function.VerifyJWT = !*noVerifyJWT
 		}
 		functionConfig[name] = function
 	}

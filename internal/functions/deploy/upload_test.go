@@ -195,7 +195,7 @@ func TestDeployAll(t *testing.T) {
 
 	t.Run("throws error on network failure", func(t *testing.T) {
 		errNetwork := errors.New("network")
-		c := config.FunctionConfig{"demo": {}}
+		c := config.FunctionConfig{"demo": {Enabled: true}}
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock api
