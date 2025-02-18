@@ -75,9 +75,14 @@ type (
 		Password     string            `toml:"-"`
 		RootKey      string            `toml:"-" mapstructure:"root_key"`
 		Pooler       pooler            `toml:"pooler"`
+		Migrations   migrations        `toml:"migrations"`
 		Seed         seed              `toml:"seed"`
 		Settings     settings          `toml:"settings"`
 		Vault        map[string]Secret `toml:"vault"`
+	}
+
+	migrations struct {
+		SchemaPaths Glob `toml:"schema_paths"`
 	}
 
 	seed struct {
