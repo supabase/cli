@@ -677,6 +677,11 @@ func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 			}
 		}
 	}
+	for i, pattern := range c.Db.Migrations.SchemaPaths {
+		if len(pattern) > 0 && !filepath.IsAbs(pattern) {
+			c.Db.Migrations.SchemaPaths[i] = path.Join(builder.SupabaseDirPath, pattern)
+		}
+	}
 	return nil
 }
 
