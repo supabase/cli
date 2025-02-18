@@ -81,9 +81,8 @@ type (
 	}
 
 	seed struct {
-		Enabled      bool     `toml:"enabled"`
-		GlobPatterns []string `toml:"sql_paths"`
-		SqlPaths     []string `toml:"-"`
+		Enabled  bool `toml:"enabled"`
+		SqlPaths Glob `toml:"sql_paths"`
 	}
 
 	pooler struct {
