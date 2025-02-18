@@ -42,6 +42,7 @@ func deploy(ctx context.Context, functionConfig config.FunctionConfig, maxJobs u
 		for i, sf := range fc.StaticFiles {
 			files[i] = filepath.ToSlash(sf)
 		}
+		meta.StaticPatterns = &files
 		toDeploy = append(toDeploy, meta)
 	}
 	if len(toDeploy) == 0 {
@@ -171,21 +172,14 @@ func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys afe
 		}
 	}
 	// Add static files
-	seen := make(map[string]struct{})
-	for _, pattern := range cast.Val(meta.StaticPatterns, []string{}) {
-		matches, err := afero.Glob(fsys, pattern)
-		if err != nil {
-			return errors.Errorf("failed to glob files: %w", err)
-		}
-		for _, sfPath := range matches {
-			// Ignore duplicates
-			if _, ok := seen[sfPath]; ok {
-				continue
-			}
-			seen[sfPath] = struct{}{}
-			if err := addFile(sfPath, io.Discard); err != nil {
-				return err
-			}
+	patterns := config.Glob(cast.Val(meta.StaticPatterns, []string{}))
+	files, err := patterns.Files(afero.NewIOFS(fsys))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), err)
+	}
+	for _, sfPath := range files {
+		if err := addFile(sfPath, io.Discard); err != nil {
+			return err
 		}
 	}
 	return walkImportPaths(meta.EntrypointPath, importMap, addFile)
