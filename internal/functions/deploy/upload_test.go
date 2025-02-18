@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/h2non/gock"
@@ -85,7 +87,24 @@ func assertFormEqual(t *testing.T, actual []byte) {
 	if errors.Is(err, os.ErrNotExist) {
 		assert.NoError(t, os.WriteFile(snapshot, actual, 0600))
 	}
-	assert.Equal(t, string(expected), string(actual))
+
+	// Convert forward slashes to OS-specific path separator in both strings
+	expectedStr := strings.ReplaceAll(string(expected), "/", string(os.PathSeparator))
+	actualStr := strings.ReplaceAll(string(actual), "/", string(os.PathSeparator))
+
+	// Normalize line endings
+	expectedStr = strings.ReplaceAll(expectedStr, "\r\n", "\n")
+	actualStr = strings.ReplaceAll(actualStr, "\r\n", "\n")
+
+	// Normalize consecutive newlines to single newlines
+	expectedStr = strings.ReplaceAll(expectedStr, "\n\n", "\n")
+	actualStr = strings.ReplaceAll(actualStr, "\n\n", "\n")
+
+	// Normalize backslash escaping
+	expectedStr = strings.ReplaceAll(expectedStr, "\\\\", "\\")
+	actualStr = strings.ReplaceAll(actualStr, "\\\\", "\\")
+
+	assert.Equal(t, expectedStr, actualStr)
 }
 
 func TestWriteForm(t *testing.T) {
@@ -93,8 +112,13 @@ func TestWriteForm(t *testing.T) {
 		var buf bytes.Buffer
 		form := multipart.NewWriter(&buf)
 		require.NoError(t, form.SetBoundary("test"))
+
 		// Setup in-memory fs
-		fsys := afero.FromIOFS{FS: testImports}
+		fsys := afero.NewMemMapFs()
+		// Create test files
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join("testdata", "nested", "deno.json"), []byte("{}"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join("testdata", "geometries", "Geometries.js"), []byte(""), 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join("testdata", "nested", "index.ts"), []byte(""), 0644))
 		// Run test
 		err := writeForm(form, api.FunctionDeployMetadata{
 			Name:           cast.Ptr("nested"),

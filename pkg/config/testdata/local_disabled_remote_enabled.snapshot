@@ -1,0 +1,12 @@
+diff remote[auth] local[auth]
+--- remote[auth]
++++ local[auth]
+@@ -10,7 +10,7 @@
+ password_requirements = ""
+ 
+ [captcha]
+-enabled = true
++enabled = false
+ provider = "turnstile"
+ secret = "hash:ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e"
+ 

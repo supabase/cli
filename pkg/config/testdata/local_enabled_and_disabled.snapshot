@@ -1,0 +1,28 @@
+diff remote[auth] local[auth]
+--- remote[auth]
++++ local[auth]
+@@ -1,14 +1,14 @@
+ enabled = false
+-site_url = ""
+-additional_redirect_urls = ["https://127.0.0.1:3000", "https://ref.supabase.co"]
+-jwt_expiry = 0
+-enable_refresh_token_rotation = true
+-refresh_token_reuse_interval = 0
+-enable_manual_linking = true
+-enable_signup = true
+-enable_anonymous_sign_ins = true
+-minimum_password_length = 8
+-password_requirements = "letters_digits"
++site_url = "http://127.0.0.1:3000"
++additional_redirect_urls = ["https://127.0.0.1:3000"]
++jwt_expiry = 3600
++enable_refresh_token_rotation = false
++refresh_token_reuse_interval = 10
++enable_manual_linking = false
++enable_signup = false
++enable_anonymous_sign_ins = false
++minimum_password_length = 6
++password_requirements = "lower_upper_letters_digits_symbols"
+ 
+ [hook]
+ 
