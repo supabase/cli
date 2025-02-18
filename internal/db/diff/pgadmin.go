@@ -11,7 +11,6 @@ import (
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/config"
 )
 
@@ -35,13 +34,8 @@ func SaveDiff(out, file string, fsys afero.Fs) error {
 
 func RunPgAdmin(ctx context.Context, schema []string, file string, config pgconn.Config, fsys afero.Fs) error {
 	// Sanity checks.
-	{
-		if err := flags.LoadConfig(fsys); err != nil {
-			return err
-		}
-		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
-			return err
-		}
+	if err := utils.AssertSupabaseDbIsRunning(); err != nil {
+		return err
 	}
 
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {

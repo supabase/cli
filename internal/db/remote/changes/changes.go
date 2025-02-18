@@ -8,24 +8,17 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
 )
 
 var output string
 
 func Run(ctx context.Context, schema []string, config pgconn.Config, fsys afero.Fs) error {
-	// Sanity checks.
-	if err := flags.LoadConfig(fsys); err != nil {
-		return err
-	}
-
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
 		return run(p, ctx, schema, config, fsys)
 	}); err != nil {
 		return err
 	}
-
 	return diff.SaveDiff(output, "", fsys)
 }
 
