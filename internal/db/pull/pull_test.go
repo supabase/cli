@@ -29,20 +29,9 @@ var dbConfig = pgconn.Config{
 }
 
 func TestPullCommand(t *testing.T) {
-	t.Run("throws error on malformed config", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
-		// Run test
-		err := Run(context.Background(), nil, pgconn.Config{}, "", fsys)
-		// Check error
-		assert.ErrorContains(t, err, "toml: expected = after a key, but the document ends there")
-	})
-
 	t.Run("throws error on connect failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Run test
 		err := Run(context.Background(), nil, pgconn.Config{}, "", fsys)
 		// Check error
@@ -53,7 +42,6 @@ func TestPullCommand(t *testing.T) {
 	t.Run("throws error on sync failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
