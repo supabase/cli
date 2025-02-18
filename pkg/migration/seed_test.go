@@ -77,18 +77,13 @@ func TestPendingSeeds(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("throws error on missing file", func(t *testing.T) {
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(SELECT_SEED_TABLE).
-			Reply("SELECT 0")
+	t.Run("ignores missing seed file", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := fs.MapFS{}
 		// Run test
-		_, err := GetPendingSeeds(context.Background(), pending, conn.MockClient(t), fsys)
+		_, err := GetPendingSeeds(context.Background(), pending, nil, fsys)
 		// Check error
-		assert.ErrorIs(t, err, os.ErrNotExist)
+		assert.NoError(t, err)
 	})
 }
 

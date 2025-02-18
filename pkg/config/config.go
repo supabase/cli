@@ -95,6 +95,34 @@ func (p *RequestPolicy) UnmarshalText(text []byte) error {
 	return nil
 }
 
+type Glob []string
+
+// Match the glob patterns in the given FS to get a deduplicated
+// array of all migrations files to apply in the declared order.
+func (g Glob) Files(fsys fs.FS) ([]string, error) {
+	var result []string
+	var allErrors []error
+	set := make(map[string]struct{})
+	for _, pattern := range g {
+		// Glob expects / as path separator on windows
+		matches, err := fs.Glob(fsys, filepath.ToSlash(pattern))
+		if err != nil {
+			allErrors = append(allErrors, errors.Errorf("failed to glob files: %w", err))
+		} else if len(matches) == 0 {
+			allErrors = append(allErrors, errors.Errorf("no files matched pattern: %s", pattern))
+		}
+		sort.Strings(matches)
+		// Remove duplicates
+		for _, item := range matches {
+			if _, exists := set[item]; !exists {
+				set[item] = struct{}{}
+				result = append(result, item)
+			}
+		}
+	}
+	return result, errors.Join(allErrors...)
+}
+
 type CustomClaims struct {
 	// Overrides Issuer to maintain json order when marshalling
 	Issuer string `json:"iss,omitempty"`
@@ -320,8 +348,8 @@ func NewConfig(editors ...ConfigEditor) config {
 				SecretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
 			},
 			Seed: seed{
-				Enabled:      true,
-				GlobPatterns: []string{"./seed.sql"},
+				Enabled:  true,
+				SqlPaths: []string{"seed.sql"},
 			},
 		},
 		Realtime: realtime{
@@ -636,11 +664,20 @@ func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 			function.ImportMap = filepath.Join(builder.SupabaseDirPath, function.ImportMap)
 		}
 		for i, val := range function.StaticFiles {
-			function.StaticFiles[i] = filepath.Join(builder.SupabaseDirPath, val)
+			if len(val) > 0 && !filepath.IsAbs(val) {
+				function.StaticFiles[i] = filepath.Join(builder.SupabaseDirPath, val)
+			}
 		}
 		c.Functions[slug] = function
 	}
-	return c.Db.Seed.loadSeedPaths(builder.SupabaseDirPath, fsys)
+	if c.Db.Seed.Enabled {
+		for i, pattern := range c.Db.Seed.SqlPaths {
+			if len(pattern) > 0 && !filepath.IsAbs(pattern) {
+				c.Db.Seed.SqlPaths[i] = path.Join(builder.SupabaseDirPath, pattern)
+			}
+		}
+	}
+	return nil
 }
 
 func (c *config) Validate(fsys fs.FS) error {
@@ -855,42 +892,6 @@ func loadDefaultEnv(env string) error {
 func loadEnvIfExists(path string) error {
 	if err := godotenv.Load(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return errors.Errorf("failed to load %s: %w", ".env", err)
-	}
-	return nil
-}
-
-// Match the glob patterns from the config to get a deduplicated
-// array of all migrations files to apply in the declared order.
-func (c *seed) loadSeedPaths(basePath string, fsys fs.FS) error {
-	if !c.Enabled {
-		return nil
-	}
-	if c.SqlPaths != nil {
-		// Reuse already allocated array
-		c.SqlPaths = c.SqlPaths[:0]
-	}
-	set := make(map[string]struct{})
-	for _, pattern := range c.GlobPatterns {
-		// Glob expects / as path separator on windows
-		pattern = filepath.ToSlash(pattern)
-		if !filepath.IsAbs(pattern) {
-			pattern = path.Join(basePath, pattern)
-		}
-		matches, err := fs.Glob(fsys, pattern)
-		if err != nil {
-			return errors.Errorf("failed to apply glob pattern: %w", err)
-		}
-		if len(matches) == 0 {
-			fmt.Fprintln(os.Stderr, "WARN: no seed files matched pattern:", pattern)
-		}
-		sort.Strings(matches)
-		// Remove duplicates
-		for _, item := range matches {
-			if _, exists := set[item]; !exists {
-				set[item] = struct{}{}
-				c.SqlPaths = append(c.SqlPaths, item)
-			}
-		}
 	}
 	return nil
 }

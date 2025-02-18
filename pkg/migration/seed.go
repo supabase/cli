@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
+	"github.com/supabase/cli/pkg/config"
 )
 
 func getRemoteSeeds(ctx context.Context, conn *pgx.Conn) (map[string]string, error) {
@@ -30,7 +31,11 @@ func getRemoteSeeds(ctx context.Context, conn *pgx.Conn) (map[string]string, err
 	return applied, nil
 }
 
-func GetPendingSeeds(ctx context.Context, locals []string, conn *pgx.Conn, fsys fs.FS) ([]SeedFile, error) {
+func GetPendingSeeds(ctx context.Context, locals config.Glob, conn *pgx.Conn, fsys fs.FS) ([]SeedFile, error) {
+	locals, err := locals.Files(fsys)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "WARN:", err)
+	}
 	if len(locals) == 0 {
 		return nil, nil
 	}
