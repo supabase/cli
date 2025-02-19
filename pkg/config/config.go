@@ -492,6 +492,12 @@ func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 			v.Set(k, true)
 		}
 	}
+	// Set default values when [auth.email.smtp] is defined
+	if smtp := v.GetStringMap("auth.email.smtp"); len(smtp) > 0 {
+		if _, exists := smtp["enabled"]; !exists {
+			v.Set("auth.email.smtp.enabled", true)
+		}
+	}
 	if err := v.UnmarshalExact(c, func(dc *mapstructure.DecoderConfig) {
 		dc.TagName = "toml"
 		dc.Squash = true
@@ -916,7 +922,7 @@ func (e *email) validate(fsys fs.FS) (err error) {
 		}
 		e.Template[name] = tmpl
 	}
-	if e.Smtp != nil && e.Smtp.IsEnabled() {
+	if e.Smtp != nil && e.Smtp.Enabled {
 		if len(e.Smtp.Host) == 0 {
 			return errors.New("Missing required field in config: auth.email.smtp.host")
 		}
