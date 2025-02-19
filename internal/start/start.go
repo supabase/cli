@@ -294,9 +294,14 @@ EOF
 		case "unix":
 			if dindHost, err = client.ParseHostURL(client.DefaultDockerHost); err != nil {
 				return errors.Errorf("failed to parse default host: %w", err)
+			} else if strings.HasSuffix(parsed.Host, "/.docker/run/docker.sock") {
+				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires mounting default docker socket:", dindHost.Host)
+				binds = append(binds, fmt.Sprintf("%[1]s:%[1]s:ro", dindHost.Host))
+			} else {
+				// Podman and OrbStack can mount root-less socket without issue
+				binds = append(binds, fmt.Sprintf("%s:%s:ro", parsed.Host, dindHost.Host))
+				securityOpts = append(securityOpts, "label:disable")
 			}
-			binds = append(binds, fmt.Sprintf("%s:%s:ro", parsed.Host, dindHost.Host))
-			securityOpts = append(securityOpts, "label:disable")
 		}
 		if _, err := utils.DockerStart(
 			ctx,
