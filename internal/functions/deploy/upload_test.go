@@ -179,18 +179,15 @@ func TestDeployAll(t *testing.T) {
 		fsys := afero.FromIOFS{FS: testImports}
 		// Setup mock api
 		defer gock.OffAll()
-		body := api.V1BulkUpdateFunctionsJSONBody{}
 		for slug := range c {
 			gock.New(utils.DefaultApiHost).
 				Post("/v1/projects/"+flags.ProjectRef+"/functions/deploy").
 				MatchParam("slug", slug).
 				Reply(http.StatusCreated).
 				JSON(api.DeployFunctionResponse{Id: slug})
-			body = append(body, api.BulkUpdateFunctionBody{Id: slug})
 		}
 		gock.New(utils.DefaultApiHost).
 			Put("/v1/projects/" + flags.ProjectRef + "/functions").
-			JSON(body).
 			Reply(http.StatusOK).
 			JSON(api.BulkUpdateFunctionResponse{})
 		// Run test
