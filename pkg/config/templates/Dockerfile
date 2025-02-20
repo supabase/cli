@@ -13,7 +13,7 @@ FROM supabase/edge-runtime:v1.67.2
 FROM timberio/vector:0.28.1-alpine
 FROM supabase/supavisor:1.1.56
 FROM supabase/gotrue:v2.169.0
-FROM supabase/realtime:v2.34.7
+FROM supabase/realtime:v2.34.25
 FROM supabase/storage-api:v1.14.5
 FROM supabase/logflare:1.4.0
 
