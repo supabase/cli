@@ -8,7 +8,7 @@ FROM inbucket/inbucket:3.0.3 AS inbucket
 FROM postgrest/postgrest:v12.2.0 AS postgrest
 FROM supabase/postgres-meta:v0.84.2 AS pgmeta
 FROM supabase/studio:20250219-7101314 AS studio
-FROM darthsim/imgproxy:v3.8.0 AS imgproxy
+FROM darthsim/imgproxy:v3.27.2 AS imgproxy
 FROM supabase/edge-runtime:v1.67.2 AS edgeruntime
 FROM timberio/vector:0.28.1-alpine AS vector
 FROM supabase/supavisor:1.1.56 AS supavisor
