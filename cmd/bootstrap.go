@@ -23,10 +23,9 @@ var (
 	}
 
 	bootstrapCmd = &cobra.Command{
-		GroupID: groupQuickStart,
-		Use:     "bootstrap [template]",
-		Short:   "Bootstrap a Supabase project from a starter template",
-		Args:    cobra.MaximumNArgs(1),
+		Use:     "bootstrap",
+		Short:   "Bootstrap your project",
+		GroupID: "quick-start",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			if !viper.IsSet("WORKDIR") {
