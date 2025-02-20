@@ -13,7 +13,7 @@ FROM supabase/supavisor:1.1.56 AS supavisor
 FROM supabase/gotrue:v2.169.0 AS gotrue
 FROM supabase/realtime:v2.34.27 AS realtime
 FROM supabase/storage-api:v1.19.1 AS storage
-FROM supabase/logflare:1.4.0 AS logflare
+FROM supabase/logflare:1.11.0 AS logflare
 # Append to JobImages when adding new dependencies below
 FROM supabase/pgadmin-schema-diff:cli-0.0.5 AS differ
 FROM supabase/migra:3.0.1663481299 AS migra
