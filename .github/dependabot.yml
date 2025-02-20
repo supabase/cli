@@ -17,8 +17,6 @@ updates:
     schedule:
       interval: "daily"
     ignore:
-      - dependency-name: "supabase/postgres"
-        versions: ["< 15"]
       - dependency-name: "library/kong"
       - dependency-name: "inbucket/inbucket"
       - dependency-name: "darthsim/imgproxy"

@@ -1,6 +1,4 @@
 # Exposed for updates by .github/dependabot.yml
-FROM supabase/postgres:13.3.0 AS pg13
-FROM supabase/postgres:14.1.0.89 AS pg14
 FROM supabase/postgres:15.8.1.020 AS pg15
 # Append to ServiceImages when adding new dependencies below
 FROM library/kong:2.8.1 AS kong

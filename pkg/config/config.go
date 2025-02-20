@@ -720,9 +720,9 @@ func (c *config) Validate(fsys fs.FS) error {
 	case 12:
 		return errors.New("Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.")
 	case 13:
-		c.Db.Image = Images.Pg13
+		c.Db.Image = pg13
 	case 14:
-		c.Db.Image = Images.Pg14
+		c.Db.Image = pg14
 	case 15:
 		if len(c.Experimental.OrioleDBVersion) > 0 {
 			c.Db.Image = "supabase/postgres:orioledb-" + c.Experimental.OrioleDBVersion

@@ -8,9 +8,12 @@ import (
 	"github.com/mitchellh/mapstructure"
 )
 
+const (
+	pg13 = "supabase/postgres:13.3.0"
+	pg14 = "supabase/postgres:14.1.0.89"
+)
+
 type images struct {
-	Pg13 string `mapstructure:"pg13"`
-	Pg14 string `mapstructure:"pg14"`
 	Pg15 string `mapstructure:"pg15"`
 	// Append to Services when adding new dependencies below
 	Kong        string `mapstructure:"kong"`
