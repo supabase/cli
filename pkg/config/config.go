@@ -334,15 +334,15 @@ func NewConfig(editors ...ConfigEditor) config {
 	initial := config{baseConfig: baseConfig{
 		Hostname: "127.0.0.1",
 		Api: api{
-			Image:     postgrestImage,
-			KongImage: kongImage,
+			Image:     Images.Postgrest,
+			KongImage: Images.Kong,
 		},
 		Db: db{
-			Image:    Pg15Image,
+			Image:    Images.Pg15,
 			Password: "postgres",
 			RootKey:  "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
 			Pooler: pooler{
-				Image:         supavisorImage,
+				Image:         Images.Supavisor,
 				TenantId:      "pooler-dev",
 				EncryptionKey: "12345678901234567890123456789032",
 				SecretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
@@ -353,7 +353,7 @@ func NewConfig(editors ...ConfigEditor) config {
 			},
 		},
 		Realtime: realtime{
-			Image:           realtimeImage,
+			Image:           Images.Realtime,
 			IpVersion:       AddressIPv4,
 			MaxHeaderLength: 4096,
 			TenantId:        "realtime-dev",
@@ -361,8 +361,8 @@ func NewConfig(editors ...ConfigEditor) config {
 			SecretKeyBase:   "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
 		},
 		Storage: storage{
-			Image:         storageImage,
-			ImgProxyImage: imageProxyImage,
+			Image:         Images.Storage,
+			ImgProxyImage: Images.ImgProxy,
 			S3Credentials: storageS3Credentials{
 				AccessKeyId:     "625729a08b95bf1b7ff351a663f3a23c",
 				SecretAccessKey: "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907",
@@ -370,7 +370,7 @@ func NewConfig(editors ...ConfigEditor) config {
 			},
 		},
 		Auth: auth{
-			Image: gotrueImage,
+			Image: Images.Gotrue,
 			Email: email{
 				Template: map[string]emailTemplate{},
 			},
@@ -381,23 +381,23 @@ func NewConfig(editors ...ConfigEditor) config {
 			JwtSecret: defaultJwtSecret,
 		},
 		Inbucket: inbucket{
-			Image:      inbucketImage,
+			Image:      Images.Inbucket,
 			AdminEmail: "admin@email.com",
 			SenderName: "Admin",
 		},
 		Studio: studio{
-			Image:       studioImage,
-			PgmetaImage: pgmetaImage,
+			Image:       Images.Studio,
+			PgmetaImage: Images.Pgmeta,
 		},
 		Analytics: analytics{
-			Image:       logflareImage,
-			VectorImage: vectorImage,
+			Image:       Images.Logflare,
+			VectorImage: Images.Vector,
 			ApiKey:      "api-key",
 			// Defaults to bigquery for backwards compatibility with existing config.toml
 			Backend: LogflareBigQuery,
 		},
 		EdgeRuntime: edgeRuntime{
-			Image: edgeRuntimeImage,
+			Image: Images.EdgeRuntime,
 		},
 	}}
 	for _, apply := range editors {
@@ -595,31 +595,31 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	// Update image versions
 	if version, err := fs.ReadFile(fsys, builder.PostgresVersionPath); err == nil {
 		if strings.HasPrefix(string(version), "15.") && semver.Compare(string(version[3:]), "1.0.55") >= 0 {
-			c.Db.Image = replaceImageTag(Pg15Image, string(version))
+			c.Db.Image = replaceImageTag(Images.Pg15, string(version))
 		}
 	}
 	if c.Db.MajorVersion > 14 {
 		if version, err := fs.ReadFile(fsys, builder.RestVersionPath); err == nil && len(version) > 0 {
-			c.Api.Image = replaceImageTag(postgrestImage, string(version))
+			c.Api.Image = replaceImageTag(Images.Postgrest, string(version))
 		}
 		if version, err := fs.ReadFile(fsys, builder.StorageVersionPath); err == nil && len(version) > 0 {
-			c.Storage.Image = replaceImageTag(storageImage, string(version))
+			c.Storage.Image = replaceImageTag(Images.Storage, string(version))
 		}
 		if version, err := fs.ReadFile(fsys, builder.GotrueVersionPath); err == nil && len(version) > 0 {
-			c.Auth.Image = replaceImageTag(gotrueImage, string(version))
+			c.Auth.Image = replaceImageTag(Images.Gotrue, string(version))
 		}
 	}
 	if version, err := fs.ReadFile(fsys, builder.PoolerVersionPath); err == nil && len(version) > 0 {
-		c.Db.Pooler.Image = replaceImageTag(supavisorImage, string(version))
+		c.Db.Pooler.Image = replaceImageTag(Images.Supavisor, string(version))
 	}
 	if version, err := fs.ReadFile(fsys, builder.RealtimeVersionPath); err == nil && len(version) > 0 {
-		c.Realtime.Image = replaceImageTag(realtimeImage, string(version))
+		c.Realtime.Image = replaceImageTag(Images.Realtime, string(version))
 	}
 	if version, err := fs.ReadFile(fsys, builder.StudioVersionPath); err == nil && len(version) > 0 {
-		c.Studio.Image = replaceImageTag(studioImage, string(version))
+		c.Studio.Image = replaceImageTag(Images.Studio, string(version))
 	}
 	if version, err := fs.ReadFile(fsys, builder.PgmetaVersionPath); err == nil && len(version) > 0 {
-		c.Studio.PgmetaImage = replaceImageTag(pgmetaImage, string(version))
+		c.Studio.PgmetaImage = replaceImageTag(Images.Pgmeta, string(version))
 	}
 	// TODO: replace derived config resolution with viper decode hooks
 	if err := c.baseConfig.resolve(builder, fsys); err != nil {
@@ -720,9 +720,9 @@ func (c *config) Validate(fsys fs.FS) error {
 	case 12:
 		return errors.New("Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.")
 	case 13:
-		c.Db.Image = pg13Image
+		c.Db.Image = Images.Pg13
 	case 14:
-		c.Db.Image = pg14Image
+		c.Db.Image = Images.Pg14
 	case 15:
 		if len(c.Experimental.OrioleDBVersion) > 0 {
 			c.Db.Image = "supabase/postgres:orioledb-" + c.Experimental.OrioleDBVersion

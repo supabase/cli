@@ -1117,7 +1117,7 @@ func isContainerExcluded(imageName string, excluded map[string]bool) bool {
 
 func ExcludableContainers() []string {
 	names := []string{}
-	for _, image := range config.ServiceImages {
+	for _, image := range config.Images.Services() {
 		names = append(names, utils.ShortContainerImageName(image))
 	}
 	return names

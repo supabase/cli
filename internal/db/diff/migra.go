@@ -26,7 +26,7 @@ func DiffSchemaMigra(ctx context.Context, source, target string, schema []string
 	if err := utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
-			Image: config.MigraImage,
+			Image: config.Images.Migra,
 			Env:   env,
 			Cmd:   cmd,
 		},

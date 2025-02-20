@@ -104,7 +104,7 @@ func TestDatabaseStart(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
 			Reply(http.StatusOK).
 			JSON(types.ImageInspect{})
-		for _, image := range config.ServiceImages {
+		for _, image := range config.Images.Services() {
 			service := utils.GetRegistryImageUrl(image)
 			gock.New(utils.Docker.DaemonHost()).
 				Get("/v" + utils.Docker.ClientVersion() + "/images/" + service + "/json").
