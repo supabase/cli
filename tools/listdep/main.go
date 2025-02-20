@@ -11,7 +11,7 @@ import (
 
 func main() {
 	external := make([]string, 0)
-	for _, img := range config.ServiceImages {
+	for _, img := range config.Images.Services() {
 		if !strings.HasPrefix(img, "supabase/") ||
 			strings.HasPrefix(img, "supabase/logflare") {
 			external = append(external, img)

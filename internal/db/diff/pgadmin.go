@@ -80,7 +80,7 @@ func DiffSchemaPgAdmin(ctx context.Context, source, target string, schema []stri
 	if len(schema) == 0 {
 		if err := utils.DockerRunOnceWithStream(
 			ctx,
-			config.DifferImage,
+			config.Images.Differ,
 			nil,
 			args,
 			stream.Stdout(),
@@ -93,7 +93,7 @@ func DiffSchemaPgAdmin(ctx context.Context, source, target string, schema []stri
 		p.Send(utils.StatusMsg("Diffing schema: " + s))
 		if err := utils.DockerRunOnceWithStream(
 			ctx,
-			config.DifferImage,
+			config.Images.Differ,
 			nil,
 			append([]string{"--schema", s}, args...),
 			stream.Stdout(),

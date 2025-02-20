@@ -79,7 +79,7 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 	return utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
-			Image: cliConfig.PgProveImage,
+			Image: cliConfig.Images.PgProve,
 			Env: []string{
 				"PGHOST=" + config.Host,
 				fmt.Sprintf("PGPORT=%d", config.Port),
