@@ -4,7 +4,7 @@ FROM supabase/postgres:15.8.1.020 AS pg15
 FROM library/kong:2.8.1 AS kong
 FROM inbucket/inbucket:3.0.3 AS inbucket
 FROM postgrest/postgrest:v12.2.0 AS postgrest
-FROM supabase/postgres-meta:v0.84.2 AS pgmeta
+FROM supabase/postgres-meta:v0.86.0 AS pgmeta
 FROM supabase/studio:20250219-7101314 AS studio
 FROM darthsim/imgproxy:v3.8.0 AS imgproxy
 FROM supabase/edge-runtime:v1.67.2 AS edgeruntime
