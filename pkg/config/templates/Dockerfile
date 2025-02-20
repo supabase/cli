@@ -4,7 +4,7 @@ FROM supabase/postgres:15.8.1.020
 
 # Append to ServiceImages when adding new dependencies below
 FROM library/kong:2.8.1
-FROM inbucket/inbucket:3.0.3
+FROM inbucket/inbucket:3.0.4
 FROM postgrest/postgrest:v12.2.0
 FROM supabase/postgres-meta:v0.84.2
 FROM supabase/studio:20250219-7101314
