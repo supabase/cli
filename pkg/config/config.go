@@ -171,6 +171,7 @@ type (
 	// Common config fields between our "base" config and any "remote" branch specific
 	baseConfig struct {
 		ProjectId    string         `toml:"project_id"`
+		PinVersions  bool           `toml:"pin_service_versions"`
 		Hostname     string         `toml:"-"`
 		Api          api            `toml:"api"`
 		Db           db             `toml:"db" mapstructure:"db"`
@@ -592,7 +593,18 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		}
 		c.Api.ExternalUrl = apiUrl.String()
 	}
-	// Update image versions
+	// TODO: replace derived config resolution with viper decode hooks
+	c.baseConfig.resolveVersions(builder, fsys)
+	if err := c.baseConfig.resolvePaths(builder, fsys); err != nil {
+		return err
+	}
+	return c.Validate(fsys)
+}
+
+func (c *baseConfig) resolveVersions(builder pathBuilder, fsys fs.FS) {
+	if c.PinVersions {
+		return
+	}
 	if version, err := fs.ReadFile(fsys, builder.PostgresVersionPath); err == nil {
 		if strings.HasPrefix(string(version), "15.") && semver.Compare(string(version[3:]), "1.0.55") >= 0 {
 			c.Db.Image = replaceImageTag(Pg15Image, string(version))
@@ -621,14 +633,9 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if version, err := fs.ReadFile(fsys, builder.PgmetaVersionPath); err == nil && len(version) > 0 {
 		c.Studio.PgmetaImage = replaceImageTag(pgmetaImage, string(version))
 	}
-	// TODO: replace derived config resolution with viper decode hooks
-	if err := c.baseConfig.resolve(builder, fsys); err != nil {
-		return err
-	}
-	return c.Validate(fsys)
 }
 
-func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
+func (c *baseConfig) resolvePaths(builder pathBuilder, fsys fs.FS) error {
 	// Update content paths
 	for name, tmpl := range c.Auth.Email.Template {
 		// FIXME: only email template is relative to repo directory

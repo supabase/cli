@@ -3,6 +3,8 @@
 # A string used to distinguish different Supabase projects on the same host. Defaults to the
 # working directory name when running `supabase init`.
 project_id = "test"
+# If enabled, CLI will only use the pinned service images for local development.
+pin_service_versions = false
 
 [api]
 enabled = true
