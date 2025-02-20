@@ -6,7 +6,7 @@ FROM supabase/postgres:15.8.1.020
 FROM library/kong:2.8.1
 FROM inbucket/inbucket:3.0.4
 FROM postgrest/postgrest:v12.2.0
-FROM supabase/postgres-meta:v0.84.2
+FROM supabase/postgres-meta:v0.86.0
 FROM supabase/studio:20250219-7101314
 FROM darthsim/imgproxy:v3.8.0
 FROM supabase/edge-runtime:v1.67.2
