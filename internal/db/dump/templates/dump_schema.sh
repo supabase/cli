@@ -32,7 +32,7 @@ pg_dump \
 | sed -E 's/^CREATE VIEW "/CREATE OR REPLACE VIEW "/' \
 | sed -E 's/^CREATE FUNCTION "/CREATE OR REPLACE FUNCTION "/' \
 | sed -E 's/^CREATE TRIGGER "/CREATE OR REPLACE TRIGGER "/' \
-| sed -E 's/^CREATE PUBLICATION "supabase_realtime"/-- &/' \
+| sed -E 's/^CREATE PUBLICATION "supabase_realtime/-- &/' \
 | sed -E 's/^CREATE EVENT TRIGGER /-- &/' \
 | sed -E 's/^         WHEN TAG IN /-- &/' \
 | sed -E 's/^   EXECUTE FUNCTION /-- &/' \
