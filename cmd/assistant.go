@@ -98,3 +98,17 @@ func newAssistantSchemaCmd() *cobra.Command {
 		},
 	}
 }
+
+func newAssistantCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "assistant",
+		Short: "DNA CLI assistant for database design and normalization",
+	}
+
+	cmd.AddCommand(
+		newAssistantChatCmd(),
+		// Migration commands removed - these belong in main CLI
+	)
+
+	return cmd
+}
