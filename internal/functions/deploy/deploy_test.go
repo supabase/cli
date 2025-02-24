@@ -31,6 +31,10 @@ func TestDeployCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
+
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, slug, "index.ts"), []byte{}, 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, slug+"-2", "index.ts"), []byte{}, 0644))
+
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
@@ -120,6 +124,47 @@ import_map = "./import_map.json"
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
+	t.Run("deploys functions with main.ts as entrypoint", func(t *testing.T) {
+		t.Cleanup(func() { clear(utils.Config.Functions) })
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+
+		// Setup function entrypoint
+		entrypointPath := filepath.Join(utils.FunctionsDir, slug, "main.ts")
+		require.NoError(t, afero.WriteFile(fsys, entrypointPath, []byte{}, 0644))
+
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Setup valid deno path
+		_, err := fsys.Create(utils.DenoPathOverride)
+		require.NoError(t, err)
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + flags.ProjectRef + "/functions").
+			Reply(http.StatusOK).
+			JSON([]api.FunctionResponse{})
+		gock.New(utils.DefaultApiHost).
+			Post("/v1/projects/"+flags.ProjectRef+"/functions").
+			MatchParam("slug", slug).
+			ParamPresent("import_map_path").
+			Reply(http.StatusCreated).
+			JSON(api.FunctionResponse{Id: "1"})
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
+		// Setup output file
+		outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
+		// Run test
+		err = Run(context.Background(), []string{slug}, true, nil, "", 1, fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
 	t.Run("skip disabled functions from config", func(t *testing.T) {
 		t.Cleanup(func() { clear(utils.Config.Functions) })
 		// Setup in-memory fs
@@ -188,6 +233,47 @@ import_map = "./import_map.json"
 		err := Run(context.Background(), nil, true, nil, "", 1, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "No Functions specified or found in supabase/functions")
+	})
+
+	t.Run("throws error on missing entrypoint", func(t *testing.T) {
+		t.Cleanup(func() { clear(utils.Config.Functions) })
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+
+		// Setup function entrypoint
+		entrypointPath := filepath.Join(utils.FunctionsDir, slug, "not-entrypoint.ts")
+		require.NoError(t, afero.WriteFile(fsys, entrypointPath, []byte{}, 0644))
+
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Setup valid deno path
+		_, err := fsys.Create(utils.DenoPathOverride)
+		require.NoError(t, err)
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + flags.ProjectRef + "/functions").
+			Reply(http.StatusOK).
+			JSON([]api.FunctionResponse{})
+		gock.New(utils.DefaultApiHost).
+			Post("/v1/projects/"+flags.ProjectRef+"/functions").
+			MatchParam("slug", slug).
+			ParamPresent("import_map_path").
+			Reply(http.StatusCreated).
+			JSON(api.FunctionResponse{Id: "1"})
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
+		// Setup output file
+		outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
+		// Run test
+		err = Run(context.Background(), []string{slug}, true, nil, "", 1, fsys)
+		// Check error
+		assert.ErrorContains(t, err, "Cannot find a valid entrypoint file")
 	})
 
 	t.Run("verify_jwt param falls back to config", func(t *testing.T) {
@@ -283,6 +369,10 @@ func TestImportMapPath(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
+
+		// Write function entrypoints
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "test", "index.ts"), []byte{}, 0644))
+
 		// Run test
 		fc, err := GetFunctionConfig([]string{"test"}, "", nil, fsys)
 		// Check error
@@ -299,6 +389,10 @@ func TestImportMapPath(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
+
+		// Write function entrypoints
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, slug, "index.ts"), []byte{}, 0644))
+
 		// Run test
 		fc, err := GetFunctionConfig([]string{slug}, "", nil, fsys)
 		// Check error
@@ -319,6 +413,9 @@ func TestImportMapPath(t *testing.T) {
 		require.NoError(t, afero.WriteFile(fsys, customImportMapPath, []byte("{}"), 0644))
 		// Create fallback import map to test precedence order
 		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
+		// Write function entrypoints
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, slug, "index.ts"), []byte{}, 0644))
+
 		// Run test
 		fc, err := GetFunctionConfig([]string{slug}, customImportMapPath, cast.Ptr(false), fsys)
 		// Check error
@@ -329,6 +426,10 @@ func TestImportMapPath(t *testing.T) {
 	t.Run("returns empty string if no fallback", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+
+		// Write function entrypoints
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "test", "index.ts"), []byte{}, 0644))
+
 		// Run test
 		fc, err := GetFunctionConfig([]string{"test"}, "", nil, fsys)
 		// Check error
@@ -341,6 +442,10 @@ func TestImportMapPath(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
+
+		// Write function entrypoints
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "test", "index.ts"), []byte{}, 0644))
+
 		// Run test
 		fc, err := GetFunctionConfig([]string{"test"}, path, nil, fsys)
 		// Check error

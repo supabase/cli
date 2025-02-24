@@ -54,7 +54,7 @@ func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool,
 }
 
 func GetFunctionSlugs(fsys afero.Fs) (slugs []string, err error) {
-	pattern := filepath.Join(utils.FunctionsDir, "*", "index.ts")
+	pattern := filepath.Join(utils.FunctionsDir, "*", "*.ts")
 	paths, err := afero.Glob(fsys, pattern)
 	if err != nil {
 		return nil, errors.Errorf("failed to glob function slugs: %w", err)
@@ -97,7 +97,15 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 		// Precedence order: flag > config > fallback
 		functionDir := filepath.Join(utils.FunctionsDir, name)
 		if len(function.Entrypoint) == 0 {
-			function.Entrypoint = filepath.Join(functionDir, "index.ts")
+			indexEntrypoint := filepath.Join(functionDir, "index.ts")
+			mainEntrypoint := filepath.Join(functionDir, "main.ts")
+			if _, err := fsys.Stat(indexEntrypoint); err == nil {
+				function.Entrypoint = indexEntrypoint
+			} else if _, err := fsys.Stat(mainEntrypoint); err == nil {
+				function.Entrypoint = mainEntrypoint
+			} else {
+				return nil, errors.Errorf("Cannot find a valid entrypoint file (index.ts or main.ts) for the function. Set the custom entrypoint path in config.toml")
+			}
 		}
 		if len(importMapPath) > 0 {
 			function.ImportMap = importMapPath
