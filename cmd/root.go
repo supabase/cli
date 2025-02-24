@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -15,6 +16,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/debug"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"golang.org/x/mod/semver"
@@ -114,7 +116,7 @@ var (
 			}
 			// Prepare context
 			if viper.GetBool("DEBUG") {
-				ctx = utils.WithTraceContext(ctx)
+				http.DefaultTransport = debug.NewTransport()
 				fmt.Fprintln(os.Stderr, cmd.Root().Short)
 			}
 			cmd.SetContext(ctx)
