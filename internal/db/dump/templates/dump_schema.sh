@@ -38,6 +38,7 @@ pg_dump \
 | sed -E 's/^   EXECUTE FUNCTION /-- &/' \
 | sed -E 's/^ALTER EVENT TRIGGER /-- &/' \
 | sed -E 's/^ALTER FOREIGN DATA WRAPPER (.+) OWNER TO /-- &/' \
+| sed -E 's/^ALTER PUBLICATION (.+) OWNER TO "supabase_admin"/-- &/' \
 | sed -E 's/^ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin"/-- &/' \
 | sed -E "s/^GRANT (.+) ON (.+) \"(${EXCLUDED_SCHEMAS:-})\"/-- &/" \
 | sed -E "s/^REVOKE (.+) ON (.+) \"(${EXCLUDED_SCHEMAS:-})\"/-- &/" \
