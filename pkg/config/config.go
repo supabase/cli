@@ -609,6 +609,9 @@ func (c *config) Load(path string, fsys fs.FS) error {
 			c.Auth.Image = replaceImageTag(Images.Gotrue, string(version))
 		}
 	}
+	if version, err := fs.ReadFile(fsys, builder.FunctionVersionPath); err == nil && len(version) > 0 {
+		c.EdgeRuntime.Image = replaceImageTag(Images.EdgeRuntime, string(version))
+	}
 	if version, err := fs.ReadFile(fsys, builder.PoolerVersionPath); err == nil && len(version) > 0 {
 		c.Db.Pooler.Image = replaceImageTag(Images.Supavisor, string(version))
 	}
