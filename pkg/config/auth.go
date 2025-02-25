@@ -143,17 +143,17 @@ type (
 		MaxFrequency         time.Duration            `toml:"max_frequency"`
 		OtpLength            uint                     `toml:"otp_length"`
 		OtpExpiry            uint                     `toml:"otp_expiry"`
-		RateLimitEmailSent   *uint                    `toml:"rate_limit_email_sent"`
 	}
 
 	smtp struct {
-		Enabled    bool   `toml:"enabled"`
-		Host       string `toml:"host"`
-		Port       uint16 `toml:"port"`
-		User       string `toml:"user"`
-		Pass       Secret `toml:"pass"`
-		AdminEmail string `toml:"admin_email"`
-		SenderName string `toml:"sender_name"`
+		Enabled            bool   `toml:"enabled"`
+		Host               string `toml:"host"`
+		Port               uint16 `toml:"port"`
+		User               string `toml:"user"`
+		Pass               Secret `toml:"pass"`
+		AdminEmail         string `toml:"admin_email"`
+		SenderName         string `toml:"sender_name"`
+		RateLimitEmailSent *uint  `toml:"rate_limit_email_sent"`
 	}
 
 	emailTemplate struct {
@@ -502,11 +502,6 @@ func (e email) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.SecurityUpdatePasswordRequireReauthentication = &e.SecurePasswordChange
 	body.SmtpMaxFrequency = cast.Ptr(int(e.MaxFrequency.Seconds()))
 
-	// Add email rate limit
-	if e.RateLimitEmailSent != nil {
-		body.RateLimitEmailSent = cast.UintToIntPtr(e.RateLimitEmailSent)
-	}
-
 	// When local config is not set, we assume platform defaults should not change
 	if e.Smtp != nil {
 		e.Smtp.toAuthConfigBody(body)
@@ -543,12 +538,6 @@ func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	e.OtpExpiry = cast.IntToUint(remoteConfig.MailerOtpExp)
 	e.SecurePasswordChange = cast.Val(remoteConfig.SecurityUpdatePasswordRequireReauthentication, false)
 	e.MaxFrequency = time.Duration(cast.Val(remoteConfig.SmtpMaxFrequency, 0)) * time.Second
-
-	// Get email rate limit
-	if remoteConfig.RateLimitEmailSent != nil {
-		val := cast.IntToUint(*remoteConfig.RateLimitEmailSent)
-		e.RateLimitEmailSent = &val
-	}
 
 	e.Smtp.fromAuthConfig(remoteConfig)
 	if len(e.Template) == 0 {
@@ -624,6 +613,11 @@ func (s smtp) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	}
 	body.SmtpAdminEmail = &s.AdminEmail
 	body.SmtpSenderName = &s.SenderName
+
+	// Add email rate limit
+	if s.RateLimitEmailSent != nil {
+		body.RateLimitEmailSent = cast.UintToIntPtr(s.RateLimitEmailSent)
+	}
 }
 
 func (s *smtp) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
@@ -642,6 +636,12 @@ func (s *smtp) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 		portStr := cast.Val(remoteConfig.SmtpPort, "0")
 		if port, err := strconv.ParseUint(portStr, 10, 16); err == nil {
 			s.Port = uint16(port)
+		}
+
+		// Get email rate limit
+		if remoteConfig.RateLimitEmailSent != nil {
+			val := cast.IntToUint(*remoteConfig.RateLimitEmailSent)
+			s.RateLimitEmailSent = &val
 		}
 	}
 	// Api resets all values when SMTP is disabled

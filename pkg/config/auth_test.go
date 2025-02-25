@@ -1211,7 +1211,10 @@ func TestEmailRateLimit(t *testing.T) {
 		// Setup auth with email rate limit
 		c := newWithDefaults()
 		emailLimit := uint(25)
-		c.Email.RateLimitEmailSent = &emailLimit
+		c.Email.Smtp = &smtp{
+			Enabled:            true,
+			RateLimitEmailSent: &emailLimit,
+		}
 
 		// Create API request body
 		body := v1API.UpdateAuthConfigBody{}
@@ -1221,17 +1224,24 @@ func TestEmailRateLimit(t *testing.T) {
 		assert.Equal(t, 25, *body.RateLimitEmailSent)
 
 		// Test FromAuthConfig
-		e := email{}
+		e := email{
+			Smtp: &smtp{
+				Enabled: true,
+			},
+		}
 		e.fromAuthConfig(v1API.AuthConfigResponse{
 			RateLimitEmailSent: cast.Ptr(25),
 		})
 
-		assert.Equal(t, uint(25), *e.RateLimitEmailSent)
+		assert.Equal(t, uint(25), *e.Smtp.RateLimitEmailSent)
 	})
 
 	t.Run("rate limit not specified", func(t *testing.T) {
 		// Setup auth without email rate limit
 		c := newWithDefaults()
+		c.Email.Smtp = &smtp{
+			Enabled: true,
+		}
 
 		// Create API request body
 		body := v1API.UpdateAuthConfigBody{}
@@ -1241,10 +1251,14 @@ func TestEmailRateLimit(t *testing.T) {
 		assert.Nil(t, body.RateLimitEmailSent)
 
 		// Test FromAuthConfig
-		e := email{}
+		e := email{
+			Smtp: &smtp{
+				Enabled: true,
+			},
+		}
 		e.fromAuthConfig(v1API.AuthConfigResponse{})
 
-		assert.Nil(t, e.RateLimitEmailSent)
+		assert.Nil(t, e.Smtp.RateLimitEmailSent)
 	})
 }
 
@@ -1309,7 +1323,10 @@ func TestRateLimitsDiff(t *testing.T) {
 		c.RateLimitTokenRefresh = &tokenRefreshLimit
 		c.RateLimitOtp = &otpLimit
 		c.RateLimitVerify = &verifyLimit
-		c.Email.RateLimitEmailSent = &emailLimit
+		c.Email.Smtp = &smtp{
+			Enabled:            true,
+			RateLimitEmailSent: &emailLimit,
+		}
 		c.Sms.RateLimitSmsSent = &smsLimit
 
 		// Run test
@@ -1341,7 +1358,10 @@ func TestRateLimitsDiff(t *testing.T) {
 		c.RateLimitTokenRefresh = &tokenRefreshLimit
 		c.RateLimitOtp = &otpLimit
 		c.RateLimitVerify = &verifyLimit
-		c.Email.RateLimitEmailSent = &emailLimit
+		c.Email.Smtp = &smtp{
+			Enabled:            true,
+			RateLimitEmailSent: &emailLimit,
+		}
 		c.Sms.RateLimitSmsSent = &smsLimit
 
 		// Run test with different remote values
@@ -1381,7 +1401,10 @@ func TestRateLimitsDiff(t *testing.T) {
 		c.RateLimitTokenRefresh = &tokenRefreshLimit
 		c.RateLimitOtp = &otpLimit
 		c.RateLimitVerify = &verifyLimit
-		c.Email.RateLimitEmailSent = &emailLimit
+		c.Email.Smtp = &smtp{
+			Enabled:            true,
+			RateLimitEmailSent: &emailLimit,
+		}
 		c.Sms.RateLimitSmsSent = &smsLimit
 
 		// Create a remote config with some other values to ensure a diff

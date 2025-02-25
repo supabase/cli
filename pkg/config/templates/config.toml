@@ -158,8 +158,6 @@ max_frequency = "1s"
 otp_length = 6
 # Number of seconds before the email OTP expires (defaults to 1 hour).
 otp_expiry = 3600
-# Rate limit for email sending requests per hour
-rate_limit_email_sent = 2
 
 # Use a production-ready SMTP server
 # [auth.email.smtp]
@@ -170,6 +168,8 @@ rate_limit_email_sent = 2
 # pass = "env(SENDGRID_API_KEY)"
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
+# Rate limit for email sending requests per hour
+# rate_limit_email_sent = 2
 
 # Uncomment to customize email template
 # [auth.email.template.invite]
