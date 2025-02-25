@@ -384,6 +384,54 @@ func TestLoadEnv(t *testing.T) {
 	assert.Equal(t, "test-root-key", config.Db.RootKey)
 }
 
+func TestLoadFunctionEntrypoint(t *testing.T) {
+	t.Run("uses custom entrypoint when defined", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+			project_id = "bvikqvbczudanvggcord"
+			[functions.hello]
+			entrypoint = "./functions/hello/foo.ts"
+			`)},
+			"supabase/functions/hello/foo.ts": &fs.MapFile{},
+		}
+		// Run test
+		assert.NoError(t, config.Load("", fsys))
+		// Check that deno.json was set as import map
+		assert.Equal(t, "supabase/functions/hello/foo.ts", config.Functions["hello"].Entrypoint)
+	})
+
+	t.Run("set index.ts as the entrypoint when file is present and no explicit entrypoint set", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+			project_id = "bvikqvbczudanvggcord"
+			[functions.hello]
+			`)},
+			"supabase/functions/hello/index.ts": &fs.MapFile{},
+		}
+		// Run test
+		assert.NoError(t, config.Load("", fsys))
+		// Check that deno.json was set as import map
+		assert.Equal(t, "supabase/functions/hello/index.ts", config.Functions["hello"].Entrypoint)
+	})
+
+	t.Run("set main.ts as the entrypoint when file is present and no explicit entrypoint set", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+			project_id = "bvikqvbczudanvggcord"
+			[functions.hello]
+			`)},
+			"supabase/functions/hello/main.ts": &fs.MapFile{},
+		}
+		// Run test
+		assert.NoError(t, config.Load("", fsys))
+		// Check that deno.json was set as import map
+		assert.Equal(t, "supabase/functions/hello/main.ts", config.Functions["hello"].Entrypoint)
+	})
+}
+
 func TestLoadFunctionImportMap(t *testing.T) {
 	t.Run("uses deno.json as import map when present", func(t *testing.T) {
 		config := NewConfig()

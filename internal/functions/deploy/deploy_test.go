@@ -289,6 +289,10 @@ verify_jwt = false
 `)
 		require.NoError(t, err)
 		require.NoError(t, f.Close())
+
+		// Setup function entrypoint
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, slug, "index.ts"), []byte{}, 0644))
+
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
@@ -332,6 +336,10 @@ verify_jwt = false
 `)
 		require.NoError(t, err)
 		require.NoError(t, f.Close())
+
+		// Setup function entrypoint
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, slug, "index.ts"), []byte{}, 0644))
+
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))

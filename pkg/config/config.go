@@ -654,7 +654,13 @@ func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 	// Resolve functions config
 	for slug, function := range c.Functions {
 		if len(function.Entrypoint) == 0 {
-			function.Entrypoint = filepath.Join(builder.FunctionsDir, slug, "index.ts")
+			indexEntrypoint := filepath.Join(builder.FunctionsDir, slug, "index.ts")
+			mainEntrypoint := filepath.Join(builder.FunctionsDir, slug, "main.ts")
+			if _, err := fs.Stat(fsys, indexEntrypoint); err == nil {
+				function.Entrypoint = indexEntrypoint
+			} else if _, err := fs.Stat(fsys, mainEntrypoint); err == nil {
+				function.Entrypoint = mainEntrypoint
+			}
 		} else if !filepath.IsAbs(function.Entrypoint) {
 			// Append supabase/ because paths in configs are specified relative to config.toml
 			function.Entrypoint = filepath.Join(builder.SupabaseDirPath, function.Entrypoint)
