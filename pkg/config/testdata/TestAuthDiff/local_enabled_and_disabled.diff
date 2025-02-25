@@ -24,5 +24,5 @@ diff remote[auth] local[auth]
 +minimum_password_length = 6
 +password_requirements = "lower_upper_letters_digits_symbols"
  
- [hook]
+ [rate_limit]
  

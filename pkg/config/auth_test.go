@@ -1377,19 +1377,48 @@ func TestRateLimitsDiff(t *testing.T) {
 		c.RateLimit.EmailSent = &emailLimit
 		c.RateLimit.SmsSent = &smsLimit
 
+		// Configure email to make sure email section appears
+		c.Email.Smtp = &smtp{
+			Enabled: true,
+			Host:    "smtp.example.com",
+		}
+
+		c.Email.EnableSignup = true
+		// Configure SMS to make sure SMS section appears
+		c.Sms.EnableSignup = true
+
 		// Run test with no remote rate limits
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			// Remote has no rate limits or SMTP configuration
+			// Remote has no rate limits but needs these fields to make certain sections appear
+			SmtpHost:             cast.Ptr("smtp.example.com"),
+			ExternalEmailEnabled: cast.Ptr(true),
+			ExternalPhoneEnabled: cast.Ptr(true),
 		})
 
 		// Check error
 		assert.NoError(t, err)
 		assert.NotEmpty(t, string(diff))
+
+		// For creating a snapshot file
+		snapshot := filepath.Join("testdata", filepath.FromSlash(t.Name())) + ".diff"
+		if _, err := os.Stat(snapshot); os.IsNotExist(err) {
+			assert.NoError(t, os.MkdirAll(filepath.Dir(snapshot), 0755))
+			assert.NoError(t, os.WriteFile(snapshot, diff, 0600))
+		}
 	})
 
 	t.Run("remote has rate limits but local doesn't", func(t *testing.T) {
 		// Setup auth without rate limits
 		c := newWithDefaults()
+
+		// Configure email to make sure email section appears
+		c.Email.Smtp = &smtp{
+			Enabled: true,
+			Host:    "smtp.example.com",
+		}
+		c.Email.EnableSignup = true
+		// Configure SMS to make sure SMS section appears
+		c.Sms.EnableSignup = true
 
 		// Run test with remote rate limits
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
@@ -1399,6 +1428,10 @@ func TestRateLimitsDiff(t *testing.T) {
 			RateLimitVerify:         cast.Ptr(50),
 			RateLimitEmailSent:      cast.Ptr(25),
 			RateLimitSmsSent:        cast.Ptr(35),
+			// Add required fields to make relevant sections appear in the diff
+			SmtpHost:             cast.Ptr("smtp.example.com"),
+			ExternalEmailEnabled: cast.Ptr(true),
+			ExternalPhoneEnabled: cast.Ptr(true),
 		})
 
 		// Check error
