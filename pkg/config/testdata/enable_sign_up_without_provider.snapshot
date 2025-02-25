@@ -1,0 +1,12 @@
+diff remote[auth] local[auth]
+--- remote[auth]
++++ local[auth]
+@@ -40,7 +40,7 @@
+ otp_expiry = 0
+ 
+ [sms]
+-enable_signup = false
++enable_signup = true
+ enable_confirmations = false
+ template = ""
+ max_frequency = "0s"

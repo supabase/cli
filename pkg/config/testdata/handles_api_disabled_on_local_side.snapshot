@@ -1,0 +1,9 @@
+diff remote[api] local[api]
+--- remote[api]
++++ local[api]
+@@ -1,4 +1,4 @@
+-enabled = true
++enabled = false
+ schemas = ["public"]
+ extra_search_path = ["public"]
+ max_rows = 500

@@ -1,0 +1,16 @@
+diff remote[auth] local[auth]
+--- remote[auth]
++++ local[auth]
+@@ -10,9 +10,9 @@
+ password_requirements = ""
+ 
+ [captcha]
+-enabled = false
+-provider = "hcaptcha"
+-secret = "hash:ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"
++enabled = true
++provider = "turnstile"
++secret = "hash:ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e"
+ 
+ [hook]
+ 

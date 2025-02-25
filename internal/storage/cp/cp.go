@@ -132,6 +132,8 @@ func UploadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remoteP
 		if err != nil {
 			return errors.Errorf("failed to resolve relative path: %w", err)
 		}
+		// Convert to forward slashes for URL paths
+		relPath = filepath.ToSlash(relPath)
 		dstPath := remotePath
 		// Copying single file
 		if relPath == "." {
