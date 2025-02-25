@@ -127,6 +127,15 @@ minimum_password_length = 6
 # are: `letters_digits`, `lower_upper_letters_digits`, `lower_upper_letters_digits_symbols`
 password_requirements = ""
 
+# Rate limit for unauthenticated requests per minute
+rate_limit_anonymous_users = 30
+# Rate limit for token refresh requests per minute
+rate_limit_token_refresh = 150
+# Rate limit for OTP generation requests per minute
+rate_limit_otp = 30
+# Rate limit for verification requests per minute
+rate_limit_verify = 30
+
 # Configure one of the supported captcha providers: `hcaptcha`, `turnstile`.
 # [auth.captcha]
 # enabled = true
@@ -149,6 +158,8 @@ max_frequency = "1s"
 otp_length = 6
 # Number of seconds before the email OTP expires (defaults to 1 hour).
 otp_expiry = 3600
+# Rate limit for email sending requests per hour
+rate_limit_email_sent = 2
 
 # Use a production-ready SMTP server
 # [auth.email.smtp]
@@ -174,6 +185,8 @@ enable_confirmations = false
 template = "Your code is {{ `{{ .Code }}` }}"
 # Controls the minimum amount of time that must pass before sending another sms otp.
 max_frequency = "5s"
+# Rate limit for SMS sending requests per hour
+rate_limit_sms_sent = 30
 
 # Use pre-defined map of phone number to OTP for testing.
 # [auth.sms.test_otp]
