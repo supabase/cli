@@ -104,7 +104,7 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 			} else if _, err := fsys.Stat(mainEntrypoint); err == nil {
 				function.Entrypoint = mainEntrypoint
 			} else {
-				return nil, errors.Errorf("Cannot find a valid entrypoint file (index.ts or main.ts) for the function. Set the custom entrypoint path in config.toml")
+				return nil, errors.Errorf("Cannot find a valid entrypoint file (index.ts or main.ts) for the '%s' function. Set the custom entrypoint path in config.toml", name)
 			}
 		}
 		if len(importMapPath) > 0 {
