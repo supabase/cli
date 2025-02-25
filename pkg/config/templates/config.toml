@@ -127,14 +127,20 @@ minimum_password_length = 6
 # are: `letters_digits`, `lower_upper_letters_digits`, `lower_upper_letters_digits_symbols`
 password_requirements = ""
 
+[auth.rate_limit]
+# Rate limit for email sending requests per hour
+# email_sent = 2
 # Rate limit for unauthenticated requests per minute
-rate_limit_anonymous_users = 30
+anonymous_users = 30
 # Rate limit for token refresh requests per minute
-rate_limit_token_refresh = 150
+token_refresh = 150
 # Rate limit for OTP generation requests per minute
-rate_limit_otp = 30
+otp = 30
 # Rate limit for verification requests per minute
-rate_limit_verify = 30
+verify = 30
+# Rate limit for SMS sending requests per hour
+sms_sent = 30
+
 
 # Configure one of the supported captcha providers: `hcaptcha`, `turnstile`.
 # [auth.captcha]
@@ -168,8 +174,6 @@ otp_expiry = 3600
 # pass = "env(SENDGRID_API_KEY)"
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
-# Rate limit for email sending requests per hour
-# rate_limit_email_sent = 2
 
 # Uncomment to customize email template
 # [auth.email.template.invite]
@@ -185,8 +189,6 @@ enable_confirmations = false
 template = "Your code is {{ `{{ .Code }}` }}"
 # Controls the minimum amount of time that must pass before sending another sms otp.
 max_frequency = "5s"
-# Rate limit for SMS sending requests per hour
-rate_limit_sms_sent = 30
 
 # Use pre-defined map of phone number to OTP for testing.
 # [auth.sms.test_otp]

@@ -507,11 +507,12 @@ EOF
 			fmt.Sprintf("GOTRUE_MFA_MAX_ENROLLED_FACTORS=%v", utils.Config.Auth.MFA.MaxEnrolledFactors),
 
 			// Add rate limit configurations
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_ANONYMOUS_USERS=%v", cast.Val(utils.Config.Auth.RateLimitAnonymousUsers, 30)),
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_TOKEN_REFRESH=%v", cast.Val(utils.Config.Auth.RateLimitTokenRefresh, 150)),
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_OTP=%v", cast.Val(utils.Config.Auth.RateLimitOtp, 30)),
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_VERIFY=%v", cast.Val(utils.Config.Auth.RateLimitVerify, 30)),
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_SMS_SENT=%v", cast.Val(utils.Config.Auth.Sms.RateLimitSmsSent, 30)),
+			fmt.Sprintf("GOTRUE_RATE_LIMIT_ANONYMOUS_USERS=%v", cast.Val(utils.Config.Auth.RateLimit.AnonymousUsers, 30)),
+			fmt.Sprintf("GOTRUE_RATE_LIMIT_TOKEN_REFRESH=%v", cast.Val(utils.Config.Auth.RateLimit.TokenRefresh, 150)),
+			fmt.Sprintf("GOTRUE_RATE_LIMIT_OTP=%v", cast.Val(utils.Config.Auth.RateLimit.Otp, 30)),
+			fmt.Sprintf("GOTRUE_RATE_LIMIT_VERIFY=%v", cast.Val(utils.Config.Auth.RateLimit.Verify, 30)),
+			fmt.Sprintf("GOTRUE_RATE_LIMIT_SMS_SENT=%v", cast.Val(utils.Config.Auth.RateLimit.SmsSent, 30)),
+			fmt.Sprintf("GOTRUE_RATE_LIMIT_EMAIL_SENT=%v", cast.Val(utils.Config.Auth.RateLimit.EmailSent, 2)),
 		}
 
 		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.Enabled {
@@ -522,7 +523,6 @@ EOF
 				fmt.Sprintf("GOTRUE_SMTP_PASS=%s", utils.Config.Auth.Email.Smtp.Pass.Value),
 				fmt.Sprintf("GOTRUE_SMTP_ADMIN_EMAIL=%s", utils.Config.Auth.Email.Smtp.AdminEmail),
 				fmt.Sprintf("GOTRUE_SMTP_SENDER_NAME=%s", utils.Config.Auth.Email.Smtp.SenderName),
-				fmt.Sprintf("GOTRUE_RATE_LIMIT_EMAIL_SENT=%v", cast.Val(utils.Config.Auth.Email.Smtp.RateLimitEmailSent, 2)),
 			)
 		} else if utils.Config.Inbucket.Enabled {
 			env = append(env,
