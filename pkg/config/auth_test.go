@@ -663,10 +663,6 @@ func TestEmailDiff(t *testing.T) {
 			SecurityUpdatePasswordRequireReauthentication: cast.Ptr(true),
 			SmtpHost:         cast.Ptr("smtp.sendgrid.net"),
 			SmtpPort:         cast.Ptr("587"),
-			SmtpUser:         cast.Ptr("apikey"),
-			SmtpPass:         cast.Ptr("ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e"),
-			SmtpAdminEmail:   cast.Ptr("admin@email.com"),
-			SmtpSenderName:   cast.Ptr("Admin"),
 			SmtpMaxFrequency: cast.Ptr(1),
 			// Custom templates
 			MailerSubjectsInvite:                   cast.Ptr("invite-subject"),
@@ -1337,6 +1333,7 @@ func TestRateLimitsDiff(t *testing.T) {
 			RateLimitVerify:         cast.Ptr(50),
 			RateLimitEmailSent:      cast.Ptr(25),
 			RateLimitSmsSent:        cast.Ptr(35),
+			SmtpHost:                cast.Ptr(""),
 		})
 
 		// Check error
@@ -1372,6 +1369,7 @@ func TestRateLimitsDiff(t *testing.T) {
 			RateLimitVerify:         cast.Ptr(50),
 			RateLimitEmailSent:      cast.Ptr(15), // Different value
 			RateLimitSmsSent:        cast.Ptr(55), // Different value
+			SmtpHost:                cast.Ptr(""), // Add this to enable SMTP in remote config
 		})
 
 		// Check error
@@ -1407,32 +1405,21 @@ func TestRateLimitsDiff(t *testing.T) {
 		}
 		c.Sms.RateLimitSmsSent = &smsLimit
 
-		// Create a remote config with some other values to ensure a diff
-		remoteConfig := v1API.AuthConfigResponse{
-			SiteUrl: cast.Ptr("some-site-url"),
-		}
-
-		// Run test with no remote values for rate limits
-		diff, err := c.DiffWithRemote(remoteConfig)
+		// Run test with no remote rate limits
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+			// Remote has no rate limits or SMTP configuration
+		})
 
 		// Check error
 		assert.NoError(t, err)
-		// Just ensure diff shows differences - don't compare with snapshot on first run
 		assert.NotEmpty(t, string(diff))
-
-		// For creating a snapshot file
-		snapshot := filepath.Join("testdata", filepath.FromSlash(t.Name())) + ".diff"
-		if _, err := os.Stat(snapshot); os.IsNotExist(err) {
-			assert.NoError(t, os.MkdirAll(filepath.Dir(snapshot), 0755))
-			assert.NoError(t, os.WriteFile(snapshot, diff, 0600))
-		}
 	})
 
 	t.Run("remote has rate limits but local doesn't", func(t *testing.T) {
 		// Setup auth without rate limits
 		c := newWithDefaults()
 
-		// Run test with remote values
+		// Run test with remote rate limits
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			RateLimitAnonymousUsers: cast.Ptr(20),
 			RateLimitTokenRefresh:   cast.Ptr(30),
