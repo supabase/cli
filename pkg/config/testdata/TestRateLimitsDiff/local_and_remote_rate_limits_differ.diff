@@ -1,0 +1,33 @@
+diff remote[auth] local[auth]
+--- remote[auth]
++++ local[auth]
+@@ -8,9 +8,9 @@
+ enable_anonymous_sign_ins = false
+ minimum_password_length = 0
+ password_requirements = ""
+-rate_limit_anonymous_users = 10
++rate_limit_anonymous_users = 20
+ rate_limit_token_refresh = 30
+-rate_limit_otp = 45
++rate_limit_otp = 40
+ rate_limit_verify = 50
+ 
+ [hook]
+@@ -42,7 +42,7 @@
+ max_frequency = "0s"
+ otp_length = 0
+ otp_expiry = 0
+-rate_limit_email_sent = 15
++rate_limit_email_sent = 25
+ 
+ [sms]
+ enable_signup = false
+@@ -49,7 +49,7 @@
+ enable_confirmations = false
+ template = ""
+ max_frequency = "0s"
+-rate_limit_sms_sent = 55
++rate_limit_sms_sent = 35
+ [sms.twilio]
+ enabled = false
+ account_sid = ""

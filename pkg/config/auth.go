@@ -83,6 +83,12 @@ type (
 		MinimumPasswordLength      uint                 `toml:"minimum_password_length"`
 		PasswordRequirements       PasswordRequirements `toml:"password_requirements"`
 
+		// Rate limiting configurations
+		RateLimitAnonymousUsers *uint `toml:"rate_limit_anonymous_users"`
+		RateLimitTokenRefresh   *uint `toml:"rate_limit_token_refresh"`
+		RateLimitOtp            *uint `toml:"rate_limit_otp"`
+		RateLimitVerify         *uint `toml:"rate_limit_verify"`
+
 		Captcha  *captcha `toml:"captcha"`
 		Hook     hook     `toml:"hook"`
 		MFA      mfa      `toml:"mfa"`
@@ -137,6 +143,7 @@ type (
 		MaxFrequency         time.Duration            `toml:"max_frequency"`
 		OtpLength            uint                     `toml:"otp_length"`
 		OtpExpiry            uint                     `toml:"otp_expiry"`
+		RateLimitEmailSent   *uint                    `toml:"rate_limit_email_sent"`
 	}
 
 	smtp struct {
@@ -167,6 +174,7 @@ type (
 		Vonage              vonageConfig      `toml:"vonage" mapstructure:"vonage"`
 		TestOTP             map[string]string `toml:"test_otp"`
 		MaxFrequency        time.Duration     `toml:"max_frequency"`
+		RateLimitSmsSent    *uint             `toml:"rate_limit_sms_sent"`
 	}
 
 	captcha struct {
@@ -262,6 +270,21 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 		PasswordMinLength:                 cast.UintToIntPtr(&a.MinimumPasswordLength),
 		PasswordRequiredCharacters:        cast.Ptr(a.PasswordRequirements.ToChar()),
 	}
+
+	// Add rate limit fields
+	if a.RateLimitAnonymousUsers != nil {
+		body.RateLimitAnonymousUsers = cast.UintToIntPtr(a.RateLimitAnonymousUsers)
+	}
+	if a.RateLimitTokenRefresh != nil {
+		body.RateLimitTokenRefresh = cast.UintToIntPtr(a.RateLimitTokenRefresh)
+	}
+	if a.RateLimitOtp != nil {
+		body.RateLimitOtp = cast.UintToIntPtr(a.RateLimitOtp)
+	}
+	if a.RateLimitVerify != nil {
+		body.RateLimitVerify = cast.UintToIntPtr(a.RateLimitVerify)
+	}
+
 	// When local config is not set, we assume platform defaults should not change
 	if a.Captcha != nil {
 		a.Captcha.toAuthConfigBody(&body)
@@ -287,6 +310,25 @@ func (a *auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	a.MinimumPasswordLength = cast.IntToUint(cast.Val(remoteConfig.PasswordMinLength, 0))
 	prc := cast.Val(remoteConfig.PasswordRequiredCharacters, "")
 	a.PasswordRequirements = NewPasswordRequirement(v1API.UpdateAuthConfigBodyPasswordRequiredCharacters(prc))
+
+	// Get rate limits
+	if remoteConfig.RateLimitAnonymousUsers != nil {
+		val := cast.IntToUint(*remoteConfig.RateLimitAnonymousUsers)
+		a.RateLimitAnonymousUsers = &val
+	}
+	if remoteConfig.RateLimitTokenRefresh != nil {
+		val := cast.IntToUint(*remoteConfig.RateLimitTokenRefresh)
+		a.RateLimitTokenRefresh = &val
+	}
+	if remoteConfig.RateLimitOtp != nil {
+		val := cast.IntToUint(*remoteConfig.RateLimitOtp)
+		a.RateLimitOtp = &val
+	}
+	if remoteConfig.RateLimitVerify != nil {
+		val := cast.IntToUint(*remoteConfig.RateLimitVerify)
+		a.RateLimitVerify = &val
+	}
+
 	a.Captcha.fromAuthConfig(remoteConfig)
 	a.Hook.fromAuthConfig(remoteConfig)
 	a.MFA.fromAuthConfig(remoteConfig)
@@ -459,6 +501,12 @@ func (e email) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.MailerOtpExp = cast.UintToIntPtr(&e.OtpExpiry)
 	body.SecurityUpdatePasswordRequireReauthentication = &e.SecurePasswordChange
 	body.SmtpMaxFrequency = cast.Ptr(int(e.MaxFrequency.Seconds()))
+
+	// Add email rate limit
+	if e.RateLimitEmailSent != nil {
+		body.RateLimitEmailSent = cast.UintToIntPtr(e.RateLimitEmailSent)
+	}
+
 	// When local config is not set, we assume platform defaults should not change
 	if e.Smtp != nil {
 		e.Smtp.toAuthConfigBody(body)
@@ -495,6 +543,13 @@ func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	e.OtpExpiry = cast.IntToUint(remoteConfig.MailerOtpExp)
 	e.SecurePasswordChange = cast.Val(remoteConfig.SecurityUpdatePasswordRequireReauthentication, false)
 	e.MaxFrequency = time.Duration(cast.Val(remoteConfig.SmtpMaxFrequency, 0)) * time.Second
+
+	// Get email rate limit
+	if remoteConfig.RateLimitEmailSent != nil {
+		val := cast.IntToUint(*remoteConfig.RateLimitEmailSent)
+		e.RateLimitEmailSent = &val
+	}
+
 	e.Smtp.fromAuthConfig(remoteConfig)
 	if len(e.Template) == 0 {
 		return
@@ -598,6 +653,12 @@ func (s sms) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.SmsMaxFrequency = cast.Ptr(int(s.MaxFrequency.Seconds()))
 	body.SmsAutoconfirm = &s.EnableConfirmations
 	body.SmsTemplate = &s.Template
+
+	// Add SMS rate limit
+	if s.RateLimitSmsSent != nil {
+		body.RateLimitSmsSent = cast.UintToIntPtr(s.RateLimitSmsSent)
+	}
+
 	if otpString := mapToEnv(s.TestOTP); len(otpString) > 0 {
 		body.SmsTestOtp = &otpString
 		// Set a 10 year validity for test OTP
@@ -647,6 +708,13 @@ func (s *sms) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	s.MaxFrequency = time.Duration(cast.Val(remoteConfig.SmsMaxFrequency, 0)) * time.Second
 	s.EnableConfirmations = cast.Val(remoteConfig.SmsAutoconfirm, false)
 	s.Template = cast.Val(remoteConfig.SmsTemplate, "")
+
+	// Get SMS rate limit
+	if remoteConfig.RateLimitSmsSent != nil {
+		val := cast.IntToUint(*remoteConfig.RateLimitSmsSent)
+		s.RateLimitSmsSent = &val
+	}
+
 	s.TestOTP = envToMap(cast.Val(remoteConfig.SmsTestOtp, ""))
 	// We are only interested in the provider that's enabled locally
 	switch {
