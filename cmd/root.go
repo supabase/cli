@@ -17,7 +17,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
-	"golang.org/x/mod/semver"
 )
 
 const (
@@ -83,8 +82,10 @@ var (
 	createTicket bool
 
 	rootCmd = &cobra.Command{
-		Use:     "supabase",
-		Short:   "Supabase CLI " + utils.Version,
+		Use:   "dna",
+		Short: "DNA CLI - Database Normalization Assistant",
+		Long: `DNA CLI helps you analyze and normalize your database schemas.
+It provides tools for schema analysis, normalization suggestions, and best practices.`,
 		Version: utils.Version,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			if IsExperimental(cmd) && !viper.GetBool("EXPERIMENTAL") {
@@ -131,20 +132,9 @@ var (
 )
 
 func Execute() {
-	defer recoverAndExit()
 	if err := rootCmd.Execute(); err != nil {
-		panic(err)
-	}
-	// Check upgrade last because --version flag is initialised after execute
-	version, err := checkUpgrade(rootCmd.Context(), afero.NewOsFs())
-	if err != nil {
-		fmt.Fprintln(utils.GetDebugLogger(), err)
-	}
-	if semver.Compare(version, "v"+utils.Version) > 0 {
-		fmt.Fprintln(os.Stderr, suggestUpgrade(version))
-	}
-	if len(utils.CmdSuggestion) > 0 {
-		fmt.Fprintln(os.Stderr, utils.CmdSuggestion)
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 }
 
@@ -219,27 +209,33 @@ func recoverAndExit() {
 	os.Exit(1)
 }
 
+// Move these to the top, before any commands are defined
+var (
+	quickStartGroup = &cobra.Group{
+		ID:    "quick-start",
+		Title: "Quick Start Commands",
+	}
+
+	localDevGroup = &cobra.Group{
+		ID:    "local-dev",
+		Title: "Local Development Commands",
+	}
+
+	managementAPIGroup = &cobra.Group{
+		ID:    "management-api",
+		Title: "Management API Commands",
+	}
+)
+
 func init() {
-	cobra.OnInitialize(func() {
-		viper.SetEnvPrefix("SUPABASE")
-		viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
-		viper.AutomaticEnv()
-	})
+	// Add groups first
+	rootCmd.AddGroup(quickStartGroup)
+	rootCmd.AddGroup(localDevGroup)
+	rootCmd.AddGroup(managementAPIGroup)
 
-	flags := rootCmd.PersistentFlags()
-	flags.Bool("debug", false, "output debug logs to stderr")
-	flags.String("workdir", "", "path to a Supabase project directory")
-	flags.Bool("experimental", false, "enable experimental features")
-	flags.String("network-id", "", "use the specified docker network instead of a generated one")
-	flags.Var(&utils.OutputFormat, "output", "output format of status variables")
-	flags.Var(&utils.DNSResolver, "dns-resolver", "lookup domain names using the specified resolver")
-	flags.BoolVar(&createTicket, "create-ticket", false, "create a support ticket for any CLI error")
-	cobra.CheckErr(viper.BindPFlags(flags))
-
-	rootCmd.SetVersionTemplate("{{.Version}}\n")
-	rootCmd.AddGroup(&cobra.Group{ID: groupQuickStart, Title: "Quick Start:"})
-	rootCmd.AddGroup(&cobra.Group{ID: groupLocalDev, Title: "Local Development:"})
-	rootCmd.AddGroup(&cobra.Group{ID: groupManagementAPI, Title: "Management APIs:"})
+	// Then add commands with group
+	assistantCmd.GroupID = quickStartGroup.ID
+	rootCmd.AddCommand(assistantCmd)
 }
 
 // instantiate new rootCmd is a bit tricky with cobra, but it can be done later with the following

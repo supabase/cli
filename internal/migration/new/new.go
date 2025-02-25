@@ -5,27 +5,30 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
-	"github.com/go-errors/errors"
+	"github.com/pkg/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
 
-func Run(migrationName string, stdin afero.File, fsys afero.Fs) error {
-	path := GetMigrationPath(utils.GetCurrentTimestamp(), migrationName)
-	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(path)); err != nil {
+func Run(name string, reader io.Reader, fs afero.Fs) error {
+	timestamp := time.Now().UTC().Format("20060102150405")
+	filename := fmt.Sprintf("%s_%s.sql", timestamp, name)
+	path := fmt.Sprintf("supabase/migrations/%s", filename)
+
+	content, err := io.ReadAll(reader)
+	if err != nil {
 		return err
 	}
-	f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+
+	err = afero.WriteFile(fs, path, content, 0644)
 	if err != nil {
-		return errors.Errorf("failed to open migration file: %w", err)
+		return fmt.Errorf("failed to create migration: %w", err)
 	}
-	defer func() {
-		fmt.Println("Created new migration at " + utils.Bold(path))
-		// File descriptor will always be closed when process quits
-		_ = f.Close()
-	}()
-	return CopyStdinIfExists(stdin, f)
+
+	fmt.Printf("Created new migration at %s\n", path)
+	return nil
 }
 
 func GetMigrationPath(timestamp, name string) string {

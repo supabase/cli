@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/supabase/cli/cmd"
 )
 
@@ -8,5 +10,6 @@ import (
 //go:generate go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen --config=pkg/api/client.cfg.yaml api/beta.yaml
 
 func main() {
+	fmt.Println("=== TESTING BUILD ===")
 	cmd.Execute()
 }
