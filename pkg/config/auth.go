@@ -109,12 +109,12 @@ type (
 	}
 
 	rateLimit struct {
-		AnonymousUsers *uint `toml:"anonymous_users"`
-		TokenRefresh   *uint `toml:"token_refresh"`
-		Otp            *uint `toml:"sign_in_sign_ups"`
-		Verify         *uint `toml:"token_verifications"`
-		EmailSent      *uint `toml:"email_sent"`
-		SmsSent        *uint `toml:"sms_sent"`
+		AnonymousUsers     *uint `toml:"anonymous_users"`
+		TokenRefresh       *uint `toml:"token_refresh"`
+		SignInSignUps      *uint `toml:"sign_in_sign_ups"`
+		TokenVerifications *uint `toml:"token_verifications"`
+		EmailSent          *uint `toml:"email_sent"`
+		SmsSent            *uint `toml:"sms_sent"`
 	}
 
 	tpaFirebase struct {
@@ -266,11 +266,11 @@ func (r rateLimit) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if r.TokenRefresh != nil {
 		body.RateLimitTokenRefresh = cast.UintToIntPtr(r.TokenRefresh)
 	}
-	if r.Otp != nil {
-		body.RateLimitOtp = cast.UintToIntPtr(r.Otp)
+	if r.SignInSignUps != nil {
+		body.RateLimitOtp = cast.UintToIntPtr(r.SignInSignUps)
 	}
-	if r.Verify != nil {
-		body.RateLimitVerify = cast.UintToIntPtr(r.Verify)
+	if r.TokenVerifications != nil {
+		body.RateLimitVerify = cast.UintToIntPtr(r.TokenVerifications)
 	}
 	if r.EmailSent != nil {
 		body.RateLimitEmailSent = cast.UintToIntPtr(r.EmailSent)
@@ -291,11 +291,11 @@ func (r *rateLimit) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	}
 	if remoteConfig.RateLimitOtp != nil {
 		val := cast.IntToUint(*remoteConfig.RateLimitOtp)
-		r.Otp = &val
+		r.SignInSignUps = &val
 	}
 	if remoteConfig.RateLimitVerify != nil {
 		val := cast.IntToUint(*remoteConfig.RateLimitVerify)
-		r.Verify = &val
+		r.TokenVerifications = &val
 	}
 	if remoteConfig.RateLimitEmailSent != nil {
 		val := cast.IntToUint(*remoteConfig.RateLimitEmailSent)

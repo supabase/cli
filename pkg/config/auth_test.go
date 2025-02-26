@@ -1125,8 +1125,8 @@ func TestAuthRateLimits(t *testing.T) {
 		verifyLimit := uint(50)
 		c.RateLimit.AnonymousUsers = &anonymousLimit
 		c.RateLimit.TokenRefresh = &tokenRefreshLimit
-		c.RateLimit.Otp = &otpLimit
-		c.RateLimit.Verify = &verifyLimit
+		c.RateLimit.SignInSignUps = &otpLimit
+		c.RateLimit.TokenVerifications = &verifyLimit
 
 		// Run test for ToUpdateAuthConfigBody
 		body := c.ToUpdateAuthConfigBody()
@@ -1148,8 +1148,8 @@ func TestAuthRateLimits(t *testing.T) {
 
 		assert.Equal(t, uint(20), *c.RateLimit.AnonymousUsers)
 		assert.Equal(t, uint(30), *c.RateLimit.TokenRefresh)
-		assert.Equal(t, uint(40), *c.RateLimit.Otp)
-		assert.Equal(t, uint(50), *c.RateLimit.Verify)
+		assert.Equal(t, uint(40), *c.RateLimit.SignInSignUps)
+		assert.Equal(t, uint(50), *c.RateLimit.TokenVerifications)
 	})
 
 	t.Run("no rate limits specified", func(t *testing.T) {
@@ -1171,8 +1171,8 @@ func TestAuthRateLimits(t *testing.T) {
 
 		assert.Nil(t, c.RateLimit.AnonymousUsers)
 		assert.Nil(t, c.RateLimit.TokenRefresh)
-		assert.Nil(t, c.RateLimit.Otp)
-		assert.Nil(t, c.RateLimit.Verify)
+		assert.Nil(t, c.RateLimit.SignInSignUps)
+		assert.Nil(t, c.RateLimit.TokenVerifications)
 	})
 
 	t.Run("partial rate limits specified", func(t *testing.T) {
@@ -1181,7 +1181,7 @@ func TestAuthRateLimits(t *testing.T) {
 		anonymousLimit := uint(20)
 		verifyLimit := uint(50)
 		c.RateLimit.AnonymousUsers = &anonymousLimit
-		c.RateLimit.Verify = &verifyLimit
+		c.RateLimit.TokenVerifications = &verifyLimit
 
 		// Run test for ToUpdateAuthConfigBody
 		body := c.ToUpdateAuthConfigBody()
@@ -1201,8 +1201,8 @@ func TestAuthRateLimits(t *testing.T) {
 
 		assert.Equal(t, uint(20), *c.RateLimit.AnonymousUsers)
 		assert.Nil(t, c.RateLimit.TokenRefresh)
-		assert.Nil(t, c.RateLimit.Otp)
-		assert.Equal(t, uint(50), *c.RateLimit.Verify)
+		assert.Nil(t, c.RateLimit.SignInSignUps)
+		assert.Equal(t, uint(50), *c.RateLimit.TokenVerifications)
 	})
 }
 
@@ -1303,8 +1303,8 @@ func TestRateLimitsDiff(t *testing.T) {
 
 		c.RateLimit.AnonymousUsers = &anonymousLimit
 		c.RateLimit.TokenRefresh = &tokenRefreshLimit
-		c.RateLimit.Otp = &otpLimit
-		c.RateLimit.Verify = &verifyLimit
+		c.RateLimit.SignInSignUps = &otpLimit
+		c.RateLimit.TokenVerifications = &verifyLimit
 		c.RateLimit.EmailSent = &emailLimit
 		c.RateLimit.SmsSent = &smsLimit
 
@@ -1336,8 +1336,8 @@ func TestRateLimitsDiff(t *testing.T) {
 
 		c.RateLimit.AnonymousUsers = &anonymousLimit
 		c.RateLimit.TokenRefresh = &tokenRefreshLimit
-		c.RateLimit.Otp = &otpLimit
-		c.RateLimit.Verify = &verifyLimit
+		c.RateLimit.SignInSignUps = &otpLimit
+		c.RateLimit.TokenVerifications = &verifyLimit
 		c.RateLimit.EmailSent = &emailLimit
 		c.RateLimit.SmsSent = &smsLimit
 
@@ -1369,8 +1369,8 @@ func TestRateLimitsDiff(t *testing.T) {
 		smsLimit := uint(35)
 		c.RateLimit.AnonymousUsers = &anonymousLimit
 		c.RateLimit.TokenRefresh = &tokenRefreshLimit
-		c.RateLimit.Otp = &otpLimit
-		c.RateLimit.Verify = &verifyLimit
+		c.RateLimit.SignInSignUps = &otpLimit
+		c.RateLimit.TokenVerifications = &verifyLimit
 		c.RateLimit.EmailSent = &emailLimit
 		c.RateLimit.SmsSent = &smsLimit
 

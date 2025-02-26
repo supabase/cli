@@ -509,8 +509,8 @@ EOF
 			// Add rate limit configurations
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_ANONYMOUS_USERS=%v", cast.Val(utils.Config.Auth.RateLimit.AnonymousUsers, 30)),
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_TOKEN_REFRESH=%v", cast.Val(utils.Config.Auth.RateLimit.TokenRefresh, 150)),
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_OTP=%v", cast.Val(utils.Config.Auth.RateLimit.Otp, 30)),
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_VERIFY=%v", cast.Val(utils.Config.Auth.RateLimit.Verify, 30)),
+			fmt.Sprintf("GOTRUE_RATE_LIMIT_OTP=%v", cast.Val(utils.Config.Auth.RateLimit.SignInSignUps, 30)),
+			fmt.Sprintf("GOTRUE_RATE_LIMIT_VERIFY=%v", cast.Val(utils.Config.Auth.RateLimit.TokenVerifications, 30)),
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_SMS_SENT=%v", cast.Val(utils.Config.Auth.RateLimit.SmsSent, 30)),
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_EMAIL_SENT=%v", cast.Val(utils.Config.Auth.RateLimit.EmailSent, 2)),
 		}
