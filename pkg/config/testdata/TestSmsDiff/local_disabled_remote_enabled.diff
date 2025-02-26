@@ -1,7 +1,7 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -40,12 +40,12 @@
+@@ -42,12 +42,12 @@
  otp_expiry = 0
  
  [sms]
@@ -19,12 +19,3 @@ diff remote[auth] local[auth]
  account_sid = ""
  message_service_sid = ""
  auth_token = ""
-@@ -68,8 +68,6 @@
- api_key = ""
- api_secret = ""
- [sms.test_otp]
--123 = "456"
--456 = "123"
- 
- [third_party]
- [third_party.firebase]

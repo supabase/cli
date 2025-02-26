@@ -1350,15 +1350,8 @@ func TestRateLimitsDiff(t *testing.T) {
 
 		// Check error
 		assert.NoError(t, err)
-		// Just ensure diff shows differences - don't compare with snapshot on first run
-		assert.NotEmpty(t, string(diff))
-
-		// For creating a snapshot file
-		snapshot := filepath.Join("testdata", filepath.FromSlash(t.Name())) + ".diff"
-		if _, err := os.Stat(snapshot); os.IsNotExist(err) {
-			assert.NoError(t, os.MkdirAll(filepath.Dir(snapshot), 0755))
-			assert.NoError(t, os.WriteFile(snapshot, diff, 0600))
-		}
+		// Compare with snapshot
+		assertSnapshotEqual(t, diff)
 	})
 
 	t.Run("local has rate limits but remote doesn't", func(t *testing.T) {
@@ -1397,14 +1390,7 @@ func TestRateLimitsDiff(t *testing.T) {
 
 		// Check error
 		assert.NoError(t, err)
-		assert.NotEmpty(t, string(diff))
-
-		// For creating a snapshot file
-		snapshot := filepath.Join("testdata", filepath.FromSlash(t.Name())) + ".diff"
-		if _, err := os.Stat(snapshot); os.IsNotExist(err) {
-			assert.NoError(t, os.MkdirAll(filepath.Dir(snapshot), 0755))
-			assert.NoError(t, os.WriteFile(snapshot, diff, 0600))
-		}
+		assert.Empty(t, string(diff))
 	})
 
 	t.Run("remote has rate limits but local doesn't", func(t *testing.T) {
@@ -1436,14 +1422,7 @@ func TestRateLimitsDiff(t *testing.T) {
 
 		// Check error
 		assert.NoError(t, err)
-		// Just ensure diff shows differences - don't compare with snapshot on first run
-		assert.NotEmpty(t, string(diff))
-
-		// For creating a snapshot file
-		snapshot := filepath.Join("testdata", filepath.FromSlash(t.Name())) + ".diff"
-		if _, err := os.Stat(snapshot); os.IsNotExist(err) {
-			assert.NoError(t, os.MkdirAll(filepath.Dir(snapshot), 0755))
-			assert.NoError(t, os.WriteFile(snapshot, diff, 0600))
-		}
+		// Compare with snapshot
+		assertSnapshotEqual(t, diff)
 	})
 }
