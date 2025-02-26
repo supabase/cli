@@ -83,13 +83,14 @@ type (
 		MinimumPasswordLength      uint                 `toml:"minimum_password_length"`
 		PasswordRequirements       PasswordRequirements `toml:"password_requirements"`
 
-		Captcha  *captcha `toml:"captcha"`
-		Hook     hook     `toml:"hook"`
-		MFA      mfa      `toml:"mfa"`
-		Sessions sessions `toml:"sessions"`
-		Email    email    `toml:"email"`
-		Sms      sms      `toml:"sms"`
-		External external `toml:"external"`
+		RateLimit rateLimit `toml:"rate_limit"`
+		Captcha   *captcha  `toml:"captcha"`
+		Hook      hook      `toml:"hook"`
+		MFA       mfa       `toml:"mfa"`
+		Sessions  sessions  `toml:"sessions"`
+		Email     email     `toml:"email"`
+		Sms       sms       `toml:"sms"`
+		External  external  `toml:"external"`
 
 		// Custom secrets can be injected from .env file
 		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
@@ -105,6 +106,15 @@ type (
 		Firebase tpaFirebase `toml:"firebase"`
 		Auth0    tpaAuth0    `toml:"auth0"`
 		Cognito  tpaCognito  `toml:"aws_cognito"`
+	}
+
+	rateLimit struct {
+		AnonymousUsers     *uint `toml:"anonymous_users"`
+		TokenRefresh       *uint `toml:"token_refresh"`
+		SignInSignUps      *uint `toml:"sign_in_sign_ups"`
+		TokenVerifications *uint `toml:"token_verifications"`
+		EmailSent          *uint `toml:"email_sent"`
+		SmsSent            *uint `toml:"sms_sent"`
 	}
 
 	tpaFirebase struct {
@@ -249,6 +259,54 @@ type (
 	}
 )
 
+func (r rateLimit) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+	if r.AnonymousUsers != nil {
+		body.RateLimitAnonymousUsers = cast.UintToIntPtr(r.AnonymousUsers)
+	}
+	if r.TokenRefresh != nil {
+		body.RateLimitTokenRefresh = cast.UintToIntPtr(r.TokenRefresh)
+	}
+	if r.SignInSignUps != nil {
+		body.RateLimitOtp = cast.UintToIntPtr(r.SignInSignUps)
+	}
+	if r.TokenVerifications != nil {
+		body.RateLimitVerify = cast.UintToIntPtr(r.TokenVerifications)
+	}
+	if r.EmailSent != nil {
+		body.RateLimitEmailSent = cast.UintToIntPtr(r.EmailSent)
+	}
+	if r.SmsSent != nil {
+		body.RateLimitSmsSent = cast.UintToIntPtr(r.SmsSent)
+	}
+}
+
+func (r *rateLimit) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	if remoteConfig.RateLimitAnonymousUsers != nil {
+		val := cast.IntToUint(*remoteConfig.RateLimitAnonymousUsers)
+		r.AnonymousUsers = &val
+	}
+	if remoteConfig.RateLimitTokenRefresh != nil {
+		val := cast.IntToUint(*remoteConfig.RateLimitTokenRefresh)
+		r.TokenRefresh = &val
+	}
+	if remoteConfig.RateLimitOtp != nil {
+		val := cast.IntToUint(*remoteConfig.RateLimitOtp)
+		r.SignInSignUps = &val
+	}
+	if remoteConfig.RateLimitVerify != nil {
+		val := cast.IntToUint(*remoteConfig.RateLimitVerify)
+		r.TokenVerifications = &val
+	}
+	if remoteConfig.RateLimitEmailSent != nil {
+		val := cast.IntToUint(*remoteConfig.RateLimitEmailSent)
+		r.EmailSent = &val
+	}
+	if remoteConfig.RateLimitSmsSent != nil {
+		val := cast.IntToUint(*remoteConfig.RateLimitSmsSent)
+		r.SmsSent = &val
+	}
+}
+
 func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 	body := v1API.UpdateAuthConfigBody{
 		SiteUrl:                           &a.SiteUrl,
@@ -262,6 +320,10 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 		PasswordMinLength:                 cast.UintToIntPtr(&a.MinimumPasswordLength),
 		PasswordRequiredCharacters:        cast.Ptr(a.PasswordRequirements.ToChar()),
 	}
+
+	// Add rate limit fields
+	a.RateLimit.toAuthConfigBody(&body)
+
 	// When local config is not set, we assume platform defaults should not change
 	if a.Captcha != nil {
 		a.Captcha.toAuthConfigBody(&body)
@@ -287,6 +349,8 @@ func (a *auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	a.MinimumPasswordLength = cast.IntToUint(cast.Val(remoteConfig.PasswordMinLength, 0))
 	prc := cast.Val(remoteConfig.PasswordRequiredCharacters, "")
 	a.PasswordRequirements = NewPasswordRequirement(v1API.UpdateAuthConfigBodyPasswordRequiredCharacters(prc))
+
+	a.RateLimit.fromAuthConfig(remoteConfig)
 	a.Captcha.fromAuthConfig(remoteConfig)
 	a.Hook.fromAuthConfig(remoteConfig)
 	a.MFA.fromAuthConfig(remoteConfig)
@@ -459,6 +523,7 @@ func (e email) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.MailerOtpExp = cast.UintToIntPtr(&e.OtpExpiry)
 	body.SecurityUpdatePasswordRequireReauthentication = &e.SecurePasswordChange
 	body.SmtpMaxFrequency = cast.Ptr(int(e.MaxFrequency.Seconds()))
+
 	// When local config is not set, we assume platform defaults should not change
 	if e.Smtp != nil {
 		e.Smtp.toAuthConfigBody(body)
@@ -495,6 +560,7 @@ func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	e.OtpExpiry = cast.IntToUint(remoteConfig.MailerOtpExp)
 	e.SecurePasswordChange = cast.Val(remoteConfig.SecurityUpdatePasswordRequireReauthentication, false)
 	e.MaxFrequency = time.Duration(cast.Val(remoteConfig.SmtpMaxFrequency, 0)) * time.Second
+
 	e.Smtp.fromAuthConfig(remoteConfig)
 	if len(e.Template) == 0 {
 		return
@@ -648,6 +714,7 @@ func (s *sms) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	s.EnableConfirmations = cast.Val(remoteConfig.SmsAutoconfirm, false)
 	s.Template = cast.Val(remoteConfig.SmsTemplate, "")
 	s.TestOTP = envToMap(cast.Val(remoteConfig.SmsTestOtp, ""))
+
 	// We are only interested in the provider that's enabled locally
 	switch {
 	case s.Twilio.Enabled:
