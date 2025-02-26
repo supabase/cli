@@ -32,3 +32,11 @@ diff remote[auth] local[auth]
  [sms.textlocal]
  enabled = false
  sender = ""
+@@ -70,6 +70,7 @@
+ api_key = ""
+ api_secret = ""
+ [sms.test_otp]
++123 = "456"
+ 
+ [third_party]
+ [third_party.firebase]

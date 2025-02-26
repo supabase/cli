@@ -663,6 +663,10 @@ func TestEmailDiff(t *testing.T) {
 			SecurityUpdatePasswordRequireReauthentication: cast.Ptr(true),
 			SmtpHost:         cast.Ptr("smtp.sendgrid.net"),
 			SmtpPort:         cast.Ptr("587"),
+			SmtpUser:         cast.Ptr("apikey"),
+			SmtpPass:         cast.Ptr("ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e"),
+			SmtpAdminEmail:   cast.Ptr("admin@email.com"),
+			SmtpSenderName:   cast.Ptr("Admin"),
 			SmtpMaxFrequency: cast.Ptr(1),
 			// Custom templates
 			MailerSubjectsInvite:                   cast.Ptr("invite-subject"),

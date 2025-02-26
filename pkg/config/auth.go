@@ -664,7 +664,12 @@ func (s sms) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.SmsMaxFrequency = cast.Ptr(int(s.MaxFrequency.Seconds()))
 	body.SmsAutoconfirm = &s.EnableConfirmations
 	body.SmsTemplate = &s.Template
-
+	if otpString := mapToEnv(s.TestOTP); len(otpString) > 0 {
+		body.SmsTestOtp = &otpString
+		// Set a 10 year validity for test OTP
+		timestamp := time.Now().UTC().AddDate(10, 0, 0).Format(time.RFC3339)
+		body.SmsTestOtpValidUntil = &timestamp
+	}
 	// Api only overrides configs of enabled providers
 	switch {
 	case s.Twilio.Enabled:
@@ -708,6 +713,7 @@ func (s *sms) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	s.MaxFrequency = time.Duration(cast.Val(remoteConfig.SmsMaxFrequency, 0)) * time.Second
 	s.EnableConfirmations = cast.Val(remoteConfig.SmsAutoconfirm, false)
 	s.Template = cast.Val(remoteConfig.SmsTemplate, "")
+	s.TestOTP = envToMap(cast.Val(remoteConfig.SmsTestOtp, ""))
 
 	// We are only interested in the provider that's enabled locally
 	switch {
