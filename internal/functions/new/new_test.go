@@ -25,6 +25,10 @@ func TestNewCommand(t *testing.T) {
 			"curl -i --location --request POST 'http://127.0.0.1:54321/functions/v1/test-func'",
 		)
 
+		// Verify config.toml is updated
+		_, err = afero.ReadFile(fsys, utils.ConfigPath)
+		assert.NoError(t, err, "config.toml should be created")
+
 		// Verify deno.json exists
 		denoPath := filepath.Join(utils.FunctionsDir, "test-func", "deno.json")
 		_, err = afero.ReadFile(fsys, denoPath)

@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
-	"github.com/supabase/cli/pkg/config"
 )
 
 var (
@@ -36,64 +35,57 @@ type indexConfig struct {
 
 func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 	// 1. Sanity checks.
-	funcDir := filepath.Join(utils.FunctionsDir, slug)
-	{
-		if err := utils.ValidateFunctionSlug(slug); err != nil {
-			return err
-		}
+	if err := utils.ValidateFunctionSlug(slug); err != nil {
+		return err
 	}
-
 	// 2. Create new function.
-	{
-		if err := utils.MkdirIfNotExistFS(fsys, funcDir); err != nil {
-			return err
-		}
-
-		// Load config if available
-		if err := flags.LoadConfig(fsys); err != nil {
-			utils.CmdSuggestion = ""
-		}
-
-		if err := createTemplateFile(fsys, filepath.Join(funcDir, "index.ts"), indexTemplate, indexConfig{
-			URL:   utils.GetApiUrl("/functions/v1/" + slug),
-			Token: utils.Config.Auth.AnonKey,
-		}); err != nil {
-			return errors.Errorf("failed to create function entrypoint: %w", err)
-		}
-
-		if err := afero.WriteFile(fsys, filepath.Join(funcDir, "deno.json"), []byte(denoEmbed), 0644); err != nil {
-			return errors.Errorf("failed to create deno.json config: %w", err)
-		}
-
-		if err := afero.WriteFile(fsys, filepath.Join(funcDir, ".npmrc"), []byte(npmrcEmbed), 0644); err != nil {
-			return errors.Errorf("failed to create .npmrc config: %w", err)
-		}
-
-		if err := appendConfigFile(slug, fsys); err != nil {
-			return err
-		}
+	funcDir := filepath.Join(utils.FunctionsDir, slug)
+	if err := utils.MkdirIfNotExistFS(fsys, funcDir); err != nil {
+		return err
 	}
-
+	// Load config if available
+	if err := flags.LoadConfig(fsys); err != nil {
+		utils.CmdSuggestion = ""
+	}
+	if err := createEntrypointFile(slug, fsys); err != nil {
+		return err
+	}
+	if err := appendConfigFile(slug, fsys); err != nil {
+		return err
+	}
+	// 3. Create optional files
+	if err := afero.WriteFile(fsys, filepath.Join(funcDir, "deno.json"), []byte(denoEmbed), 0644); err != nil {
+		return errors.Errorf("failed to create deno.json config: %w", err)
+	}
+	if err := afero.WriteFile(fsys, filepath.Join(funcDir, ".npmrc"), []byte(npmrcEmbed), 0644); err != nil {
+		return errors.Errorf("failed to create .npmrc config: %w", err)
+	}
 	fmt.Println("Created new Function at " + utils.Bold(funcDir))
 	return nil
 }
 
-func createTemplateFile(fsys afero.Fs, path string, tmpl *template.Template, data interface{}) error {
-	f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+func createEntrypointFile(slug string, fsys afero.Fs) error {
+	entrypointPath := filepath.Join(utils.FunctionsDir, slug, "index.ts")
+	f, err := fsys.OpenFile(entrypointPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to create entrypoint: %w", err)
 	}
 	defer f.Close()
-	return tmpl.Option("missingkey=error").Execute(f, data)
+	if err := indexTemplate.Option("missingkey=error").Execute(f, indexConfig{
+		URL:   utils.GetApiUrl("/functions/v1/" + slug),
+		Token: utils.Config.Auth.AnonKey,
+	}); err != nil {
+		return errors.Errorf("failed to write entrypoint: %w", err)
+	}
+	return nil
 }
 
 func appendConfigFile(slug string, fsys afero.Fs) error {
-	builder := config.NewPathBuilder("")
 	if _, exists := utils.Config.Functions[slug]; exists {
-		fmt.Fprintf(os.Stderr, "[functions.%s] is already declared in %s\n", slug, utils.Bold(builder.ConfigPath))
+		fmt.Fprintf(os.Stderr, "[functions.%s] is already declared in %s\n", slug, utils.Bold(utils.ConfigPath))
 		return nil
 	}
-	f, err := fsys.OpenFile(builder.ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	f, err := fsys.OpenFile(utils.ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
 		return errors.Errorf("failed to append config: %w", err)
 	}
