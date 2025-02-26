@@ -7,8 +7,8 @@ diff remote[auth] local[auth]
  [rate_limit]
 -anonymous_users = 20
 -token_refresh = 30
--otp = 40
--verify = 50
+-sign_in_sign_ups = 40
+-token_verifications = 50
 -email_sent = 25
 -sms_sent = 35
  

@@ -111,8 +111,8 @@ type (
 	rateLimit struct {
 		AnonymousUsers *uint `toml:"anonymous_users"`
 		TokenRefresh   *uint `toml:"token_refresh"`
-		Otp            *uint `toml:"otp"`
-		Verify         *uint `toml:"verify"`
+		Otp            *uint `toml:"sign_in_sign_ups"`
+		Verify         *uint `toml:"token_verifications"`
 		EmailSent      *uint `toml:"email_sent"`
 		SmsSent        *uint `toml:"sms_sent"`
 	}

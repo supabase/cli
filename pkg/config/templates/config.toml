@@ -128,18 +128,18 @@ minimum_password_length = 6
 password_requirements = ""
 
 [auth.rate_limit]
-# Rate limit for email sending requests per hour
+# Number of emails that can be sent per hour. Requires auth.email.smtp to be enabled.
 # email_sent = 2
-# Rate limit for unauthenticated requests per minute
+# Number of SMS messages that can be sent per hour. Requires auth.sms to be enabled.
+# sms_sent = 30
+# Number of anonymous sign-ins that can be made per hour per IP address. Requires enable_anonymous_sign_ins = true.
 anonymous_users = 30
-# Rate limit for token refresh requests per minute
+# Number of sessions that can be refreshed in a 5 minute interval per IP address.
 token_refresh = 150
-# Rate limit for OTP generation requests per minute
-otp = 30
-# Rate limit for verification requests per minute
-verify = 30
-# Rate limit for SMS sending requests per hour
-sms_sent = 30
+# Number of sign up and sign-in requests that can be made in a 5 minute interval per IP address (excludes anonymous users).
+sign_in_sign_ups = 30
+# Number of OTP / Magic link verifications that can be made in a 5 minute interval per IP address.
+token_verifications = 30
 
 
 # Configure one of the supported captcha providers: `hcaptcha`, `turnstile`.
