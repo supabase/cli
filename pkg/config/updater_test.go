@@ -190,10 +190,11 @@ func TestUpdateAuthConfig(t *testing.T) {
 			JSON(v1API.AuthConfigResponse{})
 		// Run test
 		err := updater.UpdateAuthConfig(context.Background(), "test-project", auth{
-			Enabled:      true,
-			EnableSignup: true,
-			Email:        email{EnableConfirmations: true},
-			Sms:          sms{TestOTP: map[string]string{}},
+			Enabled:                true,
+			EnableSignup:           true,
+			AdditionalRedirectUrls: []string{},
+			Email:                  email{EnableConfirmations: true},
+			Sms:                    sms{TestOTP: map[string]string{}},
 		})
 		// Check result
 		assert.NoError(t, err)
