@@ -231,8 +231,8 @@ type (
 	function struct {
 		Enabled     bool   `toml:"enabled" json:"-"`
 		VerifyJWT   bool   `toml:"verify_jwt" json:"verifyJWT"`
-		ImportMap   string `toml:"import_map" json:"importMapPath,omitempty"`
-		Entrypoint  string `toml:"entrypoint" json:"entrypointPath,omitempty"`
+		ImportMap   string `toml:"import_map,omitempty" json:"importMapPath,omitempty"`
+		Entrypoint  string `toml:"entrypoint,omitempty" json:"entrypointPath,omitempty"`
 		StaticFiles Glob   `toml:"static_files" json:"staticFiles,omitempty"`
 	}
 
