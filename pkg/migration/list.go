@@ -39,6 +39,7 @@ func ListLocalMigrations(migrationsDir string, fsys fs.FS, filter ...func(string
 		filter = append(filter, func(string) bool { return true })
 	}
 	var clean []string
+OUTER:
 	for i, migration := range localMigrations {
 		filename := migration.Name()
 		if i == 0 && shouldSkip(filename) {
@@ -52,10 +53,11 @@ func ListLocalMigrations(migrationsDir string, fsys fs.FS, filter ...func(string
 		}
 		path := filepath.Join(migrationsDir, filename)
 		for _, keep := range filter {
-			if version := matches[1]; keep(version) {
-				clean = append(clean, path)
+			if version := matches[1]; !keep(version) {
+				continue OUTER
 			}
 		}
+		clean = append(clean, path)
 	}
 	return clean, nil
 }
