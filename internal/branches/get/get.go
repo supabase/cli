@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
@@ -102,15 +101,9 @@ func toStandardEnvs(detail api.BranchDetailResponse, pooler api.SupavisorConfigR
 	} else {
 		config.Password = direct.Password
 	}
-	envs := map[string]string{
-		"POSTGRES_URL":             utils.ToPostgresURL(*config),
-		"POSTGRES_URL_NON_POOLING": utils.ToPostgresURL(direct),
-		"SUPABASE_URL":             "https://" + utils.GetSupabaseHost(detail.Ref),
-	}
-	for _, entry := range keys {
-		name := strings.ToUpper(entry.Name)
-		key := fmt.Sprintf("SUPABASE_%s_KEY", name)
-		envs[key] = entry.ApiKey
-	}
+	envs := apiKeys.ToEnv(keys)
+	envs["POSTGRES_URL"] = utils.ToPostgresURL(*config)
+	envs["POSTGRES_URL_NON_POOLING"] = utils.ToPostgresURL(direct)
+	envs["SUPABASE_URL"] = "https://" + utils.GetSupabaseHost(detail.Ref)
 	return envs
 }
