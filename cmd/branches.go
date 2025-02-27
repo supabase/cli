@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/go-errors/errors"
+	"github.com/google/uuid"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/branches/create"
@@ -75,14 +76,11 @@ var (
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			if len(args) == 0 {
-				if err := promptBranchId(ctx, flags.ProjectRef); err != nil {
-					return err
-				}
-			} else {
-				branchId = args[0]
+			fsys := afero.NewOsFs()
+			if err := promptBranchId(ctx, args, fsys); err != nil {
+				return err
 			}
-			return get.Run(ctx, branchId, afero.NewOsFs())
+			return get.Run(ctx, branchId, fsys)
 		},
 	}
 
@@ -101,7 +99,7 @@ var (
 	branchUpdateCmd = &cobra.Command{
 		Use:   "update [branch-id]",
 		Short: "Update a preview branch",
-		Long:  "Update a preview branch by its ID.",
+		Long:  "Update a preview branch by its name or ID.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmdFlags := cmd.Flags()
@@ -119,30 +117,24 @@ var (
 				body.Status = (*api.UpdateBranchBodyStatus)(&branchStatus.Value)
 			}
 			ctx := cmd.Context()
-			if len(args) == 0 {
-				if err := promptBranchId(ctx, flags.ProjectRef); err != nil {
-					return err
-				}
-			} else {
-				branchId = args[0]
+			fsys := afero.NewOsFs()
+			if err := promptBranchId(ctx, args, fsys); err != nil {
+				return err
 			}
-			return update.Run(cmd.Context(), branchId, body, afero.NewOsFs())
+			return update.Run(cmd.Context(), branchId, body, fsys)
 		},
 	}
 
 	branchDeleteCmd = &cobra.Command{
 		Use:   "delete [branch-id]",
 		Short: "Delete a preview branch",
-		Long:  "Delete a preview branch by its ID.",
+		Long:  "Delete a preview branch by its name or ID.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			if len(args) == 0 {
-				if err := promptBranchId(ctx, flags.ProjectRef); err != nil {
-					return err
-				}
-			} else {
-				branchId = args[0]
+			fsys := afero.NewOsFs()
+			if err := promptBranchId(ctx, args, fsys); err != nil {
+				return err
 			}
 			return delete.Run(ctx, branchId)
 		},
@@ -181,40 +173,43 @@ func init() {
 	rootCmd.AddCommand(branchesCmd)
 }
 
-func promptBranchId(ctx context.Context, ref string) error {
-	resp, err := utils.GetSupabase().V1ListAllBranchesWithResponse(ctx, ref)
-	if err != nil {
-		return errors.Errorf("failed to list preview branches: %w", err)
-	}
-	if resp.JSON200 == nil {
-		return errors.New("Unexpected error listing preview branches: " + string(resp.Body))
-	}
-	console := utils.NewConsole()
-	if !console.IsTTY {
-		// Fallback to current git branch on GHA
-		gitBranch := keys.GetGitBranch(afero.NewOsFs())
-		title := "Enter the name of your branch: "
-		if len(gitBranch) > 0 {
-			title = fmt.Sprintf("%-2s (or leave blank to use %s): ", title, utils.Aqua(gitBranch))
+func promptBranchId(ctx context.Context, args []string, fsys afero.Fs) error {
+	var filter []list.BranchFilter
+	if len(args) > 0 {
+		if branchId = args[0]; uuid.Validate(branchId) == nil {
+			return nil
 		}
+		// Try resolving as branch name
+		filter = append(filter, list.FilterByName(branchId))
+	} else if console := utils.NewConsole(); !console.IsTTY {
+		// Only read from stdin if the terminal is non-interactive
+		title := "Enter the name of your branch"
+		if branchId = keys.GetGitBranch(fsys); len(branchId) > 0 {
+			title += fmt.Sprintf(" (or leave blank to use %s)", utils.Aqua(branchId))
+		}
+		title += ": "
 		if name, err := console.PromptText(ctx, title); err != nil {
 			return err
 		} else if len(name) > 0 {
-			gitBranch = name
+			branchId = name
 		}
-		if len(gitBranch) == 0 {
-			return errors.New("git branch cannot be empty")
+		if len(branchId) == 0 {
+			return errors.New("branch name cannot be empty")
 		}
-		for _, branch := range *resp.JSON200 {
-			if branch.Name == gitBranch {
-				branchId = branch.Id
-				return nil
-			}
-		}
-		return errors.Errorf("Branch not found: %s", gitBranch)
+		filter = append(filter, list.FilterByName(branchId))
 	}
-	items := make([]utils.PromptItem, len(*resp.JSON200))
-	for i, branch := range *resp.JSON200 {
+	branches, err := list.ListBranch(ctx, flags.ProjectRef, filter...)
+	if err != nil {
+		return err
+	} else if len(branches) == 0 {
+		return errors.Errorf("branch not found: %s", branchId)
+	} else if len(branches) == 1 {
+		branchId = branches[0].Id
+		return nil
+	}
+	// Let user choose from a list of branches
+	items := make([]utils.PromptItem, len(branches))
+	for i, branch := range branches {
 		items[i] = utils.PromptItem{
 			Summary: branch.Name,
 			Details: branch.Id,
