@@ -19,7 +19,8 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 		return err
 	}
 
-	if utils.OutputFormat.Value == utils.OutputPretty {
+	switch utils.OutputFormat.Value {
+	case utils.OutputPretty:
 		table := `|NAME|KEY VALUE|
 |-|-|
 `
@@ -28,6 +29,8 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 		}
 
 		return list.RenderTable(table)
+	case utils.OutputToml, utils.OutputEnv:
+		return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, ToEnv(keys))
 	}
 
 	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, keys)
@@ -41,4 +44,14 @@ func RunGetApiKeys(ctx context.Context, projectRef string) ([]api.ApiKeyResponse
 		return nil, errors.Errorf("unexpected get api keys status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 	return *resp.JSON200, nil
+}
+
+func ToEnv(keys []api.ApiKeyResponse) map[string]string {
+	envs := make(map[string]string, len(keys))
+	for _, entry := range keys {
+		name := strings.ToUpper(entry.Name)
+		key := fmt.Sprintf("SUPABASE_%s_KEY", name)
+		envs[key] = entry.ApiKey
+	}
+	return envs
 }

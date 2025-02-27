@@ -157,8 +157,6 @@ func init() {
 	createFlags.Var(&branchRegion, "region", "Select a region to deploy the branch database.")
 	createFlags.Var(&size, "size", "Select a desired instance size for the branch database.")
 	createFlags.BoolVar(&persistent, "persistent", false, "Whether to create a persistent branch.")
-	getFlags := branchGetCmd.Flags()
-	getFlags.VarP(&utils.OutputFormat, "output", "o", "Output format of branch details.")
 	branchesCmd.AddCommand(branchCreateCmd)
 	branchesCmd.AddCommand(branchListCmd)
 	branchesCmd.AddCommand(branchGetCmd)
