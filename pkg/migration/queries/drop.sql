@@ -20,6 +20,17 @@ begin
     execute format('drop routine if exists %I.%I(%s) cascade', rec.pronamespace::regnamespace::name, rec.proname, pg_catalog.pg_get_function_identity_arguments(rec.oid));
   end loop;
 
+  -- views (necessary for views targeting supabase specific schemas objects)
+  for rec in
+    select *
+    from pg_class c
+    where
+      c.relnamespace::regnamespace::name = 'public'
+      and c.relkind = 'v'
+  loop
+    execute format('drop view if exists %I.%I cascade', rec.relnamespace::regnamespace::name, rec.relname);
+  end loop;
+
   -- tables (cascade to views)
   for rec in
     select *
