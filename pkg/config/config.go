@@ -205,7 +205,7 @@ type (
 		Image        string `toml:"-"`
 		Port         uint16 `toml:"port"`
 		ApiUrl       string `toml:"api_url"`
-		OpenaiApiKey string `toml:"openai_api_key"`
+		OpenaiApiKey Secret `toml:"openai_api_key"`
 		PgmetaImage  string `toml:"-"`
 	}
 
