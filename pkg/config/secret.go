@@ -27,14 +27,31 @@ func (s Secret) MarshalText() (text []byte, err error) {
 
 const ENCRYPTED_PREFIX = "encrypted:"
 
+func (s *Secret) Decrypt(keys []string) error {
+	if !strings.HasPrefix(s.Value, ENCRYPTED_PREFIX) {
+		return nil
+	}
+	if len(keys) == 0 {
+		return errors.New(errMissingKey)
+	}
+	var err error
+	for _, k := range keys {
+		// Use the first private key that successfully decrypts the secret
+		if s.Value, err = decrypt(k, s.Value); err == nil {
+			break
+		}
+	}
+	// If we didn't break, none of the keys worked
+	return err
+}
+
+var errMissingKey = errors.New("missing private key")
+
 // Decrypt secret values following dotenvx convention:
 // https://github.com/dotenvx/dotenvx/blob/main/src/lib/helpers/decryptKeyValue.js
 func decrypt(key, value string) (string, error) {
-	if !strings.HasPrefix(value, ENCRYPTED_PREFIX) {
-		return value, nil
-	}
 	if len(key) == 0 {
-		return value, errors.New("missing private key")
+		return value, errors.New(errMissingKey)
 	}
 	// Verify private key exists
 	privateKey, err := ecies.NewPrivateKeyFromHex(key)
@@ -55,7 +72,17 @@ func decrypt(key, value string) (string, error) {
 	return string(plaintext), nil
 }
 
+const PRIVATE_KEY_PREFIX = "DOTENV_PRIVATE_KEY"
+
 func DecryptSecretHookFunc(hashKey string) mapstructure.DecodeHookFunc {
+	// Get all env vars and filter for private keys
+	var privateKeys []string
+	for _, env := range os.Environ() {
+		kv := strings.SplitN(env, "=", 2)
+		if kv[0] == PRIVATE_KEY_PREFIX || strings.HasPrefix(kv[0], PRIVATE_KEY_PREFIX+"_") {
+			privateKeys = append(privateKeys, strToArr(kv[1])...)
+		}
+	}
 	return func(f reflect.Type, t reflect.Type, data interface{}) (interface{}, error) {
 		if f.Kind() != reflect.String {
 			return data, nil
@@ -64,35 +91,19 @@ func DecryptSecretHookFunc(hashKey string) mapstructure.DecodeHookFunc {
 		if t != reflect.TypeOf(result) {
 			return data, nil
 		}
-		value := data.(string)
-		if len(value) == 0 {
+		result.Value = data.(string)
+		if len(result.Value) == 0 {
 			return result, nil
 		}
-		// Get all env vars and filter for DOTENV_PRIVATE_KEY
-		var privateKeys []string
-		for _, env := range os.Environ() {
-			key := strings.Split(env, "=")[0]
-			if key == "DOTENV_PRIVATE_KEY" || strings.HasPrefix(key, "DOTENV_PRIVATE_KEY_") {
-				if value := os.Getenv(key); value != "" {
-					privateKeys = append(privateKeys, value)
-				}
-			}
+		// Unloaded env() references should be returned verbatim without hashing
+		if envPattern.MatchString(result.Value) {
+			return result, nil
 		}
-		// Try each private key
-		var err error
-		privKey := strings.Join(privateKeys, ",")
-		for _, k := range strings.Split(privKey, ",") {
-			// Use the first private key that successfully decrypts the secret
-			if result.Value, err = decrypt(k, value); err == nil {
-				// Unloaded env() references may be returned verbatim.
-				// Don't hash those values as they are meaningless.
-				if !envPattern.MatchString(result.Value) {
-					result.SHA256 = sha256Hmac(hashKey, result.Value)
-				}
-				break
-			}
+		if err := result.Decrypt(privateKeys); err != nil {
+			return result, err
 		}
-		// If we get here, none of the keys worked
-		return result, err
+		// Decrypted values should be hashed
+		result.SHA256 = sha256Hmac(hashKey, result.Value)
+		return result, nil
 	}
 }

@@ -22,7 +22,7 @@ func TestDecryptSecret(t *testing.T) {
 		// Run test
 		plaintext, err := decrypt("", value)
 		// Check error
-		assert.ErrorContains(t, err, "missing private key")
+		assert.ErrorIs(t, err, errMissingKey)
 		assert.Equal(t, value, plaintext)
 	})
 
