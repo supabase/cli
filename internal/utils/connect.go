@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/viper"
@@ -47,13 +48,9 @@ func GetPoolerConfig(projectRef string) *pgconn.Config {
 		fmt.Fprintln(logger, "Pooler URL is not configured")
 		return nil
 	}
-	// Remove password from pooler connection string because the placeholder text
-	// [YOUR-PASSWORD] messes up pgconn.ParseConfig. The password must be percent
-	// escaped so we cannot simply call strings.Replace with actual password.
-	poolerUrl := strings.ReplaceAll(Config.Db.Pooler.ConnectionString, "[YOUR-PASSWORD]", "")
-	poolerConfig, err := pgconn.ParseConfig(poolerUrl)
+	poolerConfig, err := ParsePoolerURL(Config.Db.Pooler.ConnectionString)
 	if err != nil {
-		fmt.Fprintln(logger, "Failed to parse pooler URL:", poolerUrl)
+		fmt.Fprintln(logger, err)
 		return nil
 	}
 	if poolerConfig.RuntimeParams == nil {
@@ -77,10 +74,22 @@ func GetPoolerConfig(projectRef string) *pgconn.Config {
 		fmt.Fprintln(logger, "Pooler hostname does not belong to Supabase domain:", poolerConfig.Host)
 		return nil
 	}
-	fmt.Fprintln(logger, "Using connection pooler:", poolerUrl)
+	fmt.Fprintln(logger, "Using connection pooler:", Config.Db.Pooler.ConnectionString)
 	// Supavisor transaction mode does not support prepared statement
 	poolerConfig.Port = 5432
 	return poolerConfig
+}
+
+func ParsePoolerURL(connString string) (*pgconn.Config, error) {
+	// Remove password from pooler connection string because the placeholder text
+	// [YOUR-PASSWORD] messes up pgconn.ParseConfig. The password must be percent
+	// escaped so we cannot simply call strings.Replace with actual password.
+	poolerUrl := strings.ReplaceAll(connString, "[YOUR-PASSWORD]", "")
+	poolerConfig, err := pgconn.ParseConfig(poolerUrl)
+	if err != nil {
+		return nil, errors.Errorf("failed to parse pooler URL: %w", err)
+	}
+	return poolerConfig, nil
 }
 
 func isSupabaseDomain(host string) bool {

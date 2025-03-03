@@ -14,7 +14,8 @@ import (
 
 func newWithDefaults() auth {
 	return auth{
-		EnableSignup: true,
+		EnableSignup:           true,
+		AdditionalRedirectUrls: []string{},
 		Email: email{
 			EnableConfirmations: true,
 		},

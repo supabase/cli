@@ -22,12 +22,13 @@ func (s *StorageAPI) UpsertBuckets(ctx context.Context, bucketConfig config.Buck
 	for _, b := range buckets {
 		exists[b.Name] = b.Id
 	}
+OUTER:
 	for name, bucket := range bucketConfig {
 		// Update bucket properties if already exists
 		if bucketId, ok := exists[name]; ok {
 			for _, keep := range filter {
 				if !keep(bucketId) {
-					continue
+					continue OUTER
 				}
 			}
 			fmt.Fprintln(os.Stderr, "Updating Storage bucket:", bucketId)

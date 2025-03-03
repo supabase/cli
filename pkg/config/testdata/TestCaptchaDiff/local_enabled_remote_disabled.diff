@@ -1,8 +1,8 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -12,9 +12,9 @@
- [rate_limit]
+@@ -11,9 +11,9 @@
+ password_requirements = ""
  
  [captcha]
 -enabled = false

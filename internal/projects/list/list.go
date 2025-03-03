@@ -41,7 +41,8 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		})
 	}
 
-	if utils.OutputFormat.Value == utils.OutputPretty {
+	switch utils.OutputFormat.Value {
+	case utils.OutputPretty:
 		table := `LINKED|ORG ID|REFERENCE ID|NAME|REGION|CREATED AT (UTC)
 |-|-|-|-|-|-|
 `
@@ -57,12 +58,14 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 			)
 		}
 		return list.RenderTable(table)
-	} else if utils.OutputFormat.Value == utils.OutputToml {
+	case utils.OutputToml:
 		return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, struct {
 			Projects []linkedProject `toml:"projects"`
 		}{
 			Projects: projects,
 		})
+	case utils.OutputEnv:
+		return errors.Errorf("--output env flag is not supported")
 	}
 
 	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, projects)

@@ -22,19 +22,16 @@ const (
 	OutputMetadata = "metadata"
 )
 
-var (
-	OutputDefaultAllowed = []string{
+var OutputFormat = EnumFlag{
+	Allowed: []string{
+		OutputEnv,
 		OutputPretty,
 		OutputJson,
 		OutputToml,
 		OutputYaml,
-	}
-
-	OutputFormat = EnumFlag{
-		Allowed: OutputDefaultAllowed,
-		Value:   OutputPretty,
-	}
-)
+	},
+	Value: OutputPretty,
+}
 
 func EncodeOutput(format string, w io.Writer, value any) error {
 	switch format {

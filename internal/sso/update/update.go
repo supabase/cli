@@ -119,7 +119,8 @@ func Run(ctx context.Context, params RunParams) error {
 			CreatedAt: putResp.JSON200.CreatedAt,
 			UpdatedAt: putResp.JSON200.UpdatedAt,
 		})
-
+	case utils.OutputEnv:
+		return nil
 	default:
 		return utils.EncodeOutput(params.Format, os.Stdout, putResp.JSON200)
 	}

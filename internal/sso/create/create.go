@@ -83,7 +83,8 @@ func Run(ctx context.Context, params RunParams) error {
 			CreatedAt: resp.JSON201.CreatedAt,
 			UpdatedAt: resp.JSON201.UpdatedAt,
 		})
-
+	case utils.OutputEnv:
+		return nil
 	default:
 		return utils.EncodeOutput(params.Format, os.Stdout, resp.JSON201)
 	}

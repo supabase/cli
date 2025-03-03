@@ -34,6 +34,7 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 	for _, f := range result {
 		exists[f.Slug] = struct{}{}
 	}
+OUTER:
 	for slug, function := range functionConfig {
 		if !function.Enabled {
 			fmt.Fprintln(os.Stderr, "Skipped deploying Function:", slug)
@@ -41,7 +42,7 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 		}
 		for _, keep := range filter {
 			if !keep(slug) {
-				continue
+				continue OUTER
 			}
 		}
 		var body bytes.Buffer

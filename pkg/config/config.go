@@ -205,7 +205,7 @@ type (
 		Image        string `toml:"-"`
 		Port         uint16 `toml:"port"`
 		ApiUrl       string `toml:"api_url"`
-		OpenaiApiKey string `toml:"openai_api_key"`
+		OpenaiApiKey Secret `toml:"openai_api_key"`
 		PgmetaImage  string `toml:"-"`
 	}
 
@@ -871,7 +871,7 @@ func loadNestedEnv(basePath string) error {
 	if !filepath.IsAbs(basePath) {
 		basePath = filepath.Join(repoDir, basePath)
 	}
-	env := viper.GetString("ENV")
+	env := os.Getenv("SUPABASE_ENV")
 	for cwd := basePath; cwd != filepath.Dir(repoDir); cwd = filepath.Dir(cwd) {
 		if err := os.Chdir(cwd); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return errors.Errorf("failed to change directory: %w", err)
