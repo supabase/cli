@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
@@ -20,6 +22,7 @@ import (
 	"github.com/supabase/cli/internal/secrets/set"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/config"
 )
 
 type InspectMode string
@@ -129,7 +132,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	if err != nil {
 		return errors.Errorf("failed to get working directory: %w", err)
 	}
-	binds, functionsConfigString, err := populatePerFunctionConfigs(cwd, importMapPath, noVerifyJWT, fsys)
+	binds, functionsConfigString, err := populatePerFunctionConfigs(ctx, cwd, importMapPath, noVerifyJWT, fsys)
 	if err != nil {
 		return err
 	}
@@ -207,12 +210,12 @@ func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
 	return env, nil
 }
 
-func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) ([]string, string, error) {
+func populatePerFunctionConfigs(ctx context.Context, cwd, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) ([]string, string, error) {
 	slugs, err := deploy.GetFunctionSlugs(fsys)
 	if err != nil {
 		return nil, "", err
 	}
-	functionsConfig, err := deploy.GetFunctionConfig(slugs, importMapPath, noVerifyJWT, fsys)
+	functionsConfig, err := getServeConfig(ctx, slugs, importMapPath, noVerifyJWT, fsys)
 	if err != nil {
 		return nil, "", err
 	}
@@ -239,4 +242,89 @@ func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 		return nil, "", errors.Errorf("failed to marshal config json: %w", err)
 	}
 	return utils.RemoveDuplicates(binds), string(functionsConfigBytes), nil
+}
+
+func getServeConfig(ctx context.Context, slugs []string, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) (config.FunctionConfig, error) {
+	functionsConfig, err := deploy.GetFunctionConfig(slugs, importMapPath, noVerifyJWT, fsys)
+	if err != nil {
+		return nil, err
+	}
+	dirs, err := afero.ReadDir(fsys, utils.FunctionsDir)
+	if err != nil {
+		return nil, errors.Errorf("failed to read directory: %w", err)
+	}
+	console := utils.NewConsole()
+	for _, p := range dirs {
+		if !p.IsDir() {
+			continue
+		}
+		slug := p.Name()
+		if !utils.FuncSlugPattern.MatchString(slug) {
+			continue
+		}
+		fc, ok := functionsConfig[slug]
+		if ok {
+			continue
+		}
+		label := fmt.Sprintf("Enter an entrypoint for %s (or leave blank to skip): ", slug)
+		fc.Entrypoint, err = console.PromptText(ctx, label)
+		if err != nil {
+			return nil, err
+		}
+		functionDir := filepath.Join(utils.FunctionsDir, slug)
+		if fc.Enabled = len(fc.Entrypoint) > 0; fc.Enabled {
+			fc.Entrypoint = filepath.Join(functionDir, fc.Entrypoint)
+		}
+		if err := appendConfigFile(slug, fc.Entrypoint, fsys); err != nil {
+			return nil, err
+		}
+		fc.VerifyJWT = true
+		if noVerifyJWT != nil {
+			fc.VerifyJWT = !*noVerifyJWT
+		}
+		fc.ImportMap = importMapPath
+		// Precedence order: flag > config > fallback
+		if len(fc.ImportMap) == 0 {
+			denoJsonPath := filepath.Join(functionDir, "deno.json")
+			denoJsoncPath := filepath.Join(functionDir, "deno.jsonc")
+			importMapPath := filepath.Join(functionDir, "import_map.json")
+			if _, err := fsys.Stat(denoJsonPath); err == nil {
+				fc.ImportMap = denoJsonPath
+			} else if _, err := fsys.Stat(denoJsoncPath); err == nil {
+				fc.ImportMap = denoJsoncPath
+			} else if _, err := fsys.Stat(importMapPath); err == nil {
+				fc.ImportMap = importMapPath
+			} else {
+				fc.ImportMap = utils.FallbackImportMapPath
+			}
+		}
+		functionsConfig[slug] = fc
+	}
+	return functionsConfig, nil
+}
+
+func appendConfigFile(slug, entrypoint string, fsys afero.Fs) error {
+	f, err := fsys.OpenFile(utils.ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		return errors.Errorf("failed to append config: %w", err)
+	}
+	defer f.Close()
+	data := map[string]config.FunctionConfig{
+		"functions": {slug: {
+			Enabled:    len(entrypoint) > 0,
+			Entrypoint: entrypoint,
+			VerifyJWT:  true,
+		}},
+	}
+	var buf bytes.Buffer
+	enc := toml.NewEncoder(&buf)
+	enc.Indent = ""
+	if err := enc.Encode(data); err != nil {
+		return errors.Errorf("failed to append function: %w", err)
+	}
+	result := bytes.ReplaceAll(buf.Bytes(), []byte("[functions]"), nil)
+	if _, err := f.Write(result); err != nil {
+		return errors.Errorf("failed to write function: %w", err)
+	}
+	return nil
 }
