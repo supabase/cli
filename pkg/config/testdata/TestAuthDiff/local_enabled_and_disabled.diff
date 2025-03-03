@@ -25,4 +25,4 @@ diff remote[auth] local[auth]
 +password_requirements = "lower_upper_letters_digits_symbols"
  
  [rate_limit]
- 
+ anonymous_users = 0

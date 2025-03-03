@@ -1,7 +1,7 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -10,12 +10,12 @@
+@@ -11,12 +11,12 @@
  password_requirements = ""
  
  [rate_limit]
