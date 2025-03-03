@@ -723,9 +723,6 @@ EOF
 				Image: utils.Config.Inbucket.Image,
 			},
 			container.HostConfig{
-				Binds: []string{
-					utils.InbucketId + ":/data",
-				},
 				PortBindings:  inbucketPortBindings,
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
