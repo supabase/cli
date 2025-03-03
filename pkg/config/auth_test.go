@@ -1115,199 +1115,17 @@ func TestExternalDiff(t *testing.T) {
 	})
 }
 
-func TestAuthRateLimits(t *testing.T) {
-	t.Run("all rate limits specified", func(t *testing.T) {
-		// Setup auth with all rate limits
-		c := newWithDefaults()
-		anonymousLimit := uint(20)
-		tokenRefreshLimit := uint(30)
-		otpLimit := uint(40)
-		verifyLimit := uint(50)
-		c.RateLimit.AnonymousUsers = &anonymousLimit
-		c.RateLimit.TokenRefresh = &tokenRefreshLimit
-		c.RateLimit.SignInSignUps = &otpLimit
-		c.RateLimit.TokenVerifications = &verifyLimit
-
-		// Run test for ToUpdateAuthConfigBody
-		body := c.ToUpdateAuthConfigBody()
-
-		// Check values
-		assert.Equal(t, 20, *body.RateLimitAnonymousUsers)
-		assert.Equal(t, 30, *body.RateLimitTokenRefresh)
-		assert.Equal(t, 40, *body.RateLimitOtp)
-		assert.Equal(t, 50, *body.RateLimitVerify)
-
-		// Check FromRemoteAuthConfig
-		c = newWithDefaults()
-		c.FromRemoteAuthConfig(v1API.AuthConfigResponse{
-			RateLimitAnonymousUsers: cast.Ptr(20),
-			RateLimitTokenRefresh:   cast.Ptr(30),
-			RateLimitOtp:            cast.Ptr(40),
-			RateLimitVerify:         cast.Ptr(50),
-		})
-
-		assert.Equal(t, uint(20), *c.RateLimit.AnonymousUsers)
-		assert.Equal(t, uint(30), *c.RateLimit.TokenRefresh)
-		assert.Equal(t, uint(40), *c.RateLimit.SignInSignUps)
-		assert.Equal(t, uint(50), *c.RateLimit.TokenVerifications)
-	})
-
-	t.Run("no rate limits specified", func(t *testing.T) {
-		// Setup auth with no rate limits
-		c := newWithDefaults()
-
-		// Run test for ToUpdateAuthConfigBody
-		body := c.ToUpdateAuthConfigBody()
-
-		// Check values
-		assert.Nil(t, body.RateLimitAnonymousUsers)
-		assert.Nil(t, body.RateLimitTokenRefresh)
-		assert.Nil(t, body.RateLimitOtp)
-		assert.Nil(t, body.RateLimitVerify)
-
-		// Check FromRemoteAuthConfig without rate limits
-		c = newWithDefaults()
-		c.FromRemoteAuthConfig(v1API.AuthConfigResponse{})
-
-		assert.Nil(t, c.RateLimit.AnonymousUsers)
-		assert.Nil(t, c.RateLimit.TokenRefresh)
-		assert.Nil(t, c.RateLimit.SignInSignUps)
-		assert.Nil(t, c.RateLimit.TokenVerifications)
-	})
-
-	t.Run("partial rate limits specified", func(t *testing.T) {
-		// Setup auth with partial rate limits
-		c := newWithDefaults()
-		anonymousLimit := uint(20)
-		verifyLimit := uint(50)
-		c.RateLimit.AnonymousUsers = &anonymousLimit
-		c.RateLimit.TokenVerifications = &verifyLimit
-
-		// Run test for ToUpdateAuthConfigBody
-		body := c.ToUpdateAuthConfigBody()
-
-		// Check values
-		assert.Equal(t, 20, *body.RateLimitAnonymousUsers)
-		assert.Nil(t, body.RateLimitTokenRefresh)
-		assert.Nil(t, body.RateLimitOtp)
-		assert.Equal(t, 50, *body.RateLimitVerify)
-
-		// Check FromRemoteAuthConfig with partial rate limits
-		c = newWithDefaults()
-		c.FromRemoteAuthConfig(v1API.AuthConfigResponse{
-			RateLimitAnonymousUsers: cast.Ptr(20),
-			RateLimitVerify:         cast.Ptr(50),
-		})
-
-		assert.Equal(t, uint(20), *c.RateLimit.AnonymousUsers)
-		assert.Nil(t, c.RateLimit.TokenRefresh)
-		assert.Nil(t, c.RateLimit.SignInSignUps)
-		assert.Equal(t, uint(50), *c.RateLimit.TokenVerifications)
-	})
-}
-
-func TestEmailRateLimit(t *testing.T) {
-	t.Run("rate limit specified", func(t *testing.T) {
-		// Setup auth with email rate limit
-		c := newWithDefaults()
-		emailLimit := uint(25)
-		c.RateLimit.EmailSent = &emailLimit
-
-		// Create API request body
-		body := v1API.UpdateAuthConfigBody{}
-		c.RateLimit.toAuthConfigBody(&body)
-
-		// Check value
-		assert.Equal(t, 25, *body.RateLimitEmailSent)
-
-		// Test FromAuthConfig
-		r := rateLimit{}
-		r.fromAuthConfig(v1API.AuthConfigResponse{
-			RateLimitEmailSent: cast.Ptr(25),
-		})
-
-		assert.Equal(t, uint(25), *r.EmailSent)
-	})
-
-	t.Run("rate limit not specified", func(t *testing.T) {
-		// Setup auth without email rate limit
-		c := newWithDefaults()
-
-		// Create API request body
-		body := v1API.UpdateAuthConfigBody{}
-		c.RateLimit.toAuthConfigBody(&body)
-
-		// Check value
-		assert.Nil(t, body.RateLimitEmailSent)
-
-		// Test FromAuthConfig
-		r := rateLimit{}
-		r.fromAuthConfig(v1API.AuthConfigResponse{})
-
-		assert.Nil(t, r.EmailSent)
-	})
-}
-
-func TestSmsRateLimit(t *testing.T) {
-	t.Run("rate limit specified", func(t *testing.T) {
-		// Setup auth with SMS rate limit
-		c := newWithDefaults()
-		smsLimit := uint(35)
-		c.RateLimit.SmsSent = &smsLimit
-
-		// Create API request body
-		body := v1API.UpdateAuthConfigBody{}
-		c.RateLimit.toAuthConfigBody(&body)
-
-		// Check value
-		assert.Equal(t, 35, *body.RateLimitSmsSent)
-
-		// Test FromAuthConfig
-		r := rateLimit{}
-		r.fromAuthConfig(v1API.AuthConfigResponse{
-			RateLimitSmsSent: cast.Ptr(35),
-		})
-
-		assert.Equal(t, uint(35), *r.SmsSent)
-	})
-
-	t.Run("rate limit not specified", func(t *testing.T) {
-		// Setup auth without SMS rate limit
-		c := newWithDefaults()
-
-		// Create API request body
-		body := v1API.UpdateAuthConfigBody{}
-		c.RateLimit.toAuthConfigBody(&body)
-
-		// Check value
-		assert.Nil(t, body.RateLimitSmsSent)
-
-		// Test FromAuthConfig
-		r := rateLimit{}
-		r.fromAuthConfig(v1API.AuthConfigResponse{})
-
-		assert.Nil(t, r.SmsSent)
-	})
-}
-
 func TestRateLimitsDiff(t *testing.T) {
 	t.Run("local and remote rate limits match", func(t *testing.T) {
 		// Setup auth with rate limits
 		c := newWithDefaults()
-		anonymousLimit := uint(20)
-		tokenRefreshLimit := uint(30)
-		otpLimit := uint(40)
-		verifyLimit := uint(50)
-		emailLimit := uint(25)
-		smsLimit := uint(35)
-
-		c.RateLimit.AnonymousUsers = &anonymousLimit
-		c.RateLimit.TokenRefresh = &tokenRefreshLimit
-		c.RateLimit.SignInSignUps = &otpLimit
-		c.RateLimit.TokenVerifications = &verifyLimit
-		c.RateLimit.EmailSent = &emailLimit
-		c.RateLimit.SmsSent = &smsLimit
-
+		c.RateLimit.AnonymousUsers = 20
+		c.RateLimit.TokenRefresh = 30
+		c.RateLimit.SignInSignUps = 40
+		c.RateLimit.TokenVerifications = 50
+		c.RateLimit.EmailSent = 25
+		c.RateLimit.SmsSent = 35
+		c.Email.Smtp = &smtp{Enabled: true}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			RateLimitAnonymousUsers: cast.Ptr(20),
@@ -1318,7 +1136,6 @@ func TestRateLimitsDiff(t *testing.T) {
 			RateLimitSmsSent:        cast.Ptr(35),
 			SmtpHost:                cast.Ptr(""),
 		})
-
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, string(diff))
@@ -1327,20 +1144,13 @@ func TestRateLimitsDiff(t *testing.T) {
 	t.Run("local and remote rate limits differ", func(t *testing.T) {
 		// Setup auth with rate limits
 		c := newWithDefaults()
-		anonymousLimit := uint(20)
-		tokenRefreshLimit := uint(30)
-		otpLimit := uint(40)
-		verifyLimit := uint(50)
-		emailLimit := uint(25)
-		smsLimit := uint(35)
-
-		c.RateLimit.AnonymousUsers = &anonymousLimit
-		c.RateLimit.TokenRefresh = &tokenRefreshLimit
-		c.RateLimit.SignInSignUps = &otpLimit
-		c.RateLimit.TokenVerifications = &verifyLimit
-		c.RateLimit.EmailSent = &emailLimit
-		c.RateLimit.SmsSent = &smsLimit
-
+		c.RateLimit.AnonymousUsers = 20
+		c.RateLimit.TokenRefresh = 30
+		c.RateLimit.SignInSignUps = 40
+		c.RateLimit.TokenVerifications = 50
+		c.RateLimit.EmailSent = 25
+		c.RateLimit.SmsSent = 35
+		c.Email.Smtp = &smtp{Enabled: true}
 		// Run test with different remote values
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			RateLimitAnonymousUsers: cast.Ptr(10), // Different value
@@ -1349,84 +1159,25 @@ func TestRateLimitsDiff(t *testing.T) {
 			RateLimitVerify:         cast.Ptr(50),
 			RateLimitEmailSent:      cast.Ptr(15), // Different value
 			RateLimitSmsSent:        cast.Ptr(55), // Different value
-			SmtpHost:                cast.Ptr(""), // Add this to enable SMTP in remote config
+			SmtpHost:                cast.Ptr(""),
 		})
-
 		// Check error
 		assert.NoError(t, err)
 		// Compare with snapshot
 		assertSnapshotEqual(t, diff)
 	})
 
-	t.Run("local has rate limits but remote doesn't", func(t *testing.T) {
-		// Setup auth with rate limits
+	t.Run("ignores email rate limit when smtp is disabled", func(t *testing.T) {
+		// Setup auth without rate limits
 		c := newWithDefaults()
-		anonymousLimit := uint(20)
-		tokenRefreshLimit := uint(30)
-		otpLimit := uint(40)
-		verifyLimit := uint(50)
-		emailLimit := uint(25)
-		smsLimit := uint(35)
-		c.RateLimit.AnonymousUsers = &anonymousLimit
-		c.RateLimit.TokenRefresh = &tokenRefreshLimit
-		c.RateLimit.SignInSignUps = &otpLimit
-		c.RateLimit.TokenVerifications = &verifyLimit
-		c.RateLimit.EmailSent = &emailLimit
-		c.RateLimit.SmsSent = &smsLimit
-
-		// Configure email to make sure email section appears
-		c.Email.Smtp = &smtp{
-			Enabled: true,
-			Host:    "smtp.example.com",
-		}
-
-		c.Email.EnableSignup = true
-		// Configure SMS to make sure SMS section appears
-		c.Sms.EnableSignup = true
-
-		// Run test with no remote rate limits
+		c.RateLimit.EmailSent = 25
+		// Run test with remote rate limits
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			// Remote has no rate limits but needs these fields to make certain sections appear
-			SmtpHost:             cast.Ptr("smtp.example.com"),
-			ExternalEmailEnabled: cast.Ptr(true),
-			ExternalPhoneEnabled: cast.Ptr(true),
+			RateLimitEmailSent: cast.Ptr(15),
+			SmtpHost:           cast.Ptr(""),
 		})
-
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, string(diff))
-	})
-
-	t.Run("remote has rate limits but local doesn't", func(t *testing.T) {
-		// Setup auth without rate limits
-		c := newWithDefaults()
-
-		// Configure email to make sure email section appears
-		c.Email.Smtp = &smtp{
-			Enabled: true,
-			Host:    "smtp.example.com",
-		}
-		c.Email.EnableSignup = true
-		// Configure SMS to make sure SMS section appears
-		c.Sms.EnableSignup = true
-
-		// Run test with remote rate limits
-		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			RateLimitAnonymousUsers: cast.Ptr(20),
-			RateLimitTokenRefresh:   cast.Ptr(30),
-			RateLimitOtp:            cast.Ptr(40),
-			RateLimitVerify:         cast.Ptr(50),
-			RateLimitEmailSent:      cast.Ptr(25),
-			RateLimitSmsSent:        cast.Ptr(35),
-			// Add required fields to make relevant sections appear in the diff
-			SmtpHost:             cast.Ptr("smtp.example.com"),
-			ExternalEmailEnabled: cast.Ptr(true),
-			ExternalPhoneEnabled: cast.Ptr(true),
-		})
-
-		// Check error
-		assert.NoError(t, err)
-		// Compare with snapshot
-		assertSnapshotEqual(t, diff)
 	})
 }

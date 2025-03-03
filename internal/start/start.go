@@ -30,7 +30,6 @@ import (
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
-	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/config"
 	"golang.org/x/mod/semver"
 )
@@ -507,12 +506,12 @@ EOF
 			fmt.Sprintf("GOTRUE_MFA_MAX_ENROLLED_FACTORS=%v", utils.Config.Auth.MFA.MaxEnrolledFactors),
 
 			// Add rate limit configurations
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_ANONYMOUS_USERS=%v", cast.Val(utils.Config.Auth.RateLimit.AnonymousUsers, 30)),
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_TOKEN_REFRESH=%v", cast.Val(utils.Config.Auth.RateLimit.TokenRefresh, 150)),
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_OTP=%v", cast.Val(utils.Config.Auth.RateLimit.SignInSignUps, 30)),
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_VERIFY=%v", cast.Val(utils.Config.Auth.RateLimit.TokenVerifications, 30)),
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_SMS_SENT=%v", cast.Val(utils.Config.Auth.RateLimit.SmsSent, 30)),
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_EMAIL_SENT=%v", cast.Val(utils.Config.Auth.RateLimit.EmailSent, 2)),
+			fmt.Sprintf("GOTRUE_RATE_LIMIT_ANONYMOUS_USERS=%v", utils.Config.Auth.RateLimit.AnonymousUsers),
+			fmt.Sprintf("GOTRUE_RATE_LIMIT_TOKEN_REFRESH=%v", utils.Config.Auth.RateLimit.TokenRefresh),
+			fmt.Sprintf("GOTRUE_RATE_LIMIT_OTP=%v", utils.Config.Auth.RateLimit.SignInSignUps),
+			fmt.Sprintf("GOTRUE_RATE_LIMIT_VERIFY=%v", utils.Config.Auth.RateLimit.TokenVerifications),
+			fmt.Sprintf("GOTRUE_RATE_LIMIT_SMS_SENT=%v", utils.Config.Auth.RateLimit.SmsSent),
+			fmt.Sprintf("GOTRUE_RATE_LIMIT_EMAIL_SENT=%v", utils.Config.Auth.RateLimit.EmailSent),
 		}
 
 		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.Enabled {

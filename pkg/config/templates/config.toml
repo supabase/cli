@@ -129,9 +129,9 @@ password_requirements = ""
 
 [auth.rate_limit]
 # Number of emails that can be sent per hour. Requires auth.email.smtp to be enabled.
-# email_sent = 2
+email_sent = 2
 # Number of SMS messages that can be sent per hour. Requires auth.sms to be enabled.
-# sms_sent = 30
+sms_sent = 30
 # Number of anonymous sign-ins that can be made per hour per IP address. Requires enable_anonymous_sign_ins = true.
 anonymous_users = 30
 # Number of sessions that can be refreshed in a 5 minute interval per IP address.

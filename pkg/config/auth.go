@@ -109,12 +109,12 @@ type (
 	}
 
 	rateLimit struct {
-		AnonymousUsers     *uint `toml:"anonymous_users"`
-		TokenRefresh       *uint `toml:"token_refresh"`
-		SignInSignUps      *uint `toml:"sign_in_sign_ups"`
-		TokenVerifications *uint `toml:"token_verifications"`
-		EmailSent          *uint `toml:"email_sent"`
-		SmsSent            *uint `toml:"sms_sent"`
+		AnonymousUsers     uint `toml:"anonymous_users"`
+		TokenRefresh       uint `toml:"token_refresh"`
+		SignInSignUps      uint `toml:"sign_in_sign_ups"`
+		TokenVerifications uint `toml:"token_verifications"`
+		EmailSent          uint `toml:"email_sent"`
+		SmsSent            uint `toml:"sms_sent"`
 	}
 
 	tpaFirebase struct {
@@ -259,54 +259,6 @@ type (
 	}
 )
 
-func (r rateLimit) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
-	if r.AnonymousUsers != nil {
-		body.RateLimitAnonymousUsers = cast.UintToIntPtr(r.AnonymousUsers)
-	}
-	if r.TokenRefresh != nil {
-		body.RateLimitTokenRefresh = cast.UintToIntPtr(r.TokenRefresh)
-	}
-	if r.SignInSignUps != nil {
-		body.RateLimitOtp = cast.UintToIntPtr(r.SignInSignUps)
-	}
-	if r.TokenVerifications != nil {
-		body.RateLimitVerify = cast.UintToIntPtr(r.TokenVerifications)
-	}
-	if r.EmailSent != nil {
-		body.RateLimitEmailSent = cast.UintToIntPtr(r.EmailSent)
-	}
-	if r.SmsSent != nil {
-		body.RateLimitSmsSent = cast.UintToIntPtr(r.SmsSent)
-	}
-}
-
-func (r *rateLimit) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
-	if remoteConfig.RateLimitAnonymousUsers != nil {
-		val := cast.IntToUint(*remoteConfig.RateLimitAnonymousUsers)
-		r.AnonymousUsers = &val
-	}
-	if remoteConfig.RateLimitTokenRefresh != nil {
-		val := cast.IntToUint(*remoteConfig.RateLimitTokenRefresh)
-		r.TokenRefresh = &val
-	}
-	if remoteConfig.RateLimitOtp != nil {
-		val := cast.IntToUint(*remoteConfig.RateLimitOtp)
-		r.SignInSignUps = &val
-	}
-	if remoteConfig.RateLimitVerify != nil {
-		val := cast.IntToUint(*remoteConfig.RateLimitVerify)
-		r.TokenVerifications = &val
-	}
-	if remoteConfig.RateLimitEmailSent != nil {
-		val := cast.IntToUint(*remoteConfig.RateLimitEmailSent)
-		r.EmailSent = &val
-	}
-	if remoteConfig.RateLimitSmsSent != nil {
-		val := cast.IntToUint(*remoteConfig.RateLimitSmsSent)
-		r.SmsSent = &val
-	}
-}
-
 func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 	body := v1API.UpdateAuthConfigBody{
 		SiteUrl:                           &a.SiteUrl,
@@ -320,10 +272,11 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 		PasswordMinLength:                 cast.UintToIntPtr(&a.MinimumPasswordLength),
 		PasswordRequiredCharacters:        cast.Ptr(a.PasswordRequirements.ToChar()),
 	}
-
 	// Add rate limit fields
 	a.RateLimit.toAuthConfigBody(&body)
-
+	if s := a.Email.Smtp; s != nil && s.Enabled {
+		body.RateLimitEmailSent = cast.Ptr(cast.UintToInt(a.RateLimit.EmailSent))
+	}
 	// When local config is not set, we assume platform defaults should not change
 	if a.Captcha != nil {
 		a.Captcha.toAuthConfigBody(&body)
@@ -349,8 +302,10 @@ func (a *auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	a.MinimumPasswordLength = cast.IntToUint(cast.Val(remoteConfig.PasswordMinLength, 0))
 	prc := cast.Val(remoteConfig.PasswordRequiredCharacters, "")
 	a.PasswordRequirements = NewPasswordRequirement(v1API.UpdateAuthConfigBodyPasswordRequiredCharacters(prc))
-
 	a.RateLimit.fromAuthConfig(remoteConfig)
+	if s := a.Email.Smtp; s != nil && s.Enabled {
+		a.RateLimit.EmailSent = cast.IntToUint(cast.Val(remoteConfig.RateLimitEmailSent, 0))
+	}
 	a.Captcha.fromAuthConfig(remoteConfig)
 	a.Hook.fromAuthConfig(remoteConfig)
 	a.MFA.fromAuthConfig(remoteConfig)
@@ -358,6 +313,24 @@ func (a *auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	a.Email.fromAuthConfig(remoteConfig)
 	a.Sms.fromAuthConfig(remoteConfig)
 	a.External.fromAuthConfig(remoteConfig)
+}
+
+func (r rateLimit) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+	body.RateLimitAnonymousUsers = cast.Ptr(cast.UintToInt(r.AnonymousUsers))
+	body.RateLimitTokenRefresh = cast.Ptr(cast.UintToInt(r.TokenRefresh))
+	body.RateLimitOtp = cast.Ptr(cast.UintToInt(r.SignInSignUps))
+	body.RateLimitVerify = cast.Ptr(cast.UintToInt(r.TokenVerifications))
+	// Email rate limit is only updated when SMTP is enabled
+	body.RateLimitSmsSent = cast.Ptr(cast.UintToInt(r.SmsSent))
+}
+
+func (r *rateLimit) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	r.AnonymousUsers = cast.IntToUint(cast.Val(remoteConfig.RateLimitAnonymousUsers, 0))
+	r.TokenRefresh = cast.IntToUint(cast.Val(remoteConfig.RateLimitTokenRefresh, 0))
+	r.SignInSignUps = cast.IntToUint(cast.Val(remoteConfig.RateLimitOtp, 0))
+	r.TokenVerifications = cast.IntToUint(cast.Val(remoteConfig.RateLimitVerify, 0))
+	// Email rate limit is only updated when SMTP is enabled
+	r.SmsSent = cast.IntToUint(cast.Val(remoteConfig.RateLimitSmsSent, 0))
 }
 
 func (c captcha) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
@@ -523,7 +496,6 @@ func (e email) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.MailerOtpExp = cast.UintToIntPtr(&e.OtpExpiry)
 	body.SecurityUpdatePasswordRequireReauthentication = &e.SecurePasswordChange
 	body.SmtpMaxFrequency = cast.Ptr(int(e.MaxFrequency.Seconds()))
-
 	// When local config is not set, we assume platform defaults should not change
 	if e.Smtp != nil {
 		e.Smtp.toAuthConfigBody(body)
@@ -560,7 +532,6 @@ func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	e.OtpExpiry = cast.IntToUint(remoteConfig.MailerOtpExp)
 	e.SecurePasswordChange = cast.Val(remoteConfig.SecurityUpdatePasswordRequireReauthentication, false)
 	e.MaxFrequency = time.Duration(cast.Val(remoteConfig.SmtpMaxFrequency, 0)) * time.Second
-
 	e.Smtp.fromAuthConfig(remoteConfig)
 	if len(e.Template) == 0 {
 		return
@@ -714,7 +685,6 @@ func (s *sms) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	s.EnableConfirmations = cast.Val(remoteConfig.SmsAutoconfirm, false)
 	s.Template = cast.Val(remoteConfig.SmsTemplate, "")
 	s.TestOTP = envToMap(cast.Val(remoteConfig.SmsTestOtp, ""))
-
 	// We are only interested in the provider that's enabled locally
 	switch {
 	case s.Twilio.Enabled:
