@@ -35,6 +35,11 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang str
 	}
 	included := strings.Join(schemas, ",")
 
+	var defaultSchemaEnv string
+	if len(schemas) == 1 && schemas[0] != "public"{
+		defaultSchemaEnv = schemas[0]
+	}
+
 	if projectId != "" {
 		if lang != LangTypescript {
 			return errors.Errorf("Unable to generate %s types for selected project. Try using --db-url flag instead.", lang)
@@ -84,17 +89,23 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang str
 		escaped += "&sslmode=require"
 	}
 
+	envVars := []string{
+		"PG_META_DB_URL=" + escaped,
+		"PG_META_GENERATE_TYPES=" + lang,
+		"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=" + included,
+		"PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL=" + swiftAccessControl,
+		fmt.Sprintf("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=%v", !postgrestV9Compat),
+	}
+
+	if defaultSchemaEnv != "" {
+		envVars = append(envVars, "PG_META_GENERATE_TYPES_DEFAULT_SCHEMA="+defaultSchemaEnv)
+	}
+
 	return utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
 			Image: utils.Config.Studio.PgmetaImage,
-			Env: []string{
-				"PG_META_DB_URL=" + escaped,
-				"PG_META_GENERATE_TYPES=" + lang,
-				"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=" + included,
-				"PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL=" + swiftAccessControl,
-				fmt.Sprintf("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=%v", !postgrestV9Compat),
-			},
+			Env: envVars,
 			Cmd: []string{"node", "dist/server/server.js"},
 		},
 		hostConfig,
