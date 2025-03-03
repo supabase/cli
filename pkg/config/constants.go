@@ -1,48 +1,74 @@
 package config
 
-const (
-	pg13Image = "supabase/postgres:13.3.0"
-	pg14Image = "supabase/postgres:14.1.0.89"
-	Pg15Image = "supabase/postgres:15.8.1.020"
-	// Append to ServiceImages when adding new dependencies below
-	// TODO: try https://github.com/axllent/mailpit
-	kongImage        = "library/kong:2.8.1"
-	inbucketImage    = "axllent/mailpit:v1.22.2"
-	postgrestImage   = "postgrest/postgrest:v12.2.0"
-	pgmetaImage      = "supabase/postgres-meta:v0.84.2"
-	studioImage      = "supabase/studio:20250130-b048539"
-	imageProxyImage  = "darthsim/imgproxy:v3.8.0"
-	edgeRuntimeImage = "supabase/edge-runtime:v1.67.0"
-	vectorImage      = "timberio/vector:0.28.1-alpine"
-	supavisorImage   = "supabase/supavisor:1.1.56"
-	gotrueImage      = "supabase/gotrue:v2.167.0"
-	realtimeImage    = "supabase/realtime:v2.34.7"
-	storageImage     = "supabase/storage-api:v1.14.5"
-	logflareImage    = "supabase/logflare:1.4.0"
-	// Append to JobImages when adding new dependencies below
-	DifferImage  = "supabase/pgadmin-schema-diff:cli-0.0.5"
-	MigraImage   = "supabase/migra:3.0.1663481299"
-	PgProveImage = "supabase/pg_prove:3.36"
+import (
+	_ "embed"
+	"regexp"
+
+	"github.com/go-errors/errors"
+	"github.com/mitchellh/mapstructure"
 )
 
-var ServiceImages = []string{
-	gotrueImage,
-	realtimeImage,
-	storageImage,
-	imageProxyImage,
-	kongImage,
-	inbucketImage,
-	postgrestImage,
-	pgmetaImage,
-	studioImage,
-	edgeRuntimeImage,
-	logflareImage,
-	vectorImage,
-	supavisorImage,
+const (
+	pg13 = "supabase/postgres:13.3.0"
+	pg14 = "supabase/postgres:14.1.0.89"
+)
+
+type images struct {
+	Pg15 string `mapstructure:"pg15"`
+	// Append to Services when adding new dependencies below
+	Kong        string `mapstructure:"kong"`
+	Inbucket    string `mapstructure:"inbucket"`
+	Postgrest   string `mapstructure:"postgrest"`
+	Pgmeta      string `mapstructure:"pgmeta"`
+	Studio      string `mapstructure:"studio"`
+	ImgProxy    string `mapstructure:"imgproxy"`
+	EdgeRuntime string `mapstructure:"edgeruntime"`
+	Vector      string `mapstructure:"vector"`
+	Supavisor   string `mapstructure:"supavisor"`
+	Gotrue      string `mapstructure:"gotrue"`
+	Realtime    string `mapstructure:"realtime"`
+	Storage     string `mapstructure:"storage"`
+	Logflare    string `mapstructure:"logflare"`
+	// Append to Jobs when adding new dependencies below
+	Differ  string `mapstructure:"differ"`
+	Migra   string `mapstructure:"migra"`
+	PgProve string `mapstructure:"pgprove"`
 }
 
-var JobImages = []string{
-	DifferImage,
-	MigraImage,
-	PgProveImage,
+var (
+	//go:embed templates/Dockerfile
+	dockerImage  string
+	imagePattern = regexp.MustCompile(`(?i)FROM\s+([^\s]+)\s+AS\s+([^\s]+)`)
+	Images       images
+)
+
+func init() {
+	matches := imagePattern.FindAllStringSubmatch(dockerImage, -1)
+	result := make(map[string]string, len(matches))
+	for _, m := range matches {
+		if len(m) == 3 {
+			result[m[2]] = m[1]
+		}
+	}
+	if err := mapstructure.Decode(result, &Images); err != nil {
+		panic(errors.Errorf("failed to decode images: %w", err))
+	}
+}
+
+func (s images) Services() []string {
+	return []string{
+		s.Gotrue,
+		s.Realtime,
+		s.Storage,
+		s.ImgProxy,
+		s.Kong,
+		s.Inbucket,
+		s.Postgrest,
+		s.Pgmeta,
+		s.Studio,
+		s.EdgeRuntime,
+		s.Logflare,
+		s.Vector,
+		s.Supavisor,
+	}
 }

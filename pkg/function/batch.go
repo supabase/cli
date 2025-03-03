@@ -34,14 +34,15 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 	for _, f := range result {
 		exists[f.Slug] = struct{}{}
 	}
+OUTER:
 	for slug, function := range functionConfig {
-		if !function.IsEnabled() {
+		if !function.Enabled {
 			fmt.Fprintln(os.Stderr, "Skipped deploying Function:", slug)
 			continue
 		}
 		for _, keep := range filter {
 			if !keep(slug) {
-				continue
+				continue OUTER
 			}
 		}
 		var body bytes.Buffer
@@ -52,7 +53,7 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 		upsert := func() error {
 			if _, ok := exists[slug]; ok {
 				if resp, err := s.client.V1UpdateAFunctionWithBodyWithResponse(ctx, s.project, slug, &api.V1UpdateAFunctionParams{
-					VerifyJwt:      function.VerifyJWT,
+					VerifyJwt:      &function.VerifyJWT,
 					ImportMapPath:  toFileURL(function.ImportMap),
 					EntrypointPath: toFileURL(function.Entrypoint),
 				}, eszipContentType, bytes.NewReader(body.Bytes())); err != nil {
@@ -64,7 +65,7 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 				if resp, err := s.client.V1CreateAFunctionWithBodyWithResponse(ctx, s.project, &api.V1CreateAFunctionParams{
 					Slug:           &slug,
 					Name:           &slug,
-					VerifyJwt:      function.VerifyJWT,
+					VerifyJwt:      &function.VerifyJWT,
 					ImportMapPath:  toFileURL(function.ImportMap),
 					EntrypointPath: toFileURL(function.Entrypoint),
 				}, eszipContentType, bytes.NewReader(body.Bytes())); err != nil {

@@ -30,6 +30,11 @@ shadow_port = 54320
 # server_version;` on the remote database to check.
 major_version = 15
 
+[db.migrations]
+# Specifies an ordered list of schema files that describe your database.
+# Supports glob patterns relative to supabase directory: "./schemas/*.sql"
+schema_paths = ["./schemas/*.sql"]
+
 [db.pooler]
 enabled = true
 # Port to use for the local connection pooler.

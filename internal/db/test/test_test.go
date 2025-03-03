@@ -41,7 +41,7 @@ func TestRunCommand(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		containerId := "test-pg-prove"
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(config.PgProveImage), containerId)
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(config.Images.PgProve), containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "Result: SUCCESS"))
 		// Run test
 		err := Run(context.Background(), []string{"nested"}, dbConfig, fsys, conn.Intercept)
@@ -90,7 +90,7 @@ func TestRunCommand(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(config.PgProveImage) + "/json").
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(config.Images.PgProve) + "/json").
 			ReplyError(errNetwork)
 		// Run test
 		err := Run(context.Background(), nil, dbConfig, fsys, conn.Intercept)

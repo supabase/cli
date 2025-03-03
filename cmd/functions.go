@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/functions/delete"
@@ -52,8 +53,10 @@ var (
 		},
 	}
 
-	noVerifyJWT     = new(bool)
+	useApi          bool
+	useDocker       bool
 	useLegacyBundle bool
+	noVerifyJWT     = new(bool)
 	importMapPath   string
 
 	functionsDeployCmd = &cobra.Command{
@@ -65,7 +68,12 @@ var (
 			if !cmd.Flags().Changed("no-verify-jwt") {
 				noVerifyJWT = nil
 			}
-			return deploy.Run(cmd.Context(), args, flags.ProjectRef, noVerifyJWT, importMapPath, afero.NewOsFs())
+			if useApi {
+				useDocker = false
+			} else if maxJobs > 1 {
+				return errors.New("--jobs must be used together with --use-api")
+			}
+			return deploy.Run(cmd.Context(), args, useDocker, noVerifyJWT, importMapPath, maxJobs, afero.NewOsFs())
 		},
 	}
 
@@ -123,11 +131,16 @@ var (
 func init() {
 	functionsListCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsDeleteCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
-	functionsDeployCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
-	functionsDeployCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
-	functionsDeployCmd.Flags().BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
-	functionsDeployCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")
-	cobra.CheckErr(functionsDeployCmd.Flags().MarkHidden("legacy-bundle"))
+	deployFlags := functionsDeployCmd.Flags()
+	deployFlags.BoolVar(&useApi, "use-api", false, "Use Management API to bundle functions.")
+	deployFlags.BoolVar(&useDocker, "use-docker", true, "Use Docker to bundle functions.")
+	deployFlags.BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
+	functionsDeployCmd.MarkFlagsMutuallyExclusive("use-api", "use-docker", "legacy-bundle")
+	cobra.CheckErr(deployFlags.MarkHidden("legacy-bundle"))
+	deployFlags.UintVarP(&maxJobs, "jobs", "j", 1, "Maximum number of parallel jobs.")
+	deployFlags.BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
+	deployFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
+	deployFlags.StringVar(&importMapPath, "import-map", "", "Path to import map file.")
 	functionsServeCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsServeCmd.Flags().StringVar(&envFilePath, "env-file", "", "Path to an env file to be populated to the Function environment.")
 	functionsServeCmd.Flags().StringVar(&importMapPath, "import-map", "", "Path to import map file.")

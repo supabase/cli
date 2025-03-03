@@ -1,0 +1,20 @@
+--test
+Content-Disposition: form-data; name="metadata"
+
+{"entrypoint_path":"testdata/nested/index.ts","import_map_path":"testdata/nested/deno.json","name":"nested","static_patterns":["testdata/*/*.js"],"verify_jwt":true}
+
+--test
+Content-Disposition: form-data; name="file"; filename="testdata/nested/deno.json"
+Content-Type: application/octet-stream
+
+{}
+
+--test
+Content-Disposition: form-data; name="file"; filename="testdata/geometries/Geometries.js"
+Content-Type: application/octet-stream
+
+
+--test
+Content-Disposition: form-data; name="file"; filename="testdata/nested/index.ts"
+Content-Type: application/octet-stream
+

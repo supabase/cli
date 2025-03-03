@@ -24,7 +24,6 @@ import (
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/parser"
 )
@@ -33,9 +32,6 @@ type DiffFunc func(context.Context, string, string, []string) (string, error)
 
 func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
 	// Sanity checks.
-	if err := flags.LoadConfig(fsys); err != nil {
-		return err
-	}
 	if utils.IsLocalDatabase(config) {
 		if container, err := createShadowIfNotExists(ctx, fsys); err != nil {
 			return err
@@ -88,6 +84,9 @@ func createShadowIfNotExists(ctx context.Context, fsys afero.Fs) (string, error)
 }
 
 func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
+	if schemas := utils.Config.Db.Migrations.SchemaPaths; len(schemas) > 0 {
+		return schemas.Files(afero.NewIOFS(fsys))
+	}
 	var declared []string
 	if err := afero.Walk(fsys, utils.SchemasDir, func(path string, info fs.FileInfo, err error) error {
 		if err != nil {

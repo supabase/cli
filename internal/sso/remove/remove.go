@@ -34,7 +34,8 @@ func Run(ctx context.Context, ref, providerId, format string) error {
 			CreatedAt: resp.JSON200.CreatedAt,
 			UpdatedAt: resp.JSON200.UpdatedAt,
 		})
-
+	case utils.OutputEnv:
+		return nil
 	default:
 		return utils.EncodeOutput(format, os.Stdout, resp.JSON200)
 	}

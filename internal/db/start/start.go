@@ -248,7 +248,7 @@ func initCurrentBranch(fsys afero.Fs) error {
 }
 
 func initSchema(ctx context.Context, conn *pgx.Conn, host string, w io.Writer) error {
-	fmt.Fprintln(w, "Setting up initial schema...")
+	fmt.Fprintln(w, "Initialising schema...")
 	if utils.Config.Db.MajorVersion <= 14 {
 		if file, err := migration.NewMigrationFromReader(strings.NewReader(utils.GlobalsSql)); err != nil {
 			return err

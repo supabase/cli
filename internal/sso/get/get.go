@@ -30,7 +30,6 @@ func Run(ctx context.Context, ref, providerId, format string) error {
 	case utils.OutputMetadata:
 		_, err := fmt.Println(*resp.JSON200.Saml.MetadataXml)
 		return err
-
 	case utils.OutputPretty:
 		return render.SingleMarkdown(api.Provider{
 			Id:        resp.JSON200.Id,
@@ -39,7 +38,8 @@ func Run(ctx context.Context, ref, providerId, format string) error {
 			CreatedAt: resp.JSON200.CreatedAt,
 			UpdatedAt: resp.JSON200.UpdatedAt,
 		})
-
+	case utils.OutputEnv:
+		return errors.Errorf("--output env flag is not supported")
 	default:
 		return utils.EncodeOutput(format, os.Stdout, resp.JSON200)
 	}

@@ -45,6 +45,11 @@ max_client_conn = 100
 # [db.vault]
 # secret_key = "env(SECRET_VALUE)"
 
+[db.migrations]
+# Specifies an ordered list of schema files that describe your database.
+# Supports glob patterns relative to supabase directory: "./schemas/*.sql"
+schema_paths = []
+
 [db.seed]
 # If enabled, seeds the database after migrations during a db reset.
 enabled = true
@@ -257,18 +262,6 @@ enabled = true
 policy = "oneshot"
 # Port to attach the Chrome inspector for debugging edge functions.
 inspector_port = 8083
-
-# Use these configurations to customize your Edge Function.
-# [functions.MY_FUNCTION_NAME]
-# enabled = true
-# verify_jwt = true
-# import_map = "./functions/MY_FUNCTION_NAME/deno.json"
-# Uncomment to specify a custom file path to the entrypoint.
-# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
-# entrypoint = "./functions/MY_FUNCTION_NAME/index.ts"
-# Specifies static files to be bundled with the function. Supports glob patterns.
-# For example, if you want to serve static HTML pages in your function:
-# static_files = [ "./functions/MY_FUNCTION_NAME/*.html" ]
 
 [analytics]
 enabled = true

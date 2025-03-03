@@ -274,14 +274,14 @@ EOF
 		}); err != nil {
 			return errors.Errorf("failed to exec template: %w", err)
 		}
-		var binds, env []string
+		var binds, env, securityOpts []string
 		// Special case for GitLab pipeline
 		parsed, err := client.ParseHostURL(utils.Docker.DaemonHost())
 		if err != nil {
 			return errors.Errorf("failed to parse docker host: %w", err)
 		}
 		// Ref: https://vector.dev/docs/reference/configuration/sources/docker_logs/#docker_host
-		dindHost := url.URL{Scheme: "http", Host: net.JoinHostPort(utils.DinDHost, "2375")}
+		dindHost := &url.URL{Scheme: "http", Host: net.JoinHostPort(utils.DinDHost, "2375")}
 		switch parsed.Scheme {
 		case "tcp":
 			if _, port, err := net.SplitHostPort(parsed.Host); err == nil {
@@ -292,13 +292,16 @@ EOF
 			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires docker daemon exposed on tcp://localhost:2375")
 			env = append(env, "DOCKER_HOST="+dindHost.String())
 		case "unix":
-			if parsed, err = client.ParseHostURL(client.DefaultDockerHost); err != nil {
+			if dindHost, err = client.ParseHostURL(client.DefaultDockerHost); err != nil {
 				return errors.Errorf("failed to parse default host: %w", err)
+			} else if strings.HasSuffix(parsed.Host, "/.docker/run/docker.sock") {
+				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires mounting default docker socket:", dindHost.Host)
+				binds = append(binds, fmt.Sprintf("%[1]s:%[1]s:ro", dindHost.Host))
+			} else {
+				// Podman and OrbStack can mount root-less socket without issue
+				binds = append(binds, fmt.Sprintf("%s:%s:ro", parsed.Host, dindHost.Host))
+				securityOpts = append(securityOpts, "label:disable")
 			}
-			if utils.Docker.DaemonHost() != client.DefaultDockerHost {
-				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires mounting default docker socket:", parsed.Host)
-			}
-			binds = append(binds, fmt.Sprintf("%[1]s:%[1]s:ro", parsed.Host))
 		}
 		if _, err := utils.DockerStart(
 			ctx,
@@ -321,6 +324,7 @@ EOF
 			container.HostConfig{
 				Binds:         binds,
 				RestartPolicy: container.RestartPolicy{Name: "always"},
+				SecurityOpt:   securityOpts,
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
@@ -502,7 +506,7 @@ EOF
 			fmt.Sprintf("GOTRUE_MFA_MAX_ENROLLED_FACTORS=%v", utils.Config.Auth.MFA.MaxEnrolledFactors),
 		}
 
-		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.IsEnabled() {
+		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.Enabled {
 			env = append(env,
 				fmt.Sprintf("GOTRUE_SMTP_HOST=%s", utils.Config.Auth.Email.Smtp.Host),
 				fmt.Sprintf("GOTRUE_SMTP_PORT=%d", utils.Config.Auth.Email.Smtp.Port),
@@ -981,7 +985,7 @@ EOF
 					"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
 					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
 					"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
-					"OPENAI_API_KEY=" + utils.Config.Studio.OpenaiApiKey,
+					"OPENAI_API_KEY=" + utils.Config.Studio.OpenaiApiKey.Value,
 					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
 					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
 					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
@@ -989,7 +993,7 @@ EOF
 					"HOSTNAME=0.0.0.0",
 				},
 				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD-SHELL", `node --eval="fetch('http://localhost:3000/api/platform/profile').then((r) => {if (!r.ok) throw new Error(r.status)})"`},
+					Test:     []string{"CMD-SHELL", `node --eval="fetch('http://127.0.0.1:3000/api/platform/profile').then((r) => {if (!r.ok) throw new Error(r.status)})"`},
 					Interval: 10 * time.Second,
 					Timeout:  2 * time.Second,
 					Retries:  3,
@@ -1110,7 +1114,7 @@ func isContainerExcluded(imageName string, excluded map[string]bool) bool {
 
 func ExcludableContainers() []string {
 	names := []string{}
-	for _, image := range config.ServiceImages {
+	for _, image := range config.Images.Services() {
 		names = append(names, utils.ShortContainerImageName(image))
 	}
 	return names

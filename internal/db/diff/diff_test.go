@@ -22,6 +22,7 @@ import (
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/pgtest"
@@ -39,9 +40,7 @@ func TestRun(t *testing.T) {
 	t.Run("runs migra diff", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
-		project := apitest.RandomProjectRef()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644))
+		require.NoError(t, flags.LoadConfig(fsys))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -64,7 +63,7 @@ func TestRun(t *testing.T) {
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-shadow-storage", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Auth.Image), "test-shadow-auth")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-shadow-auth", ""))
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(config.MigraImage), "test-migra")
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(config.Images.Migra), "test-migra")
 		diff := "create table test();"
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-migra", diff))
 		// Setup mock postgres
@@ -85,22 +84,9 @@ func TestRun(t *testing.T) {
 		assert.Equal(t, []byte(diff), contents)
 	})
 
-	t.Run("throws error on malformed config", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
-		// Run test
-		err := Run(context.Background(), []string{"public"}, "", pgconn.Config{}, DiffSchemaMigra, fsys)
-		// Check error
-		assert.ErrorContains(t, err, "toml: expected = after a key, but the document ends there")
-	})
-
 	t.Run("throws error on failure to load user schemas", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
-		project := apitest.RandomProjectRef()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -115,9 +101,6 @@ func TestRun(t *testing.T) {
 	t.Run("throws error on failure to diff target", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
-		project := apitest.RandomProjectRef()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -311,7 +294,7 @@ create schema public`)
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
 			Reply(http.StatusOK)
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(config.MigraImage), "test-migra")
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(config.Images.Migra), "test-migra")
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-migra/logs").
 			ReplyError(errors.New("network error"))

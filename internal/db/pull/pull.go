@@ -18,7 +18,6 @@ import (
 	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
 )
 
@@ -35,17 +34,13 @@ var (
 )
 
 func Run(ctx context.Context, schema []string, config pgconn.Config, name string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	// 1. Sanity checks.
-	if err := flags.LoadConfig(fsys); err != nil {
-		return err
-	}
-	// 2. Check postgres connection
+	// 1. Check postgres connection
 	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
-	// 3. Pull schema
+	// 2. Pull schema
 	timestamp := utils.GetCurrentTimestamp()
 	path := new.GetMigrationPath(timestamp, name)
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
@@ -53,7 +48,7 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 	}); err != nil {
 		return err
 	}
-	// 4. Insert a row to `schema_migrations`
+	// 3. Insert a row to `schema_migrations`
 	fmt.Fprintln(os.Stderr, "Schema written to "+utils.Bold(path))
 	if shouldUpdate, err := utils.NewConsole().PromptYesNo(ctx, "Update remote migration history table?", true); err != nil {
 		return err

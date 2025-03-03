@@ -14,7 +14,8 @@ import (
 
 func newWithDefaults() auth {
 	return auth{
-		EnableSignup: true,
+		EnableSignup:           true,
+		AdditionalRedirectUrls: []string{},
 		Email: email{
 			EnableConfirmations: true,
 		},
@@ -521,7 +522,7 @@ func TestEmailDiff(t *testing.T) {
 				},
 			},
 			Smtp: &smtp{
-				Enabled: cast.Ptr(true),
+				Enabled: true,
 				Host:    "smtp.sendgrid.net",
 				Port:    587,
 				User:    "apikey",
@@ -602,9 +603,10 @@ func TestEmailDiff(t *testing.T) {
 				},
 			},
 			Smtp: &smtp{
-				Host: "smtp.sendgrid.net",
-				Port: 587,
-				User: "apikey",
+				Enabled: true,
+				Host:    "smtp.sendgrid.net",
+				Port:    587,
+				User:    "apikey",
 				Pass: Secret{
 					Value:  "test-key",
 					SHA256: "ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e",
@@ -699,7 +701,7 @@ func TestEmailDiff(t *testing.T) {
 				"reauthentication": {},
 			},
 			Smtp: &smtp{
-				Enabled: cast.Ptr(false),
+				Enabled: false,
 				Host:    "smtp.sendgrid.net",
 				Port:    587,
 				User:    "apikey",

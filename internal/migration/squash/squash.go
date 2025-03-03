@@ -20,7 +20,6 @@ import (
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
 )
 
@@ -34,9 +33,6 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 		if _, err := repair.GetMigrationFile(version, fsys); err != nil {
 			return err
 		}
-	}
-	if err := flags.LoadConfig(fsys); err != nil {
-		return err
 	}
 	// 1. Squash local migrations
 	if err := squashToVersion(ctx, version, fsys, options...); err != nil {

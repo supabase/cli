@@ -27,6 +27,7 @@ import (
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/pgtest"
 )
@@ -43,7 +44,7 @@ func TestSquashCommand(t *testing.T) {
 	t.Run("squashes local migrations", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
+		require.NoError(t, flags.LoadConfig(fsys))
 		paths := []string{
 			filepath.Join(utils.MigrationsDir, "0_init.sql"),
 			filepath.Join(utils.MigrationsDir, "1_target.sql"),
@@ -108,7 +109,6 @@ func TestSquashCommand(t *testing.T) {
 	t.Run("baselines migration history", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteConfig(fsys, false))
 		path := filepath.Join(utils.MigrationsDir, "0_init.sql")
 		sql := "create schema test"
 		require.NoError(t, afero.WriteFile(fsys, path, []byte(sql), 0644))
@@ -138,7 +138,7 @@ func TestSquashCommand(t *testing.T) {
 		assert.ErrorIs(t, err, repair.ErrInvalidVersion)
 	})
 
-	t.Run("throws error on missing config", func(t *testing.T) {
+	t.Run("throws error on missing migration", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
@@ -241,6 +241,7 @@ func TestSquashMigrations(t *testing.T) {
 	t.Run("throws error on shadow migrate failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		require.NoError(t, flags.LoadConfig(fsys))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()

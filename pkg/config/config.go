@@ -95,6 +95,34 @@ func (p *RequestPolicy) UnmarshalText(text []byte) error {
 	return nil
 }
 
+type Glob []string
+
+// Match the glob patterns in the given FS to get a deduplicated
+// array of all migrations files to apply in the declared order.
+func (g Glob) Files(fsys fs.FS) ([]string, error) {
+	var result []string
+	var allErrors []error
+	set := make(map[string]struct{})
+	for _, pattern := range g {
+		// Glob expects / as path separator on windows
+		matches, err := fs.Glob(fsys, filepath.ToSlash(pattern))
+		if err != nil {
+			allErrors = append(allErrors, errors.Errorf("failed to glob files: %w", err))
+		} else if len(matches) == 0 {
+			allErrors = append(allErrors, errors.Errorf("no files matched pattern: %s", pattern))
+		}
+		sort.Strings(matches)
+		// Remove duplicates
+		for _, item := range matches {
+			if _, exists := set[item]; !exists {
+				set[item] = struct{}{}
+				result = append(result, item)
+			}
+		}
+	}
+	return result, errors.Join(allErrors...)
+}
+
 type CustomClaims struct {
 	// Overrides Issuer to maintain json order when marshalling
 	Issuer string `json:"iss,omitempty"`
@@ -177,7 +205,7 @@ type (
 		Image        string `toml:"-"`
 		Port         uint16 `toml:"port"`
 		ApiUrl       string `toml:"api_url"`
-		OpenaiApiKey string `toml:"openai_api_key"`
+		OpenaiApiKey Secret `toml:"openai_api_key"`
 		PgmetaImage  string `toml:"-"`
 	}
 
@@ -201,11 +229,11 @@ type (
 	FunctionConfig map[string]function
 
 	function struct {
-		Enabled     *bool    `toml:"enabled" json:"-"`
-		VerifyJWT   *bool    `toml:"verify_jwt" json:"verifyJWT"`
-		ImportMap   string   `toml:"import_map" json:"importMapPath,omitempty"`
-		Entrypoint  string   `toml:"entrypoint" json:"entrypointPath,omitempty"`
-		StaticFiles []string `toml:"static_files" json:"staticFiles,omitempty"`
+		Enabled     bool   `toml:"enabled" json:"-"`
+		VerifyJWT   bool   `toml:"verify_jwt" json:"verifyJWT"`
+		ImportMap   string `toml:"import_map" json:"importMapPath,omitempty"`
+		Entrypoint  string `toml:"entrypoint" json:"entrypointPath,omitempty"`
+		StaticFiles Glob   `toml:"static_files" json:"staticFiles,omitempty"`
 	}
 
 	analytics struct {
@@ -235,11 +263,6 @@ type (
 		Webhooks        *webhooks `toml:"webhooks"`
 	}
 )
-
-func (f function) IsEnabled() bool {
-	// If Enabled is not defined, or defined and set to true
-	return f.Enabled == nil || *f.Enabled
-}
 
 func (a *auth) Clone() auth {
 	copy := *a
@@ -311,26 +334,26 @@ func NewConfig(editors ...ConfigEditor) config {
 	initial := config{baseConfig: baseConfig{
 		Hostname: "127.0.0.1",
 		Api: api{
-			Image:     postgrestImage,
-			KongImage: kongImage,
+			Image:     Images.Postgrest,
+			KongImage: Images.Kong,
 		},
 		Db: db{
-			Image:    Pg15Image,
+			Image:    Images.Pg15,
 			Password: "postgres",
 			RootKey:  "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
 			Pooler: pooler{
-				Image:         supavisorImage,
+				Image:         Images.Supavisor,
 				TenantId:      "pooler-dev",
 				EncryptionKey: "12345678901234567890123456789032",
 				SecretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
 			},
 			Seed: seed{
-				Enabled:      true,
-				GlobPatterns: []string{"./seed.sql"},
+				Enabled:  true,
+				SqlPaths: []string{"seed.sql"},
 			},
 		},
 		Realtime: realtime{
-			Image:           realtimeImage,
+			Image:           Images.Realtime,
 			IpVersion:       AddressIPv4,
 			MaxHeaderLength: 4096,
 			TenantId:        "realtime-dev",
@@ -338,8 +361,8 @@ func NewConfig(editors ...ConfigEditor) config {
 			SecretKeyBase:   "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
 		},
 		Storage: storage{
-			Image:         storageImage,
-			ImgProxyImage: imageProxyImage,
+			Image:         Images.Storage,
+			ImgProxyImage: Images.ImgProxy,
 			S3Credentials: storageS3Credentials{
 				AccessKeyId:     "625729a08b95bf1b7ff351a663f3a23c",
 				SecretAccessKey: "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907",
@@ -347,7 +370,7 @@ func NewConfig(editors ...ConfigEditor) config {
 			},
 		},
 		Auth: auth{
-			Image: gotrueImage,
+			Image: Images.Gotrue,
 			Email: email{
 				Template: map[string]emailTemplate{},
 			},
@@ -358,23 +381,23 @@ func NewConfig(editors ...ConfigEditor) config {
 			JwtSecret: defaultJwtSecret,
 		},
 		Inbucket: inbucket{
-			Image:      inbucketImage,
+			Image:      Images.Inbucket,
 			AdminEmail: "admin@email.com",
 			SenderName: "Admin",
 		},
 		Studio: studio{
-			Image:       studioImage,
-			PgmetaImage: pgmetaImage,
+			Image:       Images.Studio,
+			PgmetaImage: Images.Pgmeta,
 		},
 		Analytics: analytics{
-			Image:       logflareImage,
-			VectorImage: vectorImage,
+			Image:       Images.Logflare,
+			VectorImage: Images.Vector,
 			ApiKey:      "api-key",
 			// Defaults to bigquery for backwards compatibility with existing config.toml
 			Backend: LogflareBigQuery,
 		},
 		EdgeRuntime: edgeRuntime{
-			Image: edgeRuntimeImage,
+			Image: Images.EdgeRuntime,
 		},
 	}}
 	for _, apply := range editors {
@@ -456,10 +479,23 @@ func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 			v.Set("project_id", baseId)
 		}
 	}
-	// Manually parse [functions.*] to empty struct for backwards compatibility
+	// Set default values for [functions.*] when config struct is empty
 	for key, value := range v.GetStringMap("functions") {
-		if m, ok := value.(map[string]any); ok && len(m) == 0 {
-			v.Set("functions."+key, function{})
+		if _, ok := value.(map[string]any); !ok {
+			// Leave validation to decode hook
+			continue
+		}
+		if k := fmt.Sprintf("functions.%s.enabled", key); !v.IsSet(k) {
+			v.Set(k, true)
+		}
+		if k := fmt.Sprintf("functions.%s.verify_jwt", key); !v.IsSet(k) {
+			v.Set(k, true)
+		}
+	}
+	// Set default values when [auth.email.smtp] is defined
+	if smtp := v.GetStringMap("auth.email.smtp"); len(smtp) > 0 {
+		if _, exists := smtp["enabled"]; !exists {
+			v.Set("auth.email.smtp.enabled", true)
 		}
 	}
 	if err := v.UnmarshalExact(c, func(dc *mapstructure.DecoderConfig) {
@@ -559,31 +595,34 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	// Update image versions
 	if version, err := fs.ReadFile(fsys, builder.PostgresVersionPath); err == nil {
 		if strings.HasPrefix(string(version), "15.") && semver.Compare(string(version[3:]), "1.0.55") >= 0 {
-			c.Db.Image = replaceImageTag(Pg15Image, string(version))
+			c.Db.Image = replaceImageTag(Images.Pg15, string(version))
 		}
 	}
 	if c.Db.MajorVersion > 14 {
 		if version, err := fs.ReadFile(fsys, builder.RestVersionPath); err == nil && len(version) > 0 {
-			c.Api.Image = replaceImageTag(postgrestImage, string(version))
+			c.Api.Image = replaceImageTag(Images.Postgrest, string(version))
 		}
 		if version, err := fs.ReadFile(fsys, builder.StorageVersionPath); err == nil && len(version) > 0 {
-			c.Storage.Image = replaceImageTag(storageImage, string(version))
+			c.Storage.Image = replaceImageTag(Images.Storage, string(version))
 		}
 		if version, err := fs.ReadFile(fsys, builder.GotrueVersionPath); err == nil && len(version) > 0 {
-			c.Auth.Image = replaceImageTag(gotrueImage, string(version))
+			c.Auth.Image = replaceImageTag(Images.Gotrue, string(version))
 		}
 	}
+	if version, err := fs.ReadFile(fsys, builder.EdgeRuntimeVersionPath); err == nil && len(version) > 0 {
+		c.EdgeRuntime.Image = replaceImageTag(Images.EdgeRuntime, string(version))
+	}
 	if version, err := fs.ReadFile(fsys, builder.PoolerVersionPath); err == nil && len(version) > 0 {
-		c.Db.Pooler.Image = replaceImageTag(supavisorImage, string(version))
+		c.Db.Pooler.Image = replaceImageTag(Images.Supavisor, string(version))
 	}
 	if version, err := fs.ReadFile(fsys, builder.RealtimeVersionPath); err == nil && len(version) > 0 {
-		c.Realtime.Image = replaceImageTag(realtimeImage, string(version))
+		c.Realtime.Image = replaceImageTag(Images.Realtime, string(version))
 	}
 	if version, err := fs.ReadFile(fsys, builder.StudioVersionPath); err == nil && len(version) > 0 {
-		c.Studio.Image = replaceImageTag(studioImage, string(version))
+		c.Studio.Image = replaceImageTag(Images.Studio, string(version))
 	}
 	if version, err := fs.ReadFile(fsys, builder.PgmetaVersionPath); err == nil && len(version) > 0 {
-		c.Studio.PgmetaImage = replaceImageTag(pgmetaImage, string(version))
+		c.Studio.PgmetaImage = replaceImageTag(Images.Pgmeta, string(version))
 	}
 	// TODO: replace derived config resolution with viper decode hooks
 	if err := c.baseConfig.resolve(builder, fsys); err != nil {
@@ -634,11 +673,25 @@ func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 			function.ImportMap = filepath.Join(builder.SupabaseDirPath, function.ImportMap)
 		}
 		for i, val := range function.StaticFiles {
-			function.StaticFiles[i] = filepath.Join(builder.SupabaseDirPath, val)
+			if len(val) > 0 && !filepath.IsAbs(val) {
+				function.StaticFiles[i] = filepath.Join(builder.SupabaseDirPath, val)
+			}
 		}
 		c.Functions[slug] = function
 	}
-	return c.Db.Seed.loadSeedPaths(builder.SupabaseDirPath, fsys)
+	if c.Db.Seed.Enabled {
+		for i, pattern := range c.Db.Seed.SqlPaths {
+			if len(pattern) > 0 && !filepath.IsAbs(pattern) {
+				c.Db.Seed.SqlPaths[i] = path.Join(builder.SupabaseDirPath, pattern)
+			}
+		}
+	}
+	for i, pattern := range c.Db.Migrations.SchemaPaths {
+		if len(pattern) > 0 && !filepath.IsAbs(pattern) {
+			c.Db.Migrations.SchemaPaths[i] = path.Join(builder.SupabaseDirPath, pattern)
+		}
+	}
+	return nil
 }
 
 func (c *config) Validate(fsys fs.FS) error {
@@ -670,9 +723,9 @@ func (c *config) Validate(fsys fs.FS) error {
 	case 12:
 		return errors.New("Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.")
 	case 13:
-		c.Db.Image = pg13Image
+		c.Db.Image = pg13
 	case 14:
-		c.Db.Image = pg14Image
+		c.Db.Image = pg14
 	case 15:
 		if len(c.Experimental.OrioleDBVersion) > 0 {
 			c.Db.Image = "supabase/postgres:orioledb-" + c.Experimental.OrioleDBVersion
@@ -818,7 +871,7 @@ func loadNestedEnv(basePath string) error {
 	if !filepath.IsAbs(basePath) {
 		basePath = filepath.Join(repoDir, basePath)
 	}
-	env := viper.GetString("ENV")
+	env := os.Getenv("SUPABASE_ENV")
 	for cwd := basePath; cwd != filepath.Dir(repoDir); cwd = filepath.Dir(cwd) {
 		if err := os.Chdir(cwd); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return errors.Errorf("failed to change directory: %w", err)
@@ -857,42 +910,6 @@ func loadEnvIfExists(path string) error {
 	return nil
 }
 
-// Match the glob patterns from the config to get a deduplicated
-// array of all migrations files to apply in the declared order.
-func (c *seed) loadSeedPaths(basePath string, fsys fs.FS) error {
-	if !c.Enabled {
-		return nil
-	}
-	if c.SqlPaths != nil {
-		// Reuse already allocated array
-		c.SqlPaths = c.SqlPaths[:0]
-	}
-	set := make(map[string]struct{})
-	for _, pattern := range c.GlobPatterns {
-		// Glob expects / as path separator on windows
-		pattern = filepath.ToSlash(pattern)
-		if !filepath.IsAbs(pattern) {
-			pattern = path.Join(basePath, pattern)
-		}
-		matches, err := fs.Glob(fsys, pattern)
-		if err != nil {
-			return errors.Errorf("failed to apply glob pattern: %w", err)
-		}
-		if len(matches) == 0 {
-			fmt.Fprintln(os.Stderr, "WARN: no seed files matched pattern:", pattern)
-		}
-		sort.Strings(matches)
-		// Remove duplicates
-		for _, item := range matches {
-			if _, exists := set[item]; !exists {
-				set[item] = struct{}{}
-				c.SqlPaths = append(c.SqlPaths, item)
-			}
-		}
-	}
-	return nil
-}
-
 func (e *email) validate(fsys fs.FS) (err error) {
 	for name, tmpl := range e.Template {
 		if len(tmpl.ContentPath) == 0 {
@@ -908,7 +925,7 @@ func (e *email) validate(fsys fs.FS) (err error) {
 		}
 		e.Template[name] = tmpl
 	}
-	if e.Smtp != nil && e.Smtp.IsEnabled() {
+	if e.Smtp != nil && e.Smtp.Enabled {
 		if len(e.Smtp.Host) == 0 {
 			return errors.New("Missing required field in config: auth.email.smtp.host")
 		}

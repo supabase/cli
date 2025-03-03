@@ -290,7 +290,7 @@ func TestValidateHookURI(t *testing.T) {
 	}
 }
 
-func TestLoadSeedPaths(t *testing.T) {
+func TestGlobFiles(t *testing.T) {
 	t.Run("returns seed files matching patterns", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := fs.MapFS{
@@ -301,15 +301,12 @@ func TestLoadSeedPaths(t *testing.T) {
 			"supabase/seeds/ignore.sql":  &fs.MapFile{Data: []byte("INSERT INTO table3 VALUES (3);")},
 		}
 		// Mock config patterns
-		config := seed{
-			Enabled: true,
-			GlobPatterns: []string{
-				"seeds/seed[12].sql",
-				"seeds/ano*.sql",
-			},
+		g := Glob{
+			"supabase/seeds/seed[12].sql",
+			"supabase/seeds/ano*.sql",
 		}
 		// Run test
-		err := config.loadSeedPaths("supabase", fsys)
+		files, err := g.Files(fsys)
 		// Check error
 		assert.NoError(t, err)
 		// Validate files
@@ -317,8 +314,9 @@ func TestLoadSeedPaths(t *testing.T) {
 			"supabase/seeds/seed1.sql",
 			"supabase/seeds/seed2.sql",
 			"supabase/seeds/another.sql",
-		}, config.SqlPaths)
+		}, files)
 	})
+
 	t.Run("returns seed files matching patterns skip duplicates", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := fs.MapFS{
@@ -329,16 +327,13 @@ func TestLoadSeedPaths(t *testing.T) {
 			"supabase/seeds/ignore.sql":  &fs.MapFile{Data: []byte("INSERT INTO table3 VALUES (3);")},
 		}
 		// Mock config patterns
-		config := seed{
-			Enabled: true,
-			GlobPatterns: []string{
-				"seeds/seed[12].sql",
-				"seeds/ano*.sql",
-				"seeds/seed*.sql",
-			},
+		g := Glob{
+			"supabase/seeds/seed[12].sql",
+			"supabase/seeds/ano*.sql",
+			"supabase/seeds/seed*.sql",
 		}
 		// Run test
-		err := config.loadSeedPaths("supabase", fsys)
+		files, err := g.Files(fsys)
 		// Check error
 		assert.NoError(t, err)
 		// Validate files
@@ -347,33 +342,33 @@ func TestLoadSeedPaths(t *testing.T) {
 			"supabase/seeds/seed2.sql",
 			"supabase/seeds/another.sql",
 			"supabase/seeds/seed3.sql",
-		}, config.SqlPaths)
+		}, files)
 	})
 
 	t.Run("returns error on invalid pattern", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := fs.MapFS{}
 		// Mock config patterns
-		config := seed{Enabled: true, GlobPatterns: []string{"[*!#@D#"}}
+		g := Glob{"[*!#@D#"}
 		// Run test
-		err := config.loadSeedPaths("", fsys)
+		files, err := g.Files(fsys)
 		// Check error
 		assert.ErrorIs(t, err, path.ErrBadPattern)
 		// The resuling seed list should be empty
-		assert.Empty(t, config.SqlPaths)
+		assert.Empty(t, files)
 	})
 
 	t.Run("returns empty list if no files match", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := fs.MapFS{}
 		// Mock config patterns
-		config := seed{Enabled: true, GlobPatterns: []string{"seeds/*.sql"}}
+		g := Glob{"seeds/*.sql"}
 		// Run test
-		err := config.loadSeedPaths("", fsys)
+		files, err := g.Files(fsys)
 		// Check error
-		assert.NoError(t, err)
+		assert.ErrorContains(t, err, "no files matched")
 		// Validate files
-		assert.Empty(t, config.SqlPaths)
+		assert.Empty(t, files)
 	})
 }
 
@@ -454,9 +449,9 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		// Run test
 		err := config.Load("", fsys)
 		// Check error contains both decode errors
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), invalidFunctionsConfigFormat)
+		assert.ErrorContains(t, err, invalidFunctionsConfigFormat)
 	})
+
 	t.Run("returns error with function slug for invalid non-existent field", func(t *testing.T) {
 		config := NewConfig()
 		fsys := fs.MapFS{
@@ -469,9 +464,9 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		// Run test
 		err := config.Load("", fsys)
 		// Check error contains both decode errors
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "'functions[hello]' has invalid keys: unknown_field")
+		assert.ErrorContains(t, err, "* 'functions[hello]' has invalid keys: unknown_field")
 	})
+
 	t.Run("returns error with function slug for invalid field value", func(t *testing.T) {
 		config := NewConfig()
 		fsys := fs.MapFS{
@@ -484,9 +479,9 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		// Run test
 		err := config.Load("", fsys)
 		// Check error contains both decode errors
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "cannot parse 'functions[hello].verify_jwt' as bool: strconv.ParseBool: parsing \"not-a-bool\"")
+		assert.ErrorContains(t, err, `* cannot parse 'functions[hello].verify_jwt' as bool: strconv.ParseBool: parsing "not-a-bool"`)
 	})
+
 	t.Run("returns error for unknown function fields", func(t *testing.T) {
 		config := NewConfig()
 		fsys := fs.MapFS{
@@ -499,7 +494,7 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		}
 		// Run test
 		err := config.Load("", fsys)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), invalidFunctionsConfigFormat)
+		assert.ErrorContains(t, err, `* 'functions[name]' expected a map, got 'string'`)
+		assert.ErrorContains(t, err, `* 'functions[verify_jwt]' expected a map, got 'bool'`)
 	})
 }

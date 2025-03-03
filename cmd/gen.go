@@ -21,16 +21,7 @@ var (
 		Short:   "Run code generation tools",
 	}
 
-	keyNames  keys.CustomName
-	keyOutput = utils.EnumFlag{
-		Allowed: []string{
-			utils.OutputEnv,
-			utils.OutputJson,
-			utils.OutputToml,
-			utils.OutputYaml,
-		},
-		Value: utils.OutputEnv,
-	}
+	keyNames keys.CustomName
 
 	genKeysCmd = &cobra.Command{
 		Use:   "keys",
@@ -47,7 +38,11 @@ var (
 			return cmd.Root().PersistentPreRunE(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return keys.Run(cmd.Context(), flags.ProjectRef, keyOutput.Value, keyNames, afero.NewOsFs())
+			format := utils.OutputFormat.Value
+			if format == utils.OutputPretty {
+				format = utils.OutputEnv
+			}
+			return keys.Run(cmd.Context(), flags.ProjectRef, format, keyNames, afero.NewOsFs())
 		},
 	}
 
@@ -73,7 +68,7 @@ var (
 		Short: "Generate types from Postgres schema",
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			if postgrestV9Compat && !cmd.Flags().Changed("db-url") {
-				return errors.New("--postgrest-v9-compat can only be used together with --db-url")
+				return errors.New("--postgrest-v9-compat must used together with --db-url")
 			}
 			// Legacy commands specify language using arg, eg. gen types typescript
 			if len(args) > 0 && args[0] != types.LangTypescript && !cmd.Flags().Changed("lang") {
@@ -114,7 +109,6 @@ func init() {
 	genCmd.AddCommand(genTypesCmd)
 	keyFlags := genKeysCmd.Flags()
 	keyFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
-	keyFlags.VarP(&keyOutput, "output", "o", "Output format of key variables.")
 	keyFlags.StringSliceVar(&override, "override-name", []string{}, "Override specific variable names.")
 	genCmd.AddCommand(genKeysCmd)
 	rootCmd.AddCommand(genCmd)

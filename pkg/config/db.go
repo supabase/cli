@@ -75,15 +75,19 @@ type (
 		Password     string            `toml:"-"`
 		RootKey      string            `toml:"-" mapstructure:"root_key"`
 		Pooler       pooler            `toml:"pooler"`
+		Migrations   migrations        `toml:"migrations"`
 		Seed         seed              `toml:"seed"`
 		Settings     settings          `toml:"settings"`
 		Vault        map[string]Secret `toml:"vault"`
 	}
 
+	migrations struct {
+		SchemaPaths Glob `toml:"schema_paths"`
+	}
+
 	seed struct {
-		Enabled      bool     `toml:"enabled"`
-		GlobPatterns []string `toml:"sql_paths"`
-		SqlPaths     []string `toml:"-"`
+		Enabled  bool `toml:"enabled"`
+		SqlPaths Glob `toml:"sql_paths"`
 	}
 
 	pooler struct {

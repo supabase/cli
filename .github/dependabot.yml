@@ -12,3 +12,12 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
+  - package-ecosystem: "docker"
+    directory: "pkg/config/templates"
+    schedule:
+      interval: "daily"
+    ignore:
+      - dependency-name: "library/kong"
+      - dependency-name: "inbucket/inbucket"
+      - dependency-name: "darthsim/imgproxy"
+      - dependency-name: "timberio/vector"

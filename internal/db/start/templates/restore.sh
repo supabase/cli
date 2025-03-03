@@ -22,6 +22,7 @@ echo "$0: restoring roles"
 cat "/etc/backup.sql" \
 | grep 'CREATE ROLE' \
 | grep -v 'supabase_admin' \
+| sed -E 's/^(CREATE ROLE postgres);/\1 WITH SUPERUSER;/' \
 | psql -v ON_ERROR_STOP=1 --no-password --no-psqlrc -U supabase_admin
 
 echo "$0: restoring schema"
@@ -31,6 +32,7 @@ cat "/etc/backup.sql" \
 | sed -E 's/^CREATE TRIGGER /CREATE OR REPLACE TRIGGER /' \
 | sed -E 's/^GRANT ALL ON FUNCTION graphql_public\./-- &/' \
 | sed -E 's/^CREATE ROLE /-- &/' \
+| sed -e '/ALTER ROLE postgres WITH / { h; $p; d; }' -e '$G' \
 | psql -v ON_ERROR_STOP=1 --no-password --no-psqlrc -U supabase_admin
 
 # run any post migration script to update role passwords

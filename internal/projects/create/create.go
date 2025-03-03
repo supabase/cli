@@ -36,7 +36,8 @@ func Run(ctx context.Context, params api.V1CreateProjectBodyDto, fsys afero.Fs) 
 
 	projectUrl := fmt.Sprintf("%s/project/%s", utils.GetSupabaseDashboardURL(), resp.JSON201.Id)
 	fmt.Fprintf(os.Stderr, "Created a new project %s at %s\n", utils.Aqua(resp.JSON201.Name), utils.Bold(projectUrl))
-	if utils.OutputFormat.Value == utils.OutputPretty {
+	switch utils.OutputFormat.Value {
+	case utils.OutputPretty, utils.OutputEnv:
 		return nil
 	}
 
