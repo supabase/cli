@@ -6,8 +6,8 @@ import (
 	"net/http"
 
 	"github.com/docker/docker/api"
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/versions"
 	"github.com/docker/docker/api/types/volume"
@@ -33,11 +33,11 @@ func MockDocker(docker *client.Client) error {
 }
 
 // Ref: internal/utils/docker.go::DockerStart
-func MockDockerStart(docker *client.Client, image, containerID string) {
+func MockDockerStart(docker *client.Client, imageID, containerID string) {
 	gock.New(docker.DaemonHost()).
-		Get("/v" + docker.ClientVersion() + "/images/" + image + "/json").
+		Get("/v" + docker.ClientVersion() + "/images/" + imageID + "/json").
 		Reply(http.StatusOK).
-		JSON(types.ImageInspect{})
+		JSON(image.InspectResponse{})
 	gock.New(docker.DaemonHost()).
 		Post("/v" + docker.ClientVersion() + "/networks/create").
 		Reply(http.StatusCreated).
@@ -61,7 +61,7 @@ func MockDockerStop(docker *client.Client) {
 	gock.New(docker.DaemonHost()).
 		Get("/v" + docker.ClientVersion() + "/containers/json").
 		Reply(http.StatusOK).
-		JSON([]types.Container{})
+		JSON([]container.Summary{})
 	gock.New(docker.DaemonHost()).
 		Post("/v" + docker.ClientVersion() + "/containers/prune").
 		Reply(http.StatusOK).
@@ -95,9 +95,10 @@ func setupDockerLogs(docker *client.Client, containerID, stdout string, exitCode
 	gock.New(docker.DaemonHost()).
 		Get("/v" + docker.ClientVersion() + "/containers/" + containerID + "/json").
 		Reply(http.StatusOK).
-		JSON(types.ContainerJSONBase{State: &types.ContainerState{
-			ExitCode: exitCode,
-		}})
+		JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			State: &container.State{
+				ExitCode: exitCode,
+			}}})
 	gock.New(docker.DaemonHost()).
 		Delete("/v" + docker.ClientVersion() + "/containers/" + containerID).
 		Reply(http.StatusOK)

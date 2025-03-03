@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -18,9 +18,9 @@ import (
 
 func TestStatusCommand(t *testing.T) {
 	t.Run("shows service status", func(t *testing.T) {
-		var running []types.Container
+		var running []container.Summary
 		for _, name := range utils.GetDockerIds() {
-			running = append(running, types.Container{
+			running = append(running, container.Summary{
 				Names: []string{name + "_test"},
 			})
 		}
@@ -33,8 +33,10 @@ func TestStatusCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_test/json").
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{Running: true},
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{
+					Running: true,
+				},
 			}})
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
@@ -76,9 +78,9 @@ func TestStatusCommand(t *testing.T) {
 
 func TestServiceHealth(t *testing.T) {
 	t.Run("checks all services", func(t *testing.T) {
-		var running []types.Container
+		var running []container.Summary
 		for _, name := range utils.GetDockerIds() {
-			running = append(running, types.Container{
+			running = append(running, container.Summary{
 				Names: []string{"/" + name},
 			})
 		}
@@ -104,7 +106,7 @@ func TestServiceHealth(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
 			Reply(http.StatusOK).
-			JSON([]types.Container{})
+			JSON([]container.Summary{})
 		// Run test
 		stopped, err := checkServiceHealth(context.Background())
 		// Check error

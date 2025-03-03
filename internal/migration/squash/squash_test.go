@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
@@ -59,10 +60,10 @@ func TestSquashCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db/json").
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{
 					Running: true,
-					Health:  &types.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: types.Healthy},
 				},
 			}})
 		gock.New(utils.Docker.DaemonHost()).
@@ -219,8 +220,8 @@ func TestSquashMigrations(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db/json").
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{
 					Running: false,
 					Status:  "exited",
 				},
@@ -249,10 +250,10 @@ func TestSquashMigrations(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db/json").
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{
 					Running: true,
-					Health:  &types.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: types.Healthy},
 				},
 			}})
 		gock.New(utils.Docker.DaemonHost()).
@@ -284,10 +285,10 @@ func TestSquashMigrations(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db/json").
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{
 					Running: true,
-					Health:  &types.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: types.Healthy},
 				},
 			}})
 		gock.New(utils.Docker.DaemonHost()).

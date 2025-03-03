@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
@@ -50,7 +51,7 @@ func TestResetCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{})
+			JSON(container.InspectResponse{})
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
 			Reply(http.StatusOK)
@@ -61,10 +62,10 @@ func TestResetCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{
 					Running: true,
-					Health:  &types.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: types.Healthy},
 				},
 			}})
 		// Setup mock postgres
@@ -84,10 +85,10 @@ func TestResetCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.StorageId + "/json").
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{
 					Running: true,
-					Health:  &types.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: types.Healthy},
 				},
 			}})
 		gock.New(utils.Config.Api.ExternalUrl).
@@ -147,7 +148,7 @@ func TestResetCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{})
+			JSON(container.InspectResponse{})
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
 			ReplyError(errors.New("network error"))
@@ -298,10 +299,10 @@ func TestRestartDatabase(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{
 					Running: true,
-					Health:  &types.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: types.Healthy},
 				},
 			}})
 		// Restarts services
@@ -333,10 +334,10 @@ func TestRestartDatabase(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{
 					Running: true,
-					Health:  &types.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: types.Healthy},
 				},
 			}})
 		// Restarts services
@@ -389,8 +390,8 @@ func TestRestartDatabase(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-reset/json").
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{
 					Running: false,
 					Status:  "exited",
 				},

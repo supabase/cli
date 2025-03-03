@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/h2non/gock"
 	"github.com/spf13/afero"
@@ -71,10 +72,10 @@ func TestStartDatabase(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{
 					Running: true,
-					Health:  &types.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: types.Healthy},
 				},
 			}})
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Realtime.Image), "test-realtime")
@@ -117,10 +118,10 @@ func TestStartDatabase(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{
 					Running: true,
-					Health:  &types.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: types.Healthy},
 				},
 			}})
 		// Run test
@@ -194,7 +195,7 @@ func TestStartCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/").
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{})
+			JSON(container.InspectResponse{})
 		// Run test
 		err := Run(context.Background(), "", fsys)
 		// Check error
@@ -333,10 +334,10 @@ func TestStartDatabaseWithCustomSettings(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{
 					Running: true,
-					Health:  &types.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: types.Healthy},
 				},
 			}})
 

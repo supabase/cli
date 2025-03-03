@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
@@ -38,7 +38,7 @@ func TestLintCommand(t *testing.T) {
 	gock.New(utils.Docker.DaemonHost()).
 		Get("/v" + utils.Docker.ClientVersion() + "/containers").
 		Reply(http.StatusOK).
-		JSON(types.ContainerJSON{})
+		JSON(container.InspectResponse{})
 	// Setup db response
 	expected := Result{
 		Function: "22751",

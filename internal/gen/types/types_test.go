@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
@@ -41,7 +41,7 @@ func TestGenLocalCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{})
+			JSON(container.InspectResponse{})
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
 		// Setup mock postgres
@@ -78,7 +78,7 @@ func TestGenLocalCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{})
+			JSON(container.InspectResponse{})
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images").
 			Reply(http.StatusServiceUnavailable)
@@ -99,7 +99,7 @@ func TestGenLocalCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{})
+			JSON(container.InspectResponse{})
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
 		// Setup mock postgres
