@@ -2,7 +2,7 @@
 FROM supabase/postgres:15.8.1.047 AS pg15
 # Append to ServiceImages when adding new dependencies below
 FROM library/kong:2.8.1 AS kong
-FROM inbucket/inbucket:3.0.3 AS inbucket
+FROM axllent/mailpit:v1.22.2 AS mailpit
 FROM postgrest/postgrest:v12.2.8 AS postgrest
 FROM supabase/postgres-meta:v0.86.0 AS pgmeta
 FROM supabase/studio:20250224-d10db0f AS studio
