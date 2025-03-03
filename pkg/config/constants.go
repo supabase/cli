@@ -17,7 +17,7 @@ type images struct {
 	Pg15 string `mapstructure:"pg15"`
 	// Append to Services when adding new dependencies below
 	Kong        string `mapstructure:"kong"`
-	Inbucket    string `mapstructure:"inbucket"`
+	Inbucket    string `mapstructure:"mailpit"`
 	Postgrest   string `mapstructure:"postgrest"`
 	Pgmeta      string `mapstructure:"pgmeta"`
 	Studio      string `mapstructure:"studio"`
