@@ -1115,3 +1115,70 @@ func TestExternalDiff(t *testing.T) {
 		assert.Empty(t, string(diff))
 	})
 }
+
+func TestRateLimitsDiff(t *testing.T) {
+	t.Run("local and remote rate limits match", func(t *testing.T) {
+		// Setup auth with rate limits
+		c := newWithDefaults()
+		c.RateLimit.AnonymousUsers = 20
+		c.RateLimit.TokenRefresh = 30
+		c.RateLimit.SignInSignUps = 40
+		c.RateLimit.TokenVerifications = 50
+		c.RateLimit.EmailSent = 25
+		c.RateLimit.SmsSent = 35
+		c.Email.Smtp = &smtp{Enabled: true}
+		// Run test
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+			RateLimitAnonymousUsers: cast.Ptr(20),
+			RateLimitTokenRefresh:   cast.Ptr(30),
+			RateLimitOtp:            cast.Ptr(40),
+			RateLimitVerify:         cast.Ptr(50),
+			RateLimitEmailSent:      cast.Ptr(25),
+			RateLimitSmsSent:        cast.Ptr(35),
+			SmtpHost:                cast.Ptr(""),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, string(diff))
+	})
+
+	t.Run("local and remote rate limits differ", func(t *testing.T) {
+		// Setup auth with rate limits
+		c := newWithDefaults()
+		c.RateLimit.AnonymousUsers = 20
+		c.RateLimit.TokenRefresh = 30
+		c.RateLimit.SignInSignUps = 40
+		c.RateLimit.TokenVerifications = 50
+		c.RateLimit.EmailSent = 25
+		c.RateLimit.SmsSent = 35
+		c.Email.Smtp = &smtp{Enabled: true}
+		// Run test with different remote values
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+			RateLimitAnonymousUsers: cast.Ptr(10), // Different value
+			RateLimitTokenRefresh:   cast.Ptr(30),
+			RateLimitOtp:            cast.Ptr(45), // Different value
+			RateLimitVerify:         cast.Ptr(50),
+			RateLimitEmailSent:      cast.Ptr(15), // Different value
+			RateLimitSmsSent:        cast.Ptr(55), // Different value
+			SmtpHost:                cast.Ptr(""),
+		})
+		// Check error
+		assert.NoError(t, err)
+		// Compare with snapshot
+		assertSnapshotEqual(t, diff)
+	})
+
+	t.Run("ignores email rate limit when smtp is disabled", func(t *testing.T) {
+		// Setup auth without rate limits
+		c := newWithDefaults()
+		c.RateLimit.EmailSent = 25
+		// Run test with remote rate limits
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+			RateLimitEmailSent: cast.Ptr(15),
+			SmtpHost:           cast.Ptr(""),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, string(diff))
+	})
+}
