@@ -236,7 +236,7 @@ func TestRunOnce(t *testing.T) {
 			Reply(http.StatusOK)
 		// Run test
 		_, err = DockerRunOnce(context.Background(), imageId, nil, nil)
-		assert.ErrorContains(t, err, "request returned Service Unavailable for API route and version")
+		assert.ErrorContains(t, err, "request returned 503 Service Unavailable for API route and version")
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})

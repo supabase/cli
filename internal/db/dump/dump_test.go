@@ -72,7 +72,7 @@ func TestPullCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), "", dbConfig, nil, nil, false, false, false, false, false, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "request returned Service Unavailable for API route and version")
+		assert.ErrorContains(t, err, "request returned 503 Service Unavailable for API route and version")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 

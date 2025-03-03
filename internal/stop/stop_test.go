@@ -156,7 +156,7 @@ func TestStopCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), false, "test", false, afero.NewReadOnlyFs(fsys))
 		// Check error
-		assert.ErrorContains(t, err, "request returned Service Unavailable for API route and version")
+		assert.ErrorContains(t, err, "request returned 503 Service Unavailable for API route and version")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }

@@ -148,11 +148,11 @@ func TestStartDatabase(t *testing.T) {
 			ReplyError(errors.New("network error"))
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Config.Db.Image) + "/json").
-			Reply(http.StatusInternalServerError)
+			Reply(http.StatusServiceUnavailable)
 		// Run test
 		err := StartDatabase(context.Background(), "", fsys, io.Discard)
 		// Check error
-		assert.ErrorContains(t, err, "request returned Internal Server Error for API route and version")
+		assert.ErrorContains(t, err, "request returned 503 Service Unavailable for API route and version")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
