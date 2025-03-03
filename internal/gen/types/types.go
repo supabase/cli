@@ -36,7 +36,7 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang str
 	included := strings.Join(schemas, ",")
 
 	var defaultSchemaEnv string
-	if len(schemas) == 1 && schemas[0] != "public"{
+	if len(schemas) == 1 && schemas[0] != "public" {
 		defaultSchemaEnv = schemas[0]
 	}
 
@@ -105,8 +105,8 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang str
 		ctx,
 		container.Config{
 			Image: utils.Config.Studio.PgmetaImage,
-			Env: envVars,
-			Cmd: []string{"node", "dist/server/server.js"},
+			Env:   envVars,
+			Cmd:   []string{"node", "dist/server/server.js"},
 		},
 		hostConfig,
 		network.NetworkingConfig{},
