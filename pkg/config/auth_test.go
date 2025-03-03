@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,7 +33,18 @@ func assertSnapshotEqual(t *testing.T, actual []byte) {
 		assert.NoError(t, os.MkdirAll(filepath.Dir(snapshot), 0755))
 		assert.NoError(t, os.WriteFile(snapshot, actual, 0600))
 	}
-	assert.Equal(t, string(expected), string(actual))
+	// Normalize line endings in both expected and actual
+	expectedStr := normalizeLineEndings(string(expected))
+	actualStr := normalizeLineEndings(string(actual))
+	assert.Equal(t, expectedStr, actualStr)
+}
+
+func normalizeLineEndings(s string) string {
+	// First normalize to Unix-style line endings
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	// Then normalize any remaining Windows-style line endings
+	s = strings.ReplaceAll(s, "\r", "\n")
+	return s
 }
 
 func TestAuthDiff(t *testing.T) {
