@@ -239,7 +239,7 @@ func DockerImagePullWithRetry(ctx context.Context, image string, retries int) er
 
 func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 	imageUrl := GetRegistryImageUrl(imageName)
-	if _, _, err := Docker.ImageInspectWithRaw(ctx, imageUrl); err == nil {
+	if _, err := Docker.ImageInspect(ctx, imageUrl); err == nil {
 		return nil
 	} else if !client.IsErrNotFound(err) {
 		return errors.Errorf("failed to inspect docker image: %w", err)

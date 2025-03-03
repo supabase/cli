@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
@@ -32,7 +31,7 @@ func TestStopCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
 			Reply(http.StatusOK).
-			JSON([]types.Container{})
+			JSON([]container.Summary{})
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/prune").
 			Reply(http.StatusOK).
@@ -69,7 +68,7 @@ func TestStopCommand(t *testing.T) {
 			Get("/v"+utils.Docker.ClientVersion()+"/containers/json").
 			MatchParam("all", "true").
 			Reply(http.StatusOK).
-			JSON([]types.Container{
+			JSON([]container.Summary{
 				{ID: "container1", Labels: map[string]string{utils.CliProjectLabel: "project1"}},
 				{ID: "container2", Labels: map[string]string{utils.CliProjectLabel: "project2"}},
 			})
@@ -93,7 +92,7 @@ func TestStopCommand(t *testing.T) {
 				MatchParam("all", "1").
 				MatchParam("filters", fmt.Sprintf(`{"label":{"com.supabase.cli.project=%s":true}}`, projectId)).
 				Reply(http.StatusOK).
-				JSON([]types.Container{{ID: "container-" + projectId, State: "running"}})
+				JSON([]container.Summary{{ID: "container-" + projectId, State: "running"}})
 
 			// Mock container stop
 			gock.New(utils.Docker.DaemonHost()).
@@ -120,11 +119,11 @@ func TestStopCommand(t *testing.T) {
 			Get("/v"+utils.Docker.ClientVersion()+"/containers/json").
 			MatchParam("all", "true").
 			Reply(http.StatusOK).
-			JSON([]types.Container{})
+			JSON([]container.Summary{})
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
 			Reply(http.StatusOK).
-			JSON([]types.Container{})
+			JSON([]container.Summary{})
 
 		// Run test
 		err := Run(context.Background(), true, "", true, fsys)
@@ -157,14 +156,14 @@ func TestStopCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), false, "test", false, afero.NewReadOnlyFs(fsys))
 		// Check error
-		assert.ErrorContains(t, err, "request returned Service Unavailable for API route and version")
+		assert.ErrorContains(t, err, "request returned 503 Service Unavailable for API route and version")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
 
 func TestStopServices(t *testing.T) {
 	t.Run("stops all services", func(t *testing.T) {
-		containers := []types.Container{{ID: "c1", State: "running"}, {ID: "c2"}}
+		containers := []container.Summary{{ID: "c1", State: "running"}, {ID: "c2"}}
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -232,7 +231,7 @@ func TestStopServices(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
 			Reply(http.StatusOK).
-			JSON([]types.Container{})
+			JSON([]container.Summary{})
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/prune").
 			ReplyError(errors.New("network error"))

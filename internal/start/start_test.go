@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/h2non/gock"
@@ -52,9 +54,9 @@ func TestStartCommand(t *testing.T) {
 	})
 
 	t.Run("show status if database is already running", func(t *testing.T) {
-		var running []types.Container
+		var running []container.Summary
 		for _, name := range utils.GetDockerIds() {
-			running = append(running, types.Container{
+			running = append(running, container.Summary{
 				Names: []string{name + "_test"},
 			})
 		}
@@ -67,13 +69,15 @@ func TestStartCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{})
+			JSON(container.InspectResponse{})
 
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_start/json").
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{Running: true},
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{
+					Running: true,
+				},
 			}})
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
@@ -103,13 +107,13 @@ func TestDatabaseStart(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
 			Reply(http.StatusOK).
-			JSON(types.ImageInspect{})
-		for _, image := range config.Images.Services() {
-			service := utils.GetRegistryImageUrl(image)
+			JSON(image.InspectResponse{})
+		for _, img := range config.Images.Services() {
+			service := utils.GetRegistryImageUrl(img)
 			gock.New(utils.Docker.DaemonHost()).
 				Get("/v" + utils.Docker.ClientVersion() + "/images/" + service + "/json").
 				Reply(http.StatusOK).
-				JSON(types.ImageInspect{})
+				JSON(image.InspectResponse{})
 		}
 		// Start postgres
 		utils.DbId = "test-postgres"
@@ -164,14 +168,14 @@ func TestDatabaseStart(t *testing.T) {
 			utils.StorageId, utils.ImgProxyId, utils.EdgeRuntimeId, utils.PgmetaId, utils.StudioId,
 			utils.LogflareId, utils.RestId, utils.VectorId,
 		}
-		for _, container := range started {
+		for _, c := range started {
 			gock.New(utils.Docker.DaemonHost()).
-				Get("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/json").
+				Get("/v" + utils.Docker.ClientVersion() + "/containers/" + c + "/json").
 				Reply(http.StatusOK).
-				JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-					State: &types.ContainerState{
+				JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+					State: &container.State{
 						Running: true,
-						Health:  &types.Health{Status: types.Healthy},
+						Health:  &container.Health{Status: types.Healthy},
 					},
 				}})
 		}
@@ -185,10 +189,10 @@ func TestDatabaseStart(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.StorageId + "/json").
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{
 					Running: true,
-					Health:  &types.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: types.Healthy},
 				},
 			}})
 		gock.New(utils.Config.Api.ExternalUrl).
@@ -219,7 +223,7 @@ func TestDatabaseStart(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
 			Reply(http.StatusOK).
-			JSON(types.ImageInspect{})
+			JSON(image.InspectResponse{})
 		// Start postgres
 		utils.DbId = "test-postgres"
 		utils.ConfigId = "test-config"
@@ -233,10 +237,10 @@ func TestDatabaseStart(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
-			JSON(types.ContainerJSON{ContainerJSONBase: &types.ContainerJSONBase{
-				State: &types.ContainerState{
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{
 					Running: true,
-					Health:  &types.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: types.Healthy},
 				},
 			}})
 		// Run test

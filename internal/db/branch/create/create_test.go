@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -60,7 +60,7 @@ func TestBranchCreation(t *testing.T) {
 		// Run test
 		err := createBranch(context.Background(), "test-branch")
 		// Validate api
-		assert.ErrorContains(t, err, "request returned Service Unavailable for API route and version")
+		assert.ErrorContains(t, err, "request returned 503 Service Unavailable for API route and version")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
@@ -71,7 +71,7 @@ func TestBranchCreation(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/exec").
 			Reply(http.StatusCreated).
-			JSON(types.ContainerJSON{})
+			JSON(container.InspectResponse{})
 		// Run test
 		err := createBranch(context.Background(), "test-branch")
 		// Validate api
