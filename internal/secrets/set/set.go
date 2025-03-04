@@ -22,46 +22,14 @@ func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsy
 	if err := flags.LoadConfig(fsys); err != nil {
 		fmt.Fprintln(utils.GetDebugLogger(), err)
 	}
-	envMap := map[string]string{}
-	for name, secret := range utils.Config.EdgeRuntime.Secrets {
-		if len(secret.SHA256) > 0 {
-			envMap[name] = secret.Value
-		}
+	secrets, err := ListSecrets(envFilePath, fsys, args...)
+	if err != nil {
+		return err
 	}
-	if len(envFilePath) > 0 {
-		if !filepath.IsAbs(envFilePath) {
-			envFilePath = filepath.Join(utils.CurrentDirAbs, envFilePath)
-		}
-		parsed, err := ParseEnvFile(envFilePath, fsys)
-		if err != nil {
-			return err
-		}
-		maps.Copy(envMap, parsed)
-	}
-	for _, pair := range args {
-		name, value, found := strings.Cut(pair, "=")
-		if !found {
-			return errors.Errorf("Invalid secret pair: %s. Must be NAME=VALUE.", pair)
-		}
-		envMap[name] = value
-	}
-	if len(envMap) == 0 {
+	if len(secrets) == 0 {
 		return errors.New("No arguments found. Use --env-file to read from a .env file.")
 	}
 	// 2. Set secret(s).
-	var secrets api.V1BulkCreateSecretsJSONBody
-	for name, value := range envMap {
-		// Lower case prefix is accepted by API
-		if strings.HasPrefix(name, "SUPABASE_") {
-			fmt.Fprintln(os.Stderr, "Env name cannot start with SUPABASE_, skipping: "+name)
-			continue
-		}
-		secret := api.CreateSecretBody{
-			Name:  name,
-			Value: value,
-		}
-		secrets = append(secrets, secret)
-	}
 	resp, err := utils.GetSupabase().V1BulkCreateSecretsWithResponse(ctx, projectRef, secrets)
 	if err != nil {
 		return errors.Errorf("failed to set secrets: %w", err)
@@ -72,7 +40,46 @@ func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsy
 	return nil
 }
 
-func ParseEnvFile(envFilePath string, fsys afero.Fs) (map[string]string, error) {
+func ListSecrets(envFilePath string, fsys afero.Fs, envArgs ...string) ([]api.CreateSecretBody, error) {
+	envMap := map[string]string{}
+	for name, secret := range utils.Config.EdgeRuntime.Secrets {
+		if len(secret.SHA256) > 0 {
+			envMap[name] = secret.Value
+		}
+	}
+	if len(envFilePath) > 0 {
+		if !filepath.IsAbs(envFilePath) {
+			envFilePath = filepath.Join(utils.CurrentDirAbs, envFilePath)
+		}
+		parsed, err := parseEnvFile(envFilePath, fsys)
+		if err != nil {
+			return nil, err
+		}
+		maps.Copy(envMap, parsed)
+	}
+	for _, pair := range envArgs {
+		name, value, found := strings.Cut(pair, "=")
+		if !found {
+			return nil, errors.Errorf("Invalid secret pair: %s. Must be NAME=VALUE.", pair)
+		}
+		envMap[name] = value
+	}
+	var result []api.CreateSecretBody
+	for name, value := range envMap {
+		// Lower case prefix is accepted by API
+		if strings.HasPrefix(name, "SUPABASE_") {
+			fmt.Fprintln(os.Stderr, "Env name cannot start with SUPABASE_, skipping: "+name)
+			continue
+		}
+		result = append(result, api.CreateSecretBody{
+			Name:  name,
+			Value: value,
+		})
+	}
+	return result, nil
+}
+
+func parseEnvFile(envFilePath string, fsys afero.Fs) (map[string]string, error) {
 	f, err := fsys.Open(envFilePath)
 	if err != nil {
 		return nil, errors.Errorf("failed to open env file: %w", err)
