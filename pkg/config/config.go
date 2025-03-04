@@ -1199,6 +1199,26 @@ func (c *tpaCognito) validate() (err error) {
 	return nil
 }
 
+var clerkDomainPattern = regexp.MustCompile("^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-][.])+clerk[.]accounts[.]dev)$")
+
+func (c *tpaClerk) issuerURL() string {
+	return fmt.Sprintf("https://%s", c.Domain)
+}
+
+func (c *tpaClerk) validate() (err error) {
+	if c.Domain == "" {
+		return errors.New("Invalid config: auth.third_party.clerk is enabled but without a domain.")
+	} else if err := assertEnvLoaded(c.Domain); err != nil {
+		return err
+	}
+
+	if !clerkDomainPattern.MatchString(c.Domain) {
+		return errors.New("Invalid config: auth.third_party.clerk has invalid domain, it usually is like clerk.example.com or example.clerk.accounts.dev")
+	}
+
+	return nil
+}
+
 func (tpa *thirdParty) validate() error {
 	enabled := 0
 
@@ -1226,6 +1246,14 @@ func (tpa *thirdParty) validate() error {
 		}
 	}
 
+	if tpa.Clerk.Enabled {
+		enabled += 1
+
+		if err := tpa.Clerk.validate(); err != nil {
+			return err
+		}
+	}
+
 	if enabled > 1 {
 		return errors.New("Invalid config: Only one third_party provider allowed to be enabled at a time.")
 	}
@@ -1244,6 +1272,10 @@ func (tpa *thirdParty) IssuerURL() string {
 
 	if tpa.Cognito.Enabled {
 		return tpa.Cognito.issuerURL()
+	}
+
+	if tpa.Clerk.Enabled {
+		return tpa.Clerk.issuerURL()
 	}
 
 	return ""
