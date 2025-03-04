@@ -13,12 +13,21 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
 )
 
 func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsys afero.Fs) error {
 	// 1. Sanity checks.
-	envMap := make(map[string]string, len(args))
+	if err := flags.LoadConfig(fsys); err != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), err)
+	}
+	envMap := map[string]string{}
+	for name, secret := range utils.Config.EdgeRuntime.Secrets {
+		if len(secret.SHA256) > 0 {
+			envMap[name] = secret.Value
+		}
+	}
 	if len(envFilePath) > 0 {
 		if !filepath.IsAbs(envFilePath) {
 			envFilePath = filepath.Join(utils.CurrentDirAbs, envFilePath)
@@ -53,16 +62,12 @@ func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsy
 		}
 		secrets = append(secrets, secret)
 	}
-
 	resp, err := utils.GetSupabase().V1BulkCreateSecretsWithResponse(ctx, projectRef, secrets)
 	if err != nil {
 		return errors.Errorf("failed to set secrets: %w", err)
-	}
-
-	if resp.StatusCode() != http.StatusCreated {
+	} else if resp.StatusCode() != http.StatusCreated {
 		return errors.New("Unexpected error setting project secrets: " + string(resp.Body))
 	}
-
 	fmt.Println("Finished " + utils.Aqua("supabase secrets set") + ".")
 	return nil
 }

@@ -220,10 +220,11 @@ type (
 	}
 
 	edgeRuntime struct {
-		Enabled       bool          `toml:"enabled"`
-		Image         string        `toml:"-"`
-		Policy        RequestPolicy `toml:"policy"`
-		InspectorPort uint16        `toml:"inspector_port"`
+		Enabled       bool              `toml:"enabled"`
+		Image         string            `toml:"-"`
+		Policy        RequestPolicy     `toml:"policy"`
+		InspectorPort uint16            `toml:"inspector_port"`
+		Secrets       map[string]Secret `toml:"secrets"`
 	}
 
 	FunctionConfig map[string]function
@@ -312,7 +313,9 @@ func (s *storage) Clone() storage {
 
 func (c *baseConfig) Clone() baseConfig {
 	copy := *c
+	copy.Db.Vault = maps.Clone(c.Db.Vault)
 	copy.Storage = c.Storage.Clone()
+	copy.EdgeRuntime.Secrets = maps.Clone(c.EdgeRuntime.Secrets)
 	copy.Functions = maps.Clone(c.Functions)
 	copy.Auth = c.Auth.Clone()
 	if c.Experimental.Webhooks != nil {

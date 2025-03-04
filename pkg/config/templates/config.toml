@@ -278,6 +278,9 @@ policy = "oneshot"
 # Port to attach the Chrome inspector for debugging edge functions.
 inspector_port = 8083
 
+# [edge_runtime.secrets]
+# secret_key = "env(SECRET_VALUE)"
+
 [analytics]
 enabled = true
 port = 54327
