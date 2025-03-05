@@ -106,6 +106,7 @@ type (
 		Firebase tpaFirebase `toml:"firebase"`
 		Auth0    tpaAuth0    `toml:"auth0"`
 		Cognito  tpaCognito  `toml:"aws_cognito"`
+		Clerk    tpaClerk    `toml:"clerk"`
 	}
 
 	rateLimit struct {
@@ -135,6 +136,12 @@ type (
 
 		UserPoolID     string `toml:"user_pool_id"`
 		UserPoolRegion string `toml:"user_pool_region"`
+	}
+
+	tpaClerk struct {
+		Enabled bool `toml:"enabled"`
+
+		Domain string `toml:"domain"`
 	}
 
 	email struct {
