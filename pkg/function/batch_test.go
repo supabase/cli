@@ -29,7 +29,9 @@ const (
 func TestUpsertFunctions(t *testing.T) {
 	apiClient, err := api.NewClientWithResponses(mockApiHost)
 	require.NoError(t, err)
-	client := NewEdgeRuntimeAPI(mockProject, *apiClient, &MockBundler{})
+	client := NewEdgeRuntimeAPI(mockProject, *apiClient, func(era *EdgeRuntimeAPI) {
+		era.eszip = &MockBundler{}
+	})
 
 	t.Run("throws error on network failure", func(t *testing.T) {
 		// Setup mock api

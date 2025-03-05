@@ -1,4 +1,4 @@
-package deploy
+package function
 
 import (
 	"bytes"
@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"mime/multipart"
 	"os"
 	"path"
@@ -14,18 +15,19 @@ import (
 	"strings"
 
 	"github.com/go-errors/errors"
-	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/queue"
+	"github.com/tidwall/jsonc"
 )
 
-var errNoDeploy = errors.New("All Functions are up to date.")
+var ErrNoDeploy = errors.New("All Functions are up to date.")
 
-func deploy(ctx context.Context, functionConfig config.FunctionConfig, maxJobs uint, fsys afero.Fs) error {
+func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.FunctionConfig, fsys fs.FS) error {
+	if s.eszip != nil {
+		return s.UpsertFunctions(ctx, functionConfig)
+	}
 	var toDeploy []api.FunctionDeployMetadata
 	for slug, fc := range functionConfig {
 		if !fc.Enabled {
@@ -46,17 +48,17 @@ func deploy(ctx context.Context, functionConfig config.FunctionConfig, maxJobs u
 		toDeploy = append(toDeploy, meta)
 	}
 	if len(toDeploy) == 0 {
-		return errors.New(errNoDeploy)
+		return errors.New(ErrNoDeploy)
 	} else if len(toDeploy) == 1 {
 		param := api.V1DeployAFunctionParams{Slug: toDeploy[0].Name}
-		_, err := upload(ctx, param, toDeploy[0], fsys)
+		_, err := s.upload(ctx, param, toDeploy[0], fsys)
 		return err
 	}
-	return bulkUpload(ctx, toDeploy, maxJobs, fsys)
+	return s.bulkUpload(ctx, toDeploy, fsys)
 }
 
-func bulkUpload(ctx context.Context, toDeploy []api.FunctionDeployMetadata, maxJobs uint, fsys afero.Fs) error {
-	jq := queue.NewJobQueue(maxJobs)
+func (s *EdgeRuntimeAPI) bulkUpload(ctx context.Context, toDeploy []api.FunctionDeployMetadata, fsys fs.FS) error {
+	jq := queue.NewJobQueue(s.maxJobs)
 	toUpdate := make([]api.BulkUpdateFunctionBody, len(toDeploy))
 	for i, meta := range toDeploy {
 		fmt.Fprintln(os.Stderr, "Deploying Function:", *meta.Name)
@@ -65,7 +67,7 @@ func bulkUpload(ctx context.Context, toDeploy []api.FunctionDeployMetadata, maxJ
 			BundleOnly: cast.Ptr(true),
 		}
 		bundle := func() error {
-			resp, err := upload(ctx, param, meta, fsys)
+			resp, err := s.upload(ctx, param, meta, fsys)
 			if err != nil {
 				return err
 			}
@@ -88,7 +90,7 @@ func bulkUpload(ctx context.Context, toDeploy []api.FunctionDeployMetadata, maxJ
 	if err := jq.Collect(); err != nil {
 		return err
 	}
-	if resp, err := utils.GetSupabase().V1BulkUpdateFunctionsWithResponse(ctx, flags.ProjectRef, toUpdate); err != nil {
+	if resp, err := s.client.V1BulkUpdateFunctionsWithResponse(ctx, s.project, toUpdate); err != nil {
 		return errors.Errorf("failed to bulk update: %w", err)
 	} else if resp.JSON200 == nil {
 		return errors.Errorf("unexpected bulk update status %d: %s", resp.StatusCode(), string(resp.Body))
@@ -96,7 +98,7 @@ func bulkUpload(ctx context.Context, toDeploy []api.FunctionDeployMetadata, maxJ
 	return nil
 }
 
-func upload(ctx context.Context, param api.V1DeployAFunctionParams, meta api.FunctionDeployMetadata, fsys afero.Fs) (*api.DeployFunctionResponse, error) {
+func (s *EdgeRuntimeAPI) upload(ctx context.Context, param api.V1DeployAFunctionParams, meta api.FunctionDeployMetadata, fsys fs.FS) (*api.DeployFunctionResponse, error) {
 	body, w := io.Pipe()
 	form := multipart.NewWriter(w)
 	ctx, cancel := context.WithCancelCause(ctx)
@@ -109,7 +111,7 @@ func upload(ctx context.Context, param api.V1DeployAFunctionParams, meta api.Fun
 			cancel(err)
 		}
 	}()
-	resp, err := utils.GetSupabase().V1DeployAFunctionWithBodyWithResponse(ctx, flags.ProjectRef, &param, form.FormDataContentType(), body)
+	resp, err := s.client.V1DeployAFunctionWithBodyWithResponse(ctx, s.project, &param, form.FormDataContentType(), body)
 	if cause := context.Cause(ctx); cause != ctx.Err() {
 		return nil, cause
 	} else if err != nil {
@@ -120,7 +122,7 @@ func upload(ctx context.Context, param api.V1DeployAFunctionParams, meta api.Fun
 	return resp.JSON201, nil
 }
 
-func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys afero.Fs) error {
+func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys fs.FS) error {
 	m, err := form.CreateFormField("metadata")
 	if err != nil {
 		return errors.Errorf("failed to create metadata: %w", err)
@@ -152,9 +154,9 @@ func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys afe
 		return nil
 	}
 	// Add import map
-	importMap := utils.ImportMap{}
+	importMap := ImportMap{}
 	if imPath := cast.Val(meta.ImportMapPath, ""); len(imPath) > 0 {
-		data, err := afero.ReadFile(fsys, filepath.FromSlash(imPath))
+		data, err := fs.ReadFile(fsys, filepath.FromSlash(imPath))
 		if err != nil {
 			return errors.Errorf("failed to load import map: %w", err)
 		}
@@ -173,9 +175,9 @@ func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys afe
 	}
 	// Add static files
 	patterns := config.Glob(cast.Val(meta.StaticPatterns, []string{}))
-	files, err := patterns.Files(afero.NewIOFS(fsys))
+	files, err := patterns.Files(fsys)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), err)
+		fmt.Fprintln(os.Stderr, "WARN:", err)
 	}
 	for _, sfPath := range files {
 		if err := addFile(sfPath, io.Discard); err != nil {
@@ -185,10 +187,24 @@ func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys afe
 	return walkImportPaths(meta.EntrypointPath, importMap, addFile)
 }
 
+type ImportMap struct {
+	Imports map[string]string            `json:"imports"`
+	Scopes  map[string]map[string]string `json:"scopes"`
+}
+
+func (m *ImportMap) Parse(data []byte) error {
+	data = jsonc.ToJSONInPlace(data)
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := decoder.Decode(&m); err != nil {
+		return errors.Errorf("failed to parse import map: %w", err)
+	}
+	return nil
+}
+
 // Ref: https://regex101.com/r/DfBdJA/1
 var importPathPattern = regexp.MustCompile(`(?i)(?:import|export)\s+(?:{[^{}]+}|.*?)\s*(?:from)?\s*['"](.*?)['"]|import\(\s*['"](.*?)['"]\)`)
 
-func walkImportPaths(srcPath string, importMap utils.ImportMap, readFile func(curr string, w io.Writer) error) error {
+func walkImportPaths(srcPath string, importMap ImportMap, readFile func(curr string, w io.Writer) error) error {
 	seen := map[string]struct{}{}
 	// DFS because it's more efficient to pop from end of array
 	q := make([]string, 1)
@@ -204,7 +220,7 @@ func walkImportPaths(srcPath string, importMap utils.ImportMap, readFile func(cu
 		// Read into memory for regex match later
 		var buf bytes.Buffer
 		if err := readFile(curr, &buf); errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), err)
+			fmt.Fprintln(os.Stderr, "WARN:", err)
 			continue
 		} else if err != nil {
 			return err

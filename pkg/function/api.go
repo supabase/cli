@@ -11,12 +11,34 @@ type EdgeRuntimeAPI struct {
 	project string
 	client  api.ClientWithResponses
 	eszip   EszipBundler
+	maxJobs uint
 }
 
 type EszipBundler interface {
 	Bundle(ctx context.Context, entrypoint string, importMap string, staticFiles []string, output io.Writer) error
 }
 
-func NewEdgeRuntimeAPI(project string, client api.ClientWithResponses, bundler EszipBundler) EdgeRuntimeAPI {
-	return EdgeRuntimeAPI{client: client, project: project, eszip: bundler}
+func NewEdgeRuntimeAPI(project string, client api.ClientWithResponses, opts ...withOption) EdgeRuntimeAPI {
+	result := EdgeRuntimeAPI{client: client, project: project}
+	for _, apply := range opts {
+		apply(&result)
+	}
+	if result.maxJobs == 0 {
+		result.maxJobs = 1
+	}
+	return result
+}
+
+type withOption func(*EdgeRuntimeAPI)
+
+func WithBundler(bundler EszipBundler) withOption {
+	return func(era *EdgeRuntimeAPI) {
+		era.eszip = bundler
+	}
+}
+
+func WithMaxJobs(maxJobs uint) withOption {
+	return func(era *EdgeRuntimeAPI) {
+		era.maxJobs = maxJobs
+	}
 }
