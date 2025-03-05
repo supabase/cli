@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -97,15 +96,7 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 }
 
 func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, runtimeOption RuntimeOption, fsys afero.Fs) error {
-	// 1. Load default values
-	if envFilePath == "" {
-		if f, err := fsys.Stat(utils.FallbackEnvFilePath); err == nil && !f.IsDir() {
-			envFilePath = utils.FallbackEnvFilePath
-		}
-	} else if !filepath.IsAbs(envFilePath) {
-		envFilePath = filepath.Join(utils.CurrentDirAbs, envFilePath)
-	}
-	// 2. Parse user defined env
+	// 1. Parse custom env file
 	env, err := parseEnvFile(envFilePath, fsys)
 	if err != nil {
 		return err
@@ -124,7 +115,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	if runtimeOption.InspectMode != nil {
 		env = append(env, "SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=0")
 	}
-	// 3. Parse custom import map
+	// 2. Parse custom import map
 	cwd, err := os.Getwd()
 	if err != nil {
 		return errors.Errorf("failed to get working directory: %w", err)
@@ -134,7 +125,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		return err
 	}
 	env = append(env, "SUPABASE_INTERNAL_FUNCTIONS_CONFIG="+functionsConfigString)
-	// 4. Parse entrypoint script
+	// 3. Parse entrypoint script
 	cmd := append([]string{
 		"edge-runtime",
 		"start",
@@ -150,7 +141,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 ` + mainFuncEmbed + `
 EOF
 `}
-	// 5. Parse exposed ports
+	// 4. Parse exposed ports
 	dockerRuntimePort := nat.Port(fmt.Sprintf("%d/tcp", dockerRuntimeServerPort))
 	exposedPorts := nat.PortSet{dockerRuntimePort: struct{}{}}
 	portBindings := nat.PortMap{}
@@ -161,7 +152,7 @@ EOF
 			HostPort: strconv.FormatUint(uint64(utils.Config.EdgeRuntime.InspectorPort), 10),
 		}}
 	}
-	// 6. Start container
+	// 5. Start container
 	_, err = utils.DockerStart(
 		ctx,
 		container.Config{
@@ -189,22 +180,17 @@ EOF
 }
 
 func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
-	env := []string{}
-	if len(envFilePath) == 0 {
-		return env, nil
-	}
-	envMap, err := set.ParseEnvFile(envFilePath, fsys)
-	if err != nil {
-		return env, err
-	}
-	for name, value := range envMap {
-		if strings.HasPrefix(name, "SUPABASE_") {
-			fmt.Fprintln(os.Stderr, "Env name cannot start with SUPABASE_, skipping: "+name)
-			continue
+	if envFilePath == "" {
+		if f, err := fsys.Stat(utils.FallbackEnvFilePath); err == nil && !f.IsDir() {
+			envFilePath = utils.FallbackEnvFilePath
 		}
-		env = append(env, name+"="+value)
 	}
-	return env, nil
+	env := []string{}
+	secrets, err := set.ListSecrets(envFilePath, fsys)
+	for _, v := range secrets {
+		env = append(env, fmt.Sprintf("%s=%s", v.Name, v.Value))
+	}
+	return env, err
 }
 
 func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) ([]string, string, error) {

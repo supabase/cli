@@ -224,8 +224,10 @@ type (
 		Image         string        `toml:"-"`
 		Policy        RequestPolicy `toml:"policy"`
 		InspectorPort uint16        `toml:"inspector_port"`
+		Secrets       SecretsConfig `toml:"secrets"`
 	}
 
+	SecretsConfig  map[string]Secret
 	FunctionConfig map[string]function
 
 	function struct {
@@ -312,7 +314,9 @@ func (s *storage) Clone() storage {
 
 func (c *baseConfig) Clone() baseConfig {
 	copy := *c
+	copy.Db.Vault = maps.Clone(c.Db.Vault)
 	copy.Storage = c.Storage.Clone()
+	copy.EdgeRuntime.Secrets = maps.Clone(c.EdgeRuntime.Secrets)
 	copy.Functions = maps.Clone(c.Functions)
 	copy.Auth = c.Auth.Clone()
 	if c.Experimental.Webhooks != nil {
@@ -506,6 +510,12 @@ func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 	}); err != nil {
 		return errors.Errorf("failed to parse config: %w", err)
 	}
+	// Convert keys to upper case: https://github.com/spf13/viper/issues/1014
+	secrets := make(SecretsConfig, len(c.EdgeRuntime.Secrets))
+	for k, v := range c.EdgeRuntime.Secrets {
+		secrets[strings.ToUpper(k)] = v
+	}
+	c.EdgeRuntime.Secrets = secrets
 	return nil
 }
 

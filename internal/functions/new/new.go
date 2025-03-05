@@ -45,7 +45,7 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 	}
 	// Load config if available
 	if err := flags.LoadConfig(fsys); err != nil {
-		utils.CmdSuggestion = ""
+		fmt.Fprintln(utils.GetDebugLogger(), err)
 	}
 	if err := createEntrypointFile(slug, fsys); err != nil {
 		return err
