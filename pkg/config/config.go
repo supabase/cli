@@ -220,13 +220,14 @@ type (
 	}
 
 	edgeRuntime struct {
-		Enabled       bool              `toml:"enabled"`
-		Image         string            `toml:"-"`
-		Policy        RequestPolicy     `toml:"policy"`
-		InspectorPort uint16            `toml:"inspector_port"`
-		Secrets       map[string]Secret `toml:"secrets"`
+		Enabled       bool          `toml:"enabled"`
+		Image         string        `toml:"-"`
+		Policy        RequestPolicy `toml:"policy"`
+		InspectorPort uint16        `toml:"inspector_port"`
+		Secrets       SecretsConfig `toml:"secrets"`
 	}
 
+	SecretsConfig  map[string]Secret
 	FunctionConfig map[string]function
 
 	function struct {
@@ -509,6 +510,12 @@ func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 	}); err != nil {
 		return errors.Errorf("failed to parse config: %w", err)
 	}
+	// Convert keys to upper case: https://github.com/spf13/viper/issues/1014
+	secrets := make(SecretsConfig, len(c.EdgeRuntime.Secrets))
+	for k, v := range c.EdgeRuntime.Secrets {
+		secrets[strings.ToUpper(k)] = v
+	}
+	c.EdgeRuntime.Secrets = secrets
 	return nil
 }
 
