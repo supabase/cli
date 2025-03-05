@@ -1,4 +1,4 @@
-package deploy
+package function
 
 import (
 	"bytes"
@@ -11,15 +11,12 @@ import (
 	"os"
 	"path"
 	"testing"
+	fs "testing/fstest"
 
 	"github.com/h2non/gock"
-	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/testing/apitest"
-	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/config"
@@ -52,7 +49,7 @@ func TestImportPaths(t *testing.T) {
 		fsys.On("ReadFile", "testdata/modules/imports.ts").Once()
 		fsys.On("ReadFile", "testdata/geometries/Geometries.js").Once()
 		// Run test
-		im := utils.ImportMap{}
+		im := ImportMap{}
 		err := walkImportPaths("testdata/modules/imports.ts", im, fsys.ReadFile)
 		// Check error
 		assert.NoError(t, err)
@@ -69,7 +66,7 @@ func TestImportPaths(t *testing.T) {
 		fsys.On("ReadFile", "testdata/shared/mod.ts").Once()
 		fsys.On("ReadFile", "testdata/nested/index.ts").Once()
 		// Run test
-		im := utils.ImportMap{Imports: map[string]string{
+		im := ImportMap{Imports: map[string]string{
 			"module-name/": "../shared/",
 		}}
 		err := walkImportPaths("testdata/modules/imports.ts", im, fsys.ReadFile)
@@ -94,7 +91,7 @@ func TestWriteForm(t *testing.T) {
 		form := multipart.NewWriter(&buf)
 		require.NoError(t, form.SetBoundary("test"))
 		// Setup in-memory fs
-		fsys := afero.FromIOFS{FS: testImports}
+		fsys := testImports
 		// Run test
 		err := writeForm(form, api.FunctionDeployMetadata{
 			Name:           cast.Ptr("nested"),
@@ -113,7 +110,7 @@ func TestWriteForm(t *testing.T) {
 		form := multipart.NewWriter(&buf)
 		require.NoError(t, form.SetBoundary("test"))
 		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
+		fsys := fs.MapFS{}
 		// Run test
 		err := writeForm(form, api.FunctionDeployMetadata{
 			ImportMapPath: cast.Ptr("testdata/import_map.json"),
@@ -127,7 +124,7 @@ func TestWriteForm(t *testing.T) {
 		form := multipart.NewWriter(&buf)
 		require.NoError(t, form.SetBoundary("test"))
 		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
+		fsys := testImports
 		// Run test
 		err := writeForm(form, api.FunctionDeployMetadata{
 			StaticPatterns: cast.Ptr([]string{"testdata"}),
@@ -138,10 +135,9 @@ func TestWriteForm(t *testing.T) {
 }
 
 func TestDeployAll(t *testing.T) {
-	flags.ProjectRef = apitest.RandomProjectRef()
-	// Setup valid access token
-	token := apitest.RandomAccessToken(t)
-	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+	apiClient, err := api.NewClientWithResponses(mockApiHost)
+	require.NoError(t, err)
+	client := NewEdgeRuntimeAPI(mockProject, *apiClient)
 
 	t.Run("deploys single slug", func(t *testing.T) {
 		c := config.FunctionConfig{"demo": {
@@ -149,19 +145,20 @@ func TestDeployAll(t *testing.T) {
 			Entrypoint: "testdata/shared/whatever.ts",
 		}}
 		// Setup in-memory fs
-		fsys := afero.FromIOFS{FS: testImports}
+		fsys := testImports
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Post("/v1/projects/"+flags.ProjectRef+"/functions/deploy").
+		gock.New(mockApiHost).
+			Post("/v1/projects/"+mockProject+"/functions/deploy").
 			MatchParam("slug", "demo").
 			Reply(http.StatusCreated).
 			JSON(api.DeployFunctionResponse{})
 		// Run test
-		err := deploy(context.Background(), c, 1, fsys)
+		err := client.Deploy(context.Background(), c, fsys)
 		// Check error
 		assert.NoError(t, err)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
+		assert.Empty(t, gock.Pending())
+		assert.Empty(t, gock.GetUnmatchedRequests())
 	})
 
 	t.Run("deploys multiple slugs", func(t *testing.T) {
@@ -176,42 +173,44 @@ func TestDeployAll(t *testing.T) {
 			},
 		}
 		// Setup in-memory fs
-		fsys := afero.FromIOFS{FS: testImports}
+		fsys := testImports
 		// Setup mock api
 		defer gock.OffAll()
 		for slug := range c {
-			gock.New(utils.DefaultApiHost).
-				Post("/v1/projects/"+flags.ProjectRef+"/functions/deploy").
+			gock.New(mockApiHost).
+				Post("/v1/projects/"+mockProject+"/functions/deploy").
 				MatchParam("slug", slug).
 				Reply(http.StatusCreated).
 				JSON(api.DeployFunctionResponse{Id: slug})
 		}
-		gock.New(utils.DefaultApiHost).
-			Put("/v1/projects/" + flags.ProjectRef + "/functions").
+		gock.New(mockApiHost).
+			Put("/v1/projects/" + mockProject + "/functions").
 			Reply(http.StatusOK).
 			JSON(api.BulkUpdateFunctionResponse{})
 		// Run test
-		err := deploy(context.Background(), c, 1, fsys)
+		err := client.Deploy(context.Background(), c, fsys)
 		// Check error
 		assert.NoError(t, err)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
+		assert.Empty(t, gock.Pending())
+		assert.Empty(t, gock.GetUnmatchedRequests())
 	})
 
 	t.Run("throws error on network failure", func(t *testing.T) {
 		errNetwork := errors.New("network")
 		c := config.FunctionConfig{"demo": {Enabled: true}}
 		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
+		fsys := fs.MapFS{}
 		// Setup mock api
 		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Post("/v1/projects/"+flags.ProjectRef+"/functions/deploy").
+		gock.New(mockApiHost).
+			Post("/v1/projects/"+mockProject+"/functions/deploy").
 			MatchParam("slug", "demo").
 			ReplyError(errNetwork)
 		// Run test
-		err := deploy(context.Background(), c, 1, fsys)
+		err := client.Deploy(context.Background(), c, fsys)
 		// Check error
 		assert.ErrorIs(t, err, errNetwork)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
+		assert.Empty(t, gock.Pending())
+		assert.Empty(t, gock.GetUnmatchedRequests())
 	})
 }

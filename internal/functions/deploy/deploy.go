@@ -36,12 +36,12 @@ func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool,
 	if err != nil {
 		return err
 	}
+	opt := function.WithMaxJobs(maxJobs)
 	if useDocker {
-		api := function.NewEdgeRuntimeAPI(flags.ProjectRef, *utils.GetSupabase(), NewDockerBundler(fsys))
-		if err := api.UpsertFunctions(ctx, functionConfig); err != nil {
-			return err
-		}
-	} else if err := deploy(ctx, functionConfig, maxJobs, fsys); errors.Is(err, errNoDeploy) {
+		opt = function.WithBundler(NewDockerBundler(fsys))
+	}
+	api := function.NewEdgeRuntimeAPI(flags.ProjectRef, *utils.GetSupabase(), opt)
+	if err := api.Deploy(ctx, functionConfig, afero.NewIOFS(fsys)); errors.Is(err, function.ErrNoDeploy) {
 		fmt.Fprintln(os.Stderr, err)
 		return nil
 	} else if err != nil {
