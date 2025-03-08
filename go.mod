@@ -49,7 +49,7 @@ require (
 	github.com/withfig/autocomplete-tools/packages/cobra v1.2.0
 	github.com/zalando/go-keyring v0.2.6
 	go.opentelemetry.io/otel v1.35.0
-	golang.org/x/mod v0.23.0
+	golang.org/x/mod v0.24.0
 	golang.org/x/oauth2 v0.27.0
 	golang.org/x/term v0.29.0
 	google.golang.org/grpc v1.71.0
