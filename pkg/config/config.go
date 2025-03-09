@@ -1223,7 +1223,7 @@ func (c *tpaClerk) validate() (err error) {
 	}
 
 	if !clerkDomainPattern.MatchString(c.Domain) {
-		return errors.New("Invalid config: auth.third_party.clerk has invalid domain, it usually is like clerk.example.com or example.clerk.accounts.dev")
+		return errors.New("Invalid config: auth.third_party.clerk has invalid domain, it usually is like clerk.example.com or example.clerk.accounts.dev. Check https://clerk.com/setup/supabase on how to find the correct value.")
 	}
 
 	return nil
