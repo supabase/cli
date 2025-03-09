@@ -1209,7 +1209,7 @@ func (c *tpaCognito) validate() (err error) {
 	return nil
 }
 
-var clerkDomainPattern = regexp.MustCompile("^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-][.])+clerk[.]accounts[.]dev)$")
+var clerkDomainPattern = regexp.MustCompile("^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$")
 
 func (c *tpaClerk) issuerURL() string {
 	return fmt.Sprintf("https://%s", c.Domain)
