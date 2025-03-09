@@ -1209,7 +1209,7 @@ func (c *tpaCognito) validate() (err error) {
 	return nil
 }
 
-var clerkDomainPattern = regexp.MustCompile("^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-][.])+clerk[.]accounts[.]dev)$")
+var clerkDomainPattern = regexp.MustCompile("^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$")
 
 func (c *tpaClerk) issuerURL() string {
 	return fmt.Sprintf("https://%s", c.Domain)
@@ -1223,7 +1223,7 @@ func (c *tpaClerk) validate() (err error) {
 	}
 
 	if !clerkDomainPattern.MatchString(c.Domain) {
-		return errors.New("Invalid config: auth.third_party.clerk has invalid domain, it usually is like clerk.example.com or example.clerk.accounts.dev")
+		return errors.New("Invalid config: auth.third_party.clerk has invalid domain, it usually is like clerk.example.com or example.clerk.accounts.dev. Check https://clerk.com/setup/supabase on how to find the correct value.")
 	}
 
 	return nil
