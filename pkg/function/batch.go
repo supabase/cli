@@ -111,7 +111,7 @@ OUTER:
 		}
 	}
 	if len(toUpdate) > 1 {
-		body := make([]api.BulkUpdateFunctionBody, len(toUpdate))
+		var body []api.BulkUpdateFunctionBody
 		for _, b := range toUpdate {
 			body = append(body, b)
 		}
