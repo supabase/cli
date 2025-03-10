@@ -54,6 +54,10 @@ func TestDeployCommand(t *testing.T) {
 			apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 			require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
 		}
+		gock.New(utils.DefaultApiHost).
+			Put("/v1/projects/" + flags.ProjectRef + "/functions").
+			Reply(http.StatusOK).
+			JSON(api.BulkUpdateFunctionResponse{})
 		// Setup output file
 		for _, v := range functions {
 			outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", v))
