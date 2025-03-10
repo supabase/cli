@@ -34,6 +34,7 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 	for _, f := range result {
 		exists[f.Slug] = struct{}{}
 	}
+	toUpdate := map[string]api.BulkUpdateFunctionBody{}
 OUTER:
 	for slug, function := range functionConfig {
 		if !function.Enabled {
@@ -52,26 +53,52 @@ OUTER:
 		// Update if function already exists
 		upsert := func() error {
 			if _, ok := exists[slug]; ok {
-				if resp, err := s.client.V1UpdateAFunctionWithBodyWithResponse(ctx, s.project, slug, &api.V1UpdateAFunctionParams{
+				resp, err := s.client.V1UpdateAFunctionWithBodyWithResponse(ctx, s.project, slug, &api.V1UpdateAFunctionParams{
 					VerifyJwt:      &function.VerifyJWT,
 					ImportMapPath:  toFileURL(function.ImportMap),
 					EntrypointPath: toFileURL(function.Entrypoint),
-				}, eszipContentType, bytes.NewReader(body.Bytes())); err != nil {
+				}, eszipContentType, bytes.NewReader(body.Bytes()))
+				if err != nil {
 					return errors.Errorf("failed to update function: %w", err)
 				} else if resp.JSON200 == nil {
 					return errors.Errorf("unexpected status %d: %s", resp.StatusCode(), string(resp.Body))
 				}
+				toUpdate[slug] = api.BulkUpdateFunctionBody{
+					Id:             resp.JSON200.Id,
+					Name:           resp.JSON200.Name,
+					Slug:           resp.JSON200.Slug,
+					Version:        resp.JSON200.Version,
+					EntrypointPath: resp.JSON200.EntrypointPath,
+					ImportMap:      resp.JSON200.ImportMap,
+					ImportMapPath:  resp.JSON200.ImportMapPath,
+					VerifyJwt:      resp.JSON200.VerifyJwt,
+					Status:         api.BulkUpdateFunctionBodyStatus(resp.JSON200.Status),
+					CreatedAt:      &resp.JSON200.CreatedAt,
+				}
 			} else {
-				if resp, err := s.client.V1CreateAFunctionWithBodyWithResponse(ctx, s.project, &api.V1CreateAFunctionParams{
+				resp, err := s.client.V1CreateAFunctionWithBodyWithResponse(ctx, s.project, &api.V1CreateAFunctionParams{
 					Slug:           &slug,
 					Name:           &slug,
 					VerifyJwt:      &function.VerifyJWT,
 					ImportMapPath:  toFileURL(function.ImportMap),
 					EntrypointPath: toFileURL(function.Entrypoint),
-				}, eszipContentType, bytes.NewReader(body.Bytes())); err != nil {
+				}, eszipContentType, bytes.NewReader(body.Bytes()))
+				if err != nil {
 					return errors.Errorf("failed to create function: %w", err)
 				} else if resp.JSON201 == nil {
 					return errors.Errorf("unexpected status %d: %s", resp.StatusCode(), string(resp.Body))
+				}
+				toUpdate[slug] = api.BulkUpdateFunctionBody{
+					Id:             resp.JSON201.Id,
+					Name:           resp.JSON201.Name,
+					Slug:           resp.JSON201.Slug,
+					Version:        resp.JSON201.Version,
+					EntrypointPath: resp.JSON201.EntrypointPath,
+					ImportMap:      resp.JSON201.ImportMap,
+					ImportMapPath:  resp.JSON201.ImportMapPath,
+					VerifyJwt:      resp.JSON201.VerifyJwt,
+					Status:         api.BulkUpdateFunctionBodyStatus(resp.JSON201.Status),
+					CreatedAt:      &resp.JSON201.CreatedAt,
 				}
 			}
 			return nil
@@ -81,6 +108,17 @@ OUTER:
 		policy := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), maxRetries), ctx)
 		if err := backoff.Retry(upsert, policy); err != nil {
 			return err
+		}
+	}
+	if len(toUpdate) > 1 {
+		body := make([]api.BulkUpdateFunctionBody, len(toUpdate))
+		for _, b := range toUpdate {
+			body = append(body, b)
+		}
+		if resp, err := s.client.V1BulkUpdateFunctionsWithResponse(ctx, s.project, body); err != nil {
+			return errors.Errorf("failed to bulk update: %w", err)
+		} else if resp.JSON200 == nil {
+			return errors.Errorf("unexpected bulk update status %d: %s", resp.StatusCode(), string(resp.Body))
 		}
 	}
 	return nil
