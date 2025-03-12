@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -184,6 +185,8 @@ func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
 		if f, err := fsys.Stat(utils.FallbackEnvFilePath); err == nil && !f.IsDir() {
 			envFilePath = utils.FallbackEnvFilePath
 		}
+	} else if !filepath.IsAbs(envFilePath) {
+		envFilePath = filepath.Join(utils.CurrentDirAbs, envFilePath)
 	}
 	env := []string{}
 	secrets, err := set.ListSecrets(envFilePath, fsys)
