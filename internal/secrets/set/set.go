@@ -22,6 +22,9 @@ func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsy
 	if err := flags.LoadConfig(fsys); err != nil {
 		fmt.Fprintln(utils.GetDebugLogger(), err)
 	}
+	if !filepath.IsAbs(envFilePath) {
+		envFilePath = filepath.Join(utils.CurrentDirAbs, envFilePath)
+	}
 	secrets, err := ListSecrets(envFilePath, fsys, args...)
 	if err != nil {
 		return err
@@ -48,9 +51,6 @@ func ListSecrets(envFilePath string, fsys afero.Fs, envArgs ...string) ([]api.Cr
 		}
 	}
 	if len(envFilePath) > 0 {
-		if !filepath.IsAbs(envFilePath) {
-			envFilePath = filepath.Join(utils.CurrentDirAbs, envFilePath)
-		}
 		parsed, err := parseEnvFile(envFilePath, fsys)
 		if err != nil {
 			return nil, err
