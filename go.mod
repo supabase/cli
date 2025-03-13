@@ -11,7 +11,7 @@ require (
 	github.com/charmbracelet/bubbletea v0.25.0
 	github.com/charmbracelet/glamour v0.7.0
 	github.com/charmbracelet/lipgloss v0.12.1
-	github.com/containers/common v0.62.1
+	github.com/containers/common v0.62.2
 	github.com/docker/cli v28.0.1+incompatible
 	github.com/docker/docker v28.0.1+incompatible
 	github.com/docker/go-connections v0.5.0
@@ -107,7 +107,7 @@ require (
 	github.com/cloudflare/circl v1.6.0 // indirect
 	github.com/containerd/console v1.0.4-0.20230313162750-1ae8d489ac81 // indirect
 	github.com/containerd/log v0.1.0 // indirect
-	github.com/containers/storage v1.57.1 // indirect
+	github.com/containers/storage v1.57.2 // indirect
 	github.com/curioswitch/go-reassign v0.3.0 // indirect
 	github.com/cyphar/filepath-securejoin v0.4.1 // indirect
 	github.com/daixiang0/gci v0.13.5 // indirect
