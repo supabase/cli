@@ -225,6 +225,7 @@ type (
 		Policy        RequestPolicy `toml:"policy"`
 		InspectorPort uint16        `toml:"inspector_port"`
 		Secrets       SecretsConfig `toml:"secrets"`
+		DenoVersion   uint          `toml:"deno_version"`
 	}
 
 	SecretsConfig  map[string]Secret
@@ -826,6 +827,16 @@ func (c *config) Validate(fsys fs.FS) error {
 		if err := ValidateFunctionSlug(name); err != nil {
 			return err
 		}
+	}
+	switch c.EdgeRuntime.DenoVersion {
+	case 0:
+		return errors.New("Missing required field in config: edge_runtime.deno_version")
+	case 1:
+		break
+	case 2:
+		c.EdgeRuntime.Image = deno2
+	default:
+		return errors.Errorf("Failed reading config: Invalid %s: %v.", "edge_runtime.deno_version", c.EdgeRuntime.DenoVersion)
 	}
 	// Validate logflare config
 	if c.Analytics.Enabled {
