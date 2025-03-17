@@ -17,8 +17,16 @@ import (
 type MockBundler struct {
 }
 
-func (b *MockBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) error {
-	return nil
+func (b *MockBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) (api.FunctionDeployMetadata, error) {
+	if staticFiles == nil {
+		staticFiles = []string{}
+	}
+	return api.FunctionDeployMetadata{
+		Name:           &slug,
+		EntrypointPath: entrypoint,
+		ImportMapPath:  &importMap,
+		StaticPatterns: &staticFiles,
+	}, nil
 }
 
 const (
@@ -54,7 +62,7 @@ func TestUpsertFunctions(t *testing.T) {
 		// Run test
 		err := client.UpsertFunctions(context.Background(), nil)
 		// Check error
-		assert.ErrorContains(t, err, "unexpected status 503:")
+		assert.ErrorContains(t, err, "unexpected list functions status 503:")
 	})
 
 	t.Run("retries on create failure", func(t *testing.T) {
