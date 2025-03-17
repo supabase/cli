@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/function"
 )
 
@@ -25,17 +26,17 @@ func NewDockerBundler(fsys afero.Fs) function.EszipBundler {
 	return &dockerBundler{fsys: fsys}
 }
 
-func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) error {
-	// Create temp directory to store generated eszip
+func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) (api.FunctionDeployMetadata, error) {
+	meta := function.NewMetadata(slug, entrypoint, importMap, staticFiles)
 	fmt.Fprintln(os.Stderr, "Bundling Function:", utils.Bold(slug))
 	cwd, err := os.Getwd()
 	if err != nil {
-		return errors.Errorf("failed to get working directory: %w", err)
+		return meta, errors.Errorf("failed to get working directory: %w", err)
 	}
 	// BitBucket pipelines require docker bind mounts to be world writable
 	hostOutputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
 	if err := b.fsys.MkdirAll(hostOutputDir, 0777); err != nil {
-		return errors.Errorf("failed to mkdir: %w", err)
+		return meta, errors.Errorf("failed to mkdir: %w", err)
 	}
 	defer func() {
 		if err := b.fsys.RemoveAll(hostOutputDir); err != nil {
@@ -45,7 +46,7 @@ func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	// Create bind mounts
 	binds, err := GetBindMounts(cwd, utils.FunctionsDir, hostOutputDir, entrypoint, importMap, b.fsys)
 	if err != nil {
-		return err
+		return meta, err
 	}
 	hostOutputPath := filepath.Join(hostOutputDir, "output.eszip")
 	// Create exec command
@@ -53,8 +54,8 @@ func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	if len(importMap) > 0 {
 		cmd = append(cmd, "--import-map", utils.ToDockerPath(importMap))
 	}
-	for _, staticFile := range staticFiles {
-		cmd = append(cmd, "--static", utils.ToDockerPath(staticFile))
+	for _, sf := range staticFiles {
+		cmd = append(cmd, "--static", utils.ToDockerPath(sf))
 	}
 	if viper.GetBool("DEBUG") {
 		cmd = append(cmd, "--verbose")
@@ -81,15 +82,15 @@ func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 		os.Stdout,
 		os.Stderr,
 	); err != nil {
-		return err
+		return meta, err
 	}
 	// Read and compress
 	eszipBytes, err := b.fsys.Open(hostOutputPath)
 	if err != nil {
-		return errors.Errorf("failed to open eszip: %w", err)
+		return meta, errors.Errorf("failed to open eszip: %w", err)
 	}
 	defer eszipBytes.Close()
-	return function.Compress(eszipBytes, output)
+	return meta, function.Compress(eszipBytes, output)
 }
 
 func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointPath, hostImportMapPath string, fsys afero.Fs) ([]string, error) {
