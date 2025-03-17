@@ -47,7 +47,7 @@ OUTER:
 			}
 		}
 		var body bytes.Buffer
-		if err := s.eszip.Bundle(ctx, function.Entrypoint, function.ImportMap, function.StaticFiles, &body); err != nil {
+		if err := s.eszip.Bundle(ctx, slug, function.Entrypoint, function.ImportMap, function.StaticFiles, &body); err != nil {
 			return err
 		}
 		// Update if function already exists

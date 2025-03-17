@@ -28,8 +28,7 @@ func NewNativeBundler(tempDir string, fsys fs.FS) EszipBundler {
 // Use a package private variable to allow testing without gosec complaining about G204
 var edgeRuntimeBin = "edge-runtime"
 
-func (b *nativeBundler) Bundle(ctx context.Context, entrypoint string, importMap string, staticFiles []string, output io.Writer) error {
-	slug := filepath.Base(filepath.Dir(entrypoint))
+func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) error {
 	outputPath := filepath.Join(b.tempDir, slug+".eszip")
 	// TODO: make edge runtime write to stdout
 	args := []string{"bundle", "--entrypoint", entrypoint, "--output", outputPath}
