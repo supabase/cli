@@ -25,9 +25,8 @@ func NewDockerBundler(fsys afero.Fs) function.EszipBundler {
 	return &dockerBundler{fsys: fsys}
 }
 
-func (b *dockerBundler) Bundle(ctx context.Context, entrypoint string, importMap string, staticFiles []string, output io.Writer) error {
+func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) error {
 	// Create temp directory to store generated eszip
-	slug := filepath.Base(filepath.Dir(entrypoint))
 	fmt.Fprintln(os.Stderr, "Bundling Function:", utils.Bold(slug))
 	cwd, err := os.Getwd()
 	if err != nil {
