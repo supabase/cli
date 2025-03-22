@@ -2,8 +2,10 @@ module github.com/supabase/cli
 
 go 1.23.2
 
+toolchain go1.24.1
+
 require (
-	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c
+	github.com/BurntSushi/toml v1.5.0
 	github.com/Netflix/go-env v0.1.2
 	github.com/andybalholm/brotli v1.1.1
 	github.com/cenkalti/backoff/v4 v4.3.0
@@ -12,8 +14,8 @@ require (
 	github.com/charmbracelet/glamour v0.7.0
 	github.com/charmbracelet/lipgloss v0.12.1
 	github.com/containers/common v0.62.2
-	github.com/docker/cli v28.0.1+incompatible
-	github.com/docker/docker v28.0.1+incompatible
+	github.com/docker/cli v28.0.2+incompatible
+	github.com/docker/docker v28.0.2+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/docker/go-units v0.5.0
 	github.com/ecies/go/v2 v2.0.10
@@ -21,8 +23,8 @@ require (
 	github.com/go-errors/errors v1.5.1
 	github.com/go-git/go-git/v5 v5.14.0
 	github.com/go-xmlfmt/xmlfmt v1.1.3
-	github.com/golang-jwt/jwt/v5 v5.2.1
-	github.com/golangci/golangci-lint v1.64.7
+	github.com/golang-jwt/jwt/v5 v5.2.2
+	github.com/golangci/golangci-lint v1.64.8
 	github.com/google/go-github/v62 v62.0.0
 	github.com/google/go-querystring v1.1.0
 	github.com/google/uuid v1.6.0
@@ -39,7 +41,7 @@ require (
 	github.com/oapi-codegen/oapi-codegen/v2 v2.4.1
 	github.com/oapi-codegen/runtime v1.1.1
 	github.com/slack-go/slack v0.16.0
-	github.com/spf13/afero v1.12.0
+	github.com/spf13/afero v1.14.0
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/pflag v1.0.6
 	github.com/spf13/viper v1.19.0

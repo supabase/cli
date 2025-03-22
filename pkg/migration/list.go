@@ -35,9 +35,6 @@ func ListLocalMigrations(migrationsDir string, fsys fs.FS, filter ...func(string
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, errors.Errorf("failed to read directory: %w", err)
 	}
-	if len(filter) == 0 {
-		filter = append(filter, func(string) bool { return true })
-	}
 	var clean []string
 OUTER:
 	for i, migration := range localMigrations {

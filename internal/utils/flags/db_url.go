@@ -50,7 +50,7 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 	// Update connection config
 	switch connType {
 	case direct:
-		if err := utils.Config.Load("", utils.NewRootFS(fsys)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := LoadConfig(fsys); err != nil {
 			return err
 		}
 		if flag := flagSet.Lookup("db-url"); flag != nil {
