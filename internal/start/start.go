@@ -511,11 +511,11 @@ EOF
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_OTP=%v", utils.Config.Auth.RateLimit.SignInSignUps),
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_VERIFY=%v", utils.Config.Auth.RateLimit.TokenVerifications),
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_SMS_SENT=%v", utils.Config.Auth.RateLimit.SmsSent),
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_EMAIL_SENT=%v", utils.Config.Auth.RateLimit.EmailSent),
 		}
 
 		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.Enabled {
 			env = append(env,
+				fmt.Sprintf("GOTRUE_RATE_LIMIT_EMAIL_SENT=%v", utils.Config.Auth.RateLimit.EmailSent),
 				fmt.Sprintf("GOTRUE_SMTP_HOST=%s", utils.Config.Auth.Email.Smtp.Host),
 				fmt.Sprintf("GOTRUE_SMTP_PORT=%d", utils.Config.Auth.Email.Smtp.Port),
 				fmt.Sprintf("GOTRUE_SMTP_USER=%s", utils.Config.Auth.Email.Smtp.User),
