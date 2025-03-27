@@ -5,7 +5,7 @@ import (
 	"regexp"
 
 	"github.com/go-errors/errors"
-	"github.com/mitchellh/mapstructure"
+	"github.com/go-viper/mapstructure/v2"
 )
 
 const (
