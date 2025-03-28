@@ -440,35 +440,19 @@ func (c *config) Eject(w io.Writer) error {
 // Loads custom config file to struct fields tagged with toml.
 func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 	v := viper.New()
-	v.SetConfigType("toml")
-	// Load default values
-	var buf bytes.Buffer
-	if err := c.Eject(&buf); err != nil {
+	if err := c.mergeDefaultValues(v); err != nil {
 		return err
-	} else if err := c.loadFromReader(v, &buf); err != nil {
+	} else if err := mergeFileConfig(v, filename, fsys); err != nil {
 		return err
 	}
-	// Load custom config
-	if ext := filepath.Ext(filename); len(ext) > 0 {
-		v.SetConfigType(ext[1:])
-	}
-	f, err := fsys.Open(filename)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	} else if err != nil {
-		return errors.Errorf("failed to read file config: %w", err)
-	}
-	defer f.Close()
-	return c.loadFromReader(v, f)
-}
-
-func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
-	if err := v.MergeConfig(r); err != nil {
-		return errors.Errorf("failed to merge config: %w", err)
+	// Load base config and mapstructure overrides
+	if err := c.load(v); err != nil {
+		return err
+	} else if err := c.loadFromEnv(); err != nil {
+		return err
 	}
 	// Find [remotes.*] block to override base config
-	baseId := v.GetString("project_id")
-	idToName := map[string]string{baseId: "base"}
+	idToName := map[string]string{}
 	for name, remote := range v.GetStringMap("remotes") {
 		projectId := v.GetString(fmt.Sprintf("remotes.%s.project_id", name))
 		// Track remote project_id to check for duplication
@@ -481,9 +465,43 @@ func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 			if err := v.MergeConfigMap(remote.(map[string]any)); err != nil {
 				return err
 			}
-			v.Set("project_id", baseId)
 		}
 	}
+	if _, exists := idToName[c.ProjectId]; exists {
+		return c.load(v)
+	}
+	return nil
+}
+
+func (c *config) mergeDefaultValues(v *viper.Viper) error {
+	v.SetConfigType("toml")
+	var buf bytes.Buffer
+	if err := c.Eject(&buf); err != nil {
+		return err
+	} else if err := v.MergeConfig(&buf); err != nil {
+		return errors.Errorf("failed to merge default values: %w", err)
+	}
+	return nil
+}
+
+func mergeFileConfig(v *viper.Viper, filename string, fsys fs.FS) error {
+	if ext := filepath.Ext(filename); len(ext) > 0 {
+		v.SetConfigType(ext[1:])
+	}
+	f, err := fsys.Open(filename)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return errors.Errorf("failed to read file config: %w", err)
+	}
+	defer f.Close()
+	if err := v.MergeConfig(f); err != nil {
+		return errors.Errorf("failed to merge file config: %w", err)
+	}
+	return nil
+}
+
+func (c *config) load(v *viper.Viper) error {
 	// Set default values for [functions.*] when config struct is empty
 	for key, value := range v.GetStringMap("functions") {
 		if _, ok := value.(map[string]any); !ok {
@@ -520,7 +538,7 @@ func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 	return nil
 }
 
-func (c *config) newDecodeHook(fs ...mapstructure.DecodeHookFunc) mapstructure.DecodeHookFunc {
+func (c *baseConfig) newDecodeHook(fs ...mapstructure.DecodeHookFunc) mapstructure.DecodeHookFunc {
 	fs = append(fs,
 		mapstructure.StringToTimeDurationHookFunc(),
 		mapstructure.StringToIPHookFunc(),
@@ -532,26 +550,11 @@ func (c *config) newDecodeHook(fs ...mapstructure.DecodeHookFunc) mapstructure.D
 }
 
 // Loads envs prefixed with supabase_ to struct fields tagged with mapstructure.
-func (c *config) loadFromEnv() error {
-	v := viper.New()
+func (c *baseConfig) loadFromEnv() error {
+	v := viper.NewWithOptions(viper.ExperimentalBindStruct())
 	v.SetEnvPrefix("SUPABASE")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
-	// Viper does not parse env vars automatically. Instead of calling viper.BindEnv
-	// per key, we decode all keys from an existing struct, and merge them to viper.
-	// Ref: https://github.com/spf13/viper/issues/761#issuecomment-859306364
-	envKeysMap := map[string]interface{}{}
-	if dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
-		Result:               &envKeysMap,
-		IgnoreUntaggedFields: true,
-	}); err != nil {
-		return errors.Errorf("failed to create decoder: %w", err)
-	} else if err := dec.Decode(c.baseConfig); err != nil {
-		return errors.Errorf("failed to decode env: %w", err)
-	} else if err := v.MergeConfigMap(envKeysMap); err != nil {
-		return errors.Errorf("failed to merge env config: %w", err)
-	}
-	// Writes viper state back to config struct, with automatic env substitution
 	if err := v.UnmarshalExact(c, viper.DecodeHook(c.newDecodeHook())); err != nil {
 		return errors.Errorf("failed to parse env override: %w", err)
 	}
@@ -565,9 +568,6 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		return err
 	}
 	if err := c.loadFromFile(builder.ConfigPath, fsys); err != nil {
-		return err
-	}
-	if err := c.loadFromEnv(); err != nil {
 		return err
 	}
 	// Generate JWT tokens
