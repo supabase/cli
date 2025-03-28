@@ -73,7 +73,7 @@ func createEntrypointFile(slug string, fsys afero.Fs) error {
 	defer f.Close()
 	if err := indexTemplate.Option("missingkey=error").Execute(f, indexConfig{
 		URL:   utils.GetApiUrl("/functions/v1/" + slug),
-		Token: utils.Config.Auth.AnonKey,
+		Token: utils.Config.Auth.AnonKey.Value,
 	}); err != nil {
 		return errors.Errorf("failed to write entrypoint: %w", err)
 	}

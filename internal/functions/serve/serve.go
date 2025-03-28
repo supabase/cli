@@ -104,10 +104,10 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	}
 	env = append(env,
 		fmt.Sprintf("SUPABASE_URL=http://%s:8000", utils.KongAliases[0]),
-		"SUPABASE_ANON_KEY="+utils.Config.Auth.AnonKey,
-		"SUPABASE_SERVICE_ROLE_KEY="+utils.Config.Auth.ServiceRoleKey,
+		"SUPABASE_ANON_KEY="+utils.Config.Auth.AnonKey.Value,
+		"SUPABASE_SERVICE_ROLE_KEY="+utils.Config.Auth.ServiceRoleKey.Value,
 		"SUPABASE_DB_URL="+dbUrl,
-		"SUPABASE_INTERNAL_JWT_SECRET="+utils.Config.Auth.JwtSecret,
+		"SUPABASE_INTERNAL_JWT_SECRET="+utils.Config.Auth.JwtSecret.Value,
 		fmt.Sprintf("SUPABASE_INTERNAL_HOST_PORT=%d", utils.Config.Api.Port),
 	)
 	if viper.GetBool("DEBUG") {

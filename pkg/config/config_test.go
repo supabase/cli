@@ -69,6 +69,45 @@ func TestConfigParsing(t *testing.T) {
 		// Run test
 		assert.Error(t, config.Load("", fsys))
 	})
+}
+
+func TestRemoteOverride(t *testing.T) {
+	t.Run("load staging override", func(t *testing.T) {
+		config := NewConfig()
+		config.ProjectId = "bvikqvbczudanvggcord"
+		// Setup in-memory fs
+		fsys := fs.MapFS{
+			"supabase/config.toml":           &fs.MapFile{Data: testInitConfigEmbed},
+			"supabase/templates/invite.html": &fs.MapFile{},
+		}
+		// Run test
+		t.Setenv("SUPABASE_AUTH_SITE_URL", "http://preview.com")
+		t.Setenv("AUTH_SEND_SMS_SECRETS", "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw==")
+		assert.NoError(t, config.Load("", fsys))
+		// Check error
+		assert.True(t, config.Db.Seed.Enabled)
+		assert.Equal(t, "http://preview.com", config.Auth.SiteUrl)
+		assert.Equal(t, []string{"image/png"}, config.Storage.Buckets["images"].AllowedMimeTypes)
+	})
+
+	t.Run("load production override", func(t *testing.T) {
+		config := NewConfig()
+		config.ProjectId = "vpefcjyosynxeiebfscx"
+		// Setup in-memory fs
+		fsys := fs.MapFS{
+			"supabase/config.toml":           &fs.MapFile{Data: testInitConfigEmbed},
+			"supabase/templates/invite.html": &fs.MapFile{},
+		}
+		// Run test
+		t.Setenv("SUPABASE_AUTH_SITE_URL", "http://preview.com")
+		t.Setenv("AUTH_SEND_SMS_SECRETS", "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw==")
+		assert.NoError(t, config.Load("", fsys))
+		// Check error
+		assert.False(t, config.Db.Seed.Enabled)
+		assert.Equal(t, "http://feature-auth-branch.com/", config.Auth.SiteUrl)
+		assert.Equal(t, false, config.Auth.External["azure"].Enabled)
+		assert.Equal(t, "nope", config.Auth.External["azure"].ClientId)
+	})
 
 	t.Run("config file with remotes", func(t *testing.T) {
 		config := NewConfig()
@@ -372,18 +411,6 @@ func TestGlobFiles(t *testing.T) {
 	})
 }
 
-func TestLoadEnv(t *testing.T) {
-	t.Setenv("SUPABASE_AUTH_JWT_SECRET", "test-secret")
-	t.Setenv("SUPABASE_DB_ROOT_KEY", "test-root-key")
-	config := NewConfig()
-	// Run test
-	err := config.loadFromEnv()
-	// Check error
-	assert.NoError(t, err)
-	assert.Equal(t, "test-secret", config.Auth.JwtSecret)
-	assert.Equal(t, "test-root-key", config.Db.RootKey)
-}
-
 func TestLoadFunctionImportMap(t *testing.T) {
 	t.Run("uses deno.json as import map when present", func(t *testing.T) {
 		config := NewConfig()
@@ -464,7 +491,7 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		// Run test
 		err := config.Load("", fsys)
 		// Check error contains both decode errors
-		assert.ErrorContains(t, err, "* 'functions[hello]' has invalid keys: unknown_field")
+		assert.ErrorContains(t, err, "'functions[hello]' has invalid keys: unknown_field")
 	})
 
 	t.Run("returns error with function slug for invalid field value", func(t *testing.T) {
@@ -479,7 +506,7 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		// Run test
 		err := config.Load("", fsys)
 		// Check error contains both decode errors
-		assert.ErrorContains(t, err, `* cannot parse 'functions[hello].verify_jwt' as bool: strconv.ParseBool: parsing "not-a-bool"`)
+		assert.ErrorContains(t, err, `cannot parse 'functions[hello].verify_jwt' as bool: strconv.ParseBool: parsing "not-a-bool"`)
 	})
 
 	t.Run("returns error for unknown function fields", func(t *testing.T) {
@@ -494,7 +521,7 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		}
 		// Run test
 		err := config.Load("", fsys)
-		assert.ErrorContains(t, err, `* 'functions[name]' expected a map, got 'string'`)
-		assert.ErrorContains(t, err, `* 'functions[verify_jwt]' expected a map, got 'bool'`)
+		assert.ErrorContains(t, err, `'functions[name]' expected a map, got 'string'`)
+		assert.ErrorContains(t, err, `'functions[verify_jwt]' expected a map, got 'bool'`)
 	})
 }
