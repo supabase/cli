@@ -111,6 +111,6 @@ func updateComposeVersion(ctx context.Context, client *github.Client, path, ref 
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, "Committed changes to", *resp.Commit.SHA)
+	fmt.Fprintln(os.Stderr, "Committed changes to", *resp.SHA)
 	return nil
 }

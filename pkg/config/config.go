@@ -628,7 +628,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		c.Studio.PgmetaImage = replaceImageTag(Images.Pgmeta, string(version))
 	}
 	// TODO: replace derived config resolution with viper decode hooks
-	if err := c.baseConfig.resolve(builder, fsys); err != nil {
+	if err := c.resolve(builder, fsys); err != nil {
 		return err
 	}
 	return c.Validate(fsys)
@@ -1399,7 +1399,7 @@ func (c *baseConfig) GetServiceImages() []string {
 // Retrieve the final base config to use taking into account the remotes override
 // Pre: config must be loaded after setting config.ProjectID = "ref"
 func (c *config) GetRemoteByProjectRef(projectRef string) (baseConfig, error) {
-	base := c.baseConfig.Clone()
+	base := c.Clone()
 	for _, remote := range c.Remotes {
 		if remote.ProjectId == projectRef {
 			base.ProjectId = projectRef
