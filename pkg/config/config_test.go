@@ -464,7 +464,7 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		// Run test
 		err := config.Load("", fsys)
 		// Check error contains both decode errors
-		assert.ErrorContains(t, err, "* 'functions[hello]' has invalid keys: unknown_field")
+		assert.ErrorContains(t, err, "'functions[hello]' has invalid keys: unknown_field")
 	})
 
 	t.Run("returns error with function slug for invalid field value", func(t *testing.T) {
@@ -479,7 +479,7 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		// Run test
 		err := config.Load("", fsys)
 		// Check error contains both decode errors
-		assert.ErrorContains(t, err, `* cannot parse 'functions[hello].verify_jwt' as bool: strconv.ParseBool: parsing "not-a-bool"`)
+		assert.ErrorContains(t, err, `cannot parse 'functions[hello].verify_jwt' as bool: strconv.ParseBool: parsing "not-a-bool"`)
 	})
 
 	t.Run("returns error for unknown function fields", func(t *testing.T) {
@@ -494,7 +494,7 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		}
 		// Run test
 		err := config.Load("", fsys)
-		assert.ErrorContains(t, err, `* 'functions[name]' expected a map, got 'string'`)
-		assert.ErrorContains(t, err, `* 'functions[verify_jwt]' expected a map, got 'bool'`)
+		assert.ErrorContains(t, err, `'functions[name]' expected a map, got 'string'`)
+		assert.ErrorContains(t, err, `'functions[verify_jwt]' expected a map, got 'bool'`)
 	})
 }
