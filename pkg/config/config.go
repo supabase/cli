@@ -335,7 +335,9 @@ func NewConfig(editors ...ConfigEditor) config {
 		Db: db{
 			Image:    Images.Pg15,
 			Password: "postgres",
-			RootKey:  "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
+			RootKey: Secret{
+				Value: "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
+			},
 			Pooler: pooler{
 				Image:         Images.Supavisor,
 				TenantId:      "pooler-dev",
@@ -372,8 +374,10 @@ func NewConfig(editors ...ConfigEditor) config {
 			Sms: sms{
 				TestOTP: map[string]string{},
 			},
-			External:  map[string]provider{},
-			JwtSecret: defaultJwtSecret,
+			External: map[string]provider{},
+			JwtSecret: Secret{
+				Value: defaultJwtSecret,
+			},
 		},
 		Inbucket: inbucket{
 			Image:      Images.Inbucket,
@@ -559,20 +563,20 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		return err
 	}
 	// Generate JWT tokens
-	if len(c.Auth.AnonKey) == 0 {
+	if len(c.Auth.AnonKey.Value) == 0 {
 		anonToken := CustomClaims{Role: "anon"}.NewToken()
-		if signed, err := anonToken.SignedString([]byte(c.Auth.JwtSecret)); err != nil {
+		if signed, err := anonToken.SignedString([]byte(c.Auth.JwtSecret.Value)); err != nil {
 			return errors.Errorf("failed to generate anon key: %w", err)
 		} else {
-			c.Auth.AnonKey = signed
+			c.Auth.AnonKey.Value = signed
 		}
 	}
-	if len(c.Auth.ServiceRoleKey) == 0 {
+	if len(c.Auth.ServiceRoleKey.Value) == 0 {
 		anonToken := CustomClaims{Role: "service_role"}.NewToken()
-		if signed, err := anonToken.SignedString([]byte(c.Auth.JwtSecret)); err != nil {
+		if signed, err := anonToken.SignedString([]byte(c.Auth.JwtSecret.Value)); err != nil {
 			return errors.Errorf("failed to generate service_role key: %w", err)
 		} else {
-			c.Auth.ServiceRoleKey = signed
+			c.Auth.ServiceRoleKey.Value = signed
 		}
 	}
 	// TODO: move linked pooler connection string elsewhere
@@ -1360,7 +1364,7 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 	}
 
 	secretJWK.KeyType = "oct"
-	secretJWK.KeyBase64URL = base64.RawURLEncoding.EncodeToString([]byte(a.JwtSecret))
+	secretJWK.KeyBase64URL = base64.RawURLEncoding.EncodeToString([]byte(a.JwtSecret.Value))
 
 	secretJWKEncoded, err := json.Marshal(&secretJWK)
 	if err != nil {

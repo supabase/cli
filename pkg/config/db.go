@@ -73,7 +73,7 @@ type (
 		ShadowPort   uint16            `toml:"shadow_port"`
 		MajorVersion uint              `toml:"major_version"`
 		Password     string            `toml:"-"`
-		RootKey      string            `toml:"root_key"`
+		RootKey      Secret            `toml:"root_key"`
 		Pooler       pooler            `toml:"pooler"`
 		Migrations   migrations        `toml:"migrations"`
 		Seed         seed              `toml:"seed"`

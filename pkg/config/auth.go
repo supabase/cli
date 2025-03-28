@@ -93,9 +93,9 @@ type (
 		External  external  `toml:"external"`
 
 		// Custom secrets can be injected from .env file
-		JwtSecret      string `toml:"jwt_secret"`
-		AnonKey        string `toml:"anon_key"`
-		ServiceRoleKey string `toml:"service_role_key"`
+		JwtSecret      Secret `toml:"jwt_secret"`
+		AnonKey        Secret `toml:"anon_key"`
+		ServiceRoleKey Secret `toml:"service_role_key"`
 
 		ThirdParty thirdParty `toml:"third_party"`
 	}

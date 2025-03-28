@@ -50,9 +50,9 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 		values[c.StudioURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Studio.Port)
 	}
 	if utils.Config.Auth.Enabled && !utils.SliceContains(exclude, utils.GotrueId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Auth.Image)) {
-		values[c.JWTSecret] = utils.Config.Auth.JwtSecret
-		values[c.AnonKey] = utils.Config.Auth.AnonKey
-		values[c.ServiceRoleKey] = utils.Config.Auth.ServiceRoleKey
+		values[c.JWTSecret] = utils.Config.Auth.JwtSecret.Value
+		values[c.AnonKey] = utils.Config.Auth.AnonKey.Value
+		values[c.ServiceRoleKey] = utils.Config.Auth.ServiceRoleKey.Value
 	}
 	if utils.Config.Inbucket.Enabled && !utils.SliceContains(exclude, utils.InbucketId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Inbucket.Image)) {
 		values[c.InbucketURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Inbucket.Port)
@@ -178,7 +178,7 @@ func checkHTTPHead(ctx context.Context, path string) error {
 	healthOnce.Do(func() {
 		server := utils.Config.Api.ExternalUrl
 		header := func(req *http.Request) {
-			req.Header.Add("apikey", utils.Config.Auth.AnonKey)
+			req.Header.Add("apikey", utils.Config.Auth.AnonKey.Value)
 		}
 		client := NewKongClient()
 		healthClient = fetcher.NewFetcher(
