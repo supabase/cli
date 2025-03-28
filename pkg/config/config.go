@@ -156,16 +156,6 @@ func (c CustomClaims) NewToken() *jwt.Token {
 //
 // > secret = "env(SUPABASE_AUTH_EXTERNAL_APPLE_SECRET)"
 //
-// If you are adding an internal config or secret that doesn't need to be overridden by the user,
-// exclude the field from toml serialization. For example,
-//
-//	type auth struct {
-//		AnonKey string `toml:"-" mapstructure:"anon_key"`
-//	}
-//
-// Use `mapstructure:"anon_key"` tag only if you want inject values from a predictable environment
-// variable, such as SUPABASE_AUTH_ANON_KEY.
-//
 // Default values for internal configs should be added to `var Config` initializer.
 type (
 	// Common config fields between our "base" config and any "remote" branch specific
@@ -173,12 +163,12 @@ type (
 		ProjectId    string         `toml:"project_id"`
 		Hostname     string         `toml:"-"`
 		Api          api            `toml:"api"`
-		Db           db             `toml:"db" mapstructure:"db"`
+		Db           db             `toml:"db"`
 		Realtime     realtime       `toml:"realtime"`
 		Studio       studio         `toml:"studio"`
 		Inbucket     inbucket       `toml:"inbucket"`
 		Storage      storage        `toml:"storage"`
-		Auth         auth           `toml:"auth" mapstructure:"auth"`
+		Auth         auth           `toml:"auth"`
 		EdgeRuntime  edgeRuntime    `toml:"edge_runtime"`
 		Functions    FunctionConfig `toml:"functions"`
 		Analytics    analytics      `toml:"analytics"`
@@ -186,8 +176,8 @@ type (
 	}
 
 	config struct {
-		baseConfig `mapstructure:",squash"`
-		Remotes    map[string]baseConfig `toml:"remotes"`
+		baseConfig
+		Remotes map[string]baseConfig `toml:"remotes"`
 	}
 
 	realtime struct {
@@ -248,7 +238,7 @@ type (
 		GcpProjectId     string          `toml:"gcp_project_id"`
 		GcpProjectNumber string          `toml:"gcp_project_number"`
 		GcpJwtPath       string          `toml:"gcp_jwt_path"`
-		ApiKey           string          `toml:"-" mapstructure:"api_key"`
+		ApiKey           string          `toml:"-"`
 		// Deprecated together with syslog
 		VectorPort uint16 `toml:"vector_port"`
 	}
@@ -439,16 +429,15 @@ func (c *config) Eject(w io.Writer) error {
 
 // Loads custom config file to struct fields tagged with toml.
 func (c *config) loadFromFile(filename string, fsys fs.FS) error {
-	v := viper.New()
+	v := viper.NewWithOptions(
+		viper.ExperimentalBindStruct(),
+		viper.EnvKeyReplacer(strings.NewReplacer(".", "_")),
+	)
+	v.SetEnvPrefix("SUPABASE")
+	v.AutomaticEnv()
 	if err := c.mergeDefaultValues(v); err != nil {
 		return err
 	} else if err := mergeFileConfig(v, filename, fsys); err != nil {
-		return err
-	}
-	// Load base config and mapstructure overrides
-	if err := c.load(v); err != nil {
-		return err
-	} else if err := c.loadFromEnv(); err != nil {
 		return err
 	}
 	// Find [remotes.*] block to override base config
@@ -462,15 +451,12 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 		idToName[projectId] = fmt.Sprintf("[remotes.%s]", name)
 		if projectId == c.ProjectId {
 			fmt.Fprintln(os.Stderr, "Loading config override:", idToName[projectId])
-			if err := v.MergeConfigMap(remote.(map[string]any)); err != nil {
+			if err := mergeRemoteConfig(v, remote.(map[string]any)); err != nil {
 				return err
 			}
 		}
 	}
-	if _, exists := idToName[c.ProjectId]; exists {
-		return c.load(v)
-	}
-	return nil
+	return c.load(v)
 }
 
 func (c *config) mergeDefaultValues(v *viper.Viper) error {
@@ -497,6 +483,20 @@ func mergeFileConfig(v *viper.Viper, filename string, fsys fs.FS) error {
 	defer f.Close()
 	if err := v.MergeConfig(f); err != nil {
 		return errors.Errorf("failed to merge file config: %w", err)
+	}
+	return nil
+}
+
+func mergeRemoteConfig(v *viper.Viper, remote map[string]any) error {
+	u := viper.New()
+	if err := u.MergeConfigMap(remote); err != nil {
+		return errors.Errorf("failed to merge remote config: %w", err)
+	}
+	for _, k := range u.AllKeys() {
+		v.Set(k, u.Get(k))
+	}
+	if key := "db.seed.enabled"; !u.IsSet(key) {
+		v.Set(key, false)
 	}
 	return nil
 }
@@ -538,7 +538,7 @@ func (c *config) load(v *viper.Viper) error {
 	return nil
 }
 
-func (c *baseConfig) newDecodeHook(fs ...mapstructure.DecodeHookFunc) mapstructure.DecodeHookFunc {
+func (c *config) newDecodeHook(fs ...mapstructure.DecodeHookFunc) mapstructure.DecodeHookFunc {
 	fs = append(fs,
 		mapstructure.StringToTimeDurationHookFunc(),
 		mapstructure.StringToIPHookFunc(),
@@ -547,18 +547,6 @@ func (c *baseConfig) newDecodeHook(fs ...mapstructure.DecodeHookFunc) mapstructu
 		DecryptSecretHookFunc(c.ProjectId),
 	)
 	return mapstructure.ComposeDecodeHookFunc(fs...)
-}
-
-// Loads envs prefixed with supabase_ to struct fields tagged with mapstructure.
-func (c *baseConfig) loadFromEnv() error {
-	v := viper.NewWithOptions(viper.ExperimentalBindStruct())
-	v.SetEnvPrefix("SUPABASE")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.AutomaticEnv()
-	if err := v.UnmarshalExact(c, viper.DecodeHook(c.newDecodeHook())); err != nil {
-		return errors.Errorf("failed to parse env override: %w", err)
-	}
-	return nil
 }
 
 func (c *config) Load(path string, fsys fs.FS) error {

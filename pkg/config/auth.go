@@ -72,7 +72,7 @@ type (
 		Enabled bool   `toml:"enabled"`
 		Image   string `toml:"-"`
 
-		SiteUrl                    string               `toml:"site_url" mapstructure:"site_url"`
+		SiteUrl                    string               `toml:"site_url"`
 		AdditionalRedirectUrls     []string             `toml:"additional_redirect_urls"`
 		JwtExpiry                  uint                 `toml:"jwt_expiry"`
 		EnableRefreshTokenRotation bool                 `toml:"enable_refresh_token_rotation"`
@@ -93,9 +93,9 @@ type (
 		External  external  `toml:"external"`
 
 		// Custom secrets can be injected from .env file
-		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
-		AnonKey        string `toml:"-" mapstructure:"anon_key"`
-		ServiceRoleKey string `toml:"-" mapstructure:"service_role_key"`
+		JwtSecret      string `toml:"jwt_secret"`
+		AnonKey        string `toml:"anon_key"`
+		ServiceRoleKey string `toml:"service_role_key"`
 
 		ThirdParty thirdParty `toml:"third_party"`
 	}
@@ -177,11 +177,11 @@ type (
 		EnableSignup        bool              `toml:"enable_signup"`
 		EnableConfirmations bool              `toml:"enable_confirmations"`
 		Template            string            `toml:"template"`
-		Twilio              twilioConfig      `toml:"twilio" mapstructure:"twilio"`
-		TwilioVerify        twilioConfig      `toml:"twilio_verify" mapstructure:"twilio_verify"`
-		Messagebird         messagebirdConfig `toml:"messagebird" mapstructure:"messagebird"`
-		Textlocal           textlocalConfig   `toml:"textlocal" mapstructure:"textlocal"`
-		Vonage              vonageConfig      `toml:"vonage" mapstructure:"vonage"`
+		Twilio              twilioConfig      `toml:"twilio"`
+		TwilioVerify        twilioConfig      `toml:"twilio_verify"`
+		Messagebird         messagebirdConfig `toml:"messagebird"`
+		Textlocal           textlocalConfig   `toml:"textlocal"`
+		Vonage              vonageConfig      `toml:"vonage"`
 		TestOTP             map[string]string `toml:"test_otp"`
 		MaxFrequency        time.Duration     `toml:"max_frequency"`
 	}
@@ -234,26 +234,26 @@ type (
 		Enabled           bool   `toml:"enabled"`
 		AccountSid        string `toml:"account_sid"`
 		MessageServiceSid string `toml:"message_service_sid"`
-		AuthToken         Secret `toml:"auth_token" mapstructure:"auth_token"`
+		AuthToken         Secret `toml:"auth_token"`
 	}
 
 	messagebirdConfig struct {
 		Enabled    bool   `toml:"enabled"`
 		Originator string `toml:"originator"`
-		AccessKey  Secret `toml:"access_key" mapstructure:"access_key"`
+		AccessKey  Secret `toml:"access_key"`
 	}
 
 	textlocalConfig struct {
 		Enabled bool   `toml:"enabled"`
 		Sender  string `toml:"sender"`
-		ApiKey  Secret `toml:"api_key" mapstructure:"api_key"`
+		ApiKey  Secret `toml:"api_key"`
 	}
 
 	vonageConfig struct {
 		Enabled   bool   `toml:"enabled"`
 		From      string `toml:"from"`
-		ApiKey    string `toml:"api_key" mapstructure:"api_key"`
-		ApiSecret Secret `toml:"api_secret" mapstructure:"api_secret"`
+		ApiKey    string `toml:"api_key"`
+		ApiSecret Secret `toml:"api_secret"`
 	}
 
 	provider struct {
