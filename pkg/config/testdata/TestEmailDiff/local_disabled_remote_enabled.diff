@@ -1,7 +1,7 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -40,13 +40,13 @@
+@@ -43,13 +43,13 @@
  inactivity_timeout = "0s"
  
  [email]
