@@ -318,7 +318,7 @@ func TestValidateHookURI(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.hookConfig.validate(tt.name)
+			err := tt.validate(tt.name)
 			if len(tt.errorMsg) > 0 {
 				assert.Error(t, err, "Expected an error for %v", tt.name)
 				assert.EqualError(t, err, tt.errorMsg, "Expected error message does not match for %v", tt.name)
