@@ -1,23 +1,40 @@
+version: "2"
 linters:
   enable:
     - dogsled
     - dupl
-    - gofmt
-    - goimports
     - gosec
     - misspell
     - nakedret
-    - stylecheck
+    - staticcheck
     - unconvert
     - unparam
     - whitespace
-    - errcheck
-    - gosimple
-    - staticcheck
-    - ineffassign
-    - unused
-linters-settings:
-  stylecheck:
-    checks: ["all", "-ST1003"]
-  dupl:
-    threshold: 250
+  settings:
+    dupl:
+      threshold: 250
+  exclusions:
+    generated: lax
+    rules:
+      - text: 'ST1003:'
+        linters:
+          - staticcheck
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
