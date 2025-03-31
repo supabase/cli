@@ -197,8 +197,8 @@ github.com/containerd/console v1.0.4-0.20230313162750-1ae8d489ac81 h1:q2hJAaP1k2
 github.com/containerd/console v1.0.4-0.20230313162750-1ae8d489ac81/go.mod h1:YynlIjWYF8myEu6sdkwKIvGQq+cOckRm6So2avqoYAk=
 github.com/containerd/log v0.1.0 h1:TCJt7ioM2cr/tfR8GPbGf9/VRAX8D2B4PjzCpfX540I=
 github.com/containerd/log v0.1.0/go.mod h1:VRRf09a7mHDIRezVKTRCrOq78v577GXq3bSa3EhrzVo=
-github.com/containers/common v0.62.2 h1:xO45OOoeq17EZMIDZoSyRqg7GXGcRHa9sXlrr75zH+U=
-github.com/containers/common v0.62.2/go.mod h1:veFiR9iq2j3CHXtB4YnPHuOkSRdhIQ3bAY8AFMP/5bE=
+github.com/containers/common v0.62.3 h1:aOGryqXfW6aKBbHbqOveH7zB+ihavUN03X/2pUSvWFI=
+github.com/containers/common v0.62.3/go.mod h1:3R8kDox2prC9uj/a2hmXj/YjZz5sBEUNrcDiw51S0Lo=
 github.com/containers/storage v1.57.2 h1:2roCtTyE9pzIaBDHibK72DTnYkPmwWaq5uXxZdaWK4U=
 github.com/containers/storage v1.57.2/go.mod h1:i/Hb4lu7YgFr9G0K6BMjqW0BLJO1sFsnWQwj2UoWCUM=
 github.com/coreos/go-systemd v0.0.0-20190321100706-95778dfbb74e/go.mod h1:F5haX7vjVVG0kc13fIWeqUViNPyEJxv/OmvnBo0Yme4=
