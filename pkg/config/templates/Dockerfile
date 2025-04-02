@@ -4,7 +4,7 @@ FROM supabase/postgres:15.8.1.060 AS pg15
 FROM library/kong:2.8.1 AS kong
 FROM axllent/mailpit:v1.22.3 AS mailpit
 FROM postgrest/postgrest:v12.2.8 AS postgrest
-FROM supabase/postgres-meta:v0.88.0 AS pgmeta
+FROM supabase/postgres-meta:v0.88.2 AS pgmeta
 FROM supabase/studio:20250317-6955350 AS studio
 FROM darthsim/imgproxy:v3.8.0 AS imgproxy
 FROM supabase/edge-runtime:v1.67.4 AS edgeruntime
