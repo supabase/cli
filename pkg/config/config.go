@@ -600,6 +600,9 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		if strings.HasPrefix(string(version), "15.") && semver.Compare(string(version[3:]), "1.0.55") >= 0 {
 			c.Db.Image = replaceImageTag(Images.Pg15, string(version))
 		}
+		if strings.HasPrefix(string(version), "17.") && semver.Compare(string(version[3:]), "1.0.55") >= 0 {
+			c.Db.Image = replaceImageTag(Images.Pg17, string(version))
+		}
 	}
 	if c.Db.MajorVersion > 14 {
 		if version, err := fs.ReadFile(fsys, builder.RestVersionPath); err == nil && len(version) > 0 {
@@ -729,7 +732,7 @@ func (c *config) Validate(fsys fs.FS) error {
 		c.Db.Image = pg13
 	case 14:
 		c.Db.Image = pg14
-	case 15:
+	case 15, 17:
 		if len(c.Experimental.OrioleDBVersion) > 0 {
 			c.Db.Image = "supabase/postgres:orioledb-" + c.Experimental.OrioleDBVersion
 			if err := assertEnvLoaded(c.Experimental.S3Host); err != nil {

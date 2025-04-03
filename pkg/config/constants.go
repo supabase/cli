@@ -16,6 +16,7 @@ const (
 
 type images struct {
 	Pg15 string `mapstructure:"pg15"`
+	Pg17 string `mapstructure:"pg17"`
 	// Append to Services when adding new dependencies below
 	Kong        string `mapstructure:"kong"`
 	Inbucket    string `mapstructure:"mailpit"`
