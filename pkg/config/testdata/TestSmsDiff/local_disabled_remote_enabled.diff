@@ -1,7 +1,7 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -49,12 +49,12 @@
+@@ -52,12 +52,12 @@
  otp_expiry = 0
  
  [sms]
@@ -19,7 +19,7 @@ diff remote[auth] local[auth]
  account_sid = ""
  message_service_sid = ""
  auth_token = ""
-@@ -77,8 +77,6 @@
+@@ -80,8 +80,6 @@
  api_key = ""
  api_secret = ""
  [sms.test_otp]

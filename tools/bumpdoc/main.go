@@ -78,7 +78,7 @@ func updateRefDoc(ctx context.Context, path string, stdin io.Reader) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, "Committed changes to", *resp.Commit.SHA)
+	fmt.Fprintln(os.Stderr, "Committed changes to", *resp.SHA)
 	// Create pull request
 	pr := github.NewPullRequest{
 		Title: &message,

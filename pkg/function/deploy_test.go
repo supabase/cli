@@ -49,8 +49,7 @@ func TestImportPaths(t *testing.T) {
 		fsys.On("ReadFile", "testdata/modules/imports.ts").Once()
 		fsys.On("ReadFile", "testdata/geometries/Geometries.js").Once()
 		// Run test
-		im := ImportMap{}
-		err := walkImportPaths("testdata/modules/imports.ts", im, fsys.ReadFile)
+		err := walkImportPaths("testdata/modules/imports.ts", ImportMap{}, fsys.ReadFile)
 		// Check error
 		assert.NoError(t, err)
 		fsys.AssertExpectations(t)
@@ -65,10 +64,33 @@ func TestImportPaths(t *testing.T) {
 		fsys.On("ReadFile", "testdata/shared/whatever.ts").Once()
 		fsys.On("ReadFile", "testdata/shared/mod.ts").Once()
 		fsys.On("ReadFile", "testdata/nested/index.ts").Once()
-		// Run test
+		// Setup deno.json
 		im := ImportMap{Imports: map[string]string{
 			"module-name/": "../shared/",
 		}}
+		assert.NoError(t, im.Resolve("testdata/modules/deno.json", testImports))
+		// Run test
+		err := walkImportPaths("testdata/modules/imports.ts", im, fsys.ReadFile)
+		// Check error
+		assert.NoError(t, err)
+		fsys.AssertExpectations(t)
+	})
+
+	t.Run("resolves legacy import map", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := MockFS{}
+		fsys.On("ReadFile", "/modules/my-module.ts").Once()
+		fsys.On("ReadFile", "testdata/modules/imports.ts").Once()
+		fsys.On("ReadFile", "testdata/geometries/Geometries.js").Once()
+		fsys.On("ReadFile", "testdata/shared/whatever.ts").Once()
+		fsys.On("ReadFile", "testdata/shared/mod.ts").Once()
+		fsys.On("ReadFile", "testdata/nested/index.ts").Once()
+		// Setup legacy import map
+		im := ImportMap{Imports: map[string]string{
+			"module-name/": "./shared/",
+		}}
+		assert.NoError(t, im.Resolve("testdata/import_map.json", testImports))
+		// Run test
 		err := walkImportPaths("testdata/modules/imports.ts", im, fsys.ReadFile)
 		// Check error
 		assert.NoError(t, err)

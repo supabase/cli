@@ -163,6 +163,9 @@ func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys fs.
 		if err := importMap.Parse(data); err != nil {
 			return err
 		}
+		if err := importMap.Resolve(imPath, fsys); err != nil {
+			return err
+		}
 		// TODO: replace with addFile once edge runtime supports jsonc
 		fmt.Fprintf(os.Stderr, "Uploading asset (%s): %s\n", *meta.Name, imPath)
 		f, err := form.CreateFormFile("file", imPath)
@@ -201,6 +204,41 @@ func (m *ImportMap) Parse(data []byte) error {
 	return nil
 }
 
+func (m *ImportMap) Resolve(imPath string, fsys fs.FS) error {
+	// Resolve all paths relative to current file
+	for k, v := range m.Imports {
+		m.Imports[k] = resolveHostPath(imPath, v, fsys)
+	}
+	for module, mapping := range m.Scopes {
+		for k, v := range mapping {
+			m.Scopes[module][k] = resolveHostPath(imPath, v, fsys)
+		}
+	}
+	return nil
+}
+
+func resolveHostPath(jsonPath, hostPath string, fsys fs.FS) string {
+	// Leave absolute paths unchanged
+	if path.IsAbs(hostPath) {
+		return hostPath
+	}
+	resolved := path.Join(path.Dir(jsonPath), hostPath)
+	if _, err := fs.Stat(fsys, filepath.FromSlash(resolved)); err != nil {
+		// Leave URLs unchanged
+		return hostPath
+	}
+	// Directory imports need to be suffixed with /
+	// Ref: https://deno.com/manual@v1.33.0/basics/import_maps
+	if strings.HasSuffix(hostPath, "/") {
+		resolved += "/"
+	}
+	// Relative imports must be prefixed with ./ or ../
+	if !path.IsAbs(resolved) {
+		resolved = "./" + resolved
+	}
+	return resolved
+}
+
 // Ref: https://regex101.com/r/DfBdJA/1
 var importPathPattern = regexp.MustCompile(`(?i)(?:import|export)\s+(?:{[^{}]+}|.*?)\s*(?:from)?\s*['"](.*?)['"]|import\(\s*['"](.*?)['"]\)`)
 
@@ -237,22 +275,35 @@ func walkImportPaths(srcPath string, importMap ImportMap, readFile func(curr str
 			}
 			mod = strings.TrimSpace(mod)
 			// Substitute kv from import map
+			substituted := false
 			for k, v := range importMap.Imports {
 				if strings.HasPrefix(mod, k) {
 					mod = v + mod[len(k):]
+					substituted = true
 				}
 			}
-			// Deno import path must begin with these prefixes
-			if strings.HasPrefix(mod, "./") || strings.HasPrefix(mod, "../") {
-				mod = path.Join(path.Dir(curr), mod)
-			} else if !strings.HasPrefix(mod, "/") {
+			// Ignore URLs and directories
+			if len(path.Ext(mod)) == 0 {
 				continue
 			}
-			if len(path.Ext(mod)) > 0 {
-				// Cleans import path to help detect duplicates
-				q = append(q, path.Clean(mod))
+			// Deno import path must begin with one of these prefixes
+			if !isRelPath(mod) && !isAbsPath(mod) {
+				continue
 			}
+			if isRelPath(mod) && !substituted {
+				mod = path.Join(path.Dir(curr), mod)
+			}
+			// Cleans import path to help detect duplicates
+			q = append(q, path.Clean(mod))
 		}
 	}
 	return nil
+}
+
+func isRelPath(mod string) bool {
+	return strings.HasPrefix(mod, "./") || strings.HasPrefix(mod, "../")
+}
+
+func isAbsPath(mod string) bool {
+	return strings.HasPrefix(mod, "/")
 }

@@ -7,7 +7,11 @@ Content-Disposition: form-data; name="metadata"
 Content-Disposition: form-data; name="file"; filename="testdata/nested/deno.json"
 Content-Type: application/octet-stream
 
-{}
+{
+  "imports": {
+    "module": "jsr:@supabase/functions-js/edge-runtime.d.ts"
+  }
+}
 
 --test
 Content-Disposition: form-data; name="file"; filename="testdata/geometries/Geometries.js"
@@ -18,3 +22,4 @@ Content-Type: application/octet-stream
 Content-Disposition: form-data; name="file"; filename="testdata/nested/index.ts"
 Content-Type: application/octet-stream
 
+import "module";

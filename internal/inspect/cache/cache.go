@@ -45,9 +45,10 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 			ok = "Maybe not..."
 		}
 		var explanation string
-		if r.Name == "index hit rate" {
+		switch r.Name {
+		case "index hit rate":
 			explanation = "This is the ratio of index hits to index scans. If this ratio is low, it means that the database is not using indexes effectively. Check the `index-usage` command for more info."
-		} else if r.Name == "table hit rate" {
+		case "table hit rate":
 			explanation = "This is the ratio of table hits to table scans. If this ratio is low, it means that your queries are not finding the data effectively. Check your query performance and it might be worth increasing your compute."
 		}
 		table += fmt.Sprintf("|`%s`|`%.6f`|`%s`|`%s`|\n", r.Name, r.Ratio, ok, explanation)

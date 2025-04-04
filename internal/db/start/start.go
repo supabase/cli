@@ -63,7 +63,7 @@ func NewContainerConfig() container.Config {
 	env := []string{
 		"POSTGRES_PASSWORD=" + utils.Config.Db.Password,
 		"POSTGRES_HOST=/var/run/postgresql",
-		"JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+		"JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
 		fmt.Sprintf("JWT_EXP=%d", utils.Config.Auth.JwtExpiry),
 	}
 	if len(utils.Config.Experimental.OrioleDBVersion) > 0 {
@@ -96,7 +96,7 @@ docker-entrypoint.sh postgres -D /etc/postgresql
 ` + webhookSchema + `
 ` + _supabaseSchema + `
 EOF
-` + utils.Config.Db.RootKey + `
+` + utils.Config.Db.RootKey.Value + `
 EOF
 ` + utils.Config.Db.Settings.ToPostgresConfig() + `
 EOF`},
@@ -157,7 +157,7 @@ docker-entrypoint.sh postgres -D /etc/postgresql
 EOF
 ` + restoreScript + `
 EOF
-` + utils.Config.Db.RootKey + `
+` + utils.Config.Db.RootKey.Value + `
 EOF
 ` + utils.Config.Db.Settings.ToPostgresConfig() + `
 EOF`}
@@ -284,8 +284,8 @@ func initRealtimeJob(host string) utils.DockerJob {
 			"DB_NAME=postgres",
 			"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
 			"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
-			"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-			"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+			"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
+			"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
 			"APP_NAME=realtime",
 			"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
 			"ERL_AFLAGS=" + utils.ToRealtimeEnv(utils.Config.Realtime.IpVersion),
@@ -305,9 +305,9 @@ func initStorageJob(host string) utils.DockerJob {
 		Image: utils.Config.Storage.Image,
 		Env: []string{
 			"DB_INSTALL_ROLES=false",
-			"ANON_KEY=" + utils.Config.Auth.AnonKey,
-			"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
-			"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+			"ANON_KEY=" + utils.Config.Auth.AnonKey.Value,
+			"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
+			"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
 			fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
 			fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
 			"STORAGE_BACKEND=file",
@@ -330,7 +330,7 @@ func initAuthJob(host string) utils.DockerJob {
 			"GOTRUE_DB_DRIVER=postgres",
 			fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
 			"GOTRUE_SITE_URL=" + utils.Config.Auth.SiteUrl,
-			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
 		},
 		Cmd: []string{"gotrue", "migrate"},
 	}

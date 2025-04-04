@@ -24,7 +24,7 @@ func DiffPgSchema(ctx context.Context, source, target string, schema []string) (
 	// Generate DDL based on schema plan
 	plan, err := pgschema.Generate(
 		ctx,
-		dbSrc,
+		pgschema.DBSchemaSource(dbSrc),
 		pgschema.DBSchemaSource(dbDst),
 		pgschema.WithDoNotValidatePlan(),
 		pgschema.WithIncludeSchemas(schema...),

@@ -23,6 +23,6 @@ diff remote[auth] local[auth]
 +enable_anonymous_sign_ins = false
 +minimum_password_length = 6
 +password_requirements = "lower_upper_letters_digits_symbols"
- 
- [rate_limit]
- anonymous_users = 0
+ jwt_secret = ""
+ anon_key = ""
+ service_role_key = ""

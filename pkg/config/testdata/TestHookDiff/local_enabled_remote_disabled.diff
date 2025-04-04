@@ -1,7 +1,7 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -20,20 +20,20 @@
+@@ -23,20 +23,20 @@
  
  [hook]
  [hook.mfa_verification_attempt]

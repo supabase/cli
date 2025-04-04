@@ -18,7 +18,7 @@ func NewStorageAPI(ctx context.Context, projectRef string) (storage.StorageAPI, 
 		client.Fetcher = newLocalClient()
 	} else if viper.IsSet("AUTH_SERVICE_ROLE_KEY") {
 		// Special case for calling storage API without personal access token
-		client.Fetcher = newRemoteClient(projectRef, utils.Config.Auth.ServiceRoleKey)
+		client.Fetcher = newRemoteClient(projectRef, utils.Config.Auth.ServiceRoleKey.Value)
 	} else if apiKey, err := tenant.GetApiKeys(ctx, projectRef); err == nil {
 		client.Fetcher = newRemoteClient(projectRef, apiKey.ServiceRole)
 	} else {
@@ -32,7 +32,7 @@ func newLocalClient() *fetcher.Fetcher {
 	return fetcher.NewFetcher(
 		utils.Config.Api.ExternalUrl,
 		fetcher.WithHTTPClient(client),
-		fetcher.WithBearerToken(utils.Config.Auth.ServiceRoleKey),
+		fetcher.WithBearerToken(utils.Config.Auth.ServiceRoleKey.Value),
 		fetcher.WithUserAgent("SupabaseCLI/"+utils.Version),
 		fetcher.WithExpectedStatus(http.StatusOK),
 	)
