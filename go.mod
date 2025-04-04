@@ -1,6 +1,7 @@
 module github.com/supabase/cli
 
 go 1.24.1
+
 require (
 	github.com/BurntSushi/toml v1.5.0
 	github.com/Netflix/go-env v0.1.2
@@ -43,7 +44,7 @@ require (
 	github.com/spf13/pflag v1.0.6
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.10.0
-	github.com/stripe/pg-schema-diff v0.8.0
+	github.com/stripe/pg-schema-diff v0.9.0
 	github.com/tidwall/jsonc v0.3.2
 	github.com/withfig/autocomplete-tools/packages/cobra v1.2.0
 	github.com/zalando/go-keyring v0.2.6
