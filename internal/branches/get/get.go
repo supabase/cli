@@ -105,5 +105,6 @@ func toStandardEnvs(detail api.BranchDetailResponse, pooler api.SupavisorConfigR
 	envs["POSTGRES_URL"] = utils.ToPostgresURL(*config)
 	envs["POSTGRES_URL_NON_POOLING"] = utils.ToPostgresURL(direct)
 	envs["SUPABASE_URL"] = "https://" + utils.GetSupabaseHost(detail.Ref)
+	envs["SUPABASE_JWT_SECRET"] = *detail.JwtSecret
 	return envs
 }
