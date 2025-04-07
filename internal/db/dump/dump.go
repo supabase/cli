@@ -173,7 +173,7 @@ func dump(ctx context.Context, config pgconn.Config, script string, env []string
 	return utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
-			Image: cliConfig.Images.Pg17,
+			Image: cliConfig.Images.Pg,
 			Env:   allEnvs,
 			Cmd:   []string{"bash", "-c", script, "--"},
 		},
