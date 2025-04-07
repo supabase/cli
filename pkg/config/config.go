@@ -333,7 +333,7 @@ func NewConfig(editors ...ConfigEditor) config {
 			KongImage: Images.Kong,
 		},
 		Db: db{
-			Image:    Images.Pg17,
+			Image:    Images.Pg,
 			Password: "postgres",
 			RootKey: Secret{
 				Value: "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
@@ -598,10 +598,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	// Update image versions
 	if version, err := fs.ReadFile(fsys, builder.PostgresVersionPath); err == nil {
 		if strings.HasPrefix(string(version), "15.") && semver.Compare(string(version[3:]), "1.0.55") >= 0 {
-			c.Db.Image = replaceImageTag(Images.Pg15, string(version))
-		}
-		if strings.HasPrefix(string(version), "17.") && semver.Compare(string(version[3:]), "1.0.55") >= 0 {
-			c.Db.Image = replaceImageTag(Images.Pg17, string(version))
+			c.Db.Image = replaceImageTag(pg15, string(version))
 		}
 	}
 	if c.Db.MajorVersion > 14 {
@@ -732,7 +729,7 @@ func (c *config) Validate(fsys fs.FS) error {
 		c.Db.Image = pg13
 	case 14:
 		c.Db.Image = pg14
-	case 15, 17:
+	case 15:
 		if len(c.Experimental.OrioleDBVersion) > 0 {
 			c.Db.Image = "supabase/postgres:orioledb-" + c.Experimental.OrioleDBVersion
 			if err := assertEnvLoaded(c.Experimental.S3Host); err != nil {
@@ -748,6 +745,8 @@ func (c *config) Validate(fsys fs.FS) error {
 				return err
 			}
 		}
+	case 17:
+		c.Db.Image = Images.Pg
 	default:
 		return errors.Errorf("Failed reading config: Invalid %s: %v.", "db.major_version", c.Db.MajorVersion)
 	}

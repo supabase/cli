@@ -130,11 +130,7 @@ func InitConfig(params InitParams, fsys afero.Fs) error {
 	c := config.NewConfig()
 	c.ProjectId = params.ProjectId
 	if params.UseOrioleDB {
-		if c.Db.MajorVersion > 15 {
-			c.Experimental.OrioleDBVersion = "17.0.1.57"
-		} else {
-			c.Experimental.OrioleDBVersion = "15.1.0.150"
-		}
+		c.Experimental.OrioleDBVersion = "15.1.0.150"
 	}
 	// Create config file
 	if err := MkdirIfNotExistFS(fsys, SupabaseDirPath); err != nil {
