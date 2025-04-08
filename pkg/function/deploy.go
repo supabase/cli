@@ -28,6 +28,7 @@ func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.Funct
 	if s.eszip != nil {
 		return s.UpsertFunctions(ctx, functionConfig)
 	}
+	// Convert all paths in functions config to relative when using api deploy
 	var toDeploy []api.FunctionDeployMetadata
 	for slug, fc := range functionConfig {
 		if !fc.Enabled {
@@ -36,13 +37,13 @@ func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.Funct
 		}
 		meta := api.FunctionDeployMetadata{
 			Name:           &slug,
-			EntrypointPath: filepath.ToSlash(fc.Entrypoint),
-			ImportMapPath:  cast.Ptr(filepath.ToSlash(fc.ImportMap)),
+			EntrypointPath: toRelPath(fc.Entrypoint),
+			ImportMapPath:  cast.Ptr(toRelPath(fc.ImportMap)),
 			VerifyJwt:      &fc.VerifyJWT,
 		}
 		files := make([]string, len(fc.StaticFiles))
 		for i, sf := range fc.StaticFiles {
-			files[i] = filepath.ToSlash(sf)
+			files[i] = toRelPath(sf)
 		}
 		meta.StaticPatterns = &files
 		toDeploy = append(toDeploy, meta)
@@ -57,16 +58,27 @@ func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.Funct
 	return s.bulkUpload(ctx, toDeploy, fsys)
 }
 
+func toRelPath(fp string) string {
+	if filepath.IsAbs(fp) {
+		if cwd, err := os.Getwd(); err == nil {
+			if relPath, err := filepath.Rel(cwd, fp); err == nil {
+				fp = relPath
+			}
+		}
+	}
+	return filepath.ToSlash(fp)
+}
+
 func (s *EdgeRuntimeAPI) bulkUpload(ctx context.Context, toDeploy []api.FunctionDeployMetadata, fsys fs.FS) error {
 	jq := queue.NewJobQueue(s.maxJobs)
 	toUpdate := make([]api.BulkUpdateFunctionBody, len(toDeploy))
 	for i, meta := range toDeploy {
-		fmt.Fprintln(os.Stderr, "Deploying Function:", *meta.Name)
 		param := api.V1DeployAFunctionParams{
 			Slug:       meta.Name,
 			BundleOnly: cast.Ptr(true),
 		}
 		bundle := func() error {
+			fmt.Fprintln(os.Stderr, "Deploying Function:", *meta.Name)
 			resp, err := s.upload(ctx, param, meta, fsys)
 			if err != nil {
 				return err
