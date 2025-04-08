@@ -73,12 +73,12 @@ func (s *EdgeRuntimeAPI) bulkUpload(ctx context.Context, toDeploy []api.Function
 	jq := queue.NewJobQueue(s.maxJobs)
 	toUpdate := make([]api.BulkUpdateFunctionBody, len(toDeploy))
 	for i, meta := range toDeploy {
-		fmt.Fprintln(os.Stderr, "Deploying Function:", *meta.Name)
 		param := api.V1DeployAFunctionParams{
 			Slug:       meta.Name,
 			BundleOnly: cast.Ptr(true),
 		}
 		bundle := func() error {
+			fmt.Fprintln(os.Stderr, "Deploying Function:", *meta.Name)
 			resp, err := s.upload(ctx, param, meta, fsys)
 			if err != nil {
 				return err
