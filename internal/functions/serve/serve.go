@@ -64,10 +64,8 @@ const (
 	dockerRuntimeInspectorPort = 8083
 )
 
-var (
-	//go:embed templates/main.ts
-	mainFuncEmbed string
-)
+//go:embed templates/main.ts
+var mainFuncEmbed string
 
 func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
 	// 1. Sanity checks.
@@ -215,6 +213,7 @@ func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 		if err != nil {
 			return nil, "", err
 		}
+
 		binds = append(binds, modules...)
 		fc.ImportMap = utils.ToDockerPath(fc.ImportMap)
 		fc.Entrypoint = utils.ToDockerPath(fc.Entrypoint)

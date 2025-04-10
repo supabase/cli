@@ -13,7 +13,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 
@@ -197,7 +199,6 @@ func CopyDenoScripts(ctx context.Context, fsys afero.Fs) (*DenoScriptDir, error)
 
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
@@ -245,11 +246,25 @@ func (m *ImportMap) Parse(data []byte) error {
 	return nil
 }
 
+func (m *ImportMap) Resolve(imPath string, fsys afero.Fs) error {
+	// Resolve all paths relative to current file
+	for k, v := range m.Imports {
+		m.Imports[k] = resolveHostPath(imPath, v, fsys)
+	}
+	for module, mapping := range m.Scopes {
+		for k, v := range mapping {
+			m.Scopes[module][k] = resolveHostPath(imPath, v, fsys)
+		}
+	}
+	return nil
+}
+
 func resolveHostPath(jsonPath, hostPath string, fsys afero.Fs) string {
 	// Leave absolute paths unchanged
 	if filepath.IsAbs(hostPath) {
 		return hostPath
 	}
+
 	resolved := filepath.Join(filepath.Dir(jsonPath), hostPath)
 	if exists, err := afero.Exists(fsys, resolved); !exists {
 		// Leave URLs unchanged
@@ -259,11 +274,18 @@ func resolveHostPath(jsonPath, hostPath string, fsys afero.Fs) string {
 		}
 		return hostPath
 	}
+
 	// Directory imports need to be suffixed with /
 	// Ref: https://deno.com/manual@v1.33.0/basics/import_maps
 	if strings.HasSuffix(hostPath, string(filepath.Separator)) {
 		resolved += string(filepath.Separator)
 	}
+
+	// Relative imports must be prefixed with ./ or ../
+	if !filepath.IsAbs(resolved) {
+		resolved = "./" + resolved
+	}
+
 	return resolved
 }
 
@@ -297,4 +319,73 @@ func ToDockerPath(absHostPath string) string {
 	prefix := filepath.VolumeName(absHostPath)
 	dockerPath := filepath.ToSlash(absHostPath)
 	return strings.TrimPrefix(dockerPath, prefix)
+}
+
+// Ref: https://regex101.com/r/DfBdJA/1
+var importPathPattern = regexp.MustCompile(`(?i)(?:import|export)\s+(?:{[^{}]+}|.*?)\s*(?:from)?\s*['"](.*?)['"]|import\(\s*['"](.*?)['"]\)`)
+
+func (importMap *ImportMap) WalkImportPaths(srcPath string, readFile func(curr string, w io.Writer) error) error {
+	seen := map[string]struct{}{}
+	// DFS because it's more efficient to pop from end of array
+	q := make([]string, 1)
+	q[0] = srcPath
+	for len(q) > 0 {
+		curr := q[len(q)-1]
+		q = q[:len(q)-1]
+		// Assume no file is symlinked
+		if _, ok := seen[curr]; ok {
+			continue
+		}
+		seen[curr] = struct{}{}
+		// Read into memory for regex match later
+		var buf bytes.Buffer
+		if err := readFile(curr, &buf); errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintln(os.Stderr, "WARN:", err)
+			continue
+		} else if err != nil {
+			return err
+		}
+		// Traverse all modules imported by the current source file
+		for _, matches := range importPathPattern.FindAllStringSubmatch(buf.String(), -1) {
+			if len(matches) < 3 {
+				continue
+			}
+			// Matches 'from' clause if present, else fallback to 'import'
+			mod := matches[1]
+			if len(mod) == 0 {
+				mod = matches[2]
+			}
+			mod = strings.TrimSpace(mod)
+			// Substitute kv from import map
+			substituted := false
+			for k, v := range importMap.Imports {
+				if strings.HasPrefix(mod, k) {
+					mod = v + mod[len(k):]
+					substituted = true
+				}
+			}
+			// Ignore URLs and directories
+			if len(path.Ext(mod)) == 0 {
+				continue
+			}
+			// Deno import path must begin with one of these prefixes
+			if !isRelPath(mod) && !isAbsPath(mod) {
+				continue
+			}
+			if isRelPath(mod) && !substituted {
+				mod = path.Join(path.Dir(curr), mod)
+			}
+			// Cleans import path to help detect duplicates
+			q = append(q, path.Clean(mod))
+		}
+	}
+	return nil
+}
+
+func isRelPath(mod string) bool {
+	return strings.HasPrefix(mod, "./") || strings.HasPrefix(mod, "../")
+}
+
+func isAbsPath(mod string) bool {
+	return strings.HasPrefix(mod, "/")
 }

@@ -14,9 +14,11 @@ import (
 	fs "testing/fstest"
 
 	"github.com/h2non/gock"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/config"
@@ -49,7 +51,8 @@ func TestImportPaths(t *testing.T) {
 		fsys.On("ReadFile", "testdata/modules/imports.ts").Once()
 		fsys.On("ReadFile", "testdata/geometries/Geometries.js").Once()
 		// Run test
-		err := walkImportPaths("testdata/modules/imports.ts", ImportMap{}, fsys.ReadFile)
+		im := utils.ImportMap{}
+		err := im.WalkImportPaths("testdata/modules/imports.ts", fsys.ReadFile)
 		// Check error
 		assert.NoError(t, err)
 		fsys.AssertExpectations(t)
@@ -65,12 +68,14 @@ func TestImportPaths(t *testing.T) {
 		fsys.On("ReadFile", "testdata/shared/mod.ts").Once()
 		fsys.On("ReadFile", "testdata/nested/index.ts").Once()
 		// Setup deno.json
-		im := ImportMap{Imports: map[string]string{
+		im := utils.ImportMap{Imports: map[string]string{
 			"module-name/": "../shared/",
 		}}
-		assert.NoError(t, im.Resolve("testdata/modules/deno.json", testImports))
+		// Casting io.FS to afero.Fs
+		afsys := &afero.FromIOFS{FS: testImports}
+		assert.NoError(t, im.Resolve("testdata/modules/deno.json", afsys))
 		// Run test
-		err := walkImportPaths("testdata/modules/imports.ts", im, fsys.ReadFile)
+		err := im.WalkImportPaths("testdata/modules/imports.ts", fsys.ReadFile)
 		// Check error
 		assert.NoError(t, err)
 		fsys.AssertExpectations(t)
@@ -86,12 +91,14 @@ func TestImportPaths(t *testing.T) {
 		fsys.On("ReadFile", "testdata/shared/mod.ts").Once()
 		fsys.On("ReadFile", "testdata/nested/index.ts").Once()
 		// Setup legacy import map
-		im := ImportMap{Imports: map[string]string{
+		im := utils.ImportMap{Imports: map[string]string{
 			"module-name/": "./shared/",
 		}}
-		assert.NoError(t, im.Resolve("testdata/import_map.json", testImports))
+		// Casting io.FS to afero.Fs
+		afsys := &afero.FromIOFS{FS: testImports}
+		assert.NoError(t, im.Resolve("testdata/import_map.json", afsys))
 		// Run test
-		err := walkImportPaths("testdata/modules/imports.ts", im, fsys.ReadFile)
+		err := im.WalkImportPaths("testdata/modules/imports.ts", fsys.ReadFile)
 		// Check error
 		assert.NoError(t, err)
 		fsys.AssertExpectations(t)
