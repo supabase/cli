@@ -6,6 +6,10 @@ on:
       - main
   workflow_call:
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   settings:
     runs-on: ubuntu-latest
