@@ -137,6 +137,7 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointPath, hostImpo
 			binds = append(binds, hostEntrypointDir+":"+dockerEntrypointDir+":ro")
 		}
 	}
+
 	// Imports outside of ./supabase/functions will be bound by absolute path
 	if len(hostImportMapPath) > 0 {
 		if !filepath.IsAbs(hostImportMapPath) {
@@ -146,9 +147,44 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointPath, hostImpo
 		if err != nil {
 			return nil, err
 		}
+
 		modules := importMap.BindHostModules()
 		dockerImportMapPath := utils.ToDockerPath(hostImportMapPath)
 		modules = append(modules, hostImportMapPath+":"+dockerImportMapPath+":ro")
+
+		addFile := func(srcPath string, w io.Writer) error {
+			f, err := fsys.Open(filepath.FromSlash(srcPath))
+			if err != nil {
+				return errors.Errorf("failed to read file: %w", err)
+			}
+			defer f.Close()
+			if fi, err := f.Stat(); err != nil {
+				return errors.Errorf("failed to stat file: %w", err)
+			} else if fi.IsDir() {
+				return errors.New("file path is a directory: " + srcPath)
+			}
+
+			r := io.TeeReader(f, w)
+			_, err = io.Copy(io.Discard, r) // Discard the read data after writing to w
+			if err != nil {
+				return errors.Errorf("failed to copy file content: %w", err)
+			}
+
+			if !filepath.IsAbs(srcPath) || strings.HasPrefix(srcPath, hostFuncDir) {
+				return nil
+			}
+
+			dockerPath := utils.ToDockerPath(srcPath)
+			modules = append(modules, srcPath+":"+dockerPath+":ro")
+
+			return nil
+		}
+
+		// Resolving all Import Graph
+		err = importMap.WalkImportPaths(hostEntrypointPath, addFile)
+		if err != nil {
+			return nil, err
+		}
 
 		// Remove any duplicate mount points
 		for _, mod := range modules {

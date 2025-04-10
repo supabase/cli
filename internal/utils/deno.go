@@ -303,6 +303,7 @@ func (m *ImportMap) BindHostModules() []string {
 		dockerPath := ToDockerPath(hostPath)
 		binds = append(binds, hostPath+":"+dockerPath+":ro")
 	}
+
 	for _, mapping := range m.Scopes {
 		for _, hostPath := range mapping {
 			if !filepath.IsAbs(hostPath) || strings.HasPrefix(hostPath, hostFuncDir) {
