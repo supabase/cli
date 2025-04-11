@@ -220,7 +220,9 @@ func NewImportMap(absJsonPath string, fsys afero.Fs) (*function.ImportMap, error
 
 	// TODO:(kallebysantos) Find somehow to cast between `afero.Fs` to `io.FS`
 	// in order to use `function.ImportMap.Resolve()`
-	resolve(&result, absJsonPath, fsys)
+	if err := resolve(&result, absJsonPath, fsys); err != nil {
+		return nil, err
+	}
 
 	return &result, nil
 }
