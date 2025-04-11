@@ -218,58 +218,12 @@ func NewImportMap(absJsonPath string, fsys afero.Fs) (*function.ImportMap, error
 		return nil, err
 	}
 
-	// TODO:(kallebysantos) Find somehow to cast between `afero.Fs` to `io.FS`
-	// in order to use `function.ImportMap.Resolve()`
-	if err := resolve(&result, absJsonPath, fsys); err != nil {
+	iofsys := afero.NewIOFS(fsys)
+	if err := result.Resolve(absJsonPath, iofsys); err != nil {
 		return nil, err
 	}
 
 	return &result, nil
-}
-
-// WARN:(kallebysantos) should use `function.ImportMap.Resolve(.., fs.FS)`
-func resolve(m *function.ImportMap, imPath string, fsys afero.Fs) error {
-	// Resolve all paths relative to current file
-	for k, v := range m.Imports {
-		m.Imports[k] = resolveHostPath(imPath, v, fsys)
-	}
-	for module, mapping := range m.Scopes {
-		for k, v := range mapping {
-			m.Scopes[module][k] = resolveHostPath(imPath, v, fsys)
-		}
-	}
-	return nil
-}
-
-// WARN:(kallebysantos) duplicated code to support `resolve(.., afero.Fs)`
-func resolveHostPath(jsonPath, hostPath string, fsys afero.Fs) string {
-	// Leave absolute paths unchanged
-	if filepath.IsAbs(hostPath) {
-		return hostPath
-	}
-
-	resolved := filepath.Join(filepath.Dir(jsonPath), hostPath)
-	if exists, err := afero.Exists(fsys, resolved); !exists {
-		// Leave URLs unchanged
-		if err != nil {
-			logger := GetDebugLogger()
-			fmt.Fprintln(logger, err)
-		}
-		return hostPath
-	}
-
-	// Directory imports need to be suffixed with /
-	// Ref: https://deno.com/manual@v1.33.0/basics/import_maps
-	if strings.HasSuffix(hostPath, string(filepath.Separator)) {
-		resolved += string(filepath.Separator)
-	}
-
-	// Relative imports must be prefixed with ./ or ../
-	if !filepath.IsAbs(resolved) {
-		resolved = "./" + resolved
-	}
-
-	return resolved
 }
 
 func BindHostModules(m *function.ImportMap) []string {

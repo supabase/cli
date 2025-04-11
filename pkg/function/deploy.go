@@ -218,7 +218,6 @@ func (m *ImportMap) Parse(data []byte) error {
 	return nil
 }
 
-// WARN:(kallebysantos) duplicated code inside `utils.resolve(.., afero.Fs)`
 func (m *ImportMap) Resolve(imPath string, fsys fs.FS) error {
 	// Resolve all paths relative to current file
 	for k, v := range m.Imports {
@@ -232,7 +231,6 @@ func (m *ImportMap) Resolve(imPath string, fsys fs.FS) error {
 	return nil
 }
 
-// WARN:(kallebysantos) duplicated code inside `utils.resolveHostPath(.., afero.Fs)`
 func resolveHostPath(jsonPath, hostPath string, fsys fs.FS) string {
 	// Leave absolute paths unchanged
 	if path.IsAbs(hostPath) {
