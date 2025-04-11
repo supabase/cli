@@ -241,15 +241,13 @@ func resolveHostPath(jsonPath, hostPath string, fsys fs.FS) string {
 	resolved := path.Join(path.Dir(jsonPath), hostPath)
 	if _, err := fs.Stat(fsys, filepath.FromSlash(resolved)); err != nil {
 		// Leave URLs unchanged
-		if err != nil {
-		}
 		return hostPath
 	}
 
 	// Directory imports need to be suffixed with /
 	// Ref: https://deno.com/manual@v1.33.0/basics/import_maps
-	if strings.HasSuffix(hostPath, string(filepath.Separator)) {
-		resolved += string(filepath.Separator)
+	if strings.HasSuffix(hostPath, "/") {
+		resolved += "/"
 	}
 
 	// Relative imports must be prefixed with ./ or ../
