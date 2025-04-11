@@ -199,7 +199,7 @@ func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys fs.
 			return err
 		}
 	}
-	return walkImportPaths(meta.EntrypointPath, importMap, addFile)
+	return importMap.WalkImportPaths(meta.EntrypointPath, addFile)
 }
 
 type ImportMap struct {
@@ -254,7 +254,7 @@ func resolveHostPath(jsonPath, hostPath string, fsys fs.FS) string {
 // Ref: https://regex101.com/r/DfBdJA/1
 var importPathPattern = regexp.MustCompile(`(?i)(?:import|export)\s+(?:{[^{}]+}|.*?)\s*(?:from)?\s*['"](.*?)['"]|import\(\s*['"](.*?)['"]\)`)
 
-func walkImportPaths(srcPath string, importMap ImportMap, readFile func(curr string, w io.Writer) error) error {
+func (importMap *ImportMap) WalkImportPaths(srcPath string, readFile func(curr string, w io.Writer) error) error {
 	seen := map[string]struct{}{}
 	// DFS because it's more efficient to pop from end of array
 	q := make([]string, 1)
@@ -294,7 +294,8 @@ func walkImportPaths(srcPath string, importMap ImportMap, readFile func(curr str
 					substituted = true
 				}
 			}
-			// Ignore URLs and directories
+			// Ignore URLs and directories, assuming no sloppy imports
+			// https://github.com/denoland/deno/issues/2506#issuecomment-2727635545
 			if len(path.Ext(mod)) == 0 {
 				continue
 			}
