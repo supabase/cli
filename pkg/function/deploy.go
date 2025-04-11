@@ -294,7 +294,8 @@ func (importMap *ImportMap) WalkImportPaths(srcPath string, readFile func(curr s
 					substituted = true
 				}
 			}
-			// Ignore URLs and directories
+			// Ignore URLs and directories, assuming no sloppy imports
+			// https://github.com/denoland/deno/issues/2506#issuecomment-2727635545
 			if len(path.Ext(mod)) == 0 {
 				continue
 			}

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -208,47 +209,57 @@ func CopyDenoScripts(ctx context.Context, fsys afero.Fs) (*DenoScriptDir, error)
 	return &sd, nil
 }
 
-func NewImportMap(absJsonPath string, fsys afero.Fs) (*function.ImportMap, error) {
-	data, err := afero.ReadFile(fsys, absJsonPath)
+func newImportMap(relJsonPath string, fsys afero.Fs) (function.ImportMap, error) {
+	var result function.ImportMap
+	if len(relJsonPath) == 0 {
+		return result, nil
+	}
+	data, err := afero.ReadFile(fsys, relJsonPath)
 	if err != nil {
-		return nil, errors.Errorf("failed to load import map: %w", err)
+		return result, errors.Errorf("failed to load import map: %w", err)
 	}
-	result := function.ImportMap{}
 	if err := result.Parse(data); err != nil {
-		return nil, err
+		return result, err
 	}
-	iofsys := afero.NewIOFS(fsys)
-	if err := result.Resolve(absJsonPath, iofsys); err != nil {
-		return nil, err
+	unixPath := filepath.ToSlash(relJsonPath)
+	if err := result.Resolve(unixPath, afero.NewIOFS(fsys)); err != nil {
+		return result, err
 	}
-	return &result, nil
+	return result, nil
 }
 
-func BindHostModules(m *function.ImportMap) []string {
-	hostFuncDir, err := filepath.Abs(FunctionsDir)
+func BindHostModules(cwd, relEntrypointPath, relImportMapPath string, fsys afero.Fs) ([]string, error) {
+	importMap, err := newImportMap(relImportMapPath, fsys)
 	if err != nil {
-		logger := GetDebugLogger()
-		fmt.Fprintln(logger, err)
+		return nil, err
 	}
-	binds := []string{}
-	for _, hostPath := range m.Imports {
-		if !filepath.IsAbs(hostPath) || strings.HasPrefix(hostPath, hostFuncDir) {
-			continue
+	var modules []string
+	// Resolving all Import Graph
+	addModule := func(unixPath string, w io.Writer) error {
+		hostPath := filepath.FromSlash(unixPath)
+		if path.IsAbs(unixPath) {
+			hostPath = filepath.VolumeName(cwd) + hostPath
+		} else {
+			hostPath = filepath.Join(cwd, hostPath)
+		}
+		f, err := fsys.Open(hostPath)
+		if err != nil {
+			return errors.Errorf("failed to read file: %w", err)
+		}
+		defer f.Close()
+		if _, err := io.Copy(w, f); err != nil {
+			return errors.Errorf("failed to copy file content: %w", err)
 		}
 		dockerPath := ToDockerPath(hostPath)
-		binds = append(binds, hostPath+":"+dockerPath+":ro")
+		modules = append(modules, hostPath+":"+dockerPath+":ro")
+		return nil
 	}
-
-	for _, mapping := range m.Scopes {
-		for _, hostPath := range mapping {
-			if !filepath.IsAbs(hostPath) || strings.HasPrefix(hostPath, hostFuncDir) {
-				continue
-			}
-			dockerPath := ToDockerPath(hostPath)
-			binds = append(binds, hostPath+":"+dockerPath+":ro")
-		}
+	unixPath := filepath.ToSlash(relEntrypointPath)
+	if err := importMap.WalkImportPaths(unixPath, addModule); err != nil {
+		return nil, err
 	}
-	return binds
+	// TODO: support scopes
+	return modules, nil
 }
 
 func ToDockerPath(absHostPath string) string {

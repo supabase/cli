@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 
@@ -123,71 +122,23 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointPath, hostImpo
 			binds = append(binds, hostOutputDir+":"+dockerOutputDir+":rw")
 		}
 	}
-	// Allow entrypoints outside the functions directory
-	hostEntrypointDir := filepath.Dir(hostEntrypointPath)
-	if len(hostEntrypointDir) > 0 {
-		if !filepath.IsAbs(hostEntrypointDir) {
-			hostEntrypointDir = filepath.Join(cwd, hostEntrypointDir)
-		}
-		if !strings.HasSuffix(hostEntrypointDir, sep) {
-			hostEntrypointDir += sep
-		}
-		if !strings.HasPrefix(hostEntrypointDir, hostFuncDir) &&
-			!strings.HasPrefix(hostEntrypointDir, hostOutputDir) {
-			dockerEntrypointDir := utils.ToDockerPath(hostEntrypointDir)
-			binds = append(binds, hostEntrypointDir+":"+dockerEntrypointDir+":ro")
-		}
-	}
 	// Imports outside of ./supabase/functions will be bound by absolute path
-	var modules []string
-	importMap := function.ImportMap{}
+	modules, err := utils.BindHostModules(cwd, hostEntrypointPath, hostImportMapPath, fsys)
+	if err != nil {
+		return nil, err
+	}
 	if len(hostImportMapPath) > 0 {
-		data, err := afero.ReadFile(fsys, hostImportMapPath)
-		if err != nil {
-			return nil, errors.Errorf("failed to load import map: %w", err)
-		}
-		if err := importMap.Parse(data); err != nil {
-			return nil, err
-		}
 		if !filepath.IsAbs(hostImportMapPath) {
 			hostImportMapPath = filepath.Join(cwd, hostImportMapPath)
 		}
 		dockerImportMapPath := utils.ToDockerPath(hostImportMapPath)
 		modules = append(modules, hostImportMapPath+":"+dockerImportMapPath+":ro")
-		if err := importMap.Resolve(dockerImportMapPath, afero.NewIOFS(fsys)); err != nil {
-			return nil, err
-		}
-	}
-	// Resolving all Import Graph
-	addModule := func(unixPath string, w io.Writer) error {
-		hostPath := filepath.FromSlash(unixPath)
-		if path.IsAbs(unixPath) {
-			hostPath = filepath.VolumeName(cwd) + hostPath
-		} else {
-			hostPath = filepath.Join(cwd, hostPath)
-		}
-		f, err := fsys.Open(hostPath)
-		if err != nil {
-			return errors.Errorf("failed to read file: %w", err)
-		}
-		defer f.Close()
-		if _, err := io.Copy(w, f); err != nil {
-			return errors.Errorf("failed to copy file content: %w", err)
-		}
-		dockerPath := utils.ToDockerPath(hostPath)
-		modules = append(modules, hostPath+":"+dockerPath+":ro")
-		return nil
-	}
-	dockerEntrypointPath := utils.ToDockerPath(hostEntrypointPath)
-	if err := importMap.WalkImportPaths(dockerEntrypointPath, addModule); err != nil {
-		return nil, err
 	}
 	// Remove any duplicate mount points
 	for _, mod := range modules {
 		hostPath := strings.Split(mod, ":")[0]
 		if !strings.HasPrefix(hostPath, hostFuncDir) &&
-			(len(hostOutputDir) == 0 || !strings.HasPrefix(hostPath, hostOutputDir)) &&
-			(len(hostEntrypointDir) == 0 || !strings.HasPrefix(hostPath, hostEntrypointDir)) {
+			(len(hostOutputDir) == 0 || !strings.HasPrefix(hostPath, hostOutputDir)) {
 			binds = append(binds, mod)
 		}
 	}
