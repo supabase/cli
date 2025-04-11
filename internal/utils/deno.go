@@ -217,12 +217,10 @@ func NewImportMap(absJsonPath string, fsys afero.Fs) (*function.ImportMap, error
 	if err := result.Parse(data); err != nil {
 		return nil, err
 	}
-
 	iofsys := afero.NewIOFS(fsys)
 	if err := result.Resolve(absJsonPath, iofsys); err != nil {
 		return nil, err
 	}
-
 	return &result, nil
 }
 

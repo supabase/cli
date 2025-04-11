@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -137,67 +138,57 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointPath, hostImpo
 			binds = append(binds, hostEntrypointDir+":"+dockerEntrypointDir+":ro")
 		}
 	}
-
 	// Imports outside of ./supabase/functions will be bound by absolute path
+	var modules []string
+	importMap := function.ImportMap{}
 	if len(hostImportMapPath) > 0 {
+		data, err := afero.ReadFile(fsys, hostImportMapPath)
+		if err != nil {
+			return nil, errors.Errorf("failed to load import map: %w", err)
+		}
+		if err := importMap.Parse(data); err != nil {
+			return nil, err
+		}
 		if !filepath.IsAbs(hostImportMapPath) {
 			hostImportMapPath = filepath.Join(cwd, hostImportMapPath)
 		}
-		importMap, err := utils.NewImportMap(hostImportMapPath, fsys)
-		if err != nil {
-			return nil, err
-		}
-
-		modules := utils.BindHostModules(importMap)
 		dockerImportMapPath := utils.ToDockerPath(hostImportMapPath)
 		modules = append(modules, hostImportMapPath+":"+dockerImportMapPath+":ro")
-
-		addFile := func(srcPath string, w io.Writer) error {
-			hostPath, err := filepath.Abs(srcPath)
-			if err != nil {
-				return errors.Errorf("failed to resolve absolute filepath: %w", err)
-			}
-
-			f, err := fsys.Open(filepath.FromSlash(hostPath))
-			if err != nil {
-				return errors.Errorf("failed to read file: %w", err)
-			}
-			defer f.Close()
-			if fi, err := f.Stat(); err != nil {
-				return errors.Errorf("failed to stat file: %w", err)
-			} else if fi.IsDir() {
-				return errors.New("file path is a directory: " + hostPath)
-			}
-
-			_, err = io.Copy(w, f) // Discard the read data after writing to w
-			if err != nil {
-				return errors.Errorf("failed to copy file content: %w", err)
-			}
-
-			if !filepath.IsAbs(hostPath) || strings.HasPrefix(hostPath, hostFuncDir) {
-				return nil
-			}
-
-			dockerPath := utils.ToDockerPath(hostPath)
-			modules = append(modules, hostPath+":"+dockerPath+":ro")
-
-			return nil
-		}
-
-		// Resolving all Import Graph
-		err = importMap.WalkImportPaths(hostEntrypointPath, addFile)
-		if err != nil {
+		if err := importMap.Resolve(dockerImportMapPath, afero.NewIOFS(fsys)); err != nil {
 			return nil, err
 		}
-
-		// Remove any duplicate mount points
-		for _, mod := range modules {
-			hostPath := strings.Split(mod, ":")[0]
-			if !strings.HasPrefix(hostPath, hostFuncDir) &&
-				(len(hostOutputDir) == 0 || !strings.HasPrefix(hostPath, hostOutputDir)) &&
-				(len(hostEntrypointDir) == 0 || !strings.HasPrefix(hostPath, hostEntrypointDir)) {
-				binds = append(binds, mod)
-			}
+	}
+	// Resolving all Import Graph
+	addModule := func(unixPath string, w io.Writer) error {
+		hostPath := filepath.FromSlash(unixPath)
+		if path.IsAbs(unixPath) {
+			hostPath = filepath.VolumeName(cwd) + hostPath
+		} else {
+			hostPath = filepath.Join(cwd, hostPath)
+		}
+		f, err := fsys.Open(hostPath)
+		if err != nil {
+			return errors.Errorf("failed to read file: %w", err)
+		}
+		defer f.Close()
+		if _, err := io.Copy(w, f); err != nil {
+			return errors.Errorf("failed to copy file content: %w", err)
+		}
+		dockerPath := utils.ToDockerPath(hostPath)
+		modules = append(modules, hostPath+":"+dockerPath+":ro")
+		return nil
+	}
+	dockerEntrypointPath := utils.ToDockerPath(hostEntrypointPath)
+	if err := importMap.WalkImportPaths(dockerEntrypointPath, addModule); err != nil {
+		return nil, err
+	}
+	// Remove any duplicate mount points
+	for _, mod := range modules {
+		hostPath := strings.Split(mod, ":")[0]
+		if !strings.HasPrefix(hostPath, hostFuncDir) &&
+			(len(hostOutputDir) == 0 || !strings.HasPrefix(hostPath, hostOutputDir)) &&
+			(len(hostEntrypointDir) == 0 || !strings.HasPrefix(hostPath, hostEntrypointDir)) {
+			binds = append(binds, mod)
 		}
 	}
 	return binds, nil

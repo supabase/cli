@@ -175,11 +175,9 @@ func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys fs.
 		if err := importMap.Parse(data); err != nil {
 			return err
 		}
-
 		if err := importMap.Resolve(imPath, fsys); err != nil {
 			return err
 		}
-
 		// TODO: replace with addFile once edge runtime supports jsonc
 		fmt.Fprintf(os.Stderr, "Uploading asset (%s): %s\n", *meta.Name, imPath)
 		f, err := form.CreateFormFile("file", imPath)
@@ -241,13 +239,11 @@ func resolveHostPath(jsonPath, hostPath string, fsys fs.FS) string {
 		// Leave URLs unchanged
 		return hostPath
 	}
-
 	// Directory imports need to be suffixed with /
 	// Ref: https://deno.com/manual@v1.33.0/basics/import_maps
 	if strings.HasSuffix(hostPath, "/") {
 		resolved += "/"
 	}
-
 	// Relative imports must be prefixed with ./ or ../
 	if !path.IsAbs(resolved) {
 		resolved = "./" + resolved

@@ -213,7 +213,6 @@ func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 		if err != nil {
 			return nil, "", err
 		}
-
 		binds = append(binds, modules...)
 		fc.ImportMap = utils.ToDockerPath(fc.ImportMap)
 		fc.Entrypoint = utils.ToDockerPath(fc.Entrypoint)
