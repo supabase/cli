@@ -164,8 +164,7 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointPath, hostImpo
 				return errors.New("file path is a directory: " + srcPath)
 			}
 
-			r := io.TeeReader(f, w)
-			_, err = io.Copy(io.Discard, r) // Discard the read data after writing to w
+			_, err = io.Copy(w, f) // Discard the read data after writing to w
 			if err != nil {
 				return errors.Errorf("failed to copy file content: %w", err)
 			}
