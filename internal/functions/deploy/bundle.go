@@ -153,7 +153,12 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointPath, hostImpo
 		modules = append(modules, hostImportMapPath+":"+dockerImportMapPath+":ro")
 
 		addFile := func(srcPath string, w io.Writer) error {
-			f, err := fsys.Open(filepath.FromSlash(srcPath))
+			hostPath, err := filepath.Abs(srcPath)
+			if err != nil {
+				return errors.Errorf("failed to resolve absolute filepath: %w", err)
+			}
+
+			f, err := fsys.Open(filepath.FromSlash(hostPath))
 			if err != nil {
 				return errors.Errorf("failed to read file: %w", err)
 			}
@@ -161,7 +166,7 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointPath, hostImpo
 			if fi, err := f.Stat(); err != nil {
 				return errors.Errorf("failed to stat file: %w", err)
 			} else if fi.IsDir() {
-				return errors.New("file path is a directory: " + srcPath)
+				return errors.New("file path is a directory: " + hostPath)
 			}
 
 			_, err = io.Copy(w, f) // Discard the read data after writing to w
@@ -169,12 +174,12 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointPath, hostImpo
 				return errors.Errorf("failed to copy file content: %w", err)
 			}
 
-			if !filepath.IsAbs(srcPath) || strings.HasPrefix(srcPath, hostFuncDir) {
+			if !filepath.IsAbs(hostPath) || strings.HasPrefix(hostPath, hostFuncDir) {
 				return nil
 			}
 
-			dockerPath := utils.ToDockerPath(srcPath)
-			modules = append(modules, srcPath+":"+dockerPath+":ro")
+			dockerPath := utils.ToDockerPath(hostPath)
+			modules = append(modules, hostPath+":"+dockerPath+":ro")
 
 			return nil
 		}
