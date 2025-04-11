@@ -6,22 +6,19 @@ import (
 	"context"
 	"crypto/sha256"
 	"embed"
-	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/tidwall/jsonc"
+	"github.com/supabase/cli/pkg/function"
 )
 
 var (
@@ -211,42 +208,25 @@ func CopyDenoScripts(ctx context.Context, fsys afero.Fs) (*DenoScriptDir, error)
 	return &sd, nil
 }
 
-type ImportMap struct {
-	Imports map[string]string            `json:"imports"`
-	Scopes  map[string]map[string]string `json:"scopes"`
-}
-
-func NewImportMap(absJsonPath string, fsys afero.Fs) (*ImportMap, error) {
+func NewImportMap(absJsonPath string, fsys afero.Fs) (*function.ImportMap, error) {
 	data, err := afero.ReadFile(fsys, absJsonPath)
 	if err != nil {
 		return nil, errors.Errorf("failed to load import map: %w", err)
 	}
-	result := ImportMap{}
+	result := function.ImportMap{}
 	if err := result.Parse(data); err != nil {
 		return nil, err
 	}
-	// Resolve all paths relative to current file
-	for k, v := range result.Imports {
-		result.Imports[k] = resolveHostPath(absJsonPath, v, fsys)
-	}
-	for module, mapping := range result.Scopes {
-		for k, v := range mapping {
-			result.Scopes[module][k] = resolveHostPath(absJsonPath, v, fsys)
-		}
-	}
+
+	// TODO:(kallebysantos) Find somehow to cast between `afero.Fs` to `io.FS`
+	// in order to use `function.ImportMap.Resolve()`
+	resolve(&result, absJsonPath, fsys)
+
 	return &result, nil
 }
 
-func (m *ImportMap) Parse(data []byte) error {
-	data = jsonc.ToJSONInPlace(data)
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	if err := decoder.Decode(&m); err != nil {
-		return errors.Errorf("failed to parse import map: %w", err)
-	}
-	return nil
-}
-
-func (m *ImportMap) Resolve(imPath string, fsys afero.Fs) error {
+// WARN:(kallebysantos) should use `function.ImportMap.Resolve(.., fs.FS)`
+func resolve(m *function.ImportMap, imPath string, fsys afero.Fs) error {
 	// Resolve all paths relative to current file
 	for k, v := range m.Imports {
 		m.Imports[k] = resolveHostPath(imPath, v, fsys)
@@ -259,6 +239,7 @@ func (m *ImportMap) Resolve(imPath string, fsys afero.Fs) error {
 	return nil
 }
 
+// WARN:(kallebysantos) duplicated code to support `resolve(.., afero.Fs)`
 func resolveHostPath(jsonPath, hostPath string, fsys afero.Fs) string {
 	// Leave absolute paths unchanged
 	if filepath.IsAbs(hostPath) {
@@ -289,7 +270,7 @@ func resolveHostPath(jsonPath, hostPath string, fsys afero.Fs) string {
 	return resolved
 }
 
-func (m *ImportMap) BindHostModules() []string {
+func BindHostModules(m *function.ImportMap) []string {
 	hostFuncDir, err := filepath.Abs(FunctionsDir)
 	if err != nil {
 		logger := GetDebugLogger()
@@ -320,73 +301,4 @@ func ToDockerPath(absHostPath string) string {
 	prefix := filepath.VolumeName(absHostPath)
 	dockerPath := filepath.ToSlash(absHostPath)
 	return strings.TrimPrefix(dockerPath, prefix)
-}
-
-// Ref: https://regex101.com/r/DfBdJA/1
-var importPathPattern = regexp.MustCompile(`(?i)(?:import|export)\s+(?:{[^{}]+}|.*?)\s*(?:from)?\s*['"](.*?)['"]|import\(\s*['"](.*?)['"]\)`)
-
-func (importMap *ImportMap) WalkImportPaths(srcPath string, readFile func(curr string, w io.Writer) error) error {
-	seen := map[string]struct{}{}
-	// DFS because it's more efficient to pop from end of array
-	q := make([]string, 1)
-	q[0] = srcPath
-	for len(q) > 0 {
-		curr := q[len(q)-1]
-		q = q[:len(q)-1]
-		// Assume no file is symlinked
-		if _, ok := seen[curr]; ok {
-			continue
-		}
-		seen[curr] = struct{}{}
-		// Read into memory for regex match later
-		var buf bytes.Buffer
-		if err := readFile(curr, &buf); errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintln(os.Stderr, "WARN:", err)
-			continue
-		} else if err != nil {
-			return err
-		}
-		// Traverse all modules imported by the current source file
-		for _, matches := range importPathPattern.FindAllStringSubmatch(buf.String(), -1) {
-			if len(matches) < 3 {
-				continue
-			}
-			// Matches 'from' clause if present, else fallback to 'import'
-			mod := matches[1]
-			if len(mod) == 0 {
-				mod = matches[2]
-			}
-			mod = strings.TrimSpace(mod)
-			// Substitute kv from import map
-			substituted := false
-			for k, v := range importMap.Imports {
-				if strings.HasPrefix(mod, k) {
-					mod = v + mod[len(k):]
-					substituted = true
-				}
-			}
-			// Ignore URLs and directories
-			if len(path.Ext(mod)) == 0 {
-				continue
-			}
-			// Deno import path must begin with one of these prefixes
-			if !isRelPath(mod) && !isAbsPath(mod) {
-				continue
-			}
-			if isRelPath(mod) && !substituted {
-				mod = path.Join(path.Dir(curr), mod)
-			}
-			// Cleans import path to help detect duplicates
-			q = append(q, path.Clean(mod))
-		}
-	}
-	return nil
-}
-
-func isRelPath(mod string) bool {
-	return strings.HasPrefix(mod, "./") || strings.HasPrefix(mod, "../")
-}
-
-func isAbsPath(mod string) bool {
-	return strings.HasPrefix(mod, "/")
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/pkg/function"
 )
 
 func TestResolveImports(t *testing.T) {
@@ -64,7 +65,7 @@ func TestBindModules(t *testing.T) {
 	t.Run("binds docker imports", func(t *testing.T) {
 		cwd, err := os.Getwd()
 		require.NoError(t, err)
-		importMap := ImportMap{
+		importMap := function.ImportMap{
 			Imports: map[string]string{
 				"abs/":   "/tmp/",
 				"root":   cwd + "/common",
@@ -73,7 +74,7 @@ func TestBindModules(t *testing.T) {
 			},
 		}
 		// Run test
-		mods := importMap.BindHostModules()
+		mods := BindHostModules(&importMap)
 		// Check error
 		assert.ElementsMatch(t, mods, []string{
 			"/tmp/:/tmp/:ro",
@@ -83,7 +84,7 @@ func TestBindModules(t *testing.T) {
 	})
 
 	t.Run("binds docker scopes", func(t *testing.T) {
-		importMap := ImportMap{
+		importMap := function.ImportMap{
 			Scopes: map[string]map[string]string{
 				"my-scope": {
 					"my-mod": "https://deno.land",
@@ -91,7 +92,7 @@ func TestBindModules(t *testing.T) {
 			},
 		}
 		// Run test
-		mods := importMap.BindHostModules()
+		mods := BindHostModules(&importMap)
 		// Check error
 		assert.Empty(t, mods)
 	})

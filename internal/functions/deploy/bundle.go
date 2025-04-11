@@ -148,7 +148,7 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointPath, hostImpo
 			return nil, err
 		}
 
-		modules := importMap.BindHostModules()
+		modules := utils.BindHostModules(importMap)
 		dockerImportMapPath := utils.ToDockerPath(hostImportMapPath)
 		modules = append(modules, hostImportMapPath+":"+dockerImportMapPath+":ro")
 
