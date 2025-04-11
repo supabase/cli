@@ -68,14 +68,13 @@ import "/tmp/index.ts"
 import "../common/index.ts"
 import "../../../supabase/tests/index.ts"
 import "./child/index.ts"`
-		entrypointPath := "/app/supabase/functions/hello/index.ts"
-		require.NoError(t, WriteFile(entrypointPath, []byte(entrypoint), fsys))
+		require.NoError(t, WriteFile("/app/supabase/functions/hello/index.ts", []byte(entrypoint), fsys))
 		require.NoError(t, WriteFile("/tmp/index.ts", []byte{}, fsys))
 		require.NoError(t, WriteFile("/app/supabase/functions/common/index.ts", []byte{}, fsys))
 		require.NoError(t, WriteFile("/app/supabase/tests/index.ts", []byte{}, fsys))
 		require.NoError(t, WriteFile("/app/supabase/functions/hello/child/index.ts", []byte{}, fsys))
 		// Run test
-		mods, err := BindHostModules("/app", entrypointPath, "", fsys)
+		mods, err := BindHostModules("/app", "supabase/functions/hello/index.ts", "", fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.ElementsMatch(t, mods, []string{
