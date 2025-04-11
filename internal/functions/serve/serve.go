@@ -119,6 +119,14 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	if err != nil {
 		return errors.Errorf("failed to get working directory: %w", err)
 	}
+	if len(importMapPath) > 0 {
+		if !filepath.IsAbs(importMapPath) {
+			importMapPath = filepath.Join(utils.CurrentDirAbs, importMapPath)
+		}
+		if importMapPath, err = filepath.Rel(cwd, importMapPath); err != nil {
+			return errors.Errorf("failed to resolve relative path: %w", err)
+		}
+	}
 	binds, functionsConfigString, err := populatePerFunctionConfigs(cwd, importMapPath, noVerifyJWT, fsys)
 	if err != nil {
 		return err

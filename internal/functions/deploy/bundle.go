@@ -122,7 +122,7 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointPath, hostImpo
 			binds = append(binds, hostOutputDir+":"+dockerOutputDir+":rw")
 		}
 	}
-	// Imports outside of ./supabase/functions will be bound by absolute path
+	// Imports outside of ./supabase/functions will be bound by walking the entrypoint
 	modules, err := utils.BindHostModules(cwd, hostEntrypointPath, hostImportMapPath, fsys)
 	if err != nil {
 		return nil, err
