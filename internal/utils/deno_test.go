@@ -31,7 +31,7 @@ func TestResolveImports(t *testing.T) {
 		require.NoError(t, fsys.Mkdir(filepath.Join(cwd, DbTestsDir), 0755))
 		require.NoError(t, fsys.Mkdir(filepath.Join(cwd, FunctionsDir, "child"), 0755))
 		// Run test
-		resolved, err := NewImportMap(jsonPath, fsys)
+		resolved, err := newImportMap(jsonPath, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Equal(t, "/tmp/", resolved.Imports["abs/"])
@@ -53,7 +53,7 @@ func TestResolveImports(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, FallbackImportMapPath, importMap, 0644))
 		// Run test
-		resolved, err := NewImportMap(FallbackImportMapPath, fsys)
+		resolved, err := newImportMap(FallbackImportMapPath, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Equal(t, "https://deno.land", resolved.Scopes["my-scope"]["my-mod"])
@@ -62,37 +62,27 @@ func TestResolveImports(t *testing.T) {
 
 func TestBindModules(t *testing.T) {
 	t.Run("binds docker imports", func(t *testing.T) {
-		cwd, err := os.Getwd()
-		require.NoError(t, err)
-		importMap := ImportMap{
-			Imports: map[string]string{
-				"abs/":   "/tmp/",
-				"root":   cwd + "/common",
-				"parent": cwd + "/supabase/tests",
-				"child":  cwd + "/supabase/functions/child/",
-			},
-		}
+		fsys := afero.NewMemMapFs()
+		entrypoint := `import "https://deno.land"
+import "/tmp/index.ts"
+import "../common/index.ts"
+import "../../../supabase/tests/index.ts"
+import "./child/index.ts"`
+		require.NoError(t, WriteFile("/app/supabase/functions/hello/index.ts", []byte(entrypoint), fsys))
+		require.NoError(t, WriteFile("/tmp/index.ts", []byte{}, fsys))
+		require.NoError(t, WriteFile("/app/supabase/functions/common/index.ts", []byte{}, fsys))
+		require.NoError(t, WriteFile("/app/supabase/tests/index.ts", []byte{}, fsys))
+		require.NoError(t, WriteFile("/app/supabase/functions/hello/child/index.ts", []byte{}, fsys))
 		// Run test
-		mods := importMap.BindHostModules()
+		mods, err := BindHostModules("/app", "supabase/functions/hello/index.ts", "", fsys)
 		// Check error
+		assert.NoError(t, err)
 		assert.ElementsMatch(t, mods, []string{
-			"/tmp/:/tmp/:ro",
-			cwd + "/common:" + cwd + "/common:ro",
-			cwd + "/supabase/tests:" + cwd + "/supabase/tests:ro",
+			"/app/supabase/functions/hello/index.ts:/app/supabase/functions/hello/index.ts:ro",
+			"/tmp/index.ts:/tmp/index.ts:ro",
+			"/app/supabase/functions/common/index.ts:/app/supabase/functions/common/index.ts:ro",
+			"/app/supabase/tests/index.ts:/app/supabase/tests/index.ts:ro",
+			"/app/supabase/functions/hello/child/index.ts:/app/supabase/functions/hello/child/index.ts:ro",
 		})
-	})
-
-	t.Run("binds docker scopes", func(t *testing.T) {
-		importMap := ImportMap{
-			Scopes: map[string]map[string]string{
-				"my-scope": {
-					"my-mod": "https://deno.land",
-				},
-			},
-		}
-		// Run test
-		mods := importMap.BindHostModules()
-		// Check error
-		assert.Empty(t, mods)
 	})
 }

@@ -6,20 +6,20 @@ import (
 	"context"
 	"crypto/sha256"
 	"embed"
-	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/tidwall/jsonc"
+	"github.com/supabase/cli/pkg/function"
 )
 
 var (
@@ -197,7 +197,6 @@ func CopyDenoScripts(ctx context.Context, fsys afero.Fs) (*DenoScriptDir, error)
 
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
@@ -210,87 +209,57 @@ func CopyDenoScripts(ctx context.Context, fsys afero.Fs) (*DenoScriptDir, error)
 	return &sd, nil
 }
 
-type ImportMap struct {
-	Imports map[string]string            `json:"imports"`
-	Scopes  map[string]map[string]string `json:"scopes"`
+func newImportMap(relJsonPath string, fsys afero.Fs) (function.ImportMap, error) {
+	var result function.ImportMap
+	if len(relJsonPath) == 0 {
+		return result, nil
+	}
+	data, err := afero.ReadFile(fsys, relJsonPath)
+	if err != nil {
+		return result, errors.Errorf("failed to load import map: %w", err)
+	}
+	if err := result.Parse(data); err != nil {
+		return result, err
+	}
+	unixPath := filepath.ToSlash(relJsonPath)
+	if err := result.Resolve(unixPath, afero.NewIOFS(fsys)); err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
-func NewImportMap(absJsonPath string, fsys afero.Fs) (*ImportMap, error) {
-	data, err := afero.ReadFile(fsys, absJsonPath)
+func BindHostModules(cwd, relEntrypointPath, relImportMapPath string, fsys afero.Fs) ([]string, error) {
+	importMap, err := newImportMap(relImportMapPath, fsys)
 	if err != nil {
-		return nil, errors.Errorf("failed to load import map: %w", err)
-	}
-	result := ImportMap{}
-	if err := result.Parse(data); err != nil {
 		return nil, err
 	}
-	// Resolve all paths relative to current file
-	for k, v := range result.Imports {
-		result.Imports[k] = resolveHostPath(absJsonPath, v, fsys)
-	}
-	for module, mapping := range result.Scopes {
-		for k, v := range mapping {
-			result.Scopes[module][k] = resolveHostPath(absJsonPath, v, fsys)
+	var modules []string
+	// Resolving all Import Graph
+	addModule := func(unixPath string, w io.Writer) error {
+		hostPath := filepath.FromSlash(unixPath)
+		if path.IsAbs(unixPath) {
+			hostPath = filepath.VolumeName(cwd) + hostPath
+		} else {
+			hostPath = filepath.Join(cwd, hostPath)
 		}
-	}
-	return &result, nil
-}
-
-func (m *ImportMap) Parse(data []byte) error {
-	data = jsonc.ToJSONInPlace(data)
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	if err := decoder.Decode(&m); err != nil {
-		return errors.Errorf("failed to parse import map: %w", err)
-	}
-	return nil
-}
-
-func resolveHostPath(jsonPath, hostPath string, fsys afero.Fs) string {
-	// Leave absolute paths unchanged
-	if filepath.IsAbs(hostPath) {
-		return hostPath
-	}
-	resolved := filepath.Join(filepath.Dir(jsonPath), hostPath)
-	if exists, err := afero.Exists(fsys, resolved); !exists {
-		// Leave URLs unchanged
+		f, err := fsys.Open(hostPath)
 		if err != nil {
-			logger := GetDebugLogger()
-			fmt.Fprintln(logger, err)
+			return errors.Errorf("failed to read file: %w", err)
 		}
-		return hostPath
-	}
-	// Directory imports need to be suffixed with /
-	// Ref: https://deno.com/manual@v1.33.0/basics/import_maps
-	if strings.HasSuffix(hostPath, string(filepath.Separator)) {
-		resolved += string(filepath.Separator)
-	}
-	return resolved
-}
-
-func (m *ImportMap) BindHostModules() []string {
-	hostFuncDir, err := filepath.Abs(FunctionsDir)
-	if err != nil {
-		logger := GetDebugLogger()
-		fmt.Fprintln(logger, err)
-	}
-	binds := []string{}
-	for _, hostPath := range m.Imports {
-		if !filepath.IsAbs(hostPath) || strings.HasPrefix(hostPath, hostFuncDir) {
-			continue
+		defer f.Close()
+		if _, err := io.Copy(w, f); err != nil {
+			return errors.Errorf("failed to copy file content: %w", err)
 		}
 		dockerPath := ToDockerPath(hostPath)
-		binds = append(binds, hostPath+":"+dockerPath+":ro")
+		modules = append(modules, hostPath+":"+dockerPath+":ro")
+		return nil
 	}
-	for _, mapping := range m.Scopes {
-		for _, hostPath := range mapping {
-			if !filepath.IsAbs(hostPath) || strings.HasPrefix(hostPath, hostFuncDir) {
-				continue
-			}
-			dockerPath := ToDockerPath(hostPath)
-			binds = append(binds, hostPath+":"+dockerPath+":ro")
-		}
+	unixPath := filepath.ToSlash(relEntrypointPath)
+	if err := importMap.WalkImportPaths(unixPath, addModule); err != nil {
+		return nil, err
 	}
-	return binds
+	// TODO: support scopes
+	return modules, nil
 }
 
 func ToDockerPath(absHostPath string) string {

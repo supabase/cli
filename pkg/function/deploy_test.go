@@ -49,7 +49,8 @@ func TestImportPaths(t *testing.T) {
 		fsys.On("ReadFile", "testdata/modules/imports.ts").Once()
 		fsys.On("ReadFile", "testdata/geometries/Geometries.js").Once()
 		// Run test
-		err := walkImportPaths("testdata/modules/imports.ts", ImportMap{}, fsys.ReadFile)
+		im := ImportMap{}
+		err := im.WalkImportPaths("testdata/modules/imports.ts", fsys.ReadFile)
 		// Check error
 		assert.NoError(t, err)
 		fsys.AssertExpectations(t)
@@ -70,7 +71,7 @@ func TestImportPaths(t *testing.T) {
 		}}
 		assert.NoError(t, im.Resolve("testdata/modules/deno.json", testImports))
 		// Run test
-		err := walkImportPaths("testdata/modules/imports.ts", im, fsys.ReadFile)
+		err := im.WalkImportPaths("testdata/modules/imports.ts", fsys.ReadFile)
 		// Check error
 		assert.NoError(t, err)
 		fsys.AssertExpectations(t)
@@ -91,7 +92,7 @@ func TestImportPaths(t *testing.T) {
 		}}
 		assert.NoError(t, im.Resolve("testdata/import_map.json", testImports))
 		// Run test
-		err := walkImportPaths("testdata/modules/imports.ts", im, fsys.ReadFile)
+		err := im.WalkImportPaths("testdata/modules/imports.ts", fsys.ReadFile)
 		// Check error
 		assert.NoError(t, err)
 		fsys.AssertExpectations(t)
