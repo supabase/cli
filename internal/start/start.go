@@ -982,6 +982,7 @@ EOF
 			container.Config{
 				Image: utils.Config.Studio.Image,
 				Env: []string{
+					"CURRENT_CLI_VERSION=" + utils.Version,
 					"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
 					"POSTGRES_PASSWORD=" + dbConfig.Password,
 					"SUPABASE_URL=http://" + utils.KongId + ":8000",
