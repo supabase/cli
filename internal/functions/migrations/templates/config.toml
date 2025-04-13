@@ -1,0 +1,5 @@
+[functions.check-email-existence]
+enabled = true
+verify_jwt = false  # Public endpoint
+import_map = "supabase/functions/check-email-existence/deno.json"
+entrypoint = "supabase/functions/check-email-existence/index.ts"
