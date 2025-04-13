@@ -210,13 +210,19 @@ func CopyDenoScripts(ctx context.Context, fsys afero.Fs) (*DenoScriptDir, error)
 }
 
 func BindHostModules(cwd, relEntrypointPath, relImportMapPath string, fsys afero.Fs) ([]string, error) {
+	var modules []string
+	bindModule := func(srcPath string, r io.Reader) error {
+		hostPath := filepath.Join(cwd, filepath.FromSlash(srcPath))
+		dockerPath := ToDockerPath(hostPath)
+		modules = append(modules, hostPath+":"+dockerPath+":ro")
+		return nil
+	}
 	importMap := function.ImportMap{}
 	if imPath := filepath.ToSlash(relImportMapPath); len(imPath) > 0 {
-		if err := importMap.Load(imPath, afero.NewIOFS(fsys)); err != nil {
+		if err := importMap.LoadAsDeno(imPath, afero.NewIOFS(fsys), bindModule); err != nil {
 			return nil, err
 		}
 	}
-	var modules []string
 	// Resolving all Import Graph
 	addModule := func(unixPath string, w io.Writer) error {
 		hostPath := filepath.FromSlash(unixPath)
