@@ -428,6 +428,26 @@ func TestLoadFunctionImportMap(t *testing.T) {
 		assert.Equal(t, "supabase/functions/hello/deno.json", config.Functions["hello"].ImportMap)
 	})
 
+	t.Run("uses deno.json+importMap field as import map when present", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+			project_id = "bvikqvbczudanvggcord"
+			[functions.hello]
+			`)},
+			"supabase/functions/hello/deno.json": &fs.MapFile{Data: []byte(`
+      {
+        "importMap": "../import_map.json"
+      }`)},
+			"supabase/functions/import_map.json": &fs.MapFile{},
+			"supabase/functions/hello/index.ts":  &fs.MapFile{},
+		}
+		// Run test
+		assert.NoError(t, config.Load("", fsys))
+		// Check that deno.json was set as import map
+		assert.Equal(t, "supabase/functions/import_map.json", config.Functions["hello"].ImportMap)
+	})
+
 	t.Run("uses deno.jsonc as import map when present", func(t *testing.T) {
 		config := NewConfig()
 		fsys := fs.MapFS{
@@ -442,6 +462,26 @@ func TestLoadFunctionImportMap(t *testing.T) {
 		assert.NoError(t, config.Load("", fsys))
 		// Check that deno.jsonc was set as import map
 		assert.Equal(t, "supabase/functions/hello/deno.jsonc", config.Functions["hello"].ImportMap)
+	})
+
+	t.Run("uses deno.jsonc+importMap field as import map when present", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+			project_id = "bvikqvbczudanvggcord"
+			[functions.hello]
+			`)},
+			"supabase/functions/hello/deno.jsonc": &fs.MapFile{Data: []byte(`
+      {
+        "importMap": "../import_map.json"
+      }`)},
+			"supabase/functions/import_map.json": &fs.MapFile{},
+			"supabase/functions/hello/index.ts":  &fs.MapFile{},
+		}
+		// Run test
+		assert.NoError(t, config.Load("", fsys))
+		// Check that deno.json was set as import map
+		assert.Equal(t, "supabase/functions/import_map.json", config.Functions["hello"].ImportMap)
 	})
 
 	t.Run("config.toml takes precedence over deno.json", func(t *testing.T) {
