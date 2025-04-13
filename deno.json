@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "std/": "https://deno.land/std@0.220.1/",
+    "@supabase/supabase-js": "https://deno.land/x/supabase@1.0.0/mod.ts"
+  }
+} 
