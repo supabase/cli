@@ -257,6 +257,11 @@ type (
 	}
 )
 
+// Represents the `functions/[slug]/deno.json(c)` file
+type DenoConfig struct {
+	ImportMap string `json:"importMap,omitempty"`
+}
+
 func (a *auth) Clone() auth {
 	copy := *a
 	if copy.Captcha != nil {
@@ -672,15 +677,34 @@ func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 			// Append supabase/ because paths in configs are specified relative to config.toml
 			function.Entrypoint = filepath.Join(builder.SupabaseDirPath, function.Entrypoint)
 		}
-		if len(function.ImportMap) == 0 {
+		if len(function.ImportMap) == 0 || strings.Contains(function.ImportMap, "deno.json") {
 			functionDir := filepath.Dir(function.Entrypoint)
 			denoJsonPath := filepath.Join(functionDir, "deno.json")
 			denoJsoncPath := filepath.Join(functionDir, "deno.jsonc")
-			if _, err := fs.Stat(fsys, denoJsonPath); err == nil {
-				function.ImportMap = denoJsonPath
-			} else if _, err := fs.Stat(fsys, denoJsoncPath); err == nil {
-				function.ImportMap = denoJsoncPath
+
+			// We preference opt to load `importMap` field then fallback to `imports: {}`
+			loadDenoImportMap := func(denoConfigPath string) (string, error) {
+				in, err := fs.ReadFile(fsys, denoConfigPath)
+				if err != nil {
+					return "", err
+				}
+
+				denoConfig := DenoConfig{}
+				json.Unmarshal(in, &denoConfig)
+
+				if len(denoConfig.ImportMap) == 0 {
+					return denoConfigPath, nil
+				}
+
+				return filepath.Join(functionDir, denoConfig.ImportMap), nil
 			}
+
+			if denoJsonImportMap, err := loadDenoImportMap(denoJsonPath); err == nil {
+				function.ImportMap = denoJsonImportMap
+			} else if denoJsoncImportMap, err := loadDenoImportMap(denoJsoncPath); err == nil {
+				function.ImportMap = denoJsoncImportMap
+			}
+
 			// Functions may not use import map so we don't set a default value
 		} else if !filepath.IsAbs(function.ImportMap) {
 			function.ImportMap = filepath.Join(builder.SupabaseDirPath, function.ImportMap)
