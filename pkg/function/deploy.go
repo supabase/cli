@@ -142,7 +142,7 @@ func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys fs.
 		fmt.Fprintf(os.Stderr, "Uploading asset (%s): %s\n", *meta.Name, srcPath)
 		f, err := form.CreateFormFile("file", srcPath)
 		if err != nil {
-			return errors.Errorf("failed to create map: %w", err)
+			return errors.Errorf("failed to create form: %w", err)
 		}
 		if _, err := io.Copy(f, r); err != nil {
 			return errors.Errorf("failed to write form: %w", err)
