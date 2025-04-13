@@ -691,11 +691,7 @@ func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 
 				denoConfig := DenoConfig{}
 				err = json.Unmarshal(in, &denoConfig)
-				if err != nil {
-					return "", err
-				}
-
-				if len(denoConfig.ImportMap) == 0 {
+				if err != nil || len(denoConfig.ImportMap) == 0 {
 					return denoConfigPath, nil
 				}
 
