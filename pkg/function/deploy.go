@@ -143,6 +143,17 @@ func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys fs.
 	if err := enc.Encode(meta); err != nil {
 		return errors.Errorf("failed to encode metadata: %w", err)
 	}
+	uploadAsset := func(srcPath string, r io.Reader) error {
+		fmt.Fprintf(os.Stderr, "Uploading asset (%s): %s\n", *meta.Name, srcPath)
+		f, err := form.CreateFormFile("file", srcPath)
+		if err != nil {
+			return errors.Errorf("failed to create map: %w", err)
+		}
+		if _, err := io.Copy(f, r); err != nil {
+			return errors.Errorf("failed to write form: %w", err)
+		}
+		return nil
+	}
 	addFile := func(srcPath string, w io.Writer) error {
 		f, err := fsys.Open(filepath.FromSlash(srcPath))
 		if err != nil {
@@ -154,38 +165,14 @@ func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys fs.
 		} else if fi.IsDir() {
 			return errors.New("file path is a directory: " + srcPath)
 		}
-		fmt.Fprintf(os.Stderr, "Uploading asset (%s): %s\n", *meta.Name, srcPath)
 		r := io.TeeReader(f, w)
-		dst, err := form.CreateFormFile("file", srcPath)
-		if err != nil {
-			return errors.Errorf("failed to create form: %w", err)
-		}
-		if _, err := io.Copy(dst, r); err != nil {
-			return errors.Errorf("failed to write form: %w", err)
-		}
-		return nil
+		return uploadAsset(srcPath, r)
 	}
 	// Add import map
 	importMap := ImportMap{}
 	if imPath := cast.Val(meta.ImportMapPath, ""); len(imPath) > 0 {
-		data, err := fs.ReadFile(fsys, filepath.FromSlash(imPath))
-		if err != nil {
-			return errors.Errorf("failed to load import map: %w", err)
-		}
-		if err := importMap.Parse(data); err != nil {
+		if err := importMap.Load(imPath, fsys, uploadAsset); err != nil {
 			return err
-		}
-		if err := importMap.Resolve(imPath, fsys); err != nil {
-			return err
-		}
-		// TODO: replace with addFile once edge runtime supports jsonc
-		fmt.Fprintf(os.Stderr, "Uploading asset (%s): %s\n", *meta.Name, imPath)
-		f, err := form.CreateFormFile("file", imPath)
-		if err != nil {
-			return errors.Errorf("failed to create import map: %w", err)
-		}
-		if _, err := f.Write(data); err != nil {
-			return errors.Errorf("failed to write import map: %w", err)
 		}
 	}
 	// Add static files
@@ -205,6 +192,25 @@ func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys fs.
 type ImportMap struct {
 	Imports map[string]string            `json:"imports"`
 	Scopes  map[string]map[string]string `json:"scopes"`
+}
+
+func (m *ImportMap) Load(imPath string, fsys fs.FS, opts ...func(string, io.Reader) error) error {
+	data, err := fs.ReadFile(fsys, filepath.FromSlash(imPath))
+	if err != nil {
+		return errors.Errorf("failed to load import map: %w", err)
+	}
+	if err := m.Parse(data); err != nil {
+		return err
+	}
+	if err := m.Resolve(imPath, fsys); err != nil {
+		return err
+	}
+	for _, apply := range opts {
+		if err := apply(imPath, bytes.NewReader(data)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *ImportMap) Parse(data []byte) error {
