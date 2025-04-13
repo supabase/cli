@@ -127,13 +127,6 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointPath, hostImpo
 	if err != nil {
 		return nil, err
 	}
-	if len(hostImportMapPath) > 0 {
-		if !filepath.IsAbs(hostImportMapPath) {
-			hostImportMapPath = filepath.Join(cwd, hostImportMapPath)
-		}
-		dockerImportMapPath := utils.ToDockerPath(hostImportMapPath)
-		modules = append(modules, hostImportMapPath+":"+dockerImportMapPath+":ro")
-	}
 	// Remove any duplicate mount points
 	for _, mod := range modules {
 		hostPath := strings.Split(mod, ":")[0]

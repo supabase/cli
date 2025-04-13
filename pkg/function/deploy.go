@@ -171,7 +171,7 @@ func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys fs.
 	// Add import map
 	importMap := ImportMap{}
 	if imPath := cast.Val(meta.ImportMapPath, ""); len(imPath) > 0 {
-		if err := importMap.Load(imPath, fsys, uploadAsset); err != nil {
+		if err := importMap.LoadAsDeno(imPath, fsys, uploadAsset); err != nil {
 			return err
 		}
 	}
@@ -192,6 +192,26 @@ func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys fs.
 type ImportMap struct {
 	Imports map[string]string            `json:"imports"`
 	Scopes  map[string]map[string]string `json:"scopes"`
+	// Fallback reference for deno.json
+	ImportMap string `json:"importMap"`
+}
+
+func (m *ImportMap) LoadAsDeno(imPath string, fsys fs.FS, opts ...func(string, io.Reader) error) error {
+	if err := m.Load(imPath, fsys, opts...); err != nil {
+		return err
+	}
+	if strings.EqualFold(path.Base(imPath), "deno.json") && m.IsReference() {
+		imPath = path.Join(path.Dir(imPath), m.ImportMap)
+		if err := m.Load(imPath, fsys, opts...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *ImportMap) IsReference() bool {
+	// Ref: https://github.com/denoland/deno/blob/main/cli/schemas/config-file.v1.json#L273
+	return len(m.Imports) == 0 && len(m.Scopes) == 0 && len(m.ImportMap) > 0
 }
 
 func (m *ImportMap) Load(imPath string, fsys fs.FS, opts ...func(string, io.Reader) error) error {
