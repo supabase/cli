@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/pkg/function"
 )
 
 func TestResolveImports(t *testing.T) {
@@ -31,7 +32,8 @@ func TestResolveImports(t *testing.T) {
 		require.NoError(t, fsys.Mkdir(filepath.Join(cwd, DbTestsDir), 0755))
 		require.NoError(t, fsys.Mkdir(filepath.Join(cwd, FunctionsDir, "child"), 0755))
 		// Run test
-		resolved, err := newImportMap(jsonPath, fsys)
+		resolved := function.ImportMap{}
+		err = resolved.Load(jsonPath, afero.NewIOFS(fsys))
 		// Check error
 		assert.NoError(t, err)
 		assert.Equal(t, "/tmp/", resolved.Imports["abs/"])
@@ -53,7 +55,8 @@ func TestResolveImports(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, FallbackImportMapPath, importMap, 0644))
 		// Run test
-		resolved, err := newImportMap(FallbackImportMapPath, fsys)
+		resolved := function.ImportMap{}
+		err := resolved.Load(FallbackImportMapPath, afero.NewIOFS(fsys))
 		// Check error
 		assert.NoError(t, err)
 		assert.Equal(t, "https://deno.land", resolved.Scopes["my-scope"]["my-mod"])

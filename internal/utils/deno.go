@@ -209,29 +209,12 @@ func CopyDenoScripts(ctx context.Context, fsys afero.Fs) (*DenoScriptDir, error)
 	return &sd, nil
 }
 
-func newImportMap(relJsonPath string, fsys afero.Fs) (function.ImportMap, error) {
-	var result function.ImportMap
-	if len(relJsonPath) == 0 {
-		return result, nil
-	}
-	data, err := afero.ReadFile(fsys, relJsonPath)
-	if err != nil {
-		return result, errors.Errorf("failed to load import map: %w", err)
-	}
-	if err := result.Parse(data); err != nil {
-		return result, err
-	}
-	unixPath := filepath.ToSlash(relJsonPath)
-	if err := result.Resolve(unixPath, afero.NewIOFS(fsys)); err != nil {
-		return result, err
-	}
-	return result, nil
-}
-
 func BindHostModules(cwd, relEntrypointPath, relImportMapPath string, fsys afero.Fs) ([]string, error) {
-	importMap, err := newImportMap(relImportMapPath, fsys)
-	if err != nil {
-		return nil, err
+	importMap := function.ImportMap{}
+	if imPath := filepath.ToSlash(relImportMapPath); len(imPath) > 0 {
+		if err := importMap.Load(imPath, afero.NewIOFS(fsys)); err != nil {
+			return nil, err
+		}
 	}
 	var modules []string
 	// Resolving all Import Graph
