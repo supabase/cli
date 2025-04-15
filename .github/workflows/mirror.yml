@@ -19,6 +19,9 @@ on:
       - submitted
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   setup:
     runs-on: ubuntu-latest

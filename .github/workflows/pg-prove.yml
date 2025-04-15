@@ -3,6 +3,9 @@ name: Publish pg_prove
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   settings:
     runs-on: ubuntu-latest
