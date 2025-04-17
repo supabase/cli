@@ -64,10 +64,8 @@ const (
 	dockerRuntimeInspectorPort = 8083
 )
 
-var (
-	//go:embed templates/main.ts
-	mainFuncEmbed string
-)
+//go:embed templates/main.ts
+var mainFuncEmbed string
 
 func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
 	// 1. Sanity checks.
@@ -120,6 +118,14 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	cwd, err := os.Getwd()
 	if err != nil {
 		return errors.Errorf("failed to get working directory: %w", err)
+	}
+	if len(importMapPath) > 0 {
+		if !filepath.IsAbs(importMapPath) {
+			importMapPath = filepath.Join(utils.CurrentDirAbs, importMapPath)
+		}
+		if importMapPath, err = filepath.Rel(cwd, importMapPath); err != nil {
+			return errors.Errorf("failed to resolve relative path: %w", err)
+		}
 	}
 	binds, functionsConfigString, err := populatePerFunctionConfigs(cwd, importMapPath, noVerifyJWT, fsys)
 	if err != nil {

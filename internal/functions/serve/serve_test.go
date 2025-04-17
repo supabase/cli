@@ -88,6 +88,7 @@ func TestServeCommand(t *testing.T) {
 	})
 
 	t.Run("throws error on missing import map", func(t *testing.T) {
+		utils.CurrentDirAbs = "/"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.InitConfig(utils.InitParams{ProjectId: "test"}, fsys))

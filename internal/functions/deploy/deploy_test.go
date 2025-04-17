@@ -84,8 +84,7 @@ import_map = "./import_map.json"
 `)
 		require.NoError(t, err)
 		require.NoError(t, f.Close())
-		importMapPath, err := filepath.Abs(filepath.Join(utils.SupabaseDirPath, "import_map.json"))
-		require.NoError(t, err)
+		importMapPath := filepath.Join(utils.SupabaseDirPath, "import_map.json")
 		require.NoError(t, afero.WriteFile(fsys, importMapPath, []byte("{}"), 0644))
 		// Setup function entrypoint
 		entrypointPath := filepath.Join(utils.FunctionsDir, slug, "index.ts")

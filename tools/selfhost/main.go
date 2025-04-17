@@ -61,7 +61,7 @@ func updateSelfHosted(ctx context.Context, branch string) error {
 }
 
 func getStableVersions() map[string]string {
-	images := append(config.Images.Services(), config.Images.Pg15)
+	images := append(config.Images.Services(), config.Images.Pg)
 	result := make(map[string]string, len(images))
 	for _, img := range images {
 		parts := strings.Split(img, ":")

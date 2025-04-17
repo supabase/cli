@@ -3,9 +3,7 @@ package function
 import (
 	"bytes"
 	"context"
-	"embed"
 	"errors"
-	"io"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -15,88 +13,11 @@ import (
 
 	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/config"
 )
-
-//go:embed testdata
-var testImports embed.FS
-
-type MockFS struct {
-	mock.Mock
-}
-
-func (m *MockFS) ReadFile(srcPath string, w io.Writer) error {
-	_ = m.Called(srcPath)
-	data, err := testImports.ReadFile(srcPath)
-	if err != nil {
-		return err
-	}
-	if _, err := w.Write(data); err != nil {
-		return err
-	}
-	return nil
-}
-
-func TestImportPaths(t *testing.T) {
-	t.Run("iterates all import paths", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := MockFS{}
-		fsys.On("ReadFile", "/modules/my-module.ts").Once()
-		fsys.On("ReadFile", "testdata/modules/imports.ts").Once()
-		fsys.On("ReadFile", "testdata/geometries/Geometries.js").Once()
-		// Run test
-		err := walkImportPaths("testdata/modules/imports.ts", ImportMap{}, fsys.ReadFile)
-		// Check error
-		assert.NoError(t, err)
-		fsys.AssertExpectations(t)
-	})
-
-	t.Run("iterates with import map", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := MockFS{}
-		fsys.On("ReadFile", "/modules/my-module.ts").Once()
-		fsys.On("ReadFile", "testdata/modules/imports.ts").Once()
-		fsys.On("ReadFile", "testdata/geometries/Geometries.js").Once()
-		fsys.On("ReadFile", "testdata/shared/whatever.ts").Once()
-		fsys.On("ReadFile", "testdata/shared/mod.ts").Once()
-		fsys.On("ReadFile", "testdata/nested/index.ts").Once()
-		// Setup deno.json
-		im := ImportMap{Imports: map[string]string{
-			"module-name/": "../shared/",
-		}}
-		assert.NoError(t, im.Resolve("testdata/modules/deno.json", testImports))
-		// Run test
-		err := walkImportPaths("testdata/modules/imports.ts", im, fsys.ReadFile)
-		// Check error
-		assert.NoError(t, err)
-		fsys.AssertExpectations(t)
-	})
-
-	t.Run("resolves legacy import map", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := MockFS{}
-		fsys.On("ReadFile", "/modules/my-module.ts").Once()
-		fsys.On("ReadFile", "testdata/modules/imports.ts").Once()
-		fsys.On("ReadFile", "testdata/geometries/Geometries.js").Once()
-		fsys.On("ReadFile", "testdata/shared/whatever.ts").Once()
-		fsys.On("ReadFile", "testdata/shared/mod.ts").Once()
-		fsys.On("ReadFile", "testdata/nested/index.ts").Once()
-		// Setup legacy import map
-		im := ImportMap{Imports: map[string]string{
-			"module-name/": "./shared/",
-		}}
-		assert.NoError(t, im.Resolve("testdata/import_map.json", testImports))
-		// Run test
-		err := walkImportPaths("testdata/modules/imports.ts", im, fsys.ReadFile)
-		// Check error
-		assert.NoError(t, err)
-		fsys.AssertExpectations(t)
-	})
-}
 
 func assertFormEqual(t *testing.T, actual []byte) {
 	snapshot := path.Join("testdata", path.Base(t.Name())+".form")

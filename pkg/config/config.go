@@ -333,7 +333,7 @@ func NewConfig(editors ...ConfigEditor) config {
 			KongImage: Images.Kong,
 		},
 		Db: db{
-			Image:    Images.Pg15,
+			Image:    Images.Pg,
 			Password: "postgres",
 			RootKey: Secret{
 				Value: "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
@@ -596,12 +596,22 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		c.Api.ExternalUrl = apiUrl.String()
 	}
 	// Update image versions
-	if version, err := fs.ReadFile(fsys, builder.PostgresVersionPath); err == nil {
-		if strings.HasPrefix(string(version), "15.") && semver.Compare(string(version[3:]), "1.0.55") >= 0 {
-			c.Db.Image = replaceImageTag(Images.Pg15, string(version))
-		}
+	switch c.Db.MajorVersion {
+	case 13:
+		c.Db.Image = pg15
+	case 14:
+		c.Db.Image = pg14
+	case 15:
+		c.Db.Image = pg15
 	}
 	if c.Db.MajorVersion > 14 {
+		if version, err := fs.ReadFile(fsys, builder.PostgresVersionPath); err == nil {
+			// Only replace image if postgres version is above 15.1.0.55
+			if strings.HasPrefix(string(version), fmt.Sprintf("%d.", c.Db.MajorVersion)) &&
+				(c.Db.MajorVersion != 15 || semver.Compare(string(version[3:]), "1.0.55") >= 0) {
+				c.Db.Image = replaceImageTag(pg15, string(version))
+			}
+		}
 		if version, err := fs.ReadFile(fsys, builder.RestVersionPath); err == nil && len(version) > 0 {
 			c.Api.Image = replaceImageTag(Images.Postgrest, string(version))
 		}
@@ -725,10 +735,8 @@ func (c *config) Validate(fsys fs.FS) error {
 		return errors.New("Missing required field in config: db.major_version")
 	case 12:
 		return errors.New("Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.")
-	case 13:
-		c.Db.Image = pg13
-	case 14:
-		c.Db.Image = pg14
+	case 13, 14, 17:
+		// TODO: support oriole db 17 eventually
 	case 15:
 		if len(c.Experimental.OrioleDBVersion) > 0 {
 			c.Db.Image = "supabase/postgres:orioledb-" + c.Experimental.OrioleDBVersion
