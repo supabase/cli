@@ -8,7 +8,7 @@ import (
 
 var (
 	servicesCmd = &cobra.Command{
-		GroupID: groupManagementAPI,
+		GroupID: groupLocalDev,
 		Use:     "services",
 		Short:   "Show versions of all Supabase services",
 		RunE: func(cmd *cobra.Command, args []string) error {

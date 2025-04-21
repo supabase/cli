@@ -20,10 +20,6 @@ var (
 
 const AccessTokenKey = "access-token"
 
-func LoadAccessToken() (string, error) {
-	return LoadAccessTokenFS(afero.NewOsFs())
-}
-
 func LoadAccessTokenFS(fsys afero.Fs) (string, error) {
 	accessToken, err := loadAccessToken(fsys)
 	if err != nil {
