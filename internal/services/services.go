@@ -19,7 +19,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	if err := flags.LoadProjectRef(fsys); err != nil && !errors.Is(err, utils.ErrNotLinked) {
 		fmt.Fprintln(os.Stderr, err)
 	}
-	if err := utils.Config.Load("", utils.NewRootFS(fsys)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := flags.LoadConfig(fsys); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}
 

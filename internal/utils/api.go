@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/go-errors/errors"
+	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils/cloudflare"
 	supabase "github.com/supabase/cli/pkg/api"
@@ -116,7 +117,7 @@ func withFallbackDNS(dialContext DialContextFunc) DialContextFunc {
 
 func GetSupabase() *supabase.ClientWithResponses {
 	clientOnce.Do(func() {
-		token, err := LoadAccessToken()
+		token, err := LoadAccessTokenFS(afero.NewOsFs())
 		if err != nil {
 			log.Fatalln(err)
 		}
