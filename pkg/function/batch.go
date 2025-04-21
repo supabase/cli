@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/docker/go-units"
@@ -32,6 +34,7 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 	for _, f := range result {
 		exists[f.Slug] = struct{}{}
 	}
+	policy := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), maxRetries), ctx)
 	var toUpdate []api.BulkUpdateFunctionBody
 OUTER:
 	for slug, function := range functionConfig {
@@ -59,12 +62,16 @@ OUTER:
 		}
 		functionSize := units.HumanSize(float64(body.Len()))
 		fmt.Fprintf(os.Stderr, "Deploying Function: %s (script size: %s)\n", slug, functionSize)
-		policy := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), maxRetries), ctx)
-		result, err := backoff.RetryWithData(upsert, policy)
+		result, err := backoff.RetryNotifyWithData(upsert, policy, func(err error, d time.Duration) {
+			if strings.Contains(err.Error(), "Duplicated function slug") {
+				exists[slug] = struct{}{}
+			}
+		})
 		if err != nil {
 			return err
 		}
 		toUpdate = append(toUpdate, result)
+		policy.Reset()
 	}
 	if len(toUpdate) > 1 {
 		if resp, err := s.client.V1BulkUpdateFunctionsWithResponse(ctx, s.project, toUpdate); err != nil {
