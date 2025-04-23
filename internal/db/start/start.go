@@ -305,6 +305,7 @@ func initStorageJob(host string) utils.DockerJob {
 		Image: utils.Config.Storage.Image,
 		Env: []string{
 			"DB_INSTALL_ROLES=false",
+			"DB_MIGRATIONS_FREEZE_AT=" + utils.Config.Storage.TargetMigration,
 			"ANON_KEY=" + utils.Config.Auth.AnonKey.Value,
 			"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
 			"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,

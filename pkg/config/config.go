@@ -615,11 +615,14 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		if version, err := fs.ReadFile(fsys, builder.RestVersionPath); err == nil && len(version) > 0 {
 			c.Api.Image = replaceImageTag(Images.Postgrest, string(version))
 		}
-		if version, err := fs.ReadFile(fsys, builder.StorageVersionPath); err == nil && len(version) > 0 {
-			c.Storage.Image = replaceImageTag(Images.Storage, string(version))
-		}
 		if version, err := fs.ReadFile(fsys, builder.GotrueVersionPath); err == nil && len(version) > 0 {
 			c.Auth.Image = replaceImageTag(Images.Gotrue, string(version))
+		}
+	}
+	if version, err := fs.ReadFile(fsys, builder.StorageVersionPath); err == nil && len(version) > 0 {
+		// For backwards compatibility, exclude all strings that look like semver
+		if v := strings.TrimSpace(string(version)); !semver.IsValid(v) {
+			c.Storage.TargetMigration = v
 		}
 	}
 	if version, err := fs.ReadFile(fsys, builder.EdgeRuntimeVersionPath); err == nil && len(version) > 0 {

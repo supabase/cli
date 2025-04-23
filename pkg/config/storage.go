@@ -10,6 +10,7 @@ type (
 	storage struct {
 		Enabled             bool                 `toml:"enabled"`
 		Image               string               `toml:"-"`
+		TargetMigration     string               `toml:"-"`
 		ImgProxyImage       string               `toml:"-"`
 		FileSizeLimit       sizeInBytes          `toml:"file_size_limit"`
 		ImageTransformation *imageTransformation `toml:"image_transformation"`
