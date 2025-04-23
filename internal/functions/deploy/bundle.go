@@ -50,7 +50,7 @@ func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	}
 	hostOutputPath := filepath.Join(hostOutputDir, "output.eszip")
 	// Create exec command
-	cmd := []string{"bundle", "--entrypoint", utils.ToDockerPath(entrypoint), "--output", utils.ToDockerPath(hostOutputPath)}
+	cmd := []string{"bundle", "--entrypoint", utils.ToDockerPath(entrypoint), "--output", utils.ToDockerPath(hostOutputPath), "--decorator", "tc39"}
 	if len(importMap) > 0 {
 		cmd = append(cmd, "--import-map", utils.ToDockerPath(importMap))
 	}
