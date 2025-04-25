@@ -37,6 +37,7 @@ import (
 	"github.com/supabase/cli/internal/inspect/total_table_sizes"
 	"github.com/supabase/cli/internal/inspect/unused_indexes"
 	"github.com/supabase/cli/internal/inspect/vacuum_stats"
+	"github.com/supabase/cli/internal/migration/list"
 )
 
 var (
@@ -310,7 +311,8 @@ func printReportSummary(outDir string) error {
 	}
 	defer db.Close()
 
-	fmt.Println("Report Summary:")
+	// Build report summary table
+	table := "NAME|STATUS\n|-|-|\n"
 	entries, err := os.ReadDir(outDir)
 	if err != nil {
 		return err
@@ -346,7 +348,7 @@ func printReportSummary(outDir string) error {
 				status = matched.Fail
 			}
 		}
-		fmt.Printf("%-30s %s\n", name, status)
+		table += fmt.Sprintf("|`%s`|`%s`|\n", name, status)
 	}
-	return nil
+	return list.RenderTable(table)
 }
