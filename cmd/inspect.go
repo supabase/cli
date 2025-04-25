@@ -1,16 +1,13 @@
 package cmd
 
 import (
-	"encoding/csv"
+	"database/sql"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -20,6 +17,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 
+	_ "github.com/mithrandie/csvq-driver"
 	"github.com/pelletier/go-toml/v2"
 	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/inspect/calls"
@@ -239,12 +237,12 @@ var (
 type Rule struct {
 	PatternRegex string         `toml:"pattern_regex,omitempty"`
 	Regex        *regexp.Regexp `toml:"-"`
-	Name         string         `toml:"name"`
+	Query        string         `toml:"query"`
+	Pass         string         `toml:"pass"`
+	Fail         string         `toml:"fail"`
+	Column       string         `toml:"column"`
+	Threshold    string         `toml:"threshold"`
 	Type         string         `toml:"type"`
-	Column       string         `toml:"column,omitempty"`
-	Threshold    string         `toml:"threshold,omitempty"`
-	Pass         string         `toml:"pass,omitempty"`
-	Fail         string         `toml:"fail,omitempty"`
 }
 
 // Config holds all rules
@@ -305,29 +303,24 @@ func printReportSummary(outDir string) error {
 			cfg.Rules[i].Regex = re
 		}
 	}
+	// Open csvq database rooted at the output directory
+	db, err := sql.Open("csvq", outDir)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
 	fmt.Println("Report Summary:")
 	entries, err := os.ReadDir(outDir)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%-30s %s\n", "File", "Status")
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".csv") {
 			continue
 		}
 		name := entry.Name()
-		path := filepath.Join(outDir, name)
-		f, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		reader := csv.NewReader(f)
-		headers, err := reader.Read()
-		if err != nil && err != io.EOF {
-			f.Close()
-			return err
-		}
-		// find rule
+		// find matching rule
 		var matched *Rule
 		for i := range cfg.Rules {
 			r := &cfg.Rules[i]
@@ -337,115 +330,22 @@ func printReportSummary(outDir string) error {
 			}
 		}
 		status := "--"
-		if matched != nil {
-			status = matched.Fail
-			switch matched.Name {
-			case "empty":
-				filelen, err := reader.ReadAll()
-				if err != nil {
-					f.Close()
-					return err
-				}
-				if len(filelen) <= 1 {
-					status = matched.Pass
-				}
-			case "above_threshold":
-				idx := -1
-				for i, h := range headers {
-					if h == matched.Column {
-						idx = i
-						break
-					}
-				}
+		if matched != nil && matched.Query != "" {
+			// Run the rule query against the CSV via csvq
+			// table := strings.TrimSuffix(name, ".csv")
+			q := fmt.Sprintf(matched.Query, name)
+			row := db.QueryRow(q)
+			var ok bool
 
-				for {
-					rec, err := reader.Read()
-					if err == io.EOF {
-						break
-					}
-					if err != nil {
-						f.Close()
-						return err
-					}
-					if matched.Type == "time" {
-						thr, _ := time.ParseDuration(matched.Threshold)
-						parts := strings.Split(rec[idx], ":")
-						if len(parts) == 3 {
-							h, _ := strconv.Atoi(parts[0])
-							m, _ := strconv.Atoi(parts[1])
-							s, _ := strconv.Atoi(parts[2])
-							dur := time.Duration(h)*time.Hour + time.Duration(m)*time.Minute + time.Duration(s)*time.Second
-							if dur > thr {
-								status = matched.Pass
-								break
-							}
-						}
-					} else {
-						var val, thr float64
-						if val, err = strconv.ParseFloat(rec[idx], 64); err != nil {
-							f.Close()
-							return err
-						}
-						if thr, err = strconv.ParseFloat(matched.Threshold, 64); err != nil {
-							f.Close()
-							return err
-						}
-						if val > thr {
-							status = matched.Pass
-							break
-						}
-					}
-				}
-
-			case "below_threshold":
-				idx := -1
-				for i, h := range headers {
-					if h == matched.Column {
-						idx = i
-						break
-					}
-				}
-				for {
-					rec, err := reader.Read()
-					if err == io.EOF {
-						break
-					}
-					if err != nil {
-						f.Close()
-						return err
-					}
-					if matched.Type == "time" {
-						thr, _ := time.ParseDuration(matched.Threshold)
-						parts := strings.Split(rec[idx], ":")
-						if len(parts) == 3 {
-							h, _ := strconv.Atoi(parts[0])
-							m, _ := strconv.Atoi(parts[1])
-							s, _ := strconv.Atoi(parts[2])
-							dur := time.Duration(h)*time.Hour + time.Duration(m)*time.Minute + time.Duration(s)*time.Second
-							if dur < thr {
-								status = matched.Pass
-								break
-							}
-						}
-					} else {
-						var val, thr float64
-						if val, err = strconv.ParseFloat(rec[idx], 64); err != nil {
-							f.Close()
-							return err
-						}
-						if thr, err = strconv.ParseFloat(matched.Threshold, 64); err != nil {
-							f.Close()
-							return err
-						}
-						if val < thr {
-							status = matched.Pass
-							break
-						}
-					}
-				}
+			if err := row.Scan(&ok); err != nil {
+				println(err.Error())
+				status = "ERR"
+			} else if ok {
+				status = matched.Pass
+			} else {
+				status = matched.Fail
 			}
 		}
-		f.Close()
 		fmt.Printf("%-30s %s\n", name, status)
 	}
 	return nil

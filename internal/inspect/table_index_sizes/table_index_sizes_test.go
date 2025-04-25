@@ -29,7 +29,7 @@ func TestTableIndexSizesCommand(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(TableIndexSizesQuery, reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
-				Table:      "public.test_table",
+				Name:       "public.test_table",
 				Index_size: "3GB",
 			})
 		// Run test

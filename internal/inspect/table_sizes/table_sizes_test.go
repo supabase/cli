@@ -29,9 +29,8 @@ func TestTableSizesCommand(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(TableSizesQuery, reset.LikeEscapeSchema(utils.PgSchemas)).
 			Reply("SELECT 1", Result{
-				Schema: "schema",
-				Name:   "test_table",
-				Size:   "3GB",
+				Name: "public.test_table",
+				Size: "3GB",
 			})
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)

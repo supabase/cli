@@ -1,6 +1,5 @@
 SELECT
-  n.nspname AS schema,
-  c.relname AS name,
+  n.nspname || '.' || c.relname AS name,
   pg_size_pretty(pg_total_relation_size(c.oid)) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)

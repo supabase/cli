@@ -29,8 +29,7 @@ func TestTableRecordCountsCommand(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(TableRecordCountsQuery, reset.LikeEscapeSchema(utils.PgSchemas)).
 			Reply("SELECT 1", Result{
-				Schema:          "public",
-				Name:            "test_table",
+				Name:            "public.test_table",
 				Estimated_count: 100,
 			})
 		// Run test

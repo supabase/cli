@@ -2,16 +2,28 @@
 
 [[rule]]
 pattern_regex = "^locks_.*$"
+query = "SELECT count(*) > 0 AS ok FROM `%s` WHERE age > '00:02:00'"
 name      = "above_threshold"
 type = "time"
-column    = "age"
-threshold = "2m"
+column    = "ok"
+pass     = "✔"
+fail     = "??"
+
+[[rule]]
+pattern_regex = "^locks_.*$"
+query = "SELECT count(granted) > 0 AS ok FROM `%s` WHERE granted = 'f'"
+name      = "above_threshold"
+type = "time"
+column    = "ok"
 pass     = "??"
 fail     = "✔"
 
+
 [[rule]]
-pattern_regex = "^(blocking|calls|unused_indexes|long_running_queries)_.*\\.csv$"
+pattern_regex = "^(blocking|calls|unused_indexes|long_running_queries|outliers)_.*\\.csv$"
+query = "select count(*) = 0 as ok from `%s`"
 type          = "empty"
+column        = "ok"
 pass          = "✔"
 fail          = "??"
 
@@ -19,7 +31,7 @@ fail          = "??"
 [[rule]]
 pattern_regex = "^cache_.*$"
 name      = "below_threshold"
-threshold = "0.94"
-column    = "ratio"
+query = "select count(*) > 0 AS ok from `%s` where ratio < 0.94"
+column    = "ok"
 pass     = "✔"
 fail     = "??"

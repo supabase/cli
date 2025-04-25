@@ -19,7 +19,7 @@ import (
 var TableIndexSizesQuery string
 
 type Result struct {
-	Table      string
+	Name       string
 	Index_size string
 }
 
@@ -40,7 +40,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 
 	table := "|Table|Index size|\n|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%s`|\n", r.Table, r.Index_size)
+		table += fmt.Sprintf("|`%s`|`%s`|\n", r.Name, r.Index_size)
 	}
 	return list.RenderTable(table)
 }

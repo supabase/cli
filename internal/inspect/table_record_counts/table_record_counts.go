@@ -19,7 +19,6 @@ import (
 var TableRecordCountsQuery string
 
 type Result struct {
-	Schema          string
 	Name            string
 	Estimated_count int64
 }
@@ -39,9 +38,9 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "Schema|Table|Estimated count|\n|-|-|-|\n"
+	table := "|Table|Estimated count|\n|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%s`|`%d`|\n", r.Schema, r.Name, r.Estimated_count)
+		table += fmt.Sprintf("|`%s`|`%d`|\n", r.Name, r.Estimated_count)
 	}
 	return list.RenderTable(table)
 }
