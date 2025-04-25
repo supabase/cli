@@ -31,7 +31,7 @@ func TestLocksCommand(t *testing.T) {
 				Relname:       "rel",
 				Transactionid: "9301",
 				Granted:       true,
-				Query:         "select 1",
+				Stmt:          "select 1",
 				Age:           "300ms",
 			})
 		// Run test
