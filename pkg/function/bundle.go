@@ -29,8 +29,13 @@ func NewNativeBundler(tempDir string, fsys fs.FS) EszipBundler {
 	}
 }
 
-// Use a package private variable to allow testing without gosec complaining about G204
-var edgeRuntimeBin = "edge-runtime"
+var (
+	// Use a package private variable to allow testing without gosec complaining about G204
+	edgeRuntimeBin = "edge-runtime"
+	BundleFlags    = []string{
+		"--decorator", "tc39",
+	}
+)
 
 func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) (api.FunctionDeployMetadata, error) {
 	meta := NewMetadata(slug, entrypoint, importMap, staticFiles)
@@ -43,6 +48,7 @@ func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	for _, staticFile := range staticFiles {
 		args = append(args, "--static", staticFile)
 	}
+	args = append(args, BundleFlags...)
 	cmd := exec.CommandContext(ctx, edgeRuntimeBin, args...)
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
