@@ -1,0 +1,25 @@
+# Rules to validate CSV report files
+
+[[rule]]
+pattern_regex = "^locks_.*$"
+name      = "above_threshold"
+type = "time"
+column    = "age"
+threshold = "2m"
+pass     = "??"
+fail     = "✔"
+
+[[rule]]
+pattern_regex = "^(blocking|calls|unused_indexes|long_running_queries)_.*\\.csv$"
+type          = "empty"
+pass          = "✔"
+fail          = "??"
+
+
+[[rule]]
+pattern_regex = "^cache_.*$"
+name      = "below_threshold"
+threshold = "0.94"
+column    = "ratio"
+pass     = "✔"
+fail     = "??"

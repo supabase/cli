@@ -1,10 +1,16 @@
 package cmd
 
 import (
+	"encoding/csv"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -14,6 +20,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 
+	"github.com/pelletier/go-toml/v2"
 	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/inspect/calls"
 	"github.com/supabase/cli/internal/inspect/index_sizes"
@@ -218,19 +225,32 @@ var (
 		Short: "Generate a CSV output for all inspect commands",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			if len(outputDir) == 0 {
-				defaultPath := filepath.Join(utils.CurrentDirAbs, "report")
-				title := fmt.Sprintf("Enter a directory to save output files (or leave blank to use %s): ", utils.Bold(defaultPath))
-				if dir, err := utils.NewConsole().PromptText(ctx, title); err != nil {
-					return err
-				} else if len(dir) == 0 {
-					outputDir = defaultPath
-				}
+			if err := inspect.Report(ctx, outputDir, flags.DbConfig, afero.NewOsFs()); err != nil {
+				return err
 			}
-			return inspect.Report(ctx, outputDir, flags.DbConfig, afero.NewOsFs())
+			return printReportSummary(outputDir)
 		},
 	}
 )
+
+// Load rules file at runtime (tools/inspect_rules.toml)
+
+// Rule defines a validation rule for a CSV file
+type Rule struct {
+	PatternRegex string         `toml:"pattern_regex,omitempty"`
+	Regex        *regexp.Regexp `toml:"-"`
+	Name         string         `toml:"name"`
+	Type         string         `toml:"type"`
+	Column       string         `toml:"column,omitempty"`
+	Threshold    string         `toml:"threshold,omitempty"`
+	Pass         string         `toml:"pass,omitempty"`
+	Fail         string         `toml:"fail,omitempty"`
+}
+
+// Config holds all rules
+type Config struct {
+	Rules []Rule `toml:"rule"`
+}
 
 func init() {
 	inspectFlags := inspectCmd.PersistentFlags()
@@ -262,4 +282,171 @@ func init() {
 	reportCmd.Flags().StringVar(&outputDir, "output-dir", "", "Path to save CSV files in")
 	inspectCmd.AddCommand(reportCmd)
 	rootCmd.AddCommand(inspectCmd)
+}
+
+func printReportSummary(outDir string) error {
+	// Load rules from tools/inspect_rules.toml
+	data, err := os.ReadFile(filepath.Join(utils.CurrentDirAbs, "tools", "inspect_rules.toml"))
+	if err != nil {
+		return err
+	}
+	var cfg Config
+	if err := toml.Unmarshal(data, &cfg); err != nil {
+		return err
+	}
+	// Compile regex for each rule
+	for i := range cfg.Rules {
+		raw := cfg.Rules[i].PatternRegex
+		if raw != "" {
+			re, err := regexp.Compile(raw)
+			if err != nil {
+				return fmt.Errorf("invalid regex %q: %w", raw, err)
+			}
+			cfg.Rules[i].Regex = re
+		}
+	}
+	fmt.Println("Report Summary:")
+	entries, err := os.ReadDir(outDir)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%-30s %s\n", "File", "Status")
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".csv") {
+			continue
+		}
+		name := entry.Name()
+		path := filepath.Join(outDir, name)
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		reader := csv.NewReader(f)
+		headers, err := reader.Read()
+		if err != nil && err != io.EOF {
+			f.Close()
+			return err
+		}
+		// find rule
+		var matched *Rule
+		for i := range cfg.Rules {
+			r := &cfg.Rules[i]
+			if r.Regex != nil && r.Regex.MatchString(name) {
+				matched = r
+				break
+			}
+		}
+		status := "--"
+		if matched != nil {
+			status = matched.Fail
+			switch matched.Name {
+			case "empty":
+				filelen, err := reader.ReadAll()
+				if err != nil {
+					f.Close()
+					return err
+				}
+				if len(filelen) <= 1 {
+					status = matched.Pass
+				}
+			case "above_threshold":
+				idx := -1
+				for i, h := range headers {
+					if h == matched.Column {
+						idx = i
+						break
+					}
+				}
+
+				for {
+					rec, err := reader.Read()
+					if err == io.EOF {
+						break
+					}
+					if err != nil {
+						f.Close()
+						return err
+					}
+					if matched.Type == "time" {
+						thr, _ := time.ParseDuration(matched.Threshold)
+						parts := strings.Split(rec[idx], ":")
+						if len(parts) == 3 {
+							h, _ := strconv.Atoi(parts[0])
+							m, _ := strconv.Atoi(parts[1])
+							s, _ := strconv.Atoi(parts[2])
+							dur := time.Duration(h)*time.Hour + time.Duration(m)*time.Minute + time.Duration(s)*time.Second
+							if dur > thr {
+								status = matched.Pass
+								break
+							}
+						}
+					} else {
+						var val, thr float64
+						if val, err = strconv.ParseFloat(rec[idx], 64); err != nil {
+							f.Close()
+							return err
+						}
+						if thr, err = strconv.ParseFloat(matched.Threshold, 64); err != nil {
+							f.Close()
+							return err
+						}
+						if val > thr {
+							status = matched.Pass
+							break
+						}
+					}
+				}
+
+			case "below_threshold":
+				idx := -1
+				for i, h := range headers {
+					if h == matched.Column {
+						idx = i
+						break
+					}
+				}
+				for {
+					rec, err := reader.Read()
+					if err == io.EOF {
+						break
+					}
+					if err != nil {
+						f.Close()
+						return err
+					}
+					if matched.Type == "time" {
+						thr, _ := time.ParseDuration(matched.Threshold)
+						parts := strings.Split(rec[idx], ":")
+						if len(parts) == 3 {
+							h, _ := strconv.Atoi(parts[0])
+							m, _ := strconv.Atoi(parts[1])
+							s, _ := strconv.Atoi(parts[2])
+							dur := time.Duration(h)*time.Hour + time.Duration(m)*time.Minute + time.Duration(s)*time.Second
+							if dur < thr {
+								status = matched.Pass
+								break
+							}
+						}
+					} else {
+						var val, thr float64
+						if val, err = strconv.ParseFloat(rec[idx], 64); err != nil {
+							f.Close()
+							return err
+						}
+						if thr, err = strconv.ParseFloat(matched.Threshold, 64); err != nil {
+							f.Close()
+							return err
+						}
+						if val < thr {
+							status = matched.Pass
+							break
+						}
+					}
+				}
+			}
+		}
+		f.Close()
+		fmt.Printf("%-30s %s\n", name, status)
+	}
+	return nil
 }
