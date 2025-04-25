@@ -50,7 +50,7 @@ func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	}
 	hostOutputPath := filepath.Join(hostOutputDir, "output.eszip")
 	// Create exec command
-	cmd := []string{"bundle", "--entrypoint", utils.ToDockerPath(entrypoint), "--output", utils.ToDockerPath(hostOutputPath), "--decorator", "tc39"}
+	cmd := []string{"bundle", "--entrypoint", utils.ToDockerPath(entrypoint), "--output", utils.ToDockerPath(hostOutputPath)}
 	if len(importMap) > 0 {
 		cmd = append(cmd, "--import-map", utils.ToDockerPath(importMap))
 	}
@@ -60,6 +60,7 @@ func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	if viper.GetBool("DEBUG") {
 		cmd = append(cmd, "--verbose")
 	}
+	cmd = append(cmd, function.BundleFlags...)
 
 	env := []string{}
 	if custom_registry := os.Getenv("NPM_CONFIG_REGISTRY"); custom_registry != "" {
