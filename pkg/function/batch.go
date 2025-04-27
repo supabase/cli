@@ -84,10 +84,15 @@ OUTER:
 		policy.Reset()
 	}
 	if len(toUpdate) > 1 {
-		if resp, err := s.client.V1BulkUpdateFunctionsWithResponse(ctx, s.project, toUpdate); err != nil {
-			return errors.Errorf("failed to bulk update: %w", err)
-		} else if resp.JSON200 == nil {
-			return errors.Errorf("unexpected bulk update status %d: %s", resp.StatusCode(), string(resp.Body))
+		if err := backoff.Retry(func() error {
+			if resp, err := s.client.V1BulkUpdateFunctionsWithResponse(ctx, s.project, toUpdate); err != nil {
+				return errors.Errorf("failed to bulk update: %w", err)
+			} else if resp.JSON200 == nil {
+				return errors.Errorf("unexpected bulk update status %d: %s", resp.StatusCode(), string(resp.Body))
+			}
+			return nil
+		}, policy); err != nil {
+			return err
 		}
 	}
 	return nil
