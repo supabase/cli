@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -22,19 +23,28 @@ const (
 )
 
 func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig config.FunctionConfig, filter ...func(string) bool) error {
-	var result []api.FunctionResponse
-	if resp, err := s.client.V1ListAllFunctionsWithResponse(ctx, s.project); err != nil {
-		return errors.Errorf("failed to list functions: %w", err)
-	} else if resp.JSON200 == nil {
-		return errors.Errorf("unexpected list functions status %d: %s", resp.StatusCode(), string(resp.Body))
-	} else {
-		result = *resp.JSON200
+	policy := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), maxRetries), ctx)
+	result, err := backoff.RetryWithData(func() ([]api.FunctionResponse, error) {
+		resp, err := s.client.V1ListAllFunctionsWithResponse(ctx, s.project)
+		if err != nil {
+			return nil, errors.Errorf("failed to list functions: %w", err)
+		} else if resp.JSON200 == nil {
+			err = errors.Errorf("unexpected list functions status %d: %s", resp.StatusCode(), string(resp.Body))
+			if resp.StatusCode() < http.StatusInternalServerError {
+				err = &backoff.PermanentError{Err: err}
+			}
+			return nil, err
+		}
+		return *resp.JSON200, nil
+	}, policy)
+	if err != nil {
+		return err
 	}
+	policy.Reset()
 	exists := make(map[string]struct{}, len(result))
 	for _, f := range result {
 		exists[f.Slug] = struct{}{}
 	}
-	policy := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), maxRetries), ctx)
 	var toUpdate []api.BulkUpdateFunctionBody
 OUTER:
 	for slug, function := range functionConfig {
