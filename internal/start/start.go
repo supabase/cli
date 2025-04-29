@@ -833,7 +833,7 @@ EOF
 					"ANON_KEY=" + utils.Config.Auth.AnonKey.Value,
 					"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
 					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
-					fmt.Sprintf("AUTH_JWT_JWKS=%s", jwks),
+					fmt.Sprintf("JWT_JWKS=%s", jwks),
 					fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:%d/%s", dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
 					fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
 					"STORAGE_BACKEND=file",
