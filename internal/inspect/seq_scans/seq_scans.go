@@ -19,8 +19,8 @@ import (
 var SeqScansQuery string
 
 type Result struct {
-	Name  string
-	Count int64
+	Name     string
+	SeqScans int64
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -38,9 +38,9 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "|Name|Count|\n|-|-|\n"
+	table := "|Name|Sequential_Scans|\n|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%d`|\n", r.Name, r.Count)
+		table += fmt.Sprintf("|`%s`|`%d`|\n", r.Name, r.SeqScans)
 	}
 	return list.RenderTable(table)
 }

@@ -29,8 +29,8 @@ func TestSequentialScansCommand(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(SeqScansQuery, reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
-				Name:  "test_table",
-				Count: 99999,
+				Name:     "test_table",
+				SeqScans: 99999,
 			})
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)

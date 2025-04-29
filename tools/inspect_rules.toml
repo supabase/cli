@@ -1,37 +1,46 @@
 # Rules to validate CSV report files
 
 [[rule]]
-pattern_regex = "^locks_.*$"
-query = "SELECT count(*) > 0 AS ok FROM `%s` WHERE age > '00:02:00'"
-name      = "above_threshold"
-type = "time"
-column    = "ok"
+query = "SELECT count(*) = 0 AS ok FROM `locks.csv` WHERE age > '00:02:00'"
+name      = "No old locks"
 pass     = "✔"
-fail     = "??"
+fail     = "There is at least one lock older than 2 minutes"
 
 [[rule]]
-pattern_regex = "^locks_.*$"
-query = "SELECT count(granted) > 0 AS ok FROM `%s` WHERE granted = 'f'"
-name      = "above_threshold"
-type = "time"
-column    = "ok"
-pass     = "??"
-fail     = "✔"
+query = "SELECT count(*) = 0 AS ok FROM `locks.csv` WHERE granted = 'f'"
+name      = "No ungranted locks"
+pass     = "✔"
+fail     = "There is at least one ungranted lock"
 
 
 [[rule]]
-pattern_regex = "^(blocking|calls|unused_indexes|long_running_queries|outliers)_.*\\.csv$"
-query = "select count(*) = 0 as ok from `%s`"
-type          = "empty"
-column        = "ok"
+query = "select count(*) = 0 as ok from `unused_indexes.csv`"
 pass          = "✔"
-fail          = "??"
+fail          = "There is at least one unused index"
+name          = "No unused indexes"
 
 
 [[rule]]
-pattern_regex = "^cache_.*$"
-name      = "below_threshold"
-query = "select count(*) > 0 AS ok from `%s` where ratio < 0.94"
-column    = "ok"
+name      = "Check cache hit is within acceptable bounds"
+query = "select count(*) = 0 AS ok from `cache.csv` where ratio < 0.94"
 pass     = "✔"
-fail     = "??"
+fail     = "There is at least one table with a cache hit ratio below 94%"
+
+[[rule]]
+query = "SELECT count(*) = 0 AS ok FROM `seq_scans.csv` s  JOIN `table_record_counts.csv` t ON s.name = t.name WHERE t.estimated_count > 1000 AND s.seq_scans > t.estimated_count * 0.1;"
+name = "No large tables with sequential scans more than 10% of rows"
+pass = "✔"
+fail = "At least one table is showing sequential scans more than 10% of total row count"
+
+
+[[rule]]
+query = "SELECT count(*) = 0 AS ok FROM `vacuum_stats.csv` s WHERE s.expect_autovacuum = 'yes' and s.rowcount > 1000;"
+name = "No large tables waiting on autovacuum"
+pass = "✔"
+fail = "At least one table is waiting on autovacuum"
+
+[[rule]]
+query = "SELECT count(*) = 0 AS ok FROM `vacuum_stats.csv` s WHERE s.rowcount > 0 AND (s.last_autovacuum IS NULL OR s.last_vacuum IS NULL);"
+name = "No tables yet to be vacuumed"
+pass = "✔"
+fail = "At least one table has never had autovacuum or vacuum run on it"

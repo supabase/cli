@@ -6,8 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"regexp"
-	"strings"
+	"time"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -236,14 +235,10 @@ var (
 
 // Rule defines a validation rule for a CSV file
 type Rule struct {
-	PatternRegex string         `toml:"pattern_regex,omitempty"`
-	Regex        *regexp.Regexp `toml:"-"`
-	Query        string         `toml:"query"`
-	Pass         string         `toml:"pass"`
-	Fail         string         `toml:"fail"`
-	Column       string         `toml:"column"`
-	Threshold    string         `toml:"threshold"`
-	Type         string         `toml:"type"`
+	Query string `toml:"query"`
+	Pass  string `toml:"pass"`
+	Fail  string `toml:"fail"`
+	Name  string `toml:"name"`
 }
 
 // Config holds all rules
@@ -284,6 +279,9 @@ func init() {
 }
 
 func printReportSummary(outDir string) error {
+	// point to the date-based subdirectory
+	date := time.Now().Format("2006-01-02")
+	outDir = filepath.Join(outDir, date)
 	// Load rules from tools/inspect_rules.toml
 	data, err := os.ReadFile(filepath.Join(utils.CurrentDirAbs, "tools", "inspect_rules.toml"))
 	if err != nil {
@@ -293,17 +291,6 @@ func printReportSummary(outDir string) error {
 	if err := toml.Unmarshal(data, &cfg); err != nil {
 		return err
 	}
-	// Compile regex for each rule
-	for i := range cfg.Rules {
-		raw := cfg.Rules[i].PatternRegex
-		if raw != "" {
-			re, err := regexp.Compile(raw)
-			if err != nil {
-				return fmt.Errorf("invalid regex %q: %w", raw, err)
-			}
-			cfg.Rules[i].Regex = re
-		}
-	}
 	// Open csvq database rooted at the output directory
 	db, err := sql.Open("csvq", outDir)
 	if err != nil {
@@ -312,41 +299,24 @@ func printReportSummary(outDir string) error {
 	defer db.Close()
 
 	// Build report summary table
-	table := "NAME|STATUS\n|-|-|\n"
-	entries, err := os.ReadDir(outDir)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".csv") {
-			continue
-		}
-		name := entry.Name()
-		// find matching rule
-		var matched *Rule
-		for i := range cfg.Rules {
-			r := &cfg.Rules[i]
-			if r.Regex != nil && r.Regex.MatchString(name) {
-				matched = r
-				break
-			}
-		}
-		status := "--"
-		if matched != nil && matched.Query != "" {
-			// Run the rule query against the CSV via csvq
-			// table := strings.TrimSuffix(name, ".csv")
-			q := fmt.Sprintf(matched.Query, name)
-			row := db.QueryRow(q)
-			var ok bool
+	table := "RULE|STATUS\n|-|-|\n"
 
-			if err := row.Scan(&ok); err != nil {
-				println(err.Error())
-				status = "ERR"
-			} else if ok {
-				status = matched.Pass
-			} else {
-				status = matched.Fail
-			}
+	// find matching rule
+
+	for i := range cfg.Rules {
+		r := &cfg.Rules[i]
+		name := r.Name
+		status := "--"
+		row := db.QueryRow(r.Query)
+		var ok bool
+
+		if err := row.Scan(&ok); err != nil {
+			println(err.Error())
+			status = "ERR"
+		} else if ok {
+			status = r.Pass
+		} else {
+			status = r.Fail
 		}
 		table += fmt.Sprintf("|`%s`|`%s`|\n", name, status)
 	}
