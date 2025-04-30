@@ -299,7 +299,7 @@ func printReportSummary(outDir string) error {
 	defer db.Close()
 
 	// Build report summary table
-	table := "RULE|STATUS\n|-|-|\n"
+	table := "RULE|STATUS|MATCHES\n|-|-|-|\n"
 
 	// find matching rule
 
@@ -308,17 +308,18 @@ func printReportSummary(outDir string) error {
 		name := r.Name
 		status := "--"
 		row := db.QueryRow(r.Query)
-		var ok bool
+		var match string
 
-		if err := row.Scan(&ok); err != nil {
-			println(err.Error())
-			status = "ERR"
-		} else if ok {
-			status = r.Pass
+		if err := row.Scan(&match); err != nil {
+			if err == sql.ErrNoRows {
+				status = r.Pass
+			} else {
+				status = err.Error()
+			}
 		} else {
 			status = r.Fail
 		}
-		table += fmt.Sprintf("|`%s`|`%s`|\n", name, status)
+		table += fmt.Sprintf("|`%s`|`%s`|`%s`|\n", name, status, match)
 	}
 	return list.RenderTable(table)
 }
