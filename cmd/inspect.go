@@ -308,7 +308,7 @@ func printReportSummary(outDir string) error {
 		name := r.Name
 		status := "--"
 		row := db.QueryRow(r.Query)
-		var match string
+		var match sql.NullString
 
 		if err := row.Scan(&match); err != nil {
 			if err == sql.ErrNoRows {
@@ -317,9 +317,17 @@ func printReportSummary(outDir string) error {
 				status = err.Error()
 			}
 		} else {
-			status = r.Fail
+			if !match.Valid || match.String == "" {
+				status = r.Pass
+			} else {
+				status = r.Fail
+			}
 		}
-		table += fmt.Sprintf("|`%s`|`%s`|`%s`|\n", name, status, match)
+		matchStr := ""
+		if match.Valid {
+			matchStr = match.String
+		}
+		table += fmt.Sprintf("|`%s`|`%s`|`%s`|\n", name, status, matchStr)
 	}
 	return list.RenderTable(table)
 }
