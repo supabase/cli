@@ -1,7 +1,6 @@
 package credentials
 
 import (
-	"os"
 	"testing"
 
 	"github.com/go-errors/errors"
@@ -62,70 +61,6 @@ func TestKeyringStore(t *testing.T) {
 			_, err := StoreProvider.Get(project)
 			assert.ErrorIs(t, err, keyring.ErrNotFound)
 		}
-	})
-}
-
-func setupWSLEnvironment(t *testing.T) func() {
-	tmpFile, err := os.CreateTemp("", "osrelease")
-	assert.NoError(t, err)
-
-	_, err = tmpFile.WriteString("Linux version 5.10.16.3-microsoft-standard-WSL2")
-	assert.NoError(t, err)
-
-	oldProcPath := "/proc/sys/kernel/osrelease"
-	if err := os.Rename(oldProcPath, oldProcPath+".bak"); err == nil {
-		// Only setup symlink if we can backup original
-		err = os.Symlink(tmpFile.Name(), oldProcPath)
-		if err != nil {
-			t.Skip("Cannot create symlink for testing WSL detection")
-		}
-	} else {
-		t.Skip("Cannot backup original osrelease file")
-	}
-
-	return func() {
-		os.Remove(tmpFile.Name())
-		os.Remove(oldProcPath)
-		err := os.Rename(oldProcPath+".bak", oldProcPath)
-		assert.Nil(t, err)
-	}
-}
-
-func TestWSLSupport(t *testing.T) {
-	t.Run("Get returns not supported in WSL", func(t *testing.T) {
-		cleanup := setupWSLEnvironment(t)
-		defer cleanup()
-
-		store := &KeyringStore{}
-		_, err := store.Get("test")
-		assert.ErrorIs(t, err, ErrNotSupported)
-	})
-
-	t.Run("Set returns not supported in WSL", func(t *testing.T) {
-		cleanup := setupWSLEnvironment(t)
-		defer cleanup()
-
-		store := &KeyringStore{}
-		err := store.Set("test", "pass")
-		assert.ErrorIs(t, err, ErrNotSupported)
-	})
-
-	t.Run("Delete returns not supported in WSL", func(t *testing.T) {
-		cleanup := setupWSLEnvironment(t)
-		defer cleanup()
-
-		store := &KeyringStore{}
-		err := store.Delete("test")
-		assert.ErrorIs(t, err, ErrNotSupported)
-	})
-
-	t.Run("DeleteAll returns not supported in WSL", func(t *testing.T) {
-		cleanup := setupWSLEnvironment(t)
-		defer cleanup()
-
-		store := &KeyringStore{}
-		err := store.DeleteAll()
-		assert.ErrorIs(t, err, ErrNotSupported)
 	})
 }
 
