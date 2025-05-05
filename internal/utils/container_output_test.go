@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"sync"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -146,20 +147,25 @@ func TestProcessPullOutput(t *testing.T) {
 
 type MockProgram struct {
 	handler func(tea.Msg)
+	mu      sync.Mutex // Add mutex for thread safety
 }
 
 func NewMockProgram(handler func(tea.Msg)) *MockProgram {
-	return &MockProgram{handler: handler}
-}
-
-func (m *MockProgram) Start() error {
-	return nil
+	return &MockProgram{
+		handler: handler,
+	}
 }
 
 func (m *MockProgram) Send(msg tea.Msg) {
 	if m.handler != nil {
+		m.mu.Lock()
 		m.handler(msg)
+		m.mu.Unlock()
 	}
+}
+
+func (m *MockProgram) Start() error {
+	return nil
 }
 
 func (m *MockProgram) Quit() {}
