@@ -114,7 +114,8 @@ func TestProcessPullOutput(t *testing.T) {
 		enc := json.NewEncoder(w)
 		go func() {
 			for _, msg := range messages {
-				enc.Encode(msg)
+				err := enc.Encode(msg)
+				assert.Nil(t, err)
 			}
 			w.Close()
 		}()
@@ -161,6 +162,4 @@ func (m *MockProgram) Send(msg tea.Msg) {
 	}
 }
 
-func (m *MockProgram) Quit() {
-	return
-}
+func (m *MockProgram) Quit() {}

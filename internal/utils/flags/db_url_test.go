@@ -17,11 +17,12 @@ func TestParseDatabaseConfig(t *testing.T) {
 	t.Run("parses direct connection from db-url flag", func(t *testing.T) {
 		flagSet := pflag.NewFlagSet("test", pflag.ContinueOnError)
 		flagSet.String("db-url", "postgres://postgres:password@localhost:5432/postgres", "")
-		flagSet.Set("db-url", "postgres://admin:secret@db.example.com:6432/app")
+		err := flagSet.Set("db-url", "postgres://admin:secret@db.example.com:6432/app")
+		assert.Nil(t, err)
 
 		fsys := afero.NewMemMapFs()
 
-		err := ParseDatabaseConfig(flagSet, fsys)
+		err = ParseDatabaseConfig(flagSet, fsys)
 
 		assert.NoError(t, err)
 		assert.Equal(t, "db.example.com", DbConfig.Host)
@@ -32,10 +33,10 @@ func TestParseDatabaseConfig(t *testing.T) {
 	})
 
 	t.Run("parses local connection", func(t *testing.T) {
-
 		flagSet := pflag.NewFlagSet("test", pflag.ContinueOnError)
 		flagSet.Bool("local", false, "")
-		flagSet.Set("local", "true")
+		err := flagSet.Set("local", "true")
+		assert.Nil(t, err)
 
 		fsys := afero.NewMemMapFs()
 
@@ -43,7 +44,7 @@ func TestParseDatabaseConfig(t *testing.T) {
 		utils.Config.Db.Port = 54322
 		utils.Config.Db.Password = "local-password"
 
-		err := ParseDatabaseConfig(flagSet, fsys)
+		err = ParseDatabaseConfig(flagSet, fsys)
 
 		assert.NoError(t, err)
 		assert.Equal(t, "localhost", DbConfig.Host)
@@ -56,12 +57,13 @@ func TestParseDatabaseConfig(t *testing.T) {
 	t.Run("parses linked connection", func(t *testing.T) {
 		flagSet := pflag.NewFlagSet("test", pflag.ContinueOnError)
 		flagSet.Bool("linked", false, "")
-		flagSet.Set("linked", "true")
+		err := flagSet.Set("linked", "true")
+		assert.Nil(t, err)
 
 		fsys := afero.NewMemMapFs()
 
 		project := apitest.RandomProjectRef()
-		err := afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644)
+		err = afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644)
 		require.NoError(t, err)
 
 		err = ParseDatabaseConfig(flagSet, fsys)
@@ -78,7 +80,8 @@ func TestPromptPassword(t *testing.T) {
 		defer r.Close()
 		go func() {
 			defer w.Close()
-			w.Write([]byte("test-password"))
+			_, err := w.Write([]byte("test-password"))
+			assert.Nil(t, err)
 		}()
 
 		password := PromptPassword(r)
@@ -92,7 +95,8 @@ func TestPromptPassword(t *testing.T) {
 		defer r.Close()
 		go func() {
 			defer w.Close()
-			w.Write([]byte(""))
+			_, err := w.Write([]byte(""))
+			assert.Nil(t, err)
 		}()
 
 		password := PromptPassword(r)

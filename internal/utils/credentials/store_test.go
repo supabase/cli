@@ -86,7 +86,8 @@ func setupWSLEnvironment(t *testing.T) func() {
 	return func() {
 		os.Remove(tmpFile.Name())
 		os.Remove(oldProcPath)
-		os.Rename(oldProcPath+".bak", oldProcPath)
+		err := os.Rename(oldProcPath+".bak", oldProcPath)
+		assert.Nil(t, err)
 	}
 }
 
