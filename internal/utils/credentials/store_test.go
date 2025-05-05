@@ -11,7 +11,7 @@ import (
 
 func TestKeyringStore(t *testing.T) {
 	t.Run("stores and retrieves password", func(t *testing.T) {
-		defer MockInit()()
+		keyring.MockInit()
 		project := "test-project"
 		password := "test-password"
 
@@ -24,7 +24,7 @@ func TestKeyringStore(t *testing.T) {
 	})
 
 	t.Run("returns error for non-existent project", func(t *testing.T) {
-		defer MockInit()()
+		keyring.MockInit()
 		project := "non-existent"
 
 		retrieved, err := StoreProvider.Get(project)
@@ -33,7 +33,7 @@ func TestKeyringStore(t *testing.T) {
 	})
 
 	t.Run("deletes specific project password", func(t *testing.T) {
-		defer MockInit()()
+		keyring.MockInit()
 		project := "test-project"
 		password := "test-password"
 
@@ -47,7 +47,7 @@ func TestKeyringStore(t *testing.T) {
 	})
 
 	t.Run("deletes all project passwords", func(t *testing.T) {
-		defer MockInit()()
+		keyring.MockInit()
 		projects := []string{"project1", "project2"}
 
 		for _, project := range projects {
@@ -131,40 +131,32 @@ func TestWSLSupport(t *testing.T) {
 
 func TestKeyringErrors(t *testing.T) {
 	t.Run("handles Get error", func(t *testing.T) {
-		oldStore := StoreProvider
-		defer func() { StoreProvider = oldStore }()
 		mockErr := errors.New("mock error")
-		StoreProvider = &mockProvider{mockError: mockErr}
+		keyring.MockInitWithError(mockErr)
 
 		_, err := StoreProvider.Get("test")
 		assert.ErrorIs(t, err, mockErr)
 	})
 
 	t.Run("handles Set error", func(t *testing.T) {
-		oldStore := StoreProvider
-		defer func() { StoreProvider = oldStore }()
 		mockErr := errors.New("mock error")
-		StoreProvider = &mockProvider{mockError: mockErr}
+		keyring.MockInitWithError(mockErr)
 
 		err := StoreProvider.Set("test", "pass")
 		assert.ErrorIs(t, err, mockErr)
 	})
 
 	t.Run("handles Delete error", func(t *testing.T) {
-		oldStore := StoreProvider
-		defer func() { StoreProvider = oldStore }()
 		mockErr := errors.New("mock error")
-		StoreProvider = &mockProvider{mockError: mockErr}
+		keyring.MockInitWithError(mockErr)
 
 		err := StoreProvider.Delete("test")
 		assert.ErrorIs(t, err, mockErr)
 	})
 
 	t.Run("handles DeleteAll error", func(t *testing.T) {
-		oldStore := StoreProvider
-		defer func() { StoreProvider = oldStore }()
 		mockErr := errors.New("mock error")
-		StoreProvider = &mockProvider{mockError: mockErr}
+		keyring.MockInitWithError(mockErr)
 
 		err := StoreProvider.DeleteAll()
 		assert.ErrorIs(t, err, mockErr)
