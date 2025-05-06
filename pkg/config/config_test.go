@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	_ "embed"
+	"os"
 	"path"
 	"strings"
 	"testing"
@@ -523,5 +524,91 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		err := config.Load("", fsys)
 		assert.ErrorContains(t, err, `'functions[name]' expected a map, got 'string'`)
 		assert.ErrorContains(t, err, `'functions[verify_jwt]' expected a map, got 'bool'`)
+	})
+}
+
+func TestLoadEnvIfExists(t *testing.T) {
+	t.Run("returns nil when file does not exist", func(t *testing.T) {
+		err := loadEnvIfExists("nonexistent.env")
+		assert.NoError(t, err)
+	})
+	t.Run("returns raw error when file exists but is malformed and DEBUG=1", func(t *testing.T) {
+		// Set DEBUG=1
+		t.Setenv("DEBUG", "1")
+
+		// Create a temporary file with malformed content
+		tmpFile, err := os.CreateTemp("", "test-*.env")
+		require.NoError(t, err)
+		defer os.Remove(tmpFile.Name())
+
+		// Write malformed content
+		_, err = tmpFile.WriteString("[invalid]\nvalue=secret_value\n")
+		require.NoError(t, err)
+		tmpFile.Close()
+
+		// Test loading the malformed file
+		err = loadEnvIfExists(tmpFile.Name())
+		assert.Error(t, err)
+		// Should contain the raw error, including the secret value
+		assert.Contains(t, err.Error(), "unexpected character")
+		assert.Contains(t, err.Error(), "secret_value")
+	})
+	t.Run("returns error when file exists but is malformed invalid character", func(t *testing.T) {
+		// Create a temporary file with malformed content
+		tmpFile, err := os.CreateTemp("", "test-*.env")
+		require.NoError(t, err)
+		defer os.Remove(tmpFile.Name())
+
+		// Write malformed content
+		_, err = tmpFile.WriteString("[invalid]\nvalue=secret_value\n")
+		require.NoError(t, err)
+		tmpFile.Close()
+
+		// Test loading the malformed file
+		err = loadEnvIfExists(tmpFile.Name())
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to parse environment file: .env (unexpected character '[' in variable name)")
+		assert.NotContains(t, err.Error(), "secret_value")
+	})
+	t.Run("returns error when file exists but is malformed unterminated quotes", func(t *testing.T) {
+		// Create a temporary file with malformed content
+		tmpFile, err := os.CreateTemp("", "test-*.env")
+		require.NoError(t, err)
+		defer os.Remove(tmpFile.Name())
+
+		// Write malformed content
+		_, err = tmpFile.WriteString("value=\"secret_value\n")
+		require.NoError(t, err)
+		tmpFile.Close()
+
+		// Test loading the malformed file
+		err = loadEnvIfExists(tmpFile.Name())
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to parse environment file: .env (unterminated quoted value)")
+		assert.NotContains(t, err.Error(), "secret_value")
+	})
+
+	t.Run("loads valid env file successfully", func(t *testing.T) {
+		// Create a temporary file with valid content
+		tmpFile, err := os.CreateTemp("", "test-*.env")
+		require.NoError(t, err)
+		defer os.Remove(tmpFile.Name())
+
+		// Write valid content
+		_, err = tmpFile.WriteString("TEST_KEY=test_value\nANOTHER_KEY=another_value")
+		require.NoError(t, err)
+		tmpFile.Close()
+
+		// Test loading the valid file
+		err = loadEnvIfExists(tmpFile.Name())
+		assert.NoError(t, err)
+
+		// Verify environment variables were loaded
+		assert.Equal(t, "test_value", os.Getenv("TEST_KEY"))
+		assert.Equal(t, "another_value", os.Getenv("ANOTHER_KEY"))
+
+		// Clean up environment variables
+		os.Unsetenv("TEST_KEY")
+		os.Unsetenv("ANOTHER_KEY")
 	})
 }

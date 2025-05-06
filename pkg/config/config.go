@@ -929,7 +929,31 @@ func loadDefaultEnv(env string) error {
 
 func loadEnvIfExists(path string) error {
 	if err := godotenv.Load(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return errors.Errorf("failed to load %s: %w", ".env", err)
+		// If DEBUG=1, return the error as is for full debugability
+		if os.Getenv("DEBUG") == "1" {
+			return errors.Errorf("failed to load .env: %w", err)
+		}
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "unexpected character"):
+			// Try to extract the character, fallback to generic
+			start := strings.Index(msg, "unexpected character \"")
+			if start != -1 {
+				start += len("unexpected character \"")
+				end := strings.Index(msg[start:], "\"")
+				if end != -1 {
+					char := msg[start : start+end]
+					return errors.Errorf("failed to parse environment file: .env (unexpected character '%s' in variable name)", char)
+				}
+			}
+			return errors.Errorf("failed to parse environment file: .env (unexpected character in variable name)")
+		case strings.Contains(msg, "unterminated quoted value"):
+			return errors.Errorf("failed to parse environment file: .env (unterminated quoted value)")
+		case strings.Contains(msg, "\n"):
+			return errors.Errorf("failed to parse environment file: .env (syntax error)")
+		default:
+			return errors.Errorf("failed to load environment file: .env: %v", err)
+		}
 	}
 	return nil
 }
