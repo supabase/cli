@@ -929,7 +929,33 @@ func loadDefaultEnv(env string) error {
 
 func loadEnvIfExists(path string) error {
 	if err := godotenv.Load(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return errors.Errorf("failed to load %s: %w", ".env", err)
+		// If DEBUG=1, return the error as is for full debugability
+		if viper.GetBool("DEBUG") {
+			return errors.Errorf("failed to load %s: %w", path, err)
+		}
+		msg := err.Error()
+		switch {
+		case strings.HasPrefix(msg, "unexpected character"):
+			// Try to extract the character, fallback to generic
+			start := strings.Index(msg, "unexpected character \"")
+			if start != -1 {
+				start += len("unexpected character \"")
+				end := strings.Index(msg[start:], "\"")
+				if end != -1 {
+					char := msg[start : start+end]
+					return errors.Errorf("failed to parse environment file: %s (unexpected character '%s' in variable name)", path, char)
+				}
+			}
+			return errors.Errorf("failed to parse environment file: %s (unexpected character in variable name)", path)
+		case strings.HasPrefix(msg, "unterminated quoted value"):
+			return errors.Errorf("failed to parse environment file: %s (unterminated quoted value)", path)
+		// If the error message contains newlines, there is a high chance that the actual content of the
+		// dotenv file is being leaked. In such cases, we return a generic error to avoid unwanted leaks in the logs
+		case strings.Contains(msg, "\n"):
+			return errors.Errorf("failed to parse environment file: %s (syntax error)", path)
+		default:
+			return errors.Errorf("failed to load %s: %w", path, err)
+		}
 	}
 	return nil
 }
