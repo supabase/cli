@@ -954,7 +954,7 @@ func loadEnvIfExists(path string) error {
 		case strings.Contains(msg, "\n"):
 			return errors.Errorf("failed to parse environment file: %s (syntax error)", path)
 		default:
-			return errors.Errorf("failed to load environment file: %s: %v", path, err)
+			return errors.Errorf("failed to load %s: %w", path, err)
 		}
 	}
 	return nil

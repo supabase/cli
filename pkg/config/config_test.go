@@ -547,14 +547,13 @@ func TestLoadEnvIfExists(t *testing.T) {
 		// Write malformed content
 		_, err = tmpFile.WriteString("[invalid]\nvalue=secret_value\n")
 		require.NoError(t, err)
-		tmpFile.Close()
+		require.NoError(t, tmpFile.Close())
 
 		// Test loading the malformed file
 		err = loadEnvIfExists(tmpFile.Name())
-		assert.Error(t, err)
 		// Should contain the raw error, including the secret value
-		assert.Contains(t, err.Error(), "unexpected character")
-		assert.Contains(t, err.Error(), "secret_value")
+		assert.ErrorContains(t, err, "unexpected character")
+		assert.ErrorContains(t, err, "secret_value")
 	})
 	t.Run("returns error when file exists but is malformed invalid character", func(t *testing.T) {
 		// Create a temporary file with malformed content
@@ -565,12 +564,11 @@ func TestLoadEnvIfExists(t *testing.T) {
 		// Write malformed content
 		_, err = tmpFile.WriteString("[invalid]\nvalue=secret_value\n")
 		require.NoError(t, err)
-		tmpFile.Close()
+		require.NoError(t, tmpFile.Close())
 
 		// Test loading the malformed file
 		err = loadEnvIfExists(tmpFile.Name())
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), fmt.Sprintf("failed to parse environment file: %s (unexpected character '[' in variable name)", tmpFile.Name()))
+		assert.ErrorContains(t, err, fmt.Sprintf("failed to parse environment file: %s (unexpected character '[' in variable name)", tmpFile.Name()))
 		assert.NotContains(t, err.Error(), "secret_value")
 	})
 	t.Run("returns error when file exists but is malformed unterminated quotes", func(t *testing.T) {
@@ -582,12 +580,11 @@ func TestLoadEnvIfExists(t *testing.T) {
 		// Write malformed content
 		_, err = tmpFile.WriteString("value=\"secret_value\n")
 		require.NoError(t, err)
-		tmpFile.Close()
+		require.NoError(t, tmpFile.Close())
 
 		// Test loading the malformed file
 		err = loadEnvIfExists(tmpFile.Name())
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), fmt.Sprintf("failed to parse environment file: %s (unterminated quoted value)", tmpFile.Name()))
+		assert.ErrorContains(t, err, fmt.Sprintf("failed to parse environment file: %s (unterminated quoted value)", tmpFile.Name()))
 		assert.NotContains(t, err.Error(), "secret_value")
 	})
 
