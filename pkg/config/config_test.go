@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	_ "embed"
+	"fmt"
 	"os"
 	"path"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	fs "testing/fstest"
 
 	"github.com/BurntSushi/toml"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -535,6 +537,7 @@ func TestLoadEnvIfExists(t *testing.T) {
 	t.Run("returns raw error when file exists but is malformed and DEBUG=1", func(t *testing.T) {
 		// Set DEBUG=1
 		t.Setenv("DEBUG", "1")
+		viper.AutomaticEnv()
 
 		// Create a temporary file with malformed content
 		tmpFile, err := os.CreateTemp("", "test-*.env")
@@ -567,7 +570,7 @@ func TestLoadEnvIfExists(t *testing.T) {
 		// Test loading the malformed file
 		err = loadEnvIfExists(tmpFile.Name())
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to parse environment file: .env (unexpected character '[' in variable name)")
+		assert.Contains(t, err.Error(), fmt.Sprintf("failed to parse environment file: %s (unexpected character '[' in variable name)", tmpFile.Name()))
 		assert.NotContains(t, err.Error(), "secret_value")
 	})
 	t.Run("returns error when file exists but is malformed unterminated quotes", func(t *testing.T) {
@@ -584,7 +587,7 @@ func TestLoadEnvIfExists(t *testing.T) {
 		// Test loading the malformed file
 		err = loadEnvIfExists(tmpFile.Name())
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to parse environment file: .env (unterminated quoted value)")
+		assert.Contains(t, err.Error(), fmt.Sprintf("failed to parse environment file: %s (unterminated quoted value)", tmpFile.Name()))
 		assert.NotContains(t, err.Error(), "secret_value")
 	})
 
