@@ -23,7 +23,7 @@ type Result struct {
 	Relname       string
 	Transactionid string
 	Granted       bool
-	Query         string
+	Stmt          string
 	Age           string
 }
 
@@ -42,16 +42,16 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "|pid|relname|transaction id|granted|query|age|\n|-|-|-|-|-|-|\n"
+	table := "|pid|relname|transaction id|granted|stmt|age|\n|-|-|-|-|-|-|\n"
 	for _, r := range result {
 		// remove whitespace from query
 		re := regexp.MustCompile(`\s+|\r+|\n+|\t+|\v`)
-		query := re.ReplaceAllString(r.Query, " ")
+		stmt := re.ReplaceAllString(r.Stmt, " ")
 
 		// escape pipes in query
 		re = regexp.MustCompile(`\|`)
-		query = re.ReplaceAllString(query, `\|`)
-		table += fmt.Sprintf("|`%d`|`%s`|`%s`|`%t`|%s|`%s`|\n", r.Pid, r.Relname, r.Transactionid, r.Granted, query, r.Age)
+		stmt = re.ReplaceAllString(stmt, `\|`)
+		table += fmt.Sprintf("|`%d`|`%s`|`%s`|`%t`|%s|`%s`|\n", r.Pid, r.Relname, r.Transactionid, r.Granted, stmt, r.Age)
 	}
 	return list.RenderTable(table)
 }

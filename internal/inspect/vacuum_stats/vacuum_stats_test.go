@@ -30,7 +30,7 @@ func TestVacuumCommand(t *testing.T) {
 		conn.Query(VacuumStatsQuery, reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
 				Schema:               "test_schema",
-				Table:                "test_table",
+				Tbl:                  "test_table",
 				Last_vacuum:          "2021-01-01 00:00:00",
 				Last_autovacuum:      "2021-01-01 00:00:00",
 				Rowcount:             "1000",

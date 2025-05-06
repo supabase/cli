@@ -1,4 +1,4 @@
-package seq_scans
+package table_stats
 
 import (
 	"context"
@@ -20,21 +20,22 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-func TestSequentialScansCommand(t *testing.T) {
-	t.Run("inspects sequential scans", func(t *testing.T) {
-		// Setup in-memory fs
+func TestTableStatsCommand(t *testing.T) {
+	t.Run("inspects table stats", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
-		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(SeqScansQuery, reset.LikeEscapeSchema(utils.InternalSchemas)).
+
+		// Mock table sizes and index sizes
+		conn.Query(TableStatsQuery, reset.LikeEscapeSchema(utils.PgSchemas)).
 			Reply("SELECT 1", Result{
-				Name:  "test_table",
-				Count: 99999,
+				Name:                "public.test_table",
+				Table_size:          "3GB",
+				Index_size:          "1GB",
+				Estimated_row_count: 100,
 			})
-		// Run test
+
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
-		// Check error
 		assert.NoError(t, err)
 	})
 }

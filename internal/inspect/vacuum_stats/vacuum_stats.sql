@@ -20,8 +20,7 @@ WITH table_opts AS (
     table_opts
 )
 SELECT
-  vacuum_settings.nspname AS schema,
-  vacuum_settings.relname AS table,
+  vacuum_settings.nspname || '.' || vacuum_settings.relname AS name,
   coalesce(to_char(psut.last_vacuum, 'YYYY-MM-DD HH24:MI'), '') AS last_vacuum,
   coalesce(to_char(psut.last_autovacuum, 'YYYY-MM-DD HH24:MI'), '') AS last_autovacuum,
   to_char(pg_class.reltuples, '9G999G999G999') AS rowcount,

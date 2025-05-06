@@ -1,5 +1,5 @@
 SELECT
-  rolname,
+  rolname as role_name,
   (
     SELECT
       count(*)
@@ -11,6 +11,8 @@ SELECT
   CASE WHEN rolconnlimit = -1
     THEN current_setting('max_connections')::int8
     ELSE rolconnlimit
-  END AS connection_limit
-FROM pg_roles
-ORDER BY 2 DESC
+  END AS connection_limit,
+  array_to_string(rolconfig, ',', '*') as custom_config
+FROM
+  pg_roles 
+ORDER BY 3 DESC

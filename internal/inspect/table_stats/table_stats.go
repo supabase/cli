@@ -1,4 +1,4 @@
-package index_sizes
+package table_stats
 
 import (
 	"context"
@@ -15,12 +15,14 @@ import (
 	"github.com/supabase/cli/pkg/pgxv5"
 )
 
-//go:embed index_sizes.sql
-var IndexSizesQuery string
+//go:embed table_stats.sql
+var TableStatsQuery string
 
 type Result struct {
-	Name string
-	Size string
+	Name                string
+	Table_size          string
+	Index_size          string
+	Estimated_row_count int64
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -29,7 +31,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 	defer conn.Close(context.Background())
-	rows, err := conn.Query(ctx, IndexSizesQuery, reset.LikeEscapeSchema(utils.InternalSchemas))
+	rows, err := conn.Query(ctx, TableStatsQuery, reset.LikeEscapeSchema(utils.PgSchemas))
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}
@@ -38,9 +40,9 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "|Name|size|\n|-|-|\n"
+	table := "|Table|Size|Index size|Estimated row count|\n|-|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%s`|\n", r.Name, r.Size)
+		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%d`|\n", r.Name, r.Table_size, r.Index_size, r.Estimated_row_count)
 	}
 	return list.RenderTable(table)
 }

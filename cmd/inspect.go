@@ -11,26 +11,21 @@ import (
 	"github.com/supabase/cli/internal/inspect/bloat"
 	"github.com/supabase/cli/internal/inspect/blocking"
 	"github.com/supabase/cli/internal/inspect/cache"
+
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 
 	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/inspect/calls"
-	"github.com/supabase/cli/internal/inspect/index_sizes"
-	"github.com/supabase/cli/internal/inspect/index_usage"
+	"github.com/supabase/cli/internal/inspect/index_stats"
 	"github.com/supabase/cli/internal/inspect/locks"
 	"github.com/supabase/cli/internal/inspect/long_running_queries"
 	"github.com/supabase/cli/internal/inspect/outliers"
 	"github.com/supabase/cli/internal/inspect/replication_slots"
-	"github.com/supabase/cli/internal/inspect/role_configs"
-	"github.com/supabase/cli/internal/inspect/role_connections"
-	"github.com/supabase/cli/internal/inspect/seq_scans"
-	"github.com/supabase/cli/internal/inspect/table_index_sizes"
-	"github.com/supabase/cli/internal/inspect/table_record_counts"
-	"github.com/supabase/cli/internal/inspect/table_sizes"
+
+	"github.com/supabase/cli/internal/inspect/table_stats"
 	"github.com/supabase/cli/internal/inspect/total_index_size"
-	"github.com/supabase/cli/internal/inspect/total_table_sizes"
-	"github.com/supabase/cli/internal/inspect/unused_indexes"
+
 	"github.com/supabase/cli/internal/inspect/vacuum_stats"
 )
 
@@ -67,11 +62,11 @@ var (
 		},
 	}
 
-	inspectIndexUsageCmd = &cobra.Command{
-		Use:   "index-usage",
-		Short: "Show information about the efficiency of indexes",
+	inspectIndexStatsCmd = &cobra.Command{
+		Use:   "index-stats",
+		Short: "Show combined index size, usage percent, scan counts, and unused status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return index_usage.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
+			return index_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -115,67 +110,11 @@ var (
 		},
 	}
 
-	inspectIndexSizesCmd = &cobra.Command{
-		Use:   "index-sizes",
-		Short: "Show index sizes of individual indexes",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return index_sizes.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
-	inspectTableSizesCmd = &cobra.Command{
-		Use:   "table-sizes",
-		Short: "Show table sizes of individual tables without their index sizes",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return table_sizes.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
-	inspectTableIndexSizesCmd = &cobra.Command{
-		Use:   "table-index-sizes",
-		Short: "Show index sizes of individual tables",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return table_index_sizes.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
-	inspectTotalTableSizesCmd = &cobra.Command{
-		Use:   "total-table-sizes",
-		Short: "Show total table sizes, including table index sizes",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return total_table_sizes.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
-	inspectUnusedIndexesCmd = &cobra.Command{
-		Use:   "unused-indexes",
-		Short: "Show indexes with low usage",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return unused_indexes.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
-	inspectSeqScansCmd = &cobra.Command{
-		Use:   "seq-scans",
-		Short: "Show number of sequential scans recorded against all tables",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return seq_scans.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
 	inspectLongRunningQueriesCmd = &cobra.Command{
 		Use:   "long-running-queries",
 		Short: "Show currently running queries running for longer than 5 minutes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return long_running_queries.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
-	inspectTableRecordCountsCmd = &cobra.Command{
-		Use:   "table-record-counts",
-		Short: "Show estimated number of rows per table",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return table_record_counts.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -195,19 +134,11 @@ var (
 		},
 	}
 
-	inspectRoleConfigsCmd = &cobra.Command{
-		Use:   "role-configs",
-		Short: "Show configuration settings for database roles when they have been modified",
+	inspectTableStatsCmd = &cobra.Command{
+		Use:   "table-stats",
+		Short: "Show combined table size, index size, and estimated row count",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return role_configs.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
-	inspectRoleConnectionsCmd = &cobra.Command{
-		Use:   "role-connections",
-		Short: "Show number of active connections for all database roles",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return role_connections.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
+			return table_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -240,24 +171,16 @@ func init() {
 	inspectCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	inspectDBCmd.AddCommand(inspectCacheHitCmd)
 	inspectDBCmd.AddCommand(inspectReplicationSlotsCmd)
-	inspectDBCmd.AddCommand(inspectIndexUsageCmd)
+	inspectDBCmd.AddCommand(inspectIndexStatsCmd)
 	inspectDBCmd.AddCommand(inspectLocksCmd)
 	inspectDBCmd.AddCommand(inspectBlockingCmd)
 	inspectDBCmd.AddCommand(inspectOutliersCmd)
 	inspectDBCmd.AddCommand(inspectCallsCmd)
 	inspectDBCmd.AddCommand(inspectTotalIndexSizeCmd)
-	inspectDBCmd.AddCommand(inspectIndexSizesCmd)
-	inspectDBCmd.AddCommand(inspectTableSizesCmd)
-	inspectDBCmd.AddCommand(inspectTableIndexSizesCmd)
-	inspectDBCmd.AddCommand(inspectTotalTableSizesCmd)
-	inspectDBCmd.AddCommand(inspectUnusedIndexesCmd)
-	inspectDBCmd.AddCommand(inspectSeqScansCmd)
 	inspectDBCmd.AddCommand(inspectLongRunningQueriesCmd)
-	inspectDBCmd.AddCommand(inspectTableRecordCountsCmd)
 	inspectDBCmd.AddCommand(inspectBloatCmd)
 	inspectDBCmd.AddCommand(inspectVacuumStatsCmd)
-	inspectDBCmd.AddCommand(inspectRoleConfigsCmd)
-	inspectDBCmd.AddCommand(inspectRoleConnectionsCmd)
+	inspectDBCmd.AddCommand(inspectTableStatsCmd)
 	inspectCmd.AddCommand(inspectDBCmd)
 	reportCmd.Flags().StringVar(&outputDir, "output-dir", "", "Path to save CSV files in")
 	inspectCmd.AddCommand(reportCmd)
