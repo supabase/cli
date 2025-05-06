@@ -34,13 +34,13 @@ fail = "At least one table is showing sequential scans more than 10% of total ro
 
 
 [[rule]]
-query = "SELECT LISTAGG(s.name, ',') AS match FROM `vacuum_stats.csv` s WHERE s.expect_autovacuum = 'yes' and s.rowcount > 1000;"
+query = "SELECT LISTAGG(s.tbl, ',') AS match FROM `vacuum_stats.csv` s WHERE s.expect_autovacuum = 'yes' and s.rowcount > 1000;"
 name = "No large tables waiting on autovacuum"
 pass = "✔"
 fail = "At least one table is waiting on autovacuum"
 
 [[rule]]
-query = "SELECT LISTAGG(s.name, ',') AS match FROM `vacuum_stats.csv` s WHERE s.rowcount > 0 AND (s.last_autovacuum IS NULL OR s.last_vacuum IS NULL);"
+query = "SELECT LISTAGG(s.tbl, ',') AS match FROM `vacuum_stats.csv` s WHERE s.rowcount > 0 AND (s.last_autovacuum = '' OR s.last_vacuum = '');"
 name = "No tables yet to be vacuumed"
 pass = "✔"
 fail = "At least one table has never had autovacuum or vacuum run on it"
