@@ -534,6 +534,7 @@ func TestLoadEnvIfExists(t *testing.T) {
 		err := loadEnvIfExists("nonexistent.env")
 		assert.NoError(t, err)
 	})
+
 	t.Run("returns raw error when file exists but is malformed and DEBUG=1", func(t *testing.T) {
 		// Set DEBUG=1
 		t.Setenv("DEBUG", "1")
@@ -555,6 +556,7 @@ func TestLoadEnvIfExists(t *testing.T) {
 		assert.ErrorContains(t, err, "unexpected character")
 		assert.ErrorContains(t, err, "secret_value")
 	})
+
 	t.Run("returns error when file exists but is malformed invalid character", func(t *testing.T) {
 		// Create a temporary file with malformed content
 		tmpFile, err := os.CreateTemp("", "test-*.env")
@@ -571,6 +573,7 @@ func TestLoadEnvIfExists(t *testing.T) {
 		assert.ErrorContains(t, err, fmt.Sprintf("failed to parse environment file: %s (unexpected character '[' in variable name)", tmpFile.Name()))
 		assert.NotContains(t, err.Error(), "secret_value")
 	})
+
 	t.Run("returns error when file exists but is malformed unterminated quotes", func(t *testing.T) {
 		// Create a temporary file with malformed content
 		tmpFile, err := os.CreateTemp("", "test-*.env")
@@ -597,7 +600,7 @@ func TestLoadEnvIfExists(t *testing.T) {
 		// Write valid content
 		_, err = tmpFile.WriteString("TEST_KEY=test_value\nANOTHER_KEY=another_value")
 		require.NoError(t, err)
-		tmpFile.Close()
+		require.NoError(t, tmpFile.Close())
 
 		// Test loading the valid file
 		err = loadEnvIfExists(tmpFile.Name())
