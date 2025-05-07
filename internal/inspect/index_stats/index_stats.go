@@ -33,7 +33,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 	defer conn.Close(context.Background())
-	rows, err := conn.Query(ctx, IndexStatsQuery, reset.LikeEscapeSchema(utils.PgSchemas))
+	rows, err := conn.Query(ctx, IndexStatsQuery, reset.LikeEscapeSchema(utils.InternalSchemas))
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}
@@ -42,7 +42,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "|Index|Size|Percent used|Index scans|Seq scans|Unused|\n|-|-|-|-|-|-|\n"
+	table := "|Name|Size|Percent used|Index scans|Seq scans|Unused|\n|-|-|-|-|-|-|\n"
 	for _, r := range result {
 		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%d`|`%d`|`%t`|\n", r.Name, r.Size, r.Percent_used, r.Index_scans, r.Seq_scans, r.Unused)
 	}

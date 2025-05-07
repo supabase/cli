@@ -10,21 +10,20 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/inspect/bloat"
 	"github.com/supabase/cli/internal/inspect/blocking"
-	"github.com/supabase/cli/internal/inspect/cache"
+	"github.com/supabase/cli/internal/inspect/role_stats"
 
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 
 	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/inspect/calls"
+	"github.com/supabase/cli/internal/inspect/db_stats"
 	"github.com/supabase/cli/internal/inspect/index_stats"
 	"github.com/supabase/cli/internal/inspect/locks"
 	"github.com/supabase/cli/internal/inspect/long_running_queries"
 	"github.com/supabase/cli/internal/inspect/outliers"
 	"github.com/supabase/cli/internal/inspect/replication_slots"
-
 	"github.com/supabase/cli/internal/inspect/table_stats"
-	"github.com/supabase/cli/internal/inspect/total_index_size"
 
 	"github.com/supabase/cli/internal/inspect/vacuum_stats"
 )
@@ -46,11 +45,11 @@ var (
 		},
 	}
 
-	inspectCacheHitCmd = &cobra.Command{
-		Use:   "cache-hit",
+	inspectDBStatsCmd = &cobra.Command{
+		Use:   "db-stats",
 		Short: "Show cache hit rates for tables and indices",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return cache.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
+			return db_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -59,14 +58,6 @@ var (
 		Short: "Show information about replication slots on the database",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return replication_slots.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
-	inspectIndexStatsCmd = &cobra.Command{
-		Use:   "index-stats",
-		Short: "Show combined index size, usage percent, scan counts, and unused status",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return index_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -102,11 +93,11 @@ var (
 		},
 	}
 
-	inspectTotalIndexSizeCmd = &cobra.Command{
-		Use:   "total-index-size",
-		Short: "Show total size of all indexes",
+	inspectIndexStatsCmd = &cobra.Command{
+		Use:   "index-stats",
+		Short: "Show combined index size, usage percent, scan counts, and unused status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return total_index_size.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
+			return index_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -123,6 +114,14 @@ var (
 		Short: "Estimates space allocated to a relation that is full of dead tuples",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return bloat.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
+		},
+	}
+
+	inspectRoleStatsCmd = &cobra.Command{
+		Use:   "role-stats",
+		Short: "Show information about roles on the database",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return role_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -169,18 +168,18 @@ func init() {
 	inspectFlags.Bool("linked", true, "Inspect the linked project.")
 	inspectFlags.Bool("local", false, "Inspect the local database.")
 	inspectCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
-	inspectDBCmd.AddCommand(inspectCacheHitCmd)
 	inspectDBCmd.AddCommand(inspectReplicationSlotsCmd)
 	inspectDBCmd.AddCommand(inspectIndexStatsCmd)
 	inspectDBCmd.AddCommand(inspectLocksCmd)
 	inspectDBCmd.AddCommand(inspectBlockingCmd)
 	inspectDBCmd.AddCommand(inspectOutliersCmd)
 	inspectDBCmd.AddCommand(inspectCallsCmd)
-	inspectDBCmd.AddCommand(inspectTotalIndexSizeCmd)
 	inspectDBCmd.AddCommand(inspectLongRunningQueriesCmd)
 	inspectDBCmd.AddCommand(inspectBloatCmd)
 	inspectDBCmd.AddCommand(inspectVacuumStatsCmd)
 	inspectDBCmd.AddCommand(inspectTableStatsCmd)
+	inspectDBCmd.AddCommand(inspectRoleStatsCmd)
+	inspectDBCmd.AddCommand(inspectDBStatsCmd)
 	inspectCmd.AddCommand(inspectDBCmd)
 	reportCmd.Flags().StringVar(&outputDir, "output-dir", "", "Path to save CSV files in")
 	inspectCmd.AddCommand(reportCmd)

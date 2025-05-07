@@ -1,4 +1,4 @@
-package total_index_size
+package db_stats
 
 import (
 	"context"
@@ -20,16 +20,23 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-func TestTotalIndexSizeCommand(t *testing.T) {
+func TestDBStatsCommand(t *testing.T) {
 	t.Run("inspects size of all indexes", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(TotalIndexSizeQuery, reset.LikeEscapeSchema(utils.InternalSchemas)).
+		conn.Query(DBStatsQuery, reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
-				Size: "8GB",
+				Database_size:          "8GB",
+				Total_index_size:       "8GB",
+				Total_table_size:       "8GB",
+				Total_toast_size:       "8GB",
+				Time_since_stats_reset: "8GB",
+				Index_hit_rate:         "8GB",
+				Table_hit_rate:         "8GB",
+				WAL_size:               "8GB",
 			})
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)

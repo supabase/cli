@@ -32,7 +32,9 @@ func TestTableStatsCommand(t *testing.T) {
 				Name:                "public.test_table",
 				Table_size:          "3GB",
 				Index_size:          "1GB",
+				Total_size:          "4GB",
 				Estimated_row_count: 100,
+				Seq_scans:           1,
 			})
 
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)

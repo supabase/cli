@@ -22,7 +22,9 @@ type Result struct {
 	Name                string
 	Table_size          string
 	Index_size          string
+	Total_size          string
 	Estimated_row_count int64
+	Seq_scans           int64
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -31,7 +33,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 	defer conn.Close(context.Background())
-	rows, err := conn.Query(ctx, TableStatsQuery, reset.LikeEscapeSchema(utils.PgSchemas))
+	rows, err := conn.Query(ctx, TableStatsQuery, reset.LikeEscapeSchema(utils.InternalSchemas))
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}
@@ -40,9 +42,9 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "|Table|Size|Index size|Estimated row count|\n|-|-|-|-|\n"
+	table := "|Name|Table size|Index size|Total size|Estimated row count|Seq scans|\n|-|-|-|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%d`|\n", r.Name, r.Table_size, r.Index_size, r.Estimated_row_count)
+		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%s`|`%d`|`%d`|\n", r.Name, r.Table_size, r.Index_size, r.Total_size, r.Estimated_row_count, r.Seq_scans)
 	}
 	return list.RenderTable(table)
 }
