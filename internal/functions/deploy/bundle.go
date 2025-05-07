@@ -60,7 +60,9 @@ func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	if viper.GetBool("DEBUG") {
 		cmd = append(cmd, "--verbose")
 	}
-	cmd = append(cmd, function.BundleFlags...)
+	if utils.Config.EdgeRuntime.DenoVersion == 1 {
+		cmd = append(cmd, function.BundleFlags...)
+	}
 
 	env := []string{}
 	if custom_registry := os.Getenv("NPM_CONFIG_REGISTRY"); custom_registry != "" {
