@@ -42,7 +42,7 @@ begin
     execute format('drop materialized view if exists %I.%I cascade', rec.relnamespace::regnamespace::name, rec.relname);
   end loop;
 
-  -- tables (cascade to views)
+  -- tables (cascade to dependent objects)
   for rec in
     select *
     from pg_class c
@@ -65,7 +65,7 @@ begin
       or c.relnamespace::regnamespace::name = 'supabase_migrations')
       and c.relkind = 'r'
   loop
-    execute format('truncate %I.%I restart identity cascade', rec.relnamespace::regnamespace::name, rec.relname);
+    execute format('truncate %I.%I cascade', rec.relnamespace::regnamespace::name, rec.relname);
   end loop;
 
   -- sequences
