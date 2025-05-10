@@ -1,4 +1,4 @@
-package role_connections
+package table_stats
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
+	"github.com/supabase/cli/internal/db/reset"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/pgtest"
 )
 
@@ -18,22 +20,24 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-func TestRoleCommand(t *testing.T) {
-	t.Run("inspects role connections", func(t *testing.T) {
-		// Setup in-memory fs
+func TestTableStatsCommand(t *testing.T) {
+	t.Run("inspects table stats", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
-		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(RoleConnectionsQuery).
+
+		// Mock table sizes and index sizes
+		conn.Query(TableStatsQuery, reset.LikeEscapeSchema(utils.PgSchemas)).
 			Reply("SELECT 1", Result{
-				Rolname:            "postgres",
-				Active_connections: 1,
-				Connection_limit:   10,
+				Name:                "public.test_table",
+				Table_size:          "3GB",
+				Index_size:          "1GB",
+				Total_size:          "4GB",
+				Estimated_row_count: 100,
+				Seq_scans:           1,
 			})
-		// Run test
+
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
-		// Check error
 		assert.NoError(t, err)
 	})
 }

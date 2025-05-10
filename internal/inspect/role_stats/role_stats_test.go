@@ -1,4 +1,4 @@
-package table_index_sizes
+package role_stats
 
 import (
 	"context"
@@ -7,8 +7,6 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
-	"github.com/supabase/cli/internal/db/reset"
-	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/pgtest"
 )
 
@@ -20,17 +18,19 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-func TestTableIndexSizesCommand(t *testing.T) {
-	t.Run("inspects table index sizes", func(t *testing.T) {
+func TestRoleCommand(t *testing.T) {
+	t.Run("inspects role connections", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(TableIndexSizesQuery, reset.LikeEscapeSchema(utils.InternalSchemas)).
+		conn.Query(RoleStatsQuery).
 			Reply("SELECT 1", Result{
-				Table:      "public.test_table",
-				Index_size: "3GB",
+				Role_name:          "postgres",
+				Custom_config:      "statement_timeout=3s",
+				Active_connections: 1,
+				Connection_limit:   10,
 			})
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)

@@ -1,4 +1,4 @@
-package index_sizes
+package index_stats
 
 import (
 	"context"
@@ -15,12 +15,16 @@ import (
 	"github.com/supabase/cli/pkg/pgxv5"
 )
 
-//go:embed index_sizes.sql
-var IndexSizesQuery string
+//go:embed index_stats.sql
+var IndexStatsQuery string
 
 type Result struct {
-	Name string
-	Size string
+	Name         string
+	Size         string
+	Percent_used string
+	Index_scans  int64
+	Seq_scans    int64
+	Unused       bool
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -29,7 +33,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 	defer conn.Close(context.Background())
-	rows, err := conn.Query(ctx, IndexSizesQuery, reset.LikeEscapeSchema(utils.InternalSchemas))
+	rows, err := conn.Query(ctx, IndexStatsQuery, reset.LikeEscapeSchema(utils.InternalSchemas))
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}
@@ -38,9 +42,9 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "|Name|size|\n|-|-|\n"
+	table := "|Name|Size|Percent used|Index scans|Seq scans|Unused|\n|-|-|-|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%s`|\n", r.Name, r.Size)
+		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%d`|`%d`|`%t`|\n", r.Name, r.Size, r.Percent_used, r.Index_scans, r.Seq_scans, r.Unused)
 	}
 	return list.RenderTable(table)
 }
