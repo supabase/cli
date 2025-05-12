@@ -245,7 +245,7 @@ func printReportSummary(outDir string) error {
 				status = r.Fail
 			}
 		}
-		matchStr := ""
+		matchStr := "-"
 		if match.Valid {
 			matchStr = match.String
 		}

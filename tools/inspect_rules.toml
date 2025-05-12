@@ -22,7 +22,7 @@ name          = "No unused indexes"
 
 [[rule]]
 name      = "Check cache hit is within acceptable bounds"
-query = "SELECT LISTAGG(name, ',') AS match FROM `cache.csv` WHERE ratio < 0.94"
+query = "SELECT LISTAGG(name, ',') AS match FROM `db_stats.csv` WHERE index_hit_rate < 0.94 OR table_hit_rate < 0.94"
 pass     = "✔"
 fail     = "There is at least one table with a cache hit ratio below 94%"
 
@@ -40,7 +40,7 @@ pass = "✔"
 fail = "At least one table is waiting on autovacuum"
 
 [[rule]]
-query = "SELECT LISTAGG(s.tbl, ',') AS match FROM `vacuum_stats.csv` s WHERE s.rowcount > 0 AND (s.last_autovacuum = '' OR s.last_vacuum = '');"
+query = "SELECT LISTAGG(s.name, ',') AS match FROM `vacuum_stats.csv` s WHERE s.rowcount > 0 AND (s.last_autovacuum = '' OR s.last_vacuum = '');"
 name = "No tables yet to be vacuumed"
 pass = "✔"
 fail = "At least one table has never had autovacuum or vacuum run on it"
