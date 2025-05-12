@@ -80,7 +80,7 @@ func listRemoteImages(ctx context.Context, projectRef string) map[string]string 
 		return linked
 	}
 	api := tenant.NewTenantAPI(ctx, projectRef, keys.Anon)
-	wg.Add(3)
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		if version, err := api.GetGotrueVersion(ctx); err == nil {
@@ -91,12 +91,6 @@ func listRemoteImages(ctx context.Context, projectRef string) map[string]string 
 		defer wg.Done()
 		if version, err := api.GetPostgrestVersion(ctx); err == nil {
 			linked[utils.Config.Api.Image] = version
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if version, err := api.GetStorageVersion(ctx); err == nil {
-			linked[utils.Config.Storage.Image] = version
 		}
 	}()
 	wg.Wait()

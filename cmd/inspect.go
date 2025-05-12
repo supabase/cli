@@ -12,7 +12,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/inspect/bloat"
 	"github.com/supabase/cli/internal/inspect/blocking"
-	"github.com/supabase/cli/internal/inspect/cache"
+	"github.com/supabase/cli/internal/inspect/role_stats"
+
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 
@@ -20,21 +21,14 @@ import (
 	"github.com/pelletier/go-toml/v2"
 	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/inspect/calls"
-	"github.com/supabase/cli/internal/inspect/index_sizes"
-	"github.com/supabase/cli/internal/inspect/index_usage"
+	"github.com/supabase/cli/internal/inspect/db_stats"
+	"github.com/supabase/cli/internal/inspect/index_stats"
 	"github.com/supabase/cli/internal/inspect/locks"
 	"github.com/supabase/cli/internal/inspect/long_running_queries"
 	"github.com/supabase/cli/internal/inspect/outliers"
 	"github.com/supabase/cli/internal/inspect/replication_slots"
-	"github.com/supabase/cli/internal/inspect/role_configs"
-	"github.com/supabase/cli/internal/inspect/role_connections"
-	"github.com/supabase/cli/internal/inspect/seq_scans"
-	"github.com/supabase/cli/internal/inspect/table_index_sizes"
-	"github.com/supabase/cli/internal/inspect/table_record_counts"
-	"github.com/supabase/cli/internal/inspect/table_sizes"
-	"github.com/supabase/cli/internal/inspect/total_index_size"
-	"github.com/supabase/cli/internal/inspect/total_table_sizes"
-	"github.com/supabase/cli/internal/inspect/unused_indexes"
+	"github.com/supabase/cli/internal/inspect/table_stats"
+
 	"github.com/supabase/cli/internal/inspect/vacuum_stats"
 	"github.com/supabase/cli/internal/migration/list"
 )
@@ -56,11 +50,11 @@ var (
 		},
 	}
 
-	inspectCacheHitCmd = &cobra.Command{
-		Use:   "cache-hit",
+	inspectDBStatsCmd = &cobra.Command{
+		Use:   "db-stats",
 		Short: "Show cache hit rates for tables and indices",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return cache.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
+			return db_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -69,14 +63,6 @@ var (
 		Short: "Show information about replication slots on the database",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return replication_slots.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
-	inspectIndexUsageCmd = &cobra.Command{
-		Use:   "index-usage",
-		Short: "Show information about the efficiency of indexes",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return index_usage.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -112,59 +98,11 @@ var (
 		},
 	}
 
-	inspectTotalIndexSizeCmd = &cobra.Command{
-		Use:   "total-index-size",
-		Short: "Show total size of all indexes",
+	inspectIndexStatsCmd = &cobra.Command{
+		Use:   "index-stats",
+		Short: "Show combined index size, usage percent, scan counts, and unused status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return total_index_size.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
-	inspectIndexSizesCmd = &cobra.Command{
-		Use:   "index-sizes",
-		Short: "Show index sizes of individual indexes",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return index_sizes.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
-	inspectTableSizesCmd = &cobra.Command{
-		Use:   "table-sizes",
-		Short: "Show table sizes of individual tables without their index sizes",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return table_sizes.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
-	inspectTableIndexSizesCmd = &cobra.Command{
-		Use:   "table-index-sizes",
-		Short: "Show index sizes of individual tables",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return table_index_sizes.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
-	inspectTotalTableSizesCmd = &cobra.Command{
-		Use:   "total-table-sizes",
-		Short: "Show total table sizes, including table index sizes",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return total_table_sizes.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
-	inspectUnusedIndexesCmd = &cobra.Command{
-		Use:   "unused-indexes",
-		Short: "Show indexes with low usage",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return unused_indexes.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
-	inspectSeqScansCmd = &cobra.Command{
-		Use:   "seq-scans",
-		Short: "Show number of sequential scans recorded against all tables",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return seq_scans.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
+			return index_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -176,19 +114,19 @@ var (
 		},
 	}
 
-	inspectTableRecordCountsCmd = &cobra.Command{
-		Use:   "table-record-counts",
-		Short: "Show estimated number of rows per table",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return table_record_counts.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
 	inspectBloatCmd = &cobra.Command{
 		Use:   "bloat",
 		Short: "Estimates space allocated to a relation that is full of dead tuples",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return bloat.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
+		},
+	}
+
+	inspectRoleStatsCmd = &cobra.Command{
+		Use:   "role-stats",
+		Short: "Show information about roles on the database",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return role_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -200,19 +138,11 @@ var (
 		},
 	}
 
-	inspectRoleConfigsCmd = &cobra.Command{
-		Use:   "role-configs",
-		Short: "Show configuration settings for database roles when they have been modified",
+	inspectTableStatsCmd = &cobra.Command{
+		Use:   "table-stats",
+		Short: "Show combined table size, index size, and estimated row count",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return role_configs.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
-	inspectRoleConnectionsCmd = &cobra.Command{
-		Use:   "role-connections",
-		Short: "Show number of active connections for all database roles",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return role_connections.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
+			return table_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -252,26 +182,18 @@ func init() {
 	inspectFlags.Bool("linked", true, "Inspect the linked project.")
 	inspectFlags.Bool("local", false, "Inspect the local database.")
 	inspectCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
-	inspectDBCmd.AddCommand(inspectCacheHitCmd)
 	inspectDBCmd.AddCommand(inspectReplicationSlotsCmd)
-	inspectDBCmd.AddCommand(inspectIndexUsageCmd)
+	inspectDBCmd.AddCommand(inspectIndexStatsCmd)
 	inspectDBCmd.AddCommand(inspectLocksCmd)
 	inspectDBCmd.AddCommand(inspectBlockingCmd)
 	inspectDBCmd.AddCommand(inspectOutliersCmd)
 	inspectDBCmd.AddCommand(inspectCallsCmd)
-	inspectDBCmd.AddCommand(inspectTotalIndexSizeCmd)
-	inspectDBCmd.AddCommand(inspectIndexSizesCmd)
-	inspectDBCmd.AddCommand(inspectTableSizesCmd)
-	inspectDBCmd.AddCommand(inspectTableIndexSizesCmd)
-	inspectDBCmd.AddCommand(inspectTotalTableSizesCmd)
-	inspectDBCmd.AddCommand(inspectUnusedIndexesCmd)
-	inspectDBCmd.AddCommand(inspectSeqScansCmd)
 	inspectDBCmd.AddCommand(inspectLongRunningQueriesCmd)
-	inspectDBCmd.AddCommand(inspectTableRecordCountsCmd)
 	inspectDBCmd.AddCommand(inspectBloatCmd)
 	inspectDBCmd.AddCommand(inspectVacuumStatsCmd)
-	inspectDBCmd.AddCommand(inspectRoleConfigsCmd)
-	inspectDBCmd.AddCommand(inspectRoleConnectionsCmd)
+	inspectDBCmd.AddCommand(inspectTableStatsCmd)
+	inspectDBCmd.AddCommand(inspectRoleStatsCmd)
+	inspectDBCmd.AddCommand(inspectDBStatsCmd)
 	inspectCmd.AddCommand(inspectDBCmd)
 	reportCmd.Flags().StringVar(&outputDir, "output-dir", "", "Path to save CSV files in")
 	inspectCmd.AddCommand(reportCmd)

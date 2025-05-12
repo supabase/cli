@@ -34,7 +34,7 @@ func TestLogoutCommand(t *testing.T) {
 	})
 
 	t.Run("removes all Supabase CLI credentials", func(t *testing.T) {
-		t.Cleanup(credentials.MockInit())
+		keyring.MockInit()
 		require.NoError(t, credentials.StoreProvider.Set(utils.AccessTokenKey, token))
 		require.NoError(t, credentials.StoreProvider.Set("project1", "password1"))
 		require.NoError(t, credentials.StoreProvider.Set("project2", "password2"))

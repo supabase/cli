@@ -1,4 +1,4 @@
-package table_sizes
+package index_stats
 
 import (
 	"context"
@@ -20,21 +20,24 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-func TestTableSizesCommand(t *testing.T) {
-	t.Run("inspects table sizes", func(t *testing.T) {
-		// Setup in-memory fs
+func TestIndexStatsCommand(t *testing.T) {
+	t.Run("inspects index stats", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
-		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(TableSizesQuery, reset.LikeEscapeSchema(utils.PgSchemas)).
+
+		// Mock index stats
+		conn.Query(IndexStatsQuery, reset.LikeEscapeSchema(utils.PgSchemas)).
 			Reply("SELECT 1", Result{
-				Name: "public.test_table",
-				Size: "3GB",
+				Name:         "public.test_idx",
+				Size:         "1GB",
+				Percent_used: "50%",
+				Index_scans:  5,
+				Seq_scans:    5,
+				Unused:       false,
 			})
-		// Run test
+
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
-		// Check error
 		assert.NoError(t, err)
 	})
 }
