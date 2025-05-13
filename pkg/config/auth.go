@@ -486,13 +486,13 @@ func (m *mfa) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 }
 
 func (s sessions) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
-	body.SessionsTimebox = cast.Ptr(int(s.Timebox.Seconds()))
-	body.SessionsInactivityTimeout = cast.Ptr(int(s.InactivityTimeout.Seconds()))
+	body.SessionsTimebox = cast.Ptr(int(s.Timebox.Hours()))
+	body.SessionsInactivityTimeout = cast.Ptr(int(s.InactivityTimeout.Hours()))
 }
 
 func (s *sessions) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
-	s.Timebox = time.Duration(cast.Val(remoteConfig.SessionsTimebox, 0)) * time.Second
-	s.InactivityTimeout = time.Duration(cast.Val(remoteConfig.SessionsInactivityTimeout, 0)) * time.Second
+	s.Timebox = time.Duration(cast.Val(remoteConfig.SessionsTimebox, 0)) * time.Hour
+	s.InactivityTimeout = time.Duration(cast.Val(remoteConfig.SessionsInactivityTimeout, 0)) * time.Hour
 }
 
 func (e email) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
