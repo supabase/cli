@@ -13,9 +13,8 @@ import (
 
 func validateIps(ips []string) error {
 	for _, ip := range ips {
-		ip := net.ParseIP(ip)
-		if ip.To4() == nil {
-			return errors.Errorf("only IPv4 supported at the moment: %s", ip)
+		if net.ParseIP(ip) == nil {
+			return errors.Errorf("invalid IP address: %s", ip)
 		}
 	}
 	return nil
@@ -23,11 +22,8 @@ func validateIps(ips []string) error {
 
 func Run(ctx context.Context, projectRef string, dbIpsToUnban []string, fsys afero.Fs) error {
 	// 1. sanity checks
-	{
-		err := validateIps(dbIpsToUnban)
-		if err != nil {
-			return err
-		}
+	if err := validateIps(dbIpsToUnban); err != nil {
+		return err
 	}
 
 	// 2. remove bans
