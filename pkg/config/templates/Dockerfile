@@ -1,11 +1,11 @@
 # Exposed for updates by .github/dependabot.yml
-FROM supabase/postgres:17.4.1.029 AS pg
+FROM supabase/postgres:17.4.1.030 AS pg
 # Append to ServiceImages when adding new dependencies below
 FROM library/kong:2.8.1 AS kong
 FROM axllent/mailpit:v1.22.3 AS mailpit
 FROM postgrest/postgrest:v12.2.12 AS postgrest
 FROM supabase/postgres-meta:v0.89.0 AS pgmeta
-FROM supabase/studio:2025.05.12-sha-07a8d23 AS studio
+FROM supabase/studio:2025.05.15-sha-cbafd4d AS studio
 FROM darthsim/imgproxy:v3.8.0 AS imgproxy
 FROM supabase/edge-runtime:v1.67.4 AS edgeruntime
 FROM timberio/vector:0.28.1-alpine AS vector
