@@ -607,9 +607,8 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if c.Db.MajorVersion > 14 {
 		if version, err := fs.ReadFile(fsys, builder.PostgresVersionPath); err == nil {
 			// Only replace image if postgres version is above 15.1.0.55
-			if strings.HasPrefix(string(version), fmt.Sprintf("%d.", c.Db.MajorVersion)) &&
-				(c.Db.MajorVersion != 15 || semver.Compare(string(version[3:]), "1.0.55") >= 0) {
-				c.Db.Image = replaceImageTag(pg15, string(version))
+			if VersionCompare(c.Db.Image, "15.1.0.55") >= 0 {
+				c.Db.Image = replaceImageTag(Images.Pg, string(version))
 			}
 		}
 		if version, err := fs.ReadFile(fsys, builder.RestVersionPath); err == nil && len(version) > 0 {
@@ -645,6 +644,22 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		return err
 	}
 	return c.Validate(fsys)
+}
+
+func VersionCompare(a, b string) int {
+	var pA, pB string
+	if vA := strings.Split(a, "."); len(vA) > 3 {
+		a = strings.Join(vA[:3], ".")
+		pA = strings.Join(vA[3:], ".")
+	}
+	if vB := strings.Split(b, "."); len(vB) > 3 {
+		b = strings.Join(vB[:3], ".")
+		pB = strings.Join(vB[3:], ".")
+	}
+	if r := semver.Compare("v"+a, "v"+b); r != 0 {
+		return r
+	}
+	return semver.Compare("v"+pA, "v"+pB)
 }
 
 func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {

@@ -24,6 +24,7 @@ import (
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/vault"
 )
@@ -75,7 +76,7 @@ func NewContainerConfig() container.Config {
 			"S3_ACCESS_KEY="+utils.Config.Experimental.S3AccessKey,
 			"S3_SECRET_KEY="+utils.Config.Experimental.S3SecretKey,
 		)
-	} else {
+	} else if config.VersionCompare(utils.Config.Db.Image, "15.8.1.005") < 0 {
 		env = append(env, "POSTGRES_INITDB_ARGS=--lc-collate=C.UTF-8")
 	}
 	config := container.Config{
