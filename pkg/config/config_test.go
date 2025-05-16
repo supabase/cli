@@ -615,3 +615,28 @@ func TestLoadEnvIfExists(t *testing.T) {
 		os.Unsetenv("ANOTHER_KEY")
 	})
 }
+
+func TestVersionCompare(t *testing.T) {
+	var testcase = []struct {
+		a string
+		b string
+		r int
+	}{
+		{"15.1.0.55", "15.1.0.55", 0},
+		{"15.8.1.085", "15.1.0.55", 1},
+		{"15.1.0.55", "15.8.1.085", -1},
+		{"15.8.1", "15.8.1", 0},
+		{"17", "15.8", 1},
+		{"14", "15.8", -1},
+		{"oriole-17", "oriole-17", 0},
+		{"17", "oriole-17", 1},
+		{"oriole-17", "17", -1},
+	}
+
+	for _, tt := range testcase {
+		t.Run(fmt.Sprintf("%s vs %s", tt.a, tt.b), func(t *testing.T) {
+			result := VersionCompare(tt.a, tt.b)
+			assert.Equal(t, tt.r, result)
+		})
+	}
+}
