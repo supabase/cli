@@ -607,7 +607,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if c.Db.MajorVersion > 14 {
 		if version, err := fs.ReadFile(fsys, builder.PostgresVersionPath); err == nil {
 			// Only replace image if postgres version is above 15.1.0.55
-			if VersionCompare(c.Db.Image, "15.1.0.55") >= 0 {
+			if i := strings.IndexByte(c.Db.Image, ':'); VersionCompare(c.Db.Image[i+1:], "15.1.0.55") >= 0 {
 				c.Db.Image = replaceImageTag(Images.Pg, string(version))
 			}
 		}
@@ -650,11 +650,11 @@ func VersionCompare(a, b string) int {
 	var pA, pB string
 	if vA := strings.Split(a, "."); len(vA) > 3 {
 		a = strings.Join(vA[:3], ".")
-		pA = strings.Join(vA[3:], ".")
+		pA = strings.TrimLeft(strings.Join(vA[3:], "."), "0")
 	}
 	if vB := strings.Split(b, "."); len(vB) > 3 {
 		b = strings.Join(vB[:3], ".")
-		pB = strings.Join(vB[3:], ".")
+		pB = strings.TrimLeft(strings.Join(vB[3:], "."), "0")
 	}
 	if r := semver.Compare("v"+a, "v"+b); r != 0 {
 		return r

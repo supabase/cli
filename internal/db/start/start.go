@@ -76,7 +76,7 @@ func NewContainerConfig() container.Config {
 			"S3_ACCESS_KEY="+utils.Config.Experimental.S3AccessKey,
 			"S3_SECRET_KEY="+utils.Config.Experimental.S3SecretKey,
 		)
-	} else if config.VersionCompare(utils.Config.Db.Image, "15.8.1.005") < 0 {
+	} else if i := strings.IndexByte(utils.Config.Db.Image, ':'); config.VersionCompare(utils.Config.Db.Image[i+1:], "15.8.1.005") < 0 {
 		env = append(env, "POSTGRES_INITDB_ARGS=--lc-collate=C.UTF-8")
 	}
 	config := container.Config{
