@@ -607,19 +607,21 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if c.Db.MajorVersion > 14 {
 		if version, err := fs.ReadFile(fsys, builder.PostgresVersionPath); err == nil {
 			// Only replace image if postgres version is above 15.1.0.55
-			if strings.HasPrefix(string(version), fmt.Sprintf("%d.", c.Db.MajorVersion)) &&
-				(c.Db.MajorVersion != 15 || semver.Compare(string(version[3:]), "1.0.55") >= 0) {
-				c.Db.Image = replaceImageTag(pg15, string(version))
+			if i := strings.IndexByte(c.Db.Image, ':'); VersionCompare(c.Db.Image[i+1:], "15.1.0.55") >= 0 {
+				c.Db.Image = replaceImageTag(Images.Pg, string(version))
 			}
 		}
 		if version, err := fs.ReadFile(fsys, builder.RestVersionPath); err == nil && len(version) > 0 {
 			c.Api.Image = replaceImageTag(Images.Postgrest, string(version))
 		}
-		if version, err := fs.ReadFile(fsys, builder.StorageVersionPath); err == nil && len(version) > 0 {
-			c.Storage.Image = replaceImageTag(Images.Storage, string(version))
-		}
 		if version, err := fs.ReadFile(fsys, builder.GotrueVersionPath); err == nil && len(version) > 0 {
 			c.Auth.Image = replaceImageTag(Images.Gotrue, string(version))
+		}
+	}
+	if version, err := fs.ReadFile(fsys, builder.StorageVersionPath); err == nil && len(version) > 0 {
+		// For backwards compatibility, exclude all strings that look like semver
+		if v := strings.TrimSpace(string(version)); !semver.IsValid(v) {
+			c.Storage.TargetMigration = v
 		}
 	}
 	if version, err := fs.ReadFile(fsys, builder.EdgeRuntimeVersionPath); err == nil && len(version) > 0 {
@@ -642,6 +644,22 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		return err
 	}
 	return c.Validate(fsys)
+}
+
+func VersionCompare(a, b string) int {
+	var pA, pB string
+	if vA := strings.Split(a, "."); len(vA) > 3 {
+		a = strings.Join(vA[:3], ".")
+		pA = strings.TrimLeft(strings.Join(vA[3:], "."), "0")
+	}
+	if vB := strings.Split(b, "."); len(vB) > 3 {
+		b = strings.Join(vB[:3], ".")
+		pB = strings.TrimLeft(strings.Join(vB[3:], "."), "0")
+	}
+	if r := semver.Compare("v"+a, "v"+b); r != 0 {
+		return r
+	}
+	return semver.Compare("v"+pA, "v"+pB)
 }
 
 func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
@@ -926,7 +944,33 @@ func loadDefaultEnv(env string) error {
 
 func loadEnvIfExists(path string) error {
 	if err := godotenv.Load(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return errors.Errorf("failed to load %s: %w", ".env", err)
+		// If DEBUG=1, return the error as is for full debugability
+		if viper.GetBool("DEBUG") {
+			return errors.Errorf("failed to load %s: %w", path, err)
+		}
+		msg := err.Error()
+		switch {
+		case strings.HasPrefix(msg, "unexpected character"):
+			// Try to extract the character, fallback to generic
+			start := strings.Index(msg, "unexpected character \"")
+			if start != -1 {
+				start += len("unexpected character \"")
+				end := strings.Index(msg[start:], "\"")
+				if end != -1 {
+					char := msg[start : start+end]
+					return errors.Errorf("failed to parse environment file: %s (unexpected character '%s' in variable name)", path, char)
+				}
+			}
+			return errors.Errorf("failed to parse environment file: %s (unexpected character in variable name)", path)
+		case strings.HasPrefix(msg, "unterminated quoted value"):
+			return errors.Errorf("failed to parse environment file: %s (unterminated quoted value)", path)
+		// If the error message contains newlines, there is a high chance that the actual content of the
+		// dotenv file is being leaked. In such cases, we return a generic error to avoid unwanted leaks in the logs
+		case strings.Contains(msg, "\n"):
+			return errors.Errorf("failed to parse environment file: %s (syntax error)", path)
+		default:
+			return errors.Errorf("failed to load %s: %w", path, err)
+		}
 	}
 	return nil
 }

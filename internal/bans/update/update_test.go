@@ -8,10 +8,15 @@ import (
 
 func TestPrivateSubnet(t *testing.T) {
 	err := validateIps([]string{"12.3.4.5", "10.0.0.0", "1.2.3.1"})
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 }
 
-func TestIpv4(t *testing.T) {
-	err := validateIps([]string{"12.3.4.5", "2001:db8:abcd:0012::0", "1.2.3.1"})
-	assert.ErrorContains(t, err, "only IPv4 supported at the moment: 2001:db8:abcd:12::")
+func TestIPv6(t *testing.T) {
+	err := validateIps([]string{"2001:db8:abcd:0012::0", "::0"})
+	assert.NoError(t, err)
+}
+
+func TestInvalidAddress(t *testing.T) {
+	err := validateIps([]string{"12.3.4"})
+	assert.ErrorContains(t, err, "invalid IP address: 12.3.4")
 }

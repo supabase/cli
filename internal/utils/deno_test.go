@@ -1,8 +1,10 @@
 package utils
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/spf13/afero"
@@ -10,89 +12,136 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestResolveImports(t *testing.T) {
-	t.Run("resolves relative directory", func(t *testing.T) {
-		importMap := []byte(`{
-	"imports": {
-		"abs/":    "/tmp/",
-		"root":    "../../common",
-		"parent":  "../tests",
-		"child":   "child/",
-		"missing": "../missing"
-	}
-}`)
-		// Setup in-memory fs
+func TestBindModules(t *testing.T) {
+	t.Run("binds docker imports", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
-		cwd, err := os.Getwd()
-		require.NoError(t, err)
-		jsonPath := filepath.Join(cwd, FallbackImportMapPath)
-		require.NoError(t, afero.WriteFile(fsys, jsonPath, importMap, 0644))
-		require.NoError(t, fsys.Mkdir(filepath.Join(cwd, "common"), 0755))
-		require.NoError(t, fsys.Mkdir(filepath.Join(cwd, DbTestsDir), 0755))
-		require.NoError(t, fsys.Mkdir(filepath.Join(cwd, FunctionsDir, "child"), 0755))
+		entrypoint := `import "https://deno.land"
+import "/tmp/index.ts"
+import "../common/index.ts"
+import "../../../supabase/tests/index.ts"
+import "./child/index.ts"`
+		require.NoError(t, WriteFile("/app/supabase/functions/hello/index.ts", []byte(entrypoint), fsys))
+		require.NoError(t, WriteFile("/tmp/index.ts", []byte{}, fsys))
+		require.NoError(t, WriteFile("/app/supabase/functions/common/index.ts", []byte{}, fsys))
+		require.NoError(t, WriteFile("/app/supabase/tests/index.ts", []byte{}, fsys))
+		require.NoError(t, WriteFile("/app/supabase/functions/hello/child/index.ts", []byte{}, fsys))
 		// Run test
-		resolved, err := NewImportMap(jsonPath, fsys)
+		mods, err := BindHostModules("/app", "supabase/functions/hello/index.ts", "", fsys)
 		// Check error
 		assert.NoError(t, err)
-		assert.Equal(t, "/tmp/", resolved.Imports["abs/"])
-		assert.Equal(t, cwd+"/common", resolved.Imports["root"])
-		assert.Equal(t, cwd+"/supabase/tests", resolved.Imports["parent"])
-		assert.Equal(t, cwd+"/supabase/functions/child/", resolved.Imports["child"])
-		assert.Equal(t, "../missing", resolved.Imports["missing"])
-	})
-
-	t.Run("resolves parent scopes", func(t *testing.T) {
-		importMap := []byte(`{
-	"scopes": {
-		"my-scope": {
-			"my-mod": "https://deno.land"
-		}
-	}
-}`)
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, FallbackImportMapPath, importMap, 0644))
-		// Run test
-		resolved, err := NewImportMap(FallbackImportMapPath, fsys)
-		// Check error
-		assert.NoError(t, err)
-		assert.Equal(t, "https://deno.land", resolved.Scopes["my-scope"]["my-mod"])
+		assert.ElementsMatch(t, mods, []string{
+			"/app/supabase/functions/hello/index.ts:/app/supabase/functions/hello/index.ts:ro",
+			"/tmp/index.ts:/tmp/index.ts:ro",
+			"/app/supabase/functions/common/index.ts:/app/supabase/functions/common/index.ts:ro",
+			"/app/supabase/tests/index.ts:/app/supabase/tests/index.ts:ro",
+			"/app/supabase/functions/hello/child/index.ts:/app/supabase/functions/hello/child/index.ts:ro",
+		})
 	})
 }
 
-func TestBindModules(t *testing.T) {
-	t.Run("binds docker imports", func(t *testing.T) {
-		cwd, err := os.Getwd()
-		require.NoError(t, err)
-		importMap := ImportMap{
-			Imports: map[string]string{
-				"abs/":   "/tmp/",
-				"root":   cwd + "/common",
-				"parent": cwd + "/supabase/tests",
-				"child":  cwd + "/supabase/functions/child/",
-			},
-		}
-		// Run test
-		mods := importMap.BindHostModules()
-		// Check error
-		assert.ElementsMatch(t, mods, []string{
-			"/tmp/:/tmp/:ro",
-			cwd + "/common:" + cwd + "/common:ro",
-			cwd + "/supabase/tests:" + cwd + "/supabase/tests:ro",
-		})
+func TestGetDenoPath(t *testing.T) {
+	t.Run("returns override path when set", func(t *testing.T) {
+		override := "/custom/path/to/deno"
+		DenoPathOverride = override
+		defer func() { DenoPathOverride = "" }()
+
+		path, err := GetDenoPath()
+
+		assert.NoError(t, err)
+		assert.Equal(t, override, path)
 	})
 
-	t.Run("binds docker scopes", func(t *testing.T) {
-		importMap := ImportMap{
-			Scopes: map[string]map[string]string{
-				"my-scope": {
-					"my-mod": "https://deno.land",
-				},
-			},
+	t.Run("returns default path", func(t *testing.T) {
+		home, err := os.UserHomeDir()
+		require.NoError(t, err)
+		expected := filepath.Join(home, ".supabase", "deno")
+		if runtime.GOOS == "windows" {
+			expected += ".exe"
 		}
-		// Run test
-		mods := importMap.BindHostModules()
-		// Check error
-		assert.Empty(t, mods)
+
+		path, err := GetDenoPath()
+
+		assert.NoError(t, err)
+		assert.Equal(t, expected, path)
+	})
+}
+
+func TestIsScriptModified(t *testing.T) {
+	t.Run("detects modified script", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		destPath := "/path/to/script.ts"
+		original := []byte("original content")
+		modified := []byte("modified content")
+		require.NoError(t, afero.WriteFile(fsys, destPath, modified, 0644))
+
+		isModified, err := isScriptModified(fsys, destPath, original)
+
+		assert.NoError(t, err)
+		assert.True(t, isModified)
+	})
+
+	t.Run("detects unmodified script", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		destPath := "/path/to/script.ts"
+		content := []byte("test content")
+		require.NoError(t, afero.WriteFile(fsys, destPath, content, 0644))
+
+		isModified, err := isScriptModified(fsys, destPath, content)
+
+		assert.NoError(t, err)
+		assert.False(t, isModified)
+	})
+
+	t.Run("handles non-existent script", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		destPath := "/path/to/script.ts"
+		content := []byte("test content")
+
+		isModified, err := isScriptModified(fsys, destPath, content)
+
+		assert.NoError(t, err)
+		assert.True(t, isModified)
+	})
+}
+
+func TestCopyDenoScripts(t *testing.T) {
+	t.Run("copies deno scripts", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		home, err := os.UserHomeDir()
+		require.NoError(t, err)
+		denoDir := filepath.Join(home, ".supabase")
+		require.NoError(t, fsys.MkdirAll(denoDir, 0755))
+
+		scripts, err := CopyDenoScripts(context.Background(), fsys)
+
+		assert.NoError(t, err)
+		assert.NotNil(t, scripts)
+		extractExists, err := afero.Exists(fsys, scripts.ExtractPath)
+		assert.NoError(t, err)
+		assert.True(t, extractExists)
+	})
+
+	t.Run("skips copying unmodified scripts", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		home, err := os.UserHomeDir()
+		require.NoError(t, err)
+		scriptDir := filepath.Join(home, ".supabase", "denos")
+		require.NoError(t, fsys.MkdirAll(scriptDir, 0755))
+
+		scripts1, err := CopyDenoScripts(context.Background(), fsys)
+		require.NoError(t, err)
+		stat1, err := fsys.Stat(scripts1.ExtractPath)
+		require.NoError(t, err)
+		modTime1 := stat1.ModTime()
+
+		// Second copy
+		scripts2, err := CopyDenoScripts(context.Background(), fsys)
+		require.NoError(t, err)
+		stat2, err := fsys.Stat(scripts2.ExtractPath)
+		require.NoError(t, err)
+		modTime2 := stat2.ModTime()
+
+		// Verify file wasn't rewritten
+		assert.Equal(t, modTime1, modTime2)
 	})
 }

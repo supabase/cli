@@ -10,6 +10,7 @@ import (
 	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/config"
 )
@@ -41,28 +42,82 @@ func TestUpsertFunctions(t *testing.T) {
 		era.eszip = &MockBundler{}
 	})
 
-	t.Run("throws error on network failure", func(t *testing.T) {
+	t.Run("deploys with bulk update", func(t *testing.T) {
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(mockApiHost).
+			Get("/v1/projects/" + mockProject + "/functions").
+			Reply(http.StatusOK).
+			JSON([]api.FunctionResponse{{Slug: "test-a"}})
+		gock.New(mockApiHost).
+			Patch("/v1/projects/" + mockProject + "/functions/test-a").
+			Reply(http.StatusOK).
+			JSON(api.FunctionResponse{Slug: "test-a"})
+		gock.New(mockApiHost).
+			Post("/v1/projects/" + mockProject + "/functions/test-b").
+			Reply(http.StatusOK).
+			JSON(api.FunctionResponse{Slug: "test-b"})
+		gock.New(mockApiHost).
+			Put("/v1/projects/" + mockProject + "/functions").
+			ReplyError(errors.New("network error"))
+		gock.New(mockApiHost).
+			Put("/v1/projects/" + mockProject + "/functions").
+			Reply(http.StatusServiceUnavailable)
+		gock.New(mockApiHost).
+			Put("/v1/projects/" + mockProject + "/functions").
+			Reply(http.StatusOK).
+			JSON(api.V1BulkUpdateFunctionsResponse{})
+		// Run test
+		err := client.UpsertFunctions(context.Background(), config.FunctionConfig{
+			"test-a": {},
+			"test-b": {},
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("handles concurrent deploy", func(t *testing.T) {
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(mockApiHost).
+			Get("/v1/projects/" + mockProject + "/functions").
+			Reply(http.StatusOK).
+			JSON([]api.FunctionResponse{})
+		gock.New(mockApiHost).
+			Post("/v1/projects/" + mockProject + "/functions").
+			Reply(http.StatusBadRequest).
+			BodyString("Duplicated function slug")
+		gock.New(mockApiHost).
+			Patch("/v1/projects/" + mockProject + "/functions/test").
+			Reply(http.StatusOK).
+			JSON(api.FunctionResponse{Slug: "test"})
+		// Run test
+		err := client.UpsertFunctions(context.Background(), config.FunctionConfig{
+			"test": {},
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("retries on network failure", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(mockApiHost).
 			Get("/v1/projects/" + mockProject + "/functions").
 			ReplyError(errors.New("network error"))
-		// Run test
-		err := client.UpsertFunctions(context.Background(), nil)
-		// Check error
-		assert.ErrorContains(t, err, "network error")
-	})
-
-	t.Run("throws error on service unavailable", func(t *testing.T) {
-		// Setup mock api
-		defer gock.OffAll()
 		gock.New(mockApiHost).
 			Get("/v1/projects/" + mockProject + "/functions").
 			Reply(http.StatusServiceUnavailable)
+		gock.New(mockApiHost).
+			Get("/v1/projects/" + mockProject + "/functions").
+			Reply(http.StatusBadRequest)
 		// Run test
 		err := client.UpsertFunctions(context.Background(), nil)
 		// Check error
-		assert.ErrorContains(t, err, "unexpected list functions status 503:")
+		assert.ErrorContains(t, err, "unexpected list functions status 400:")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("retries on create failure", func(t *testing.T) {
@@ -88,6 +143,7 @@ func TestUpsertFunctions(t *testing.T) {
 		})
 		// Check error
 		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("retries on update failure", func(t *testing.T) {
@@ -113,5 +169,6 @@ func TestUpsertFunctions(t *testing.T) {
 		})
 		// Check error
 		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }

@@ -29,7 +29,7 @@ func TestDockerBundle(t *testing.T) {
 	t.Run("throws error on bundle failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		absImportMap := filepath.Join(cwd, "hello", "deno.json")
+		absImportMap := filepath.Join("hello", "deno.json")
 		require.NoError(t, utils.WriteFile(absImportMap, []byte("{}"), fsys))
 		// Setup deno error
 		t.Setenv("TEST_DENO_ERROR", "bundle failed")

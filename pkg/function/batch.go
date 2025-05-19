@@ -5,7 +5,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/docker/go-units"
@@ -20,14 +23,24 @@ const (
 )
 
 func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig config.FunctionConfig, filter ...func(string) bool) error {
-	var result []api.FunctionResponse
-	if resp, err := s.client.V1ListAllFunctionsWithResponse(ctx, s.project); err != nil {
-		return errors.Errorf("failed to list functions: %w", err)
-	} else if resp.JSON200 == nil {
-		return errors.Errorf("unexpected list functions status %d: %s", resp.StatusCode(), string(resp.Body))
-	} else {
-		result = *resp.JSON200
+	policy := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), maxRetries), ctx)
+	result, err := backoff.RetryWithData(func() ([]api.FunctionResponse, error) {
+		resp, err := s.client.V1ListAllFunctionsWithResponse(ctx, s.project)
+		if err != nil {
+			return nil, errors.Errorf("failed to list functions: %w", err)
+		} else if resp.JSON200 == nil {
+			err = errors.Errorf("unexpected list functions status %d: %s", resp.StatusCode(), string(resp.Body))
+			if resp.StatusCode() < http.StatusInternalServerError {
+				err = &backoff.PermanentError{Err: err}
+			}
+			return nil, err
+		}
+		return *resp.JSON200, nil
+	}, policy)
+	if err != nil {
+		return err
 	}
+	policy.Reset()
 	exists := make(map[string]struct{}, len(result))
 	for _, f := range result {
 		exists[f.Slug] = struct{}{}
@@ -59,18 +72,27 @@ OUTER:
 		}
 		functionSize := units.HumanSize(float64(body.Len()))
 		fmt.Fprintf(os.Stderr, "Deploying Function: %s (script size: %s)\n", slug, functionSize)
-		policy := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), maxRetries), ctx)
-		result, err := backoff.RetryWithData(upsert, policy)
+		result, err := backoff.RetryNotifyWithData(upsert, policy, func(err error, d time.Duration) {
+			if strings.Contains(err.Error(), "Duplicated function slug") {
+				exists[slug] = struct{}{}
+			}
+		})
 		if err != nil {
 			return err
 		}
 		toUpdate = append(toUpdate, result)
+		policy.Reset()
 	}
 	if len(toUpdate) > 1 {
-		if resp, err := s.client.V1BulkUpdateFunctionsWithResponse(ctx, s.project, toUpdate); err != nil {
-			return errors.Errorf("failed to bulk update: %w", err)
-		} else if resp.JSON200 == nil {
-			return errors.Errorf("unexpected bulk update status %d: %s", resp.StatusCode(), string(resp.Body))
+		if err := backoff.Retry(func() error {
+			if resp, err := s.client.V1BulkUpdateFunctionsWithResponse(ctx, s.project, toUpdate); err != nil {
+				return errors.Errorf("failed to bulk update: %w", err)
+			} else if resp.JSON200 == nil {
+				return errors.Errorf("unexpected bulk update status %d: %s", resp.StatusCode(), string(resp.Body))
+			}
+			return nil
+		}, policy); err != nil {
+			return err
 		}
 	}
 	return nil

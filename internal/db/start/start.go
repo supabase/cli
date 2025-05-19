@@ -24,6 +24,7 @@ import (
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/vault"
 )
@@ -75,7 +76,7 @@ func NewContainerConfig() container.Config {
 			"S3_ACCESS_KEY="+utils.Config.Experimental.S3AccessKey,
 			"S3_SECRET_KEY="+utils.Config.Experimental.S3SecretKey,
 		)
-	} else {
+	} else if i := strings.IndexByte(utils.Config.Db.Image, ':'); config.VersionCompare(utils.Config.Db.Image[i+1:], "15.8.1.005") < 0 {
 		env = append(env, "POSTGRES_INITDB_ARGS=--lc-collate=C.UTF-8")
 	}
 	config := container.Config{
@@ -305,6 +306,7 @@ func initStorageJob(host string) utils.DockerJob {
 		Image: utils.Config.Storage.Image,
 		Env: []string{
 			"DB_INSTALL_ROLES=false",
+			"DB_MIGRATIONS_FREEZE_AT=" + utils.Config.Storage.TargetMigration,
 			"ANON_KEY=" + utils.Config.Auth.AnonKey.Value,
 			"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
 			"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,

@@ -75,3 +75,114 @@ func TestProjectRoot(t *testing.T) {
 		assert.Equal(t, cwd, path)
 	})
 }
+
+func TestShortContainerImageName(t *testing.T) {
+	t.Run("extracts short name from image", func(t *testing.T) {
+		input := "registry.supabase.com/postgres:15.1.0.99"
+		expected := "postgres"
+
+		result := ShortContainerImageName(input)
+
+		assert.Equal(t, expected, result)
+	})
+}
+
+func TestIsBranchNameReserved(t *testing.T) {
+	t.Run("identifies reserved names", func(t *testing.T) {
+		reserved := []string{"_current_branch", "main"}
+		for _, name := range reserved {
+			assert.True(t, IsBranchNameReserved(name), "Expected %s to be reserved", name)
+		}
+	})
+
+	t.Run("allows custom names", func(t *testing.T) {
+		allowed := []string{"my-feature", "test-branch-123"}
+		for _, name := range allowed {
+			assert.False(t, IsBranchNameReserved(name), "Expected %s to be allowed", name)
+		}
+	})
+}
+
+func TestValidateFunctionSlug(t *testing.T) {
+	t.Run("validates correct slugs", func(t *testing.T) {
+		valid := []string{
+			"my-function",
+			"MyFunction",
+			"function_1",
+			"a123",
+		}
+		for _, slug := range valid {
+			err := ValidateFunctionSlug(slug)
+			assert.NoError(t, err, "Expected %s to be valid", slug)
+		}
+	})
+
+	t.Run("rejects invalid slugs", func(t *testing.T) {
+		invalid := []string{
+			"1function",
+			"my function",
+			"function!",
+			"",
+			"-function",
+			"_function",
+		}
+		for _, slug := range invalid {
+			err := ValidateFunctionSlug(slug)
+			assert.ErrorIs(t, err, ErrInvalidSlug, "Expected %s to be invalid", slug)
+		}
+	})
+}
+
+func TestAssertProjectRefIsValid(t *testing.T) {
+	t.Run("validates correct refs", func(t *testing.T) {
+		validRef := "abcdefghijklmnopqrst"
+		err := AssertProjectRefIsValid(validRef)
+		assert.NoError(t, err)
+	})
+
+	t.Run("rejects invalid refs", func(t *testing.T) {
+		invalid := []string{
+			"tooshort",
+			"toolongabcdefghijklmnopqrst",
+			"UPPERCASE",
+			"special-chars",
+			"123",
+			"",
+		}
+		for _, ref := range invalid {
+			err := AssertProjectRefIsValid(ref)
+			assert.ErrorIs(t, err, ErrInvalidRef, "Expected %s to be invalid", ref)
+		}
+	})
+}
+
+func TestWriteFile(t *testing.T) {
+	t.Run("writes file with directories", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		path := filepath.Join("deep", "nested", "dir", "file.txt")
+		content := []byte("test content")
+
+		err := WriteFile(path, content, fsys)
+
+		assert.NoError(t, err)
+
+		written, err := afero.ReadFile(fsys, path)
+		assert.NoError(t, err)
+		assert.Equal(t, content, written)
+	})
+
+	t.Run("overwrites existing file", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		path := "test.txt"
+		original := []byte("original")
+		updated := []byte("updated")
+		require.NoError(t, afero.WriteFile(fsys, path, original, 0644))
+
+		err := WriteFile(path, updated, fsys)
+
+		assert.NoError(t, err)
+		written, err := afero.ReadFile(fsys, path)
+		assert.NoError(t, err)
+		assert.Equal(t, updated, written)
+	})
+}
