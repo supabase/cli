@@ -268,7 +268,7 @@ func TestDiffDatabase(t *testing.T) {
 		// Check error
 		assert.Empty(t, diff)
 		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)
-At statement 0:
+At statement: 0
 create schema public`)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
