@@ -89,15 +89,16 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 		if i < len(m.Statements) {
 			stat = m.Statements[i]
 		}
-		msg := err.Error()
+		var msg []string
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) {
 			stat = markError(stat, int(pgErr.Position))
 			if len(pgErr.Detail) > 0 {
-				msg += fmt.Sprintf("\n%s", pgErr.Detail)
+				msg = append(msg, pgErr.Detail)
 			}
 		}
-		return errors.Errorf("%s\nAt statement: %d\n%s", msg, i, stat)
+		msg = append(msg, fmt.Sprintf("At statement: %d", i), stat)
+		return errors.Errorf("%w\n%s", err, strings.Join(msg, "\n"))
 	}
 	return nil
 }
