@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"io/fs"
 	"path/filepath"
@@ -88,11 +89,15 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 		if i < len(m.Statements) {
 			stat = m.Statements[i]
 		}
+		msg := err.Error()
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) {
 			stat = markError(stat, int(pgErr.Position))
+			if len(pgErr.Detail) > 0 {
+				msg += fmt.Sprintf("\n%s", pgErr.Detail)
+			}
 		}
-		return errors.Errorf("%w\nAt statement %d:\n%s", err, i, stat)
+		return errors.Errorf("%s\nAt statement: %d\n%s", msg, i, stat)
 	}
 	return nil
 }
