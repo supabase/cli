@@ -29,11 +29,10 @@ func TestBloat(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(BloatQuery, reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
-				Type:        "index hit rate",
-				Schemaname:  "public",
-				Object_name: "table",
-				Bloat:       "0.9",
-				Waste:       "0.1",
+				Type:  "index hit rate",
+				Name:  "public.table",
+				Bloat: "0.9",
+				Waste: "0.1",
 			})
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)

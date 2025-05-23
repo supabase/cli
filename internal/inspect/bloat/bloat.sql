@@ -38,12 +38,12 @@ WITH constants AS (
   JOIN pg_class c2 ON c2.oid = i.indexrelid
 )
 SELECT
-  type, schemaname, object_name, bloat, pg_size_pretty(raw_waste) as waste
+  type, name, bloat, pg_size_pretty(raw_waste) as waste
 FROM
 (SELECT
   'table' as type,
   schemaname,
-  tablename as object_name,
+  schemaname || '.' || tablename as name,
   ROUND(CASE WHEN otta=0 THEN 0.0 ELSE table_bloat.relpages/otta::numeric END,1) AS bloat,
   CASE WHEN relpages < otta THEN '0' ELSE (bs*(table_bloat.relpages-otta)::bigint)::bigint END AS raw_waste
 FROM
@@ -52,7 +52,7 @@ FROM
 SELECT
   'index' as type,
   schemaname,
-  tablename || '::' || iname as object_name,
+  schemaname || '.' || tablename || '::' || iname as name,
   ROUND(CASE WHEN iotta=0 OR ipages=0 THEN 0.0 ELSE ipages/iotta::numeric END,1) AS bloat,
   CASE WHEN ipages < iotta THEN '0' ELSE (bs*(ipages-iotta))::bigint END AS raw_waste
 FROM
