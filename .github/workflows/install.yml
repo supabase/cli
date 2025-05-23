@@ -102,7 +102,7 @@ jobs:
 
       - run: npm install -g pnpm
       - run: pnpm init
-      - run: pnpm i --save-dev ./supabase-1.28.0.tgz
+      - run: pnpm i --save-dev ./supabase-1.28.0.tgz --allow-build=supabase
       - run: pnpm supabase --version
 
   bun:
