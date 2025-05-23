@@ -3,6 +3,9 @@ name: Publish migra
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   settings:
     runs-on: ubuntu-latest
@@ -70,9 +73,9 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Merge multi-arch manifests
         run: |
-          docker buildx imagetools create -t ${{ needs.settings.outputs.image_tag }} \
-          ${{ needs.settings.outputs.image_tag }}_amd64 \
-          ${{ needs.settings.outputs.image_tag }}_arm64
+          docker buildx imagetools create -t "${{ needs.settings.outputs.image_tag }}" \
+          "${{ needs.settings.outputs.image_tag }}_amd64" \
+          "${{ needs.settings.outputs.image_tag }}_arm64"
 
   publish:
     needs:
