@@ -55,6 +55,7 @@ var (
 		Value: types.LangTypescript,
 	}
 	postgrestV9Compat  bool
+	postgrestVersion   string
 	swiftAccessControl = utils.EnumFlag{
 		Allowed: []string{
 			types.SwiftInternalAccessControl,
@@ -69,6 +70,9 @@ var (
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			if postgrestV9Compat && !cmd.Flags().Changed("db-url") {
 				return errors.New("--postgrest-v9-compat must used together with --db-url")
+			}
+			if postgrestVersion != "" && !cmd.Flags().Changed("db-url") {
+				return errors.New("--postgrest-version must used together with --db-url")
 			}
 			// Legacy commands specify language using arg, eg. gen types typescript
 			if len(args) > 0 && args[0] != types.LangTypescript && !cmd.Flags().Changed("lang") {
@@ -86,7 +90,7 @@ var (
 					return err
 				}
 			}
-			return types.Run(ctx, flags.ProjectRef, flags.DbConfig, lang.Value, schema, postgrestV9Compat, swiftAccessControl.Value, afero.NewOsFs())
+			return types.Run(ctx, flags.ProjectRef, flags.DbConfig, lang.Value, schema, postgrestV9Compat, postgrestVersion, swiftAccessControl.Value, afero.NewOsFs())
 		},
 		Example: `  supabase gen types --local
   supabase gen types --linked --lang=go
@@ -106,6 +110,7 @@ func init() {
 	typeFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	typeFlags.Var(&swiftAccessControl, "swift-access-control", "Access control for Swift generated types.")
 	typeFlags.BoolVar(&postgrestV9Compat, "postgrest-v9-compat", false, "Generate types compatible with PostgREST v9 and below. Only use together with --db-url.")
+	typeFlags.StringVar(&postgrestVersion, "postgrest-version", "", "Generate types with __internal_supabase schema using the right version of postgrest. Only use together with --db-url.")
 	genCmd.AddCommand(genTypesCmd)
 	keyFlags := genKeysCmd.Flags()
 	keyFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
