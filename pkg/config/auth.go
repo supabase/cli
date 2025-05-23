@@ -304,6 +304,7 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 	a.Email.toAuthConfigBody(&body)
 	a.Sms.toAuthConfigBody(&body)
 	a.External.toAuthConfigBody(&body)
+	a.Web3.toAuthConfigBody(&body)
 	return body
 }
 
@@ -330,6 +331,7 @@ func (a *auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	a.Email.fromAuthConfig(remoteConfig)
 	a.Sms.fromAuthConfig(remoteConfig)
 	a.External.fromAuthConfig(remoteConfig)
+	a.Web3.fromAuthConfig(remoteConfig)
 }
 
 func (r rateLimit) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
@@ -339,6 +341,7 @@ func (r rateLimit) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.RateLimitVerify = cast.Ptr(cast.UintToInt(r.TokenVerifications))
 	// Email rate limit is only updated when SMTP is enabled
 	body.RateLimitSmsSent = cast.Ptr(cast.UintToInt(r.SmsSent))
+	body.RateLimitWeb3 = cast.Ptr(cast.UintToInt(r.Web3))
 }
 
 func (r *rateLimit) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
@@ -348,6 +351,7 @@ func (r *rateLimit) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	r.TokenVerifications = cast.IntToUint(cast.Val(remoteConfig.RateLimitVerify, 0))
 	// Email rate limit is only updated when SMTP is enabled
 	r.SmsSent = cast.IntToUint(cast.Val(remoteConfig.RateLimitSmsSent, 0))
+	r.Web3 = cast.IntToUint(cast.Val(remoteConfig.RateLimitWeb3, 0))
 }
 
 func (c captcha) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
@@ -1148,4 +1152,22 @@ func (a *auth) DiffWithRemote(remoteConfig v1API.AuthConfigResponse) ([]byte, er
 		return nil, err
 	}
 	return diff.Diff("remote[auth]", remoteCompare, "local[auth]", currentValue), nil
+}
+
+func (w web3) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+	w.Solana.toAuthConfigBody(body)
+}
+
+func (w *web3) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	w.Solana.fromAuthConfig(remoteConfig)
+}
+
+func (s solana) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+	body.ExternalWeb3SolanaEnabled = &s.Enabled
+}
+
+func (s *solana) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	if remoteConfig.ExternalWeb3SolanaEnabled != nil {
+		s.Enabled = *remoteConfig.ExternalWeb3SolanaEnabled
+	}
 }
