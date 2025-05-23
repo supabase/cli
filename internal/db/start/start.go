@@ -248,9 +248,18 @@ func initCurrentBranch(fsys afero.Fs) error {
 	return utils.WriteFile(utils.CurrBranchPath, []byte("main"), fsys)
 }
 
-func initSchema(ctx context.Context, conn *pgx.Conn, host string, w io.Writer) error {
+func InitDatabase(ctx context.Context, host string, w io.Writer) error {
 	fmt.Fprintln(w, "Initialising schema...")
 	if utils.Config.Db.MajorVersion <= 14 {
+		pgc := pgconn.Config{}
+		if host != utils.DbId {
+			pgc.Port = utils.Config.Db.ShadowPort
+		}
+		conn, err := utils.ConnectLocalPostgres(ctx, pgc)
+		if err != nil {
+			return err
+		}
+		defer conn.Close(context.Background())
 		if file, err := migration.NewMigrationFromReader(strings.NewReader(utils.GlobalsSql)); err != nil {
 			return err
 		} else if err := file.ExecBatch(ctx, conn); err != nil {
@@ -338,7 +347,7 @@ func initAuthJob(host string) utils.DockerJob {
 	}
 }
 
-func initSchema15(ctx context.Context, host string) error {
+func initSchema15(ctx context.Context, host string, options ...func(*pgx.ConnConfig)) error {
 	// Apply service migrations
 	var initJobs []utils.DockerJob
 	if utils.Config.Realtime.Enabled {
@@ -356,25 +365,44 @@ func initSchema15(ctx context.Context, host string) error {
 			return err
 		}
 	}
+	// Only create template on main database
+	if host != utils.DbId {
+		return nil
+	}
+	pgc := pgconn.Config{User: "supabase_admin", Database: "template1"}
+	conn, err := utils.ConnectLocalPostgres(ctx, pgc, options...)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	if _, err := conn.Exec(ctx, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'postgres'"); err != nil {
+		return errors.Errorf("failed to disconnect clients: %w", err)
+	}
+	if _, err := conn.Exec(ctx, "SET ROLE postgres"); err != nil {
+		return errors.Errorf("failed to switch role: %w", err)
+	}
+	if _, err := conn.Exec(ctx, "CREATE DATABASE _shadow TEMPLATE postgres"); err != nil {
+		return errors.Errorf("failed to create template: %w", err)
+	}
 	return nil
 }
 
 func SetupLocalDatabase(ctx context.Context, version string, fsys afero.Fs, w io.Writer, options ...func(*pgx.ConnConfig)) error {
+	if err := InitDatabase(ctx, utils.DbId, w); err != nil {
+		return err
+	}
 	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
-	if err := SetupDatabase(ctx, conn, utils.DbId, w, fsys); err != nil {
+	if err := SetupDatabase(ctx, conn, w, fsys); err != nil {
 		return err
 	}
 	return apply.MigrateAndSeed(ctx, version, conn, fsys)
 }
 
-func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer, fsys afero.Fs) error {
-	if err := initSchema(ctx, conn, host, w); err != nil {
-		return err
-	}
+func SetupDatabase(ctx context.Context, conn *pgx.Conn, w io.Writer, fsys afero.Fs) error {
 	// Create vault secrets first so roles.sql can reference them
 	if err := vault.UpsertVaultSecrets(ctx, utils.Config.Db.Vault, conn); err != nil {
 		return err
