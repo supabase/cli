@@ -91,6 +91,7 @@ type (
 		Email     email     `toml:"email"`
 		Sms       sms       `toml:"sms"`
 		External  external  `toml:"external"`
+		Web3      web3      `toml:"web3"`
 
 		// Custom secrets can be injected from .env file
 		JwtSecret      Secret `toml:"jwt_secret"`
@@ -116,6 +117,7 @@ type (
 		TokenVerifications uint `toml:"token_verifications"`
 		EmailSent          uint `toml:"email_sent"`
 		SmsSent            uint `toml:"sms_sent"`
+		Web3               uint `toml:"web3"`
 	}
 
 	tpaFirebase struct {
@@ -263,6 +265,14 @@ type (
 		Url            string `toml:"url"`
 		RedirectUri    string `toml:"redirect_uri"`
 		SkipNonceCheck bool   `toml:"skip_nonce_check"`
+	}
+
+	solana struct {
+		Enabled bool `toml:"enabled"`
+	}
+
+	web3 struct {
+		Solana solana `toml:"solana"`
 	}
 )
 
