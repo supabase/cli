@@ -11,6 +11,7 @@ paths:
           in: path
           description: Branch ID
           schema:
+            format: uuid
             type: string
       responses:
         '200':
@@ -35,6 +36,7 @@ paths:
           in: path
           description: Branch ID
           schema:
+            format: uuid
             type: string
       requestBody:
         required: true
@@ -65,6 +67,7 @@ paths:
           in: path
           description: Branch ID
           schema:
+            format: uuid
             type: string
       responses:
         '200':
@@ -90,7 +93,14 @@ paths:
           in: path
           description: Branch ID
           schema:
+            format: uuid
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BranchActionBody'
       responses:
         '201':
           description: ''
@@ -100,6 +110,38 @@ paths:
                 $ref: '#/components/schemas/BranchUpdateResponse'
         '500':
           description: Failed to push database branch
+      tags:
+        - Environments
+      security:
+        - bearer: []
+  /v1/branches/{branch_id}/merge:
+    post:
+      operationId: v1-merge-a-branch
+      summary: Merges a database branch
+      description: Merges the specified database branch
+      parameters:
+        - name: branch_id
+          required: true
+          in: path
+          description: Branch ID
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BranchActionBody'
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BranchUpdateResponse'
+        '500':
+          description: Failed to merge database branch
       tags:
         - Environments
       security:
@@ -115,7 +157,14 @@ paths:
           in: path
           description: Branch ID
           schema:
+            format: uuid
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BranchActionBody'
       responses:
         '201':
           description: ''
@@ -157,7 +206,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/V1CreateProjectBodyDto'
+              $ref: '#/components/schemas/V1CreateProjectBody'
       responses:
         '201':
           description: ''
@@ -199,7 +248,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateOrganizationV1Dto'
+              $ref: '#/components/schemas/CreateOrganizationV1'
       responses:
         '201':
           description: ''
@@ -222,6 +271,7 @@ paths:
           required: true
           in: query
           schema:
+            format: uuid
             type: string
         - name: response_type
           required: true
@@ -267,7 +317,7 @@ paths:
               - S256
             type: string
       responses:
-        '303':
+        '204':
           description: ''
       tags:
         - OAuth
@@ -307,7 +357,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/OAuthRevokeTokenBodyDto'
+              $ref: '#/components/schemas/OAuthRevokeTokenBody'
       responses:
         '204':
           description: ''
@@ -321,6 +371,15 @@ paths:
       operationId: v1-list-all-snippets
       summary: Lists SQL snippets for the logged in user
       parameters:
+        - name: project_ref
+          required: false
+          in: query
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            pattern: ^[a-z]+$
+            type: string
         - name: cursor
           required: false
           in: query
@@ -348,11 +407,6 @@ paths:
             enum:
               - asc
               - desc
-            type: string
-        - name: project_ref
-          required: false
-          in: query
-          schema:
             type: string
       responses:
         '200':
@@ -403,10 +457,12 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
         - name: reveal
-          required: true
+          required: false
           in: query
+          description: Boolean string, true or false
           schema:
             type: boolean
       responses:
@@ -418,6 +474,8 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/ApiKeyResponse'
+        '403':
+          description: ''
       tags:
         - Secrets
       security:
@@ -433,10 +491,12 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
         - name: reveal
-          required: true
+          required: false
           in: query
+          description: Boolean string, true or false
           schema:
             type: boolean
       requestBody:
@@ -452,6 +512,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiKeyResponse'
+        '403':
+          description: ''
       tags:
         - Secrets
       security:
@@ -468,15 +530,18 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
         - name: id
           required: true
           in: path
           schema:
+            format: uuid
             type: string
         - name: reveal
-          required: true
+          required: false
           in: query
+          description: Boolean string, true or false
           schema:
             type: boolean
       requestBody:
@@ -492,6 +557,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiKeyResponse'
+        '403':
+          description: ''
       tags:
         - Secrets
       security:
@@ -507,15 +574,18 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
         - name: id
           required: true
           in: path
           schema:
+            format: uuid
             type: string
         - name: reveal
-          required: true
+          required: false
           in: query
+          description: Boolean string, true or false
           schema:
             type: boolean
       responses:
@@ -525,6 +595,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiKeyResponse'
+        '403':
+          description: ''
       tags:
         - Secrets
       security:
@@ -540,15 +612,18 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
         - name: id
           required: true
           in: path
           schema:
+            format: uuid
             type: string
         - name: reveal
-          required: true
+          required: false
           in: query
+          description: Boolean string, true or false
           schema:
             type: boolean
       responses:
@@ -577,6 +652,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -587,6 +663,8 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/BranchResponse'
+        '403':
+          description: ''
         '500':
           description: Failed to retrieve database branches
       tags:
@@ -605,6 +683,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
@@ -619,6 +698,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BranchResponse'
+        '403':
+          description: ''
         '500':
           description: Failed to create database branch
       tags:
@@ -637,9 +718,12 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
+          description: ''
+        '403':
           description: ''
         '500':
           description: Failed to disable preview branching
@@ -659,6 +743,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -686,6 +771,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -710,6 +796,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
@@ -746,6 +833,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '201':
@@ -774,6 +862,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '201':
@@ -802,6 +891,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '201':
@@ -818,6 +908,37 @@ paths:
         - Projects
       security:
         - bearer: []
+  /v1/projects/{ref}/network-bans/retrieve/enriched:
+    post:
+      operationId: v1-list-all-network-bans-enriched
+      summary: >-
+        [Beta] Gets project's network bans with additional information about
+        which databases they affect
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            pattern: ^[a-z]+$
+            type: string
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkBanResponseEnriched'
+        '403':
+          description: ''
+        '500':
+          description: Failed to retrieve project's enriched network bans
+      tags:
+        - Projects
+      security:
+        - bearer: []
   /v1/projects/{ref}/network-bans:
     delete:
       operationId: v1-delete-network-bans
@@ -830,6 +951,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
@@ -860,6 +982,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -888,6 +1011,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
@@ -922,6 +1046,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -951,6 +1076,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
@@ -985,6 +1111,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -1012,13 +1139,14 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdatePostgrestConfigBody'
+              $ref: '#/components/schemas/V1UpdatePostgrestConfigBody'
       responses:
         '200':
           description: ''
@@ -1046,6 +1174,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -1054,6 +1183,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/V1ProjectWithDatabaseResponse'
+        '403':
+          description: ''
         '500':
           description: Failed to retrieve project
       tags:
@@ -1071,6 +1202,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -1098,6 +1230,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -1128,15 +1261,14 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: array
-              items:
-                $ref: '#/components/schemas/CreateSecretBody'
+              $ref: '#/components/schemas/CreateSecretBody'
       responses:
         '201':
           description: ''
@@ -1160,6 +1292,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
@@ -1172,10 +1305,6 @@ paths:
       responses:
         '200':
           description: ''
-          content:
-            application/json:
-              schema:
-                type: object
         '403':
           description: ''
         '500':
@@ -1196,6 +1325,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -1223,6 +1353,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
@@ -1264,6 +1395,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -1292,6 +1424,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -1319,6 +1452,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -1343,6 +1477,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
@@ -1377,6 +1512,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
@@ -1411,6 +1547,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
@@ -1445,6 +1582,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -1473,6 +1611,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
         - name: tracking_id
           required: false
@@ -1506,6 +1645,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -1514,6 +1654,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ReadOnlyStatusResponse'
+        '403':
+          description: ''
         '500':
           description: Failed to get project readonly mode status
       tags:
@@ -1532,9 +1674,12 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '201':
+          description: ''
+        '403':
           description: ''
         '500':
           description: Failed to disable project's readonly mode
@@ -1554,6 +1699,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
@@ -1584,6 +1730,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
@@ -1614,21 +1761,14 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
-        - name: timeout_ms
-          required: false
-          in: query
-          schema:
-            minimum: 0
-            maximum: 10000
-            type: integer
         - name: services
           required: true
           in: query
           schema:
             type: array
             items:
-              type: string
               enum:
                 - auth
                 - db
@@ -1636,6 +1776,13 @@ paths:
                 - realtime
                 - rest
                 - storage
+        - name: timeout_ms
+          required: false
+          in: query
+          schema:
+            minimum: 0
+            maximum: 10000
+            type: integer
       responses:
         '200':
           description: ''
@@ -1653,6 +1800,170 @@ paths:
         - Projects
       security:
         - bearer: []
+  /v1/projects/{ref}/config/auth/signing-keys:
+    post:
+      operationId: createSigningKeyForProject
+      summary: '[Alpha] Create a new signing key for the project in standby status'
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            pattern: ^[a-z]+$
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSigningKeyBody'
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SigningKeyResponse'
+        '403':
+          description: ''
+      tags:
+        - Auth
+      security:
+        - bearer: []
+    get:
+      operationId: listSigningKeysForProject
+      summary: '[Alpha] List all signing keys for the project'
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            pattern: ^[a-z]+$
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SigningKeysResponse'
+        '403':
+          description: ''
+      tags:
+        - Auth
+      security:
+        - bearer: []
+  /v1/projects/{ref}/config/auth/signing-keys/{id}:
+    get:
+      operationId: getSigningKeyForProject
+      summary: '[Alpha] Get information about a signing key'
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            format: uuid
+            type: string
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            pattern: ^[a-z]+$
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SigningKeyResponse'
+        '403':
+          description: ''
+      tags:
+        - Auth
+      security:
+        - bearer: []
+    delete:
+      operationId: deleteSigningKey
+      summary: >-
+        [Alpha] Remove a signing key from a project, where the status is
+        previously_used
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            format: uuid
+            type: string
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            pattern: ^[a-z]+$
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SigningKeyResponse'
+        '403':
+          description: ''
+      tags:
+        - Auth
+      security:
+        - bearer: []
+    patch:
+      operationId: patchSigningKey
+      summary: '[Alpha] Update a signing key, mainly its status'
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            format: uuid
+            type: string
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            pattern: ^[a-z]+$
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSigningKeyBody'
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SigningKeyResponse'
+        '403':
+          description: ''
+      tags:
+        - Auth
+      security:
+        - bearer: []
   /v1/projects/{ref}/config/storage:
     get:
       operationId: v1-get-storage-config
@@ -1665,6 +1976,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -1692,6 +2004,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
@@ -1722,6 +2035,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -1730,6 +2044,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PostgresConfigResponse'
+        '403':
+          description: ''
         '500':
           description: Failed to retrieve project's Postgres config
       tags:
@@ -1747,6 +2063,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
@@ -1781,6 +2098,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -1789,13 +2107,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/V1PgbouncerConfigResponse'
+        '403':
+          description: ''
         '500':
           description: Failed to retrieve project's pgbouncer config
       tags:
         - Database
   /v1/projects/{ref}/config/database/pooler:
     get:
-      operationId: v1-get-supavisor-config
+      operationId: getSupavisorConfig
       summary: Gets project's supavisor config
       parameters:
         - name: ref
@@ -1805,6 +2125,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -1822,7 +2143,7 @@ paths:
       security:
         - bearer: []
     patch:
-      operationId: v1-update-supavisor-config
+      operationId: updateSupavisorConfig
       summary: Updates project's supavisor config
       parameters:
         - name: ref
@@ -1832,6 +2153,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
@@ -1866,6 +2188,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -1893,6 +2216,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
@@ -1927,6 +2251,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
@@ -1949,7 +2274,7 @@ paths:
         - bearer: []
     get:
       operationId: listTPAForProject
-      summary: '[Alpha] Lists all third-party auth integrations'
+      summary: Lists all third-party auth integrations
       parameters:
         - name: ref
           required: true
@@ -1958,6 +2283,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -1977,7 +2303,7 @@ paths:
   /v1/projects/{ref}/config/auth/third-party-auth/{tpa_id}:
     delete:
       operationId: deleteTPAForProject
-      summary: '[Alpha] Removes a third-party auth integration'
+      summary: Removes a third-party auth integration
       parameters:
         - name: ref
           required: true
@@ -1986,11 +2312,13 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
         - name: tpa_id
           required: true
           in: path
           schema:
+            format: uuid
             type: string
       responses:
         '200':
@@ -2007,7 +2335,7 @@ paths:
         - bearer: []
     get:
       operationId: getTPAForProject
-      summary: '[Alpha] Get a third-party integration'
+      summary: Get a third-party integration
       parameters:
         - name: ref
           required: true
@@ -2016,11 +2344,13 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
         - name: tpa_id
           required: true
           in: path
           schema:
+            format: uuid
             type: string
       responses:
         '200':
@@ -2047,6 +2377,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -2065,7 +2396,11 @@ paths:
         - name: ref
           required: true
           in: path
+          description: Project ref
           schema:
+            minLength: 20
+            maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -2088,14 +2423,12 @@ paths:
         - name: ref
           required: true
           in: path
+          description: Project ref
           schema:
+            minLength: 20
+            maxLength: 20
+            pattern: ^[a-z]+$
             type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RestoreProjectBodyDto'
       responses:
         '200':
           description: ''
@@ -2113,7 +2446,11 @@ paths:
         - name: ref
           required: true
           in: path
+          description: Project ref
           schema:
+            minLength: 20
+            maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -2124,12 +2461,212 @@ paths:
         - Projects
       security:
         - bearer: []
+  /v1/projects/{ref}/billing/addons:
+    get:
+      operationId: v1-list-project-addons
+      summary: Lists project addons
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            pattern: ^[a-z]+$
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListProjectAddonsResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to list project addons
+      security:
+        - bearer: []
+    patch:
+      operationId: v1-apply-project-addon
+      summary: Applies project addon
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            pattern: ^[a-z]+$
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplyProjectAddonBody'
+      responses:
+        '200':
+          description: ''
+        '403':
+          description: ''
+        '500':
+          description: Failed to apply project addon
+      security:
+        - bearer: []
+  /v1/projects/{ref}/billing/addons/{addon_variant}:
+    delete:
+      operationId: v1-remove-project-addon
+      summary: Removes project addon
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            pattern: ^[a-z]+$
+            type: string
+        - name: addon_variant
+          required: true
+          in: path
+          oneOf:
+            - type: string
+              enum:
+                - ci_micro
+                - ci_small
+                - ci_medium
+                - ci_large
+                - ci_xlarge
+                - ci_2xlarge
+                - ci_4xlarge
+                - ci_8xlarge
+                - ci_12xlarge
+                - ci_16xlarge
+                - ci_24xlarge
+                - ci_24xlarge_optimized_cpu
+                - ci_24xlarge_optimized_memory
+                - ci_24xlarge_high_memory
+                - ci_48xlarge
+                - ci_48xlarge_optimized_cpu
+                - ci_48xlarge_optimized_memory
+                - ci_48xlarge_high_memory
+            - type: string
+              enum:
+                - cd_default
+            - type: string
+              enum:
+                - pitr_7
+                - pitr_14
+                - pitr_28
+            - type: string
+              enum:
+                - ipv4_default
+          schema: {}
+      responses:
+        '200':
+          description: ''
+        '403':
+          description: ''
+        '500':
+          description: Failed to remove project addon
+      security:
+        - bearer: []
+  /v1/projects/{ref}/advisors/performance:
+    get:
+      operationId: getPerformanceAdvisors
+      summary: Gets project performance advisors.
+      description: >-
+        This is an **experimental** endpoint. It is subject to change or removal
+        in future versions. Use it with caution, as it may not remain supported
+        or stable.
+      deprecated: true
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            pattern: ^[a-z]+$
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/V1ProjectAdvisorsResponse'
+        '403':
+          description: ''
+      tags:
+        - Projects Advisors
+      security:
+        - bearer: []
+  /v1/projects/{ref}/advisors/security:
+    get:
+      operationId: getSecurityAdvisors
+      summary: Gets project security advisors.
+      description: >-
+        This is an **experimental** endpoint. It is subject to change or removal
+        in future versions. Use it with caution, as it may not remain supported
+        or stable.
+      deprecated: true
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            pattern: ^[a-z]+$
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/V1ProjectAdvisorsResponse'
+        '403':
+          description: ''
+      tags:
+        - Projects Advisors
+      security:
+        - bearer: []
   /v1/projects/{ref}/analytics/endpoints/logs.all:
     get:
       operationId: getLogs
       summary: Gets project's logs
+      description: >
+        Executes a SQL query on the project's logs.
+
+
+        Either the 'iso_timestamp_start' and 'iso_timestamp_end' parameters must
+        be provided.
+
+        If both are not provided, only the last 1 minute of logs will be
+        queried.
+
+        The timestamp range must be no more than 24 hours and is rounded to the
+        nearest minute. If the range is more than 24 hours, a validation error
+        will be thrown.
       parameters:
-        - name: iso_timestamp_end
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            pattern: ^[a-z]+$
+            type: string
+        - name: sql
           required: false
           in: query
           schema:
@@ -2138,16 +2675,13 @@ paths:
           required: false
           in: query
           schema:
+            format: date-time
             type: string
-        - name: sql
+        - name: iso_timestamp_end
           required: false
           in: query
           schema:
-            type: string
-        - name: ref
-          required: true
-          in: path
-          schema:
+            format: date-time
             type: string
       responses:
         '200':
@@ -2162,6 +2696,73 @@ paths:
         - Analytics
       security:
         - bearer: []
+  /v1/projects/{ref}/database/migrations:
+    get:
+      operationId: v1-list-migrations
+      summary: '[Beta] List applied migration versions'
+      description: Only available to selected partner OAuth apps
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            pattern: ^[a-z]+$
+            type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/V1ListMigrationsResponse'
+        '403':
+          description: ''
+        '500':
+          description: Failed to list database migrations
+      tags:
+        - Database
+      security:
+        - bearer: []
+    post:
+      operationId: v1-apply-a-migration
+      summary: '[Beta] Apply a database migration'
+      description: Only available to selected partner OAuth apps
+      parameters:
+        - name: ref
+          required: true
+          in: path
+          description: Project ref
+          schema:
+            minLength: 20
+            maxLength: 20
+            pattern: ^[a-z]+$
+            type: string
+        - name: Idempotency-Key
+          required: false
+          in: header
+          description: A unique key to ensure the same migration is tracked only once.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/V1CreateMigrationBody'
+      responses:
+        '200':
+          description: ''
+        '403':
+          description: ''
+        '500':
+          description: Failed to apply database migration
+      tags:
+        - Database
+      security:
+        - bearer: []
   /v1/projects/{ref}/database/query:
     post:
       operationId: v1-run-a-query
@@ -2174,6 +2775,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
@@ -2184,10 +2786,6 @@ paths:
       responses:
         '201':
           description: ''
-          content:
-            application/json:
-              schema:
-                type: object
         '403':
           description: ''
         '500':
@@ -2208,6 +2806,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '201':
@@ -2233,7 +2832,11 @@ paths:
         - name: ref
           required: true
           in: path
+          description: Project ref
           schema:
+            minLength: 20
+            maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -2241,7 +2844,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GetProjectDbMetadataResponseDto'
+                $ref: '#/components/schemas/GetProjectDbMetadataResponse'
         '403':
           description: ''
       tags:
@@ -2261,6 +2864,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -2282,7 +2886,10 @@ paths:
     post:
       operationId: v1-create-a-function
       summary: Create a function
-      description: Creates a function and adds it to the specified project.
+      description: >-
+        This endpoint is deprecated - use the deploy endpoint. Creates a
+        function and adds it to the specified project.
+      deprecated: true
       parameters:
         - name: ref
           required: true
@@ -2291,12 +2898,13 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
         - name: slug
           required: false
           in: query
           schema:
-            pattern: /^[A-Za-z0-9_-]+$/
+            pattern: ^[A-Za-z0-9_-]+$
             type: string
         - name: name
           required: false
@@ -2306,11 +2914,13 @@ paths:
         - name: verify_jwt
           required: false
           in: query
+          description: Boolean string, true or false
           schema:
             type: boolean
         - name: import_map
           required: false
           in: query
+          description: Boolean string, true or false
           schema:
             type: boolean
         - name: entrypoint_path
@@ -2323,22 +2933,6 @@ paths:
           in: query
           schema:
             type: string
-        - name: compute_multiplier
-          required: false
-          in: query
-          schema:
-            minimum: 1
-            maximum: 4
-            type: number
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/V1CreateFunctionBody'
-          application/vnd.denoland.eszip:
-            schema:
-              $ref: '#/components/schemas/V1CreateFunctionBody'
       responses:
         '201':
           description: ''
@@ -2369,15 +2963,14 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: array
-              items:
-                $ref: '#/components/schemas/BulkUpdateFunctionBody'
+              $ref: '#/components/schemas/BulkUpdateFunctionBody'
       responses:
         '200':
           description: ''
@@ -2408,16 +3001,18 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
         - name: slug
           required: false
           in: query
           schema:
-            pattern: /^[A-Za-z0-9_-]+$/
+            pattern: ^[A-Za-z0-9_-]+$
             type: string
         - name: bundleOnly
           required: false
           in: query
+          description: Boolean string, true or false
           schema:
             type: boolean
       requestBody:
@@ -2454,13 +3049,14 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
         - name: function_slug
           required: true
           in: path
           description: Function slug
           schema:
-            pattern: /^[A-Za-z0-9_-]+$/
+            pattern: ^[A-Za-z0-9_-]+$
             type: string
       responses:
         '200':
@@ -2489,19 +3085,20 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
         - name: function_slug
           required: true
           in: path
           description: Function slug
           schema:
-            pattern: /^[A-Za-z0-9_-]+$/
+            pattern: ^[A-Za-z0-9_-]+$
             type: string
         - name: slug
           required: false
           in: query
           schema:
-            pattern: /^[A-Za-z0-9_-]+$/
+            pattern: ^[A-Za-z0-9_-]+$
             type: string
         - name: name
           required: false
@@ -2511,11 +3108,13 @@ paths:
         - name: verify_jwt
           required: false
           in: query
+          description: Boolean string, true or false
           schema:
             type: boolean
         - name: import_map
           required: false
           in: query
+          description: Boolean string, true or false
           schema:
             type: boolean
         - name: entrypoint_path
@@ -2528,13 +3127,6 @@ paths:
           in: query
           schema:
             type: string
-        - name: compute_multiplier
-          required: false
-          in: query
-          schema:
-            minimum: 1
-            maximum: 4
-            type: number
       requestBody:
         required: true
         content:
@@ -2571,13 +3163,14 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
         - name: function_slug
           required: true
           in: path
           description: Function slug
           schema:
-            pattern: /^[A-Za-z0-9_-]+$/
+            pattern: ^[A-Za-z0-9_-]+$
             type: string
       responses:
         '200':
@@ -2603,17 +3196,22 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
         - name: function_slug
           required: true
           in: path
           description: Function slug
           schema:
-            pattern: /^[A-Za-z0-9_-]+$/
+            pattern: ^[A-Za-z0-9_-]+$
             type: string
       responses:
         '200':
           description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreamableFile'
         '403':
           description: ''
         '500':
@@ -2634,6 +3232,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -2664,6 +3263,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
@@ -2697,6 +3297,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -2725,11 +3326,13 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
         - name: provider_id
           required: true
           in: path
           schema:
+            format: uuid
             type: string
       responses:
         '200':
@@ -2759,11 +3362,13 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
         - name: provider_id
           required: true
           in: path
           schema:
+            format: uuid
             type: string
       requestBody:
         required: true
@@ -2799,11 +3404,13 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
         - name: provider_id
           required: true
           in: path
           schema:
+            format: uuid
             type: string
       responses:
         '200':
@@ -2834,6 +3441,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       responses:
         '200':
@@ -2842,6 +3450,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/V1BackupsResponse'
+        '403':
+          description: ''
         '500':
           description: Failed to get backups
       tags:
@@ -2860,6 +3470,7 @@ paths:
           schema:
             minLength: 20
             maxLength: 20
+            pattern: ^[a-z]+$
             type: string
       requestBody:
         required: true
@@ -2869,6 +3480,8 @@ paths:
               $ref: '#/components/schemas/V1RestorePitrBody'
       responses:
         '201':
+          description: ''
+        '403':
           description: ''
       tags:
         - Database
@@ -2882,7 +3495,9 @@ paths:
         - name: slug
           required: true
           in: path
+          description: Organization slug
           schema:
+            pattern: ^[\w-]+$
             type: string
       responses:
         '200':
@@ -2893,6 +3508,8 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/V1OrganizationMemberResponse'
+        '403':
+          description: ''
       tags:
         - Organizations
       security:
@@ -2905,7 +3522,9 @@ paths:
         - name: slug
           required: true
           in: path
+          description: Organization slug
           schema:
+            pattern: ^[\w-]+$
             type: string
       responses:
         '200':
@@ -2914,6 +3533,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/V1OrganizationSlugResponse'
+        '403':
+          description: ''
       tags:
         - Organizations
       security:
@@ -2960,6 +3581,14 @@ components:
     BranchDetailResponse:
       type: object
       properties:
+        ref:
+          type: string
+        postgres_version:
+          type: string
+        postgres_engine:
+          type: string
+        release_channel:
+          type: string
         status:
           type: string
           enum:
@@ -2978,18 +3607,10 @@ components:
             - RESTARTING
             - PAUSE_FAILED
             - RESIZING
-        db_port:
-          type: integer
-        ref:
-          type: string
-        postgres_version:
-          type: string
-        postgres_engine:
-          type: string
-        release_channel:
-          type: string
         db_host:
           type: string
+        db_port:
+          type: number
         db_user:
           type: string
         db_pass:
@@ -2997,26 +3618,26 @@ components:
         jwt_secret:
           type: string
       required:
-        - status
-        - db_port
         - ref
         - postgres_version
         - postgres_engine
         - release_channel
+        - status
         - db_host
+        - db_port
     UpdateBranchBody:
       type: object
       properties:
-        reset_on_push:
-          type: boolean
-          deprecated: true
-          description: >-
-            This field is deprecated and will be ignored. Use v1-reset-a-branch
-            endpoint directly instead.
         branch_name:
           type: string
         git_branch:
           type: string
+        reset_on_push:
+          type: boolean
+          description: >-
+            This field is deprecated and will be ignored. Use v1-reset-a-branch
+            endpoint directly instead.
+          deprecated: true
         persistent:
           type: boolean
         status:
@@ -3031,22 +3652,6 @@ components:
     BranchResponse:
       type: object
       properties:
-        pr_number:
-          type: integer
-          format: int32
-        latest_check_run_id:
-          type: number
-          deprecated: true
-          description: This field is deprecated and will not be populated.
-        status:
-          type: string
-          enum:
-            - CREATING_PROJECT
-            - RUNNING_MIGRATIONS
-            - MIGRATIONS_PASSED
-            - MIGRATIONS_FAILED
-            - FUNCTIONS_DEPLOYED
-            - FUNCTIONS_FAILED
         id:
           type: string
         name:
@@ -3059,20 +3664,36 @@ components:
           type: boolean
         git_branch:
           type: string
+        pr_number:
+          type: integer
+          format: int32
+        latest_check_run_id:
+          type: number
+          description: This field is deprecated and will not be populated.
+          deprecated: true
         persistent:
           type: boolean
+        status:
+          type: string
+          enum:
+            - CREATING_PROJECT
+            - RUNNING_MIGRATIONS
+            - MIGRATIONS_PASSED
+            - MIGRATIONS_FAILED
+            - FUNCTIONS_DEPLOYED
+            - FUNCTIONS_FAILED
         created_at:
           type: string
         updated_at:
           type: string
       required:
-        - status
         - id
         - name
         - project_ref
         - parent_project_ref
         - is_default
         - persistent
+        - status
         - created_at
         - updated_at
     BranchDeleteResponse:
@@ -3080,8 +3701,15 @@ components:
       properties:
         message:
           type: string
+          enum:
+            - ok
       required:
         - message
+    BranchActionBody:
+      type: object
+      properties:
+        migration_version:
+          type: string
     BranchUpdateResponse:
       type: object
       properties:
@@ -3089,29 +3717,11 @@ components:
           type: string
         message:
           type: string
+          enum:
+            - ok
       required:
         - workflow_run_id
         - message
-    V1DatabaseResponse:
-      type: object
-      properties:
-        host:
-          type: string
-          description: Database host
-        version:
-          type: string
-          description: Database version
-        postgres_engine:
-          type: string
-          description: Database engine
-        release_channel:
-          type: string
-          description: Release channel
-      required:
-        - host
-        - version
-        - postgres_engine
-        - release_channel
     V1ProjectWithDatabaseResponse:
       type: object
       properties:
@@ -3151,7 +3761,25 @@ components:
             - PAUSE_FAILED
             - RESIZING
         database:
-          $ref: '#/components/schemas/V1DatabaseResponse'
+          type: object
+          properties:
+            host:
+              type: string
+              description: Database host
+            version:
+              type: string
+              description: Database version
+            postgres_engine:
+              type: string
+              description: Database engine
+            release_channel:
+              type: string
+              description: Release channel
+          required:
+            - host
+            - version
+            - postgres_engine
+            - release_channel
       required:
         - id
         - organization_id
@@ -3160,7 +3788,7 @@ components:
         - created_at
         - status
         - database
-    V1CreateProjectBodyDto:
+    V1CreateProjectBody:
       type: object
       properties:
         db_pass:
@@ -3168,6 +3796,7 @@ components:
           description: Database password
         name:
           type: string
+          maxLength: 256
           description: Name of your project
         organization_id:
           type: string
@@ -3210,6 +3839,7 @@ components:
         desired_instance_size:
           type: string
           enum:
+            - pico
             - micro
             - small
             - medium
@@ -3220,6 +3850,14 @@ components:
             - 8xlarge
             - 12xlarge
             - 16xlarge
+            - 24xlarge
+            - 24xlarge_optimized_memory
+            - 24xlarge_optimized_cpu
+            - 24xlarge_high_memory
+            - 48xlarge
+            - 48xlarge_optimized_memory
+            - 48xlarge_optimized_cpu
+            - 48xlarge_high_memory
         template_url:
           type: string
           format: uri
@@ -3290,7 +3928,7 @@ components:
       required:
         - id
         - name
-    CreateOrganizationV1Dto:
+    CreateOrganizationV1:
       type: object
       properties:
         name:
@@ -3302,12 +3940,13 @@ components:
       type: object
       properties:
         grant_type:
+          type: string
           enum:
             - authorization_code
             - refresh_token
-          type: string
         client_id:
           type: string
+          format: uuid
         client_secret:
           type: string
         code:
@@ -3318,30 +3957,27 @@ components:
           type: string
         refresh_token:
           type: string
-      required:
-        - grant_type
-        - client_id
-        - client_secret
+      additionalProperties: false
     OAuthTokenResponse:
       type: object
       properties:
-        expires_in:
-          type: integer
-          format: int64
-        token_type:
-          type: string
-          enum:
-            - Bearer
         access_token:
           type: string
         refresh_token:
           type: string
+        expires_in:
+          type: integer
+        token_type:
+          type: string
+          enum:
+            - Bearer
       required:
-        - expires_in
-        - token_type
         - access_token
         - refresh_token
-    OAuthRevokeTokenBodyDto:
+        - expires_in
+        - token_type
+      additionalProperties: false
+    OAuthRevokeTokenBody:
       type: object
       properties:
         client_id:
@@ -3356,94 +3992,81 @@ components:
         - client_secret
         - refresh_token
       additionalProperties: false
-    SnippetProject:
-      type: object
-      properties:
-        id:
-          type: integer
-          format: int64
-        name:
-          type: string
-      required:
-        - id
-        - name
-    SnippetUser:
-      type: object
-      properties:
-        id:
-          type: integer
-          format: int64
-        username:
-          type: string
-      required:
-        - id
-        - username
-    SnippetMeta:
-      type: object
-      properties:
-        id:
-          type: string
-        inserted_at:
-          type: string
-        updated_at:
-          type: string
-        type:
-          type: string
-          enum:
-            - sql
-        visibility:
-          type: string
-          enum:
-            - user
-            - project
-            - org
-            - public
-        name:
-          type: string
-        description:
-          type: string
-          nullable: true
-        project:
-          $ref: '#/components/schemas/SnippetProject'
-        owner:
-          $ref: '#/components/schemas/SnippetUser'
-        updated_by:
-          $ref: '#/components/schemas/SnippetUser'
-      required:
-        - id
-        - inserted_at
-        - updated_at
-        - type
-        - visibility
-        - name
-        - description
-        - project
-        - owner
-        - updated_by
     SnippetList:
       type: object
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/SnippetMeta'
+            type: object
+            properties:
+              id:
+                type: string
+              inserted_at:
+                type: string
+              updated_at:
+                type: string
+              type:
+                type: string
+                enum:
+                  - sql
+              visibility:
+                type: string
+                enum:
+                  - user
+                  - project
+                  - org
+                  - public
+              name:
+                type: string
+              description:
+                type: string
+                nullable: true
+              project:
+                type: object
+                properties:
+                  id:
+                    type: number
+                  name:
+                    type: string
+                required:
+                  - id
+                  - name
+              owner:
+                type: object
+                properties:
+                  id:
+                    type: number
+                  username:
+                    type: string
+                required:
+                  - id
+                  - username
+              updated_by:
+                type: object
+                properties:
+                  id:
+                    type: number
+                  username:
+                    type: string
+                required:
+                  - id
+                  - username
+            required:
+              - id
+              - inserted_at
+              - updated_at
+              - type
+              - visibility
+              - name
+              - description
+              - project
+              - owner
+              - updated_by
         cursor:
           type: string
       required:
         - data
-    SnippetContent:
-      type: object
-      properties:
-        favorite:
-          type: boolean
-        schema_version:
-          type: string
-        sql:
-          type: string
-      required:
-        - favorite
-        - schema_version
-        - sql
     SnippetResponse:
       type: object
       properties:
@@ -3458,25 +4081,60 @@ components:
           enum:
             - sql
         visibility:
+          type: string
           enum:
             - user
             - project
             - org
             - public
-          type: string
         name:
           type: string
         description:
           type: string
           nullable: true
         project:
-          $ref: '#/components/schemas/SnippetProject'
+          type: object
+          properties:
+            id:
+              type: number
+            name:
+              type: string
+          required:
+            - id
+            - name
         owner:
-          $ref: '#/components/schemas/SnippetUser'
+          type: object
+          properties:
+            id:
+              type: number
+            username:
+              type: string
+          required:
+            - id
+            - username
         updated_by:
-          $ref: '#/components/schemas/SnippetUser'
+          type: object
+          properties:
+            id:
+              type: number
+            username:
+              type: string
+          required:
+            - id
+            - username
         content:
-          $ref: '#/components/schemas/SnippetContent'
+          type: object
+          properties:
+            favorite:
+              type: boolean
+            schema_version:
+              type: string
+            sql:
+              type: string
+          required:
+            - favorite
+            - schema_version
+            - sql
       required:
         - id
         - inserted_at
@@ -3489,29 +4147,22 @@ components:
         - owner
         - updated_by
         - content
-    ApiKeySecretJWTTemplate:
-      type: object
-      properties:
-        role:
-          type: string
-      required:
-        - role
     ApiKeyResponse:
       type: object
       properties:
-        type:
-          nullable: true
-          type: string
-          enum:
-            - publishable
-            - secret
-            - legacy
         name:
           type: string
         api_key:
           type: string
         id:
           type: string
+          nullable: true
+        type:
+          type: string
+          enum:
+            - publishable
+            - secret
+            - legacy
           nullable: true
         prefix:
           type: string
@@ -3523,14 +4174,21 @@ components:
           type: string
           nullable: true
         secret_jwt_template:
+          type: object
+          properties:
+            role:
+              type: string
+              minLength: 1
+          required:
+            - role
           nullable: true
-          allOf:
-            - $ref: '#/components/schemas/ApiKeySecretJWTTemplate'
         inserted_at:
           type: string
+          format: date-time
           nullable: true
         updated_at:
           type: string
+          format: date-time
           nullable: true
       required:
         - name
@@ -3539,17 +4197,22 @@ components:
       type: object
       properties:
         type:
+          type: string
           enum:
             - publishable
             - secret
-          type: string
         description:
           type: string
           nullable: true
         secret_jwt_template:
+          type: object
+          properties:
+            role:
+              type: string
+              minLength: 1
+          required:
+            - role
           nullable: true
-          allOf:
-            - $ref: '#/components/schemas/ApiKeySecretJWTTemplate'
       required:
         - type
     UpdateApiKeyBody:
@@ -3559,165 +4222,169 @@ components:
           type: string
           nullable: true
         secret_jwt_template:
+          type: object
+          properties:
+            role:
+              type: string
+              minLength: 1
+          required:
+            - role
           nullable: true
-          allOf:
-            - $ref: '#/components/schemas/ApiKeySecretJWTTemplate'
-    DesiredInstanceSize:
-      type: string
-      enum:
-        - micro
-        - small
-        - medium
-        - large
-        - xlarge
-        - 2xlarge
-        - 4xlarge
-        - 8xlarge
-        - 12xlarge
-        - 16xlarge
-    ReleaseChannel:
-      type: string
-      enum:
-        - internal
-        - alpha
-        - beta
-        - ga
-        - withdrawn
-        - preview
-    PostgresEngine:
-      type: string
-      description: >-
-        Postgres engine version. If not provided, the latest version will be
-        used.
-      enum:
-        - '15'
-        - 17-oriole
     CreateBranchBody:
       type: object
       properties:
-        desired_instance_size:
-          $ref: '#/components/schemas/DesiredInstanceSize'
-        release_channel:
-          $ref: '#/components/schemas/ReleaseChannel'
-        postgres_engine:
-          $ref: '#/components/schemas/PostgresEngine'
         branch_name:
           type: string
+          minLength: 1
         git_branch:
           type: string
         persistent:
           type: boolean
         region:
           type: string
+        desired_instance_size:
+          type: string
+          enum:
+            - pico
+            - nano
+            - micro
+            - small
+            - medium
+            - large
+            - xlarge
+            - 2xlarge
+            - 4xlarge
+            - 8xlarge
+            - 12xlarge
+            - 16xlarge
+            - 24xlarge
+            - 24xlarge_optimized_memory
+            - 24xlarge_optimized_cpu
+            - 24xlarge_high_memory
+            - 48xlarge
+            - 48xlarge_optimized_memory
+            - 48xlarge_optimized_cpu
+            - 48xlarge_high_memory
+        release_channel:
+          type: string
+          enum:
+            - internal
+            - alpha
+            - beta
+            - ga
+            - withdrawn
+            - preview
+          description: Release channel. If not provided, GA will be used.
+        postgres_engine:
+          type: string
+          enum:
+            - '15'
+            - '17'
+            - 17-oriole
+          description: >-
+            Postgres engine version. If not provided, the latest version will be
+            used.
+        secrets:
+          type: object
+          additionalProperties:
+            type: string
       required:
         - branch_name
-    ValidationRecord:
-      type: object
-      properties:
-        txt_name:
-          type: string
-        txt_value:
-          type: string
-      required:
-        - txt_name
-        - txt_value
-    ValidationError:
-      type: object
-      properties:
-        message:
-          type: string
-      required:
-        - message
-    SslValidation:
-      type: object
-      properties:
-        status:
-          type: string
-        validation_records:
-          type: array
-          items:
-            $ref: '#/components/schemas/ValidationRecord'
-        validation_errors:
-          type: array
-          items:
-            $ref: '#/components/schemas/ValidationError'
-      required:
-        - status
-        - validation_records
-    OwnershipVerification:
-      type: object
-      properties:
-        type:
-          type: string
-        name:
-          type: string
-        value:
-          type: string
-      required:
-        - type
-        - name
-        - value
-    CustomHostnameDetails:
-      type: object
-      properties:
-        id:
-          type: string
-        hostname:
-          type: string
-        ssl:
-          $ref: '#/components/schemas/SslValidation'
-        ownership_verification:
-          $ref: '#/components/schemas/OwnershipVerification'
-        custom_origin_server:
-          type: string
-        verification_errors:
-          type: array
-          items:
-            type: string
-        status:
-          type: string
-      required:
-        - id
-        - hostname
-        - ssl
-        - ownership_verification
-        - custom_origin_server
-        - status
-    CfResponse:
-      type: object
-      properties:
-        success:
-          type: boolean
-        errors:
-          type: array
-          items:
-            type: object
-        messages:
-          type: array
-          items:
-            type: object
-        result:
-          $ref: '#/components/schemas/CustomHostnameDetails'
-      required:
-        - success
-        - errors
-        - messages
-        - result
     UpdateCustomHostnameResponse:
       type: object
       properties:
         status:
+          type: string
           enum:
             - 1_not_started
             - 2_initiated
             - 3_challenge_verified
             - 4_origin_setup_completed
             - 5_services_reconfigured
-          type: string
         custom_hostname:
           type: string
         data:
-          $ref: '#/components/schemas/CfResponse'
+          type: object
+          properties:
+            success:
+              type: boolean
+            errors:
+              type: array
+              items:
+                description: Any JSON-serializable value
+            messages:
+              type: array
+              items:
+                description: Any JSON-serializable value
+            result:
+              type: object
+              properties:
+                id:
+                  type: string
+                hostname:
+                  type: string
+                ssl:
+                  type: object
+                  properties:
+                    status:
+                      type: string
+                    validation_records:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          txt_name:
+                            type: string
+                          txt_value:
+                            type: string
+                        required:
+                          - txt_name
+                          - txt_value
+                    validation_errors:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          message:
+                            type: string
+                        required:
+                          - message
+                  required:
+                    - status
+                    - validation_records
+                ownership_verification:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    name:
+                      type: string
+                    value:
+                      type: string
+                  required:
+                    - type
+                    - name
+                    - value
+                custom_origin_server:
+                  type: string
+                verification_errors:
+                  type: array
+                  items:
+                    type: string
+                status:
+                  type: string
+              required:
+                - id
+                - hostname
+                - ssl
+                - ownership_verification
+                - custom_origin_server
+                - status
+          required:
+            - success
+            - errors
+            - messages
+            - result
       required:
         - status
         - custom_hostname
@@ -3738,6 +4405,26 @@ components:
             type: string
       required:
         - banned_ipv4_addresses
+    NetworkBanResponseEnriched:
+      type: object
+      properties:
+        banned_ipv4_addresses:
+          type: array
+          items:
+            type: object
+            properties:
+              banned_address:
+                type: string
+              identifier:
+                type: string
+              type:
+                type: string
+            required:
+              - banned_address
+              - identifier
+              - type
+      required:
+        - banned_ipv4_addresses
     RemoveNetworkBanRequest:
       type: object
       properties:
@@ -3745,8 +4432,58 @@ components:
           type: array
           items:
             type: string
+        identifier:
+          type: string
       required:
         - ipv4_addresses
+    NetworkRestrictionsResponse:
+      type: object
+      properties:
+        entitlement:
+          type: string
+          enum:
+            - disallowed
+            - allowed
+        config:
+          type: object
+          properties:
+            dbAllowedCidrs:
+              type: array
+              items:
+                type: string
+            dbAllowedCidrsV6:
+              type: array
+              items:
+                type: string
+          description: >-
+            At any given point in time, this is the config that the user has
+            requested be applied to their project. The `status` field indicates
+            if it has been applied to the project, or is pending. When an
+            updated config is received, the applied config is moved to
+            `old_config`.
+        old_config:
+          type: object
+          properties:
+            dbAllowedCidrs:
+              type: array
+              items:
+                type: string
+            dbAllowedCidrsV6:
+              type: array
+              items:
+                type: string
+          description: >-
+            Populated when a new config has been received, but not registered as
+            successfully applied to a project.
+        status:
+          type: string
+          enum:
+            - stored
+            - applied
+      required:
+        - entitlement
+        - config
+        - status
     NetworkRestrictionsRequest:
       type: object
       properties:
@@ -3758,27 +4495,6 @@ components:
           type: array
           items:
             type: string
-    NetworkRestrictionsResponse:
-      type: object
-      properties:
-        entitlement:
-          enum:
-            - disallowed
-            - allowed
-          type: string
-        config:
-          $ref: '#/components/schemas/NetworkRestrictionsRequest'
-        old_config:
-          $ref: '#/components/schemas/NetworkRestrictionsRequest'
-        status:
-          enum:
-            - stored
-            - applied
-          type: string
-      required:
-        - entitlement
-        - config
-        - status
     PgsodiumConfigResponse:
       type: object
       properties:
@@ -3796,28 +4512,32 @@ components:
     PostgrestConfigWithJWTSecretResponse:
       type: object
       properties:
+        db_schema:
+          type: string
         max_rows:
           type: integer
+        db_extra_search_path:
+          type: string
         db_pool:
           type: integer
           nullable: true
           description: >-
             If `null`, the value is automatically configured based on compute
             size.
-        db_schema:
-          type: string
-        db_extra_search_path:
-          type: string
         jwt_secret:
           type: string
       required:
-        - max_rows
-        - db_pool
         - db_schema
+        - max_rows
         - db_extra_search_path
-    UpdatePostgrestConfigBody:
+        - db_pool
+    V1UpdatePostgrestConfigBody:
       type: object
       properties:
+        db_extra_search_path:
+          type: string
+        db_schema:
+          type: string
         max_rows:
           type: integer
           minimum: 0
@@ -3826,36 +4546,31 @@ components:
           type: integer
           minimum: 0
           maximum: 1000
-        db_extra_search_path:
-          type: string
-        db_schema:
-          type: string
     V1PostgrestConfigResponse:
       type: object
       properties:
+        db_schema:
+          type: string
         max_rows:
           type: integer
+        db_extra_search_path:
+          type: string
         db_pool:
           type: integer
           nullable: true
           description: >-
             If `null`, the value is automatically configured based on compute
             size.
-        db_schema:
-          type: string
-        db_extra_search_path:
-          type: string
       required:
-        - max_rows
-        - db_pool
         - db_schema
+        - max_rows
         - db_extra_search_path
+        - db_pool
     V1ProjectRefResponse:
       type: object
       properties:
         id:
           type: integer
-          format: int64
         ref:
           type: string
         name:
@@ -3871,36 +4586,38 @@ components:
           type: string
         value:
           type: string
+        updated_at:
+          type: string
       required:
         - name
         - value
     CreateSecretBody:
-      type: object
-      properties:
-        name:
-          type: string
-          maxLength: 256
-          pattern: /^(?!SUPABASE_).*/
-          description: Secret name must not start with the SUPABASE_ prefix.
-          example: string
-        value:
-          type: string
-          maxLength: 24576
-      required:
-        - name
-        - value
-    SslEnforcements:
-      type: object
-      properties:
-        database:
-          type: boolean
-      required:
-        - database
+      type: array
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+            maxLength: 256
+            pattern: ^(?!SUPABASE_).*
+            description: Secret name must not start with the SUPABASE_ prefix.
+            example: string
+          value:
+            type: string
+            maxLength: 24576
+        required:
+          - name
+          - value
     SslEnforcementResponse:
       type: object
       properties:
         currentConfig:
-          $ref: '#/components/schemas/SslEnforcements'
+          type: object
+          properties:
+            database:
+              type: boolean
+          required:
+            - database
         appliedSuccessfully:
           type: boolean
       required:
@@ -3910,7 +4627,12 @@ components:
       type: object
       properties:
         requestedConfig:
-          $ref: '#/components/schemas/SslEnforcements'
+          type: object
+          properties:
+            database:
+              type: boolean
+          required:
+            - database
       required:
         - requestedConfig
     TypescriptResponse:
@@ -3924,11 +4646,11 @@ components:
       type: object
       properties:
         status:
+          type: string
           enum:
             - not-used
             - custom-domain-used
             - active
-          type: string
         custom_domain:
           type: string
       required:
@@ -3957,12 +4679,18 @@ components:
     UpgradeDatabaseBody:
       type: object
       properties:
-        release_channel:
-          $ref: '#/components/schemas/ReleaseChannel'
         target_version:
           type: string
+        release_channel:
+          type: string
+          enum:
+            - internal
+            - alpha
+            - beta
+            - ga
+            - withdrawn
+            - preview
       required:
-        - release_channel
         - target_version
     ProjectUpgradeInitiateResponse:
       type: object
@@ -3971,40 +4699,56 @@ components:
           type: string
       required:
         - tracking_id
-    ProjectVersion:
-      type: object
-      properties:
-        postgres_version:
-          $ref: '#/components/schemas/PostgresEngine'
-        release_channel:
-          $ref: '#/components/schemas/ReleaseChannel'
-        app_version:
-          type: string
-      required:
-        - postgres_version
-        - release_channel
-        - app_version
     ProjectUpgradeEligibilityResponse:
       type: object
       properties:
-        current_app_version_release_channel:
-          $ref: '#/components/schemas/ReleaseChannel'
-        duration_estimate_hours:
-          type: integer
         eligible:
           type: boolean
         current_app_version:
           type: string
+        current_app_version_release_channel:
+          type: string
+          enum:
+            - internal
+            - alpha
+            - beta
+            - ga
+            - withdrawn
+            - preview
         latest_app_version:
           type: string
         target_upgrade_versions:
           type: array
           items:
-            $ref: '#/components/schemas/ProjectVersion'
+            type: object
+            properties:
+              postgres_version:
+                type: string
+                enum:
+                  - '15'
+                  - '17'
+                  - 17-oriole
+              release_channel:
+                type: string
+                enum:
+                  - internal
+                  - alpha
+                  - beta
+                  - ga
+                  - withdrawn
+                  - preview
+              app_version:
+                type: string
+            required:
+              - postgres_version
+              - release_channel
+              - app_version
         potential_breaking_changes:
           type: array
           items:
             type: string
+        duration_estimate_hours:
+          type: number
         legacy_auth_custom_roles:
           type: array
           items:
@@ -4014,68 +4758,61 @@ components:
           items:
             type: string
       required:
-        - current_app_version_release_channel
-        - duration_estimate_hours
         - eligible
         - current_app_version
+        - current_app_version_release_channel
         - latest_app_version
         - target_upgrade_versions
         - potential_breaking_changes
+        - duration_estimate_hours
         - legacy_auth_custom_roles
         - extension_dependent_objects
-    DatabaseUpgradeStatus:
-      type: object
-      properties:
-        target_version:
-          type: integer
-        status:
-          enum:
-            - 0
-            - 1
-            - 2
-          type: integer
-        initiated_at:
-          type: string
-        latest_status_at:
-          type: string
-        error:
-          type: string
-          enum:
-            - 1_upgraded_instance_launch_failed
-            - 2_volume_detachchment_from_upgraded_instance_failed
-            - 3_volume_attachment_to_original_instance_failed
-            - 4_data_upgrade_initiation_failed
-            - 5_data_upgrade_completion_failed
-            - 6_volume_detachchment_from_original_instance_failed
-            - 7_volume_attachment_to_upgraded_instance_failed
-            - 8_upgrade_completion_failed
-            - 9_post_physical_backup_failed
-        progress:
-          type: string
-          enum:
-            - 0_requested
-            - 1_started
-            - 2_launched_upgraded_instance
-            - 3_detached_volume_from_upgraded_instance
-            - 4_attached_volume_to_original_instance
-            - 5_initiated_data_upgrade
-            - 6_completed_data_upgrade
-            - 7_detached_volume_from_original_instance
-            - 8_attached_volume_to_upgraded_instance
-            - 9_completed_upgrade
-            - 10_completed_post_physical_backup
-      required:
-        - target_version
-        - status
-        - initiated_at
-        - latest_status_at
     DatabaseUpgradeStatusResponse:
       type: object
       properties:
         databaseUpgradeStatus:
+          type: object
+          properties:
+            initiated_at:
+              type: string
+            latest_status_at:
+              type: string
+            target_version:
+              type: number
+            error:
+              type: string
+              enum:
+                - 1_upgraded_instance_launch_failed
+                - 2_volume_detachchment_from_upgraded_instance_failed
+                - 3_volume_attachment_to_original_instance_failed
+                - 4_data_upgrade_initiation_failed
+                - 5_data_upgrade_completion_failed
+                - 6_volume_detachchment_from_original_instance_failed
+                - 7_volume_attachment_to_upgraded_instance_failed
+                - 8_upgrade_completion_failed
+                - 9_post_physical_backup_failed
+            progress:
+              type: string
+              enum:
+                - 0_requested
+                - 1_started
+                - 2_launched_upgraded_instance
+                - 3_detached_volume_from_upgraded_instance
+                - 4_attached_volume_to_original_instance
+                - 5_initiated_data_upgrade
+                - 6_completed_data_upgrade
+                - 7_detached_volume_from_original_instance
+                - 8_attached_volume_to_upgraded_instance
+                - 9_completed_upgrade
+                - 10_completed_post_physical_backup
+            status:
+              type: number
+          required:
+            - initiated_at
+            - latest_status_at
+            - target_version
+            - status
           nullable: true
-          allOf:
-            - $ref: '#/components/schemas/DatabaseUpgradeStatus'
       required:
         - databaseUpgradeStatus
     ReadOnlyStatusResponse:
@@ -4126,30 +4863,11 @@ components:
           type: string
       required:
         - database_identifier
-    AuthHealthResponse:
+    V1ServiceHealthResponse:
       type: object
       properties:
         name:
           type: string
-          enum:
-            - GoTrue
-      required:
-        - name
-    RealtimeHealthResponse:
-      type: object
-      properties:
-        connected_cluster:
-          type: integer
-      required:
-        - connected_cluster
-    V1ServiceHealthResponse:
-      type: object
-      properties:
-        info:
-          oneOf:
-            - $ref: '#/components/schemas/AuthHealthResponse'
-            - $ref: '#/components/schemas/RealtimeHealthResponse'
-        name:
           enum:
             - auth
             - db
@@ -4157,53 +4875,182 @@ components:
             - realtime
             - rest
             - storage
-          type: string
         healthy:
           type: boolean
         status:
+          type: string
           enum:
             - COMING_UP
             - ACTIVE_HEALTHY
             - UNHEALTHY
-          type: string
+        info:
+          oneOf:
+            - type: object
+              properties:
+                name:
+                  type: string
+                  enum:
+                    - GoTrue
+                version:
+                  type: string
+                description:
+                  type: string
+              required:
+                - name
+                - version
+                - description
+            - type: object
+              properties:
+                healthy:
+                  type: boolean
+                db_connected:
+                  type: boolean
+                connected_cluster:
+                  type: integer
+              required:
+                - healthy
+                - db_connected
+                - connected_cluster
         error:
           type: string
       required:
         - name
         - healthy
         - status
-    StorageFeatureImageTransformation:
+    CreateSigningKeyBody:
       type: object
       properties:
-        enabled:
-          type: boolean
+        algorithm:
+          type: string
+          enum:
+            - EdDSA
+            - ES256
+            - RS256
+            - HS256
+        status:
+          type: string
+          enum:
+            - in_use
+            - standby
       required:
-        - enabled
-    StorageFeatureS3Protocol:
+        - algorithm
+      additionalProperties: false
+    SigningKeyResponse:
       type: object
       properties:
-        enabled:
-          type: boolean
+        id:
+          type: string
+          format: uuid
+        algorithm:
+          type: string
+          enum:
+            - EdDSA
+            - ES256
+            - RS256
+            - HS256
+        status:
+          type: string
+          enum:
+            - in_use
+            - previously_used
+            - revoked
+            - standby
+        public_jwk:
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
       required:
-        - enabled
-    StorageFeatures:
+        - id
+        - algorithm
+        - status
+        - created_at
+        - updated_at
+      additionalProperties: false
+    SigningKeysResponse:
       type: object
       properties:
-        imageTransformation:
-          $ref: '#/components/schemas/StorageFeatureImageTransformation'
-        s3Protocol:
-          $ref: '#/components/schemas/StorageFeatureS3Protocol'
+        keys:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              algorithm:
+                type: string
+                enum:
+                  - EdDSA
+                  - ES256
+                  - RS256
+                  - HS256
+              status:
+                type: string
+                enum:
+                  - in_use
+                  - previously_used
+                  - revoked
+                  - standby
+              public_jwk:
+                nullable: true
+              created_at:
+                type: string
+                format: date-time
+              updated_at:
+                type: string
+                format: date-time
+            required:
+              - id
+              - algorithm
+              - status
+              - created_at
+              - updated_at
+            additionalProperties: false
       required:
-        - imageTransformation
-        - s3Protocol
+        - keys
+      additionalProperties: false
+    UpdateSigningKeyBody:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+            - in_use
+            - previously_used
+            - revoked
+            - standby
+      required:
+        - status
+      additionalProperties: false
     StorageConfigResponse:
       type: object
       properties:
         fileSizeLimit:
           type: integer
-          format: int64
         features:
-          $ref: '#/components/schemas/StorageFeatures'
+          type: object
+          properties:
+            imageTransformation:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+              required:
+                - enabled
+            s3Protocol:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+              required:
+                - enabled
+          required:
+            - imageTransformation
+            - s3Protocol
       required:
         - fileSizeLimit
         - features
@@ -4214,9 +5061,26 @@ components:
           type: integer
           minimum: 0
           maximum: 53687091200
-          format: int64
         features:
-          $ref: '#/components/schemas/StorageFeatures'
+          type: object
+          properties:
+            imageTransformation:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+              required:
+                - enabled
+            s3Protocol:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+              required:
+                - enabled
+          required:
+            - imageTransformation
+            - s3Protocol
     PostgresConfigResponse:
       type: object
       properties:
@@ -4264,6 +5128,12 @@ components:
           type: integer
           minimum: 0
           maximum: 262143
+        session_replication_role:
+          type: string
+          enum:
+            - origin
+            - replica
+            - local
         shared_buffers:
           type: string
         statement_timeout:
@@ -4275,12 +5145,6 @@ components:
         wal_sender_timeout:
           type: string
         work_mem:
-          type: string
-        session_replication_role:
-          enum:
-            - origin
-            - replica
-            - local
           type: string
     UpdatePostgresConfigBody:
       type: object
@@ -4329,6 +5193,12 @@ components:
           type: integer
           minimum: 0
           maximum: 262143
+        session_replication_role:
+          type: string
+          enum:
+            - origin
+            - replica
+            - local
         shared_buffers:
           type: string
         statement_timeout:
@@ -4343,89 +5213,86 @@ components:
           type: string
         restart_database:
           type: boolean
-        session_replication_role:
-          enum:
-            - origin
-            - replica
-            - local
-          type: string
     V1PgbouncerConfigResponse:
       type: object
       properties:
-        pool_mode:
-          type: string
-          enum:
-            - transaction
-            - session
-            - statement
         default_pool_size:
           type: number
         ignore_startup_parameters:
           type: string
         max_client_conn:
           type: number
+        pool_mode:
+          type: string
+          enum:
+            - transaction
+            - session
+            - statement
         connection_string:
           type: string
     SupavisorConfigResponse:
       type: object
       properties:
+        identifier:
+          type: string
         database_type:
           type: string
           enum:
             - PRIMARY
             - READ_REPLICA
-        db_port:
-          type: integer
-        default_pool_size:
-          type: integer
-          nullable: true
-        max_client_conn:
-          type: integer
-          nullable: true
-        identifier:
-          type: string
         is_using_scram_auth:
           type: boolean
         db_user:
           type: string
         db_host:
           type: string
+        db_port:
+          type: integer
         db_name:
+          type: string
+        connection_string:
           type: string
         connectionString:
           type: string
+          description: Use connection_string instead
+        default_pool_size:
+          type: integer
+          nullable: true
+        max_client_conn:
+          type: integer
+          nullable: true
         pool_mode:
+          type: string
           enum:
             - transaction
             - session
-          type: string
       required:
-        - database_type
-        - db_port
-        - default_pool_size
-        - max_client_conn
         - identifier
+        - database_type
         - is_using_scram_auth
         - db_user
         - db_host
+        - db_port
         - db_name
+        - connection_string
         - connectionString
+        - default_pool_size
+        - max_client_conn
         - pool_mode
     UpdateSupavisorConfigBody:
       type: object
       properties:
         default_pool_size:
           type: integer
-          nullable: true
           minimum: 0
-          maximum: 1000
+          maximum: 3000
+          nullable: true
         pool_mode:
+          type: string
           enum:
             - transaction
             - session
-          type: string
-          deprecated: true
-          description: This field is deprecated and is ignored in this request
+          description: Dedicated pooler mode for the project
     UpdateSupavisorConfigResponse:
       type: object
       properties:
@@ -4433,9 +5300,6 @@ components:
           type: integer
           nullable: true
         pool_mode:
-          enum:
-            - transaction
-            - session
           type: string
       required:
         - default_pool_size
@@ -4447,63 +5311,6 @@ components:
           type: integer
           nullable: true
         db_max_pool_size:
-          type: integer
-          nullable: true
-        jwt_exp:
-          type: integer
-          nullable: true
-        mailer_otp_exp:
-          type: integer
-        mailer_otp_length:
-          type: integer
-          nullable: true
-        mfa_max_enrolled_factors:
-          type: integer
-          nullable: true
-        mfa_phone_otp_length:
-          type: integer
-        mfa_phone_max_frequency:
-          type: integer
-          nullable: true
-        password_min_length:
-          type: integer
-          nullable: true
-        rate_limit_anonymous_users:
-          type: integer
-          nullable: true
-        rate_limit_email_sent:
-          type: integer
-          nullable: true
-        rate_limit_sms_sent:
-          type: integer
-          nullable: true
-        rate_limit_token_refresh:
-          type: integer
-          nullable: true
-        rate_limit_verify:
-          type: integer
-          nullable: true
-        rate_limit_otp:
-          type: integer
-          nullable: true
-        security_refresh_token_reuse_interval:
-          type: integer
-          nullable: true
-        sessions_inactivity_timeout:
-          type: integer
-          nullable: true
-        sessions_timebox:
-          type: integer
-          nullable: true
-        sms_max_frequency:
-          type: integer
-          nullable: true
-        sms_otp_exp:
-          type: integer
-          nullable: true
-        sms_otp_length:
-          type: integer
-        smtp_max_frequency:
           type: integer
           nullable: true
         disable_signup:
@@ -4710,6 +5517,9 @@ components:
         external_workos_url:
           type: string
           nullable: true
+        external_web3_solana_enabled:
+          type: boolean
+          nullable: true
         external_zoom_client_id:
           type: string
           nullable: true
@@ -4764,11 +5574,19 @@ components:
         hook_send_email_secrets:
           type: string
           nullable: true
+        jwt_exp:
+          type: integer
+          nullable: true
         mailer_allow_unverified_email_sign_ins:
           type: boolean
           nullable: true
         mailer_autoconfirm:
           type: boolean
+          nullable: true
+        mailer_otp_exp:
+          type: integer
+        mailer_otp_length:
+          type: integer
           nullable: true
         mailer_secure_email_change_enabled:
           type: boolean
@@ -4809,6 +5627,9 @@ components:
         mailer_templates_recovery_content:
           type: string
           nullable: true
+        mfa_max_enrolled_factors:
+          type: integer
+          nullable: true
         mfa_totp_enroll_enabled:
           type: boolean
           nullable: true
@@ -4827,14 +5648,43 @@ components:
         mfa_web_authn_verify_enabled:
           type: boolean
           nullable: true
+        mfa_phone_otp_length:
+          type: integer
         mfa_phone_template:
           type: string
+          nullable: true
+        mfa_phone_max_frequency:
+          type: integer
           nullable: true
         password_hibp_enabled:
           type: boolean
           nullable: true
+        password_min_length:
+          type: integer
+          nullable: true
         password_required_characters:
           type: string
+          nullable: true
+        rate_limit_anonymous_users:
+          type: integer
+          nullable: true
+        rate_limit_email_sent:
+          type: integer
+          nullable: true
+        rate_limit_sms_sent:
+          type: integer
+          nullable: true
+        rate_limit_token_refresh:
+          type: integer
+          nullable: true
+        rate_limit_verify:
+          type: integer
+          nullable: true
+        rate_limit_otp:
+          type: integer
+          nullable: true
+        rate_limit_web3:
+          type: integer
           nullable: true
         refresh_token_rotation_enabled:
           type: boolean
@@ -4860,8 +5710,14 @@ components:
         security_manual_linking_enabled:
           type: boolean
           nullable: true
+        security_refresh_token_reuse_interval:
+          type: integer
+          nullable: true
         security_update_password_require_reauthentication:
           type: boolean
+          nullable: true
+        sessions_inactivity_timeout:
+          type: integer
           nullable: true
         sessions_single_per_user:
           type: boolean
@@ -4869,11 +5725,17 @@ components:
         sessions_tags:
           type: string
           nullable: true
+        sessions_timebox:
+          type: integer
+          nullable: true
         site_url:
           type: string
           nullable: true
         sms_autoconfirm:
           type: boolean
+          nullable: true
+        sms_max_frequency:
+          type: integer
           nullable: true
         sms_messagebird_access_key:
           type: string
@@ -4881,6 +5743,11 @@ components:
         sms_messagebird_originator:
           type: string
           nullable: true
+        sms_otp_exp:
+          type: integer
+          nullable: true
+        sms_otp_length:
+          type: integer
         sms_provider:
           type: string
           nullable: true
@@ -4935,6 +5802,9 @@ components:
         smtp_host:
           type: string
           nullable: true
+        smtp_max_frequency:
+          type: integer
+          nullable: true
         smtp_pass:
           type: string
           nullable: true
@@ -4953,26 +5823,6 @@ components:
       required:
         - api_max_request_duration
         - db_max_pool_size
-        - jwt_exp
-        - mailer_otp_exp
-        - mailer_otp_length
-        - mfa_max_enrolled_factors
-        - mfa_phone_otp_length
-        - mfa_phone_max_frequency
-        - password_min_length
-        - rate_limit_anonymous_users
-        - rate_limit_email_sent
-        - rate_limit_sms_sent
-        - rate_limit_token_refresh
-        - rate_limit_verify
-        - rate_limit_otp
-        - security_refresh_token_reuse_interval
-        - sessions_inactivity_timeout
-        - sessions_timebox
-        - sms_max_frequency
-        - sms_otp_exp
-        - sms_otp_length
-        - smtp_max_frequency
         - disable_signup
         - external_anonymous_users_enabled
         - external_apple_additional_client_ids
@@ -5041,6 +5891,7 @@ components:
         - external_workos_enabled
         - external_workos_secret
         - external_workos_url
+        - external_web3_solana_enabled
         - external_zoom_client_id
         - external_zoom_enabled
         - external_zoom_secret
@@ -5059,8 +5910,11 @@ components:
         - hook_send_email_enabled
         - hook_send_email_uri
         - hook_send_email_secrets
+        - jwt_exp
         - mailer_allow_unverified_email_sign_ins
         - mailer_autoconfirm
+        - mailer_otp_exp
+        - mailer_otp_length
         - mailer_secure_email_change_enabled
         - mailer_subjects_confirmation
         - mailer_subjects_email_change
@@ -5074,15 +5928,26 @@ components:
         - mailer_templates_magic_link_content
         - mailer_templates_reauthentication_content
         - mailer_templates_recovery_content
+        - mfa_max_enrolled_factors
         - mfa_totp_enroll_enabled
         - mfa_totp_verify_enabled
         - mfa_phone_enroll_enabled
         - mfa_phone_verify_enabled
         - mfa_web_authn_enroll_enabled
         - mfa_web_authn_verify_enabled
+        - mfa_phone_otp_length
         - mfa_phone_template
+        - mfa_phone_max_frequency
         - password_hibp_enabled
+        - password_min_length
         - password_required_characters
+        - rate_limit_anonymous_users
+        - rate_limit_email_sent
+        - rate_limit_sms_sent
+        - rate_limit_token_refresh
+        - rate_limit_verify
+        - rate_limit_otp
+        - rate_limit_web3
         - refresh_token_rotation_enabled
         - saml_enabled
         - saml_external_url
@@ -5091,13 +5956,19 @@ components:
         - security_captcha_provider
         - security_captcha_secret
         - security_manual_linking_enabled
+        - security_refresh_token_reuse_interval
         - security_update_password_require_reauthentication
+        - sessions_inactivity_timeout
         - sessions_single_per_user
         - sessions_tags
+        - sessions_timebox
         - site_url
         - sms_autoconfirm
+        - sms_max_frequency
         - sms_messagebird_access_key
         - sms_messagebird_originator
+        - sms_otp_exp
+        - sms_otp_length
         - sms_provider
         - sms_template
         - sms_test_otp
@@ -5116,6 +5987,7 @@ components:
         - sms_vonage_from
         - smtp_admin_email
         - smtp_host
+        - smtp_max_frequency
         - smtp_pass
         - smtp_port
         - smtp_sender_name
@@ -5124,56 +5996,202 @@ components:
     UpdateAuthConfigBody:
       type: object
       properties:
+        site_url:
+          type: string
+          pattern: ^[^,]+$
+          nullable: true
+        disable_signup:
+          type: boolean
+          nullable: true
         jwt_exp:
           type: integer
           minimum: 0
           maximum: 604800
+          nullable: true
+        smtp_admin_email:
+          type: string
+          nullable: true
+        smtp_host:
+          type: string
+          nullable: true
+        smtp_port:
+          type: string
+          nullable: true
+        smtp_user:
+          type: string
+          nullable: true
+        smtp_pass:
+          type: string
+          nullable: true
         smtp_max_frequency:
           type: integer
           minimum: 0
           maximum: 32767
+          nullable: true
+        smtp_sender_name:
+          type: string
+          nullable: true
+        mailer_allow_unverified_email_sign_ins:
+          type: boolean
+          nullable: true
+        mailer_autoconfirm:
+          type: boolean
+          nullable: true
+        mailer_subjects_invite:
+          type: string
+          nullable: true
+        mailer_subjects_confirmation:
+          type: string
+          nullable: true
+        mailer_subjects_recovery:
+          type: string
+          nullable: true
+        mailer_subjects_email_change:
+          type: string
+          nullable: true
+        mailer_subjects_magic_link:
+          type: string
+          nullable: true
+        mailer_subjects_reauthentication:
+          type: string
+          nullable: true
+        mailer_templates_invite_content:
+          type: string
+          nullable: true
+        mailer_templates_confirmation_content:
+          type: string
+          nullable: true
+        mailer_templates_recovery_content:
+          type: string
+          nullable: true
+        mailer_templates_email_change_content:
+          type: string
+          nullable: true
+        mailer_templates_magic_link_content:
+          type: string
+          nullable: true
+        mailer_templates_reauthentication_content:
+          type: string
+          nullable: true
         mfa_max_enrolled_factors:
           type: integer
           minimum: 0
           maximum: 2147483647
+          nullable: true
+        uri_allow_list:
+          type: string
+          nullable: true
+        external_anonymous_users_enabled:
+          type: boolean
+          nullable: true
+        external_email_enabled:
+          type: boolean
+          nullable: true
+        external_phone_enabled:
+          type: boolean
+          nullable: true
+        saml_enabled:
+          type: boolean
+          nullable: true
+        saml_external_url:
+          type: string
+          pattern: ^[^,]+$
+          nullable: true
+        security_captcha_enabled:
+          type: boolean
+          nullable: true
+        security_captcha_provider:
+          type: string
+          enum:
+            - turnstile
+            - hcaptcha
+          nullable: true
+        security_captcha_secret:
+          type: string
+          nullable: true
         sessions_timebox:
           type: integer
           minimum: 0
+          nullable: true
         sessions_inactivity_timeout:
           type: integer
           minimum: 0
+          nullable: true
+        sessions_single_per_user:
+          type: boolean
+          nullable: true
+        sessions_tags:
+          type: string
+          pattern: ^\s*([a-zA-Z0-9_-]+(\s*,+\s*)?)*\s*$
+          nullable: true
         rate_limit_anonymous_users:
           type: integer
           minimum: 1
           maximum: 2147483647
+          nullable: true
         rate_limit_email_sent:
           type: integer
           minimum: 1
           maximum: 2147483647
+          nullable: true
         rate_limit_sms_sent:
           type: integer
           minimum: 1
           maximum: 2147483647
+          nullable: true
         rate_limit_verify:
           type: integer
           minimum: 1
           maximum: 2147483647
+          nullable: true
         rate_limit_token_refresh:
           type: integer
           minimum: 1
           maximum: 2147483647
+          nullable: true
         rate_limit_otp:
           type: integer
           minimum: 1
           maximum: 2147483647
+          nullable: true
+        rate_limit_web3:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+          nullable: true
+        mailer_secure_email_change_enabled:
+          type: boolean
+          nullable: true
+        refresh_token_rotation_enabled:
+          type: boolean
+          nullable: true
+        password_hibp_enabled:
+          type: boolean
+          nullable: true
         password_min_length:
           type: integer
           minimum: 6
           maximum: 32767
+          nullable: true
+        password_required_characters:
+          type: string
+          enum:
+            - abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789
+            - abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789
+            - abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~
+            - ''
+          nullable: true
+        security_manual_linking_enabled:
+          type: boolean
+          nullable: true
+        security_update_password_require_reauthentication:
+          type: boolean
+          nullable: true
         security_refresh_token_reuse_interval:
           type: integer
           minimum: 0
           maximum: 2147483647
+          nullable: true
         mailer_otp_exp:
           type: integer
           minimum: 0
@@ -5182,333 +6200,372 @@ components:
           type: integer
           minimum: 6
           maximum: 10
+          nullable: true
+        sms_autoconfirm:
+          type: boolean
+          nullable: true
         sms_max_frequency:
           type: integer
           minimum: 0
           maximum: 32767
+          nullable: true
         sms_otp_exp:
           type: integer
           minimum: 0
           maximum: 2147483647
+          nullable: true
         sms_otp_length:
           type: integer
           minimum: 0
           maximum: 32767
+        sms_provider:
+          type: string
+          enum:
+            - messagebird
+            - textlocal
+            - twilio
+            - twilio_verify
+            - vonage
+          nullable: true
+        sms_messagebird_access_key:
+          type: string
+          nullable: true
+        sms_messagebird_originator:
+          type: string
+          nullable: true
+        sms_test_otp:
+          type: string
+          pattern: ^([0-9]{1,15}=[0-9]+,?)*$
+          nullable: true
+        sms_test_otp_valid_until:
+          type: string
+          format: date-time
+          nullable: true
+        sms_textlocal_api_key:
+          type: string
+          nullable: true
+        sms_textlocal_sender:
+          type: string
+          nullable: true
+        sms_twilio_account_sid:
+          type: string
+          nullable: true
+        sms_twilio_auth_token:
+          type: string
+          nullable: true
+        sms_twilio_content_sid:
+          type: string
+          nullable: true
+        sms_twilio_message_service_sid:
+          type: string
+          nullable: true
+        sms_twilio_verify_account_sid:
+          type: string
+          nullable: true
+        sms_twilio_verify_auth_token:
+          type: string
+          nullable: true
+        sms_twilio_verify_message_service_sid:
+          type: string
+          nullable: true
+        sms_vonage_api_key:
+          type: string
+          nullable: true
+        sms_vonage_api_secret:
+          type: string
+          nullable: true
+        sms_vonage_from:
+          type: string
+          nullable: true
+        sms_template:
+          type: string
+          nullable: true
+        hook_mfa_verification_attempt_enabled:
+          type: boolean
+          nullable: true
+        hook_mfa_verification_attempt_uri:
+          type: string
+          nullable: true
+        hook_mfa_verification_attempt_secrets:
+          type: string
+          nullable: true
+        hook_password_verification_attempt_enabled:
+          type: boolean
+          nullable: true
+        hook_password_verification_attempt_uri:
+          type: string
+          nullable: true
+        hook_password_verification_attempt_secrets:
+          type: string
+          nullable: true
+        hook_custom_access_token_enabled:
+          type: boolean
+          nullable: true
+        hook_custom_access_token_uri:
+          type: string
+          nullable: true
+        hook_custom_access_token_secrets:
+          type: string
+          nullable: true
+        hook_send_sms_enabled:
+          type: boolean
+          nullable: true
+        hook_send_sms_uri:
+          type: string
+          nullable: true
+        hook_send_sms_secrets:
+          type: string
+          nullable: true
+        hook_send_email_enabled:
+          type: boolean
+          nullable: true
+        hook_send_email_uri:
+          type: string
+          nullable: true
+        hook_send_email_secrets:
+          type: string
+          nullable: true
+        external_apple_enabled:
+          type: boolean
+          nullable: true
+        external_apple_client_id:
+          type: string
+          nullable: true
+        external_apple_secret:
+          type: string
+          nullable: true
+        external_apple_additional_client_ids:
+          type: string
+          nullable: true
+        external_azure_enabled:
+          type: boolean
+          nullable: true
+        external_azure_client_id:
+          type: string
+          nullable: true
+        external_azure_secret:
+          type: string
+          nullable: true
+        external_azure_url:
+          type: string
+          nullable: true
+        external_bitbucket_enabled:
+          type: boolean
+          nullable: true
+        external_bitbucket_client_id:
+          type: string
+          nullable: true
+        external_bitbucket_secret:
+          type: string
+          nullable: true
+        external_discord_enabled:
+          type: boolean
+          nullable: true
+        external_discord_client_id:
+          type: string
+          nullable: true
+        external_discord_secret:
+          type: string
+          nullable: true
+        external_facebook_enabled:
+          type: boolean
+          nullable: true
+        external_facebook_client_id:
+          type: string
+          nullable: true
+        external_facebook_secret:
+          type: string
+          nullable: true
+        external_figma_enabled:
+          type: boolean
+          nullable: true
+        external_figma_client_id:
+          type: string
+          nullable: true
+        external_figma_secret:
+          type: string
+          nullable: true
+        external_github_enabled:
+          type: boolean
+          nullable: true
+        external_github_client_id:
+          type: string
+          nullable: true
+        external_github_secret:
+          type: string
+          nullable: true
+        external_gitlab_enabled:
+          type: boolean
+          nullable: true
+        external_gitlab_client_id:
+          type: string
+          nullable: true
+        external_gitlab_secret:
+          type: string
+          nullable: true
+        external_gitlab_url:
+          type: string
+          nullable: true
+        external_google_enabled:
+          type: boolean
+          nullable: true
+        external_google_client_id:
+          type: string
+          nullable: true
+        external_google_secret:
+          type: string
+          nullable: true
+        external_google_additional_client_ids:
+          type: string
+          nullable: true
+        external_google_skip_nonce_check:
+          type: boolean
+          nullable: true
+        external_kakao_enabled:
+          type: boolean
+          nullable: true
+        external_kakao_client_id:
+          type: string
+          nullable: true
+        external_kakao_secret:
+          type: string
+          nullable: true
+        external_keycloak_enabled:
+          type: boolean
+          nullable: true
+        external_keycloak_client_id:
+          type: string
+          nullable: true
+        external_keycloak_secret:
+          type: string
+          nullable: true
+        external_keycloak_url:
+          type: string
+          nullable: true
+        external_linkedin_oidc_enabled:
+          type: boolean
+          nullable: true
+        external_linkedin_oidc_client_id:
+          type: string
+          nullable: true
+        external_linkedin_oidc_secret:
+          type: string
+          nullable: true
+        external_slack_oidc_enabled:
+          type: boolean
+          nullable: true
+        external_slack_oidc_client_id:
+          type: string
+          nullable: true
+        external_slack_oidc_secret:
+          type: string
+          nullable: true
+        external_notion_enabled:
+          type: boolean
+          nullable: true
+        external_notion_client_id:
+          type: string
+          nullable: true
+        external_notion_secret:
+          type: string
+          nullable: true
+        external_slack_enabled:
+          type: boolean
+          nullable: true
+        external_slack_client_id:
+          type: string
+          nullable: true
+        external_slack_secret:
+          type: string
+          nullable: true
+        external_spotify_enabled:
+          type: boolean
+          nullable: true
+        external_spotify_client_id:
+          type: string
+          nullable: true
+        external_spotify_secret:
+          type: string
+          nullable: true
+        external_twitch_enabled:
+          type: boolean
+          nullable: true
+        external_twitch_client_id:
+          type: string
+          nullable: true
+        external_twitch_secret:
+          type: string
+          nullable: true
+        external_twitter_enabled:
+          type: boolean
+          nullable: true
+        external_twitter_client_id:
+          type: string
+          nullable: true
+        external_twitter_secret:
+          type: string
+          nullable: true
+        external_workos_enabled:
+          type: boolean
+          nullable: true
+        external_workos_client_id:
+          type: string
+          nullable: true
+        external_workos_secret:
+          type: string
+          nullable: true
+        external_workos_url:
+          type: string
+          nullable: true
+        external_web3_solana_enabled:
+          type: boolean
+          nullable: true
+        external_zoom_enabled:
+          type: boolean
+          nullable: true
+        external_zoom_client_id:
+          type: string
+          nullable: true
+        external_zoom_secret:
+          type: string
+          nullable: true
         db_max_pool_size:
           type: integer
+          nullable: true
         api_max_request_duration:
           type: integer
+          nullable: true
+        mfa_totp_enroll_enabled:
+          type: boolean
+          nullable: true
+        mfa_totp_verify_enabled:
+          type: boolean
+          nullable: true
+        mfa_web_authn_enroll_enabled:
+          type: boolean
+          nullable: true
+        mfa_web_authn_verify_enabled:
+          type: boolean
+          nullable: true
+        mfa_phone_enroll_enabled:
+          type: boolean
+          nullable: true
+        mfa_phone_verify_enabled:
+          type: boolean
+          nullable: true
         mfa_phone_max_frequency:
           type: integer
           minimum: 0
           maximum: 32767
+          nullable: true
         mfa_phone_otp_length:
           type: integer
           minimum: 0
           maximum: 32767
-        site_url:
-          type: string
-          pattern: /^[^,]+$/
-        disable_signup:
-          type: boolean
-        smtp_admin_email:
-          type: string
-        smtp_host:
-          type: string
-        smtp_port:
-          type: string
-        smtp_user:
-          type: string
-        smtp_pass:
-          type: string
-        smtp_sender_name:
-          type: string
-        mailer_allow_unverified_email_sign_ins:
-          type: boolean
-        mailer_autoconfirm:
-          type: boolean
-        mailer_subjects_invite:
-          type: string
-        mailer_subjects_confirmation:
-          type: string
-        mailer_subjects_recovery:
-          type: string
-        mailer_subjects_email_change:
-          type: string
-        mailer_subjects_magic_link:
-          type: string
-        mailer_subjects_reauthentication:
-          type: string
-        mailer_templates_invite_content:
-          type: string
-        mailer_templates_confirmation_content:
-          type: string
-        mailer_templates_recovery_content:
-          type: string
-        mailer_templates_email_change_content:
-          type: string
-        mailer_templates_magic_link_content:
-          type: string
-        mailer_templates_reauthentication_content:
-          type: string
-        uri_allow_list:
-          type: string
-        external_anonymous_users_enabled:
-          type: boolean
-        external_email_enabled:
-          type: boolean
-        external_phone_enabled:
-          type: boolean
-        saml_enabled:
-          type: boolean
-        saml_external_url:
-          type: string
-          pattern: /^[^,]+$/
-        security_captcha_enabled:
-          type: boolean
-        security_captcha_provider:
-          type: string
-        security_captcha_secret:
-          type: string
-        sessions_single_per_user:
-          type: boolean
-        sessions_tags:
-          type: string
-          pattern: /^\s*([a-z0-9_-]+(\s*,+\s*)?)*\s*$/i
-        mailer_secure_email_change_enabled:
-          type: boolean
-        refresh_token_rotation_enabled:
-          type: boolean
-        password_hibp_enabled:
-          type: boolean
-        password_required_characters:
-          type: string
-          enum:
-            - abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789
-            - abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789
-            - abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~
-            - ''
-        security_manual_linking_enabled:
-          type: boolean
-        security_update_password_require_reauthentication:
-          type: boolean
-        sms_autoconfirm:
-          type: boolean
-        sms_provider:
-          type: string
-        sms_messagebird_access_key:
-          type: string
-        sms_messagebird_originator:
-          type: string
-        sms_test_otp:
-          type: string
-          pattern: /^([0-9]{1,15}=[0-9]+,?)*$/
-        sms_test_otp_valid_until:
-          type: string
-        sms_textlocal_api_key:
-          type: string
-        sms_textlocal_sender:
-          type: string
-        sms_twilio_account_sid:
-          type: string
-        sms_twilio_auth_token:
-          type: string
-        sms_twilio_content_sid:
-          type: string
-        sms_twilio_message_service_sid:
-          type: string
-        sms_twilio_verify_account_sid:
-          type: string
-        sms_twilio_verify_auth_token:
-          type: string
-        sms_twilio_verify_message_service_sid:
-          type: string
-        sms_vonage_api_key:
-          type: string
-        sms_vonage_api_secret:
-          type: string
-        sms_vonage_from:
-          type: string
-        sms_template:
-          type: string
-        hook_mfa_verification_attempt_enabled:
-          type: boolean
-        hook_mfa_verification_attempt_uri:
-          type: string
-        hook_mfa_verification_attempt_secrets:
-          type: string
-        hook_password_verification_attempt_enabled:
-          type: boolean
-        hook_password_verification_attempt_uri:
-          type: string
-        hook_password_verification_attempt_secrets:
-          type: string
-        hook_custom_access_token_enabled:
-          type: boolean
-        hook_custom_access_token_uri:
-          type: string
-        hook_custom_access_token_secrets:
-          type: string
-        hook_send_sms_enabled:
-          type: boolean
-        hook_send_sms_uri:
-          type: string
-        hook_send_sms_secrets:
-          type: string
-        hook_send_email_enabled:
-          type: boolean
-        hook_send_email_uri:
-          type: string
-        hook_send_email_secrets:
-          type: string
-        external_apple_enabled:
-          type: boolean
-        external_apple_client_id:
-          type: string
-        external_apple_secret:
-          type: string
-        external_apple_additional_client_ids:
-          type: string
-        external_azure_enabled:
-          type: boolean
-        external_azure_client_id:
-          type: string
-        external_azure_secret:
-          type: string
-        external_azure_url:
-          type: string
-        external_bitbucket_enabled:
-          type: boolean
-        external_bitbucket_client_id:
-          type: string
-        external_bitbucket_secret:
-          type: string
-        external_discord_enabled:
-          type: boolean
-        external_discord_client_id:
-          type: string
-        external_discord_secret:
-          type: string
-        external_facebook_enabled:
-          type: boolean
-        external_facebook_client_id:
-          type: string
-        external_facebook_secret:
-          type: string
-        external_figma_enabled:
-          type: boolean
-        external_figma_client_id:
-          type: string
-        external_figma_secret:
-          type: string
-        external_github_enabled:
-          type: boolean
-        external_github_client_id:
-          type: string
-        external_github_secret:
-          type: string
-        external_gitlab_enabled:
-          type: boolean
-        external_gitlab_client_id:
-          type: string
-        external_gitlab_secret:
-          type: string
-        external_gitlab_url:
-          type: string
-        external_google_enabled:
-          type: boolean
-        external_google_client_id:
-          type: string
-        external_google_secret:
-          type: string
-        external_google_additional_client_ids:
-          type: string
-        external_google_skip_nonce_check:
-          type: boolean
-        external_kakao_enabled:
-          type: boolean
-        external_kakao_client_id:
-          type: string
-        external_kakao_secret:
-          type: string
-        external_keycloak_enabled:
-          type: boolean
-        external_keycloak_client_id:
-          type: string
-        external_keycloak_secret:
-          type: string
-        external_keycloak_url:
-          type: string
-        external_linkedin_oidc_enabled:
-          type: boolean
-        external_linkedin_oidc_client_id:
-          type: string
-        external_linkedin_oidc_secret:
-          type: string
-        external_slack_oidc_enabled:
-          type: boolean
-        external_slack_oidc_client_id:
-          type: string
-        external_slack_oidc_secret:
-          type: string
-        external_notion_enabled:
-          type: boolean
-        external_notion_client_id:
-          type: string
-        external_notion_secret:
-          type: string
-        external_slack_enabled:
-          type: boolean
-        external_slack_client_id:
-          type: string
-        external_slack_secret:
-          type: string
-        external_spotify_enabled:
-          type: boolean
-        external_spotify_client_id:
-          type: string
-        external_spotify_secret:
-          type: string
-        external_twitch_enabled:
-          type: boolean
-        external_twitch_client_id:
-          type: string
-        external_twitch_secret:
-          type: string
-        external_twitter_enabled:
-          type: boolean
-        external_twitter_client_id:
-          type: string
-        external_twitter_secret:
-          type: string
-        external_workos_enabled:
-          type: boolean
-        external_workos_client_id:
-          type: string
-        external_workos_secret:
-          type: string
-        external_workos_url:
-          type: string
-        external_zoom_enabled:
-          type: boolean
-        external_zoom_client_id:
-          type: string
-        external_zoom_secret:
-          type: string
-        mfa_totp_enroll_enabled:
-          type: boolean
-        mfa_totp_verify_enabled:
-          type: boolean
-        mfa_web_authn_enroll_enabled:
-          type: boolean
-        mfa_web_authn_verify_enabled:
-          type: boolean
-        mfa_phone_enroll_enabled:
-          type: boolean
-        mfa_phone_verify_enabled:
-          type: boolean
+          nullable: true
         mfa_phone_template:
           type: string
+          nullable: true
     CreateThirdPartyAuthBody:
       type: object
       properties:
@@ -5516,13 +6573,13 @@ components:
           type: string
         jwks_url:
           type: string
-        custom_jwks:
-          type: object
+        custom_jwks: {}
     ThirdPartyAuth:
       type: object
       properties:
         id:
           type: string
+          format: uuid
         type:
           type: string
         oidc_issuer_url:
@@ -5532,10 +6589,8 @@ components:
           type: string
           nullable: true
         custom_jwks:
-          type: object
           nullable: true
         resolved_jwks:
-          type: object
           nullable: true
         inserted_at:
           type: string
@@ -5549,58 +6604,404 @@ components:
         - type
         - inserted_at
         - updated_at
-    ProjectAvailableRestoreVersion:
-      type: object
-      properties:
-        version:
-          type: string
-        release_channel:
-          type: string
-          enum:
-            - internal
-            - alpha
-            - beta
-            - ga
-            - withdrawn
-            - preview
-        postgres_engine:
-          type: string
-          enum:
-            - '13'
-            - '14'
-            - '15'
-            - '17'
-            - 17-oriole
-      required:
-        - version
-        - release_channel
-        - postgres_engine
     GetProjectAvailableRestoreVersionsResponse:
       type: object
       properties:
         available_versions:
           type: array
           items:
-            $ref: '#/components/schemas/ProjectAvailableRestoreVersion'
+            type: object
+            properties:
+              version:
+                type: string
+              release_channel:
+                type: string
+                enum:
+                  - internal
+                  - alpha
+                  - beta
+                  - ga
+                  - withdrawn
+                  - preview
+              postgres_engine:
+                type: string
+                enum:
+                  - '13'
+                  - '14'
+                  - '15'
+                  - '17'
+                  - 17-oriole
+            required:
+              - version
+              - release_channel
+              - postgres_engine
       required:
         - available_versions
-    RestoreProjectBodyDto:
+    ListProjectAddonsResponse:
       type: object
-      properties: {}
-      hideDefinitions:
-        - release_channel
-        - postgres_engine
+      properties:
+        selected_addons:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                enum:
+                  - custom_domain
+                  - compute_instance
+                  - pitr
+                  - ipv4
+                  - auth_mfa_phone
+                  - auth_mfa_web_authn
+                  - log_drain
+              variant:
+                type: object
+                properties:
+                  id:
+                    oneOf:
+                      - type: string
+                        enum:
+                          - ci_micro
+                          - ci_small
+                          - ci_medium
+                          - ci_large
+                          - ci_xlarge
+                          - ci_2xlarge
+                          - ci_4xlarge
+                          - ci_8xlarge
+                          - ci_12xlarge
+                          - ci_16xlarge
+                          - ci_24xlarge
+                          - ci_24xlarge_optimized_cpu
+                          - ci_24xlarge_optimized_memory
+                          - ci_24xlarge_high_memory
+                          - ci_48xlarge
+                          - ci_48xlarge_optimized_cpu
+                          - ci_48xlarge_optimized_memory
+                          - ci_48xlarge_high_memory
+                      - type: string
+                        enum:
+                          - cd_default
+                      - type: string
+                        enum:
+                          - pitr_7
+                          - pitr_14
+                          - pitr_28
+                      - type: string
+                        enum:
+                          - ipv4_default
+                      - type: string
+                        enum:
+                          - auth_mfa_phone_default
+                      - type: string
+                        enum:
+                          - auth_mfa_web_authn_default
+                      - type: string
+                        enum:
+                          - log_drain_default
+                  name:
+                    type: string
+                  price:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                      type:
+                        type: string
+                        enum:
+                          - fixed
+                          - usage
+                      interval:
+                        type: string
+                        enum:
+                          - monthly
+                          - hourly
+                      amount:
+                        type: number
+                    required:
+                      - description
+                      - type
+                      - interval
+                      - amount
+                  meta:
+                    description: Any JSON-serializable value
+                required:
+                  - id
+                  - name
+                  - price
+            required:
+              - type
+              - variant
+        available_addons:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                enum:
+                  - custom_domain
+                  - compute_instance
+                  - pitr
+                  - ipv4
+                  - auth_mfa_phone
+                  - auth_mfa_web_authn
+                  - log_drain
+              name:
+                type: string
+              variants:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      oneOf:
+                        - type: string
+                          enum:
+                            - ci_micro
+                            - ci_small
+                            - ci_medium
+                            - ci_large
+                            - ci_xlarge
+                            - ci_2xlarge
+                            - ci_4xlarge
+                            - ci_8xlarge
+                            - ci_12xlarge
+                            - ci_16xlarge
+                            - ci_24xlarge
+                            - ci_24xlarge_optimized_cpu
+                            - ci_24xlarge_optimized_memory
+                            - ci_24xlarge_high_memory
+                            - ci_48xlarge
+                            - ci_48xlarge_optimized_cpu
+                            - ci_48xlarge_optimized_memory
+                            - ci_48xlarge_high_memory
+                        - type: string
+                          enum:
+                            - cd_default
+                        - type: string
+                          enum:
+                            - pitr_7
+                            - pitr_14
+                            - pitr_28
+                        - type: string
+                          enum:
+                            - ipv4_default
+                        - type: string
+                          enum:
+                            - auth_mfa_phone_default
+                        - type: string
+                          enum:
+                            - auth_mfa_web_authn_default
+                        - type: string
+                          enum:
+                            - log_drain_default
+                    name:
+                      type: string
+                    price:
+                      type: object
+                      properties:
+                        description:
+                          type: string
+                        type:
+                          type: string
+                          enum:
+                            - fixed
+                            - usage
+                        interval:
+                          type: string
+                          enum:
+                            - monthly
+                            - hourly
+                        amount:
+                          type: number
+                      required:
+                        - description
+                        - type
+                        - interval
+                        - amount
+                    meta:
+                      description: Any JSON-serializable value
+                  required:
+                    - id
+                    - name
+                    - price
+            required:
+              - type
+              - name
+              - variants
+      required:
+        - selected_addons
+        - available_addons
+    ApplyProjectAddonBody:
+      type: object
+      properties:
+        addon_variant:
+          oneOf:
+            - type: string
+              enum:
+                - ci_micro
+                - ci_small
+                - ci_medium
+                - ci_large
+                - ci_xlarge
+                - ci_2xlarge
+                - ci_4xlarge
+                - ci_8xlarge
+                - ci_12xlarge
+                - ci_16xlarge
+                - ci_24xlarge
+                - ci_24xlarge_optimized_cpu
+                - ci_24xlarge_optimized_memory
+                - ci_24xlarge_high_memory
+                - ci_48xlarge
+                - ci_48xlarge_optimized_cpu
+                - ci_48xlarge_optimized_memory
+                - ci_48xlarge_high_memory
+            - type: string
+              enum:
+                - cd_default
+            - type: string
+              enum:
+                - pitr_7
+                - pitr_14
+                - pitr_28
+            - type: string
+              enum:
+                - ipv4_default
+        addon_type:
+          type: string
+          enum:
+            - custom_domain
+            - compute_instance
+            - pitr
+            - ipv4
+            - auth_mfa_phone
+            - auth_mfa_web_authn
+            - log_drain
+      required:
+        - addon_variant
+        - addon_type
+    V1ProjectAdvisorsResponse:
+      type: object
+      properties:
+        lints:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                enum:
+                  - unindexed_foreign_keys
+                  - auth_users_exposed
+                  - auth_rls_initplan
+                  - no_primary_key
+                  - unused_index
+                  - multiple_permissive_policies
+                  - policy_exists_rls_disabled
+                  - rls_enabled_no_policy
+                  - duplicate_index
+                  - security_definer_view
+                  - function_search_path_mutable
+                  - rls_disabled_in_public
+                  - extension_in_public
+                  - rls_references_user_metadata
+                  - materialized_view_in_api
+                  - foreign_table_in_api
+                  - unsupported_reg_types
+                  - auth_otp_long_expiry
+                  - auth_otp_short_length
+                  - ssl_not_enforced
+                  - network_restrictions_not_set
+                  - password_requirements_min_length
+                  - pitr_not_enabled
+                  - auth_leaked_password_protection
+                  - auth_insufficient_mfa_options
+                  - auth_password_policy_missing
+                  - leaked_service_key
+                  - no_backup_admin
+              title:
+                type: string
+              level:
+                type: string
+                enum:
+                  - ERROR
+                  - WARN
+                  - INFO
+              facing:
+                type: string
+                enum:
+                  - EXTERNAL
+              categories:
+                type: array
+                items:
+                  type: string
+                  enum:
+                    - PERFORMANCE
+                    - SECURITY
+              description:
+                type: string
+              detail:
+                type: string
+              remediation:
+                type: string
+              metadata:
+                type: object
+                properties:
+                  schema:
+                    type: string
+                  name:
+                    type: string
+                  entity:
+                    type: string
+                  type:
+                    type: string
+                    enum:
+                      - table
+                      - view
+                      - auth
+                      - function
+                      - extension
+                      - compliance
+                  fkey_name:
+                    type: string
+                  fkey_columns:
+                    type: array
+                    items:
+                      type: number
+              cache_key:
+                type: string
+            required:
+              - name
+              - title
+              - level
+              - facing
+              - categories
+              - description
+              - detail
+              - remediation
+              - cache_key
+      required:
+        - lints
     V1AnalyticsResponse:
       type: object
       properties:
+        result:
+          type: array
+          items: {}
         error:
           oneOf:
-            - properties:
+            - type: string
+            - type: object
+              properties:
                 code:
                   type: number
                 errors:
                   type: array
                   items:
+                    type: object
                     properties:
                       domain:
                         type: string
@@ -5612,23 +7013,54 @@ components:
                         type: string
                       reason:
                         type: string
+                    required:
+                      - domain
+                      - location
+                      - locationType
+                      - message
+                      - reason
                 message:
                   type: string
                 status:
                   type: string
-            - type: string
-        result:
-          type: array
-          items:
-            type: object
+              required:
+                - code
+                - errors
+                - message
+                - status
+    V1ListMigrationsResponse:
+      type: array
+      items:
+        type: object
+        properties:
+          version:
+            type: string
+            minLength: 1
+          name:
+            type: string
+        required:
+          - version
+    V1CreateMigrationBody:
+      type: object
+      properties:
+        query:
+          type: string
+          minLength: 1
+        name:
+          type: string
+      required:
+        - query
     V1RunQueryBody:
       type: object
       properties:
         query:
           type: string
+          minLength: 1
+        read_only:
+          type: boolean
       required:
         - query
-    GetProjectDbMetadataResponseDto:
+    GetProjectDbMetadataResponse:
       type: object
       properties:
         databases:
@@ -5657,14 +7089,6 @@ components:
     FunctionResponse:
       type: object
       properties:
-        version:
-          type: integer
-        created_at:
-          type: integer
-          format: int64
-        updated_at:
-          type: integer
-          format: int64
         id:
           type: string
         slug:
@@ -5672,11 +7096,17 @@ components:
         name:
           type: string
         status:
+          type: string
           enum:
             - ACTIVE
             - REMOVED
             - THROTTLED
-          type: string
+        version:
+          type: integer
+        created_at:
+          type: integer
+        updated_at:
+          type: integer
         verify_jwt:
           type: boolean
         import_map:
@@ -5685,96 +7115,94 @@ components:
           type: string
         import_map_path:
           type: string
-        compute_multiplier:
-          type: number
       required:
+        - id
+        - slug
+        - name
+        - status
         - version
         - created_at
         - updated_at
-        - id
-        - slug
-        - name
-        - status
-    V1CreateFunctionBody:
-      type: object
-      properties:
-        slug:
-          type: string
-          pattern: /^[A-Za-z0-9_-]+$/
-        name:
-          type: string
-        body:
-          type: string
-        verify_jwt:
-          type: boolean
-        compute_multiplier:
-          type: number
-          minimum: 1
-          maximum: 4
-      required:
-        - slug
-        - name
-        - body
     BulkUpdateFunctionBody:
-      type: object
-      properties:
-        version:
-          type: integer
-        created_at:
-          type: integer
-          format: int64
-        id:
-          type: string
-        slug:
-          type: string
-        name:
-          type: string
-        status:
-          enum:
-            - ACTIVE
-            - REMOVED
-            - THROTTLED
-          type: string
-        verify_jwt:
-          type: boolean
-        import_map:
-          type: boolean
-        entrypoint_path:
-          type: string
-        import_map_path:
-          type: string
-      required:
-        - version
-        - id
-        - slug
-        - name
-        - status
+      type: array
+      items:
+        type: object
+        properties:
+          id:
+            type: string
+          slug:
+            type: string
+            pattern: ^[A-Za-z0-9_-]+$
+          name:
+            type: string
+          status:
+            type: string
+            enum:
+              - ACTIVE
+              - REMOVED
+              - THROTTLED
+          version:
+            type: integer
+          created_at:
+            type: integer
+          verify_jwt:
+            type: boolean
+          import_map:
+            type: boolean
+          entrypoint_path:
+            type: string
+          import_map_path:
+            type: string
+        required:
+          - id
+          - slug
+          - name
+          - status
+          - version
     BulkUpdateFunctionResponse:
       type: object
       properties:
         functions:
           type: array
           items:
-            $ref: '#/components/schemas/FunctionResponse'
+            type: object
+            properties:
+              id:
+                type: string
+              slug:
+                type: string
+              name:
+                type: string
+              status:
+                type: string
+                enum:
+                  - ACTIVE
+                  - REMOVED
+                  - THROTTLED
+              version:
+                type: integer
+              created_at:
+                type: integer
+              updated_at:
+                type: integer
+              verify_jwt:
+                type: boolean
+              import_map:
+                type: boolean
+              entrypoint_path:
+                type: string
+              import_map_path:
+                type: string
+            required:
+              - id
+              - slug
+              - name
+              - status
+              - version
+              - created_at
+              - updated_at
       required:
         - functions
-    FunctionDeployMetadata:
-      type: object
-      properties:
-        entrypoint_path:
-          type: string
-        import_map_path:
-          type: string
-        static_patterns:
-          type: array
-          items:
-            type: string
-        verify_jwt:
-          type: boolean
-        name:
-          type: string
-      required:
-        - entrypoint_path
     FunctionDeployBody:
       type: object
       properties:
@@ -5784,21 +7212,27 @@ components:
             type: string
             format: binary
         metadata:
-          $ref: '#/components/schemas/FunctionDeployMetadata'
+          type: object
+          properties:
+            entrypoint_path:
+              type: string
+            import_map_path:
+              type: string
+            static_patterns:
+              type: array
+              items:
+                type: string
+            verify_jwt:
+              type: boolean
+            name:
+              type: string
+          required:
+            - entrypoint_path
       required:
-        - file
         - metadata
     DeployFunctionResponse:
       type: object
       properties:
-        version:
-          type: integer
-        created_at:
-          type: integer
-          format: int64
-        updated_at:
-          type: integer
-          format: int64
         id:
           type: string
         slug:
@@ -5806,11 +7240,17 @@ components:
         name:
           type: string
         status:
+          type: string
           enum:
             - ACTIVE
             - REMOVED
             - THROTTLED
-          type: string
+        version:
+          type: integer
+        created_at:
+          type: integer
+        updated_at:
+          type: integer
         verify_jwt:
           type: boolean
         import_map:
@@ -5819,25 +7259,15 @@ components:
           type: string
         import_map_path:
           type: string
-        compute_multiplier:
-          type: number
       required:
-        - version
         - id
         - slug
         - name
         - status
+        - version
     FunctionSlugResponse:
       type: object
       properties:
-        version:
-          type: integer
-        created_at:
-          type: integer
-          format: int64
-        updated_at:
-          type: integer
-          format: int64
         id:
           type: string
         slug:
@@ -5845,11 +7275,17 @@ components:
         name:
           type: string
         status:
+          type: string
           enum:
             - ACTIVE
             - REMOVED
             - THROTTLED
-          type: string
+        version:
+          type: integer
+        created_at:
+          type: integer
+        updated_at:
+          type: integer
         verify_jwt:
           type: boolean
         import_map:
@@ -5858,16 +7294,17 @@ components:
           type: string
         import_map_path:
           type: string
-        compute_multiplier:
-          type: number
       required:
-        - version
-        - created_at
-        - updated_at
         - id
         - slug
         - name
         - status
+        - version
+        - created_at
+        - updated_at
+    StreamableFile:
+      type: object
+      properties: {}
     V1UpdateFunctionBody:
       type: object
       properties:
@@ -5877,10 +7314,6 @@ components:
           type: string
         verify_jwt:
           type: boolean
-        compute_multiplier:
-          type: number
-          minimum: 1
-          maximum: 4
     V1StorageBucketResponse:
       type: object
       properties:
@@ -5903,32 +7336,6 @@ components:
         - created_at
         - updated_at
         - public
-    AttributeValue:
-      type: object
-      properties:
-        default:
-          oneOf:
-            - type: object
-            - type: number
-            - type: string
-            - type: boolean
-        name:
-          type: string
-        names:
-          type: array
-          items:
-            type: string
-        array:
-          type: boolean
-    AttributeMapping:
-      type: object
-      properties:
-        keys:
-          type: object
-          additionalProperties:
-            $ref: '#/components/schemas/AttributeValue'
-      required:
-        - keys
     CreateProviderBody:
       type: object
       properties:
@@ -5946,66 +7353,91 @@ components:
           items:
             type: string
         attribute_mapping:
-          $ref: '#/components/schemas/AttributeMapping'
+          type: object
+          properties:
+            keys:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  names:
+                    type: array
+                    items:
+                      type: string
+                  default:
+                    oneOf:
+                      - type: object
+                        properties: {}
+                      - type: number
+                      - type: string
+                      - type: boolean
+                  array:
+                    type: boolean
+          required:
+            - keys
       required:
         - type
-    SamlDescriptor:
-      type: object
-      properties:
-        id:
-          type: string
-        entity_id:
-          type: string
-        metadata_url:
-          type: string
-        metadata_xml:
-          type: string
-        attribute_mapping:
-          $ref: '#/components/schemas/AttributeMapping'
-      required:
-        - id
-        - entity_id
-    Domain:
-      type: object
-      properties:
-        id:
-          type: string
-        domain:
-          type: string
-        created_at:
-          type: string
-        updated_at:
-          type: string
-      required:
-        - id
     CreateProviderResponse:
       type: object
       properties:
         id:
           type: string
         saml:
-          $ref: '#/components/schemas/SamlDescriptor'
+          type: object
+          properties:
+            id:
+              type: string
+            entity_id:
+              type: string
+            metadata_url:
+              type: string
+            metadata_xml:
+              type: string
+            attribute_mapping:
+              type: object
+              properties:
+                keys:
+                  type: object
+                  additionalProperties:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      names:
+                        type: array
+                        items:
+                          type: string
+                      default:
+                        oneOf:
+                          - type: object
+                            properties: {}
+                          - type: number
+                          - type: string
+                          - type: boolean
+                      array:
+                        type: boolean
+              required:
+                - keys
+          required:
+            - id
+            - entity_id
         domains:
           type: array
           items:
-            $ref: '#/components/schemas/Domain'
-        created_at:
-          type: string
-        updated_at:
-          type: string
-      required:
-        - id
-    Provider:
-      type: object
-      properties:
-        id:
-          type: string
-        saml:
-          $ref: '#/components/schemas/SamlDescriptor'
-        domains:
-          type: array
-          items:
-            $ref: '#/components/schemas/Domain'
+            type: object
+            properties:
+              id:
+                type: string
+              domain:
+                type: string
+              created_at:
+                type: string
+              updated_at:
+                type: string
+            required:
+              - id
         created_at:
           type: string
         updated_at:
@@ -6018,7 +7450,70 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/Provider'
+            type: object
+            properties:
+              id:
+                type: string
+              saml:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  entity_id:
+                    type: string
+                  metadata_url:
+                    type: string
+                  metadata_xml:
+                    type: string
+                  attribute_mapping:
+                    type: object
+                    properties:
+                      keys:
+                        type: object
+                        additionalProperties:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                            names:
+                              type: array
+                              items:
+                                type: string
+                            default:
+                              oneOf:
+                                - type: object
+                                  properties: {}
+                                - type: number
+                                - type: string
+                                - type: boolean
+                            array:
+                              type: boolean
+                    required:
+                      - keys
+                required:
+                  - id
+                  - entity_id
+              domains:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                    domain:
+                      type: string
+                    created_at:
+                      type: string
+                    updated_at:
+                      type: string
+                  required:
+                    - id
+              created_at:
+                type: string
+              updated_at:
+                type: string
+            required:
+              - id
       required:
         - items
     GetProviderResponse:
@@ -6027,11 +7522,59 @@ components:
         id:
           type: string
         saml:
-          $ref: '#/components/schemas/SamlDescriptor'
+          type: object
+          properties:
+            id:
+              type: string
+            entity_id:
+              type: string
+            metadata_url:
+              type: string
+            metadata_xml:
+              type: string
+            attribute_mapping:
+              type: object
+              properties:
+                keys:
+                  type: object
+                  additionalProperties:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      names:
+                        type: array
+                        items:
+                          type: string
+                      default:
+                        oneOf:
+                          - type: object
+                            properties: {}
+                          - type: number
+                          - type: string
+                          - type: boolean
+                      array:
+                        type: boolean
+              required:
+                - keys
+          required:
+            - id
+            - entity_id
         domains:
           type: array
           items:
-            $ref: '#/components/schemas/Domain'
+            type: object
+            properties:
+              id:
+                type: string
+              domain:
+                type: string
+              created_at:
+                type: string
+              updated_at:
+                type: string
+            required:
+              - id
         created_at:
           type: string
         updated_at:
@@ -6050,18 +7593,89 @@ components:
           items:
             type: string
         attribute_mapping:
-          $ref: '#/components/schemas/AttributeMapping'
+          type: object
+          properties:
+            keys:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  names:
+                    type: array
+                    items:
+                      type: string
+                  default:
+                    oneOf:
+                      - type: object
+                        properties: {}
+                      - type: number
+                      - type: string
+                      - type: boolean
+                  array:
+                    type: boolean
+          required:
+            - keys
     UpdateProviderResponse:
       type: object
       properties:
         id:
           type: string
         saml:
-          $ref: '#/components/schemas/SamlDescriptor'
+          type: object
+          properties:
+            id:
+              type: string
+            entity_id:
+              type: string
+            metadata_url:
+              type: string
+            metadata_xml:
+              type: string
+            attribute_mapping:
+              type: object
+              properties:
+                keys:
+                  type: object
+                  additionalProperties:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      names:
+                        type: array
+                        items:
+                          type: string
+                      default:
+                        oneOf:
+                          - type: object
+                            properties: {}
+                          - type: number
+                          - type: string
+                          - type: boolean
+                      array:
+                        type: boolean
+              required:
+                - keys
+          required:
+            - id
+            - entity_id
         domains:
           type: array
           items:
-            $ref: '#/components/schemas/Domain'
+            type: object
+            properties:
+              id:
+                type: string
+              domain:
+                type: string
+              created_at:
+                type: string
+              updated_at:
+                type: string
+            required:
+              - id
         created_at:
           type: string
         updated_at:
@@ -6074,46 +7688,65 @@ components:
         id:
           type: string
         saml:
-          $ref: '#/components/schemas/SamlDescriptor'
+          type: object
+          properties:
+            id:
+              type: string
+            entity_id:
+              type: string
+            metadata_url:
+              type: string
+            metadata_xml:
+              type: string
+            attribute_mapping:
+              type: object
+              properties:
+                keys:
+                  type: object
+                  additionalProperties:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      names:
+                        type: array
+                        items:
+                          type: string
+                      default:
+                        oneOf:
+                          - type: object
+                            properties: {}
+                          - type: number
+                          - type: string
+                          - type: boolean
+                      array:
+                        type: boolean
+              required:
+                - keys
+          required:
+            - id
+            - entity_id
         domains:
           type: array
           items:
-            $ref: '#/components/schemas/Domain'
+            type: object
+            properties:
+              id:
+                type: string
+              domain:
+                type: string
+              created_at:
+                type: string
+              updated_at:
+                type: string
+            required:
+              - id
         created_at:
           type: string
         updated_at:
           type: string
       required:
         - id
-    V1Backup:
-      type: object
-      properties:
-        status:
-          type: string
-          enum:
-            - COMPLETED
-            - FAILED
-            - PENDING
-            - REMOVED
-            - ARCHIVED
-            - CANCELLED
-        is_physical_backup:
-          type: boolean
-        inserted_at:
-          type: string
-      required:
-        - status
-        - is_physical_backup
-        - inserted_at
-    V1PhysicalBackup:
-      type: object
-      properties:
-        earliest_physical_backup_date_unix:
-          type: integer
-          format: int64
-        latest_physical_backup_date_unix:
-          type: integer
-          format: int64
     V1BackupsResponse:
       type: object
       properties:
@@ -6126,9 +7759,32 @@ components:
         backups:
           type: array
           items:
-            $ref: '#/components/schemas/V1Backup'
+            type: object
+            properties:
+              is_physical_backup:
+                type: boolean
+              status:
+                type: string
+                enum:
+                  - COMPLETED
+                  - FAILED
+                  - PENDING
+                  - REMOVED
+                  - ARCHIVED
+                  - CANCELLED
+              inserted_at:
+                type: string
+            required:
+              - is_physical_backup
+              - status
+              - inserted_at
         physical_backup_data:
-          $ref: '#/components/schemas/V1PhysicalBackup'
+          type: object
+          properties:
+            earliest_physical_backup_date_unix:
+              type: integer
+            latest_physical_backup_date_unix:
+              type: integer
       required:
         - region
         - walg_enabled
@@ -6162,18 +7818,20 @@ components:
         - user_name
         - role_name
         - mfa_enabled
-    BillingPlanId:
-      type: string
-      enum:
-        - free
-        - pro
-        - team
-        - enterprise
     V1OrganizationSlugResponse:
       type: object
       properties:
+        id:
+          type: string
+        name:
+          type: string
         plan:
-          $ref: '#/components/schemas/BillingPlanId'
+          type: string
+          enum:
+            - free
+            - pro
+            - team
+            - enterprise
         opt_in_tags:
           type: array
           items:
@@ -6183,13 +7841,16 @@ components:
         allowed_release_channels:
           type: array
           items:
-            $ref: '#/components/schemas/ReleaseChannel'
-        id:
-          type: string
-        name:
-          type: string
+            type: string
+            enum:
+              - internal
+              - alpha
+              - beta
+              - ga
+              - withdrawn
+              - preview
       required:
-        - opt_in_tags
-        - allowed_release_channels
         - id
         - name
+        - opt_in_tags
+        - allowed_release_channels

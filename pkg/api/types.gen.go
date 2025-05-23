@@ -6,6 +6,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -23,17 +24,59 @@ const (
 	ApiKeyResponseTypeSecret      ApiKeyResponseType = "secret"
 )
 
-// Defines values for AuthHealthResponseName.
+// Defines values for ApplyProjectAddonBodyAddonType.
 const (
-	GoTrue AuthHealthResponseName = "GoTrue"
+	ApplyProjectAddonBodyAddonTypeAuthMfaPhone    ApplyProjectAddonBodyAddonType = "auth_mfa_phone"
+	ApplyProjectAddonBodyAddonTypeAuthMfaWebAuthn ApplyProjectAddonBodyAddonType = "auth_mfa_web_authn"
+	ApplyProjectAddonBodyAddonTypeComputeInstance ApplyProjectAddonBodyAddonType = "compute_instance"
+	ApplyProjectAddonBodyAddonTypeCustomDomain    ApplyProjectAddonBodyAddonType = "custom_domain"
+	ApplyProjectAddonBodyAddonTypeIpv4            ApplyProjectAddonBodyAddonType = "ipv4"
+	ApplyProjectAddonBodyAddonTypeLogDrain        ApplyProjectAddonBodyAddonType = "log_drain"
+	ApplyProjectAddonBodyAddonTypePitr            ApplyProjectAddonBodyAddonType = "pitr"
 )
 
-// Defines values for BillingPlanId.
+// Defines values for ApplyProjectAddonBodyAddonVariant0.
 const (
-	BillingPlanIdEnterprise BillingPlanId = "enterprise"
-	BillingPlanIdFree       BillingPlanId = "free"
-	BillingPlanIdPro        BillingPlanId = "pro"
-	BillingPlanIdTeam       BillingPlanId = "team"
+	ApplyProjectAddonBodyAddonVariant0Ci12xlarge                ApplyProjectAddonBodyAddonVariant0 = "ci_12xlarge"
+	ApplyProjectAddonBodyAddonVariant0Ci16xlarge                ApplyProjectAddonBodyAddonVariant0 = "ci_16xlarge"
+	ApplyProjectAddonBodyAddonVariant0Ci24xlarge                ApplyProjectAddonBodyAddonVariant0 = "ci_24xlarge"
+	ApplyProjectAddonBodyAddonVariant0Ci24xlargeHighMemory      ApplyProjectAddonBodyAddonVariant0 = "ci_24xlarge_high_memory"
+	ApplyProjectAddonBodyAddonVariant0Ci24xlargeOptimizedCpu    ApplyProjectAddonBodyAddonVariant0 = "ci_24xlarge_optimized_cpu"
+	ApplyProjectAddonBodyAddonVariant0Ci24xlargeOptimizedMemory ApplyProjectAddonBodyAddonVariant0 = "ci_24xlarge_optimized_memory"
+	ApplyProjectAddonBodyAddonVariant0Ci2xlarge                 ApplyProjectAddonBodyAddonVariant0 = "ci_2xlarge"
+	ApplyProjectAddonBodyAddonVariant0Ci48xlarge                ApplyProjectAddonBodyAddonVariant0 = "ci_48xlarge"
+	ApplyProjectAddonBodyAddonVariant0Ci48xlargeHighMemory      ApplyProjectAddonBodyAddonVariant0 = "ci_48xlarge_high_memory"
+	ApplyProjectAddonBodyAddonVariant0Ci48xlargeOptimizedCpu    ApplyProjectAddonBodyAddonVariant0 = "ci_48xlarge_optimized_cpu"
+	ApplyProjectAddonBodyAddonVariant0Ci48xlargeOptimizedMemory ApplyProjectAddonBodyAddonVariant0 = "ci_48xlarge_optimized_memory"
+	ApplyProjectAddonBodyAddonVariant0Ci4xlarge                 ApplyProjectAddonBodyAddonVariant0 = "ci_4xlarge"
+	ApplyProjectAddonBodyAddonVariant0Ci8xlarge                 ApplyProjectAddonBodyAddonVariant0 = "ci_8xlarge"
+	ApplyProjectAddonBodyAddonVariant0CiLarge                   ApplyProjectAddonBodyAddonVariant0 = "ci_large"
+	ApplyProjectAddonBodyAddonVariant0CiMedium                  ApplyProjectAddonBodyAddonVariant0 = "ci_medium"
+	ApplyProjectAddonBodyAddonVariant0CiMicro                   ApplyProjectAddonBodyAddonVariant0 = "ci_micro"
+	ApplyProjectAddonBodyAddonVariant0CiSmall                   ApplyProjectAddonBodyAddonVariant0 = "ci_small"
+	ApplyProjectAddonBodyAddonVariant0CiXlarge                  ApplyProjectAddonBodyAddonVariant0 = "ci_xlarge"
+)
+
+// Defines values for ApplyProjectAddonBodyAddonVariant1.
+const (
+	ApplyProjectAddonBodyAddonVariant1CdDefault ApplyProjectAddonBodyAddonVariant1 = "cd_default"
+)
+
+// Defines values for ApplyProjectAddonBodyAddonVariant2.
+const (
+	ApplyProjectAddonBodyAddonVariant2Pitr14 ApplyProjectAddonBodyAddonVariant2 = "pitr_14"
+	ApplyProjectAddonBodyAddonVariant2Pitr28 ApplyProjectAddonBodyAddonVariant2 = "pitr_28"
+	ApplyProjectAddonBodyAddonVariant2Pitr7  ApplyProjectAddonBodyAddonVariant2 = "pitr_7"
+)
+
+// Defines values for ApplyProjectAddonBodyAddonVariant3.
+const (
+	ApplyProjectAddonBodyAddonVariant3Ipv4Default ApplyProjectAddonBodyAddonVariant3 = "ipv4_default"
+)
+
+// Defines values for BranchDeleteResponseMessage.
+const (
+	BranchDeleteResponseMessageOk BranchDeleteResponseMessage = "ok"
 )
 
 // Defines values for BranchDetailResponseStatus.
@@ -65,11 +108,23 @@ const (
 	BranchResponseStatusRUNNINGMIGRATIONS BranchResponseStatus = "RUNNING_MIGRATIONS"
 )
 
+// Defines values for BranchUpdateResponseMessage.
+const (
+	BranchUpdateResponseMessageOk BranchUpdateResponseMessage = "ok"
+)
+
 // Defines values for BulkUpdateFunctionBodyStatus.
 const (
 	BulkUpdateFunctionBodyStatusACTIVE    BulkUpdateFunctionBodyStatus = "ACTIVE"
 	BulkUpdateFunctionBodyStatusREMOVED   BulkUpdateFunctionBodyStatus = "REMOVED"
 	BulkUpdateFunctionBodyStatusTHROTTLED BulkUpdateFunctionBodyStatus = "THROTTLED"
+)
+
+// Defines values for BulkUpdateFunctionResponseFunctionsStatus.
+const (
+	BulkUpdateFunctionResponseFunctionsStatusACTIVE    BulkUpdateFunctionResponseFunctionsStatus = "ACTIVE"
+	BulkUpdateFunctionResponseFunctionsStatusREMOVED   BulkUpdateFunctionResponseFunctionsStatus = "REMOVED"
+	BulkUpdateFunctionResponseFunctionsStatusTHROTTLED BulkUpdateFunctionResponseFunctionsStatus = "THROTTLED"
 )
 
 // Defines values for CreateApiKeyBodyType.
@@ -78,44 +133,92 @@ const (
 	CreateApiKeyBodyTypeSecret      CreateApiKeyBodyType = "secret"
 )
 
+// Defines values for CreateBranchBodyDesiredInstanceSize.
+const (
+	CreateBranchBodyDesiredInstanceSizeLarge                    CreateBranchBodyDesiredInstanceSize = "large"
+	CreateBranchBodyDesiredInstanceSizeMedium                   CreateBranchBodyDesiredInstanceSize = "medium"
+	CreateBranchBodyDesiredInstanceSizeMicro                    CreateBranchBodyDesiredInstanceSize = "micro"
+	CreateBranchBodyDesiredInstanceSizeN12xlarge                CreateBranchBodyDesiredInstanceSize = "12xlarge"
+	CreateBranchBodyDesiredInstanceSizeN16xlarge                CreateBranchBodyDesiredInstanceSize = "16xlarge"
+	CreateBranchBodyDesiredInstanceSizeN24xlarge                CreateBranchBodyDesiredInstanceSize = "24xlarge"
+	CreateBranchBodyDesiredInstanceSizeN24xlargeHighMemory      CreateBranchBodyDesiredInstanceSize = "24xlarge_high_memory"
+	CreateBranchBodyDesiredInstanceSizeN24xlargeOptimizedCpu    CreateBranchBodyDesiredInstanceSize = "24xlarge_optimized_cpu"
+	CreateBranchBodyDesiredInstanceSizeN24xlargeOptimizedMemory CreateBranchBodyDesiredInstanceSize = "24xlarge_optimized_memory"
+	CreateBranchBodyDesiredInstanceSizeN2xlarge                 CreateBranchBodyDesiredInstanceSize = "2xlarge"
+	CreateBranchBodyDesiredInstanceSizeN48xlarge                CreateBranchBodyDesiredInstanceSize = "48xlarge"
+	CreateBranchBodyDesiredInstanceSizeN48xlargeHighMemory      CreateBranchBodyDesiredInstanceSize = "48xlarge_high_memory"
+	CreateBranchBodyDesiredInstanceSizeN48xlargeOptimizedCpu    CreateBranchBodyDesiredInstanceSize = "48xlarge_optimized_cpu"
+	CreateBranchBodyDesiredInstanceSizeN48xlargeOptimizedMemory CreateBranchBodyDesiredInstanceSize = "48xlarge_optimized_memory"
+	CreateBranchBodyDesiredInstanceSizeN4xlarge                 CreateBranchBodyDesiredInstanceSize = "4xlarge"
+	CreateBranchBodyDesiredInstanceSizeN8xlarge                 CreateBranchBodyDesiredInstanceSize = "8xlarge"
+	CreateBranchBodyDesiredInstanceSizeNano                     CreateBranchBodyDesiredInstanceSize = "nano"
+	CreateBranchBodyDesiredInstanceSizePico                     CreateBranchBodyDesiredInstanceSize = "pico"
+	CreateBranchBodyDesiredInstanceSizeSmall                    CreateBranchBodyDesiredInstanceSize = "small"
+	CreateBranchBodyDesiredInstanceSizeXlarge                   CreateBranchBodyDesiredInstanceSize = "xlarge"
+)
+
+// Defines values for CreateBranchBodyPostgresEngine.
+const (
+	CreateBranchBodyPostgresEngineN15       CreateBranchBodyPostgresEngine = "15"
+	CreateBranchBodyPostgresEngineN17       CreateBranchBodyPostgresEngine = "17"
+	CreateBranchBodyPostgresEngineN17Oriole CreateBranchBodyPostgresEngine = "17-oriole"
+)
+
+// Defines values for CreateBranchBodyReleaseChannel.
+const (
+	CreateBranchBodyReleaseChannelAlpha     CreateBranchBodyReleaseChannel = "alpha"
+	CreateBranchBodyReleaseChannelBeta      CreateBranchBodyReleaseChannel = "beta"
+	CreateBranchBodyReleaseChannelGa        CreateBranchBodyReleaseChannel = "ga"
+	CreateBranchBodyReleaseChannelInternal  CreateBranchBodyReleaseChannel = "internal"
+	CreateBranchBodyReleaseChannelPreview   CreateBranchBodyReleaseChannel = "preview"
+	CreateBranchBodyReleaseChannelWithdrawn CreateBranchBodyReleaseChannel = "withdrawn"
+)
+
 // Defines values for CreateProviderBodyType.
 const (
 	Saml CreateProviderBodyType = "saml"
 )
 
-// Defines values for DatabaseUpgradeStatusError.
+// Defines values for CreateSigningKeyBodyAlgorithm.
 const (
-	N1UpgradedInstanceLaunchFailed                 DatabaseUpgradeStatusError = "1_upgraded_instance_launch_failed"
-	N2VolumeDetachchmentFromUpgradedInstanceFailed DatabaseUpgradeStatusError = "2_volume_detachchment_from_upgraded_instance_failed"
-	N3VolumeAttachmentToOriginalInstanceFailed     DatabaseUpgradeStatusError = "3_volume_attachment_to_original_instance_failed"
-	N4DataUpgradeInitiationFailed                  DatabaseUpgradeStatusError = "4_data_upgrade_initiation_failed"
-	N5DataUpgradeCompletionFailed                  DatabaseUpgradeStatusError = "5_data_upgrade_completion_failed"
-	N6VolumeDetachchmentFromOriginalInstanceFailed DatabaseUpgradeStatusError = "6_volume_detachchment_from_original_instance_failed"
-	N7VolumeAttachmentToUpgradedInstanceFailed     DatabaseUpgradeStatusError = "7_volume_attachment_to_upgraded_instance_failed"
-	N8UpgradeCompletionFailed                      DatabaseUpgradeStatusError = "8_upgrade_completion_failed"
-	N9PostPhysicalBackupFailed                     DatabaseUpgradeStatusError = "9_post_physical_backup_failed"
+	CreateSigningKeyBodyAlgorithmES256 CreateSigningKeyBodyAlgorithm = "ES256"
+	CreateSigningKeyBodyAlgorithmEdDSA CreateSigningKeyBodyAlgorithm = "EdDSA"
+	CreateSigningKeyBodyAlgorithmHS256 CreateSigningKeyBodyAlgorithm = "HS256"
+	CreateSigningKeyBodyAlgorithmRS256 CreateSigningKeyBodyAlgorithm = "RS256"
 )
 
-// Defines values for DatabaseUpgradeStatusProgress.
+// Defines values for CreateSigningKeyBodyStatus.
 const (
-	N0Requested                          DatabaseUpgradeStatusProgress = "0_requested"
-	N10CompletedPostPhysicalBackup       DatabaseUpgradeStatusProgress = "10_completed_post_physical_backup"
-	N1Started                            DatabaseUpgradeStatusProgress = "1_started"
-	N2LaunchedUpgradedInstance           DatabaseUpgradeStatusProgress = "2_launched_upgraded_instance"
-	N3DetachedVolumeFromUpgradedInstance DatabaseUpgradeStatusProgress = "3_detached_volume_from_upgraded_instance"
-	N4AttachedVolumeToOriginalInstance   DatabaseUpgradeStatusProgress = "4_attached_volume_to_original_instance"
-	N5InitiatedDataUpgrade               DatabaseUpgradeStatusProgress = "5_initiated_data_upgrade"
-	N6CompletedDataUpgrade               DatabaseUpgradeStatusProgress = "6_completed_data_upgrade"
-	N7DetachedVolumeFromOriginalInstance DatabaseUpgradeStatusProgress = "7_detached_volume_from_original_instance"
-	N8AttachedVolumeToUpgradedInstance   DatabaseUpgradeStatusProgress = "8_attached_volume_to_upgraded_instance"
-	N9CompletedUpgrade                   DatabaseUpgradeStatusProgress = "9_completed_upgrade"
+	CreateSigningKeyBodyStatusInUse   CreateSigningKeyBodyStatus = "in_use"
+	CreateSigningKeyBodyStatusStandby CreateSigningKeyBodyStatus = "standby"
 )
 
-// Defines values for DatabaseUpgradeStatusStatus.
+// Defines values for DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError.
 const (
-	N0 DatabaseUpgradeStatusStatus = 0
-	N1 DatabaseUpgradeStatusStatus = 1
-	N2 DatabaseUpgradeStatusStatus = 2
+	N1UpgradedInstanceLaunchFailed                 DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError = "1_upgraded_instance_launch_failed"
+	N2VolumeDetachchmentFromUpgradedInstanceFailed DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError = "2_volume_detachchment_from_upgraded_instance_failed"
+	N3VolumeAttachmentToOriginalInstanceFailed     DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError = "3_volume_attachment_to_original_instance_failed"
+	N4DataUpgradeInitiationFailed                  DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError = "4_data_upgrade_initiation_failed"
+	N5DataUpgradeCompletionFailed                  DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError = "5_data_upgrade_completion_failed"
+	N6VolumeDetachchmentFromOriginalInstanceFailed DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError = "6_volume_detachchment_from_original_instance_failed"
+	N7VolumeAttachmentToUpgradedInstanceFailed     DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError = "7_volume_attachment_to_upgraded_instance_failed"
+	N8UpgradeCompletionFailed                      DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError = "8_upgrade_completion_failed"
+	N9PostPhysicalBackupFailed                     DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError = "9_post_physical_backup_failed"
+)
+
+// Defines values for DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress.
+const (
+	N0Requested                          DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "0_requested"
+	N10CompletedPostPhysicalBackup       DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "10_completed_post_physical_backup"
+	N1Started                            DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "1_started"
+	N2LaunchedUpgradedInstance           DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "2_launched_upgraded_instance"
+	N3DetachedVolumeFromUpgradedInstance DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "3_detached_volume_from_upgraded_instance"
+	N4AttachedVolumeToOriginalInstance   DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "4_attached_volume_to_original_instance"
+	N5InitiatedDataUpgrade               DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "5_initiated_data_upgrade"
+	N6CompletedDataUpgrade               DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "6_completed_data_upgrade"
+	N7DetachedVolumeFromOriginalInstance DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "7_detached_volume_from_original_instance"
+	N8AttachedVolumeToUpgradedInstance   DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "8_attached_volume_to_upgraded_instance"
+	N9CompletedUpgrade                   DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "9_completed_upgrade"
 )
 
 // Defines values for DeployFunctionResponseStatus.
@@ -123,20 +226,6 @@ const (
 	DeployFunctionResponseStatusACTIVE    DeployFunctionResponseStatus = "ACTIVE"
 	DeployFunctionResponseStatusREMOVED   DeployFunctionResponseStatus = "REMOVED"
 	DeployFunctionResponseStatusTHROTTLED DeployFunctionResponseStatus = "THROTTLED"
-)
-
-// Defines values for DesiredInstanceSize.
-const (
-	DesiredInstanceSizeLarge     DesiredInstanceSize = "large"
-	DesiredInstanceSizeMedium    DesiredInstanceSize = "medium"
-	DesiredInstanceSizeMicro     DesiredInstanceSize = "micro"
-	DesiredInstanceSizeN12xlarge DesiredInstanceSize = "12xlarge"
-	DesiredInstanceSizeN16xlarge DesiredInstanceSize = "16xlarge"
-	DesiredInstanceSizeN2xlarge  DesiredInstanceSize = "2xlarge"
-	DesiredInstanceSizeN4xlarge  DesiredInstanceSize = "4xlarge"
-	DesiredInstanceSizeN8xlarge  DesiredInstanceSize = "8xlarge"
-	DesiredInstanceSizeSmall     DesiredInstanceSize = "small"
-	DesiredInstanceSizeXlarge    DesiredInstanceSize = "xlarge"
 )
 
 // Defines values for FunctionResponseStatus.
@@ -151,6 +240,179 @@ const (
 	FunctionSlugResponseStatusACTIVE    FunctionSlugResponseStatus = "ACTIVE"
 	FunctionSlugResponseStatusREMOVED   FunctionSlugResponseStatus = "REMOVED"
 	FunctionSlugResponseStatusTHROTTLED FunctionSlugResponseStatus = "THROTTLED"
+)
+
+// Defines values for GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngine.
+const (
+	GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngineN13       GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngine = "13"
+	GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngineN14       GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngine = "14"
+	GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngineN15       GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngine = "15"
+	GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngineN17       GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngine = "17"
+	GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngineN17Oriole GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngine = "17-oriole"
+)
+
+// Defines values for GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel.
+const (
+	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelAlpha     GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "alpha"
+	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelBeta      GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "beta"
+	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelGa        GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "ga"
+	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelInternal  GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "internal"
+	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelPreview   GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "preview"
+	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelWithdrawn GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "withdrawn"
+)
+
+// Defines values for ListProjectAddonsResponseAvailableAddonsType.
+const (
+	ListProjectAddonsResponseAvailableAddonsTypeAuthMfaPhone    ListProjectAddonsResponseAvailableAddonsType = "auth_mfa_phone"
+	ListProjectAddonsResponseAvailableAddonsTypeAuthMfaWebAuthn ListProjectAddonsResponseAvailableAddonsType = "auth_mfa_web_authn"
+	ListProjectAddonsResponseAvailableAddonsTypeComputeInstance ListProjectAddonsResponseAvailableAddonsType = "compute_instance"
+	ListProjectAddonsResponseAvailableAddonsTypeCustomDomain    ListProjectAddonsResponseAvailableAddonsType = "custom_domain"
+	ListProjectAddonsResponseAvailableAddonsTypeIpv4            ListProjectAddonsResponseAvailableAddonsType = "ipv4"
+	ListProjectAddonsResponseAvailableAddonsTypeLogDrain        ListProjectAddonsResponseAvailableAddonsType = "log_drain"
+	ListProjectAddonsResponseAvailableAddonsTypePitr            ListProjectAddonsResponseAvailableAddonsType = "pitr"
+)
+
+// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsId0.
+const (
+	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci12xlarge                ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_12xlarge"
+	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci16xlarge                ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_16xlarge"
+	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci24xlarge                ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_24xlarge"
+	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci24xlargeHighMemory      ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_24xlarge_high_memory"
+	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci24xlargeOptimizedCpu    ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_24xlarge_optimized_cpu"
+	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci24xlargeOptimizedMemory ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_24xlarge_optimized_memory"
+	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci2xlarge                 ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_2xlarge"
+	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci48xlarge                ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_48xlarge"
+	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci48xlargeHighMemory      ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_48xlarge_high_memory"
+	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci48xlargeOptimizedCpu    ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_48xlarge_optimized_cpu"
+	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci48xlargeOptimizedMemory ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_48xlarge_optimized_memory"
+	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci4xlarge                 ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_4xlarge"
+	ListProjectAddonsResponseAvailableAddonsVariantsId0Ci8xlarge                 ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_8xlarge"
+	ListProjectAddonsResponseAvailableAddonsVariantsId0CiLarge                   ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_large"
+	ListProjectAddonsResponseAvailableAddonsVariantsId0CiMedium                  ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_medium"
+	ListProjectAddonsResponseAvailableAddonsVariantsId0CiMicro                   ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_micro"
+	ListProjectAddonsResponseAvailableAddonsVariantsId0CiSmall                   ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_small"
+	ListProjectAddonsResponseAvailableAddonsVariantsId0CiXlarge                  ListProjectAddonsResponseAvailableAddonsVariantsId0 = "ci_xlarge"
+)
+
+// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsId1.
+const (
+	ListProjectAddonsResponseAvailableAddonsVariantsId1CdDefault ListProjectAddonsResponseAvailableAddonsVariantsId1 = "cd_default"
+)
+
+// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsId2.
+const (
+	ListProjectAddonsResponseAvailableAddonsVariantsId2Pitr14 ListProjectAddonsResponseAvailableAddonsVariantsId2 = "pitr_14"
+	ListProjectAddonsResponseAvailableAddonsVariantsId2Pitr28 ListProjectAddonsResponseAvailableAddonsVariantsId2 = "pitr_28"
+	ListProjectAddonsResponseAvailableAddonsVariantsId2Pitr7  ListProjectAddonsResponseAvailableAddonsVariantsId2 = "pitr_7"
+)
+
+// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsId3.
+const (
+	ListProjectAddonsResponseAvailableAddonsVariantsId3Ipv4Default ListProjectAddonsResponseAvailableAddonsVariantsId3 = "ipv4_default"
+)
+
+// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsId4.
+const (
+	ListProjectAddonsResponseAvailableAddonsVariantsId4AuthMfaPhoneDefault ListProjectAddonsResponseAvailableAddonsVariantsId4 = "auth_mfa_phone_default"
+)
+
+// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsId5.
+const (
+	ListProjectAddonsResponseAvailableAddonsVariantsId5AuthMfaWebAuthnDefault ListProjectAddonsResponseAvailableAddonsVariantsId5 = "auth_mfa_web_authn_default"
+)
+
+// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsId6.
+const (
+	ListProjectAddonsResponseAvailableAddonsVariantsId6LogDrainDefault ListProjectAddonsResponseAvailableAddonsVariantsId6 = "log_drain_default"
+)
+
+// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsPriceInterval.
+const (
+	ListProjectAddonsResponseAvailableAddonsVariantsPriceIntervalHourly  ListProjectAddonsResponseAvailableAddonsVariantsPriceInterval = "hourly"
+	ListProjectAddonsResponseAvailableAddonsVariantsPriceIntervalMonthly ListProjectAddonsResponseAvailableAddonsVariantsPriceInterval = "monthly"
+)
+
+// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsPriceType.
+const (
+	ListProjectAddonsResponseAvailableAddonsVariantsPriceTypeFixed ListProjectAddonsResponseAvailableAddonsVariantsPriceType = "fixed"
+	ListProjectAddonsResponseAvailableAddonsVariantsPriceTypeUsage ListProjectAddonsResponseAvailableAddonsVariantsPriceType = "usage"
+)
+
+// Defines values for ListProjectAddonsResponseSelectedAddonsType.
+const (
+	AuthMfaPhone    ListProjectAddonsResponseSelectedAddonsType = "auth_mfa_phone"
+	AuthMfaWebAuthn ListProjectAddonsResponseSelectedAddonsType = "auth_mfa_web_authn"
+	ComputeInstance ListProjectAddonsResponseSelectedAddonsType = "compute_instance"
+	CustomDomain    ListProjectAddonsResponseSelectedAddonsType = "custom_domain"
+	Ipv4            ListProjectAddonsResponseSelectedAddonsType = "ipv4"
+	LogDrain        ListProjectAddonsResponseSelectedAddonsType = "log_drain"
+	Pitr            ListProjectAddonsResponseSelectedAddonsType = "pitr"
+)
+
+// Defines values for ListProjectAddonsResponseSelectedAddonsVariantId0.
+const (
+	Ci12xlarge                ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_12xlarge"
+	Ci16xlarge                ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_16xlarge"
+	Ci24xlarge                ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_24xlarge"
+	Ci24xlargeHighMemory      ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_24xlarge_high_memory"
+	Ci24xlargeOptimizedCpu    ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_24xlarge_optimized_cpu"
+	Ci24xlargeOptimizedMemory ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_24xlarge_optimized_memory"
+	Ci2xlarge                 ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_2xlarge"
+	Ci48xlarge                ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_48xlarge"
+	Ci48xlargeHighMemory      ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_48xlarge_high_memory"
+	Ci48xlargeOptimizedCpu    ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_48xlarge_optimized_cpu"
+	Ci48xlargeOptimizedMemory ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_48xlarge_optimized_memory"
+	Ci4xlarge                 ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_4xlarge"
+	Ci8xlarge                 ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_8xlarge"
+	CiLarge                   ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_large"
+	CiMedium                  ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_medium"
+	CiMicro                   ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_micro"
+	CiSmall                   ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_small"
+	CiXlarge                  ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_xlarge"
+)
+
+// Defines values for ListProjectAddonsResponseSelectedAddonsVariantId1.
+const (
+	CdDefault ListProjectAddonsResponseSelectedAddonsVariantId1 = "cd_default"
+)
+
+// Defines values for ListProjectAddonsResponseSelectedAddonsVariantId2.
+const (
+	Pitr14 ListProjectAddonsResponseSelectedAddonsVariantId2 = "pitr_14"
+	Pitr28 ListProjectAddonsResponseSelectedAddonsVariantId2 = "pitr_28"
+	Pitr7  ListProjectAddonsResponseSelectedAddonsVariantId2 = "pitr_7"
+)
+
+// Defines values for ListProjectAddonsResponseSelectedAddonsVariantId3.
+const (
+	Ipv4Default ListProjectAddonsResponseSelectedAddonsVariantId3 = "ipv4_default"
+)
+
+// Defines values for ListProjectAddonsResponseSelectedAddonsVariantId4.
+const (
+	ListProjectAddonsResponseSelectedAddonsVariantId4AuthMfaPhoneDefault ListProjectAddonsResponseSelectedAddonsVariantId4 = "auth_mfa_phone_default"
+)
+
+// Defines values for ListProjectAddonsResponseSelectedAddonsVariantId5.
+const (
+	ListProjectAddonsResponseSelectedAddonsVariantId5AuthMfaWebAuthnDefault ListProjectAddonsResponseSelectedAddonsVariantId5 = "auth_mfa_web_authn_default"
+)
+
+// Defines values for ListProjectAddonsResponseSelectedAddonsVariantId6.
+const (
+	ListProjectAddonsResponseSelectedAddonsVariantId6LogDrainDefault ListProjectAddonsResponseSelectedAddonsVariantId6 = "log_drain_default"
+)
+
+// Defines values for ListProjectAddonsResponseSelectedAddonsVariantPriceInterval.
+const (
+	ListProjectAddonsResponseSelectedAddonsVariantPriceIntervalHourly  ListProjectAddonsResponseSelectedAddonsVariantPriceInterval = "hourly"
+	ListProjectAddonsResponseSelectedAddonsVariantPriceIntervalMonthly ListProjectAddonsResponseSelectedAddonsVariantPriceInterval = "monthly"
+)
+
+// Defines values for ListProjectAddonsResponseSelectedAddonsVariantPriceType.
+const (
+	ListProjectAddonsResponseSelectedAddonsVariantPriceTypeFixed ListProjectAddonsResponseSelectedAddonsVariantPriceType = "fixed"
+	ListProjectAddonsResponseSelectedAddonsVariantPriceTypeUsage ListProjectAddonsResponseSelectedAddonsVariantPriceType = "usage"
 )
 
 // Defines values for NetworkRestrictionsResponseEntitlement.
@@ -183,39 +445,31 @@ const (
 	PostgresConfigResponseSessionReplicationRoleReplica PostgresConfigResponseSessionReplicationRole = "replica"
 )
 
-// Defines values for PostgresEngine.
+// Defines values for ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel.
 const (
-	PostgresEngineN15       PostgresEngine = "15"
-	PostgresEngineN17Oriole PostgresEngine = "17-oriole"
+	ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannelAlpha     ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel = "alpha"
+	ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannelBeta      ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel = "beta"
+	ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannelGa        ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel = "ga"
+	ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannelInternal  ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel = "internal"
+	ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannelPreview   ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel = "preview"
+	ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannelWithdrawn ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel = "withdrawn"
 )
 
-// Defines values for ProjectAvailableRestoreVersionPostgresEngine.
+// Defines values for ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion.
 const (
-	ProjectAvailableRestoreVersionPostgresEngineN13       ProjectAvailableRestoreVersionPostgresEngine = "13"
-	ProjectAvailableRestoreVersionPostgresEngineN14       ProjectAvailableRestoreVersionPostgresEngine = "14"
-	ProjectAvailableRestoreVersionPostgresEngineN15       ProjectAvailableRestoreVersionPostgresEngine = "15"
-	ProjectAvailableRestoreVersionPostgresEngineN17       ProjectAvailableRestoreVersionPostgresEngine = "17"
-	ProjectAvailableRestoreVersionPostgresEngineN17Oriole ProjectAvailableRestoreVersionPostgresEngine = "17-oriole"
+	N15       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "15"
+	N17       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "17"
+	N17Oriole ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "17-oriole"
 )
 
-// Defines values for ProjectAvailableRestoreVersionReleaseChannel.
+// Defines values for ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel.
 const (
-	ProjectAvailableRestoreVersionReleaseChannelAlpha     ProjectAvailableRestoreVersionReleaseChannel = "alpha"
-	ProjectAvailableRestoreVersionReleaseChannelBeta      ProjectAvailableRestoreVersionReleaseChannel = "beta"
-	ProjectAvailableRestoreVersionReleaseChannelGa        ProjectAvailableRestoreVersionReleaseChannel = "ga"
-	ProjectAvailableRestoreVersionReleaseChannelInternal  ProjectAvailableRestoreVersionReleaseChannel = "internal"
-	ProjectAvailableRestoreVersionReleaseChannelPreview   ProjectAvailableRestoreVersionReleaseChannel = "preview"
-	ProjectAvailableRestoreVersionReleaseChannelWithdrawn ProjectAvailableRestoreVersionReleaseChannel = "withdrawn"
-)
-
-// Defines values for ReleaseChannel.
-const (
-	ReleaseChannelAlpha     ReleaseChannel = "alpha"
-	ReleaseChannelBeta      ReleaseChannel = "beta"
-	ReleaseChannelGa        ReleaseChannel = "ga"
-	ReleaseChannelInternal  ReleaseChannel = "internal"
-	ReleaseChannelPreview   ReleaseChannel = "preview"
-	ReleaseChannelWithdrawn ReleaseChannel = "withdrawn"
+	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelAlpha     ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel = "alpha"
+	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelBeta      ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel = "beta"
+	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelGa        ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel = "ga"
+	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelInternal  ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel = "internal"
+	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelPreview   ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel = "preview"
+	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelWithdrawn ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel = "withdrawn"
 )
 
 // Defines values for SetUpReadReplicaBodyReadReplicaRegion.
@@ -240,17 +494,49 @@ const (
 	SetUpReadReplicaBodyReadReplicaRegionUsWest2      SetUpReadReplicaBodyReadReplicaRegion = "us-west-2"
 )
 
-// Defines values for SnippetMetaType.
+// Defines values for SigningKeyResponseAlgorithm.
 const (
-	SnippetMetaTypeSql SnippetMetaType = "sql"
+	SigningKeyResponseAlgorithmES256 SigningKeyResponseAlgorithm = "ES256"
+	SigningKeyResponseAlgorithmEdDSA SigningKeyResponseAlgorithm = "EdDSA"
+	SigningKeyResponseAlgorithmHS256 SigningKeyResponseAlgorithm = "HS256"
+	SigningKeyResponseAlgorithmRS256 SigningKeyResponseAlgorithm = "RS256"
 )
 
-// Defines values for SnippetMetaVisibility.
+// Defines values for SigningKeyResponseStatus.
 const (
-	SnippetMetaVisibilityOrg     SnippetMetaVisibility = "org"
-	SnippetMetaVisibilityProject SnippetMetaVisibility = "project"
-	SnippetMetaVisibilityPublic  SnippetMetaVisibility = "public"
-	SnippetMetaVisibilityUser    SnippetMetaVisibility = "user"
+	SigningKeyResponseStatusInUse          SigningKeyResponseStatus = "in_use"
+	SigningKeyResponseStatusPreviouslyUsed SigningKeyResponseStatus = "previously_used"
+	SigningKeyResponseStatusRevoked        SigningKeyResponseStatus = "revoked"
+	SigningKeyResponseStatusStandby        SigningKeyResponseStatus = "standby"
+)
+
+// Defines values for SigningKeysResponseKeysAlgorithm.
+const (
+	ES256 SigningKeysResponseKeysAlgorithm = "ES256"
+	EdDSA SigningKeysResponseKeysAlgorithm = "EdDSA"
+	HS256 SigningKeysResponseKeysAlgorithm = "HS256"
+	RS256 SigningKeysResponseKeysAlgorithm = "RS256"
+)
+
+// Defines values for SigningKeysResponseKeysStatus.
+const (
+	SigningKeysResponseKeysStatusInUse          SigningKeysResponseKeysStatus = "in_use"
+	SigningKeysResponseKeysStatusPreviouslyUsed SigningKeysResponseKeysStatus = "previously_used"
+	SigningKeysResponseKeysStatusRevoked        SigningKeysResponseKeysStatus = "revoked"
+	SigningKeysResponseKeysStatusStandby        SigningKeysResponseKeysStatus = "standby"
+)
+
+// Defines values for SnippetListDataType.
+const (
+	SnippetListDataTypeSql SnippetListDataType = "sql"
+)
+
+// Defines values for SnippetListDataVisibility.
+const (
+	SnippetListDataVisibilityOrg     SnippetListDataVisibility = "org"
+	SnippetListDataVisibilityProject SnippetListDataVisibility = "project"
+	SnippetListDataVisibilityPublic  SnippetListDataVisibility = "public"
+	SnippetListDataVisibilityUser    SnippetListDataVisibility = "user"
 )
 
 // Defines values for SnippetResponseType.
@@ -286,6 +572,21 @@ const (
 	Empty                                                           UpdateAuthConfigBodyPasswordRequiredCharacters = ""
 )
 
+// Defines values for UpdateAuthConfigBodySecurityCaptchaProvider.
+const (
+	Hcaptcha  UpdateAuthConfigBodySecurityCaptchaProvider = "hcaptcha"
+	Turnstile UpdateAuthConfigBodySecurityCaptchaProvider = "turnstile"
+)
+
+// Defines values for UpdateAuthConfigBodySmsProvider.
+const (
+	Messagebird  UpdateAuthConfigBodySmsProvider = "messagebird"
+	Textlocal    UpdateAuthConfigBodySmsProvider = "textlocal"
+	Twilio       UpdateAuthConfigBodySmsProvider = "twilio"
+	TwilioVerify UpdateAuthConfigBodySmsProvider = "twilio_verify"
+	Vonage       UpdateAuthConfigBodySmsProvider = "vonage"
+)
+
 // Defines values for UpdateBranchBodyStatus.
 const (
 	UpdateBranchBodyStatusCREATINGPROJECT   UpdateBranchBodyStatus = "CREATING_PROJECT"
@@ -312,68 +613,99 @@ const (
 	UpdatePostgresConfigBodySessionReplicationRoleReplica UpdatePostgresConfigBodySessionReplicationRole = "replica"
 )
 
+// Defines values for UpdateSigningKeyBodyStatus.
+const (
+	UpdateSigningKeyBodyStatusInUse          UpdateSigningKeyBodyStatus = "in_use"
+	UpdateSigningKeyBodyStatusPreviouslyUsed UpdateSigningKeyBodyStatus = "previously_used"
+	UpdateSigningKeyBodyStatusRevoked        UpdateSigningKeyBodyStatus = "revoked"
+	UpdateSigningKeyBodyStatusStandby        UpdateSigningKeyBodyStatus = "standby"
+)
+
 // Defines values for UpdateSupavisorConfigBodyPoolMode.
 const (
 	UpdateSupavisorConfigBodyPoolModeSession     UpdateSupavisorConfigBodyPoolMode = "session"
 	UpdateSupavisorConfigBodyPoolModeTransaction UpdateSupavisorConfigBodyPoolMode = "transaction"
 )
 
-// Defines values for UpdateSupavisorConfigResponsePoolMode.
+// Defines values for UpgradeDatabaseBodyReleaseChannel.
 const (
-	UpdateSupavisorConfigResponsePoolModeSession     UpdateSupavisorConfigResponsePoolMode = "session"
-	UpdateSupavisorConfigResponsePoolModeTransaction UpdateSupavisorConfigResponsePoolMode = "transaction"
+	UpgradeDatabaseBodyReleaseChannelAlpha     UpgradeDatabaseBodyReleaseChannel = "alpha"
+	UpgradeDatabaseBodyReleaseChannelBeta      UpgradeDatabaseBodyReleaseChannel = "beta"
+	UpgradeDatabaseBodyReleaseChannelGa        UpgradeDatabaseBodyReleaseChannel = "ga"
+	UpgradeDatabaseBodyReleaseChannelInternal  UpgradeDatabaseBodyReleaseChannel = "internal"
+	UpgradeDatabaseBodyReleaseChannelPreview   UpgradeDatabaseBodyReleaseChannel = "preview"
+	UpgradeDatabaseBodyReleaseChannelWithdrawn UpgradeDatabaseBodyReleaseChannel = "withdrawn"
 )
 
-// Defines values for V1BackupStatus.
+// Defines values for V1BackupsResponseBackupsStatus.
 const (
-	V1BackupStatusARCHIVED  V1BackupStatus = "ARCHIVED"
-	V1BackupStatusCANCELLED V1BackupStatus = "CANCELLED"
-	V1BackupStatusCOMPLETED V1BackupStatus = "COMPLETED"
-	V1BackupStatusFAILED    V1BackupStatus = "FAILED"
-	V1BackupStatusPENDING   V1BackupStatus = "PENDING"
-	V1BackupStatusREMOVED   V1BackupStatus = "REMOVED"
+	V1BackupsResponseBackupsStatusARCHIVED  V1BackupsResponseBackupsStatus = "ARCHIVED"
+	V1BackupsResponseBackupsStatusCANCELLED V1BackupsResponseBackupsStatus = "CANCELLED"
+	V1BackupsResponseBackupsStatusCOMPLETED V1BackupsResponseBackupsStatus = "COMPLETED"
+	V1BackupsResponseBackupsStatusFAILED    V1BackupsResponseBackupsStatus = "FAILED"
+	V1BackupsResponseBackupsStatusPENDING   V1BackupsResponseBackupsStatus = "PENDING"
+	V1BackupsResponseBackupsStatusREMOVED   V1BackupsResponseBackupsStatus = "REMOVED"
 )
 
-// Defines values for V1CreateProjectBodyDtoDesiredInstanceSize.
+// Defines values for V1CreateProjectBodyDesiredInstanceSize.
 const (
-	V1CreateProjectBodyDtoDesiredInstanceSizeLarge     V1CreateProjectBodyDtoDesiredInstanceSize = "large"
-	V1CreateProjectBodyDtoDesiredInstanceSizeMedium    V1CreateProjectBodyDtoDesiredInstanceSize = "medium"
-	V1CreateProjectBodyDtoDesiredInstanceSizeMicro     V1CreateProjectBodyDtoDesiredInstanceSize = "micro"
-	V1CreateProjectBodyDtoDesiredInstanceSizeN12xlarge V1CreateProjectBodyDtoDesiredInstanceSize = "12xlarge"
-	V1CreateProjectBodyDtoDesiredInstanceSizeN16xlarge V1CreateProjectBodyDtoDesiredInstanceSize = "16xlarge"
-	V1CreateProjectBodyDtoDesiredInstanceSizeN2xlarge  V1CreateProjectBodyDtoDesiredInstanceSize = "2xlarge"
-	V1CreateProjectBodyDtoDesiredInstanceSizeN4xlarge  V1CreateProjectBodyDtoDesiredInstanceSize = "4xlarge"
-	V1CreateProjectBodyDtoDesiredInstanceSizeN8xlarge  V1CreateProjectBodyDtoDesiredInstanceSize = "8xlarge"
-	V1CreateProjectBodyDtoDesiredInstanceSizeSmall     V1CreateProjectBodyDtoDesiredInstanceSize = "small"
-	V1CreateProjectBodyDtoDesiredInstanceSizeXlarge    V1CreateProjectBodyDtoDesiredInstanceSize = "xlarge"
+	V1CreateProjectBodyDesiredInstanceSizeLarge                    V1CreateProjectBodyDesiredInstanceSize = "large"
+	V1CreateProjectBodyDesiredInstanceSizeMedium                   V1CreateProjectBodyDesiredInstanceSize = "medium"
+	V1CreateProjectBodyDesiredInstanceSizeMicro                    V1CreateProjectBodyDesiredInstanceSize = "micro"
+	V1CreateProjectBodyDesiredInstanceSizeN12xlarge                V1CreateProjectBodyDesiredInstanceSize = "12xlarge"
+	V1CreateProjectBodyDesiredInstanceSizeN16xlarge                V1CreateProjectBodyDesiredInstanceSize = "16xlarge"
+	V1CreateProjectBodyDesiredInstanceSizeN24xlarge                V1CreateProjectBodyDesiredInstanceSize = "24xlarge"
+	V1CreateProjectBodyDesiredInstanceSizeN24xlargeHighMemory      V1CreateProjectBodyDesiredInstanceSize = "24xlarge_high_memory"
+	V1CreateProjectBodyDesiredInstanceSizeN24xlargeOptimizedCpu    V1CreateProjectBodyDesiredInstanceSize = "24xlarge_optimized_cpu"
+	V1CreateProjectBodyDesiredInstanceSizeN24xlargeOptimizedMemory V1CreateProjectBodyDesiredInstanceSize = "24xlarge_optimized_memory"
+	V1CreateProjectBodyDesiredInstanceSizeN2xlarge                 V1CreateProjectBodyDesiredInstanceSize = "2xlarge"
+	V1CreateProjectBodyDesiredInstanceSizeN48xlarge                V1CreateProjectBodyDesiredInstanceSize = "48xlarge"
+	V1CreateProjectBodyDesiredInstanceSizeN48xlargeHighMemory      V1CreateProjectBodyDesiredInstanceSize = "48xlarge_high_memory"
+	V1CreateProjectBodyDesiredInstanceSizeN48xlargeOptimizedCpu    V1CreateProjectBodyDesiredInstanceSize = "48xlarge_optimized_cpu"
+	V1CreateProjectBodyDesiredInstanceSizeN48xlargeOptimizedMemory V1CreateProjectBodyDesiredInstanceSize = "48xlarge_optimized_memory"
+	V1CreateProjectBodyDesiredInstanceSizeN4xlarge                 V1CreateProjectBodyDesiredInstanceSize = "4xlarge"
+	V1CreateProjectBodyDesiredInstanceSizeN8xlarge                 V1CreateProjectBodyDesiredInstanceSize = "8xlarge"
+	V1CreateProjectBodyDesiredInstanceSizePico                     V1CreateProjectBodyDesiredInstanceSize = "pico"
+	V1CreateProjectBodyDesiredInstanceSizeSmall                    V1CreateProjectBodyDesiredInstanceSize = "small"
+	V1CreateProjectBodyDesiredInstanceSizeXlarge                   V1CreateProjectBodyDesiredInstanceSize = "xlarge"
 )
 
-// Defines values for V1CreateProjectBodyDtoPlan.
+// Defines values for V1CreateProjectBodyPlan.
 const (
-	V1CreateProjectBodyDtoPlanFree V1CreateProjectBodyDtoPlan = "free"
-	V1CreateProjectBodyDtoPlanPro  V1CreateProjectBodyDtoPlan = "pro"
+	V1CreateProjectBodyPlanFree V1CreateProjectBodyPlan = "free"
+	V1CreateProjectBodyPlanPro  V1CreateProjectBodyPlan = "pro"
 )
 
-// Defines values for V1CreateProjectBodyDtoRegion.
+// Defines values for V1CreateProjectBodyRegion.
 const (
-	V1CreateProjectBodyDtoRegionApEast1      V1CreateProjectBodyDtoRegion = "ap-east-1"
-	V1CreateProjectBodyDtoRegionApNortheast1 V1CreateProjectBodyDtoRegion = "ap-northeast-1"
-	V1CreateProjectBodyDtoRegionApNortheast2 V1CreateProjectBodyDtoRegion = "ap-northeast-2"
-	V1CreateProjectBodyDtoRegionApSouth1     V1CreateProjectBodyDtoRegion = "ap-south-1"
-	V1CreateProjectBodyDtoRegionApSoutheast1 V1CreateProjectBodyDtoRegion = "ap-southeast-1"
-	V1CreateProjectBodyDtoRegionApSoutheast2 V1CreateProjectBodyDtoRegion = "ap-southeast-2"
-	V1CreateProjectBodyDtoRegionCaCentral1   V1CreateProjectBodyDtoRegion = "ca-central-1"
-	V1CreateProjectBodyDtoRegionEuCentral1   V1CreateProjectBodyDtoRegion = "eu-central-1"
-	V1CreateProjectBodyDtoRegionEuCentral2   V1CreateProjectBodyDtoRegion = "eu-central-2"
-	V1CreateProjectBodyDtoRegionEuNorth1     V1CreateProjectBodyDtoRegion = "eu-north-1"
-	V1CreateProjectBodyDtoRegionEuWest1      V1CreateProjectBodyDtoRegion = "eu-west-1"
-	V1CreateProjectBodyDtoRegionEuWest2      V1CreateProjectBodyDtoRegion = "eu-west-2"
-	V1CreateProjectBodyDtoRegionEuWest3      V1CreateProjectBodyDtoRegion = "eu-west-3"
-	V1CreateProjectBodyDtoRegionSaEast1      V1CreateProjectBodyDtoRegion = "sa-east-1"
-	V1CreateProjectBodyDtoRegionUsEast1      V1CreateProjectBodyDtoRegion = "us-east-1"
-	V1CreateProjectBodyDtoRegionUsEast2      V1CreateProjectBodyDtoRegion = "us-east-2"
-	V1CreateProjectBodyDtoRegionUsWest1      V1CreateProjectBodyDtoRegion = "us-west-1"
-	V1CreateProjectBodyDtoRegionUsWest2      V1CreateProjectBodyDtoRegion = "us-west-2"
+	V1CreateProjectBodyRegionApEast1      V1CreateProjectBodyRegion = "ap-east-1"
+	V1CreateProjectBodyRegionApNortheast1 V1CreateProjectBodyRegion = "ap-northeast-1"
+	V1CreateProjectBodyRegionApNortheast2 V1CreateProjectBodyRegion = "ap-northeast-2"
+	V1CreateProjectBodyRegionApSouth1     V1CreateProjectBodyRegion = "ap-south-1"
+	V1CreateProjectBodyRegionApSoutheast1 V1CreateProjectBodyRegion = "ap-southeast-1"
+	V1CreateProjectBodyRegionApSoutheast2 V1CreateProjectBodyRegion = "ap-southeast-2"
+	V1CreateProjectBodyRegionCaCentral1   V1CreateProjectBodyRegion = "ca-central-1"
+	V1CreateProjectBodyRegionEuCentral1   V1CreateProjectBodyRegion = "eu-central-1"
+	V1CreateProjectBodyRegionEuCentral2   V1CreateProjectBodyRegion = "eu-central-2"
+	V1CreateProjectBodyRegionEuNorth1     V1CreateProjectBodyRegion = "eu-north-1"
+	V1CreateProjectBodyRegionEuWest1      V1CreateProjectBodyRegion = "eu-west-1"
+	V1CreateProjectBodyRegionEuWest2      V1CreateProjectBodyRegion = "eu-west-2"
+	V1CreateProjectBodyRegionEuWest3      V1CreateProjectBodyRegion = "eu-west-3"
+	V1CreateProjectBodyRegionSaEast1      V1CreateProjectBodyRegion = "sa-east-1"
+	V1CreateProjectBodyRegionUsEast1      V1CreateProjectBodyRegion = "us-east-1"
+	V1CreateProjectBodyRegionUsEast2      V1CreateProjectBodyRegion = "us-east-2"
+	V1CreateProjectBodyRegionUsWest1      V1CreateProjectBodyRegion = "us-west-1"
+	V1CreateProjectBodyRegionUsWest2      V1CreateProjectBodyRegion = "us-west-2"
+)
+
+// Defines values for V1OrganizationSlugResponseAllowedReleaseChannels.
+const (
+	V1OrganizationSlugResponseAllowedReleaseChannelsAlpha     V1OrganizationSlugResponseAllowedReleaseChannels = "alpha"
+	V1OrganizationSlugResponseAllowedReleaseChannelsBeta      V1OrganizationSlugResponseAllowedReleaseChannels = "beta"
+	V1OrganizationSlugResponseAllowedReleaseChannelsGa        V1OrganizationSlugResponseAllowedReleaseChannels = "ga"
+	V1OrganizationSlugResponseAllowedReleaseChannelsInternal  V1OrganizationSlugResponseAllowedReleaseChannels = "internal"
+	V1OrganizationSlugResponseAllowedReleaseChannelsPreview   V1OrganizationSlugResponseAllowedReleaseChannels = "preview"
+	V1OrganizationSlugResponseAllowedReleaseChannelsWithdrawn V1OrganizationSlugResponseAllowedReleaseChannels = "withdrawn"
 )
 
 // Defines values for V1OrganizationSlugResponseOptInTags.
@@ -381,11 +713,79 @@ const (
 	AISQLGENERATOROPTIN V1OrganizationSlugResponseOptInTags = "AI_SQL_GENERATOR_OPT_IN"
 )
 
+// Defines values for V1OrganizationSlugResponsePlan.
+const (
+	V1OrganizationSlugResponsePlanEnterprise V1OrganizationSlugResponsePlan = "enterprise"
+	V1OrganizationSlugResponsePlanFree       V1OrganizationSlugResponsePlan = "free"
+	V1OrganizationSlugResponsePlanPro        V1OrganizationSlugResponsePlan = "pro"
+	V1OrganizationSlugResponsePlanTeam       V1OrganizationSlugResponsePlan = "team"
+)
+
 // Defines values for V1PgbouncerConfigResponsePoolMode.
 const (
-	V1PgbouncerConfigResponsePoolModeSession     V1PgbouncerConfigResponsePoolMode = "session"
-	V1PgbouncerConfigResponsePoolModeStatement   V1PgbouncerConfigResponsePoolMode = "statement"
-	V1PgbouncerConfigResponsePoolModeTransaction V1PgbouncerConfigResponsePoolMode = "transaction"
+	Session     V1PgbouncerConfigResponsePoolMode = "session"
+	Statement   V1PgbouncerConfigResponsePoolMode = "statement"
+	Transaction V1PgbouncerConfigResponsePoolMode = "transaction"
+)
+
+// Defines values for V1ProjectAdvisorsResponseLintsCategories.
+const (
+	PERFORMANCE V1ProjectAdvisorsResponseLintsCategories = "PERFORMANCE"
+	SECURITY    V1ProjectAdvisorsResponseLintsCategories = "SECURITY"
+)
+
+// Defines values for V1ProjectAdvisorsResponseLintsFacing.
+const (
+	EXTERNAL V1ProjectAdvisorsResponseLintsFacing = "EXTERNAL"
+)
+
+// Defines values for V1ProjectAdvisorsResponseLintsLevel.
+const (
+	ERROR V1ProjectAdvisorsResponseLintsLevel = "ERROR"
+	INFO  V1ProjectAdvisorsResponseLintsLevel = "INFO"
+	WARN  V1ProjectAdvisorsResponseLintsLevel = "WARN"
+)
+
+// Defines values for V1ProjectAdvisorsResponseLintsMetadataType.
+const (
+	V1ProjectAdvisorsResponseLintsMetadataTypeAuth       V1ProjectAdvisorsResponseLintsMetadataType = "auth"
+	V1ProjectAdvisorsResponseLintsMetadataTypeCompliance V1ProjectAdvisorsResponseLintsMetadataType = "compliance"
+	V1ProjectAdvisorsResponseLintsMetadataTypeExtension  V1ProjectAdvisorsResponseLintsMetadataType = "extension"
+	V1ProjectAdvisorsResponseLintsMetadataTypeFunction   V1ProjectAdvisorsResponseLintsMetadataType = "function"
+	V1ProjectAdvisorsResponseLintsMetadataTypeTable      V1ProjectAdvisorsResponseLintsMetadataType = "table"
+	V1ProjectAdvisorsResponseLintsMetadataTypeView       V1ProjectAdvisorsResponseLintsMetadataType = "view"
+)
+
+// Defines values for V1ProjectAdvisorsResponseLintsName.
+const (
+	AuthInsufficientMfaOptions    V1ProjectAdvisorsResponseLintsName = "auth_insufficient_mfa_options"
+	AuthLeakedPasswordProtection  V1ProjectAdvisorsResponseLintsName = "auth_leaked_password_protection"
+	AuthOtpLongExpiry             V1ProjectAdvisorsResponseLintsName = "auth_otp_long_expiry"
+	AuthOtpShortLength            V1ProjectAdvisorsResponseLintsName = "auth_otp_short_length"
+	AuthPasswordPolicyMissing     V1ProjectAdvisorsResponseLintsName = "auth_password_policy_missing"
+	AuthRlsInitplan               V1ProjectAdvisorsResponseLintsName = "auth_rls_initplan"
+	AuthUsersExposed              V1ProjectAdvisorsResponseLintsName = "auth_users_exposed"
+	DuplicateIndex                V1ProjectAdvisorsResponseLintsName = "duplicate_index"
+	ExtensionInPublic             V1ProjectAdvisorsResponseLintsName = "extension_in_public"
+	ForeignTableInApi             V1ProjectAdvisorsResponseLintsName = "foreign_table_in_api"
+	FunctionSearchPathMutable     V1ProjectAdvisorsResponseLintsName = "function_search_path_mutable"
+	LeakedServiceKey              V1ProjectAdvisorsResponseLintsName = "leaked_service_key"
+	MaterializedViewInApi         V1ProjectAdvisorsResponseLintsName = "materialized_view_in_api"
+	MultiplePermissivePolicies    V1ProjectAdvisorsResponseLintsName = "multiple_permissive_policies"
+	NetworkRestrictionsNotSet     V1ProjectAdvisorsResponseLintsName = "network_restrictions_not_set"
+	NoBackupAdmin                 V1ProjectAdvisorsResponseLintsName = "no_backup_admin"
+	NoPrimaryKey                  V1ProjectAdvisorsResponseLintsName = "no_primary_key"
+	PasswordRequirementsMinLength V1ProjectAdvisorsResponseLintsName = "password_requirements_min_length"
+	PitrNotEnabled                V1ProjectAdvisorsResponseLintsName = "pitr_not_enabled"
+	PolicyExistsRlsDisabled       V1ProjectAdvisorsResponseLintsName = "policy_exists_rls_disabled"
+	RlsDisabledInPublic           V1ProjectAdvisorsResponseLintsName = "rls_disabled_in_public"
+	RlsEnabledNoPolicy            V1ProjectAdvisorsResponseLintsName = "rls_enabled_no_policy"
+	RlsReferencesUserMetadata     V1ProjectAdvisorsResponseLintsName = "rls_references_user_metadata"
+	SecurityDefinerView           V1ProjectAdvisorsResponseLintsName = "security_definer_view"
+	SslNotEnforced                V1ProjectAdvisorsResponseLintsName = "ssl_not_enforced"
+	UnindexedForeignKeys          V1ProjectAdvisorsResponseLintsName = "unindexed_foreign_keys"
+	UnsupportedRegTypes           V1ProjectAdvisorsResponseLintsName = "unsupported_reg_types"
+	UnusedIndex                   V1ProjectAdvisorsResponseLintsName = "unused_index"
 )
 
 // Defines values for V1ProjectResponseStatus.
@@ -426,6 +826,11 @@ const (
 	V1ProjectWithDatabaseResponseStatusUPGRADING       V1ProjectWithDatabaseResponseStatus = "UPGRADING"
 )
 
+// Defines values for V1ServiceHealthResponseInfo0Name.
+const (
+	GoTrue V1ServiceHealthResponseInfo0Name = "GoTrue"
+)
+
 // Defines values for V1ServiceHealthResponseName.
 const (
 	V1ServiceHealthResponseNameAuth     V1ServiceHealthResponseName = "auth"
@@ -438,9 +843,9 @@ const (
 
 // Defines values for V1ServiceHealthResponseStatus.
 const (
-	ACTIVEHEALTHY V1ServiceHealthResponseStatus = "ACTIVE_HEALTHY"
-	COMINGUP      V1ServiceHealthResponseStatus = "COMING_UP"
-	UNHEALTHY     V1ServiceHealthResponseStatus = "UNHEALTHY"
+	V1ServiceHealthResponseStatusACTIVEHEALTHY V1ServiceHealthResponseStatus = "ACTIVE_HEALTHY"
+	V1ServiceHealthResponseStatusCOMINGUP      V1ServiceHealthResponseStatus = "COMING_UP"
+	V1ServiceHealthResponseStatusUNHEALTHY     V1ServiceHealthResponseStatus = "UNHEALTHY"
 )
 
 // Defines values for VanitySubdomainConfigResponseStatus.
@@ -464,16 +869,6 @@ const (
 	Sha256 V1AuthorizeUserParamsCodeChallengeMethod = "sha256"
 )
 
-// Defines values for V1GetServicesHealthParamsServices.
-const (
-	V1GetServicesHealthParamsServicesAuth     V1GetServicesHealthParamsServices = "auth"
-	V1GetServicesHealthParamsServicesDb       V1GetServicesHealthParamsServices = "db"
-	V1GetServicesHealthParamsServicesPooler   V1GetServicesHealthParamsServices = "pooler"
-	V1GetServicesHealthParamsServicesRealtime V1GetServicesHealthParamsServices = "realtime"
-	V1GetServicesHealthParamsServicesRest     V1GetServicesHealthParamsServices = "rest"
-	V1GetServicesHealthParamsServicesStorage  V1GetServicesHealthParamsServices = "storage"
-)
-
 // Defines values for V1ListAllSnippetsParamsSortBy.
 const (
 	InsertedAt V1ListAllSnippetsParamsSortBy = "inserted_at"
@@ -493,53 +888,46 @@ type ActivateVanitySubdomainResponse struct {
 
 // ApiKeyResponse defines model for ApiKeyResponse.
 type ApiKeyResponse struct {
-	ApiKey            string                   `json:"api_key"`
-	Description       *string                  `json:"description"`
-	Hash              *string                  `json:"hash"`
-	Id                *string                  `json:"id"`
-	InsertedAt        *string                  `json:"inserted_at"`
-	Name              string                   `json:"name"`
-	Prefix            *string                  `json:"prefix"`
-	SecretJwtTemplate *ApiKeySecretJWTTemplate `json:"secret_jwt_template"`
-	Type              *ApiKeyResponseType      `json:"type"`
-	UpdatedAt         *string                  `json:"updated_at"`
+	ApiKey            string     `json:"api_key"`
+	Description       *string    `json:"description"`
+	Hash              *string    `json:"hash"`
+	Id                *string    `json:"id"`
+	InsertedAt        *time.Time `json:"inserted_at"`
+	Name              string     `json:"name"`
+	Prefix            *string    `json:"prefix"`
+	SecretJwtTemplate *struct {
+		Role string `json:"role"`
+	} `json:"secret_jwt_template"`
+	Type      *ApiKeyResponseType `json:"type"`
+	UpdatedAt *time.Time          `json:"updated_at"`
 }
 
 // ApiKeyResponseType defines model for ApiKeyResponse.Type.
 type ApiKeyResponseType string
 
-// ApiKeySecretJWTTemplate defines model for ApiKeySecretJWTTemplate.
-type ApiKeySecretJWTTemplate struct {
-	Role string `json:"role"`
+// ApplyProjectAddonBody defines model for ApplyProjectAddonBody.
+type ApplyProjectAddonBody struct {
+	AddonType    ApplyProjectAddonBodyAddonType     `json:"addon_type"`
+	AddonVariant ApplyProjectAddonBody_AddonVariant `json:"addon_variant"`
 }
 
-// AttributeMapping defines model for AttributeMapping.
-type AttributeMapping struct {
-	Keys map[string]AttributeValue `json:"keys"`
-}
+// ApplyProjectAddonBodyAddonType defines model for ApplyProjectAddonBody.AddonType.
+type ApplyProjectAddonBodyAddonType string
 
-// AttributeValue defines model for AttributeValue.
-type AttributeValue struct {
-	Array   *bool                   `json:"array,omitempty"`
-	Default *AttributeValue_Default `json:"default,omitempty"`
-	Name    *string                 `json:"name,omitempty"`
-	Names   *[]string               `json:"names,omitempty"`
-}
+// ApplyProjectAddonBodyAddonVariant0 defines model for ApplyProjectAddonBody.AddonVariant.0.
+type ApplyProjectAddonBodyAddonVariant0 string
 
-// AttributeValueDefault0 defines model for .
-type AttributeValueDefault0 = map[string]interface{}
+// ApplyProjectAddonBodyAddonVariant1 defines model for ApplyProjectAddonBody.AddonVariant.1.
+type ApplyProjectAddonBodyAddonVariant1 string
 
-// AttributeValueDefault1 defines model for .
-type AttributeValueDefault1 = float32
+// ApplyProjectAddonBodyAddonVariant2 defines model for ApplyProjectAddonBody.AddonVariant.2.
+type ApplyProjectAddonBodyAddonVariant2 string
 
-// AttributeValueDefault2 defines model for .
-type AttributeValueDefault2 = string
+// ApplyProjectAddonBodyAddonVariant3 defines model for ApplyProjectAddonBody.AddonVariant.3.
+type ApplyProjectAddonBodyAddonVariant3 string
 
-// AttributeValueDefault3 defines model for .
-type AttributeValueDefault3 = bool
-
-// AttributeValue_Default defines model for AttributeValue.Default.
-type AttributeValue_Default struct {
+// ApplyProjectAddonBody_AddonVariant defines model for ApplyProjectAddonBody.AddonVariant.
+type ApplyProjectAddonBody_AddonVariant struct {
 	union json.RawMessage
 }
 
@@ -611,6 +999,7 @@ type AuthConfigResponse struct {
 	ExternalTwitterClientId                       *string `json:"external_twitter_client_id"`
 	ExternalTwitterEnabled                        *bool   `json:"external_twitter_enabled"`
 	ExternalTwitterSecret                         *string `json:"external_twitter_secret"`
+	ExternalWeb3SolanaEnabled                     *bool   `json:"external_web3_solana_enabled"`
 	ExternalWorkosClientId                        *string `json:"external_workos_client_id"`
 	ExternalWorkosEnabled                         *bool   `json:"external_workos_enabled"`
 	ExternalWorkosSecret                          *string `json:"external_workos_secret"`
@@ -670,6 +1059,7 @@ type AuthConfigResponse struct {
 	RateLimitSmsSent                              *int    `json:"rate_limit_sms_sent"`
 	RateLimitTokenRefresh                         *int    `json:"rate_limit_token_refresh"`
 	RateLimitVerify                               *int    `json:"rate_limit_verify"`
+	RateLimitWeb3                                 *int    `json:"rate_limit_web3"`
 	RefreshTokenRotationEnabled                   *bool   `json:"refresh_token_rotation_enabled"`
 	SamlAllowEncryptedAssertions                  *bool   `json:"saml_allow_encrypted_assertions"`
 	SamlEnabled                                   *bool   `json:"saml_enabled"`
@@ -717,27 +1107,24 @@ type AuthConfigResponse struct {
 	UriAllowList                                  *string `json:"uri_allow_list"`
 }
 
-// AuthHealthResponse defines model for AuthHealthResponse.
-type AuthHealthResponse struct {
-	Name AuthHealthResponseName `json:"name"`
+// BranchActionBody defines model for BranchActionBody.
+type BranchActionBody struct {
+	MigrationVersion *string `json:"migration_version,omitempty"`
 }
-
-// AuthHealthResponseName defines model for AuthHealthResponse.Name.
-type AuthHealthResponseName string
-
-// BillingPlanId defines model for BillingPlanId.
-type BillingPlanId string
 
 // BranchDeleteResponse defines model for BranchDeleteResponse.
 type BranchDeleteResponse struct {
-	Message string `json:"message"`
+	Message BranchDeleteResponseMessage `json:"message"`
 }
+
+// BranchDeleteResponseMessage defines model for BranchDeleteResponse.Message.
+type BranchDeleteResponseMessage string
 
 // BranchDetailResponse defines model for BranchDetailResponse.
 type BranchDetailResponse struct {
 	DbHost          string                     `json:"db_host"`
 	DbPass          *string                    `json:"db_pass,omitempty"`
-	DbPort          int                        `json:"db_port"`
+	DbPort          float32                    `json:"db_port"`
 	DbUser          *string                    `json:"db_user,omitempty"`
 	JwtSecret       *string                    `json:"jwt_secret,omitempty"`
 	PostgresEngine  string                     `json:"postgres_engine"`
@@ -774,13 +1161,16 @@ type BranchResponseStatus string
 
 // BranchUpdateResponse defines model for BranchUpdateResponse.
 type BranchUpdateResponse struct {
-	Message       string `json:"message"`
-	WorkflowRunId string `json:"workflow_run_id"`
+	Message       BranchUpdateResponseMessage `json:"message"`
+	WorkflowRunId string                      `json:"workflow_run_id"`
 }
 
+// BranchUpdateResponseMessage defines model for BranchUpdateResponse.Message.
+type BranchUpdateResponseMessage string
+
 // BulkUpdateFunctionBody defines model for BulkUpdateFunctionBody.
-type BulkUpdateFunctionBody struct {
-	CreatedAt      *int64                       `json:"created_at,omitempty"`
+type BulkUpdateFunctionBody = []struct {
+	CreatedAt      *int                         `json:"created_at,omitempty"`
 	EntrypointPath *string                      `json:"entrypoint_path,omitempty"`
 	Id             string                       `json:"id"`
 	ImportMap      *bool                        `json:"import_map,omitempty"`
@@ -797,22 +1187,31 @@ type BulkUpdateFunctionBodyStatus string
 
 // BulkUpdateFunctionResponse defines model for BulkUpdateFunctionResponse.
 type BulkUpdateFunctionResponse struct {
-	Functions []FunctionResponse `json:"functions"`
+	Functions []struct {
+		CreatedAt      int                                       `json:"created_at"`
+		EntrypointPath *string                                   `json:"entrypoint_path,omitempty"`
+		Id             string                                    `json:"id"`
+		ImportMap      *bool                                     `json:"import_map,omitempty"`
+		ImportMapPath  *string                                   `json:"import_map_path,omitempty"`
+		Name           string                                    `json:"name"`
+		Slug           string                                    `json:"slug"`
+		Status         BulkUpdateFunctionResponseFunctionsStatus `json:"status"`
+		UpdatedAt      int                                       `json:"updated_at"`
+		VerifyJwt      *bool                                     `json:"verify_jwt,omitempty"`
+		Version        int                                       `json:"version"`
+	} `json:"functions"`
 }
 
-// CfResponse defines model for CfResponse.
-type CfResponse struct {
-	Errors   []map[string]interface{} `json:"errors"`
-	Messages []map[string]interface{} `json:"messages"`
-	Result   CustomHostnameDetails    `json:"result"`
-	Success  bool                     `json:"success"`
-}
+// BulkUpdateFunctionResponseFunctionsStatus defines model for BulkUpdateFunctionResponse.Functions.Status.
+type BulkUpdateFunctionResponseFunctionsStatus string
 
 // CreateApiKeyBody defines model for CreateApiKeyBody.
 type CreateApiKeyBody struct {
-	Description       *string                  `json:"description"`
-	SecretJwtTemplate *ApiKeySecretJWTTemplate `json:"secret_jwt_template"`
-	Type              CreateApiKeyBodyType     `json:"type"`
+	Description       *string `json:"description"`
+	SecretJwtTemplate *struct {
+		Role string `json:"role"`
+	} `json:"secret_jwt_template"`
+	Type CreateApiKeyBodyType `json:"type"`
 }
 
 // CreateApiKeyBodyType defines model for CreateApiKeyBody.Type.
@@ -820,31 +1219,67 @@ type CreateApiKeyBodyType string
 
 // CreateBranchBody defines model for CreateBranchBody.
 type CreateBranchBody struct {
-	BranchName          string               `json:"branch_name"`
-	DesiredInstanceSize *DesiredInstanceSize `json:"desired_instance_size,omitempty"`
-	GitBranch           *string              `json:"git_branch,omitempty"`
-	Persistent          *bool                `json:"persistent,omitempty"`
+	BranchName          string                               `json:"branch_name"`
+	DesiredInstanceSize *CreateBranchBodyDesiredInstanceSize `json:"desired_instance_size,omitempty"`
+	GitBranch           *string                              `json:"git_branch,omitempty"`
+	Persistent          *bool                                `json:"persistent,omitempty"`
 
 	// PostgresEngine Postgres engine version. If not provided, the latest version will be used.
-	PostgresEngine *PostgresEngine `json:"postgres_engine,omitempty"`
-	Region         *string         `json:"region,omitempty"`
-	ReleaseChannel *ReleaseChannel `json:"release_channel,omitempty"`
+	PostgresEngine *CreateBranchBodyPostgresEngine `json:"postgres_engine,omitempty"`
+	Region         *string                         `json:"region,omitempty"`
+
+	// ReleaseChannel Release channel. If not provided, GA will be used.
+	ReleaseChannel *CreateBranchBodyReleaseChannel `json:"release_channel,omitempty"`
+	Secrets        *map[string]string              `json:"secrets,omitempty"`
 }
 
-// CreateOrganizationV1Dto defines model for CreateOrganizationV1Dto.
-type CreateOrganizationV1Dto struct {
+// CreateBranchBodyDesiredInstanceSize defines model for CreateBranchBody.DesiredInstanceSize.
+type CreateBranchBodyDesiredInstanceSize string
+
+// CreateBranchBodyPostgresEngine Postgres engine version. If not provided, the latest version will be used.
+type CreateBranchBodyPostgresEngine string
+
+// CreateBranchBodyReleaseChannel Release channel. If not provided, GA will be used.
+type CreateBranchBodyReleaseChannel string
+
+// CreateOrganizationV1 defines model for CreateOrganizationV1.
+type CreateOrganizationV1 struct {
 	Name string `json:"name"`
 }
 
 // CreateProviderBody defines model for CreateProviderBody.
 type CreateProviderBody struct {
-	AttributeMapping *AttributeMapping `json:"attribute_mapping,omitempty"`
-	Domains          *[]string         `json:"domains,omitempty"`
-	MetadataUrl      *string           `json:"metadata_url,omitempty"`
-	MetadataXml      *string           `json:"metadata_xml,omitempty"`
+	AttributeMapping *struct {
+		Keys map[string]struct {
+			Array   *bool                                             `json:"array,omitempty"`
+			Default *CreateProviderBody_AttributeMapping_Keys_Default `json:"default,omitempty"`
+			Name    *string                                           `json:"name,omitempty"`
+			Names   *[]string                                         `json:"names,omitempty"`
+		} `json:"keys"`
+	} `json:"attribute_mapping,omitempty"`
+	Domains     *[]string `json:"domains,omitempty"`
+	MetadataUrl *string   `json:"metadata_url,omitempty"`
+	MetadataXml *string   `json:"metadata_xml,omitempty"`
 
 	// Type What type of provider will be created
 	Type CreateProviderBodyType `json:"type"`
+}
+
+// CreateProviderBodyAttributeMappingKeysDefault0 defines model for .
+type CreateProviderBodyAttributeMappingKeysDefault0 = map[string]interface{}
+
+// CreateProviderBodyAttributeMappingKeysDefault1 defines model for .
+type CreateProviderBodyAttributeMappingKeysDefault1 = float32
+
+// CreateProviderBodyAttributeMappingKeysDefault2 defines model for .
+type CreateProviderBodyAttributeMappingKeysDefault2 = string
+
+// CreateProviderBodyAttributeMappingKeysDefault3 defines model for .
+type CreateProviderBodyAttributeMappingKeysDefault3 = bool
+
+// CreateProviderBody_AttributeMapping_Keys_Default defines model for CreateProviderBody.AttributeMapping.Keys.Default.
+type CreateProviderBody_AttributeMapping_Keys_Default struct {
+	union json.RawMessage
 }
 
 // CreateProviderBodyType What type of provider will be created
@@ -852,130 +1287,179 @@ type CreateProviderBodyType string
 
 // CreateProviderResponse defines model for CreateProviderResponse.
 type CreateProviderResponse struct {
-	CreatedAt *string         `json:"created_at,omitempty"`
-	Domains   *[]Domain       `json:"domains,omitempty"`
-	Id        string          `json:"id"`
-	Saml      *SamlDescriptor `json:"saml,omitempty"`
-	UpdatedAt *string         `json:"updated_at,omitempty"`
+	CreatedAt *string `json:"created_at,omitempty"`
+	Domains   *[]struct {
+		CreatedAt *string `json:"created_at,omitempty"`
+		Domain    *string `json:"domain,omitempty"`
+		Id        string  `json:"id"`
+		UpdatedAt *string `json:"updated_at,omitempty"`
+	} `json:"domains,omitempty"`
+	Id   string `json:"id"`
+	Saml *struct {
+		AttributeMapping *struct {
+			Keys map[string]struct {
+				Array   *bool                                                      `json:"array,omitempty"`
+				Default *CreateProviderResponse_Saml_AttributeMapping_Keys_Default `json:"default,omitempty"`
+				Name    *string                                                    `json:"name,omitempty"`
+				Names   *[]string                                                  `json:"names,omitempty"`
+			} `json:"keys"`
+		} `json:"attribute_mapping,omitempty"`
+		EntityId    string  `json:"entity_id"`
+		Id          string  `json:"id"`
+		MetadataUrl *string `json:"metadata_url,omitempty"`
+		MetadataXml *string `json:"metadata_xml,omitempty"`
+	} `json:"saml,omitempty"`
+	UpdatedAt *string `json:"updated_at,omitempty"`
+}
+
+// CreateProviderResponseSamlAttributeMappingKeysDefault0 defines model for .
+type CreateProviderResponseSamlAttributeMappingKeysDefault0 = map[string]interface{}
+
+// CreateProviderResponseSamlAttributeMappingKeysDefault1 defines model for .
+type CreateProviderResponseSamlAttributeMappingKeysDefault1 = float32
+
+// CreateProviderResponseSamlAttributeMappingKeysDefault2 defines model for .
+type CreateProviderResponseSamlAttributeMappingKeysDefault2 = string
+
+// CreateProviderResponseSamlAttributeMappingKeysDefault3 defines model for .
+type CreateProviderResponseSamlAttributeMappingKeysDefault3 = bool
+
+// CreateProviderResponse_Saml_AttributeMapping_Keys_Default defines model for CreateProviderResponse.Saml.AttributeMapping.Keys.Default.
+type CreateProviderResponse_Saml_AttributeMapping_Keys_Default struct {
+	union json.RawMessage
 }
 
 // CreateSecretBody defines model for CreateSecretBody.
-type CreateSecretBody struct {
+type CreateSecretBody = []struct {
 	// Name Secret name must not start with the SUPABASE_ prefix.
 	Name  string `json:"name"`
 	Value string `json:"value"`
 }
 
+// CreateSigningKeyBody defines model for CreateSigningKeyBody.
+type CreateSigningKeyBody struct {
+	Algorithm CreateSigningKeyBodyAlgorithm `json:"algorithm"`
+	Status    *CreateSigningKeyBodyStatus   `json:"status,omitempty"`
+}
+
+// CreateSigningKeyBodyAlgorithm defines model for CreateSigningKeyBody.Algorithm.
+type CreateSigningKeyBodyAlgorithm string
+
+// CreateSigningKeyBodyStatus defines model for CreateSigningKeyBody.Status.
+type CreateSigningKeyBodyStatus string
+
 // CreateThirdPartyAuthBody defines model for CreateThirdPartyAuthBody.
 type CreateThirdPartyAuthBody struct {
-	CustomJwks    *map[string]interface{} `json:"custom_jwks,omitempty"`
-	JwksUrl       *string                 `json:"jwks_url,omitempty"`
-	OidcIssuerUrl *string                 `json:"oidc_issuer_url,omitempty"`
+	CustomJwks    *interface{} `json:"custom_jwks,omitempty"`
+	JwksUrl       *string      `json:"jwks_url,omitempty"`
+	OidcIssuerUrl *string      `json:"oidc_issuer_url,omitempty"`
 }
-
-// CustomHostnameDetails defines model for CustomHostnameDetails.
-type CustomHostnameDetails struct {
-	CustomOriginServer    string                `json:"custom_origin_server"`
-	Hostname              string                `json:"hostname"`
-	Id                    string                `json:"id"`
-	OwnershipVerification OwnershipVerification `json:"ownership_verification"`
-	Ssl                   SslValidation         `json:"ssl"`
-	Status                string                `json:"status"`
-	VerificationErrors    *[]string             `json:"verification_errors,omitempty"`
-}
-
-// DatabaseUpgradeStatus defines model for DatabaseUpgradeStatus.
-type DatabaseUpgradeStatus struct {
-	Error          *DatabaseUpgradeStatusError    `json:"error,omitempty"`
-	InitiatedAt    string                         `json:"initiated_at"`
-	LatestStatusAt string                         `json:"latest_status_at"`
-	Progress       *DatabaseUpgradeStatusProgress `json:"progress,omitempty"`
-	Status         DatabaseUpgradeStatusStatus    `json:"status"`
-	TargetVersion  int                            `json:"target_version"`
-}
-
-// DatabaseUpgradeStatusError defines model for DatabaseUpgradeStatus.Error.
-type DatabaseUpgradeStatusError string
-
-// DatabaseUpgradeStatusProgress defines model for DatabaseUpgradeStatus.Progress.
-type DatabaseUpgradeStatusProgress string
-
-// DatabaseUpgradeStatusStatus defines model for DatabaseUpgradeStatus.Status.
-type DatabaseUpgradeStatusStatus int
 
 // DatabaseUpgradeStatusResponse defines model for DatabaseUpgradeStatusResponse.
 type DatabaseUpgradeStatusResponse struct {
-	DatabaseUpgradeStatus *DatabaseUpgradeStatus `json:"databaseUpgradeStatus"`
+	DatabaseUpgradeStatus *struct {
+		Error          *DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError    `json:"error,omitempty"`
+		InitiatedAt    string                                                      `json:"initiated_at"`
+		LatestStatusAt string                                                      `json:"latest_status_at"`
+		Progress       *DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress `json:"progress,omitempty"`
+		Status         float32                                                     `json:"status"`
+		TargetVersion  float32                                                     `json:"target_version"`
+	} `json:"databaseUpgradeStatus"`
 }
+
+// DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError defines model for DatabaseUpgradeStatusResponse.DatabaseUpgradeStatus.Error.
+type DatabaseUpgradeStatusResponseDatabaseUpgradeStatusError string
+
+// DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress defines model for DatabaseUpgradeStatusResponse.DatabaseUpgradeStatus.Progress.
+type DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress string
 
 // DeleteProviderResponse defines model for DeleteProviderResponse.
 type DeleteProviderResponse struct {
-	CreatedAt *string         `json:"created_at,omitempty"`
-	Domains   *[]Domain       `json:"domains,omitempty"`
-	Id        string          `json:"id"`
-	Saml      *SamlDescriptor `json:"saml,omitempty"`
-	UpdatedAt *string         `json:"updated_at,omitempty"`
+	CreatedAt *string `json:"created_at,omitempty"`
+	Domains   *[]struct {
+		CreatedAt *string `json:"created_at,omitempty"`
+		Domain    *string `json:"domain,omitempty"`
+		Id        string  `json:"id"`
+		UpdatedAt *string `json:"updated_at,omitempty"`
+	} `json:"domains,omitempty"`
+	Id   string `json:"id"`
+	Saml *struct {
+		AttributeMapping *struct {
+			Keys map[string]struct {
+				Array   *bool                                                      `json:"array,omitempty"`
+				Default *DeleteProviderResponse_Saml_AttributeMapping_Keys_Default `json:"default,omitempty"`
+				Name    *string                                                    `json:"name,omitempty"`
+				Names   *[]string                                                  `json:"names,omitempty"`
+			} `json:"keys"`
+		} `json:"attribute_mapping,omitempty"`
+		EntityId    string  `json:"entity_id"`
+		Id          string  `json:"id"`
+		MetadataUrl *string `json:"metadata_url,omitempty"`
+		MetadataXml *string `json:"metadata_xml,omitempty"`
+	} `json:"saml,omitempty"`
+	UpdatedAt *string `json:"updated_at,omitempty"`
+}
+
+// DeleteProviderResponseSamlAttributeMappingKeysDefault0 defines model for .
+type DeleteProviderResponseSamlAttributeMappingKeysDefault0 = map[string]interface{}
+
+// DeleteProviderResponseSamlAttributeMappingKeysDefault1 defines model for .
+type DeleteProviderResponseSamlAttributeMappingKeysDefault1 = float32
+
+// DeleteProviderResponseSamlAttributeMappingKeysDefault2 defines model for .
+type DeleteProviderResponseSamlAttributeMappingKeysDefault2 = string
+
+// DeleteProviderResponseSamlAttributeMappingKeysDefault3 defines model for .
+type DeleteProviderResponseSamlAttributeMappingKeysDefault3 = bool
+
+// DeleteProviderResponse_Saml_AttributeMapping_Keys_Default defines model for DeleteProviderResponse.Saml.AttributeMapping.Keys.Default.
+type DeleteProviderResponse_Saml_AttributeMapping_Keys_Default struct {
+	union json.RawMessage
 }
 
 // DeployFunctionResponse defines model for DeployFunctionResponse.
 type DeployFunctionResponse struct {
-	ComputeMultiplier *float32                     `json:"compute_multiplier,omitempty"`
-	CreatedAt         *int64                       `json:"created_at,omitempty"`
-	EntrypointPath    *string                      `json:"entrypoint_path,omitempty"`
-	Id                string                       `json:"id"`
-	ImportMap         *bool                        `json:"import_map,omitempty"`
-	ImportMapPath     *string                      `json:"import_map_path,omitempty"`
-	Name              string                       `json:"name"`
-	Slug              string                       `json:"slug"`
-	Status            DeployFunctionResponseStatus `json:"status"`
-	UpdatedAt         *int64                       `json:"updated_at,omitempty"`
-	VerifyJwt         *bool                        `json:"verify_jwt,omitempty"`
-	Version           int                          `json:"version"`
+	CreatedAt      *int                         `json:"created_at,omitempty"`
+	EntrypointPath *string                      `json:"entrypoint_path,omitempty"`
+	Id             string                       `json:"id"`
+	ImportMap      *bool                        `json:"import_map,omitempty"`
+	ImportMapPath  *string                      `json:"import_map_path,omitempty"`
+	Name           string                       `json:"name"`
+	Slug           string                       `json:"slug"`
+	Status         DeployFunctionResponseStatus `json:"status"`
+	UpdatedAt      *int                         `json:"updated_at,omitempty"`
+	VerifyJwt      *bool                        `json:"verify_jwt,omitempty"`
+	Version        int                          `json:"version"`
 }
 
 // DeployFunctionResponseStatus defines model for DeployFunctionResponse.Status.
 type DeployFunctionResponseStatus string
 
-// DesiredInstanceSize defines model for DesiredInstanceSize.
-type DesiredInstanceSize string
-
-// Domain defines model for Domain.
-type Domain struct {
-	CreatedAt *string `json:"created_at,omitempty"`
-	Domain    *string `json:"domain,omitempty"`
-	Id        string  `json:"id"`
-	UpdatedAt *string `json:"updated_at,omitempty"`
-}
-
 // FunctionDeployBody defines model for FunctionDeployBody.
 type FunctionDeployBody struct {
-	File     []openapi_types.File   `json:"file"`
-	Metadata FunctionDeployMetadata `json:"metadata"`
-}
-
-// FunctionDeployMetadata defines model for FunctionDeployMetadata.
-type FunctionDeployMetadata struct {
-	EntrypointPath string    `json:"entrypoint_path"`
-	ImportMapPath  *string   `json:"import_map_path,omitempty"`
-	Name           *string   `json:"name,omitempty"`
-	StaticPatterns *[]string `json:"static_patterns,omitempty"`
-	VerifyJwt      *bool     `json:"verify_jwt,omitempty"`
+	File     *[]openapi_types.File `json:"file,omitempty"`
+	Metadata struct {
+		EntrypointPath string    `json:"entrypoint_path"`
+		ImportMapPath  *string   `json:"import_map_path,omitempty"`
+		Name           *string   `json:"name,omitempty"`
+		StaticPatterns *[]string `json:"static_patterns,omitempty"`
+		VerifyJwt      *bool     `json:"verify_jwt,omitempty"`
+	} `json:"metadata"`
 }
 
 // FunctionResponse defines model for FunctionResponse.
 type FunctionResponse struct {
-	ComputeMultiplier *float32               `json:"compute_multiplier,omitempty"`
-	CreatedAt         int64                  `json:"created_at"`
-	EntrypointPath    *string                `json:"entrypoint_path,omitempty"`
-	Id                string                 `json:"id"`
-	ImportMap         *bool                  `json:"import_map,omitempty"`
-	ImportMapPath     *string                `json:"import_map_path,omitempty"`
-	Name              string                 `json:"name"`
-	Slug              string                 `json:"slug"`
-	Status            FunctionResponseStatus `json:"status"`
-	UpdatedAt         int64                  `json:"updated_at"`
-	VerifyJwt         *bool                  `json:"verify_jwt,omitempty"`
-	Version           int                    `json:"version"`
+	CreatedAt      int                    `json:"created_at"`
+	EntrypointPath *string                `json:"entrypoint_path,omitempty"`
+	Id             string                 `json:"id"`
+	ImportMap      *bool                  `json:"import_map,omitempty"`
+	ImportMapPath  *string                `json:"import_map_path,omitempty"`
+	Name           string                 `json:"name"`
+	Slug           string                 `json:"slug"`
+	Status         FunctionResponseStatus `json:"status"`
+	UpdatedAt      int                    `json:"updated_at"`
+	VerifyJwt      *bool                  `json:"verify_jwt,omitempty"`
+	Version        int                    `json:"version"`
 }
 
 // FunctionResponseStatus defines model for FunctionResponse.Status.
@@ -983,18 +1467,17 @@ type FunctionResponseStatus string
 
 // FunctionSlugResponse defines model for FunctionSlugResponse.
 type FunctionSlugResponse struct {
-	ComputeMultiplier *float32                   `json:"compute_multiplier,omitempty"`
-	CreatedAt         int64                      `json:"created_at"`
-	EntrypointPath    *string                    `json:"entrypoint_path,omitempty"`
-	Id                string                     `json:"id"`
-	ImportMap         *bool                      `json:"import_map,omitempty"`
-	ImportMapPath     *string                    `json:"import_map_path,omitempty"`
-	Name              string                     `json:"name"`
-	Slug              string                     `json:"slug"`
-	Status            FunctionSlugResponseStatus `json:"status"`
-	UpdatedAt         int64                      `json:"updated_at"`
-	VerifyJwt         *bool                      `json:"verify_jwt,omitempty"`
-	Version           int                        `json:"version"`
+	CreatedAt      int                        `json:"created_at"`
+	EntrypointPath *string                    `json:"entrypoint_path,omitempty"`
+	Id             string                     `json:"id"`
+	ImportMap      *bool                      `json:"import_map,omitempty"`
+	ImportMapPath  *string                    `json:"import_map_path,omitempty"`
+	Name           string                     `json:"name"`
+	Slug           string                     `json:"slug"`
+	Status         FunctionSlugResponseStatus `json:"status"`
+	UpdatedAt      int                        `json:"updated_at"`
+	VerifyJwt      *bool                      `json:"verify_jwt,omitempty"`
+	Version        int                        `json:"version"`
 }
 
 // FunctionSlugResponseStatus defines model for FunctionSlugResponse.Status.
@@ -1002,44 +1485,246 @@ type FunctionSlugResponseStatus string
 
 // GetProjectAvailableRestoreVersionsResponse defines model for GetProjectAvailableRestoreVersionsResponse.
 type GetProjectAvailableRestoreVersionsResponse struct {
-	AvailableVersions []ProjectAvailableRestoreVersion `json:"available_versions"`
+	AvailableVersions []struct {
+		PostgresEngine GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngine `json:"postgres_engine"`
+		ReleaseChannel GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel `json:"release_channel"`
+		Version        string                                                                    `json:"version"`
+	} `json:"available_versions"`
 }
 
-// GetProjectDbMetadataResponseDto defines model for GetProjectDbMetadataResponseDto.
-type GetProjectDbMetadataResponseDto struct {
-	Databases []GetProjectDbMetadataResponseDto_Databases_Item `json:"databases"`
+// GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngine defines model for GetProjectAvailableRestoreVersionsResponse.AvailableVersions.PostgresEngine.
+type GetProjectAvailableRestoreVersionsResponseAvailableVersionsPostgresEngine string
+
+// GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel defines model for GetProjectAvailableRestoreVersionsResponse.AvailableVersions.ReleaseChannel.
+type GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel string
+
+// GetProjectDbMetadataResponse defines model for GetProjectDbMetadataResponse.
+type GetProjectDbMetadataResponse struct {
+	Databases []GetProjectDbMetadataResponse_Databases_Item `json:"databases"`
 }
 
-// GetProjectDbMetadataResponseDto_Databases_Schemas_Item defines model for GetProjectDbMetadataResponseDto.Databases.Schemas.Item.
-type GetProjectDbMetadataResponseDto_Databases_Schemas_Item struct {
+// GetProjectDbMetadataResponse_Databases_Schemas_Item defines model for GetProjectDbMetadataResponse.Databases.Schemas.Item.
+type GetProjectDbMetadataResponse_Databases_Schemas_Item struct {
 	Name                 string                 `json:"name"`
 	AdditionalProperties map[string]interface{} `json:"-"`
 }
 
-// GetProjectDbMetadataResponseDto_Databases_Item defines model for GetProjectDbMetadataResponseDto.databases.Item.
-type GetProjectDbMetadataResponseDto_Databases_Item struct {
-	Name                 string                                                   `json:"name"`
-	Schemas              []GetProjectDbMetadataResponseDto_Databases_Schemas_Item `json:"schemas"`
-	AdditionalProperties map[string]interface{}                                   `json:"-"`
+// GetProjectDbMetadataResponse_Databases_Item defines model for GetProjectDbMetadataResponse.databases.Item.
+type GetProjectDbMetadataResponse_Databases_Item struct {
+	Name                 string                                                `json:"name"`
+	Schemas              []GetProjectDbMetadataResponse_Databases_Schemas_Item `json:"schemas"`
+	AdditionalProperties map[string]interface{}                                `json:"-"`
 }
 
 // GetProviderResponse defines model for GetProviderResponse.
 type GetProviderResponse struct {
-	CreatedAt *string         `json:"created_at,omitempty"`
-	Domains   *[]Domain       `json:"domains,omitempty"`
-	Id        string          `json:"id"`
-	Saml      *SamlDescriptor `json:"saml,omitempty"`
-	UpdatedAt *string         `json:"updated_at,omitempty"`
+	CreatedAt *string `json:"created_at,omitempty"`
+	Domains   *[]struct {
+		CreatedAt *string `json:"created_at,omitempty"`
+		Domain    *string `json:"domain,omitempty"`
+		Id        string  `json:"id"`
+		UpdatedAt *string `json:"updated_at,omitempty"`
+	} `json:"domains,omitempty"`
+	Id   string `json:"id"`
+	Saml *struct {
+		AttributeMapping *struct {
+			Keys map[string]struct {
+				Array   *bool                                                   `json:"array,omitempty"`
+				Default *GetProviderResponse_Saml_AttributeMapping_Keys_Default `json:"default,omitempty"`
+				Name    *string                                                 `json:"name,omitempty"`
+				Names   *[]string                                               `json:"names,omitempty"`
+			} `json:"keys"`
+		} `json:"attribute_mapping,omitempty"`
+		EntityId    string  `json:"entity_id"`
+		Id          string  `json:"id"`
+		MetadataUrl *string `json:"metadata_url,omitempty"`
+		MetadataXml *string `json:"metadata_xml,omitempty"`
+	} `json:"saml,omitempty"`
+	UpdatedAt *string `json:"updated_at,omitempty"`
 }
+
+// GetProviderResponseSamlAttributeMappingKeysDefault0 defines model for .
+type GetProviderResponseSamlAttributeMappingKeysDefault0 = map[string]interface{}
+
+// GetProviderResponseSamlAttributeMappingKeysDefault1 defines model for .
+type GetProviderResponseSamlAttributeMappingKeysDefault1 = float32
+
+// GetProviderResponseSamlAttributeMappingKeysDefault2 defines model for .
+type GetProviderResponseSamlAttributeMappingKeysDefault2 = string
+
+// GetProviderResponseSamlAttributeMappingKeysDefault3 defines model for .
+type GetProviderResponseSamlAttributeMappingKeysDefault3 = bool
+
+// GetProviderResponse_Saml_AttributeMapping_Keys_Default defines model for GetProviderResponse.Saml.AttributeMapping.Keys.Default.
+type GetProviderResponse_Saml_AttributeMapping_Keys_Default struct {
+	union json.RawMessage
+}
+
+// ListProjectAddonsResponse defines model for ListProjectAddonsResponse.
+type ListProjectAddonsResponse struct {
+	AvailableAddons []struct {
+		Name     string                                       `json:"name"`
+		Type     ListProjectAddonsResponseAvailableAddonsType `json:"type"`
+		Variants []struct {
+			Id ListProjectAddonsResponse_AvailableAddons_Variants_Id `json:"id"`
+
+			// Meta Any JSON-serializable value
+			Meta  *interface{} `json:"meta,omitempty"`
+			Name  string       `json:"name"`
+			Price struct {
+				Amount      float32                                                       `json:"amount"`
+				Description string                                                        `json:"description"`
+				Interval    ListProjectAddonsResponseAvailableAddonsVariantsPriceInterval `json:"interval"`
+				Type        ListProjectAddonsResponseAvailableAddonsVariantsPriceType     `json:"type"`
+			} `json:"price"`
+		} `json:"variants"`
+	} `json:"available_addons"`
+	SelectedAddons []struct {
+		Type    ListProjectAddonsResponseSelectedAddonsType `json:"type"`
+		Variant struct {
+			Id ListProjectAddonsResponse_SelectedAddons_Variant_Id `json:"id"`
+
+			// Meta Any JSON-serializable value
+			Meta  *interface{} `json:"meta,omitempty"`
+			Name  string       `json:"name"`
+			Price struct {
+				Amount      float32                                                     `json:"amount"`
+				Description string                                                      `json:"description"`
+				Interval    ListProjectAddonsResponseSelectedAddonsVariantPriceInterval `json:"interval"`
+				Type        ListProjectAddonsResponseSelectedAddonsVariantPriceType     `json:"type"`
+			} `json:"price"`
+		} `json:"variant"`
+	} `json:"selected_addons"`
+}
+
+// ListProjectAddonsResponseAvailableAddonsType defines model for ListProjectAddonsResponse.AvailableAddons.Type.
+type ListProjectAddonsResponseAvailableAddonsType string
+
+// ListProjectAddonsResponseAvailableAddonsVariantsId0 defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.0.
+type ListProjectAddonsResponseAvailableAddonsVariantsId0 string
+
+// ListProjectAddonsResponseAvailableAddonsVariantsId1 defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.1.
+type ListProjectAddonsResponseAvailableAddonsVariantsId1 string
+
+// ListProjectAddonsResponseAvailableAddonsVariantsId2 defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.2.
+type ListProjectAddonsResponseAvailableAddonsVariantsId2 string
+
+// ListProjectAddonsResponseAvailableAddonsVariantsId3 defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.3.
+type ListProjectAddonsResponseAvailableAddonsVariantsId3 string
+
+// ListProjectAddonsResponseAvailableAddonsVariantsId4 defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.4.
+type ListProjectAddonsResponseAvailableAddonsVariantsId4 string
+
+// ListProjectAddonsResponseAvailableAddonsVariantsId5 defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.5.
+type ListProjectAddonsResponseAvailableAddonsVariantsId5 string
+
+// ListProjectAddonsResponseAvailableAddonsVariantsId6 defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.6.
+type ListProjectAddonsResponseAvailableAddonsVariantsId6 string
+
+// ListProjectAddonsResponse_AvailableAddons_Variants_Id defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.
+type ListProjectAddonsResponse_AvailableAddons_Variants_Id struct {
+	union json.RawMessage
+}
+
+// ListProjectAddonsResponseAvailableAddonsVariantsPriceInterval defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Price.Interval.
+type ListProjectAddonsResponseAvailableAddonsVariantsPriceInterval string
+
+// ListProjectAddonsResponseAvailableAddonsVariantsPriceType defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Price.Type.
+type ListProjectAddonsResponseAvailableAddonsVariantsPriceType string
+
+// ListProjectAddonsResponseSelectedAddonsType defines model for ListProjectAddonsResponse.SelectedAddons.Type.
+type ListProjectAddonsResponseSelectedAddonsType string
+
+// ListProjectAddonsResponseSelectedAddonsVariantId0 defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.0.
+type ListProjectAddonsResponseSelectedAddonsVariantId0 string
+
+// ListProjectAddonsResponseSelectedAddonsVariantId1 defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.1.
+type ListProjectAddonsResponseSelectedAddonsVariantId1 string
+
+// ListProjectAddonsResponseSelectedAddonsVariantId2 defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.2.
+type ListProjectAddonsResponseSelectedAddonsVariantId2 string
+
+// ListProjectAddonsResponseSelectedAddonsVariantId3 defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.3.
+type ListProjectAddonsResponseSelectedAddonsVariantId3 string
+
+// ListProjectAddonsResponseSelectedAddonsVariantId4 defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.4.
+type ListProjectAddonsResponseSelectedAddonsVariantId4 string
+
+// ListProjectAddonsResponseSelectedAddonsVariantId5 defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.5.
+type ListProjectAddonsResponseSelectedAddonsVariantId5 string
+
+// ListProjectAddonsResponseSelectedAddonsVariantId6 defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.6.
+type ListProjectAddonsResponseSelectedAddonsVariantId6 string
+
+// ListProjectAddonsResponse_SelectedAddons_Variant_Id defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.
+type ListProjectAddonsResponse_SelectedAddons_Variant_Id struct {
+	union json.RawMessage
+}
+
+// ListProjectAddonsResponseSelectedAddonsVariantPriceInterval defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Price.Interval.
+type ListProjectAddonsResponseSelectedAddonsVariantPriceInterval string
+
+// ListProjectAddonsResponseSelectedAddonsVariantPriceType defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Price.Type.
+type ListProjectAddonsResponseSelectedAddonsVariantPriceType string
 
 // ListProvidersResponse defines model for ListProvidersResponse.
 type ListProvidersResponse struct {
-	Items []Provider `json:"items"`
+	Items []struct {
+		CreatedAt *string `json:"created_at,omitempty"`
+		Domains   *[]struct {
+			CreatedAt *string `json:"created_at,omitempty"`
+			Domain    *string `json:"domain,omitempty"`
+			Id        string  `json:"id"`
+			UpdatedAt *string `json:"updated_at,omitempty"`
+		} `json:"domains,omitempty"`
+		Id   string `json:"id"`
+		Saml *struct {
+			AttributeMapping *struct {
+				Keys map[string]struct {
+					Array   *bool                                                           `json:"array,omitempty"`
+					Default *ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default `json:"default,omitempty"`
+					Name    *string                                                         `json:"name,omitempty"`
+					Names   *[]string                                                       `json:"names,omitempty"`
+				} `json:"keys"`
+			} `json:"attribute_mapping,omitempty"`
+			EntityId    string  `json:"entity_id"`
+			Id          string  `json:"id"`
+			MetadataUrl *string `json:"metadata_url,omitempty"`
+			MetadataXml *string `json:"metadata_xml,omitempty"`
+		} `json:"saml,omitempty"`
+		UpdatedAt *string `json:"updated_at,omitempty"`
+	} `json:"items"`
+}
+
+// ListProvidersResponseItemsSamlAttributeMappingKeysDefault0 defines model for .
+type ListProvidersResponseItemsSamlAttributeMappingKeysDefault0 = map[string]interface{}
+
+// ListProvidersResponseItemsSamlAttributeMappingKeysDefault1 defines model for .
+type ListProvidersResponseItemsSamlAttributeMappingKeysDefault1 = float32
+
+// ListProvidersResponseItemsSamlAttributeMappingKeysDefault2 defines model for .
+type ListProvidersResponseItemsSamlAttributeMappingKeysDefault2 = string
+
+// ListProvidersResponseItemsSamlAttributeMappingKeysDefault3 defines model for .
+type ListProvidersResponseItemsSamlAttributeMappingKeysDefault3 = bool
+
+// ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default defines model for ListProvidersResponse.Items.Saml.AttributeMapping.Keys.Default.
+type ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default struct {
+	union json.RawMessage
 }
 
 // NetworkBanResponse defines model for NetworkBanResponse.
 type NetworkBanResponse struct {
 	BannedIpv4Addresses []string `json:"banned_ipv4_addresses"`
+}
+
+// NetworkBanResponseEnriched defines model for NetworkBanResponseEnriched.
+type NetworkBanResponseEnriched struct {
+	BannedIpv4Addresses []struct {
+		BannedAddress string `json:"banned_address"`
+		Identifier    string `json:"identifier"`
+		Type          string `json:"type"`
+	} `json:"banned_ipv4_addresses"`
 }
 
 // NetworkRestrictionsRequest defines model for NetworkRestrictionsRequest.
@@ -1050,10 +1735,19 @@ type NetworkRestrictionsRequest struct {
 
 // NetworkRestrictionsResponse defines model for NetworkRestrictionsResponse.
 type NetworkRestrictionsResponse struct {
-	Config      NetworkRestrictionsRequest             `json:"config"`
+	// Config At any given point in time, this is the config that the user has requested be applied to their project. The `status` field indicates if it has been applied to the project, or is pending. When an updated config is received, the applied config is moved to `old_config`.
+	Config struct {
+		DbAllowedCidrs   *[]string `json:"dbAllowedCidrs,omitempty"`
+		DbAllowedCidrsV6 *[]string `json:"dbAllowedCidrsV6,omitempty"`
+	} `json:"config"`
 	Entitlement NetworkRestrictionsResponseEntitlement `json:"entitlement"`
-	OldConfig   *NetworkRestrictionsRequest            `json:"old_config,omitempty"`
-	Status      NetworkRestrictionsResponseStatus      `json:"status"`
+
+	// OldConfig Populated when a new config has been received, but not registered as successfully applied to a project.
+	OldConfig *struct {
+		DbAllowedCidrs   *[]string `json:"dbAllowedCidrs,omitempty"`
+		DbAllowedCidrsV6 *[]string `json:"dbAllowedCidrsV6,omitempty"`
+	} `json:"old_config,omitempty"`
+	Status NetworkRestrictionsResponseStatus `json:"status"`
 }
 
 // NetworkRestrictionsResponseEntitlement defines model for NetworkRestrictionsResponse.Entitlement.
@@ -1062,8 +1756,8 @@ type NetworkRestrictionsResponseEntitlement string
 // NetworkRestrictionsResponseStatus defines model for NetworkRestrictionsResponse.Status.
 type NetworkRestrictionsResponseStatus string
 
-// OAuthRevokeTokenBodyDto defines model for OAuthRevokeTokenBodyDto.
-type OAuthRevokeTokenBodyDto struct {
+// OAuthRevokeTokenBody defines model for OAuthRevokeTokenBody.
+type OAuthRevokeTokenBody struct {
 	ClientId     openapi_types.UUID `json:"client_id"`
 	ClientSecret string             `json:"client_secret"`
 	RefreshToken string             `json:"refresh_token"`
@@ -1071,13 +1765,13 @@ type OAuthRevokeTokenBodyDto struct {
 
 // OAuthTokenBody defines model for OAuthTokenBody.
 type OAuthTokenBody struct {
-	ClientId     string                  `json:"client_id"`
-	ClientSecret string                  `json:"client_secret"`
-	Code         *string                 `json:"code,omitempty"`
-	CodeVerifier *string                 `json:"code_verifier,omitempty"`
-	GrantType    OAuthTokenBodyGrantType `json:"grant_type"`
-	RedirectUri  *string                 `json:"redirect_uri,omitempty"`
-	RefreshToken *string                 `json:"refresh_token,omitempty"`
+	ClientId     *openapi_types.UUID      `json:"client_id,omitempty"`
+	ClientSecret *string                  `json:"client_secret,omitempty"`
+	Code         *string                  `json:"code,omitempty"`
+	CodeVerifier *string                  `json:"code_verifier,omitempty"`
+	GrantType    *OAuthTokenBodyGrantType `json:"grant_type,omitempty"`
+	RedirectUri  *string                  `json:"redirect_uri,omitempty"`
+	RefreshToken *string                  `json:"refresh_token,omitempty"`
 }
 
 // OAuthTokenBodyGrantType defines model for OAuthTokenBody.GrantType.
@@ -1086,7 +1780,7 @@ type OAuthTokenBodyGrantType string
 // OAuthTokenResponse defines model for OAuthTokenResponse.
 type OAuthTokenResponse struct {
 	AccessToken  string                      `json:"access_token"`
-	ExpiresIn    int64                       `json:"expires_in"`
+	ExpiresIn    int                         `json:"expires_in"`
 	RefreshToken string                      `json:"refresh_token"`
 	TokenType    OAuthTokenResponseTokenType `json:"token_type"`
 }
@@ -1098,13 +1792,6 @@ type OAuthTokenResponseTokenType string
 type OrganizationResponseV1 struct {
 	Id   string `json:"id"`
 	Name string `json:"name"`
-}
-
-// OwnershipVerification defines model for OwnershipVerification.
-type OwnershipVerification struct {
-	Name  string `json:"name"`
-	Type  string `json:"type"`
-	Value string `json:"value"`
 }
 
 // PgsodiumConfigResponse defines model for PgsodiumConfigResponse.
@@ -1142,9 +1829,6 @@ type PostgresConfigResponse struct {
 // PostgresConfigResponseSessionReplicationRole defines model for PostgresConfigResponse.SessionReplicationRole.
 type PostgresConfigResponseSessionReplicationRole string
 
-// PostgresEngine Postgres engine version. If not provided, the latest version will be used.
-type PostgresEngine string
-
 // PostgrestConfigWithJWTSecretResponse defines model for PostgrestConfigWithJWTSecretResponse.
 type PostgrestConfigWithJWTSecretResponse struct {
 	DbExtraSearchPath string `json:"db_extra_search_path"`
@@ -1156,53 +1840,35 @@ type PostgrestConfigWithJWTSecretResponse struct {
 	MaxRows   int     `json:"max_rows"`
 }
 
-// ProjectAvailableRestoreVersion defines model for ProjectAvailableRestoreVersion.
-type ProjectAvailableRestoreVersion struct {
-	PostgresEngine ProjectAvailableRestoreVersionPostgresEngine `json:"postgres_engine"`
-	ReleaseChannel ProjectAvailableRestoreVersionReleaseChannel `json:"release_channel"`
-	Version        string                                       `json:"version"`
-}
-
-// ProjectAvailableRestoreVersionPostgresEngine defines model for ProjectAvailableRestoreVersion.PostgresEngine.
-type ProjectAvailableRestoreVersionPostgresEngine string
-
-// ProjectAvailableRestoreVersionReleaseChannel defines model for ProjectAvailableRestoreVersion.ReleaseChannel.
-type ProjectAvailableRestoreVersionReleaseChannel string
-
 // ProjectUpgradeEligibilityResponse defines model for ProjectUpgradeEligibilityResponse.
 type ProjectUpgradeEligibilityResponse struct {
-	CurrentAppVersion               string           `json:"current_app_version"`
-	CurrentAppVersionReleaseChannel ReleaseChannel   `json:"current_app_version_release_channel"`
-	DurationEstimateHours           int              `json:"duration_estimate_hours"`
-	Eligible                        bool             `json:"eligible"`
-	ExtensionDependentObjects       []string         `json:"extension_dependent_objects"`
-	LatestAppVersion                string           `json:"latest_app_version"`
-	LegacyAuthCustomRoles           []string         `json:"legacy_auth_custom_roles"`
-	PotentialBreakingChanges        []string         `json:"potential_breaking_changes"`
-	TargetUpgradeVersions           []ProjectVersion `json:"target_upgrade_versions"`
+	CurrentAppVersion               string                                                           `json:"current_app_version"`
+	CurrentAppVersionReleaseChannel ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel `json:"current_app_version_release_channel"`
+	DurationEstimateHours           float32                                                          `json:"duration_estimate_hours"`
+	Eligible                        bool                                                             `json:"eligible"`
+	ExtensionDependentObjects       []string                                                         `json:"extension_dependent_objects"`
+	LatestAppVersion                string                                                           `json:"latest_app_version"`
+	LegacyAuthCustomRoles           []string                                                         `json:"legacy_auth_custom_roles"`
+	PotentialBreakingChanges        []string                                                         `json:"potential_breaking_changes"`
+	TargetUpgradeVersions           []struct {
+		AppVersion      string                                                                `json:"app_version"`
+		PostgresVersion ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion `json:"postgres_version"`
+		ReleaseChannel  ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel  `json:"release_channel"`
+	} `json:"target_upgrade_versions"`
 }
+
+// ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel defines model for ProjectUpgradeEligibilityResponse.CurrentAppVersionReleaseChannel.
+type ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel string
+
+// ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion defines model for ProjectUpgradeEligibilityResponse.TargetUpgradeVersions.PostgresVersion.
+type ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion string
+
+// ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel defines model for ProjectUpgradeEligibilityResponse.TargetUpgradeVersions.ReleaseChannel.
+type ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel string
 
 // ProjectUpgradeInitiateResponse defines model for ProjectUpgradeInitiateResponse.
 type ProjectUpgradeInitiateResponse struct {
 	TrackingId string `json:"tracking_id"`
-}
-
-// ProjectVersion defines model for ProjectVersion.
-type ProjectVersion struct {
-	AppVersion string `json:"app_version"`
-
-	// PostgresVersion Postgres engine version. If not provided, the latest version will be used.
-	PostgresVersion PostgresEngine `json:"postgres_version"`
-	ReleaseChannel  ReleaseChannel `json:"release_channel"`
-}
-
-// Provider defines model for Provider.
-type Provider struct {
-	CreatedAt *string         `json:"created_at,omitempty"`
-	Domains   *[]Domain       `json:"domains,omitempty"`
-	Id        string          `json:"id"`
-	Saml      *SamlDescriptor `json:"saml,omitempty"`
-	UpdatedAt *string         `json:"updated_at,omitempty"`
 }
 
 // ReadOnlyStatusResponse defines model for ReadOnlyStatusResponse.
@@ -1212,16 +1878,9 @@ type ReadOnlyStatusResponse struct {
 	OverrideEnabled     bool   `json:"override_enabled"`
 }
 
-// RealtimeHealthResponse defines model for RealtimeHealthResponse.
-type RealtimeHealthResponse struct {
-	ConnectedCluster int `json:"connected_cluster"`
-}
-
-// ReleaseChannel defines model for ReleaseChannel.
-type ReleaseChannel string
-
 // RemoveNetworkBanRequest defines model for RemoveNetworkBanRequest.
 type RemoveNetworkBanRequest struct {
+	Identifier    *string  `json:"identifier,omitempty"`
 	Ipv4Addresses []string `json:"ipv4_addresses"`
 }
 
@@ -1230,22 +1889,11 @@ type RemoveReadReplicaBody struct {
 	DatabaseIdentifier string `json:"database_identifier"`
 }
 
-// RestoreProjectBodyDto defines model for RestoreProjectBodyDto.
-type RestoreProjectBodyDto = map[string]interface{}
-
-// SamlDescriptor defines model for SamlDescriptor.
-type SamlDescriptor struct {
-	AttributeMapping *AttributeMapping `json:"attribute_mapping,omitempty"`
-	EntityId         string            `json:"entity_id"`
-	Id               string            `json:"id"`
-	MetadataUrl      *string           `json:"metadata_url,omitempty"`
-	MetadataXml      *string           `json:"metadata_xml,omitempty"`
-}
-
 // SecretResponse defines model for SecretResponse.
 type SecretResponse struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
+	Name      string  `json:"name"`
+	UpdatedAt *string `json:"updated_at,omitempty"`
+	Value     string  `json:"value"`
 }
 
 // SetUpReadReplicaBody defines model for SetUpReadReplicaBody.
@@ -1257,58 +1905,98 @@ type SetUpReadReplicaBody struct {
 // SetUpReadReplicaBodyReadReplicaRegion Region you want your read replica to reside in
 type SetUpReadReplicaBodyReadReplicaRegion string
 
-// SnippetContent defines model for SnippetContent.
-type SnippetContent struct {
-	Favorite      bool   `json:"favorite"`
-	SchemaVersion string `json:"schema_version"`
-	Sql           string `json:"sql"`
+// SigningKeyResponse defines model for SigningKeyResponse.
+type SigningKeyResponse struct {
+	Algorithm SigningKeyResponseAlgorithm `json:"algorithm"`
+	CreatedAt time.Time                   `json:"created_at"`
+	Id        openapi_types.UUID          `json:"id"`
+	PublicJwk *interface{}                `json:"public_jwk"`
+	Status    SigningKeyResponseStatus    `json:"status"`
+	UpdatedAt time.Time                   `json:"updated_at"`
 }
+
+// SigningKeyResponseAlgorithm defines model for SigningKeyResponse.Algorithm.
+type SigningKeyResponseAlgorithm string
+
+// SigningKeyResponseStatus defines model for SigningKeyResponse.Status.
+type SigningKeyResponseStatus string
+
+// SigningKeysResponse defines model for SigningKeysResponse.
+type SigningKeysResponse struct {
+	Keys []struct {
+		Algorithm SigningKeysResponseKeysAlgorithm `json:"algorithm"`
+		CreatedAt time.Time                        `json:"created_at"`
+		Id        openapi_types.UUID               `json:"id"`
+		PublicJwk *interface{}                     `json:"public_jwk"`
+		Status    SigningKeysResponseKeysStatus    `json:"status"`
+		UpdatedAt time.Time                        `json:"updated_at"`
+	} `json:"keys"`
+}
+
+// SigningKeysResponseKeysAlgorithm defines model for SigningKeysResponse.Keys.Algorithm.
+type SigningKeysResponseKeysAlgorithm string
+
+// SigningKeysResponseKeysStatus defines model for SigningKeysResponse.Keys.Status.
+type SigningKeysResponseKeysStatus string
 
 // SnippetList defines model for SnippetList.
 type SnippetList struct {
-	Cursor *string       `json:"cursor,omitempty"`
-	Data   []SnippetMeta `json:"data"`
+	Cursor *string `json:"cursor,omitempty"`
+	Data   []struct {
+		Description *string `json:"description"`
+		Id          string  `json:"id"`
+		InsertedAt  string  `json:"inserted_at"`
+		Name        string  `json:"name"`
+		Owner       struct {
+			Id       float32 `json:"id"`
+			Username string  `json:"username"`
+		} `json:"owner"`
+		Project struct {
+			Id   float32 `json:"id"`
+			Name string  `json:"name"`
+		} `json:"project"`
+		Type      SnippetListDataType `json:"type"`
+		UpdatedAt string              `json:"updated_at"`
+		UpdatedBy struct {
+			Id       float32 `json:"id"`
+			Username string  `json:"username"`
+		} `json:"updated_by"`
+		Visibility SnippetListDataVisibility `json:"visibility"`
+	} `json:"data"`
 }
 
-// SnippetMeta defines model for SnippetMeta.
-type SnippetMeta struct {
-	Description *string               `json:"description"`
-	Id          string                `json:"id"`
-	InsertedAt  string                `json:"inserted_at"`
-	Name        string                `json:"name"`
-	Owner       SnippetUser           `json:"owner"`
-	Project     SnippetProject        `json:"project"`
-	Type        SnippetMetaType       `json:"type"`
-	UpdatedAt   string                `json:"updated_at"`
-	UpdatedBy   SnippetUser           `json:"updated_by"`
-	Visibility  SnippetMetaVisibility `json:"visibility"`
-}
+// SnippetListDataType defines model for SnippetList.Data.Type.
+type SnippetListDataType string
 
-// SnippetMetaType defines model for SnippetMeta.Type.
-type SnippetMetaType string
-
-// SnippetMetaVisibility defines model for SnippetMeta.Visibility.
-type SnippetMetaVisibility string
-
-// SnippetProject defines model for SnippetProject.
-type SnippetProject struct {
-	Id   int64  `json:"id"`
-	Name string `json:"name"`
-}
+// SnippetListDataVisibility defines model for SnippetList.Data.Visibility.
+type SnippetListDataVisibility string
 
 // SnippetResponse defines model for SnippetResponse.
 type SnippetResponse struct {
-	Content     SnippetContent            `json:"content"`
-	Description *string                   `json:"description"`
-	Id          string                    `json:"id"`
-	InsertedAt  string                    `json:"inserted_at"`
-	Name        string                    `json:"name"`
-	Owner       SnippetUser               `json:"owner"`
-	Project     SnippetProject            `json:"project"`
-	Type        SnippetResponseType       `json:"type"`
-	UpdatedAt   string                    `json:"updated_at"`
-	UpdatedBy   SnippetUser               `json:"updated_by"`
-	Visibility  SnippetResponseVisibility `json:"visibility"`
+	Content struct {
+		Favorite      bool   `json:"favorite"`
+		SchemaVersion string `json:"schema_version"`
+		Sql           string `json:"sql"`
+	} `json:"content"`
+	Description *string `json:"description"`
+	Id          string  `json:"id"`
+	InsertedAt  string  `json:"inserted_at"`
+	Name        string  `json:"name"`
+	Owner       struct {
+		Id       float32 `json:"id"`
+		Username string  `json:"username"`
+	} `json:"owner"`
+	Project struct {
+		Id   float32 `json:"id"`
+		Name string  `json:"name"`
+	} `json:"project"`
+	Type      SnippetResponseType `json:"type"`
+	UpdatedAt string              `json:"updated_at"`
+	UpdatedBy struct {
+		Id       float32 `json:"id"`
+		Username string  `json:"username"`
+	} `json:"updated_by"`
+	Visibility SnippetResponseVisibility `json:"visibility"`
 }
 
 // SnippetResponseType defines model for SnippetResponse.Type.
@@ -1317,56 +2005,36 @@ type SnippetResponseType string
 // SnippetResponseVisibility defines model for SnippetResponse.Visibility.
 type SnippetResponseVisibility string
 
-// SnippetUser defines model for SnippetUser.
-type SnippetUser struct {
-	Id       int64  `json:"id"`
-	Username string `json:"username"`
-}
-
 // SslEnforcementRequest defines model for SslEnforcementRequest.
 type SslEnforcementRequest struct {
-	RequestedConfig SslEnforcements `json:"requestedConfig"`
+	RequestedConfig struct {
+		Database bool `json:"database"`
+	} `json:"requestedConfig"`
 }
 
 // SslEnforcementResponse defines model for SslEnforcementResponse.
 type SslEnforcementResponse struct {
-	AppliedSuccessfully bool            `json:"appliedSuccessfully"`
-	CurrentConfig       SslEnforcements `json:"currentConfig"`
-}
-
-// SslEnforcements defines model for SslEnforcements.
-type SslEnforcements struct {
-	Database bool `json:"database"`
-}
-
-// SslValidation defines model for SslValidation.
-type SslValidation struct {
-	Status            string             `json:"status"`
-	ValidationErrors  *[]ValidationError `json:"validation_errors,omitempty"`
-	ValidationRecords []ValidationRecord `json:"validation_records"`
+	AppliedSuccessfully bool `json:"appliedSuccessfully"`
+	CurrentConfig       struct {
+		Database bool `json:"database"`
+	} `json:"currentConfig"`
 }
 
 // StorageConfigResponse defines model for StorageConfigResponse.
 type StorageConfigResponse struct {
-	Features      StorageFeatures `json:"features"`
-	FileSizeLimit int64           `json:"fileSizeLimit"`
+	Features struct {
+		ImageTransformation struct {
+			Enabled bool `json:"enabled"`
+		} `json:"imageTransformation"`
+		S3Protocol struct {
+			Enabled bool `json:"enabled"`
+		} `json:"s3Protocol"`
+	} `json:"features"`
+	FileSizeLimit int `json:"fileSizeLimit"`
 }
 
-// StorageFeatureImageTransformation defines model for StorageFeatureImageTransformation.
-type StorageFeatureImageTransformation struct {
-	Enabled bool `json:"enabled"`
-}
-
-// StorageFeatureS3Protocol defines model for StorageFeatureS3Protocol.
-type StorageFeatureS3Protocol struct {
-	Enabled bool `json:"enabled"`
-}
-
-// StorageFeatures defines model for StorageFeatures.
-type StorageFeatures struct {
-	ImageTransformation StorageFeatureImageTransformation `json:"imageTransformation"`
-	S3Protocol          StorageFeatureS3Protocol          `json:"s3Protocol"`
-}
+// StreamableFile defines model for StreamableFile.
+type StreamableFile = map[string]interface{}
 
 // SubdomainAvailabilityResponse defines model for SubdomainAvailabilityResponse.
 type SubdomainAvailabilityResponse struct {
@@ -1375,7 +2043,9 @@ type SubdomainAvailabilityResponse struct {
 
 // SupavisorConfigResponse defines model for SupavisorConfigResponse.
 type SupavisorConfigResponse struct {
+	// ConnectionString Use connection_string instead
 	ConnectionString string                              `json:"connectionString"`
+	ConnectionString string                              `json:"connection_string"`
 	DatabaseType     SupavisorConfigResponseDatabaseType `json:"database_type"`
 	DbHost           string                              `json:"db_host"`
 	DbName           string                              `json:"db_name"`
@@ -1396,15 +2066,15 @@ type SupavisorConfigResponsePoolMode string
 
 // ThirdPartyAuth defines model for ThirdPartyAuth.
 type ThirdPartyAuth struct {
-	CustomJwks    *map[string]interface{} `json:"custom_jwks"`
-	Id            string                  `json:"id"`
-	InsertedAt    string                  `json:"inserted_at"`
-	JwksUrl       *string                 `json:"jwks_url"`
-	OidcIssuerUrl *string                 `json:"oidc_issuer_url"`
-	ResolvedAt    *string                 `json:"resolved_at"`
-	ResolvedJwks  *map[string]interface{} `json:"resolved_jwks"`
-	Type          string                  `json:"type"`
-	UpdatedAt     string                  `json:"updated_at"`
+	CustomJwks    *interface{}       `json:"custom_jwks"`
+	Id            openapi_types.UUID `json:"id"`
+	InsertedAt    string             `json:"inserted_at"`
+	JwksUrl       *string            `json:"jwks_url"`
+	OidcIssuerUrl *string            `json:"oidc_issuer_url"`
+	ResolvedAt    *string            `json:"resolved_at"`
+	ResolvedJwks  *interface{}       `json:"resolved_jwks"`
+	Type          string             `json:"type"`
+	UpdatedAt     string             `json:"updated_at"`
 }
 
 // TypescriptResponse defines model for TypescriptResponse.
@@ -1414,185 +2084,195 @@ type TypescriptResponse struct {
 
 // UpdateApiKeyBody defines model for UpdateApiKeyBody.
 type UpdateApiKeyBody struct {
-	Description       *string                  `json:"description"`
-	SecretJwtTemplate *ApiKeySecretJWTTemplate `json:"secret_jwt_template"`
+	Description       *string `json:"description"`
+	SecretJwtTemplate *struct {
+		Role string `json:"role"`
+	} `json:"secret_jwt_template"`
 }
 
 // UpdateAuthConfigBody defines model for UpdateAuthConfigBody.
 type UpdateAuthConfigBody struct {
-	ApiMaxRequestDuration                         *int                                            `json:"api_max_request_duration,omitempty"`
-	DbMaxPoolSize                                 *int                                            `json:"db_max_pool_size,omitempty"`
-	DisableSignup                                 *bool                                           `json:"disable_signup,omitempty"`
-	ExternalAnonymousUsersEnabled                 *bool                                           `json:"external_anonymous_users_enabled,omitempty"`
-	ExternalAppleAdditionalClientIds              *string                                         `json:"external_apple_additional_client_ids,omitempty"`
-	ExternalAppleClientId                         *string                                         `json:"external_apple_client_id,omitempty"`
-	ExternalAppleEnabled                          *bool                                           `json:"external_apple_enabled,omitempty"`
-	ExternalAppleSecret                           *string                                         `json:"external_apple_secret,omitempty"`
-	ExternalAzureClientId                         *string                                         `json:"external_azure_client_id,omitempty"`
-	ExternalAzureEnabled                          *bool                                           `json:"external_azure_enabled,omitempty"`
-	ExternalAzureSecret                           *string                                         `json:"external_azure_secret,omitempty"`
-	ExternalAzureUrl                              *string                                         `json:"external_azure_url,omitempty"`
-	ExternalBitbucketClientId                     *string                                         `json:"external_bitbucket_client_id,omitempty"`
-	ExternalBitbucketEnabled                      *bool                                           `json:"external_bitbucket_enabled,omitempty"`
-	ExternalBitbucketSecret                       *string                                         `json:"external_bitbucket_secret,omitempty"`
-	ExternalDiscordClientId                       *string                                         `json:"external_discord_client_id,omitempty"`
-	ExternalDiscordEnabled                        *bool                                           `json:"external_discord_enabled,omitempty"`
-	ExternalDiscordSecret                         *string                                         `json:"external_discord_secret,omitempty"`
-	ExternalEmailEnabled                          *bool                                           `json:"external_email_enabled,omitempty"`
-	ExternalFacebookClientId                      *string                                         `json:"external_facebook_client_id,omitempty"`
-	ExternalFacebookEnabled                       *bool                                           `json:"external_facebook_enabled,omitempty"`
-	ExternalFacebookSecret                        *string                                         `json:"external_facebook_secret,omitempty"`
-	ExternalFigmaClientId                         *string                                         `json:"external_figma_client_id,omitempty"`
-	ExternalFigmaEnabled                          *bool                                           `json:"external_figma_enabled,omitempty"`
-	ExternalFigmaSecret                           *string                                         `json:"external_figma_secret,omitempty"`
-	ExternalGithubClientId                        *string                                         `json:"external_github_client_id,omitempty"`
-	ExternalGithubEnabled                         *bool                                           `json:"external_github_enabled,omitempty"`
-	ExternalGithubSecret                          *string                                         `json:"external_github_secret,omitempty"`
-	ExternalGitlabClientId                        *string                                         `json:"external_gitlab_client_id,omitempty"`
-	ExternalGitlabEnabled                         *bool                                           `json:"external_gitlab_enabled,omitempty"`
-	ExternalGitlabSecret                          *string                                         `json:"external_gitlab_secret,omitempty"`
-	ExternalGitlabUrl                             *string                                         `json:"external_gitlab_url,omitempty"`
-	ExternalGoogleAdditionalClientIds             *string                                         `json:"external_google_additional_client_ids,omitempty"`
-	ExternalGoogleClientId                        *string                                         `json:"external_google_client_id,omitempty"`
-	ExternalGoogleEnabled                         *bool                                           `json:"external_google_enabled,omitempty"`
-	ExternalGoogleSecret                          *string                                         `json:"external_google_secret,omitempty"`
-	ExternalGoogleSkipNonceCheck                  *bool                                           `json:"external_google_skip_nonce_check,omitempty"`
-	ExternalKakaoClientId                         *string                                         `json:"external_kakao_client_id,omitempty"`
-	ExternalKakaoEnabled                          *bool                                           `json:"external_kakao_enabled,omitempty"`
-	ExternalKakaoSecret                           *string                                         `json:"external_kakao_secret,omitempty"`
-	ExternalKeycloakClientId                      *string                                         `json:"external_keycloak_client_id,omitempty"`
-	ExternalKeycloakEnabled                       *bool                                           `json:"external_keycloak_enabled,omitempty"`
-	ExternalKeycloakSecret                        *string                                         `json:"external_keycloak_secret,omitempty"`
-	ExternalKeycloakUrl                           *string                                         `json:"external_keycloak_url,omitempty"`
-	ExternalLinkedinOidcClientId                  *string                                         `json:"external_linkedin_oidc_client_id,omitempty"`
-	ExternalLinkedinOidcEnabled                   *bool                                           `json:"external_linkedin_oidc_enabled,omitempty"`
-	ExternalLinkedinOidcSecret                    *string                                         `json:"external_linkedin_oidc_secret,omitempty"`
-	ExternalNotionClientId                        *string                                         `json:"external_notion_client_id,omitempty"`
-	ExternalNotionEnabled                         *bool                                           `json:"external_notion_enabled,omitempty"`
-	ExternalNotionSecret                          *string                                         `json:"external_notion_secret,omitempty"`
-	ExternalPhoneEnabled                          *bool                                           `json:"external_phone_enabled,omitempty"`
-	ExternalSlackClientId                         *string                                         `json:"external_slack_client_id,omitempty"`
-	ExternalSlackEnabled                          *bool                                           `json:"external_slack_enabled,omitempty"`
-	ExternalSlackOidcClientId                     *string                                         `json:"external_slack_oidc_client_id,omitempty"`
-	ExternalSlackOidcEnabled                      *bool                                           `json:"external_slack_oidc_enabled,omitempty"`
-	ExternalSlackOidcSecret                       *string                                         `json:"external_slack_oidc_secret,omitempty"`
-	ExternalSlackSecret                           *string                                         `json:"external_slack_secret,omitempty"`
-	ExternalSpotifyClientId                       *string                                         `json:"external_spotify_client_id,omitempty"`
-	ExternalSpotifyEnabled                        *bool                                           `json:"external_spotify_enabled,omitempty"`
-	ExternalSpotifySecret                         *string                                         `json:"external_spotify_secret,omitempty"`
-	ExternalTwitchClientId                        *string                                         `json:"external_twitch_client_id,omitempty"`
-	ExternalTwitchEnabled                         *bool                                           `json:"external_twitch_enabled,omitempty"`
-	ExternalTwitchSecret                          *string                                         `json:"external_twitch_secret,omitempty"`
-	ExternalTwitterClientId                       *string                                         `json:"external_twitter_client_id,omitempty"`
-	ExternalTwitterEnabled                        *bool                                           `json:"external_twitter_enabled,omitempty"`
-	ExternalTwitterSecret                         *string                                         `json:"external_twitter_secret,omitempty"`
-	ExternalWorkosClientId                        *string                                         `json:"external_workos_client_id,omitempty"`
-	ExternalWorkosEnabled                         *bool                                           `json:"external_workos_enabled,omitempty"`
-	ExternalWorkosSecret                          *string                                         `json:"external_workos_secret,omitempty"`
-	ExternalWorkosUrl                             *string                                         `json:"external_workos_url,omitempty"`
-	ExternalZoomClientId                          *string                                         `json:"external_zoom_client_id,omitempty"`
-	ExternalZoomEnabled                           *bool                                           `json:"external_zoom_enabled,omitempty"`
-	ExternalZoomSecret                            *string                                         `json:"external_zoom_secret,omitempty"`
-	HookCustomAccessTokenEnabled                  *bool                                           `json:"hook_custom_access_token_enabled,omitempty"`
-	HookCustomAccessTokenSecrets                  *string                                         `json:"hook_custom_access_token_secrets,omitempty"`
-	HookCustomAccessTokenUri                      *string                                         `json:"hook_custom_access_token_uri,omitempty"`
-	HookMfaVerificationAttemptEnabled             *bool                                           `json:"hook_mfa_verification_attempt_enabled,omitempty"`
-	HookMfaVerificationAttemptSecrets             *string                                         `json:"hook_mfa_verification_attempt_secrets,omitempty"`
-	HookMfaVerificationAttemptUri                 *string                                         `json:"hook_mfa_verification_attempt_uri,omitempty"`
-	HookPasswordVerificationAttemptEnabled        *bool                                           `json:"hook_password_verification_attempt_enabled,omitempty"`
-	HookPasswordVerificationAttemptSecrets        *string                                         `json:"hook_password_verification_attempt_secrets,omitempty"`
-	HookPasswordVerificationAttemptUri            *string                                         `json:"hook_password_verification_attempt_uri,omitempty"`
-	HookSendEmailEnabled                          *bool                                           `json:"hook_send_email_enabled,omitempty"`
-	HookSendEmailSecrets                          *string                                         `json:"hook_send_email_secrets,omitempty"`
-	HookSendEmailUri                              *string                                         `json:"hook_send_email_uri,omitempty"`
-	HookSendSmsEnabled                            *bool                                           `json:"hook_send_sms_enabled,omitempty"`
-	HookSendSmsSecrets                            *string                                         `json:"hook_send_sms_secrets,omitempty"`
-	HookSendSmsUri                                *string                                         `json:"hook_send_sms_uri,omitempty"`
-	JwtExp                                        *int                                            `json:"jwt_exp,omitempty"`
-	MailerAllowUnverifiedEmailSignIns             *bool                                           `json:"mailer_allow_unverified_email_sign_ins,omitempty"`
-	MailerAutoconfirm                             *bool                                           `json:"mailer_autoconfirm,omitempty"`
+	ApiMaxRequestDuration                         *int                                            `json:"api_max_request_duration"`
+	DbMaxPoolSize                                 *int                                            `json:"db_max_pool_size"`
+	DisableSignup                                 *bool                                           `json:"disable_signup"`
+	ExternalAnonymousUsersEnabled                 *bool                                           `json:"external_anonymous_users_enabled"`
+	ExternalAppleAdditionalClientIds              *string                                         `json:"external_apple_additional_client_ids"`
+	ExternalAppleClientId                         *string                                         `json:"external_apple_client_id"`
+	ExternalAppleEnabled                          *bool                                           `json:"external_apple_enabled"`
+	ExternalAppleSecret                           *string                                         `json:"external_apple_secret"`
+	ExternalAzureClientId                         *string                                         `json:"external_azure_client_id"`
+	ExternalAzureEnabled                          *bool                                           `json:"external_azure_enabled"`
+	ExternalAzureSecret                           *string                                         `json:"external_azure_secret"`
+	ExternalAzureUrl                              *string                                         `json:"external_azure_url"`
+	ExternalBitbucketClientId                     *string                                         `json:"external_bitbucket_client_id"`
+	ExternalBitbucketEnabled                      *bool                                           `json:"external_bitbucket_enabled"`
+	ExternalBitbucketSecret                       *string                                         `json:"external_bitbucket_secret"`
+	ExternalDiscordClientId                       *string                                         `json:"external_discord_client_id"`
+	ExternalDiscordEnabled                        *bool                                           `json:"external_discord_enabled"`
+	ExternalDiscordSecret                         *string                                         `json:"external_discord_secret"`
+	ExternalEmailEnabled                          *bool                                           `json:"external_email_enabled"`
+	ExternalFacebookClientId                      *string                                         `json:"external_facebook_client_id"`
+	ExternalFacebookEnabled                       *bool                                           `json:"external_facebook_enabled"`
+	ExternalFacebookSecret                        *string                                         `json:"external_facebook_secret"`
+	ExternalFigmaClientId                         *string                                         `json:"external_figma_client_id"`
+	ExternalFigmaEnabled                          *bool                                           `json:"external_figma_enabled"`
+	ExternalFigmaSecret                           *string                                         `json:"external_figma_secret"`
+	ExternalGithubClientId                        *string                                         `json:"external_github_client_id"`
+	ExternalGithubEnabled                         *bool                                           `json:"external_github_enabled"`
+	ExternalGithubSecret                          *string                                         `json:"external_github_secret"`
+	ExternalGitlabClientId                        *string                                         `json:"external_gitlab_client_id"`
+	ExternalGitlabEnabled                         *bool                                           `json:"external_gitlab_enabled"`
+	ExternalGitlabSecret                          *string                                         `json:"external_gitlab_secret"`
+	ExternalGitlabUrl                             *string                                         `json:"external_gitlab_url"`
+	ExternalGoogleAdditionalClientIds             *string                                         `json:"external_google_additional_client_ids"`
+	ExternalGoogleClientId                        *string                                         `json:"external_google_client_id"`
+	ExternalGoogleEnabled                         *bool                                           `json:"external_google_enabled"`
+	ExternalGoogleSecret                          *string                                         `json:"external_google_secret"`
+	ExternalGoogleSkipNonceCheck                  *bool                                           `json:"external_google_skip_nonce_check"`
+	ExternalKakaoClientId                         *string                                         `json:"external_kakao_client_id"`
+	ExternalKakaoEnabled                          *bool                                           `json:"external_kakao_enabled"`
+	ExternalKakaoSecret                           *string                                         `json:"external_kakao_secret"`
+	ExternalKeycloakClientId                      *string                                         `json:"external_keycloak_client_id"`
+	ExternalKeycloakEnabled                       *bool                                           `json:"external_keycloak_enabled"`
+	ExternalKeycloakSecret                        *string                                         `json:"external_keycloak_secret"`
+	ExternalKeycloakUrl                           *string                                         `json:"external_keycloak_url"`
+	ExternalLinkedinOidcClientId                  *string                                         `json:"external_linkedin_oidc_client_id"`
+	ExternalLinkedinOidcEnabled                   *bool                                           `json:"external_linkedin_oidc_enabled"`
+	ExternalLinkedinOidcSecret                    *string                                         `json:"external_linkedin_oidc_secret"`
+	ExternalNotionClientId                        *string                                         `json:"external_notion_client_id"`
+	ExternalNotionEnabled                         *bool                                           `json:"external_notion_enabled"`
+	ExternalNotionSecret                          *string                                         `json:"external_notion_secret"`
+	ExternalPhoneEnabled                          *bool                                           `json:"external_phone_enabled"`
+	ExternalSlackClientId                         *string                                         `json:"external_slack_client_id"`
+	ExternalSlackEnabled                          *bool                                           `json:"external_slack_enabled"`
+	ExternalSlackOidcClientId                     *string                                         `json:"external_slack_oidc_client_id"`
+	ExternalSlackOidcEnabled                      *bool                                           `json:"external_slack_oidc_enabled"`
+	ExternalSlackOidcSecret                       *string                                         `json:"external_slack_oidc_secret"`
+	ExternalSlackSecret                           *string                                         `json:"external_slack_secret"`
+	ExternalSpotifyClientId                       *string                                         `json:"external_spotify_client_id"`
+	ExternalSpotifyEnabled                        *bool                                           `json:"external_spotify_enabled"`
+	ExternalSpotifySecret                         *string                                         `json:"external_spotify_secret"`
+	ExternalTwitchClientId                        *string                                         `json:"external_twitch_client_id"`
+	ExternalTwitchEnabled                         *bool                                           `json:"external_twitch_enabled"`
+	ExternalTwitchSecret                          *string                                         `json:"external_twitch_secret"`
+	ExternalTwitterClientId                       *string                                         `json:"external_twitter_client_id"`
+	ExternalTwitterEnabled                        *bool                                           `json:"external_twitter_enabled"`
+	ExternalTwitterSecret                         *string                                         `json:"external_twitter_secret"`
+	ExternalWeb3SolanaEnabled                     *bool                                           `json:"external_web3_solana_enabled"`
+	ExternalWorkosClientId                        *string                                         `json:"external_workos_client_id"`
+	ExternalWorkosEnabled                         *bool                                           `json:"external_workos_enabled"`
+	ExternalWorkosSecret                          *string                                         `json:"external_workos_secret"`
+	ExternalWorkosUrl                             *string                                         `json:"external_workos_url"`
+	ExternalZoomClientId                          *string                                         `json:"external_zoom_client_id"`
+	ExternalZoomEnabled                           *bool                                           `json:"external_zoom_enabled"`
+	ExternalZoomSecret                            *string                                         `json:"external_zoom_secret"`
+	HookCustomAccessTokenEnabled                  *bool                                           `json:"hook_custom_access_token_enabled"`
+	HookCustomAccessTokenSecrets                  *string                                         `json:"hook_custom_access_token_secrets"`
+	HookCustomAccessTokenUri                      *string                                         `json:"hook_custom_access_token_uri"`
+	HookMfaVerificationAttemptEnabled             *bool                                           `json:"hook_mfa_verification_attempt_enabled"`
+	HookMfaVerificationAttemptSecrets             *string                                         `json:"hook_mfa_verification_attempt_secrets"`
+	HookMfaVerificationAttemptUri                 *string                                         `json:"hook_mfa_verification_attempt_uri"`
+	HookPasswordVerificationAttemptEnabled        *bool                                           `json:"hook_password_verification_attempt_enabled"`
+	HookPasswordVerificationAttemptSecrets        *string                                         `json:"hook_password_verification_attempt_secrets"`
+	HookPasswordVerificationAttemptUri            *string                                         `json:"hook_password_verification_attempt_uri"`
+	HookSendEmailEnabled                          *bool                                           `json:"hook_send_email_enabled"`
+	HookSendEmailSecrets                          *string                                         `json:"hook_send_email_secrets"`
+	HookSendEmailUri                              *string                                         `json:"hook_send_email_uri"`
+	HookSendSmsEnabled                            *bool                                           `json:"hook_send_sms_enabled"`
+	HookSendSmsSecrets                            *string                                         `json:"hook_send_sms_secrets"`
+	HookSendSmsUri                                *string                                         `json:"hook_send_sms_uri"`
+	JwtExp                                        *int                                            `json:"jwt_exp"`
+	MailerAllowUnverifiedEmailSignIns             *bool                                           `json:"mailer_allow_unverified_email_sign_ins"`
+	MailerAutoconfirm                             *bool                                           `json:"mailer_autoconfirm"`
 	MailerOtpExp                                  *int                                            `json:"mailer_otp_exp,omitempty"`
-	MailerOtpLength                               *int                                            `json:"mailer_otp_length,omitempty"`
-	MailerSecureEmailChangeEnabled                *bool                                           `json:"mailer_secure_email_change_enabled,omitempty"`
-	MailerSubjectsConfirmation                    *string                                         `json:"mailer_subjects_confirmation,omitempty"`
-	MailerSubjectsEmailChange                     *string                                         `json:"mailer_subjects_email_change,omitempty"`
-	MailerSubjectsInvite                          *string                                         `json:"mailer_subjects_invite,omitempty"`
-	MailerSubjectsMagicLink                       *string                                         `json:"mailer_subjects_magic_link,omitempty"`
-	MailerSubjectsReauthentication                *string                                         `json:"mailer_subjects_reauthentication,omitempty"`
-	MailerSubjectsRecovery                        *string                                         `json:"mailer_subjects_recovery,omitempty"`
-	MailerTemplatesConfirmationContent            *string                                         `json:"mailer_templates_confirmation_content,omitempty"`
-	MailerTemplatesEmailChangeContent             *string                                         `json:"mailer_templates_email_change_content,omitempty"`
-	MailerTemplatesInviteContent                  *string                                         `json:"mailer_templates_invite_content,omitempty"`
-	MailerTemplatesMagicLinkContent               *string                                         `json:"mailer_templates_magic_link_content,omitempty"`
-	MailerTemplatesReauthenticationContent        *string                                         `json:"mailer_templates_reauthentication_content,omitempty"`
-	MailerTemplatesRecoveryContent                *string                                         `json:"mailer_templates_recovery_content,omitempty"`
-	MfaMaxEnrolledFactors                         *int                                            `json:"mfa_max_enrolled_factors,omitempty"`
-	MfaPhoneEnrollEnabled                         *bool                                           `json:"mfa_phone_enroll_enabled,omitempty"`
-	MfaPhoneMaxFrequency                          *int                                            `json:"mfa_phone_max_frequency,omitempty"`
-	MfaPhoneOtpLength                             *int                                            `json:"mfa_phone_otp_length,omitempty"`
-	MfaPhoneTemplate                              *string                                         `json:"mfa_phone_template,omitempty"`
-	MfaPhoneVerifyEnabled                         *bool                                           `json:"mfa_phone_verify_enabled,omitempty"`
-	MfaTotpEnrollEnabled                          *bool                                           `json:"mfa_totp_enroll_enabled,omitempty"`
-	MfaTotpVerifyEnabled                          *bool                                           `json:"mfa_totp_verify_enabled,omitempty"`
-	MfaWebAuthnEnrollEnabled                      *bool                                           `json:"mfa_web_authn_enroll_enabled,omitempty"`
-	MfaWebAuthnVerifyEnabled                      *bool                                           `json:"mfa_web_authn_verify_enabled,omitempty"`
-	PasswordHibpEnabled                           *bool                                           `json:"password_hibp_enabled,omitempty"`
-	PasswordMinLength                             *int                                            `json:"password_min_length,omitempty"`
-	PasswordRequiredCharacters                    *UpdateAuthConfigBodyPasswordRequiredCharacters `json:"password_required_characters,omitempty"`
-	RateLimitAnonymousUsers                       *int                                            `json:"rate_limit_anonymous_users,omitempty"`
-	RateLimitEmailSent                            *int                                            `json:"rate_limit_email_sent,omitempty"`
-	RateLimitOtp                                  *int                                            `json:"rate_limit_otp,omitempty"`
-	RateLimitSmsSent                              *int                                            `json:"rate_limit_sms_sent,omitempty"`
-	RateLimitTokenRefresh                         *int                                            `json:"rate_limit_token_refresh,omitempty"`
-	RateLimitVerify                               *int                                            `json:"rate_limit_verify,omitempty"`
-	RefreshTokenRotationEnabled                   *bool                                           `json:"refresh_token_rotation_enabled,omitempty"`
-	SamlEnabled                                   *bool                                           `json:"saml_enabled,omitempty"`
-	SamlExternalUrl                               *string                                         `json:"saml_external_url,omitempty"`
-	SecurityCaptchaEnabled                        *bool                                           `json:"security_captcha_enabled,omitempty"`
-	SecurityCaptchaProvider                       *string                                         `json:"security_captcha_provider,omitempty"`
-	SecurityCaptchaSecret                         *string                                         `json:"security_captcha_secret,omitempty"`
-	SecurityManualLinkingEnabled                  *bool                                           `json:"security_manual_linking_enabled,omitempty"`
-	SecurityRefreshTokenReuseInterval             *int                                            `json:"security_refresh_token_reuse_interval,omitempty"`
-	SecurityUpdatePasswordRequireReauthentication *bool                                           `json:"security_update_password_require_reauthentication,omitempty"`
-	SessionsInactivityTimeout                     *int                                            `json:"sessions_inactivity_timeout,omitempty"`
-	SessionsSinglePerUser                         *bool                                           `json:"sessions_single_per_user,omitempty"`
-	SessionsTags                                  *string                                         `json:"sessions_tags,omitempty"`
-	SessionsTimebox                               *int                                            `json:"sessions_timebox,omitempty"`
-	SiteUrl                                       *string                                         `json:"site_url,omitempty"`
-	SmsAutoconfirm                                *bool                                           `json:"sms_autoconfirm,omitempty"`
-	SmsMaxFrequency                               *int                                            `json:"sms_max_frequency,omitempty"`
-	SmsMessagebirdAccessKey                       *string                                         `json:"sms_messagebird_access_key,omitempty"`
-	SmsMessagebirdOriginator                      *string                                         `json:"sms_messagebird_originator,omitempty"`
-	SmsOtpExp                                     *int                                            `json:"sms_otp_exp,omitempty"`
+	MailerOtpLength                               *int                                            `json:"mailer_otp_length"`
+	MailerSecureEmailChangeEnabled                *bool                                           `json:"mailer_secure_email_change_enabled"`
+	MailerSubjectsConfirmation                    *string                                         `json:"mailer_subjects_confirmation"`
+	MailerSubjectsEmailChange                     *string                                         `json:"mailer_subjects_email_change"`
+	MailerSubjectsInvite                          *string                                         `json:"mailer_subjects_invite"`
+	MailerSubjectsMagicLink                       *string                                         `json:"mailer_subjects_magic_link"`
+	MailerSubjectsReauthentication                *string                                         `json:"mailer_subjects_reauthentication"`
+	MailerSubjectsRecovery                        *string                                         `json:"mailer_subjects_recovery"`
+	MailerTemplatesConfirmationContent            *string                                         `json:"mailer_templates_confirmation_content"`
+	MailerTemplatesEmailChangeContent             *string                                         `json:"mailer_templates_email_change_content"`
+	MailerTemplatesInviteContent                  *string                                         `json:"mailer_templates_invite_content"`
+	MailerTemplatesMagicLinkContent               *string                                         `json:"mailer_templates_magic_link_content"`
+	MailerTemplatesReauthenticationContent        *string                                         `json:"mailer_templates_reauthentication_content"`
+	MailerTemplatesRecoveryContent                *string                                         `json:"mailer_templates_recovery_content"`
+	MfaMaxEnrolledFactors                         *int                                            `json:"mfa_max_enrolled_factors"`
+	MfaPhoneEnrollEnabled                         *bool                                           `json:"mfa_phone_enroll_enabled"`
+	MfaPhoneMaxFrequency                          *int                                            `json:"mfa_phone_max_frequency"`
+	MfaPhoneOtpLength                             *int                                            `json:"mfa_phone_otp_length"`
+	MfaPhoneTemplate                              *string                                         `json:"mfa_phone_template"`
+	MfaPhoneVerifyEnabled                         *bool                                           `json:"mfa_phone_verify_enabled"`
+	MfaTotpEnrollEnabled                          *bool                                           `json:"mfa_totp_enroll_enabled"`
+	MfaTotpVerifyEnabled                          *bool                                           `json:"mfa_totp_verify_enabled"`
+	MfaWebAuthnEnrollEnabled                      *bool                                           `json:"mfa_web_authn_enroll_enabled"`
+	MfaWebAuthnVerifyEnabled                      *bool                                           `json:"mfa_web_authn_verify_enabled"`
+	PasswordHibpEnabled                           *bool                                           `json:"password_hibp_enabled"`
+	PasswordMinLength                             *int                                            `json:"password_min_length"`
+	PasswordRequiredCharacters                    *UpdateAuthConfigBodyPasswordRequiredCharacters `json:"password_required_characters"`
+	RateLimitAnonymousUsers                       *int                                            `json:"rate_limit_anonymous_users"`
+	RateLimitEmailSent                            *int                                            `json:"rate_limit_email_sent"`
+	RateLimitOtp                                  *int                                            `json:"rate_limit_otp"`
+	RateLimitSmsSent                              *int                                            `json:"rate_limit_sms_sent"`
+	RateLimitTokenRefresh                         *int                                            `json:"rate_limit_token_refresh"`
+	RateLimitVerify                               *int                                            `json:"rate_limit_verify"`
+	RateLimitWeb3                                 *int                                            `json:"rate_limit_web3"`
+	RefreshTokenRotationEnabled                   *bool                                           `json:"refresh_token_rotation_enabled"`
+	SamlEnabled                                   *bool                                           `json:"saml_enabled"`
+	SamlExternalUrl                               *string                                         `json:"saml_external_url"`
+	SecurityCaptchaEnabled                        *bool                                           `json:"security_captcha_enabled"`
+	SecurityCaptchaProvider                       *UpdateAuthConfigBodySecurityCaptchaProvider    `json:"security_captcha_provider"`
+	SecurityCaptchaSecret                         *string                                         `json:"security_captcha_secret"`
+	SecurityManualLinkingEnabled                  *bool                                           `json:"security_manual_linking_enabled"`
+	SecurityRefreshTokenReuseInterval             *int                                            `json:"security_refresh_token_reuse_interval"`
+	SecurityUpdatePasswordRequireReauthentication *bool                                           `json:"security_update_password_require_reauthentication"`
+	SessionsInactivityTimeout                     *int                                            `json:"sessions_inactivity_timeout"`
+	SessionsSinglePerUser                         *bool                                           `json:"sessions_single_per_user"`
+	SessionsTags                                  *string                                         `json:"sessions_tags"`
+	SessionsTimebox                               *int                                            `json:"sessions_timebox"`
+	SiteUrl                                       *string                                         `json:"site_url"`
+	SmsAutoconfirm                                *bool                                           `json:"sms_autoconfirm"`
+	SmsMaxFrequency                               *int                                            `json:"sms_max_frequency"`
+	SmsMessagebirdAccessKey                       *string                                         `json:"sms_messagebird_access_key"`
+	SmsMessagebirdOriginator                      *string                                         `json:"sms_messagebird_originator"`
+	SmsOtpExp                                     *int                                            `json:"sms_otp_exp"`
 	SmsOtpLength                                  *int                                            `json:"sms_otp_length,omitempty"`
-	SmsProvider                                   *string                                         `json:"sms_provider,omitempty"`
-	SmsTemplate                                   *string                                         `json:"sms_template,omitempty"`
-	SmsTestOtp                                    *string                                         `json:"sms_test_otp,omitempty"`
-	SmsTestOtpValidUntil                          *string                                         `json:"sms_test_otp_valid_until,omitempty"`
-	SmsTextlocalApiKey                            *string                                         `json:"sms_textlocal_api_key,omitempty"`
-	SmsTextlocalSender                            *string                                         `json:"sms_textlocal_sender,omitempty"`
-	SmsTwilioAccountSid                           *string                                         `json:"sms_twilio_account_sid,omitempty"`
-	SmsTwilioAuthToken                            *string                                         `json:"sms_twilio_auth_token,omitempty"`
-	SmsTwilioContentSid                           *string                                         `json:"sms_twilio_content_sid,omitempty"`
-	SmsTwilioMessageServiceSid                    *string                                         `json:"sms_twilio_message_service_sid,omitempty"`
-	SmsTwilioVerifyAccountSid                     *string                                         `json:"sms_twilio_verify_account_sid,omitempty"`
-	SmsTwilioVerifyAuthToken                      *string                                         `json:"sms_twilio_verify_auth_token,omitempty"`
-	SmsTwilioVerifyMessageServiceSid              *string                                         `json:"sms_twilio_verify_message_service_sid,omitempty"`
-	SmsVonageApiKey                               *string                                         `json:"sms_vonage_api_key,omitempty"`
-	SmsVonageApiSecret                            *string                                         `json:"sms_vonage_api_secret,omitempty"`
-	SmsVonageFrom                                 *string                                         `json:"sms_vonage_from,omitempty"`
-	SmtpAdminEmail                                *string                                         `json:"smtp_admin_email,omitempty"`
-	SmtpHost                                      *string                                         `json:"smtp_host,omitempty"`
-	SmtpMaxFrequency                              *int                                            `json:"smtp_max_frequency,omitempty"`
-	SmtpPass                                      *string                                         `json:"smtp_pass,omitempty"`
-	SmtpPort                                      *string                                         `json:"smtp_port,omitempty"`
-	SmtpSenderName                                *string                                         `json:"smtp_sender_name,omitempty"`
-	SmtpUser                                      *string                                         `json:"smtp_user,omitempty"`
-	UriAllowList                                  *string                                         `json:"uri_allow_list,omitempty"`
+	SmsProvider                                   *UpdateAuthConfigBodySmsProvider                `json:"sms_provider"`
+	SmsTemplate                                   *string                                         `json:"sms_template"`
+	SmsTestOtp                                    *string                                         `json:"sms_test_otp"`
+	SmsTestOtpValidUntil                          *time.Time                                      `json:"sms_test_otp_valid_until"`
+	SmsTextlocalApiKey                            *string                                         `json:"sms_textlocal_api_key"`
+	SmsTextlocalSender                            *string                                         `json:"sms_textlocal_sender"`
+	SmsTwilioAccountSid                           *string                                         `json:"sms_twilio_account_sid"`
+	SmsTwilioAuthToken                            *string                                         `json:"sms_twilio_auth_token"`
+	SmsTwilioContentSid                           *string                                         `json:"sms_twilio_content_sid"`
+	SmsTwilioMessageServiceSid                    *string                                         `json:"sms_twilio_message_service_sid"`
+	SmsTwilioVerifyAccountSid                     *string                                         `json:"sms_twilio_verify_account_sid"`
+	SmsTwilioVerifyAuthToken                      *string                                         `json:"sms_twilio_verify_auth_token"`
+	SmsTwilioVerifyMessageServiceSid              *string                                         `json:"sms_twilio_verify_message_service_sid"`
+	SmsVonageApiKey                               *string                                         `json:"sms_vonage_api_key"`
+	SmsVonageApiSecret                            *string                                         `json:"sms_vonage_api_secret"`
+	SmsVonageFrom                                 *string                                         `json:"sms_vonage_from"`
+	SmtpAdminEmail                                *string                                         `json:"smtp_admin_email"`
+	SmtpHost                                      *string                                         `json:"smtp_host"`
+	SmtpMaxFrequency                              *int                                            `json:"smtp_max_frequency"`
+	SmtpPass                                      *string                                         `json:"smtp_pass"`
+	SmtpPort                                      *string                                         `json:"smtp_port"`
+	SmtpSenderName                                *string                                         `json:"smtp_sender_name"`
+	SmtpUser                                      *string                                         `json:"smtp_user"`
+	UriAllowList                                  *string                                         `json:"uri_allow_list"`
 }
 
 // UpdateAuthConfigBodyPasswordRequiredCharacters defines model for UpdateAuthConfigBody.PasswordRequiredCharacters.
 type UpdateAuthConfigBodyPasswordRequiredCharacters string
+
+// UpdateAuthConfigBodySecurityCaptchaProvider defines model for UpdateAuthConfigBody.SecurityCaptchaProvider.
+type UpdateAuthConfigBodySecurityCaptchaProvider string
+
+// UpdateAuthConfigBodySmsProvider defines model for UpdateAuthConfigBody.SmsProvider.
+type UpdateAuthConfigBodySmsProvider string
 
 // UpdateBranchBody defines model for UpdateBranchBody.
 type UpdateBranchBody struct {
@@ -1616,9 +2296,35 @@ type UpdateCustomHostnameBody struct {
 
 // UpdateCustomHostnameResponse defines model for UpdateCustomHostnameResponse.
 type UpdateCustomHostnameResponse struct {
-	CustomHostname string                             `json:"custom_hostname"`
-	Data           CfResponse                         `json:"data"`
-	Status         UpdateCustomHostnameResponseStatus `json:"status"`
+	CustomHostname string `json:"custom_hostname"`
+	Data           struct {
+		Errors   []interface{} `json:"errors"`
+		Messages []interface{} `json:"messages"`
+		Result   struct {
+			CustomOriginServer    string `json:"custom_origin_server"`
+			Hostname              string `json:"hostname"`
+			Id                    string `json:"id"`
+			OwnershipVerification struct {
+				Name  string `json:"name"`
+				Type  string `json:"type"`
+				Value string `json:"value"`
+			} `json:"ownership_verification"`
+			Ssl struct {
+				Status           string `json:"status"`
+				ValidationErrors *[]struct {
+					Message string `json:"message"`
+				} `json:"validation_errors,omitempty"`
+				ValidationRecords []struct {
+					TxtName  string `json:"txt_name"`
+					TxtValue string `json:"txt_value"`
+				} `json:"validation_records"`
+			} `json:"ssl"`
+			Status             string    `json:"status"`
+			VerificationErrors *[]string `json:"verification_errors,omitempty"`
+		} `json:"result"`
+		Success bool `json:"success"`
+	} `json:"data"`
+	Status UpdateCustomHostnameResponseStatus `json:"status"`
 }
 
 // UpdateCustomHostnameResponseStatus defines model for UpdateCustomHostnameResponse.Status.
@@ -1660,125 +2366,187 @@ type UpdatePostgresConfigBody struct {
 // UpdatePostgresConfigBodySessionReplicationRole defines model for UpdatePostgresConfigBody.SessionReplicationRole.
 type UpdatePostgresConfigBodySessionReplicationRole string
 
-// UpdatePostgrestConfigBody defines model for UpdatePostgrestConfigBody.
-type UpdatePostgrestConfigBody struct {
-	DbExtraSearchPath *string `json:"db_extra_search_path,omitempty"`
-	DbPool            *int    `json:"db_pool,omitempty"`
-	DbSchema          *string `json:"db_schema,omitempty"`
-	MaxRows           *int    `json:"max_rows,omitempty"`
-}
-
 // UpdateProviderBody defines model for UpdateProviderBody.
 type UpdateProviderBody struct {
-	AttributeMapping *AttributeMapping `json:"attribute_mapping,omitempty"`
-	Domains          *[]string         `json:"domains,omitempty"`
-	MetadataUrl      *string           `json:"metadata_url,omitempty"`
-	MetadataXml      *string           `json:"metadata_xml,omitempty"`
+	AttributeMapping *struct {
+		Keys map[string]struct {
+			Array   *bool                                             `json:"array,omitempty"`
+			Default *UpdateProviderBody_AttributeMapping_Keys_Default `json:"default,omitempty"`
+			Name    *string                                           `json:"name,omitempty"`
+			Names   *[]string                                         `json:"names,omitempty"`
+		} `json:"keys"`
+	} `json:"attribute_mapping,omitempty"`
+	Domains     *[]string `json:"domains,omitempty"`
+	MetadataUrl *string   `json:"metadata_url,omitempty"`
+	MetadataXml *string   `json:"metadata_xml,omitempty"`
+}
+
+// UpdateProviderBodyAttributeMappingKeysDefault0 defines model for .
+type UpdateProviderBodyAttributeMappingKeysDefault0 = map[string]interface{}
+
+// UpdateProviderBodyAttributeMappingKeysDefault1 defines model for .
+type UpdateProviderBodyAttributeMappingKeysDefault1 = float32
+
+// UpdateProviderBodyAttributeMappingKeysDefault2 defines model for .
+type UpdateProviderBodyAttributeMappingKeysDefault2 = string
+
+// UpdateProviderBodyAttributeMappingKeysDefault3 defines model for .
+type UpdateProviderBodyAttributeMappingKeysDefault3 = bool
+
+// UpdateProviderBody_AttributeMapping_Keys_Default defines model for UpdateProviderBody.AttributeMapping.Keys.Default.
+type UpdateProviderBody_AttributeMapping_Keys_Default struct {
+	union json.RawMessage
 }
 
 // UpdateProviderResponse defines model for UpdateProviderResponse.
 type UpdateProviderResponse struct {
-	CreatedAt *string         `json:"created_at,omitempty"`
-	Domains   *[]Domain       `json:"domains,omitempty"`
-	Id        string          `json:"id"`
-	Saml      *SamlDescriptor `json:"saml,omitempty"`
-	UpdatedAt *string         `json:"updated_at,omitempty"`
+	CreatedAt *string `json:"created_at,omitempty"`
+	Domains   *[]struct {
+		CreatedAt *string `json:"created_at,omitempty"`
+		Domain    *string `json:"domain,omitempty"`
+		Id        string  `json:"id"`
+		UpdatedAt *string `json:"updated_at,omitempty"`
+	} `json:"domains,omitempty"`
+	Id   string `json:"id"`
+	Saml *struct {
+		AttributeMapping *struct {
+			Keys map[string]struct {
+				Array   *bool                                                      `json:"array,omitempty"`
+				Default *UpdateProviderResponse_Saml_AttributeMapping_Keys_Default `json:"default,omitempty"`
+				Name    *string                                                    `json:"name,omitempty"`
+				Names   *[]string                                                  `json:"names,omitempty"`
+			} `json:"keys"`
+		} `json:"attribute_mapping,omitempty"`
+		EntityId    string  `json:"entity_id"`
+		Id          string  `json:"id"`
+		MetadataUrl *string `json:"metadata_url,omitempty"`
+		MetadataXml *string `json:"metadata_xml,omitempty"`
+	} `json:"saml,omitempty"`
+	UpdatedAt *string `json:"updated_at,omitempty"`
 }
+
+// UpdateProviderResponseSamlAttributeMappingKeysDefault0 defines model for .
+type UpdateProviderResponseSamlAttributeMappingKeysDefault0 = map[string]interface{}
+
+// UpdateProviderResponseSamlAttributeMappingKeysDefault1 defines model for .
+type UpdateProviderResponseSamlAttributeMappingKeysDefault1 = float32
+
+// UpdateProviderResponseSamlAttributeMappingKeysDefault2 defines model for .
+type UpdateProviderResponseSamlAttributeMappingKeysDefault2 = string
+
+// UpdateProviderResponseSamlAttributeMappingKeysDefault3 defines model for .
+type UpdateProviderResponseSamlAttributeMappingKeysDefault3 = bool
+
+// UpdateProviderResponse_Saml_AttributeMapping_Keys_Default defines model for UpdateProviderResponse.Saml.AttributeMapping.Keys.Default.
+type UpdateProviderResponse_Saml_AttributeMapping_Keys_Default struct {
+	union json.RawMessage
+}
+
+// UpdateSigningKeyBody defines model for UpdateSigningKeyBody.
+type UpdateSigningKeyBody struct {
+	Status UpdateSigningKeyBodyStatus `json:"status"`
+}
+
+// UpdateSigningKeyBodyStatus defines model for UpdateSigningKeyBody.Status.
+type UpdateSigningKeyBodyStatus string
 
 // UpdateStorageConfigBody defines model for UpdateStorageConfigBody.
 type UpdateStorageConfigBody struct {
-	Features      *StorageFeatures `json:"features,omitempty"`
-	FileSizeLimit *int64           `json:"fileSizeLimit,omitempty"`
+	Features *struct {
+		ImageTransformation struct {
+			Enabled bool `json:"enabled"`
+		} `json:"imageTransformation"`
+		S3Protocol struct {
+			Enabled bool `json:"enabled"`
+		} `json:"s3Protocol"`
+	} `json:"features,omitempty"`
+	FileSizeLimit *int `json:"fileSizeLimit,omitempty"`
 }
 
 // UpdateSupavisorConfigBody defines model for UpdateSupavisorConfigBody.
 type UpdateSupavisorConfigBody struct {
 	DefaultPoolSize *int `json:"default_pool_size"`
 
-	// PoolMode This field is deprecated and is ignored in this request
-	// Deprecated:
+	// PoolMode Dedicated pooler mode for the project
 	PoolMode *UpdateSupavisorConfigBodyPoolMode `json:"pool_mode,omitempty"`
 }
 
-// UpdateSupavisorConfigBodyPoolMode This field is deprecated and is ignored in this request
+// UpdateSupavisorConfigBodyPoolMode Dedicated pooler mode for the project
 type UpdateSupavisorConfigBodyPoolMode string
 
 // UpdateSupavisorConfigResponse defines model for UpdateSupavisorConfigResponse.
 type UpdateSupavisorConfigResponse struct {
-	DefaultPoolSize *int                                  `json:"default_pool_size"`
-	PoolMode        UpdateSupavisorConfigResponsePoolMode `json:"pool_mode"`
+	DefaultPoolSize *int   `json:"default_pool_size"`
+	PoolMode        string `json:"pool_mode"`
 }
-
-// UpdateSupavisorConfigResponsePoolMode defines model for UpdateSupavisorConfigResponse.PoolMode.
-type UpdateSupavisorConfigResponsePoolMode string
 
 // UpgradeDatabaseBody defines model for UpgradeDatabaseBody.
 type UpgradeDatabaseBody struct {
-	ReleaseChannel ReleaseChannel `json:"release_channel"`
-	TargetVersion  string         `json:"target_version"`
+	ReleaseChannel *UpgradeDatabaseBodyReleaseChannel `json:"release_channel,omitempty"`
+	TargetVersion  string                             `json:"target_version"`
 }
+
+// UpgradeDatabaseBodyReleaseChannel defines model for UpgradeDatabaseBody.ReleaseChannel.
+type UpgradeDatabaseBodyReleaseChannel string
 
 // V1AnalyticsResponse defines model for V1AnalyticsResponse.
 type V1AnalyticsResponse struct {
 	Error  *V1AnalyticsResponse_Error `json:"error,omitempty"`
-	Result *[]map[string]interface{}  `json:"result,omitempty"`
+	Result *[]interface{}             `json:"result,omitempty"`
 }
 
 // V1AnalyticsResponseError0 defines model for .
-type V1AnalyticsResponseError0 struct {
-	Code   *float32 `json:"code,omitempty"`
-	Errors *[]struct {
-		Domain       *string `json:"domain,omitempty"`
-		Location     *string `json:"location,omitempty"`
-		LocationType *string `json:"locationType,omitempty"`
-		Message      *string `json:"message,omitempty"`
-		Reason       *string `json:"reason,omitempty"`
-	} `json:"errors,omitempty"`
-	Message *string `json:"message,omitempty"`
-	Status  *string `json:"status,omitempty"`
-}
+type V1AnalyticsResponseError0 = string
 
 // V1AnalyticsResponseError1 defines model for .
-type V1AnalyticsResponseError1 = string
+type V1AnalyticsResponseError1 struct {
+	Code   float32 `json:"code"`
+	Errors []struct {
+		Domain       string `json:"domain"`
+		Location     string `json:"location"`
+		LocationType string `json:"locationType"`
+		Message      string `json:"message"`
+		Reason       string `json:"reason"`
+	} `json:"errors"`
+	Message string `json:"message"`
+	Status  string `json:"status"`
+}
 
 // V1AnalyticsResponse_Error defines model for V1AnalyticsResponse.Error.
 type V1AnalyticsResponse_Error struct {
 	union json.RawMessage
 }
 
-// V1Backup defines model for V1Backup.
-type V1Backup struct {
-	InsertedAt       string         `json:"inserted_at"`
-	IsPhysicalBackup bool           `json:"is_physical_backup"`
-	Status           V1BackupStatus `json:"status"`
-}
-
-// V1BackupStatus defines model for V1Backup.Status.
-type V1BackupStatus string
-
 // V1BackupsResponse defines model for V1BackupsResponse.
 type V1BackupsResponse struct {
-	Backups            []V1Backup       `json:"backups"`
-	PhysicalBackupData V1PhysicalBackup `json:"physical_backup_data"`
-	PitrEnabled        bool             `json:"pitr_enabled"`
-	Region             string           `json:"region"`
-	WalgEnabled        bool             `json:"walg_enabled"`
+	Backups []struct {
+		InsertedAt       string                         `json:"inserted_at"`
+		IsPhysicalBackup bool                           `json:"is_physical_backup"`
+		Status           V1BackupsResponseBackupsStatus `json:"status"`
+	} `json:"backups"`
+	PhysicalBackupData struct {
+		EarliestPhysicalBackupDateUnix *int `json:"earliest_physical_backup_date_unix,omitempty"`
+		LatestPhysicalBackupDateUnix   *int `json:"latest_physical_backup_date_unix,omitempty"`
+	} `json:"physical_backup_data"`
+	PitrEnabled bool   `json:"pitr_enabled"`
+	Region      string `json:"region"`
+	WalgEnabled bool   `json:"walg_enabled"`
 }
 
-// V1CreateFunctionBody defines model for V1CreateFunctionBody.
-type V1CreateFunctionBody struct {
-	Body              string   `json:"body"`
-	ComputeMultiplier *float32 `json:"compute_multiplier,omitempty"`
-	Name              string   `json:"name"`
-	Slug              string   `json:"slug"`
-	VerifyJwt         *bool    `json:"verify_jwt,omitempty"`
+// V1BackupsResponseBackupsStatus defines model for V1BackupsResponse.Backups.Status.
+type V1BackupsResponseBackupsStatus string
+
+// V1CreateMigrationBody defines model for V1CreateMigrationBody.
+type V1CreateMigrationBody struct {
+	Name  *string `json:"name,omitempty"`
+	Query string  `json:"query"`
 }
 
-// V1CreateProjectBodyDto defines model for V1CreateProjectBodyDto.
-type V1CreateProjectBodyDto struct {
+// V1CreateProjectBody defines model for V1CreateProjectBody.
+type V1CreateProjectBody struct {
 	// DbPass Database password
-	DbPass              string                                     `json:"db_pass"`
-	DesiredInstanceSize *V1CreateProjectBodyDtoDesiredInstanceSize `json:"desired_instance_size,omitempty"`
+	DbPass              string                                  `json:"db_pass"`
+	DesiredInstanceSize *V1CreateProjectBodyDesiredInstanceSize `json:"desired_instance_size,omitempty"`
 
 	// KpsEnabled This field is deprecated and is ignored in this request
 	// Deprecated:
@@ -1792,37 +2560,28 @@ type V1CreateProjectBodyDto struct {
 
 	// Plan Subscription Plan is now set on organization level and is ignored in this request
 	// Deprecated:
-	Plan *V1CreateProjectBodyDtoPlan `json:"plan,omitempty"`
+	Plan *V1CreateProjectBodyPlan `json:"plan,omitempty"`
 
 	// Region Region you want your server to reside in
-	Region V1CreateProjectBodyDtoRegion `json:"region"`
+	Region V1CreateProjectBodyRegion `json:"region"`
 
 	// TemplateUrl Template URL used to create the project from the CLI.
 	TemplateUrl *string `json:"template_url,omitempty"`
 }
 
-// V1CreateProjectBodyDtoDesiredInstanceSize defines model for V1CreateProjectBodyDto.DesiredInstanceSize.
-type V1CreateProjectBodyDtoDesiredInstanceSize string
+// V1CreateProjectBodyDesiredInstanceSize defines model for V1CreateProjectBody.DesiredInstanceSize.
+type V1CreateProjectBodyDesiredInstanceSize string
 
-// V1CreateProjectBodyDtoPlan Subscription Plan is now set on organization level and is ignored in this request
-type V1CreateProjectBodyDtoPlan string
+// V1CreateProjectBodyPlan Subscription Plan is now set on organization level and is ignored in this request
+type V1CreateProjectBodyPlan string
 
-// V1CreateProjectBodyDtoRegion Region you want your server to reside in
-type V1CreateProjectBodyDtoRegion string
+// V1CreateProjectBodyRegion Region you want your server to reside in
+type V1CreateProjectBodyRegion string
 
-// V1DatabaseResponse defines model for V1DatabaseResponse.
-type V1DatabaseResponse struct {
-	// Host Database host
-	Host string `json:"host"`
-
-	// PostgresEngine Database engine
-	PostgresEngine string `json:"postgres_engine"`
-
-	// ReleaseChannel Release channel
-	ReleaseChannel string `json:"release_channel"`
-
-	// Version Database version
-	Version string `json:"version"`
+// V1ListMigrationsResponse defines model for V1ListMigrationsResponse.
+type V1ListMigrationsResponse = []struct {
+	Name    *string `json:"name,omitempty"`
+	Version string  `json:"version"`
 }
 
 // V1OrganizationMemberResponse defines model for V1OrganizationMemberResponse.
@@ -1836,15 +2595,21 @@ type V1OrganizationMemberResponse struct {
 
 // V1OrganizationSlugResponse defines model for V1OrganizationSlugResponse.
 type V1OrganizationSlugResponse struct {
-	AllowedReleaseChannels []ReleaseChannel                      `json:"allowed_release_channels"`
-	Id                     string                                `json:"id"`
-	Name                   string                                `json:"name"`
-	OptInTags              []V1OrganizationSlugResponseOptInTags `json:"opt_in_tags"`
-	Plan                   *BillingPlanId                        `json:"plan,omitempty"`
+	AllowedReleaseChannels []V1OrganizationSlugResponseAllowedReleaseChannels `json:"allowed_release_channels"`
+	Id                     string                                             `json:"id"`
+	Name                   string                                             `json:"name"`
+	OptInTags              []V1OrganizationSlugResponseOptInTags              `json:"opt_in_tags"`
+	Plan                   *V1OrganizationSlugResponsePlan                    `json:"plan,omitempty"`
 }
+
+// V1OrganizationSlugResponseAllowedReleaseChannels defines model for V1OrganizationSlugResponse.AllowedReleaseChannels.
+type V1OrganizationSlugResponseAllowedReleaseChannels string
 
 // V1OrganizationSlugResponseOptInTags defines model for V1OrganizationSlugResponse.OptInTags.
 type V1OrganizationSlugResponseOptInTags string
+
+// V1OrganizationSlugResponsePlan defines model for V1OrganizationSlugResponse.Plan.
+type V1OrganizationSlugResponsePlan string
 
 // V1PgbouncerConfigResponse defines model for V1PgbouncerConfigResponse.
 type V1PgbouncerConfigResponse struct {
@@ -1858,12 +2623,6 @@ type V1PgbouncerConfigResponse struct {
 // V1PgbouncerConfigResponsePoolMode defines model for V1PgbouncerConfigResponse.PoolMode.
 type V1PgbouncerConfigResponsePoolMode string
 
-// V1PhysicalBackup defines model for V1PhysicalBackup.
-type V1PhysicalBackup struct {
-	EarliestPhysicalBackupDateUnix *int64 `json:"earliest_physical_backup_date_unix,omitempty"`
-	LatestPhysicalBackupDateUnix   *int64 `json:"latest_physical_backup_date_unix,omitempty"`
-}
-
 // V1PostgrestConfigResponse defines model for V1PostgrestConfigResponse.
 type V1PostgrestConfigResponse struct {
 	DbExtraSearchPath string `json:"db_extra_search_path"`
@@ -1874,9 +2633,47 @@ type V1PostgrestConfigResponse struct {
 	MaxRows  int    `json:"max_rows"`
 }
 
+// V1ProjectAdvisorsResponse defines model for V1ProjectAdvisorsResponse.
+type V1ProjectAdvisorsResponse struct {
+	Lints []struct {
+		CacheKey    string                                     `json:"cache_key"`
+		Categories  []V1ProjectAdvisorsResponseLintsCategories `json:"categories"`
+		Description string                                     `json:"description"`
+		Detail      string                                     `json:"detail"`
+		Facing      V1ProjectAdvisorsResponseLintsFacing       `json:"facing"`
+		Level       V1ProjectAdvisorsResponseLintsLevel        `json:"level"`
+		Metadata    *struct {
+			Entity      *string                                     `json:"entity,omitempty"`
+			FkeyColumns *[]float32                                  `json:"fkey_columns,omitempty"`
+			FkeyName    *string                                     `json:"fkey_name,omitempty"`
+			Name        *string                                     `json:"name,omitempty"`
+			Schema      *string                                     `json:"schema,omitempty"`
+			Type        *V1ProjectAdvisorsResponseLintsMetadataType `json:"type,omitempty"`
+		} `json:"metadata,omitempty"`
+		Name        V1ProjectAdvisorsResponseLintsName `json:"name"`
+		Remediation string                             `json:"remediation"`
+		Title       string                             `json:"title"`
+	} `json:"lints"`
+}
+
+// V1ProjectAdvisorsResponseLintsCategories defines model for V1ProjectAdvisorsResponse.Lints.Categories.
+type V1ProjectAdvisorsResponseLintsCategories string
+
+// V1ProjectAdvisorsResponseLintsFacing defines model for V1ProjectAdvisorsResponse.Lints.Facing.
+type V1ProjectAdvisorsResponseLintsFacing string
+
+// V1ProjectAdvisorsResponseLintsLevel defines model for V1ProjectAdvisorsResponse.Lints.Level.
+type V1ProjectAdvisorsResponseLintsLevel string
+
+// V1ProjectAdvisorsResponseLintsMetadataType defines model for V1ProjectAdvisorsResponse.Lints.Metadata.Type.
+type V1ProjectAdvisorsResponseLintsMetadataType string
+
+// V1ProjectAdvisorsResponseLintsName defines model for V1ProjectAdvisorsResponse.Lints.Name.
+type V1ProjectAdvisorsResponseLintsName string
+
 // V1ProjectRefResponse defines model for V1ProjectRefResponse.
 type V1ProjectRefResponse struct {
-	Id   int64  `json:"id"`
+	Id   int    `json:"id"`
 	Name string `json:"name"`
 	Ref  string `json:"ref"`
 }
@@ -1906,8 +2703,20 @@ type V1ProjectResponseStatus string
 // V1ProjectWithDatabaseResponse defines model for V1ProjectWithDatabaseResponse.
 type V1ProjectWithDatabaseResponse struct {
 	// CreatedAt Creation timestamp
-	CreatedAt string             `json:"created_at"`
-	Database  V1DatabaseResponse `json:"database"`
+	CreatedAt string `json:"created_at"`
+	Database  struct {
+		// Host Database host
+		Host string `json:"host"`
+
+		// PostgresEngine Database engine
+		PostgresEngine string `json:"postgres_engine"`
+
+		// ReleaseChannel Release channel
+		ReleaseChannel string `json:"release_channel"`
+
+		// Version Database version
+		Version string `json:"version"`
+	} `json:"database"`
 
 	// Id Id of your project
 	Id string `json:"id"`
@@ -1933,7 +2742,8 @@ type V1RestorePitrBody struct {
 
 // V1RunQueryBody defines model for V1RunQueryBody.
 type V1RunQueryBody struct {
-	Query string `json:"query"`
+	Query    string `json:"query"`
+	ReadOnly *bool  `json:"read_only,omitempty"`
 }
 
 // V1ServiceHealthResponse defines model for V1ServiceHealthResponse.
@@ -1943,6 +2753,23 @@ type V1ServiceHealthResponse struct {
 	Info    *V1ServiceHealthResponse_Info `json:"info,omitempty"`
 	Name    V1ServiceHealthResponseName   `json:"name"`
 	Status  V1ServiceHealthResponseStatus `json:"status"`
+}
+
+// V1ServiceHealthResponseInfo0 defines model for .
+type V1ServiceHealthResponseInfo0 struct {
+	Description string                           `json:"description"`
+	Name        V1ServiceHealthResponseInfo0Name `json:"name"`
+	Version     string                           `json:"version"`
+}
+
+// V1ServiceHealthResponseInfo0Name defines model for V1ServiceHealthResponse.Info.0.Name.
+type V1ServiceHealthResponseInfo0Name string
+
+// V1ServiceHealthResponseInfo1 defines model for .
+type V1ServiceHealthResponseInfo1 struct {
+	ConnectedCluster int  `json:"connected_cluster"`
+	DbConnected      bool `json:"db_connected"`
+	Healthy          bool `json:"healthy"`
 }
 
 // V1ServiceHealthResponse_Info defines model for V1ServiceHealthResponse.Info.
@@ -1968,21 +2795,17 @@ type V1StorageBucketResponse struct {
 
 // V1UpdateFunctionBody defines model for V1UpdateFunctionBody.
 type V1UpdateFunctionBody struct {
-	Body              *string  `json:"body,omitempty"`
-	ComputeMultiplier *float32 `json:"compute_multiplier,omitempty"`
-	Name              *string  `json:"name,omitempty"`
-	VerifyJwt         *bool    `json:"verify_jwt,omitempty"`
+	Body      *string `json:"body,omitempty"`
+	Name      *string `json:"name,omitempty"`
+	VerifyJwt *bool   `json:"verify_jwt,omitempty"`
 }
 
-// ValidationError defines model for ValidationError.
-type ValidationError struct {
-	Message string `json:"message"`
-}
-
-// ValidationRecord defines model for ValidationRecord.
-type ValidationRecord struct {
-	TxtName  string `json:"txt_name"`
-	TxtValue string `json:"txt_value"`
+// V1UpdatePostgrestConfigBody defines model for V1UpdatePostgrestConfigBody.
+type V1UpdatePostgrestConfigBody struct {
+	DbExtraSearchPath *string `json:"db_extra_search_path,omitempty"`
+	DbPool            *int    `json:"db_pool,omitempty"`
+	DbSchema          *string `json:"db_schema,omitempty"`
+	MaxRows           *int    `json:"max_rows,omitempty"`
 }
 
 // VanitySubdomainBody defines model for VanitySubdomainBody.
@@ -2001,7 +2824,7 @@ type VanitySubdomainConfigResponseStatus string
 
 // V1AuthorizeUserParams defines parameters for V1AuthorizeUser.
 type V1AuthorizeUserParams struct {
-	ClientId            string                                    `form:"client_id" json:"client_id"`
+	ClientId            openapi_types.UUID                        `form:"client_id" json:"client_id"`
 	ResponseType        V1AuthorizeUserParamsResponseType         `form:"response_type" json:"response_type"`
 	RedirectUri         string                                    `form:"redirect_uri" json:"redirect_uri"`
 	Scope               *string                                   `form:"scope,omitempty" json:"scope,omitempty"`
@@ -2019,81 +2842,91 @@ type V1AuthorizeUserParamsCodeChallengeMethod string
 
 // GetLogsParams defines parameters for GetLogs.
 type GetLogsParams struct {
-	IsoTimestampEnd   *string `form:"iso_timestamp_end,omitempty" json:"iso_timestamp_end,omitempty"`
-	IsoTimestampStart *string `form:"iso_timestamp_start,omitempty" json:"iso_timestamp_start,omitempty"`
-	Sql               *string `form:"sql,omitempty" json:"sql,omitempty"`
+	Sql               *string    `form:"sql,omitempty" json:"sql,omitempty"`
+	IsoTimestampStart *time.Time `form:"iso_timestamp_start,omitempty" json:"iso_timestamp_start,omitempty"`
+	IsoTimestampEnd   *time.Time `form:"iso_timestamp_end,omitempty" json:"iso_timestamp_end,omitempty"`
 }
 
 // V1GetProjectApiKeysParams defines parameters for V1GetProjectApiKeys.
 type V1GetProjectApiKeysParams struct {
-	Reveal bool `form:"reveal" json:"reveal"`
+	// Reveal Boolean string, true or false
+	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
 }
 
 // CreateApiKeyParams defines parameters for CreateApiKey.
 type CreateApiKeyParams struct {
-	Reveal bool `form:"reveal" json:"reveal"`
+	// Reveal Boolean string, true or false
+	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
 }
 
 // DeleteApiKeyParams defines parameters for DeleteApiKey.
 type DeleteApiKeyParams struct {
-	Reveal bool `form:"reveal" json:"reveal"`
+	// Reveal Boolean string, true or false
+	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
 }
 
 // GetApiKeyParams defines parameters for GetApiKey.
 type GetApiKeyParams struct {
-	Reveal bool `form:"reveal" json:"reveal"`
+	// Reveal Boolean string, true or false
+	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
 }
 
 // UpdateApiKeyParams defines parameters for UpdateApiKey.
 type UpdateApiKeyParams struct {
-	Reveal bool `form:"reveal" json:"reveal"`
+	// Reveal Boolean string, true or false
+	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
+}
+
+// V1ApplyAMigrationParams defines parameters for V1ApplyAMigration.
+type V1ApplyAMigrationParams struct {
+	// IdempotencyKey A unique key to ensure the same migration is tracked only once.
+	IdempotencyKey *string `json:"Idempotency-Key,omitempty"`
 }
 
 // V1CreateAFunctionParams defines parameters for V1CreateAFunction.
 type V1CreateAFunctionParams struct {
-	Slug              *string  `form:"slug,omitempty" json:"slug,omitempty"`
-	Name              *string  `form:"name,omitempty" json:"name,omitempty"`
-	VerifyJwt         *bool    `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
-	ImportMap         *bool    `form:"import_map,omitempty" json:"import_map,omitempty"`
-	EntrypointPath    *string  `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
-	ImportMapPath     *string  `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
-	ComputeMultiplier *float32 `form:"compute_multiplier,omitempty" json:"compute_multiplier,omitempty"`
-}
+	Slug *string `form:"slug,omitempty" json:"slug,omitempty"`
+	Name *string `form:"name,omitempty" json:"name,omitempty"`
 
-// V1BulkUpdateFunctionsJSONBody defines parameters for V1BulkUpdateFunctions.
-type V1BulkUpdateFunctionsJSONBody = []BulkUpdateFunctionBody
+	// VerifyJwt Boolean string, true or false
+	VerifyJwt *bool `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
+
+	// ImportMap Boolean string, true or false
+	ImportMap      *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
+	EntrypointPath *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
+	ImportMapPath  *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
+}
 
 // V1DeployAFunctionParams defines parameters for V1DeployAFunction.
 type V1DeployAFunctionParams struct {
-	Slug       *string `form:"slug,omitempty" json:"slug,omitempty"`
-	BundleOnly *bool   `form:"bundleOnly,omitempty" json:"bundleOnly,omitempty"`
+	Slug *string `form:"slug,omitempty" json:"slug,omitempty"`
+
+	// BundleOnly Boolean string, true or false
+	BundleOnly *bool `form:"bundleOnly,omitempty" json:"bundleOnly,omitempty"`
 }
 
 // V1UpdateAFunctionParams defines parameters for V1UpdateAFunction.
 type V1UpdateAFunctionParams struct {
-	Slug              *string  `form:"slug,omitempty" json:"slug,omitempty"`
-	Name              *string  `form:"name,omitempty" json:"name,omitempty"`
-	VerifyJwt         *bool    `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
-	ImportMap         *bool    `form:"import_map,omitempty" json:"import_map,omitempty"`
-	EntrypointPath    *string  `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
-	ImportMapPath     *string  `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
-	ComputeMultiplier *float32 `form:"compute_multiplier,omitempty" json:"compute_multiplier,omitempty"`
+	Slug *string `form:"slug,omitempty" json:"slug,omitempty"`
+	Name *string `form:"name,omitempty" json:"name,omitempty"`
+
+	// VerifyJwt Boolean string, true or false
+	VerifyJwt *bool `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
+
+	// ImportMap Boolean string, true or false
+	ImportMap      *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
+	EntrypointPath *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
+	ImportMapPath  *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
 }
 
 // V1GetServicesHealthParams defines parameters for V1GetServicesHealth.
 type V1GetServicesHealthParams struct {
-	TimeoutMs *int                                `form:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`
-	Services  []V1GetServicesHealthParamsServices `form:"services" json:"services"`
+	Services  []interface{} `form:"services" json:"services"`
+	TimeoutMs *int          `form:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`
 }
-
-// V1GetServicesHealthParamsServices defines parameters for V1GetServicesHealth.
-type V1GetServicesHealthParamsServices string
 
 // V1BulkDeleteSecretsJSONBody defines parameters for V1BulkDeleteSecrets.
 type V1BulkDeleteSecretsJSONBody = []string
-
-// V1BulkCreateSecretsJSONBody defines parameters for V1BulkCreateSecrets.
-type V1BulkCreateSecretsJSONBody = []CreateSecretBody
 
 // V1GenerateTypescriptTypesParams defines parameters for V1GenerateTypescriptTypes.
 type V1GenerateTypescriptTypesParams struct {
@@ -2107,11 +2940,12 @@ type V1GetPostgresUpgradeStatusParams struct {
 
 // V1ListAllSnippetsParams defines parameters for V1ListAllSnippets.
 type V1ListAllSnippetsParams struct {
+	// ProjectRef Project ref
+	ProjectRef *string                           `form:"project_ref,omitempty" json:"project_ref,omitempty"`
 	Cursor     *string                           `form:"cursor,omitempty" json:"cursor,omitempty"`
 	Limit      *string                           `form:"limit,omitempty" json:"limit,omitempty"`
 	SortBy     *V1ListAllSnippetsParamsSortBy    `form:"sort_by,omitempty" json:"sort_by,omitempty"`
 	SortOrder  *V1ListAllSnippetsParamsSortOrder `form:"sort_order,omitempty" json:"sort_order,omitempty"`
-	ProjectRef *string                           `form:"project_ref,omitempty" json:"project_ref,omitempty"`
 }
 
 // V1ListAllSnippetsParamsSortBy defines parameters for V1ListAllSnippets.
@@ -2123,17 +2957,26 @@ type V1ListAllSnippetsParamsSortOrder string
 // V1UpdateABranchConfigJSONRequestBody defines body for V1UpdateABranchConfig for application/json ContentType.
 type V1UpdateABranchConfigJSONRequestBody = UpdateBranchBody
 
+// V1MergeABranchJSONRequestBody defines body for V1MergeABranch for application/json ContentType.
+type V1MergeABranchJSONRequestBody = BranchActionBody
+
+// V1PushABranchJSONRequestBody defines body for V1PushABranch for application/json ContentType.
+type V1PushABranchJSONRequestBody = BranchActionBody
+
+// V1ResetABranchJSONRequestBody defines body for V1ResetABranch for application/json ContentType.
+type V1ResetABranchJSONRequestBody = BranchActionBody
+
 // V1RevokeTokenJSONRequestBody defines body for V1RevokeToken for application/json ContentType.
-type V1RevokeTokenJSONRequestBody = OAuthRevokeTokenBodyDto
+type V1RevokeTokenJSONRequestBody = OAuthRevokeTokenBody
 
 // V1ExchangeOauthTokenFormdataRequestBody defines body for V1ExchangeOauthToken for application/x-www-form-urlencoded ContentType.
 type V1ExchangeOauthTokenFormdataRequestBody = OAuthTokenBody
 
 // V1CreateAnOrganizationJSONRequestBody defines body for V1CreateAnOrganization for application/json ContentType.
-type V1CreateAnOrganizationJSONRequestBody = CreateOrganizationV1Dto
+type V1CreateAnOrganizationJSONRequestBody = CreateOrganizationV1
 
 // V1CreateAProjectJSONRequestBody defines body for V1CreateAProject for application/json ContentType.
-type V1CreateAProjectJSONRequestBody = V1CreateProjectBodyDto
+type V1CreateAProjectJSONRequestBody = V1CreateProjectBody
 
 // CreateApiKeyJSONRequestBody defines body for CreateApiKey for application/json ContentType.
 type CreateApiKeyJSONRequestBody = CreateApiKeyBody
@@ -2141,11 +2984,20 @@ type CreateApiKeyJSONRequestBody = CreateApiKeyBody
 // UpdateApiKeyJSONRequestBody defines body for UpdateApiKey for application/json ContentType.
 type UpdateApiKeyJSONRequestBody = UpdateApiKeyBody
 
+// V1ApplyProjectAddonJSONRequestBody defines body for V1ApplyProjectAddon for application/json ContentType.
+type V1ApplyProjectAddonJSONRequestBody = ApplyProjectAddonBody
+
 // V1CreateABranchJSONRequestBody defines body for V1CreateABranch for application/json ContentType.
 type V1CreateABranchJSONRequestBody = CreateBranchBody
 
 // V1UpdateAuthServiceConfigJSONRequestBody defines body for V1UpdateAuthServiceConfig for application/json ContentType.
 type V1UpdateAuthServiceConfigJSONRequestBody = UpdateAuthConfigBody
+
+// CreateSigningKeyForProjectJSONRequestBody defines body for CreateSigningKeyForProject for application/json ContentType.
+type CreateSigningKeyForProjectJSONRequestBody = CreateSigningKeyBody
+
+// PatchSigningKeyJSONRequestBody defines body for PatchSigningKey for application/json ContentType.
+type PatchSigningKeyJSONRequestBody = UpdateSigningKeyBody
 
 // V1CreateASsoProviderJSONRequestBody defines body for V1CreateASsoProvider for application/json ContentType.
 type V1CreateASsoProviderJSONRequestBody = CreateProviderBody
@@ -2156,8 +3008,8 @@ type V1UpdateASsoProviderJSONRequestBody = UpdateProviderBody
 // CreateTPAForProjectJSONRequestBody defines body for CreateTPAForProject for application/json ContentType.
 type CreateTPAForProjectJSONRequestBody = CreateThirdPartyAuthBody
 
-// V1UpdateSupavisorConfigJSONRequestBody defines body for V1UpdateSupavisorConfig for application/json ContentType.
-type V1UpdateSupavisorConfigJSONRequestBody = UpdateSupavisorConfigBody
+// UpdateSupavisorConfigJSONRequestBody defines body for UpdateSupavisorConfig for application/json ContentType.
+type UpdateSupavisorConfigJSONRequestBody = UpdateSupavisorConfigBody
 
 // V1UpdatePostgresConfigJSONRequestBody defines body for V1UpdatePostgresConfig for application/json ContentType.
 type V1UpdatePostgresConfigJSONRequestBody = UpdatePostgresConfigBody
@@ -2171,14 +3023,14 @@ type V1UpdateHostnameConfigJSONRequestBody = UpdateCustomHostnameBody
 // V1RestorePitrBackupJSONRequestBody defines body for V1RestorePitrBackup for application/json ContentType.
 type V1RestorePitrBackupJSONRequestBody = V1RestorePitrBody
 
+// V1ApplyAMigrationJSONRequestBody defines body for V1ApplyAMigration for application/json ContentType.
+type V1ApplyAMigrationJSONRequestBody = V1CreateMigrationBody
+
 // V1RunAQueryJSONRequestBody defines body for V1RunAQuery for application/json ContentType.
 type V1RunAQueryJSONRequestBody = V1RunQueryBody
 
-// V1CreateAFunctionJSONRequestBody defines body for V1CreateAFunction for application/json ContentType.
-type V1CreateAFunctionJSONRequestBody = V1CreateFunctionBody
-
 // V1BulkUpdateFunctionsJSONRequestBody defines body for V1BulkUpdateFunctions for application/json ContentType.
-type V1BulkUpdateFunctionsJSONRequestBody = V1BulkUpdateFunctionsJSONBody
+type V1BulkUpdateFunctionsJSONRequestBody = BulkUpdateFunctionBody
 
 // V1DeployAFunctionMultipartRequestBody defines body for V1DeployAFunction for multipart/form-data ContentType.
 type V1DeployAFunctionMultipartRequestBody = FunctionDeployBody
@@ -2196,7 +3048,7 @@ type V1UpdateNetworkRestrictionsJSONRequestBody = NetworkRestrictionsRequest
 type V1UpdatePgsodiumConfigJSONRequestBody = UpdatePgsodiumConfigBody
 
 // V1UpdatePostgrestServiceConfigJSONRequestBody defines body for V1UpdatePostgrestServiceConfig for application/json ContentType.
-type V1UpdatePostgrestServiceConfigJSONRequestBody = UpdatePostgrestConfigBody
+type V1UpdatePostgrestServiceConfigJSONRequestBody = V1UpdatePostgrestConfigBody
 
 // V1RemoveAReadReplicaJSONRequestBody defines body for V1RemoveAReadReplica for application/json ContentType.
 type V1RemoveAReadReplicaJSONRequestBody = RemoveReadReplicaBody
@@ -2204,14 +3056,11 @@ type V1RemoveAReadReplicaJSONRequestBody = RemoveReadReplicaBody
 // V1SetupAReadReplicaJSONRequestBody defines body for V1SetupAReadReplica for application/json ContentType.
 type V1SetupAReadReplicaJSONRequestBody = SetUpReadReplicaBody
 
-// V1RestoreAProjectJSONRequestBody defines body for V1RestoreAProject for application/json ContentType.
-type V1RestoreAProjectJSONRequestBody = RestoreProjectBodyDto
-
 // V1BulkDeleteSecretsJSONRequestBody defines body for V1BulkDeleteSecrets for application/json ContentType.
 type V1BulkDeleteSecretsJSONRequestBody = V1BulkDeleteSecretsJSONBody
 
 // V1BulkCreateSecretsJSONRequestBody defines body for V1BulkCreateSecrets for application/json ContentType.
-type V1BulkCreateSecretsJSONRequestBody = V1BulkCreateSecretsJSONBody
+type V1BulkCreateSecretsJSONRequestBody = CreateSecretBody
 
 // V1UpdateSslEnforcementConfigJSONRequestBody defines body for V1UpdateSslEnforcementConfig for application/json ContentType.
 type V1UpdateSslEnforcementConfigJSONRequestBody = SslEnforcementRequest
@@ -2225,25 +3074,25 @@ type V1ActivateVanitySubdomainConfigJSONRequestBody = VanitySubdomainBody
 // V1CheckVanitySubdomainAvailabilityJSONRequestBody defines body for V1CheckVanitySubdomainAvailability for application/json ContentType.
 type V1CheckVanitySubdomainAvailabilityJSONRequestBody = VanitySubdomainBody
 
-// Getter for additional properties for GetProjectDbMetadataResponseDto_Databases_Schemas_Item. Returns the specified
+// Getter for additional properties for GetProjectDbMetadataResponse_Databases_Schemas_Item. Returns the specified
 // element and whether it was found
-func (a GetProjectDbMetadataResponseDto_Databases_Schemas_Item) Get(fieldName string) (value interface{}, found bool) {
+func (a GetProjectDbMetadataResponse_Databases_Schemas_Item) Get(fieldName string) (value interface{}, found bool) {
 	if a.AdditionalProperties != nil {
 		value, found = a.AdditionalProperties[fieldName]
 	}
 	return
 }
 
-// Setter for additional properties for GetProjectDbMetadataResponseDto_Databases_Schemas_Item
-func (a *GetProjectDbMetadataResponseDto_Databases_Schemas_Item) Set(fieldName string, value interface{}) {
+// Setter for additional properties for GetProjectDbMetadataResponse_Databases_Schemas_Item
+func (a *GetProjectDbMetadataResponse_Databases_Schemas_Item) Set(fieldName string, value interface{}) {
 	if a.AdditionalProperties == nil {
 		a.AdditionalProperties = make(map[string]interface{})
 	}
 	a.AdditionalProperties[fieldName] = value
 }
 
-// Override default JSON handling for GetProjectDbMetadataResponseDto_Databases_Schemas_Item to handle AdditionalProperties
-func (a *GetProjectDbMetadataResponseDto_Databases_Schemas_Item) UnmarshalJSON(b []byte) error {
+// Override default JSON handling for GetProjectDbMetadataResponse_Databases_Schemas_Item to handle AdditionalProperties
+func (a *GetProjectDbMetadataResponse_Databases_Schemas_Item) UnmarshalJSON(b []byte) error {
 	object := make(map[string]json.RawMessage)
 	err := json.Unmarshal(b, &object)
 	if err != nil {
@@ -2272,8 +3121,8 @@ func (a *GetProjectDbMetadataResponseDto_Databases_Schemas_Item) UnmarshalJSON(b
 	return nil
 }
 
-// Override default JSON handling for GetProjectDbMetadataResponseDto_Databases_Schemas_Item to handle AdditionalProperties
-func (a GetProjectDbMetadataResponseDto_Databases_Schemas_Item) MarshalJSON() ([]byte, error) {
+// Override default JSON handling for GetProjectDbMetadataResponse_Databases_Schemas_Item to handle AdditionalProperties
+func (a GetProjectDbMetadataResponse_Databases_Schemas_Item) MarshalJSON() ([]byte, error) {
 	var err error
 	object := make(map[string]json.RawMessage)
 
@@ -2291,25 +3140,25 @@ func (a GetProjectDbMetadataResponseDto_Databases_Schemas_Item) MarshalJSON() ([
 	return json.Marshal(object)
 }
 
-// Getter for additional properties for GetProjectDbMetadataResponseDto_Databases_Item. Returns the specified
+// Getter for additional properties for GetProjectDbMetadataResponse_Databases_Item. Returns the specified
 // element and whether it was found
-func (a GetProjectDbMetadataResponseDto_Databases_Item) Get(fieldName string) (value interface{}, found bool) {
+func (a GetProjectDbMetadataResponse_Databases_Item) Get(fieldName string) (value interface{}, found bool) {
 	if a.AdditionalProperties != nil {
 		value, found = a.AdditionalProperties[fieldName]
 	}
 	return
 }
 
-// Setter for additional properties for GetProjectDbMetadataResponseDto_Databases_Item
-func (a *GetProjectDbMetadataResponseDto_Databases_Item) Set(fieldName string, value interface{}) {
+// Setter for additional properties for GetProjectDbMetadataResponse_Databases_Item
+func (a *GetProjectDbMetadataResponse_Databases_Item) Set(fieldName string, value interface{}) {
 	if a.AdditionalProperties == nil {
 		a.AdditionalProperties = make(map[string]interface{})
 	}
 	a.AdditionalProperties[fieldName] = value
 }
 
-// Override default JSON handling for GetProjectDbMetadataResponseDto_Databases_Item to handle AdditionalProperties
-func (a *GetProjectDbMetadataResponseDto_Databases_Item) UnmarshalJSON(b []byte) error {
+// Override default JSON handling for GetProjectDbMetadataResponse_Databases_Item to handle AdditionalProperties
+func (a *GetProjectDbMetadataResponse_Databases_Item) UnmarshalJSON(b []byte) error {
 	object := make(map[string]json.RawMessage)
 	err := json.Unmarshal(b, &object)
 	if err != nil {
@@ -2346,8 +3195,8 @@ func (a *GetProjectDbMetadataResponseDto_Databases_Item) UnmarshalJSON(b []byte)
 	return nil
 }
 
-// Override default JSON handling for GetProjectDbMetadataResponseDto_Databases_Item to handle AdditionalProperties
-func (a GetProjectDbMetadataResponseDto_Databases_Item) MarshalJSON() ([]byte, error) {
+// Override default JSON handling for GetProjectDbMetadataResponse_Databases_Item to handle AdditionalProperties
+func (a GetProjectDbMetadataResponse_Databases_Item) MarshalJSON() ([]byte, error) {
 	var err error
 	object := make(map[string]json.RawMessage)
 
@@ -2370,22 +3219,22 @@ func (a GetProjectDbMetadataResponseDto_Databases_Item) MarshalJSON() ([]byte, e
 	return json.Marshal(object)
 }
 
-// AsAttributeValueDefault0 returns the union data inside the AttributeValue_Default as a AttributeValueDefault0
-func (t AttributeValue_Default) AsAttributeValueDefault0() (AttributeValueDefault0, error) {
-	var body AttributeValueDefault0
+// AsApplyProjectAddonBodyAddonVariant0 returns the union data inside the ApplyProjectAddonBody_AddonVariant as a ApplyProjectAddonBodyAddonVariant0
+func (t ApplyProjectAddonBody_AddonVariant) AsApplyProjectAddonBodyAddonVariant0() (ApplyProjectAddonBodyAddonVariant0, error) {
+	var body ApplyProjectAddonBodyAddonVariant0
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromAttributeValueDefault0 overwrites any union data inside the AttributeValue_Default as the provided AttributeValueDefault0
-func (t *AttributeValue_Default) FromAttributeValueDefault0(v AttributeValueDefault0) error {
+// FromApplyProjectAddonBodyAddonVariant0 overwrites any union data inside the ApplyProjectAddonBody_AddonVariant as the provided ApplyProjectAddonBodyAddonVariant0
+func (t *ApplyProjectAddonBody_AddonVariant) FromApplyProjectAddonBodyAddonVariant0(v ApplyProjectAddonBodyAddonVariant0) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeAttributeValueDefault0 performs a merge with any union data inside the AttributeValue_Default, using the provided AttributeValueDefault0
-func (t *AttributeValue_Default) MergeAttributeValueDefault0(v AttributeValueDefault0) error {
+// MergeApplyProjectAddonBodyAddonVariant0 performs a merge with any union data inside the ApplyProjectAddonBody_AddonVariant, using the provided ApplyProjectAddonBodyAddonVariant0
+func (t *ApplyProjectAddonBody_AddonVariant) MergeApplyProjectAddonBodyAddonVariant0(v ApplyProjectAddonBodyAddonVariant0) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -2396,22 +3245,22 @@ func (t *AttributeValue_Default) MergeAttributeValueDefault0(v AttributeValueDef
 	return err
 }
 
-// AsAttributeValueDefault1 returns the union data inside the AttributeValue_Default as a AttributeValueDefault1
-func (t AttributeValue_Default) AsAttributeValueDefault1() (AttributeValueDefault1, error) {
-	var body AttributeValueDefault1
+// AsApplyProjectAddonBodyAddonVariant1 returns the union data inside the ApplyProjectAddonBody_AddonVariant as a ApplyProjectAddonBodyAddonVariant1
+func (t ApplyProjectAddonBody_AddonVariant) AsApplyProjectAddonBodyAddonVariant1() (ApplyProjectAddonBodyAddonVariant1, error) {
+	var body ApplyProjectAddonBodyAddonVariant1
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromAttributeValueDefault1 overwrites any union data inside the AttributeValue_Default as the provided AttributeValueDefault1
-func (t *AttributeValue_Default) FromAttributeValueDefault1(v AttributeValueDefault1) error {
+// FromApplyProjectAddonBodyAddonVariant1 overwrites any union data inside the ApplyProjectAddonBody_AddonVariant as the provided ApplyProjectAddonBodyAddonVariant1
+func (t *ApplyProjectAddonBody_AddonVariant) FromApplyProjectAddonBodyAddonVariant1(v ApplyProjectAddonBodyAddonVariant1) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeAttributeValueDefault1 performs a merge with any union data inside the AttributeValue_Default, using the provided AttributeValueDefault1
-func (t *AttributeValue_Default) MergeAttributeValueDefault1(v AttributeValueDefault1) error {
+// MergeApplyProjectAddonBodyAddonVariant1 performs a merge with any union data inside the ApplyProjectAddonBody_AddonVariant, using the provided ApplyProjectAddonBodyAddonVariant1
+func (t *ApplyProjectAddonBody_AddonVariant) MergeApplyProjectAddonBodyAddonVariant1(v ApplyProjectAddonBodyAddonVariant1) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -2422,22 +3271,22 @@ func (t *AttributeValue_Default) MergeAttributeValueDefault1(v AttributeValueDef
 	return err
 }
 
-// AsAttributeValueDefault2 returns the union data inside the AttributeValue_Default as a AttributeValueDefault2
-func (t AttributeValue_Default) AsAttributeValueDefault2() (AttributeValueDefault2, error) {
-	var body AttributeValueDefault2
+// AsApplyProjectAddonBodyAddonVariant2 returns the union data inside the ApplyProjectAddonBody_AddonVariant as a ApplyProjectAddonBodyAddonVariant2
+func (t ApplyProjectAddonBody_AddonVariant) AsApplyProjectAddonBodyAddonVariant2() (ApplyProjectAddonBodyAddonVariant2, error) {
+	var body ApplyProjectAddonBodyAddonVariant2
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromAttributeValueDefault2 overwrites any union data inside the AttributeValue_Default as the provided AttributeValueDefault2
-func (t *AttributeValue_Default) FromAttributeValueDefault2(v AttributeValueDefault2) error {
+// FromApplyProjectAddonBodyAddonVariant2 overwrites any union data inside the ApplyProjectAddonBody_AddonVariant as the provided ApplyProjectAddonBodyAddonVariant2
+func (t *ApplyProjectAddonBody_AddonVariant) FromApplyProjectAddonBodyAddonVariant2(v ApplyProjectAddonBodyAddonVariant2) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeAttributeValueDefault2 performs a merge with any union data inside the AttributeValue_Default, using the provided AttributeValueDefault2
-func (t *AttributeValue_Default) MergeAttributeValueDefault2(v AttributeValueDefault2) error {
+// MergeApplyProjectAddonBodyAddonVariant2 performs a merge with any union data inside the ApplyProjectAddonBody_AddonVariant, using the provided ApplyProjectAddonBodyAddonVariant2
+func (t *ApplyProjectAddonBody_AddonVariant) MergeApplyProjectAddonBodyAddonVariant2(v ApplyProjectAddonBodyAddonVariant2) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -2448,22 +3297,22 @@ func (t *AttributeValue_Default) MergeAttributeValueDefault2(v AttributeValueDef
 	return err
 }
 
-// AsAttributeValueDefault3 returns the union data inside the AttributeValue_Default as a AttributeValueDefault3
-func (t AttributeValue_Default) AsAttributeValueDefault3() (AttributeValueDefault3, error) {
-	var body AttributeValueDefault3
+// AsApplyProjectAddonBodyAddonVariant3 returns the union data inside the ApplyProjectAddonBody_AddonVariant as a ApplyProjectAddonBodyAddonVariant3
+func (t ApplyProjectAddonBody_AddonVariant) AsApplyProjectAddonBodyAddonVariant3() (ApplyProjectAddonBodyAddonVariant3, error) {
+	var body ApplyProjectAddonBodyAddonVariant3
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromAttributeValueDefault3 overwrites any union data inside the AttributeValue_Default as the provided AttributeValueDefault3
-func (t *AttributeValue_Default) FromAttributeValueDefault3(v AttributeValueDefault3) error {
+// FromApplyProjectAddonBodyAddonVariant3 overwrites any union data inside the ApplyProjectAddonBody_AddonVariant as the provided ApplyProjectAddonBodyAddonVariant3
+func (t *ApplyProjectAddonBody_AddonVariant) FromApplyProjectAddonBodyAddonVariant3(v ApplyProjectAddonBodyAddonVariant3) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeAttributeValueDefault3 performs a merge with any union data inside the AttributeValue_Default, using the provided AttributeValueDefault3
-func (t *AttributeValue_Default) MergeAttributeValueDefault3(v AttributeValueDefault3) error {
+// MergeApplyProjectAddonBodyAddonVariant3 performs a merge with any union data inside the ApplyProjectAddonBody_AddonVariant, using the provided ApplyProjectAddonBodyAddonVariant3
+func (t *ApplyProjectAddonBody_AddonVariant) MergeApplyProjectAddonBodyAddonVariant3(v ApplyProjectAddonBodyAddonVariant3) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -2474,12 +3323,1194 @@ func (t *AttributeValue_Default) MergeAttributeValueDefault3(v AttributeValueDef
 	return err
 }
 
-func (t AttributeValue_Default) MarshalJSON() ([]byte, error) {
+func (t ApplyProjectAddonBody_AddonVariant) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
 }
 
-func (t *AttributeValue_Default) UnmarshalJSON(b []byte) error {
+func (t *ApplyProjectAddonBody_AddonVariant) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsCreateProviderBodyAttributeMappingKeysDefault0 returns the union data inside the CreateProviderBody_AttributeMapping_Keys_Default as a CreateProviderBodyAttributeMappingKeysDefault0
+func (t CreateProviderBody_AttributeMapping_Keys_Default) AsCreateProviderBodyAttributeMappingKeysDefault0() (CreateProviderBodyAttributeMappingKeysDefault0, error) {
+	var body CreateProviderBodyAttributeMappingKeysDefault0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCreateProviderBodyAttributeMappingKeysDefault0 overwrites any union data inside the CreateProviderBody_AttributeMapping_Keys_Default as the provided CreateProviderBodyAttributeMappingKeysDefault0
+func (t *CreateProviderBody_AttributeMapping_Keys_Default) FromCreateProviderBodyAttributeMappingKeysDefault0(v CreateProviderBodyAttributeMappingKeysDefault0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCreateProviderBodyAttributeMappingKeysDefault0 performs a merge with any union data inside the CreateProviderBody_AttributeMapping_Keys_Default, using the provided CreateProviderBodyAttributeMappingKeysDefault0
+func (t *CreateProviderBody_AttributeMapping_Keys_Default) MergeCreateProviderBodyAttributeMappingKeysDefault0(v CreateProviderBodyAttributeMappingKeysDefault0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsCreateProviderBodyAttributeMappingKeysDefault1 returns the union data inside the CreateProviderBody_AttributeMapping_Keys_Default as a CreateProviderBodyAttributeMappingKeysDefault1
+func (t CreateProviderBody_AttributeMapping_Keys_Default) AsCreateProviderBodyAttributeMappingKeysDefault1() (CreateProviderBodyAttributeMappingKeysDefault1, error) {
+	var body CreateProviderBodyAttributeMappingKeysDefault1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCreateProviderBodyAttributeMappingKeysDefault1 overwrites any union data inside the CreateProviderBody_AttributeMapping_Keys_Default as the provided CreateProviderBodyAttributeMappingKeysDefault1
+func (t *CreateProviderBody_AttributeMapping_Keys_Default) FromCreateProviderBodyAttributeMappingKeysDefault1(v CreateProviderBodyAttributeMappingKeysDefault1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCreateProviderBodyAttributeMappingKeysDefault1 performs a merge with any union data inside the CreateProviderBody_AttributeMapping_Keys_Default, using the provided CreateProviderBodyAttributeMappingKeysDefault1
+func (t *CreateProviderBody_AttributeMapping_Keys_Default) MergeCreateProviderBodyAttributeMappingKeysDefault1(v CreateProviderBodyAttributeMappingKeysDefault1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsCreateProviderBodyAttributeMappingKeysDefault2 returns the union data inside the CreateProviderBody_AttributeMapping_Keys_Default as a CreateProviderBodyAttributeMappingKeysDefault2
+func (t CreateProviderBody_AttributeMapping_Keys_Default) AsCreateProviderBodyAttributeMappingKeysDefault2() (CreateProviderBodyAttributeMappingKeysDefault2, error) {
+	var body CreateProviderBodyAttributeMappingKeysDefault2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCreateProviderBodyAttributeMappingKeysDefault2 overwrites any union data inside the CreateProviderBody_AttributeMapping_Keys_Default as the provided CreateProviderBodyAttributeMappingKeysDefault2
+func (t *CreateProviderBody_AttributeMapping_Keys_Default) FromCreateProviderBodyAttributeMappingKeysDefault2(v CreateProviderBodyAttributeMappingKeysDefault2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCreateProviderBodyAttributeMappingKeysDefault2 performs a merge with any union data inside the CreateProviderBody_AttributeMapping_Keys_Default, using the provided CreateProviderBodyAttributeMappingKeysDefault2
+func (t *CreateProviderBody_AttributeMapping_Keys_Default) MergeCreateProviderBodyAttributeMappingKeysDefault2(v CreateProviderBodyAttributeMappingKeysDefault2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsCreateProviderBodyAttributeMappingKeysDefault3 returns the union data inside the CreateProviderBody_AttributeMapping_Keys_Default as a CreateProviderBodyAttributeMappingKeysDefault3
+func (t CreateProviderBody_AttributeMapping_Keys_Default) AsCreateProviderBodyAttributeMappingKeysDefault3() (CreateProviderBodyAttributeMappingKeysDefault3, error) {
+	var body CreateProviderBodyAttributeMappingKeysDefault3
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCreateProviderBodyAttributeMappingKeysDefault3 overwrites any union data inside the CreateProviderBody_AttributeMapping_Keys_Default as the provided CreateProviderBodyAttributeMappingKeysDefault3
+func (t *CreateProviderBody_AttributeMapping_Keys_Default) FromCreateProviderBodyAttributeMappingKeysDefault3(v CreateProviderBodyAttributeMappingKeysDefault3) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCreateProviderBodyAttributeMappingKeysDefault3 performs a merge with any union data inside the CreateProviderBody_AttributeMapping_Keys_Default, using the provided CreateProviderBodyAttributeMappingKeysDefault3
+func (t *CreateProviderBody_AttributeMapping_Keys_Default) MergeCreateProviderBodyAttributeMappingKeysDefault3(v CreateProviderBodyAttributeMappingKeysDefault3) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t CreateProviderBody_AttributeMapping_Keys_Default) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *CreateProviderBody_AttributeMapping_Keys_Default) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsCreateProviderResponseSamlAttributeMappingKeysDefault0 returns the union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default as a CreateProviderResponseSamlAttributeMappingKeysDefault0
+func (t CreateProviderResponse_Saml_AttributeMapping_Keys_Default) AsCreateProviderResponseSamlAttributeMappingKeysDefault0() (CreateProviderResponseSamlAttributeMappingKeysDefault0, error) {
+	var body CreateProviderResponseSamlAttributeMappingKeysDefault0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCreateProviderResponseSamlAttributeMappingKeysDefault0 overwrites any union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default as the provided CreateProviderResponseSamlAttributeMappingKeysDefault0
+func (t *CreateProviderResponse_Saml_AttributeMapping_Keys_Default) FromCreateProviderResponseSamlAttributeMappingKeysDefault0(v CreateProviderResponseSamlAttributeMappingKeysDefault0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCreateProviderResponseSamlAttributeMappingKeysDefault0 performs a merge with any union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided CreateProviderResponseSamlAttributeMappingKeysDefault0
+func (t *CreateProviderResponse_Saml_AttributeMapping_Keys_Default) MergeCreateProviderResponseSamlAttributeMappingKeysDefault0(v CreateProviderResponseSamlAttributeMappingKeysDefault0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsCreateProviderResponseSamlAttributeMappingKeysDefault1 returns the union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default as a CreateProviderResponseSamlAttributeMappingKeysDefault1
+func (t CreateProviderResponse_Saml_AttributeMapping_Keys_Default) AsCreateProviderResponseSamlAttributeMappingKeysDefault1() (CreateProviderResponseSamlAttributeMappingKeysDefault1, error) {
+	var body CreateProviderResponseSamlAttributeMappingKeysDefault1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCreateProviderResponseSamlAttributeMappingKeysDefault1 overwrites any union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default as the provided CreateProviderResponseSamlAttributeMappingKeysDefault1
+func (t *CreateProviderResponse_Saml_AttributeMapping_Keys_Default) FromCreateProviderResponseSamlAttributeMappingKeysDefault1(v CreateProviderResponseSamlAttributeMappingKeysDefault1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCreateProviderResponseSamlAttributeMappingKeysDefault1 performs a merge with any union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided CreateProviderResponseSamlAttributeMappingKeysDefault1
+func (t *CreateProviderResponse_Saml_AttributeMapping_Keys_Default) MergeCreateProviderResponseSamlAttributeMappingKeysDefault1(v CreateProviderResponseSamlAttributeMappingKeysDefault1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsCreateProviderResponseSamlAttributeMappingKeysDefault2 returns the union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default as a CreateProviderResponseSamlAttributeMappingKeysDefault2
+func (t CreateProviderResponse_Saml_AttributeMapping_Keys_Default) AsCreateProviderResponseSamlAttributeMappingKeysDefault2() (CreateProviderResponseSamlAttributeMappingKeysDefault2, error) {
+	var body CreateProviderResponseSamlAttributeMappingKeysDefault2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCreateProviderResponseSamlAttributeMappingKeysDefault2 overwrites any union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default as the provided CreateProviderResponseSamlAttributeMappingKeysDefault2
+func (t *CreateProviderResponse_Saml_AttributeMapping_Keys_Default) FromCreateProviderResponseSamlAttributeMappingKeysDefault2(v CreateProviderResponseSamlAttributeMappingKeysDefault2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCreateProviderResponseSamlAttributeMappingKeysDefault2 performs a merge with any union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided CreateProviderResponseSamlAttributeMappingKeysDefault2
+func (t *CreateProviderResponse_Saml_AttributeMapping_Keys_Default) MergeCreateProviderResponseSamlAttributeMappingKeysDefault2(v CreateProviderResponseSamlAttributeMappingKeysDefault2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsCreateProviderResponseSamlAttributeMappingKeysDefault3 returns the union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default as a CreateProviderResponseSamlAttributeMappingKeysDefault3
+func (t CreateProviderResponse_Saml_AttributeMapping_Keys_Default) AsCreateProviderResponseSamlAttributeMappingKeysDefault3() (CreateProviderResponseSamlAttributeMappingKeysDefault3, error) {
+	var body CreateProviderResponseSamlAttributeMappingKeysDefault3
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCreateProviderResponseSamlAttributeMappingKeysDefault3 overwrites any union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default as the provided CreateProviderResponseSamlAttributeMappingKeysDefault3
+func (t *CreateProviderResponse_Saml_AttributeMapping_Keys_Default) FromCreateProviderResponseSamlAttributeMappingKeysDefault3(v CreateProviderResponseSamlAttributeMappingKeysDefault3) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCreateProviderResponseSamlAttributeMappingKeysDefault3 performs a merge with any union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided CreateProviderResponseSamlAttributeMappingKeysDefault3
+func (t *CreateProviderResponse_Saml_AttributeMapping_Keys_Default) MergeCreateProviderResponseSamlAttributeMappingKeysDefault3(v CreateProviderResponseSamlAttributeMappingKeysDefault3) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t CreateProviderResponse_Saml_AttributeMapping_Keys_Default) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *CreateProviderResponse_Saml_AttributeMapping_Keys_Default) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsDeleteProviderResponseSamlAttributeMappingKeysDefault0 returns the union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default as a DeleteProviderResponseSamlAttributeMappingKeysDefault0
+func (t DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) AsDeleteProviderResponseSamlAttributeMappingKeysDefault0() (DeleteProviderResponseSamlAttributeMappingKeysDefault0, error) {
+	var body DeleteProviderResponseSamlAttributeMappingKeysDefault0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDeleteProviderResponseSamlAttributeMappingKeysDefault0 overwrites any union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default as the provided DeleteProviderResponseSamlAttributeMappingKeysDefault0
+func (t *DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) FromDeleteProviderResponseSamlAttributeMappingKeysDefault0(v DeleteProviderResponseSamlAttributeMappingKeysDefault0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDeleteProviderResponseSamlAttributeMappingKeysDefault0 performs a merge with any union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided DeleteProviderResponseSamlAttributeMappingKeysDefault0
+func (t *DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) MergeDeleteProviderResponseSamlAttributeMappingKeysDefault0(v DeleteProviderResponseSamlAttributeMappingKeysDefault0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsDeleteProviderResponseSamlAttributeMappingKeysDefault1 returns the union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default as a DeleteProviderResponseSamlAttributeMappingKeysDefault1
+func (t DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) AsDeleteProviderResponseSamlAttributeMappingKeysDefault1() (DeleteProviderResponseSamlAttributeMappingKeysDefault1, error) {
+	var body DeleteProviderResponseSamlAttributeMappingKeysDefault1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDeleteProviderResponseSamlAttributeMappingKeysDefault1 overwrites any union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default as the provided DeleteProviderResponseSamlAttributeMappingKeysDefault1
+func (t *DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) FromDeleteProviderResponseSamlAttributeMappingKeysDefault1(v DeleteProviderResponseSamlAttributeMappingKeysDefault1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDeleteProviderResponseSamlAttributeMappingKeysDefault1 performs a merge with any union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided DeleteProviderResponseSamlAttributeMappingKeysDefault1
+func (t *DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) MergeDeleteProviderResponseSamlAttributeMappingKeysDefault1(v DeleteProviderResponseSamlAttributeMappingKeysDefault1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsDeleteProviderResponseSamlAttributeMappingKeysDefault2 returns the union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default as a DeleteProviderResponseSamlAttributeMappingKeysDefault2
+func (t DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) AsDeleteProviderResponseSamlAttributeMappingKeysDefault2() (DeleteProviderResponseSamlAttributeMappingKeysDefault2, error) {
+	var body DeleteProviderResponseSamlAttributeMappingKeysDefault2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDeleteProviderResponseSamlAttributeMappingKeysDefault2 overwrites any union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default as the provided DeleteProviderResponseSamlAttributeMappingKeysDefault2
+func (t *DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) FromDeleteProviderResponseSamlAttributeMappingKeysDefault2(v DeleteProviderResponseSamlAttributeMappingKeysDefault2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDeleteProviderResponseSamlAttributeMappingKeysDefault2 performs a merge with any union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided DeleteProviderResponseSamlAttributeMappingKeysDefault2
+func (t *DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) MergeDeleteProviderResponseSamlAttributeMappingKeysDefault2(v DeleteProviderResponseSamlAttributeMappingKeysDefault2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsDeleteProviderResponseSamlAttributeMappingKeysDefault3 returns the union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default as a DeleteProviderResponseSamlAttributeMappingKeysDefault3
+func (t DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) AsDeleteProviderResponseSamlAttributeMappingKeysDefault3() (DeleteProviderResponseSamlAttributeMappingKeysDefault3, error) {
+	var body DeleteProviderResponseSamlAttributeMappingKeysDefault3
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDeleteProviderResponseSamlAttributeMappingKeysDefault3 overwrites any union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default as the provided DeleteProviderResponseSamlAttributeMappingKeysDefault3
+func (t *DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) FromDeleteProviderResponseSamlAttributeMappingKeysDefault3(v DeleteProviderResponseSamlAttributeMappingKeysDefault3) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDeleteProviderResponseSamlAttributeMappingKeysDefault3 performs a merge with any union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided DeleteProviderResponseSamlAttributeMappingKeysDefault3
+func (t *DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) MergeDeleteProviderResponseSamlAttributeMappingKeysDefault3(v DeleteProviderResponseSamlAttributeMappingKeysDefault3) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsGetProviderResponseSamlAttributeMappingKeysDefault0 returns the union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default as a GetProviderResponseSamlAttributeMappingKeysDefault0
+func (t GetProviderResponse_Saml_AttributeMapping_Keys_Default) AsGetProviderResponseSamlAttributeMappingKeysDefault0() (GetProviderResponseSamlAttributeMappingKeysDefault0, error) {
+	var body GetProviderResponseSamlAttributeMappingKeysDefault0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromGetProviderResponseSamlAttributeMappingKeysDefault0 overwrites any union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default as the provided GetProviderResponseSamlAttributeMappingKeysDefault0
+func (t *GetProviderResponse_Saml_AttributeMapping_Keys_Default) FromGetProviderResponseSamlAttributeMappingKeysDefault0(v GetProviderResponseSamlAttributeMappingKeysDefault0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeGetProviderResponseSamlAttributeMappingKeysDefault0 performs a merge with any union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided GetProviderResponseSamlAttributeMappingKeysDefault0
+func (t *GetProviderResponse_Saml_AttributeMapping_Keys_Default) MergeGetProviderResponseSamlAttributeMappingKeysDefault0(v GetProviderResponseSamlAttributeMappingKeysDefault0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsGetProviderResponseSamlAttributeMappingKeysDefault1 returns the union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default as a GetProviderResponseSamlAttributeMappingKeysDefault1
+func (t GetProviderResponse_Saml_AttributeMapping_Keys_Default) AsGetProviderResponseSamlAttributeMappingKeysDefault1() (GetProviderResponseSamlAttributeMappingKeysDefault1, error) {
+	var body GetProviderResponseSamlAttributeMappingKeysDefault1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromGetProviderResponseSamlAttributeMappingKeysDefault1 overwrites any union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default as the provided GetProviderResponseSamlAttributeMappingKeysDefault1
+func (t *GetProviderResponse_Saml_AttributeMapping_Keys_Default) FromGetProviderResponseSamlAttributeMappingKeysDefault1(v GetProviderResponseSamlAttributeMappingKeysDefault1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeGetProviderResponseSamlAttributeMappingKeysDefault1 performs a merge with any union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided GetProviderResponseSamlAttributeMappingKeysDefault1
+func (t *GetProviderResponse_Saml_AttributeMapping_Keys_Default) MergeGetProviderResponseSamlAttributeMappingKeysDefault1(v GetProviderResponseSamlAttributeMappingKeysDefault1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsGetProviderResponseSamlAttributeMappingKeysDefault2 returns the union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default as a GetProviderResponseSamlAttributeMappingKeysDefault2
+func (t GetProviderResponse_Saml_AttributeMapping_Keys_Default) AsGetProviderResponseSamlAttributeMappingKeysDefault2() (GetProviderResponseSamlAttributeMappingKeysDefault2, error) {
+	var body GetProviderResponseSamlAttributeMappingKeysDefault2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromGetProviderResponseSamlAttributeMappingKeysDefault2 overwrites any union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default as the provided GetProviderResponseSamlAttributeMappingKeysDefault2
+func (t *GetProviderResponse_Saml_AttributeMapping_Keys_Default) FromGetProviderResponseSamlAttributeMappingKeysDefault2(v GetProviderResponseSamlAttributeMappingKeysDefault2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeGetProviderResponseSamlAttributeMappingKeysDefault2 performs a merge with any union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided GetProviderResponseSamlAttributeMappingKeysDefault2
+func (t *GetProviderResponse_Saml_AttributeMapping_Keys_Default) MergeGetProviderResponseSamlAttributeMappingKeysDefault2(v GetProviderResponseSamlAttributeMappingKeysDefault2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsGetProviderResponseSamlAttributeMappingKeysDefault3 returns the union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default as a GetProviderResponseSamlAttributeMappingKeysDefault3
+func (t GetProviderResponse_Saml_AttributeMapping_Keys_Default) AsGetProviderResponseSamlAttributeMappingKeysDefault3() (GetProviderResponseSamlAttributeMappingKeysDefault3, error) {
+	var body GetProviderResponseSamlAttributeMappingKeysDefault3
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromGetProviderResponseSamlAttributeMappingKeysDefault3 overwrites any union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default as the provided GetProviderResponseSamlAttributeMappingKeysDefault3
+func (t *GetProviderResponse_Saml_AttributeMapping_Keys_Default) FromGetProviderResponseSamlAttributeMappingKeysDefault3(v GetProviderResponseSamlAttributeMappingKeysDefault3) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeGetProviderResponseSamlAttributeMappingKeysDefault3 performs a merge with any union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided GetProviderResponseSamlAttributeMappingKeysDefault3
+func (t *GetProviderResponse_Saml_AttributeMapping_Keys_Default) MergeGetProviderResponseSamlAttributeMappingKeysDefault3(v GetProviderResponseSamlAttributeMappingKeysDefault3) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t GetProviderResponse_Saml_AttributeMapping_Keys_Default) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *GetProviderResponse_Saml_AttributeMapping_Keys_Default) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsListProjectAddonsResponseAvailableAddonsVariantsId0 returns the union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as a ListProjectAddonsResponseAvailableAddonsVariantsId0
+func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) AsListProjectAddonsResponseAvailableAddonsVariantsId0() (ListProjectAddonsResponseAvailableAddonsVariantsId0, error) {
+	var body ListProjectAddonsResponseAvailableAddonsVariantsId0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseAvailableAddonsVariantsId0 overwrites any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseAvailableAddonsVariantsId0
+func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) FromListProjectAddonsResponseAvailableAddonsVariantsId0(v ListProjectAddonsResponseAvailableAddonsVariantsId0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseAvailableAddonsVariantsId0 performs a merge with any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseAvailableAddonsVariantsId0
+func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseAvailableAddonsVariantsId0(v ListProjectAddonsResponseAvailableAddonsVariantsId0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseAvailableAddonsVariantsId1 returns the union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as a ListProjectAddonsResponseAvailableAddonsVariantsId1
+func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) AsListProjectAddonsResponseAvailableAddonsVariantsId1() (ListProjectAddonsResponseAvailableAddonsVariantsId1, error) {
+	var body ListProjectAddonsResponseAvailableAddonsVariantsId1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseAvailableAddonsVariantsId1 overwrites any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseAvailableAddonsVariantsId1
+func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) FromListProjectAddonsResponseAvailableAddonsVariantsId1(v ListProjectAddonsResponseAvailableAddonsVariantsId1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseAvailableAddonsVariantsId1 performs a merge with any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseAvailableAddonsVariantsId1
+func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseAvailableAddonsVariantsId1(v ListProjectAddonsResponseAvailableAddonsVariantsId1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseAvailableAddonsVariantsId2 returns the union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as a ListProjectAddonsResponseAvailableAddonsVariantsId2
+func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) AsListProjectAddonsResponseAvailableAddonsVariantsId2() (ListProjectAddonsResponseAvailableAddonsVariantsId2, error) {
+	var body ListProjectAddonsResponseAvailableAddonsVariantsId2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseAvailableAddonsVariantsId2 overwrites any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseAvailableAddonsVariantsId2
+func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) FromListProjectAddonsResponseAvailableAddonsVariantsId2(v ListProjectAddonsResponseAvailableAddonsVariantsId2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseAvailableAddonsVariantsId2 performs a merge with any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseAvailableAddonsVariantsId2
+func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseAvailableAddonsVariantsId2(v ListProjectAddonsResponseAvailableAddonsVariantsId2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseAvailableAddonsVariantsId3 returns the union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as a ListProjectAddonsResponseAvailableAddonsVariantsId3
+func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) AsListProjectAddonsResponseAvailableAddonsVariantsId3() (ListProjectAddonsResponseAvailableAddonsVariantsId3, error) {
+	var body ListProjectAddonsResponseAvailableAddonsVariantsId3
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseAvailableAddonsVariantsId3 overwrites any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseAvailableAddonsVariantsId3
+func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) FromListProjectAddonsResponseAvailableAddonsVariantsId3(v ListProjectAddonsResponseAvailableAddonsVariantsId3) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseAvailableAddonsVariantsId3 performs a merge with any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseAvailableAddonsVariantsId3
+func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseAvailableAddonsVariantsId3(v ListProjectAddonsResponseAvailableAddonsVariantsId3) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseAvailableAddonsVariantsId4 returns the union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as a ListProjectAddonsResponseAvailableAddonsVariantsId4
+func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) AsListProjectAddonsResponseAvailableAddonsVariantsId4() (ListProjectAddonsResponseAvailableAddonsVariantsId4, error) {
+	var body ListProjectAddonsResponseAvailableAddonsVariantsId4
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseAvailableAddonsVariantsId4 overwrites any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseAvailableAddonsVariantsId4
+func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) FromListProjectAddonsResponseAvailableAddonsVariantsId4(v ListProjectAddonsResponseAvailableAddonsVariantsId4) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseAvailableAddonsVariantsId4 performs a merge with any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseAvailableAddonsVariantsId4
+func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseAvailableAddonsVariantsId4(v ListProjectAddonsResponseAvailableAddonsVariantsId4) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseAvailableAddonsVariantsId5 returns the union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as a ListProjectAddonsResponseAvailableAddonsVariantsId5
+func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) AsListProjectAddonsResponseAvailableAddonsVariantsId5() (ListProjectAddonsResponseAvailableAddonsVariantsId5, error) {
+	var body ListProjectAddonsResponseAvailableAddonsVariantsId5
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseAvailableAddonsVariantsId5 overwrites any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseAvailableAddonsVariantsId5
+func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) FromListProjectAddonsResponseAvailableAddonsVariantsId5(v ListProjectAddonsResponseAvailableAddonsVariantsId5) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseAvailableAddonsVariantsId5 performs a merge with any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseAvailableAddonsVariantsId5
+func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseAvailableAddonsVariantsId5(v ListProjectAddonsResponseAvailableAddonsVariantsId5) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseAvailableAddonsVariantsId6 returns the union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as a ListProjectAddonsResponseAvailableAddonsVariantsId6
+func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) AsListProjectAddonsResponseAvailableAddonsVariantsId6() (ListProjectAddonsResponseAvailableAddonsVariantsId6, error) {
+	var body ListProjectAddonsResponseAvailableAddonsVariantsId6
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseAvailableAddonsVariantsId6 overwrites any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseAvailableAddonsVariantsId6
+func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) FromListProjectAddonsResponseAvailableAddonsVariantsId6(v ListProjectAddonsResponseAvailableAddonsVariantsId6) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseAvailableAddonsVariantsId6 performs a merge with any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseAvailableAddonsVariantsId6
+func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseAvailableAddonsVariantsId6(v ListProjectAddonsResponseAvailableAddonsVariantsId6) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsListProjectAddonsResponseSelectedAddonsVariantId0 returns the union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as a ListProjectAddonsResponseSelectedAddonsVariantId0
+func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) AsListProjectAddonsResponseSelectedAddonsVariantId0() (ListProjectAddonsResponseSelectedAddonsVariantId0, error) {
+	var body ListProjectAddonsResponseSelectedAddonsVariantId0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseSelectedAddonsVariantId0 overwrites any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseSelectedAddonsVariantId0
+func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) FromListProjectAddonsResponseSelectedAddonsVariantId0(v ListProjectAddonsResponseSelectedAddonsVariantId0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseSelectedAddonsVariantId0 performs a merge with any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseSelectedAddonsVariantId0
+func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseSelectedAddonsVariantId0(v ListProjectAddonsResponseSelectedAddonsVariantId0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseSelectedAddonsVariantId1 returns the union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as a ListProjectAddonsResponseSelectedAddonsVariantId1
+func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) AsListProjectAddonsResponseSelectedAddonsVariantId1() (ListProjectAddonsResponseSelectedAddonsVariantId1, error) {
+	var body ListProjectAddonsResponseSelectedAddonsVariantId1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseSelectedAddonsVariantId1 overwrites any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseSelectedAddonsVariantId1
+func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) FromListProjectAddonsResponseSelectedAddonsVariantId1(v ListProjectAddonsResponseSelectedAddonsVariantId1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseSelectedAddonsVariantId1 performs a merge with any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseSelectedAddonsVariantId1
+func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseSelectedAddonsVariantId1(v ListProjectAddonsResponseSelectedAddonsVariantId1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseSelectedAddonsVariantId2 returns the union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as a ListProjectAddonsResponseSelectedAddonsVariantId2
+func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) AsListProjectAddonsResponseSelectedAddonsVariantId2() (ListProjectAddonsResponseSelectedAddonsVariantId2, error) {
+	var body ListProjectAddonsResponseSelectedAddonsVariantId2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseSelectedAddonsVariantId2 overwrites any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseSelectedAddonsVariantId2
+func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) FromListProjectAddonsResponseSelectedAddonsVariantId2(v ListProjectAddonsResponseSelectedAddonsVariantId2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseSelectedAddonsVariantId2 performs a merge with any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseSelectedAddonsVariantId2
+func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseSelectedAddonsVariantId2(v ListProjectAddonsResponseSelectedAddonsVariantId2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseSelectedAddonsVariantId3 returns the union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as a ListProjectAddonsResponseSelectedAddonsVariantId3
+func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) AsListProjectAddonsResponseSelectedAddonsVariantId3() (ListProjectAddonsResponseSelectedAddonsVariantId3, error) {
+	var body ListProjectAddonsResponseSelectedAddonsVariantId3
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseSelectedAddonsVariantId3 overwrites any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseSelectedAddonsVariantId3
+func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) FromListProjectAddonsResponseSelectedAddonsVariantId3(v ListProjectAddonsResponseSelectedAddonsVariantId3) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseSelectedAddonsVariantId3 performs a merge with any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseSelectedAddonsVariantId3
+func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseSelectedAddonsVariantId3(v ListProjectAddonsResponseSelectedAddonsVariantId3) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseSelectedAddonsVariantId4 returns the union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as a ListProjectAddonsResponseSelectedAddonsVariantId4
+func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) AsListProjectAddonsResponseSelectedAddonsVariantId4() (ListProjectAddonsResponseSelectedAddonsVariantId4, error) {
+	var body ListProjectAddonsResponseSelectedAddonsVariantId4
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseSelectedAddonsVariantId4 overwrites any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseSelectedAddonsVariantId4
+func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) FromListProjectAddonsResponseSelectedAddonsVariantId4(v ListProjectAddonsResponseSelectedAddonsVariantId4) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseSelectedAddonsVariantId4 performs a merge with any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseSelectedAddonsVariantId4
+func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseSelectedAddonsVariantId4(v ListProjectAddonsResponseSelectedAddonsVariantId4) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseSelectedAddonsVariantId5 returns the union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as a ListProjectAddonsResponseSelectedAddonsVariantId5
+func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) AsListProjectAddonsResponseSelectedAddonsVariantId5() (ListProjectAddonsResponseSelectedAddonsVariantId5, error) {
+	var body ListProjectAddonsResponseSelectedAddonsVariantId5
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseSelectedAddonsVariantId5 overwrites any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseSelectedAddonsVariantId5
+func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) FromListProjectAddonsResponseSelectedAddonsVariantId5(v ListProjectAddonsResponseSelectedAddonsVariantId5) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseSelectedAddonsVariantId5 performs a merge with any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseSelectedAddonsVariantId5
+func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseSelectedAddonsVariantId5(v ListProjectAddonsResponseSelectedAddonsVariantId5) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseSelectedAddonsVariantId6 returns the union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as a ListProjectAddonsResponseSelectedAddonsVariantId6
+func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) AsListProjectAddonsResponseSelectedAddonsVariantId6() (ListProjectAddonsResponseSelectedAddonsVariantId6, error) {
+	var body ListProjectAddonsResponseSelectedAddonsVariantId6
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseSelectedAddonsVariantId6 overwrites any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseSelectedAddonsVariantId6
+func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) FromListProjectAddonsResponseSelectedAddonsVariantId6(v ListProjectAddonsResponseSelectedAddonsVariantId6) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseSelectedAddonsVariantId6 performs a merge with any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseSelectedAddonsVariantId6
+func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseSelectedAddonsVariantId6(v ListProjectAddonsResponseSelectedAddonsVariantId6) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsListProvidersResponseItemsSamlAttributeMappingKeysDefault0 returns the union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default as a ListProvidersResponseItemsSamlAttributeMappingKeysDefault0
+func (t ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) AsListProvidersResponseItemsSamlAttributeMappingKeysDefault0() (ListProvidersResponseItemsSamlAttributeMappingKeysDefault0, error) {
+	var body ListProvidersResponseItemsSamlAttributeMappingKeysDefault0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProvidersResponseItemsSamlAttributeMappingKeysDefault0 overwrites any union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default as the provided ListProvidersResponseItemsSamlAttributeMappingKeysDefault0
+func (t *ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) FromListProvidersResponseItemsSamlAttributeMappingKeysDefault0(v ListProvidersResponseItemsSamlAttributeMappingKeysDefault0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProvidersResponseItemsSamlAttributeMappingKeysDefault0 performs a merge with any union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default, using the provided ListProvidersResponseItemsSamlAttributeMappingKeysDefault0
+func (t *ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) MergeListProvidersResponseItemsSamlAttributeMappingKeysDefault0(v ListProvidersResponseItemsSamlAttributeMappingKeysDefault0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProvidersResponseItemsSamlAttributeMappingKeysDefault1 returns the union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default as a ListProvidersResponseItemsSamlAttributeMappingKeysDefault1
+func (t ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) AsListProvidersResponseItemsSamlAttributeMappingKeysDefault1() (ListProvidersResponseItemsSamlAttributeMappingKeysDefault1, error) {
+	var body ListProvidersResponseItemsSamlAttributeMappingKeysDefault1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProvidersResponseItemsSamlAttributeMappingKeysDefault1 overwrites any union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default as the provided ListProvidersResponseItemsSamlAttributeMappingKeysDefault1
+func (t *ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) FromListProvidersResponseItemsSamlAttributeMappingKeysDefault1(v ListProvidersResponseItemsSamlAttributeMappingKeysDefault1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProvidersResponseItemsSamlAttributeMappingKeysDefault1 performs a merge with any union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default, using the provided ListProvidersResponseItemsSamlAttributeMappingKeysDefault1
+func (t *ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) MergeListProvidersResponseItemsSamlAttributeMappingKeysDefault1(v ListProvidersResponseItemsSamlAttributeMappingKeysDefault1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProvidersResponseItemsSamlAttributeMappingKeysDefault2 returns the union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default as a ListProvidersResponseItemsSamlAttributeMappingKeysDefault2
+func (t ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) AsListProvidersResponseItemsSamlAttributeMappingKeysDefault2() (ListProvidersResponseItemsSamlAttributeMappingKeysDefault2, error) {
+	var body ListProvidersResponseItemsSamlAttributeMappingKeysDefault2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProvidersResponseItemsSamlAttributeMappingKeysDefault2 overwrites any union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default as the provided ListProvidersResponseItemsSamlAttributeMappingKeysDefault2
+func (t *ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) FromListProvidersResponseItemsSamlAttributeMappingKeysDefault2(v ListProvidersResponseItemsSamlAttributeMappingKeysDefault2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProvidersResponseItemsSamlAttributeMappingKeysDefault2 performs a merge with any union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default, using the provided ListProvidersResponseItemsSamlAttributeMappingKeysDefault2
+func (t *ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) MergeListProvidersResponseItemsSamlAttributeMappingKeysDefault2(v ListProvidersResponseItemsSamlAttributeMappingKeysDefault2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProvidersResponseItemsSamlAttributeMappingKeysDefault3 returns the union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default as a ListProvidersResponseItemsSamlAttributeMappingKeysDefault3
+func (t ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) AsListProvidersResponseItemsSamlAttributeMappingKeysDefault3() (ListProvidersResponseItemsSamlAttributeMappingKeysDefault3, error) {
+	var body ListProvidersResponseItemsSamlAttributeMappingKeysDefault3
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProvidersResponseItemsSamlAttributeMappingKeysDefault3 overwrites any union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default as the provided ListProvidersResponseItemsSamlAttributeMappingKeysDefault3
+func (t *ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) FromListProvidersResponseItemsSamlAttributeMappingKeysDefault3(v ListProvidersResponseItemsSamlAttributeMappingKeysDefault3) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProvidersResponseItemsSamlAttributeMappingKeysDefault3 performs a merge with any union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default, using the provided ListProvidersResponseItemsSamlAttributeMappingKeysDefault3
+func (t *ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) MergeListProvidersResponseItemsSamlAttributeMappingKeysDefault3(v ListProvidersResponseItemsSamlAttributeMappingKeysDefault3) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsUpdateProviderBodyAttributeMappingKeysDefault0 returns the union data inside the UpdateProviderBody_AttributeMapping_Keys_Default as a UpdateProviderBodyAttributeMappingKeysDefault0
+func (t UpdateProviderBody_AttributeMapping_Keys_Default) AsUpdateProviderBodyAttributeMappingKeysDefault0() (UpdateProviderBodyAttributeMappingKeysDefault0, error) {
+	var body UpdateProviderBodyAttributeMappingKeysDefault0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromUpdateProviderBodyAttributeMappingKeysDefault0 overwrites any union data inside the UpdateProviderBody_AttributeMapping_Keys_Default as the provided UpdateProviderBodyAttributeMappingKeysDefault0
+func (t *UpdateProviderBody_AttributeMapping_Keys_Default) FromUpdateProviderBodyAttributeMappingKeysDefault0(v UpdateProviderBodyAttributeMappingKeysDefault0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeUpdateProviderBodyAttributeMappingKeysDefault0 performs a merge with any union data inside the UpdateProviderBody_AttributeMapping_Keys_Default, using the provided UpdateProviderBodyAttributeMappingKeysDefault0
+func (t *UpdateProviderBody_AttributeMapping_Keys_Default) MergeUpdateProviderBodyAttributeMappingKeysDefault0(v UpdateProviderBodyAttributeMappingKeysDefault0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsUpdateProviderBodyAttributeMappingKeysDefault1 returns the union data inside the UpdateProviderBody_AttributeMapping_Keys_Default as a UpdateProviderBodyAttributeMappingKeysDefault1
+func (t UpdateProviderBody_AttributeMapping_Keys_Default) AsUpdateProviderBodyAttributeMappingKeysDefault1() (UpdateProviderBodyAttributeMappingKeysDefault1, error) {
+	var body UpdateProviderBodyAttributeMappingKeysDefault1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromUpdateProviderBodyAttributeMappingKeysDefault1 overwrites any union data inside the UpdateProviderBody_AttributeMapping_Keys_Default as the provided UpdateProviderBodyAttributeMappingKeysDefault1
+func (t *UpdateProviderBody_AttributeMapping_Keys_Default) FromUpdateProviderBodyAttributeMappingKeysDefault1(v UpdateProviderBodyAttributeMappingKeysDefault1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeUpdateProviderBodyAttributeMappingKeysDefault1 performs a merge with any union data inside the UpdateProviderBody_AttributeMapping_Keys_Default, using the provided UpdateProviderBodyAttributeMappingKeysDefault1
+func (t *UpdateProviderBody_AttributeMapping_Keys_Default) MergeUpdateProviderBodyAttributeMappingKeysDefault1(v UpdateProviderBodyAttributeMappingKeysDefault1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsUpdateProviderBodyAttributeMappingKeysDefault2 returns the union data inside the UpdateProviderBody_AttributeMapping_Keys_Default as a UpdateProviderBodyAttributeMappingKeysDefault2
+func (t UpdateProviderBody_AttributeMapping_Keys_Default) AsUpdateProviderBodyAttributeMappingKeysDefault2() (UpdateProviderBodyAttributeMappingKeysDefault2, error) {
+	var body UpdateProviderBodyAttributeMappingKeysDefault2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromUpdateProviderBodyAttributeMappingKeysDefault2 overwrites any union data inside the UpdateProviderBody_AttributeMapping_Keys_Default as the provided UpdateProviderBodyAttributeMappingKeysDefault2
+func (t *UpdateProviderBody_AttributeMapping_Keys_Default) FromUpdateProviderBodyAttributeMappingKeysDefault2(v UpdateProviderBodyAttributeMappingKeysDefault2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeUpdateProviderBodyAttributeMappingKeysDefault2 performs a merge with any union data inside the UpdateProviderBody_AttributeMapping_Keys_Default, using the provided UpdateProviderBodyAttributeMappingKeysDefault2
+func (t *UpdateProviderBody_AttributeMapping_Keys_Default) MergeUpdateProviderBodyAttributeMappingKeysDefault2(v UpdateProviderBodyAttributeMappingKeysDefault2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsUpdateProviderBodyAttributeMappingKeysDefault3 returns the union data inside the UpdateProviderBody_AttributeMapping_Keys_Default as a UpdateProviderBodyAttributeMappingKeysDefault3
+func (t UpdateProviderBody_AttributeMapping_Keys_Default) AsUpdateProviderBodyAttributeMappingKeysDefault3() (UpdateProviderBodyAttributeMappingKeysDefault3, error) {
+	var body UpdateProviderBodyAttributeMappingKeysDefault3
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromUpdateProviderBodyAttributeMappingKeysDefault3 overwrites any union data inside the UpdateProviderBody_AttributeMapping_Keys_Default as the provided UpdateProviderBodyAttributeMappingKeysDefault3
+func (t *UpdateProviderBody_AttributeMapping_Keys_Default) FromUpdateProviderBodyAttributeMappingKeysDefault3(v UpdateProviderBodyAttributeMappingKeysDefault3) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeUpdateProviderBodyAttributeMappingKeysDefault3 performs a merge with any union data inside the UpdateProviderBody_AttributeMapping_Keys_Default, using the provided UpdateProviderBodyAttributeMappingKeysDefault3
+func (t *UpdateProviderBody_AttributeMapping_Keys_Default) MergeUpdateProviderBodyAttributeMappingKeysDefault3(v UpdateProviderBodyAttributeMappingKeysDefault3) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t UpdateProviderBody_AttributeMapping_Keys_Default) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *UpdateProviderBody_AttributeMapping_Keys_Default) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsUpdateProviderResponseSamlAttributeMappingKeysDefault0 returns the union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default as a UpdateProviderResponseSamlAttributeMappingKeysDefault0
+func (t UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) AsUpdateProviderResponseSamlAttributeMappingKeysDefault0() (UpdateProviderResponseSamlAttributeMappingKeysDefault0, error) {
+	var body UpdateProviderResponseSamlAttributeMappingKeysDefault0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromUpdateProviderResponseSamlAttributeMappingKeysDefault0 overwrites any union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default as the provided UpdateProviderResponseSamlAttributeMappingKeysDefault0
+func (t *UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) FromUpdateProviderResponseSamlAttributeMappingKeysDefault0(v UpdateProviderResponseSamlAttributeMappingKeysDefault0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeUpdateProviderResponseSamlAttributeMappingKeysDefault0 performs a merge with any union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided UpdateProviderResponseSamlAttributeMappingKeysDefault0
+func (t *UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) MergeUpdateProviderResponseSamlAttributeMappingKeysDefault0(v UpdateProviderResponseSamlAttributeMappingKeysDefault0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsUpdateProviderResponseSamlAttributeMappingKeysDefault1 returns the union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default as a UpdateProviderResponseSamlAttributeMappingKeysDefault1
+func (t UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) AsUpdateProviderResponseSamlAttributeMappingKeysDefault1() (UpdateProviderResponseSamlAttributeMappingKeysDefault1, error) {
+	var body UpdateProviderResponseSamlAttributeMappingKeysDefault1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromUpdateProviderResponseSamlAttributeMappingKeysDefault1 overwrites any union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default as the provided UpdateProviderResponseSamlAttributeMappingKeysDefault1
+func (t *UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) FromUpdateProviderResponseSamlAttributeMappingKeysDefault1(v UpdateProviderResponseSamlAttributeMappingKeysDefault1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeUpdateProviderResponseSamlAttributeMappingKeysDefault1 performs a merge with any union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided UpdateProviderResponseSamlAttributeMappingKeysDefault1
+func (t *UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) MergeUpdateProviderResponseSamlAttributeMappingKeysDefault1(v UpdateProviderResponseSamlAttributeMappingKeysDefault1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsUpdateProviderResponseSamlAttributeMappingKeysDefault2 returns the union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default as a UpdateProviderResponseSamlAttributeMappingKeysDefault2
+func (t UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) AsUpdateProviderResponseSamlAttributeMappingKeysDefault2() (UpdateProviderResponseSamlAttributeMappingKeysDefault2, error) {
+	var body UpdateProviderResponseSamlAttributeMappingKeysDefault2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromUpdateProviderResponseSamlAttributeMappingKeysDefault2 overwrites any union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default as the provided UpdateProviderResponseSamlAttributeMappingKeysDefault2
+func (t *UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) FromUpdateProviderResponseSamlAttributeMappingKeysDefault2(v UpdateProviderResponseSamlAttributeMappingKeysDefault2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeUpdateProviderResponseSamlAttributeMappingKeysDefault2 performs a merge with any union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided UpdateProviderResponseSamlAttributeMappingKeysDefault2
+func (t *UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) MergeUpdateProviderResponseSamlAttributeMappingKeysDefault2(v UpdateProviderResponseSamlAttributeMappingKeysDefault2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsUpdateProviderResponseSamlAttributeMappingKeysDefault3 returns the union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default as a UpdateProviderResponseSamlAttributeMappingKeysDefault3
+func (t UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) AsUpdateProviderResponseSamlAttributeMappingKeysDefault3() (UpdateProviderResponseSamlAttributeMappingKeysDefault3, error) {
+	var body UpdateProviderResponseSamlAttributeMappingKeysDefault3
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromUpdateProviderResponseSamlAttributeMappingKeysDefault3 overwrites any union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default as the provided UpdateProviderResponseSamlAttributeMappingKeysDefault3
+func (t *UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) FromUpdateProviderResponseSamlAttributeMappingKeysDefault3(v UpdateProviderResponseSamlAttributeMappingKeysDefault3) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeUpdateProviderResponseSamlAttributeMappingKeysDefault3 performs a merge with any union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided UpdateProviderResponseSamlAttributeMappingKeysDefault3
+func (t *UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) MergeUpdateProviderResponseSamlAttributeMappingKeysDefault3(v UpdateProviderResponseSamlAttributeMappingKeysDefault3) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
@@ -2546,22 +4577,22 @@ func (t *V1AnalyticsResponse_Error) UnmarshalJSON(b []byte) error {
 	return err
 }
 
-// AsAuthHealthResponse returns the union data inside the V1ServiceHealthResponse_Info as a AuthHealthResponse
-func (t V1ServiceHealthResponse_Info) AsAuthHealthResponse() (AuthHealthResponse, error) {
-	var body AuthHealthResponse
+// AsV1ServiceHealthResponseInfo0 returns the union data inside the V1ServiceHealthResponse_Info as a V1ServiceHealthResponseInfo0
+func (t V1ServiceHealthResponse_Info) AsV1ServiceHealthResponseInfo0() (V1ServiceHealthResponseInfo0, error) {
+	var body V1ServiceHealthResponseInfo0
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromAuthHealthResponse overwrites any union data inside the V1ServiceHealthResponse_Info as the provided AuthHealthResponse
-func (t *V1ServiceHealthResponse_Info) FromAuthHealthResponse(v AuthHealthResponse) error {
+// FromV1ServiceHealthResponseInfo0 overwrites any union data inside the V1ServiceHealthResponse_Info as the provided V1ServiceHealthResponseInfo0
+func (t *V1ServiceHealthResponse_Info) FromV1ServiceHealthResponseInfo0(v V1ServiceHealthResponseInfo0) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeAuthHealthResponse performs a merge with any union data inside the V1ServiceHealthResponse_Info, using the provided AuthHealthResponse
-func (t *V1ServiceHealthResponse_Info) MergeAuthHealthResponse(v AuthHealthResponse) error {
+// MergeV1ServiceHealthResponseInfo0 performs a merge with any union data inside the V1ServiceHealthResponse_Info, using the provided V1ServiceHealthResponseInfo0
+func (t *V1ServiceHealthResponse_Info) MergeV1ServiceHealthResponseInfo0(v V1ServiceHealthResponseInfo0) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -2572,22 +4603,22 @@ func (t *V1ServiceHealthResponse_Info) MergeAuthHealthResponse(v AuthHealthRespo
 	return err
 }
 
-// AsRealtimeHealthResponse returns the union data inside the V1ServiceHealthResponse_Info as a RealtimeHealthResponse
-func (t V1ServiceHealthResponse_Info) AsRealtimeHealthResponse() (RealtimeHealthResponse, error) {
-	var body RealtimeHealthResponse
+// AsV1ServiceHealthResponseInfo1 returns the union data inside the V1ServiceHealthResponse_Info as a V1ServiceHealthResponseInfo1
+func (t V1ServiceHealthResponse_Info) AsV1ServiceHealthResponseInfo1() (V1ServiceHealthResponseInfo1, error) {
+	var body V1ServiceHealthResponseInfo1
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromRealtimeHealthResponse overwrites any union data inside the V1ServiceHealthResponse_Info as the provided RealtimeHealthResponse
-func (t *V1ServiceHealthResponse_Info) FromRealtimeHealthResponse(v RealtimeHealthResponse) error {
+// FromV1ServiceHealthResponseInfo1 overwrites any union data inside the V1ServiceHealthResponse_Info as the provided V1ServiceHealthResponseInfo1
+func (t *V1ServiceHealthResponse_Info) FromV1ServiceHealthResponseInfo1(v V1ServiceHealthResponseInfo1) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeRealtimeHealthResponse performs a merge with any union data inside the V1ServiceHealthResponse_Info, using the provided RealtimeHealthResponse
-func (t *V1ServiceHealthResponse_Info) MergeRealtimeHealthResponse(v RealtimeHealthResponse) error {
+// MergeV1ServiceHealthResponseInfo1 performs a merge with any union data inside the V1ServiceHealthResponse_Info, using the provided V1ServiceHealthResponseInfo1
+func (t *V1ServiceHealthResponse_Info) MergeV1ServiceHealthResponseInfo1(v V1ServiceHealthResponseInfo1) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err

@@ -670,6 +670,14 @@ EOF
 			}
 		}
 
+		if utils.Config.Auth.Web3.Solana.Enabled {
+			env = append(env, "GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED=true")
+
+			if utils.Config.Auth.RateLimit.Web3 != 0 {
+				env = append(env, fmt.Sprintf("GOTRUE_RATE_LIMIT_WEB3=%v", utils.Config.Auth.RateLimit.Web3))
+			}
+		}
+
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
