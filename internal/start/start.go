@@ -280,7 +280,7 @@ EOF
 			}
 			env = append(env, "DOCKER_HOST="+dindHost.String())
 		case "npipe":
-			const dockerDaemonNeededErr = "Analytics on windows requires docker daemon exposed on tcp://localhost:2375. See https://supabase.com/docs/guides/local-development/cli/getting-started?queryGroups=platform&platform=windows#running-supabase-locally for more details"
+			const dockerDaemonNeededErr = "Analytics on Windows requires Docker daemon exposed on tcp://localhost:2375.\nSee https://supabase.com/docs/guides/local-development/cli/getting-started?queryGroups=platform&platform=windows#running-supabase-locally for more details."
 			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), dockerDaemonNeededErr)
 			env = append(env, "DOCKER_HOST="+dindHost.String())
 		case "unix":
