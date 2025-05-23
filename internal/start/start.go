@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
-	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -282,25 +280,8 @@ EOF
 			}
 			env = append(env, "DOCKER_HOST="+dindHost.String())
 		case "npipe":
-			const dockerDaemonNeededErr = "Analytics requires docker daemon exposed on tcp://localhost:2375. Either disable analytics in supabase/config.toml, or expose the docker daemon. See https://supabase.com/docs/guides/local-development/cli/getting-started?queryGroups=platform&platform=windows#running-supabase-locally for more details"
-
-			resp, err := http.Get("http://localhost:2375/version")
-			if err != nil {
-				return errors.Errorf(dockerDaemonNeededErr)
-			}
-			defer resp.Body.Close()
-			var versionInfo struct {
-				Platform struct {
-					Name string `json:"Name"`
-				} `json:"Platform"`
-			}
-			if err := json.NewDecoder((resp.Body)).Decode(&versionInfo); err != nil {
-				return errors.Errorf(dockerDaemonNeededErr)
-			}
-			if versionInfo.Platform.Name == "" {
-				return errors.Errorf(dockerDaemonNeededErr)
-			}
-
+			const dockerDaemonNeededErr = "Analytics on windows requires docker daemon exposed on tcp://localhost:2375. See https://supabase.com/docs/guides/local-development/cli/getting-started?queryGroups=platform&platform=windows#running-supabase-locally for more details"
+			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), dockerDaemonNeededErr)
 			env = append(env, "DOCKER_HOST="+dindHost.String())
 		case "unix":
 			if dindHost, err = client.ParseHostURL(client.DefaultDockerHost); err != nil {
@@ -348,7 +329,9 @@ EOF
 		); err != nil {
 			return err
 		}
-		started = append(started, utils.VectorId)
+		if parsed.Scheme != "npipe" {
+			started = append(started, utils.VectorId)
+		}
 	}
 
 	// Start Kong.
