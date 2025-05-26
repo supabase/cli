@@ -27,7 +27,7 @@ func TestIndexStatsCommand(t *testing.T) {
 		defer conn.Close(t)
 
 		// Mock index stats
-		conn.Query(IndexStatsQuery, reset.LikeEscapeSchema(utils.PgSchemas)).
+		conn.Query(IndexStatsQuery, reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
 				Name:         "public.test_idx",
 				Size:         "1GB",

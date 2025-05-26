@@ -27,7 +27,7 @@ func TestTableStatsCommand(t *testing.T) {
 		defer conn.Close(t)
 
 		// Mock table sizes and index sizes
-		conn.Query(TableStatsQuery, reset.LikeEscapeSchema(utils.PgSchemas)).
+		conn.Query(TableStatsQuery, reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
 				Name:                "public.test_table",
 				Table_size:          "3GB",

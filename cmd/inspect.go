@@ -224,11 +224,11 @@ func printReportSummary(outDir string) error {
 	table := "RULE|STATUS|MATCHES\n|-|-|-|\n"
 
 	// find matching rule
-
+	var status string
 	for i := range cfg.Rules {
 		r := &cfg.Rules[i]
 		name := r.Name
-		status := "--"
+
 		row := db.QueryRow(r.Query)
 		var match sql.NullString
 

@@ -27,7 +27,7 @@ func TestTotalTableSizesCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(TotalTableSizesQuery, reset.LikeEscapeSchema(utils.PgSchemas)).
+		conn.Query(TotalTableSizesQuery, reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
 				Name: "public.test_table",
 				Size: "3GB",

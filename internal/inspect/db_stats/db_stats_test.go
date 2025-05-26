@@ -7,8 +7,6 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
-	"github.com/supabase/cli/internal/db/reset"
-	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/pgtest"
 )
 
@@ -27,7 +25,7 @@ func TestDBStatsCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(DBStatsQuery, reset.LikeEscapeSchema(utils.InternalSchemas)).
+		conn.Query(DBStatsQuery).
 			Reply("SELECT 1", Result{
 				Database_size:          "8GB",
 				Total_index_size:       "8GB",
