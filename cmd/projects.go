@@ -32,22 +32,27 @@ var (
 	region = utils.EnumFlag{
 		Allowed: awsRegions(),
 	}
-	plan = utils.EnumFlag{
-		Allowed: []string{string(api.V1CreateProjectBodyDtoPlanFree), string(api.V1CreateProjectBodyDtoPlanPro)},
-		Value:   string(api.V1CreateProjectBodyDtoPlanFree),
-	}
 	size = utils.EnumFlag{
 		Allowed: []string{
-			string(api.DesiredInstanceSizeMicro),
-			string(api.DesiredInstanceSizeSmall),
-			string(api.DesiredInstanceSizeMedium),
-			string(api.DesiredInstanceSizeLarge),
-			string(api.DesiredInstanceSizeXlarge),
-			string(api.DesiredInstanceSizeN2xlarge),
-			string(api.DesiredInstanceSizeN4xlarge),
-			string(api.DesiredInstanceSizeN8xlarge),
-			string(api.DesiredInstanceSizeN12xlarge),
-			string(api.DesiredInstanceSizeN16xlarge),
+			string(api.V1CreateProjectBodyDesiredInstanceSizeLarge),
+			string(api.V1CreateProjectBodyDesiredInstanceSizeMedium),
+			string(api.V1CreateProjectBodyDesiredInstanceSizeMicro),
+			string(api.V1CreateProjectBodyDesiredInstanceSizeN12xlarge),
+			string(api.V1CreateProjectBodyDesiredInstanceSizeN16xlarge),
+			string(api.V1CreateProjectBodyDesiredInstanceSizeN24xlarge),
+			string(api.V1CreateProjectBodyDesiredInstanceSizeN24xlargeHighMemory),
+			string(api.V1CreateProjectBodyDesiredInstanceSizeN24xlargeOptimizedCpu),
+			string(api.V1CreateProjectBodyDesiredInstanceSizeN24xlargeOptimizedMemory),
+			string(api.V1CreateProjectBodyDesiredInstanceSizeN2xlarge),
+			string(api.V1CreateProjectBodyDesiredInstanceSizeN48xlarge),
+			string(api.V1CreateProjectBodyDesiredInstanceSizeN48xlargeHighMemory),
+			string(api.V1CreateProjectBodyDesiredInstanceSizeN48xlargeOptimizedCpu),
+			string(api.V1CreateProjectBodyDesiredInstanceSizeN48xlargeOptimizedMemory),
+			string(api.V1CreateProjectBodyDesiredInstanceSizeN4xlarge),
+			string(api.V1CreateProjectBodyDesiredInstanceSizeN8xlarge),
+			string(api.V1CreateProjectBodyDesiredInstanceSizePico),
+			string(api.V1CreateProjectBodyDesiredInstanceSizeSmall),
+			string(api.V1CreateProjectBodyDesiredInstanceSizeXlarge),
 		},
 	}
 
@@ -69,14 +74,14 @@ var (
 			if len(args) > 0 {
 				projectName = args[0]
 			}
-			body := api.V1CreateProjectBodyDto{
+			body := api.V1CreateProjectBody{
 				Name:           projectName,
 				OrganizationId: orgId,
 				DbPass:         dbPassword,
-				Region:         api.V1CreateProjectBodyDtoRegion(region.Value),
+				Region:         api.V1CreateProjectBodyRegion(region.Value),
 			}
 			if cmd.Flags().Changed("size") {
-				body.DesiredInstanceSize = (*api.V1CreateProjectBodyDtoDesiredInstanceSize)(&size.Value)
+				body.DesiredInstanceSize = (*api.V1CreateProjectBodyDesiredInstanceSize)(&size.Value)
 			}
 			return create.Run(cmd.Context(), body, afero.NewOsFs())
 		},
@@ -133,7 +138,7 @@ func init() {
 	createFlags.StringVar(&orgId, "org-id", "", "Organization ID to create the project in.")
 	createFlags.StringVar(&dbPassword, "db-password", "", "Database password of the project.")
 	createFlags.Var(&region, "region", "Select a region close to you for the best performance.")
-	createFlags.Var(&plan, "plan", "Select a plan that suits your needs.")
+	createFlags.String("plan", "", "Select a plan that suits your needs.")
 	cobra.CheckErr(createFlags.MarkHidden("plan"))
 	createFlags.Var(&size, "size", "Select a desired instance size for your project.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", createFlags.Lookup("db-password")))

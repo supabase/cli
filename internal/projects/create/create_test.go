@@ -14,11 +14,11 @@ import (
 )
 
 func TestProjectCreateCommand(t *testing.T) {
-	var params = api.V1CreateProjectBodyDto{
+	var params = api.V1CreateProjectBody{
 		Name:           "Test Project",
 		OrganizationId: "combined-fuchsia-lion",
 		DbPass:         "redacted",
-		Region:         api.V1CreateProjectBodyDtoRegionUsWest1,
+		Region:         api.V1CreateProjectBodyRegionUsWest1,
 	}
 
 	t.Run("creates a new project", func(t *testing.T) {

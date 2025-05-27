@@ -2115,7 +2115,7 @@ paths:
         - Database
   /v1/projects/{ref}/config/database/pooler:
     get:
-      operationId: getSupavisorConfig
+      operationId: v1-get-pooler-config
       summary: Gets project's supavisor config
       parameters:
         - name: ref
@@ -2143,7 +2143,7 @@ paths:
       security:
         - bearer: []
     patch:
-      operationId: updateSupavisorConfig
+      operationId: v1-update-pooler-config
       summary: Updates project's supavisor config
       parameters:
         - name: ref
@@ -2767,7 +2767,7 @@ paths:
         - bearer: []
   /v1/projects/{ref}/database/migrations:
     get:
-      operationId: v1-list-migrations
+      operationId: v1-list-migration-history
       summary: '[Beta] List applied migration versions'
       description: Only available to selected partner OAuth apps
       parameters:
@@ -3002,6 +3002,12 @@ paths:
           in: query
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/vnd.denoland.eszip:
+            type: string
+            format: binary
       responses:
         '201':
           description: ''
@@ -3679,7 +3685,7 @@ components:
         db_host:
           type: string
         db_port:
-          type: number
+          type: integer
         db_user:
           type: string
         db_pass:
@@ -5111,6 +5117,7 @@ components:
       properties:
         fileSizeLimit:
           type: integer
+          format: int64
         features:
           type: object
           properties:
@@ -5141,6 +5148,7 @@ components:
           type: integer
           minimum: 0
           maximum: 53687091200
+          format: int64
         features:
           type: object
           properties:
@@ -5330,11 +5338,10 @@ components:
           type: integer
         db_name:
           type: string
+          exclusiveMinimum: true
+          minimum: 0
         connection_string:
           type: string
-        connectionString:
-          type: string
-          description: Use connection_string instead
         default_pool_size:
           type: integer
           nullable: true
@@ -7185,8 +7192,10 @@ components:
           type: integer
         created_at:
           type: integer
+          format: int64
         updated_at:
           type: integer
+          format: int64
         verify_jwt:
           type: boolean
         import_map:
@@ -7225,6 +7234,7 @@ components:
             type: integer
           created_at:
             type: integer
+            format: int64
           verify_jwt:
             type: boolean
           import_map:
@@ -7329,8 +7339,10 @@ components:
           type: integer
         created_at:
           type: integer
+          format: int64
         updated_at:
           type: integer
+          format: int64
         verify_jwt:
           type: boolean
         import_map:
@@ -7446,13 +7458,7 @@ components:
                     type: array
                     items:
                       type: string
-                  default:
-                    oneOf:
-                      - type: object
-                        properties: {}
-                      - type: number
-                      - type: string
-                      - type: boolean
+                  default: {}
                   array:
                     type: boolean
           required:
@@ -7489,13 +7495,7 @@ components:
                         type: array
                         items:
                           type: string
-                      default:
-                        oneOf:
-                          - type: object
-                            properties: {}
-                          - type: number
-                          - type: string
-                          - type: boolean
+                      default: {}
                       array:
                         type: boolean
               required:
@@ -7559,13 +7559,7 @@ components:
                               type: array
                               items:
                                 type: string
-                            default:
-                              oneOf:
-                                - type: object
-                                  properties: {}
-                                - type: number
-                                - type: string
-                                - type: boolean
+                            default: {}
                             array:
                               type: boolean
                     required:
@@ -7626,13 +7620,7 @@ components:
                         type: array
                         items:
                           type: string
-                      default:
-                        oneOf:
-                          - type: object
-                            properties: {}
-                          - type: number
-                          - type: string
-                          - type: boolean
+                      default: {}
                       array:
                         type: boolean
               required:
@@ -7686,13 +7674,7 @@ components:
                     type: array
                     items:
                       type: string
-                  default:
-                    oneOf:
-                      - type: object
-                        properties: {}
-                      - type: number
-                      - type: string
-                      - type: boolean
+                  default: {}
                   array:
                     type: boolean
           required:
@@ -7727,13 +7709,7 @@ components:
                         type: array
                         items:
                           type: string
-                      default:
-                        oneOf:
-                          - type: object
-                            properties: {}
-                          - type: number
-                          - type: string
-                          - type: boolean
+                      default: {}
                       array:
                         type: boolean
               required:
@@ -7792,13 +7768,7 @@ components:
                         type: array
                         items:
                           type: string
-                      default:
-                        oneOf:
-                          - type: object
-                            properties: {}
-                          - type: number
-                          - type: string
-                          - type: boolean
+                      default: {}
                       array:
                         type: boolean
               required:

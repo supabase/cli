@@ -1163,7 +1163,7 @@ type BranchDeleteResponseMessage string
 type BranchDetailResponse struct {
 	DbHost          string                     `json:"db_host"`
 	DbPass          *string                    `json:"db_pass,omitempty"`
-	DbPort          float32                    `json:"db_port"`
+	DbPort          int                        `json:"db_port"`
 	DbUser          *string                    `json:"db_user,omitempty"`
 	JwtSecret       *string                    `json:"jwt_secret,omitempty"`
 	PostgresEngine  string                     `json:"postgres_engine"`
@@ -1209,7 +1209,7 @@ type BranchUpdateResponseMessage string
 
 // BulkUpdateFunctionBody defines model for BulkUpdateFunctionBody.
 type BulkUpdateFunctionBody = []struct {
-	CreatedAt      *int                         `json:"created_at,omitempty"`
+	CreatedAt      *int64                       `json:"created_at,omitempty"`
 	EntrypointPath *string                      `json:"entrypoint_path,omitempty"`
 	Id             string                       `json:"id"`
 	ImportMap      *bool                        `json:"import_map,omitempty"`
@@ -1291,10 +1291,10 @@ type CreateOrganizationV1 struct {
 type CreateProviderBody struct {
 	AttributeMapping *struct {
 		Keys map[string]struct {
-			Array   *bool                                             `json:"array,omitempty"`
-			Default *CreateProviderBody_AttributeMapping_Keys_Default `json:"default,omitempty"`
-			Name    *string                                           `json:"name,omitempty"`
-			Names   *[]string                                         `json:"names,omitempty"`
+			Array   *bool        `json:"array,omitempty"`
+			Default *interface{} `json:"default,omitempty"`
+			Name    *string      `json:"name,omitempty"`
+			Names   *[]string    `json:"names,omitempty"`
 		} `json:"keys"`
 	} `json:"attribute_mapping,omitempty"`
 	Domains     *[]string `json:"domains,omitempty"`
@@ -1303,23 +1303,6 @@ type CreateProviderBody struct {
 
 	// Type What type of provider will be created
 	Type CreateProviderBodyType `json:"type"`
-}
-
-// CreateProviderBodyAttributeMappingKeysDefault0 defines model for .
-type CreateProviderBodyAttributeMappingKeysDefault0 = map[string]interface{}
-
-// CreateProviderBodyAttributeMappingKeysDefault1 defines model for .
-type CreateProviderBodyAttributeMappingKeysDefault1 = float32
-
-// CreateProviderBodyAttributeMappingKeysDefault2 defines model for .
-type CreateProviderBodyAttributeMappingKeysDefault2 = string
-
-// CreateProviderBodyAttributeMappingKeysDefault3 defines model for .
-type CreateProviderBodyAttributeMappingKeysDefault3 = bool
-
-// CreateProviderBody_AttributeMapping_Keys_Default defines model for CreateProviderBody.AttributeMapping.Keys.Default.
-type CreateProviderBody_AttributeMapping_Keys_Default struct {
-	union json.RawMessage
 }
 
 // CreateProviderBodyType What type of provider will be created
@@ -1338,10 +1321,10 @@ type CreateProviderResponse struct {
 	Saml *struct {
 		AttributeMapping *struct {
 			Keys map[string]struct {
-				Array   *bool                                                      `json:"array,omitempty"`
-				Default *CreateProviderResponse_Saml_AttributeMapping_Keys_Default `json:"default,omitempty"`
-				Name    *string                                                    `json:"name,omitempty"`
-				Names   *[]string                                                  `json:"names,omitempty"`
+				Array   *bool        `json:"array,omitempty"`
+				Default *interface{} `json:"default,omitempty"`
+				Name    *string      `json:"name,omitempty"`
+				Names   *[]string    `json:"names,omitempty"`
 			} `json:"keys"`
 		} `json:"attribute_mapping,omitempty"`
 		EntityId    string  `json:"entity_id"`
@@ -1350,23 +1333,6 @@ type CreateProviderResponse struct {
 		MetadataXml *string `json:"metadata_xml,omitempty"`
 	} `json:"saml,omitempty"`
 	UpdatedAt *string `json:"updated_at,omitempty"`
-}
-
-// CreateProviderResponseSamlAttributeMappingKeysDefault0 defines model for .
-type CreateProviderResponseSamlAttributeMappingKeysDefault0 = map[string]interface{}
-
-// CreateProviderResponseSamlAttributeMappingKeysDefault1 defines model for .
-type CreateProviderResponseSamlAttributeMappingKeysDefault1 = float32
-
-// CreateProviderResponseSamlAttributeMappingKeysDefault2 defines model for .
-type CreateProviderResponseSamlAttributeMappingKeysDefault2 = string
-
-// CreateProviderResponseSamlAttributeMappingKeysDefault3 defines model for .
-type CreateProviderResponseSamlAttributeMappingKeysDefault3 = bool
-
-// CreateProviderResponse_Saml_AttributeMapping_Keys_Default defines model for CreateProviderResponse.Saml.AttributeMapping.Keys.Default.
-type CreateProviderResponse_Saml_AttributeMapping_Keys_Default struct {
-	union json.RawMessage
 }
 
 // CreateSecretBody defines model for CreateSecretBody.
@@ -1426,10 +1392,10 @@ type DeleteProviderResponse struct {
 	Saml *struct {
 		AttributeMapping *struct {
 			Keys map[string]struct {
-				Array   *bool                                                      `json:"array,omitempty"`
-				Default *DeleteProviderResponse_Saml_AttributeMapping_Keys_Default `json:"default,omitempty"`
-				Name    *string                                                    `json:"name,omitempty"`
-				Names   *[]string                                                  `json:"names,omitempty"`
+				Array   *bool        `json:"array,omitempty"`
+				Default *interface{} `json:"default,omitempty"`
+				Name    *string      `json:"name,omitempty"`
+				Names   *[]string    `json:"names,omitempty"`
 			} `json:"keys"`
 		} `json:"attribute_mapping,omitempty"`
 		EntityId    string  `json:"entity_id"`
@@ -1440,26 +1406,9 @@ type DeleteProviderResponse struct {
 	UpdatedAt *string `json:"updated_at,omitempty"`
 }
 
-// DeleteProviderResponseSamlAttributeMappingKeysDefault0 defines model for .
-type DeleteProviderResponseSamlAttributeMappingKeysDefault0 = map[string]interface{}
-
-// DeleteProviderResponseSamlAttributeMappingKeysDefault1 defines model for .
-type DeleteProviderResponseSamlAttributeMappingKeysDefault1 = float32
-
-// DeleteProviderResponseSamlAttributeMappingKeysDefault2 defines model for .
-type DeleteProviderResponseSamlAttributeMappingKeysDefault2 = string
-
-// DeleteProviderResponseSamlAttributeMappingKeysDefault3 defines model for .
-type DeleteProviderResponseSamlAttributeMappingKeysDefault3 = bool
-
-// DeleteProviderResponse_Saml_AttributeMapping_Keys_Default defines model for DeleteProviderResponse.Saml.AttributeMapping.Keys.Default.
-type DeleteProviderResponse_Saml_AttributeMapping_Keys_Default struct {
-	union json.RawMessage
-}
-
 // DeployFunctionResponse defines model for DeployFunctionResponse.
 type DeployFunctionResponse struct {
-	CreatedAt      *int                         `json:"created_at,omitempty"`
+	CreatedAt      *int64                       `json:"created_at,omitempty"`
 	EntrypointPath *string                      `json:"entrypoint_path,omitempty"`
 	Id             string                       `json:"id"`
 	ImportMap      *bool                        `json:"import_map,omitempty"`
@@ -1467,7 +1416,7 @@ type DeployFunctionResponse struct {
 	Name           string                       `json:"name"`
 	Slug           string                       `json:"slug"`
 	Status         DeployFunctionResponseStatus `json:"status"`
-	UpdatedAt      *int                         `json:"updated_at,omitempty"`
+	UpdatedAt      *int64                       `json:"updated_at,omitempty"`
 	VerifyJwt      *bool                        `json:"verify_jwt,omitempty"`
 	Version        int                          `json:"version"`
 }
@@ -1489,7 +1438,7 @@ type FunctionDeployBody struct {
 
 // FunctionResponse defines model for FunctionResponse.
 type FunctionResponse struct {
-	CreatedAt      int                    `json:"created_at"`
+	CreatedAt      int64                  `json:"created_at"`
 	EntrypointPath *string                `json:"entrypoint_path,omitempty"`
 	Id             string                 `json:"id"`
 	ImportMap      *bool                  `json:"import_map,omitempty"`
@@ -1497,7 +1446,7 @@ type FunctionResponse struct {
 	Name           string                 `json:"name"`
 	Slug           string                 `json:"slug"`
 	Status         FunctionResponseStatus `json:"status"`
-	UpdatedAt      int                    `json:"updated_at"`
+	UpdatedAt      int64                  `json:"updated_at"`
 	VerifyJwt      *bool                  `json:"verify_jwt,omitempty"`
 	Version        int                    `json:"version"`
 }
@@ -1569,10 +1518,10 @@ type GetProviderResponse struct {
 	Saml *struct {
 		AttributeMapping *struct {
 			Keys map[string]struct {
-				Array   *bool                                                   `json:"array,omitempty"`
-				Default *GetProviderResponse_Saml_AttributeMapping_Keys_Default `json:"default,omitempty"`
-				Name    *string                                                 `json:"name,omitempty"`
-				Names   *[]string                                               `json:"names,omitempty"`
+				Array   *bool        `json:"array,omitempty"`
+				Default *interface{} `json:"default,omitempty"`
+				Name    *string      `json:"name,omitempty"`
+				Names   *[]string    `json:"names,omitempty"`
 			} `json:"keys"`
 		} `json:"attribute_mapping,omitempty"`
 		EntityId    string  `json:"entity_id"`
@@ -1581,23 +1530,6 @@ type GetProviderResponse struct {
 		MetadataXml *string `json:"metadata_xml,omitempty"`
 	} `json:"saml,omitempty"`
 	UpdatedAt *string `json:"updated_at,omitempty"`
-}
-
-// GetProviderResponseSamlAttributeMappingKeysDefault0 defines model for .
-type GetProviderResponseSamlAttributeMappingKeysDefault0 = map[string]interface{}
-
-// GetProviderResponseSamlAttributeMappingKeysDefault1 defines model for .
-type GetProviderResponseSamlAttributeMappingKeysDefault1 = float32
-
-// GetProviderResponseSamlAttributeMappingKeysDefault2 defines model for .
-type GetProviderResponseSamlAttributeMappingKeysDefault2 = string
-
-// GetProviderResponseSamlAttributeMappingKeysDefault3 defines model for .
-type GetProviderResponseSamlAttributeMappingKeysDefault3 = bool
-
-// GetProviderResponse_Saml_AttributeMapping_Keys_Default defines model for GetProviderResponse.Saml.AttributeMapping.Keys.Default.
-type GetProviderResponse_Saml_AttributeMapping_Keys_Default struct {
-	union json.RawMessage
 }
 
 // ListProjectAddonsResponse defines model for ListProjectAddonsResponse.
@@ -1721,10 +1653,10 @@ type ListProvidersResponse struct {
 		Saml *struct {
 			AttributeMapping *struct {
 				Keys map[string]struct {
-					Array   *bool                                                           `json:"array,omitempty"`
-					Default *ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default `json:"default,omitempty"`
-					Name    *string                                                         `json:"name,omitempty"`
-					Names   *[]string                                                       `json:"names,omitempty"`
+					Array   *bool        `json:"array,omitempty"`
+					Default *interface{} `json:"default,omitempty"`
+					Name    *string      `json:"name,omitempty"`
+					Names   *[]string    `json:"names,omitempty"`
 				} `json:"keys"`
 			} `json:"attribute_mapping,omitempty"`
 			EntityId    string  `json:"entity_id"`
@@ -1734,23 +1666,6 @@ type ListProvidersResponse struct {
 		} `json:"saml,omitempty"`
 		UpdatedAt *string `json:"updated_at,omitempty"`
 	} `json:"items"`
-}
-
-// ListProvidersResponseItemsSamlAttributeMappingKeysDefault0 defines model for .
-type ListProvidersResponseItemsSamlAttributeMappingKeysDefault0 = map[string]interface{}
-
-// ListProvidersResponseItemsSamlAttributeMappingKeysDefault1 defines model for .
-type ListProvidersResponseItemsSamlAttributeMappingKeysDefault1 = float32
-
-// ListProvidersResponseItemsSamlAttributeMappingKeysDefault2 defines model for .
-type ListProvidersResponseItemsSamlAttributeMappingKeysDefault2 = string
-
-// ListProvidersResponseItemsSamlAttributeMappingKeysDefault3 defines model for .
-type ListProvidersResponseItemsSamlAttributeMappingKeysDefault3 = bool
-
-// ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default defines model for ListProvidersResponse.Items.Saml.AttributeMapping.Keys.Default.
-type ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default struct {
-	union json.RawMessage
 }
 
 // NetworkBanResponse defines model for NetworkBanResponse.
@@ -2070,7 +1985,7 @@ type StorageConfigResponse struct {
 			Enabled bool `json:"enabled"`
 		} `json:"s3Protocol"`
 	} `json:"features"`
-	FileSizeLimit int `json:"fileSizeLimit"`
+	FileSizeLimit int64 `json:"fileSizeLimit"`
 }
 
 // StreamableFile defines model for StreamableFile.
@@ -2083,8 +1998,6 @@ type SubdomainAvailabilityResponse struct {
 
 // SupavisorConfigResponse defines model for SupavisorConfigResponse.
 type SupavisorConfigResponse struct {
-	// ConnectionString Use connection_string instead
-	ConnectionString string                              `json:"connectionString"`
 	ConnectionString string                              `json:"connection_string"`
 	DatabaseType     SupavisorConfigResponseDatabaseType `json:"database_type"`
 	DbHost           string                              `json:"db_host"`
@@ -2411,32 +2324,15 @@ type UpdatePostgresConfigBodySessionReplicationRole string
 type UpdateProviderBody struct {
 	AttributeMapping *struct {
 		Keys map[string]struct {
-			Array   *bool                                             `json:"array,omitempty"`
-			Default *UpdateProviderBody_AttributeMapping_Keys_Default `json:"default,omitempty"`
-			Name    *string                                           `json:"name,omitempty"`
-			Names   *[]string                                         `json:"names,omitempty"`
+			Array   *bool        `json:"array,omitempty"`
+			Default *interface{} `json:"default,omitempty"`
+			Name    *string      `json:"name,omitempty"`
+			Names   *[]string    `json:"names,omitempty"`
 		} `json:"keys"`
 	} `json:"attribute_mapping,omitempty"`
 	Domains     *[]string `json:"domains,omitempty"`
 	MetadataUrl *string   `json:"metadata_url,omitempty"`
 	MetadataXml *string   `json:"metadata_xml,omitempty"`
-}
-
-// UpdateProviderBodyAttributeMappingKeysDefault0 defines model for .
-type UpdateProviderBodyAttributeMappingKeysDefault0 = map[string]interface{}
-
-// UpdateProviderBodyAttributeMappingKeysDefault1 defines model for .
-type UpdateProviderBodyAttributeMappingKeysDefault1 = float32
-
-// UpdateProviderBodyAttributeMappingKeysDefault2 defines model for .
-type UpdateProviderBodyAttributeMappingKeysDefault2 = string
-
-// UpdateProviderBodyAttributeMappingKeysDefault3 defines model for .
-type UpdateProviderBodyAttributeMappingKeysDefault3 = bool
-
-// UpdateProviderBody_AttributeMapping_Keys_Default defines model for UpdateProviderBody.AttributeMapping.Keys.Default.
-type UpdateProviderBody_AttributeMapping_Keys_Default struct {
-	union json.RawMessage
 }
 
 // UpdateProviderResponse defines model for UpdateProviderResponse.
@@ -2452,10 +2348,10 @@ type UpdateProviderResponse struct {
 	Saml *struct {
 		AttributeMapping *struct {
 			Keys map[string]struct {
-				Array   *bool                                                      `json:"array,omitempty"`
-				Default *UpdateProviderResponse_Saml_AttributeMapping_Keys_Default `json:"default,omitempty"`
-				Name    *string                                                    `json:"name,omitempty"`
-				Names   *[]string                                                  `json:"names,omitempty"`
+				Array   *bool        `json:"array,omitempty"`
+				Default *interface{} `json:"default,omitempty"`
+				Name    *string      `json:"name,omitempty"`
+				Names   *[]string    `json:"names,omitempty"`
 			} `json:"keys"`
 		} `json:"attribute_mapping,omitempty"`
 		EntityId    string  `json:"entity_id"`
@@ -2464,23 +2360,6 @@ type UpdateProviderResponse struct {
 		MetadataXml *string `json:"metadata_xml,omitempty"`
 	} `json:"saml,omitempty"`
 	UpdatedAt *string `json:"updated_at,omitempty"`
-}
-
-// UpdateProviderResponseSamlAttributeMappingKeysDefault0 defines model for .
-type UpdateProviderResponseSamlAttributeMappingKeysDefault0 = map[string]interface{}
-
-// UpdateProviderResponseSamlAttributeMappingKeysDefault1 defines model for .
-type UpdateProviderResponseSamlAttributeMappingKeysDefault1 = float32
-
-// UpdateProviderResponseSamlAttributeMappingKeysDefault2 defines model for .
-type UpdateProviderResponseSamlAttributeMappingKeysDefault2 = string
-
-// UpdateProviderResponseSamlAttributeMappingKeysDefault3 defines model for .
-type UpdateProviderResponseSamlAttributeMappingKeysDefault3 = bool
-
-// UpdateProviderResponse_Saml_AttributeMapping_Keys_Default defines model for UpdateProviderResponse.Saml.AttributeMapping.Keys.Default.
-type UpdateProviderResponse_Saml_AttributeMapping_Keys_Default struct {
-	union json.RawMessage
 }
 
 // UpdateSigningKeyBody defines model for UpdateSigningKeyBody.
@@ -2501,7 +2380,7 @@ type UpdateStorageConfigBody struct {
 			Enabled bool `json:"enabled"`
 		} `json:"s3Protocol"`
 	} `json:"features,omitempty"`
-	FileSizeLimit *int `json:"fileSizeLimit,omitempty"`
+	FileSizeLimit *int64 `json:"fileSizeLimit,omitempty"`
 }
 
 // UpdateSupavisorConfigBody defines model for UpdateSupavisorConfigBody.
@@ -3029,8 +2908,8 @@ type V1UpdateASsoProviderJSONRequestBody = UpdateProviderBody
 // CreateTPAForProjectJSONRequestBody defines body for CreateTPAForProject for application/json ContentType.
 type CreateTPAForProjectJSONRequestBody = CreateThirdPartyAuthBody
 
-// UpdateSupavisorConfigJSONRequestBody defines body for UpdateSupavisorConfig for application/json ContentType.
-type UpdateSupavisorConfigJSONRequestBody = UpdateSupavisorConfigBody
+// V1UpdatePoolerConfigJSONRequestBody defines body for V1UpdatePoolerConfig for application/json ContentType.
+type V1UpdatePoolerConfigJSONRequestBody = UpdateSupavisorConfigBody
 
 // V1UpdatePostgresConfigJSONRequestBody defines body for V1UpdatePostgresConfig for application/json ContentType.
 type V1UpdatePostgresConfigJSONRequestBody = UpdatePostgresConfigBody
@@ -3416,462 +3295,6 @@ func (t *ApplyProjectAddonBody_AddonVariant) UnmarshalJSON(b []byte) error {
 	return err
 }
 
-// AsCreateProviderBodyAttributeMappingKeysDefault0 returns the union data inside the CreateProviderBody_AttributeMapping_Keys_Default as a CreateProviderBodyAttributeMappingKeysDefault0
-func (t CreateProviderBody_AttributeMapping_Keys_Default) AsCreateProviderBodyAttributeMappingKeysDefault0() (CreateProviderBodyAttributeMappingKeysDefault0, error) {
-	var body CreateProviderBodyAttributeMappingKeysDefault0
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromCreateProviderBodyAttributeMappingKeysDefault0 overwrites any union data inside the CreateProviderBody_AttributeMapping_Keys_Default as the provided CreateProviderBodyAttributeMappingKeysDefault0
-func (t *CreateProviderBody_AttributeMapping_Keys_Default) FromCreateProviderBodyAttributeMappingKeysDefault0(v CreateProviderBodyAttributeMappingKeysDefault0) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeCreateProviderBodyAttributeMappingKeysDefault0 performs a merge with any union data inside the CreateProviderBody_AttributeMapping_Keys_Default, using the provided CreateProviderBodyAttributeMappingKeysDefault0
-func (t *CreateProviderBody_AttributeMapping_Keys_Default) MergeCreateProviderBodyAttributeMappingKeysDefault0(v CreateProviderBodyAttributeMappingKeysDefault0) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsCreateProviderBodyAttributeMappingKeysDefault1 returns the union data inside the CreateProviderBody_AttributeMapping_Keys_Default as a CreateProviderBodyAttributeMappingKeysDefault1
-func (t CreateProviderBody_AttributeMapping_Keys_Default) AsCreateProviderBodyAttributeMappingKeysDefault1() (CreateProviderBodyAttributeMappingKeysDefault1, error) {
-	var body CreateProviderBodyAttributeMappingKeysDefault1
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromCreateProviderBodyAttributeMappingKeysDefault1 overwrites any union data inside the CreateProviderBody_AttributeMapping_Keys_Default as the provided CreateProviderBodyAttributeMappingKeysDefault1
-func (t *CreateProviderBody_AttributeMapping_Keys_Default) FromCreateProviderBodyAttributeMappingKeysDefault1(v CreateProviderBodyAttributeMappingKeysDefault1) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeCreateProviderBodyAttributeMappingKeysDefault1 performs a merge with any union data inside the CreateProviderBody_AttributeMapping_Keys_Default, using the provided CreateProviderBodyAttributeMappingKeysDefault1
-func (t *CreateProviderBody_AttributeMapping_Keys_Default) MergeCreateProviderBodyAttributeMappingKeysDefault1(v CreateProviderBodyAttributeMappingKeysDefault1) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsCreateProviderBodyAttributeMappingKeysDefault2 returns the union data inside the CreateProviderBody_AttributeMapping_Keys_Default as a CreateProviderBodyAttributeMappingKeysDefault2
-func (t CreateProviderBody_AttributeMapping_Keys_Default) AsCreateProviderBodyAttributeMappingKeysDefault2() (CreateProviderBodyAttributeMappingKeysDefault2, error) {
-	var body CreateProviderBodyAttributeMappingKeysDefault2
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromCreateProviderBodyAttributeMappingKeysDefault2 overwrites any union data inside the CreateProviderBody_AttributeMapping_Keys_Default as the provided CreateProviderBodyAttributeMappingKeysDefault2
-func (t *CreateProviderBody_AttributeMapping_Keys_Default) FromCreateProviderBodyAttributeMappingKeysDefault2(v CreateProviderBodyAttributeMappingKeysDefault2) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeCreateProviderBodyAttributeMappingKeysDefault2 performs a merge with any union data inside the CreateProviderBody_AttributeMapping_Keys_Default, using the provided CreateProviderBodyAttributeMappingKeysDefault2
-func (t *CreateProviderBody_AttributeMapping_Keys_Default) MergeCreateProviderBodyAttributeMappingKeysDefault2(v CreateProviderBodyAttributeMappingKeysDefault2) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsCreateProviderBodyAttributeMappingKeysDefault3 returns the union data inside the CreateProviderBody_AttributeMapping_Keys_Default as a CreateProviderBodyAttributeMappingKeysDefault3
-func (t CreateProviderBody_AttributeMapping_Keys_Default) AsCreateProviderBodyAttributeMappingKeysDefault3() (CreateProviderBodyAttributeMappingKeysDefault3, error) {
-	var body CreateProviderBodyAttributeMappingKeysDefault3
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromCreateProviderBodyAttributeMappingKeysDefault3 overwrites any union data inside the CreateProviderBody_AttributeMapping_Keys_Default as the provided CreateProviderBodyAttributeMappingKeysDefault3
-func (t *CreateProviderBody_AttributeMapping_Keys_Default) FromCreateProviderBodyAttributeMappingKeysDefault3(v CreateProviderBodyAttributeMappingKeysDefault3) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeCreateProviderBodyAttributeMappingKeysDefault3 performs a merge with any union data inside the CreateProviderBody_AttributeMapping_Keys_Default, using the provided CreateProviderBodyAttributeMappingKeysDefault3
-func (t *CreateProviderBody_AttributeMapping_Keys_Default) MergeCreateProviderBodyAttributeMappingKeysDefault3(v CreateProviderBodyAttributeMappingKeysDefault3) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-func (t CreateProviderBody_AttributeMapping_Keys_Default) MarshalJSON() ([]byte, error) {
-	b, err := t.union.MarshalJSON()
-	return b, err
-}
-
-func (t *CreateProviderBody_AttributeMapping_Keys_Default) UnmarshalJSON(b []byte) error {
-	err := t.union.UnmarshalJSON(b)
-	return err
-}
-
-// AsCreateProviderResponseSamlAttributeMappingKeysDefault0 returns the union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default as a CreateProviderResponseSamlAttributeMappingKeysDefault0
-func (t CreateProviderResponse_Saml_AttributeMapping_Keys_Default) AsCreateProviderResponseSamlAttributeMappingKeysDefault0() (CreateProviderResponseSamlAttributeMappingKeysDefault0, error) {
-	var body CreateProviderResponseSamlAttributeMappingKeysDefault0
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromCreateProviderResponseSamlAttributeMappingKeysDefault0 overwrites any union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default as the provided CreateProviderResponseSamlAttributeMappingKeysDefault0
-func (t *CreateProviderResponse_Saml_AttributeMapping_Keys_Default) FromCreateProviderResponseSamlAttributeMappingKeysDefault0(v CreateProviderResponseSamlAttributeMappingKeysDefault0) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeCreateProviderResponseSamlAttributeMappingKeysDefault0 performs a merge with any union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided CreateProviderResponseSamlAttributeMappingKeysDefault0
-func (t *CreateProviderResponse_Saml_AttributeMapping_Keys_Default) MergeCreateProviderResponseSamlAttributeMappingKeysDefault0(v CreateProviderResponseSamlAttributeMappingKeysDefault0) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsCreateProviderResponseSamlAttributeMappingKeysDefault1 returns the union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default as a CreateProviderResponseSamlAttributeMappingKeysDefault1
-func (t CreateProviderResponse_Saml_AttributeMapping_Keys_Default) AsCreateProviderResponseSamlAttributeMappingKeysDefault1() (CreateProviderResponseSamlAttributeMappingKeysDefault1, error) {
-	var body CreateProviderResponseSamlAttributeMappingKeysDefault1
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromCreateProviderResponseSamlAttributeMappingKeysDefault1 overwrites any union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default as the provided CreateProviderResponseSamlAttributeMappingKeysDefault1
-func (t *CreateProviderResponse_Saml_AttributeMapping_Keys_Default) FromCreateProviderResponseSamlAttributeMappingKeysDefault1(v CreateProviderResponseSamlAttributeMappingKeysDefault1) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeCreateProviderResponseSamlAttributeMappingKeysDefault1 performs a merge with any union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided CreateProviderResponseSamlAttributeMappingKeysDefault1
-func (t *CreateProviderResponse_Saml_AttributeMapping_Keys_Default) MergeCreateProviderResponseSamlAttributeMappingKeysDefault1(v CreateProviderResponseSamlAttributeMappingKeysDefault1) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsCreateProviderResponseSamlAttributeMappingKeysDefault2 returns the union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default as a CreateProviderResponseSamlAttributeMappingKeysDefault2
-func (t CreateProviderResponse_Saml_AttributeMapping_Keys_Default) AsCreateProviderResponseSamlAttributeMappingKeysDefault2() (CreateProviderResponseSamlAttributeMappingKeysDefault2, error) {
-	var body CreateProviderResponseSamlAttributeMappingKeysDefault2
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromCreateProviderResponseSamlAttributeMappingKeysDefault2 overwrites any union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default as the provided CreateProviderResponseSamlAttributeMappingKeysDefault2
-func (t *CreateProviderResponse_Saml_AttributeMapping_Keys_Default) FromCreateProviderResponseSamlAttributeMappingKeysDefault2(v CreateProviderResponseSamlAttributeMappingKeysDefault2) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeCreateProviderResponseSamlAttributeMappingKeysDefault2 performs a merge with any union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided CreateProviderResponseSamlAttributeMappingKeysDefault2
-func (t *CreateProviderResponse_Saml_AttributeMapping_Keys_Default) MergeCreateProviderResponseSamlAttributeMappingKeysDefault2(v CreateProviderResponseSamlAttributeMappingKeysDefault2) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsCreateProviderResponseSamlAttributeMappingKeysDefault3 returns the union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default as a CreateProviderResponseSamlAttributeMappingKeysDefault3
-func (t CreateProviderResponse_Saml_AttributeMapping_Keys_Default) AsCreateProviderResponseSamlAttributeMappingKeysDefault3() (CreateProviderResponseSamlAttributeMappingKeysDefault3, error) {
-	var body CreateProviderResponseSamlAttributeMappingKeysDefault3
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromCreateProviderResponseSamlAttributeMappingKeysDefault3 overwrites any union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default as the provided CreateProviderResponseSamlAttributeMappingKeysDefault3
-func (t *CreateProviderResponse_Saml_AttributeMapping_Keys_Default) FromCreateProviderResponseSamlAttributeMappingKeysDefault3(v CreateProviderResponseSamlAttributeMappingKeysDefault3) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeCreateProviderResponseSamlAttributeMappingKeysDefault3 performs a merge with any union data inside the CreateProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided CreateProviderResponseSamlAttributeMappingKeysDefault3
-func (t *CreateProviderResponse_Saml_AttributeMapping_Keys_Default) MergeCreateProviderResponseSamlAttributeMappingKeysDefault3(v CreateProviderResponseSamlAttributeMappingKeysDefault3) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-func (t CreateProviderResponse_Saml_AttributeMapping_Keys_Default) MarshalJSON() ([]byte, error) {
-	b, err := t.union.MarshalJSON()
-	return b, err
-}
-
-func (t *CreateProviderResponse_Saml_AttributeMapping_Keys_Default) UnmarshalJSON(b []byte) error {
-	err := t.union.UnmarshalJSON(b)
-	return err
-}
-
-// AsDeleteProviderResponseSamlAttributeMappingKeysDefault0 returns the union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default as a DeleteProviderResponseSamlAttributeMappingKeysDefault0
-func (t DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) AsDeleteProviderResponseSamlAttributeMappingKeysDefault0() (DeleteProviderResponseSamlAttributeMappingKeysDefault0, error) {
-	var body DeleteProviderResponseSamlAttributeMappingKeysDefault0
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromDeleteProviderResponseSamlAttributeMappingKeysDefault0 overwrites any union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default as the provided DeleteProviderResponseSamlAttributeMappingKeysDefault0
-func (t *DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) FromDeleteProviderResponseSamlAttributeMappingKeysDefault0(v DeleteProviderResponseSamlAttributeMappingKeysDefault0) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeDeleteProviderResponseSamlAttributeMappingKeysDefault0 performs a merge with any union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided DeleteProviderResponseSamlAttributeMappingKeysDefault0
-func (t *DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) MergeDeleteProviderResponseSamlAttributeMappingKeysDefault0(v DeleteProviderResponseSamlAttributeMappingKeysDefault0) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsDeleteProviderResponseSamlAttributeMappingKeysDefault1 returns the union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default as a DeleteProviderResponseSamlAttributeMappingKeysDefault1
-func (t DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) AsDeleteProviderResponseSamlAttributeMappingKeysDefault1() (DeleteProviderResponseSamlAttributeMappingKeysDefault1, error) {
-	var body DeleteProviderResponseSamlAttributeMappingKeysDefault1
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromDeleteProviderResponseSamlAttributeMappingKeysDefault1 overwrites any union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default as the provided DeleteProviderResponseSamlAttributeMappingKeysDefault1
-func (t *DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) FromDeleteProviderResponseSamlAttributeMappingKeysDefault1(v DeleteProviderResponseSamlAttributeMappingKeysDefault1) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeDeleteProviderResponseSamlAttributeMappingKeysDefault1 performs a merge with any union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided DeleteProviderResponseSamlAttributeMappingKeysDefault1
-func (t *DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) MergeDeleteProviderResponseSamlAttributeMappingKeysDefault1(v DeleteProviderResponseSamlAttributeMappingKeysDefault1) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsDeleteProviderResponseSamlAttributeMappingKeysDefault2 returns the union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default as a DeleteProviderResponseSamlAttributeMappingKeysDefault2
-func (t DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) AsDeleteProviderResponseSamlAttributeMappingKeysDefault2() (DeleteProviderResponseSamlAttributeMappingKeysDefault2, error) {
-	var body DeleteProviderResponseSamlAttributeMappingKeysDefault2
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromDeleteProviderResponseSamlAttributeMappingKeysDefault2 overwrites any union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default as the provided DeleteProviderResponseSamlAttributeMappingKeysDefault2
-func (t *DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) FromDeleteProviderResponseSamlAttributeMappingKeysDefault2(v DeleteProviderResponseSamlAttributeMappingKeysDefault2) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeDeleteProviderResponseSamlAttributeMappingKeysDefault2 performs a merge with any union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided DeleteProviderResponseSamlAttributeMappingKeysDefault2
-func (t *DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) MergeDeleteProviderResponseSamlAttributeMappingKeysDefault2(v DeleteProviderResponseSamlAttributeMappingKeysDefault2) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsDeleteProviderResponseSamlAttributeMappingKeysDefault3 returns the union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default as a DeleteProviderResponseSamlAttributeMappingKeysDefault3
-func (t DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) AsDeleteProviderResponseSamlAttributeMappingKeysDefault3() (DeleteProviderResponseSamlAttributeMappingKeysDefault3, error) {
-	var body DeleteProviderResponseSamlAttributeMappingKeysDefault3
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromDeleteProviderResponseSamlAttributeMappingKeysDefault3 overwrites any union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default as the provided DeleteProviderResponseSamlAttributeMappingKeysDefault3
-func (t *DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) FromDeleteProviderResponseSamlAttributeMappingKeysDefault3(v DeleteProviderResponseSamlAttributeMappingKeysDefault3) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeDeleteProviderResponseSamlAttributeMappingKeysDefault3 performs a merge with any union data inside the DeleteProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided DeleteProviderResponseSamlAttributeMappingKeysDefault3
-func (t *DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) MergeDeleteProviderResponseSamlAttributeMappingKeysDefault3(v DeleteProviderResponseSamlAttributeMappingKeysDefault3) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-func (t DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) MarshalJSON() ([]byte, error) {
-	b, err := t.union.MarshalJSON()
-	return b, err
-}
-
-func (t *DeleteProviderResponse_Saml_AttributeMapping_Keys_Default) UnmarshalJSON(b []byte) error {
-	err := t.union.UnmarshalJSON(b)
-	return err
-}
-
-// AsGetProviderResponseSamlAttributeMappingKeysDefault0 returns the union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default as a GetProviderResponseSamlAttributeMappingKeysDefault0
-func (t GetProviderResponse_Saml_AttributeMapping_Keys_Default) AsGetProviderResponseSamlAttributeMappingKeysDefault0() (GetProviderResponseSamlAttributeMappingKeysDefault0, error) {
-	var body GetProviderResponseSamlAttributeMappingKeysDefault0
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromGetProviderResponseSamlAttributeMappingKeysDefault0 overwrites any union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default as the provided GetProviderResponseSamlAttributeMappingKeysDefault0
-func (t *GetProviderResponse_Saml_AttributeMapping_Keys_Default) FromGetProviderResponseSamlAttributeMappingKeysDefault0(v GetProviderResponseSamlAttributeMappingKeysDefault0) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeGetProviderResponseSamlAttributeMappingKeysDefault0 performs a merge with any union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided GetProviderResponseSamlAttributeMappingKeysDefault0
-func (t *GetProviderResponse_Saml_AttributeMapping_Keys_Default) MergeGetProviderResponseSamlAttributeMappingKeysDefault0(v GetProviderResponseSamlAttributeMappingKeysDefault0) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsGetProviderResponseSamlAttributeMappingKeysDefault1 returns the union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default as a GetProviderResponseSamlAttributeMappingKeysDefault1
-func (t GetProviderResponse_Saml_AttributeMapping_Keys_Default) AsGetProviderResponseSamlAttributeMappingKeysDefault1() (GetProviderResponseSamlAttributeMappingKeysDefault1, error) {
-	var body GetProviderResponseSamlAttributeMappingKeysDefault1
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromGetProviderResponseSamlAttributeMappingKeysDefault1 overwrites any union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default as the provided GetProviderResponseSamlAttributeMappingKeysDefault1
-func (t *GetProviderResponse_Saml_AttributeMapping_Keys_Default) FromGetProviderResponseSamlAttributeMappingKeysDefault1(v GetProviderResponseSamlAttributeMappingKeysDefault1) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeGetProviderResponseSamlAttributeMappingKeysDefault1 performs a merge with any union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided GetProviderResponseSamlAttributeMappingKeysDefault1
-func (t *GetProviderResponse_Saml_AttributeMapping_Keys_Default) MergeGetProviderResponseSamlAttributeMappingKeysDefault1(v GetProviderResponseSamlAttributeMappingKeysDefault1) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsGetProviderResponseSamlAttributeMappingKeysDefault2 returns the union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default as a GetProviderResponseSamlAttributeMappingKeysDefault2
-func (t GetProviderResponse_Saml_AttributeMapping_Keys_Default) AsGetProviderResponseSamlAttributeMappingKeysDefault2() (GetProviderResponseSamlAttributeMappingKeysDefault2, error) {
-	var body GetProviderResponseSamlAttributeMappingKeysDefault2
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromGetProviderResponseSamlAttributeMappingKeysDefault2 overwrites any union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default as the provided GetProviderResponseSamlAttributeMappingKeysDefault2
-func (t *GetProviderResponse_Saml_AttributeMapping_Keys_Default) FromGetProviderResponseSamlAttributeMappingKeysDefault2(v GetProviderResponseSamlAttributeMappingKeysDefault2) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeGetProviderResponseSamlAttributeMappingKeysDefault2 performs a merge with any union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided GetProviderResponseSamlAttributeMappingKeysDefault2
-func (t *GetProviderResponse_Saml_AttributeMapping_Keys_Default) MergeGetProviderResponseSamlAttributeMappingKeysDefault2(v GetProviderResponseSamlAttributeMappingKeysDefault2) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsGetProviderResponseSamlAttributeMappingKeysDefault3 returns the union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default as a GetProviderResponseSamlAttributeMappingKeysDefault3
-func (t GetProviderResponse_Saml_AttributeMapping_Keys_Default) AsGetProviderResponseSamlAttributeMappingKeysDefault3() (GetProviderResponseSamlAttributeMappingKeysDefault3, error) {
-	var body GetProviderResponseSamlAttributeMappingKeysDefault3
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromGetProviderResponseSamlAttributeMappingKeysDefault3 overwrites any union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default as the provided GetProviderResponseSamlAttributeMappingKeysDefault3
-func (t *GetProviderResponse_Saml_AttributeMapping_Keys_Default) FromGetProviderResponseSamlAttributeMappingKeysDefault3(v GetProviderResponseSamlAttributeMappingKeysDefault3) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeGetProviderResponseSamlAttributeMappingKeysDefault3 performs a merge with any union data inside the GetProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided GetProviderResponseSamlAttributeMappingKeysDefault3
-func (t *GetProviderResponse_Saml_AttributeMapping_Keys_Default) MergeGetProviderResponseSamlAttributeMappingKeysDefault3(v GetProviderResponseSamlAttributeMappingKeysDefault3) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-func (t GetProviderResponse_Saml_AttributeMapping_Keys_Default) MarshalJSON() ([]byte, error) {
-	b, err := t.union.MarshalJSON()
-	return b, err
-}
-
-func (t *GetProviderResponse_Saml_AttributeMapping_Keys_Default) UnmarshalJSON(b []byte) error {
-	err := t.union.UnmarshalJSON(b)
-	return err
-}
-
 // AsListProjectAddonsResponseAvailableAddonsVariantsId0 returns the union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as a ListProjectAddonsResponseAvailableAddonsVariantsId0
 func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) AsListProjectAddonsResponseAvailableAddonsVariantsId0() (ListProjectAddonsResponseAvailableAddonsVariantsId0, error) {
 	var body ListProjectAddonsResponseAvailableAddonsVariantsId0
@@ -4252,348 +3675,6 @@ func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) MarshalJSON() ([]by
 }
 
 func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) UnmarshalJSON(b []byte) error {
-	err := t.union.UnmarshalJSON(b)
-	return err
-}
-
-// AsListProvidersResponseItemsSamlAttributeMappingKeysDefault0 returns the union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default as a ListProvidersResponseItemsSamlAttributeMappingKeysDefault0
-func (t ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) AsListProvidersResponseItemsSamlAttributeMappingKeysDefault0() (ListProvidersResponseItemsSamlAttributeMappingKeysDefault0, error) {
-	var body ListProvidersResponseItemsSamlAttributeMappingKeysDefault0
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromListProvidersResponseItemsSamlAttributeMappingKeysDefault0 overwrites any union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default as the provided ListProvidersResponseItemsSamlAttributeMappingKeysDefault0
-func (t *ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) FromListProvidersResponseItemsSamlAttributeMappingKeysDefault0(v ListProvidersResponseItemsSamlAttributeMappingKeysDefault0) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeListProvidersResponseItemsSamlAttributeMappingKeysDefault0 performs a merge with any union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default, using the provided ListProvidersResponseItemsSamlAttributeMappingKeysDefault0
-func (t *ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) MergeListProvidersResponseItemsSamlAttributeMappingKeysDefault0(v ListProvidersResponseItemsSamlAttributeMappingKeysDefault0) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsListProvidersResponseItemsSamlAttributeMappingKeysDefault1 returns the union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default as a ListProvidersResponseItemsSamlAttributeMappingKeysDefault1
-func (t ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) AsListProvidersResponseItemsSamlAttributeMappingKeysDefault1() (ListProvidersResponseItemsSamlAttributeMappingKeysDefault1, error) {
-	var body ListProvidersResponseItemsSamlAttributeMappingKeysDefault1
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromListProvidersResponseItemsSamlAttributeMappingKeysDefault1 overwrites any union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default as the provided ListProvidersResponseItemsSamlAttributeMappingKeysDefault1
-func (t *ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) FromListProvidersResponseItemsSamlAttributeMappingKeysDefault1(v ListProvidersResponseItemsSamlAttributeMappingKeysDefault1) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeListProvidersResponseItemsSamlAttributeMappingKeysDefault1 performs a merge with any union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default, using the provided ListProvidersResponseItemsSamlAttributeMappingKeysDefault1
-func (t *ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) MergeListProvidersResponseItemsSamlAttributeMappingKeysDefault1(v ListProvidersResponseItemsSamlAttributeMappingKeysDefault1) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsListProvidersResponseItemsSamlAttributeMappingKeysDefault2 returns the union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default as a ListProvidersResponseItemsSamlAttributeMappingKeysDefault2
-func (t ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) AsListProvidersResponseItemsSamlAttributeMappingKeysDefault2() (ListProvidersResponseItemsSamlAttributeMappingKeysDefault2, error) {
-	var body ListProvidersResponseItemsSamlAttributeMappingKeysDefault2
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromListProvidersResponseItemsSamlAttributeMappingKeysDefault2 overwrites any union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default as the provided ListProvidersResponseItemsSamlAttributeMappingKeysDefault2
-func (t *ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) FromListProvidersResponseItemsSamlAttributeMappingKeysDefault2(v ListProvidersResponseItemsSamlAttributeMappingKeysDefault2) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeListProvidersResponseItemsSamlAttributeMappingKeysDefault2 performs a merge with any union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default, using the provided ListProvidersResponseItemsSamlAttributeMappingKeysDefault2
-func (t *ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) MergeListProvidersResponseItemsSamlAttributeMappingKeysDefault2(v ListProvidersResponseItemsSamlAttributeMappingKeysDefault2) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsListProvidersResponseItemsSamlAttributeMappingKeysDefault3 returns the union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default as a ListProvidersResponseItemsSamlAttributeMappingKeysDefault3
-func (t ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) AsListProvidersResponseItemsSamlAttributeMappingKeysDefault3() (ListProvidersResponseItemsSamlAttributeMappingKeysDefault3, error) {
-	var body ListProvidersResponseItemsSamlAttributeMappingKeysDefault3
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromListProvidersResponseItemsSamlAttributeMappingKeysDefault3 overwrites any union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default as the provided ListProvidersResponseItemsSamlAttributeMappingKeysDefault3
-func (t *ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) FromListProvidersResponseItemsSamlAttributeMappingKeysDefault3(v ListProvidersResponseItemsSamlAttributeMappingKeysDefault3) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeListProvidersResponseItemsSamlAttributeMappingKeysDefault3 performs a merge with any union data inside the ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default, using the provided ListProvidersResponseItemsSamlAttributeMappingKeysDefault3
-func (t *ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) MergeListProvidersResponseItemsSamlAttributeMappingKeysDefault3(v ListProvidersResponseItemsSamlAttributeMappingKeysDefault3) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-func (t ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) MarshalJSON() ([]byte, error) {
-	b, err := t.union.MarshalJSON()
-	return b, err
-}
-
-func (t *ListProvidersResponse_Items_Saml_AttributeMapping_Keys_Default) UnmarshalJSON(b []byte) error {
-	err := t.union.UnmarshalJSON(b)
-	return err
-}
-
-// AsUpdateProviderBodyAttributeMappingKeysDefault0 returns the union data inside the UpdateProviderBody_AttributeMapping_Keys_Default as a UpdateProviderBodyAttributeMappingKeysDefault0
-func (t UpdateProviderBody_AttributeMapping_Keys_Default) AsUpdateProviderBodyAttributeMappingKeysDefault0() (UpdateProviderBodyAttributeMappingKeysDefault0, error) {
-	var body UpdateProviderBodyAttributeMappingKeysDefault0
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromUpdateProviderBodyAttributeMappingKeysDefault0 overwrites any union data inside the UpdateProviderBody_AttributeMapping_Keys_Default as the provided UpdateProviderBodyAttributeMappingKeysDefault0
-func (t *UpdateProviderBody_AttributeMapping_Keys_Default) FromUpdateProviderBodyAttributeMappingKeysDefault0(v UpdateProviderBodyAttributeMappingKeysDefault0) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeUpdateProviderBodyAttributeMappingKeysDefault0 performs a merge with any union data inside the UpdateProviderBody_AttributeMapping_Keys_Default, using the provided UpdateProviderBodyAttributeMappingKeysDefault0
-func (t *UpdateProviderBody_AttributeMapping_Keys_Default) MergeUpdateProviderBodyAttributeMappingKeysDefault0(v UpdateProviderBodyAttributeMappingKeysDefault0) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsUpdateProviderBodyAttributeMappingKeysDefault1 returns the union data inside the UpdateProviderBody_AttributeMapping_Keys_Default as a UpdateProviderBodyAttributeMappingKeysDefault1
-func (t UpdateProviderBody_AttributeMapping_Keys_Default) AsUpdateProviderBodyAttributeMappingKeysDefault1() (UpdateProviderBodyAttributeMappingKeysDefault1, error) {
-	var body UpdateProviderBodyAttributeMappingKeysDefault1
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromUpdateProviderBodyAttributeMappingKeysDefault1 overwrites any union data inside the UpdateProviderBody_AttributeMapping_Keys_Default as the provided UpdateProviderBodyAttributeMappingKeysDefault1
-func (t *UpdateProviderBody_AttributeMapping_Keys_Default) FromUpdateProviderBodyAttributeMappingKeysDefault1(v UpdateProviderBodyAttributeMappingKeysDefault1) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeUpdateProviderBodyAttributeMappingKeysDefault1 performs a merge with any union data inside the UpdateProviderBody_AttributeMapping_Keys_Default, using the provided UpdateProviderBodyAttributeMappingKeysDefault1
-func (t *UpdateProviderBody_AttributeMapping_Keys_Default) MergeUpdateProviderBodyAttributeMappingKeysDefault1(v UpdateProviderBodyAttributeMappingKeysDefault1) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsUpdateProviderBodyAttributeMappingKeysDefault2 returns the union data inside the UpdateProviderBody_AttributeMapping_Keys_Default as a UpdateProviderBodyAttributeMappingKeysDefault2
-func (t UpdateProviderBody_AttributeMapping_Keys_Default) AsUpdateProviderBodyAttributeMappingKeysDefault2() (UpdateProviderBodyAttributeMappingKeysDefault2, error) {
-	var body UpdateProviderBodyAttributeMappingKeysDefault2
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromUpdateProviderBodyAttributeMappingKeysDefault2 overwrites any union data inside the UpdateProviderBody_AttributeMapping_Keys_Default as the provided UpdateProviderBodyAttributeMappingKeysDefault2
-func (t *UpdateProviderBody_AttributeMapping_Keys_Default) FromUpdateProviderBodyAttributeMappingKeysDefault2(v UpdateProviderBodyAttributeMappingKeysDefault2) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeUpdateProviderBodyAttributeMappingKeysDefault2 performs a merge with any union data inside the UpdateProviderBody_AttributeMapping_Keys_Default, using the provided UpdateProviderBodyAttributeMappingKeysDefault2
-func (t *UpdateProviderBody_AttributeMapping_Keys_Default) MergeUpdateProviderBodyAttributeMappingKeysDefault2(v UpdateProviderBodyAttributeMappingKeysDefault2) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsUpdateProviderBodyAttributeMappingKeysDefault3 returns the union data inside the UpdateProviderBody_AttributeMapping_Keys_Default as a UpdateProviderBodyAttributeMappingKeysDefault3
-func (t UpdateProviderBody_AttributeMapping_Keys_Default) AsUpdateProviderBodyAttributeMappingKeysDefault3() (UpdateProviderBodyAttributeMappingKeysDefault3, error) {
-	var body UpdateProviderBodyAttributeMappingKeysDefault3
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromUpdateProviderBodyAttributeMappingKeysDefault3 overwrites any union data inside the UpdateProviderBody_AttributeMapping_Keys_Default as the provided UpdateProviderBodyAttributeMappingKeysDefault3
-func (t *UpdateProviderBody_AttributeMapping_Keys_Default) FromUpdateProviderBodyAttributeMappingKeysDefault3(v UpdateProviderBodyAttributeMappingKeysDefault3) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeUpdateProviderBodyAttributeMappingKeysDefault3 performs a merge with any union data inside the UpdateProviderBody_AttributeMapping_Keys_Default, using the provided UpdateProviderBodyAttributeMappingKeysDefault3
-func (t *UpdateProviderBody_AttributeMapping_Keys_Default) MergeUpdateProviderBodyAttributeMappingKeysDefault3(v UpdateProviderBodyAttributeMappingKeysDefault3) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-func (t UpdateProviderBody_AttributeMapping_Keys_Default) MarshalJSON() ([]byte, error) {
-	b, err := t.union.MarshalJSON()
-	return b, err
-}
-
-func (t *UpdateProviderBody_AttributeMapping_Keys_Default) UnmarshalJSON(b []byte) error {
-	err := t.union.UnmarshalJSON(b)
-	return err
-}
-
-// AsUpdateProviderResponseSamlAttributeMappingKeysDefault0 returns the union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default as a UpdateProviderResponseSamlAttributeMappingKeysDefault0
-func (t UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) AsUpdateProviderResponseSamlAttributeMappingKeysDefault0() (UpdateProviderResponseSamlAttributeMappingKeysDefault0, error) {
-	var body UpdateProviderResponseSamlAttributeMappingKeysDefault0
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromUpdateProviderResponseSamlAttributeMappingKeysDefault0 overwrites any union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default as the provided UpdateProviderResponseSamlAttributeMappingKeysDefault0
-func (t *UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) FromUpdateProviderResponseSamlAttributeMappingKeysDefault0(v UpdateProviderResponseSamlAttributeMappingKeysDefault0) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeUpdateProviderResponseSamlAttributeMappingKeysDefault0 performs a merge with any union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided UpdateProviderResponseSamlAttributeMappingKeysDefault0
-func (t *UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) MergeUpdateProviderResponseSamlAttributeMappingKeysDefault0(v UpdateProviderResponseSamlAttributeMappingKeysDefault0) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsUpdateProviderResponseSamlAttributeMappingKeysDefault1 returns the union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default as a UpdateProviderResponseSamlAttributeMappingKeysDefault1
-func (t UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) AsUpdateProviderResponseSamlAttributeMappingKeysDefault1() (UpdateProviderResponseSamlAttributeMappingKeysDefault1, error) {
-	var body UpdateProviderResponseSamlAttributeMappingKeysDefault1
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromUpdateProviderResponseSamlAttributeMappingKeysDefault1 overwrites any union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default as the provided UpdateProviderResponseSamlAttributeMappingKeysDefault1
-func (t *UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) FromUpdateProviderResponseSamlAttributeMappingKeysDefault1(v UpdateProviderResponseSamlAttributeMappingKeysDefault1) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeUpdateProviderResponseSamlAttributeMappingKeysDefault1 performs a merge with any union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided UpdateProviderResponseSamlAttributeMappingKeysDefault1
-func (t *UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) MergeUpdateProviderResponseSamlAttributeMappingKeysDefault1(v UpdateProviderResponseSamlAttributeMappingKeysDefault1) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsUpdateProviderResponseSamlAttributeMappingKeysDefault2 returns the union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default as a UpdateProviderResponseSamlAttributeMappingKeysDefault2
-func (t UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) AsUpdateProviderResponseSamlAttributeMappingKeysDefault2() (UpdateProviderResponseSamlAttributeMappingKeysDefault2, error) {
-	var body UpdateProviderResponseSamlAttributeMappingKeysDefault2
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromUpdateProviderResponseSamlAttributeMappingKeysDefault2 overwrites any union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default as the provided UpdateProviderResponseSamlAttributeMappingKeysDefault2
-func (t *UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) FromUpdateProviderResponseSamlAttributeMappingKeysDefault2(v UpdateProviderResponseSamlAttributeMappingKeysDefault2) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeUpdateProviderResponseSamlAttributeMappingKeysDefault2 performs a merge with any union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided UpdateProviderResponseSamlAttributeMappingKeysDefault2
-func (t *UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) MergeUpdateProviderResponseSamlAttributeMappingKeysDefault2(v UpdateProviderResponseSamlAttributeMappingKeysDefault2) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsUpdateProviderResponseSamlAttributeMappingKeysDefault3 returns the union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default as a UpdateProviderResponseSamlAttributeMappingKeysDefault3
-func (t UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) AsUpdateProviderResponseSamlAttributeMappingKeysDefault3() (UpdateProviderResponseSamlAttributeMappingKeysDefault3, error) {
-	var body UpdateProviderResponseSamlAttributeMappingKeysDefault3
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromUpdateProviderResponseSamlAttributeMappingKeysDefault3 overwrites any union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default as the provided UpdateProviderResponseSamlAttributeMappingKeysDefault3
-func (t *UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) FromUpdateProviderResponseSamlAttributeMappingKeysDefault3(v UpdateProviderResponseSamlAttributeMappingKeysDefault3) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeUpdateProviderResponseSamlAttributeMappingKeysDefault3 performs a merge with any union data inside the UpdateProviderResponse_Saml_AttributeMapping_Keys_Default, using the provided UpdateProviderResponseSamlAttributeMappingKeysDefault3
-func (t *UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) MergeUpdateProviderResponseSamlAttributeMappingKeysDefault3(v UpdateProviderResponseSamlAttributeMappingKeysDefault3) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-func (t UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) MarshalJSON() ([]byte, error) {
-	b, err := t.union.MarshalJSON()
-	return b, err
-}
-
-func (t *UpdateProviderResponse_Saml_AttributeMapping_Keys_Default) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }

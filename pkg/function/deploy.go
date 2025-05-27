@@ -24,13 +24,13 @@ func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.Funct
 		return s.UpsertFunctions(ctx, functionConfig)
 	}
 	// Convert all paths in functions config to relative when using api deploy
-	var toDeploy []api.FunctionDeployMetadata
+	var toDeploy []FunctionDeployMetadata
 	for slug, fc := range functionConfig {
 		if !fc.Enabled {
 			fmt.Fprintln(os.Stderr, "Skipped deploying Function:", slug)
 			continue
 		}
-		meta := api.FunctionDeployMetadata{
+		meta := FunctionDeployMetadata{
 			Name:           &slug,
 			EntrypointPath: toRelPath(fc.Entrypoint),
 			ImportMapPath:  cast.Ptr(toRelPath(fc.ImportMap)),
@@ -64,9 +64,9 @@ func toRelPath(fp string) string {
 	return filepath.ToSlash(fp)
 }
 
-func (s *EdgeRuntimeAPI) bulkUpload(ctx context.Context, toDeploy []api.FunctionDeployMetadata, fsys fs.FS) error {
+func (s *EdgeRuntimeAPI) bulkUpload(ctx context.Context, toDeploy []FunctionDeployMetadata, fsys fs.FS) error {
 	jq := queue.NewJobQueue(s.maxJobs)
-	toUpdate := make([]api.BulkUpdateFunctionBody, len(toDeploy))
+	toUpdate := make(api.BulkUpdateFunctionBody, len(toDeploy))
 	for i, meta := range toDeploy {
 		param := api.V1DeployAFunctionParams{
 			Slug:       meta.Name,
@@ -105,7 +105,7 @@ func (s *EdgeRuntimeAPI) bulkUpload(ctx context.Context, toDeploy []api.Function
 	return nil
 }
 
-func (s *EdgeRuntimeAPI) upload(ctx context.Context, param api.V1DeployAFunctionParams, meta api.FunctionDeployMetadata, fsys fs.FS) (*api.DeployFunctionResponse, error) {
+func (s *EdgeRuntimeAPI) upload(ctx context.Context, param api.V1DeployAFunctionParams, meta FunctionDeployMetadata, fsys fs.FS) (*api.DeployFunctionResponse, error) {
 	body, w := io.Pipe()
 	form := multipart.NewWriter(w)
 	ctx, cancel := context.WithCancelCause(ctx)
@@ -129,7 +129,7 @@ func (s *EdgeRuntimeAPI) upload(ctx context.Context, param api.V1DeployAFunction
 	return resp.JSON201, nil
 }
 
-func writeForm(form *multipart.Writer, meta api.FunctionDeployMetadata, fsys fs.FS) error {
+func writeForm(form *multipart.Writer, meta FunctionDeployMetadata, fsys fs.FS) error {
 	m, err := form.CreateFormField("metadata")
 	if err != nil {
 		return errors.Errorf("failed to create metadata: %w", err)

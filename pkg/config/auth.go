@@ -342,7 +342,7 @@ func (r *rateLimit) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 
 func (c captcha) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if body.SecurityCaptchaEnabled = &c.Enabled; c.Enabled {
-		body.SecurityCaptchaProvider = cast.Ptr(string(c.Provider))
+		body.SecurityCaptchaProvider = cast.Ptr(v1API.UpdateAuthConfigBodySecurityCaptchaProvider(c.Provider))
 		if len(c.Secret.SHA256) > 0 {
 			body.SecurityCaptchaSecret = &c.Secret.Value
 		}
@@ -645,39 +645,39 @@ func (s sms) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if otpString := mapToEnv(s.TestOTP); len(otpString) > 0 {
 		body.SmsTestOtp = &otpString
 		// Set a 10 year validity for test OTP
-		timestamp := time.Now().UTC().AddDate(10, 0, 0).Format(time.RFC3339)
+		timestamp := time.Now().UTC().AddDate(10, 0, 0)
 		body.SmsTestOtpValidUntil = &timestamp
 	}
 	// Api only overrides configs of enabled providers
 	switch {
 	case s.Twilio.Enabled:
-		body.SmsProvider = cast.Ptr("twilio")
+		body.SmsProvider = cast.Ptr(v1API.Twilio)
 		if len(s.Twilio.AuthToken.SHA256) > 0 {
 			body.SmsTwilioAuthToken = &s.Twilio.AuthToken.Value
 		}
 		body.SmsTwilioAccountSid = &s.Twilio.AccountSid
 		body.SmsTwilioMessageServiceSid = &s.Twilio.MessageServiceSid
 	case s.TwilioVerify.Enabled:
-		body.SmsProvider = cast.Ptr("twilio_verify")
+		body.SmsProvider = cast.Ptr(v1API.TwilioVerify)
 		if len(s.TwilioVerify.AuthToken.SHA256) > 0 {
 			body.SmsTwilioVerifyAuthToken = &s.TwilioVerify.AuthToken.Value
 		}
 		body.SmsTwilioVerifyAccountSid = &s.TwilioVerify.AccountSid
 		body.SmsTwilioVerifyMessageServiceSid = &s.TwilioVerify.MessageServiceSid
 	case s.Messagebird.Enabled:
-		body.SmsProvider = cast.Ptr("messagebird")
+		body.SmsProvider = cast.Ptr(v1API.Messagebird)
 		if len(s.Messagebird.AccessKey.SHA256) > 0 {
 			body.SmsMessagebirdAccessKey = &s.Messagebird.AccessKey.Value
 		}
 		body.SmsMessagebirdOriginator = &s.Messagebird.Originator
 	case s.Textlocal.Enabled:
-		body.SmsProvider = cast.Ptr("textlocal")
+		body.SmsProvider = cast.Ptr(v1API.Textlocal)
 		if len(s.Textlocal.ApiKey.SHA256) > 0 {
 			body.SmsTextlocalApiKey = &s.Textlocal.ApiKey.Value
 		}
 		body.SmsTextlocalSender = &s.Textlocal.Sender
 	case s.Vonage.Enabled:
-		body.SmsProvider = cast.Ptr("vonage")
+		body.SmsProvider = cast.Ptr(v1API.Vonage)
 		if len(s.Vonage.ApiSecret.SHA256) > 0 {
 			body.SmsVonageApiSecret = &s.Vonage.ApiSecret.Value
 		}

@@ -276,13 +276,13 @@ type ClientInterface interface {
 	// V1GetProjectPgbouncerConfig request
 	V1GetProjectPgbouncerConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetSupavisorConfig request
-	GetSupavisorConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1GetPoolerConfig request
+	V1GetPoolerConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateSupavisorConfigWithBody request with any body
-	UpdateSupavisorConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1UpdatePoolerConfigWithBody request with any body
+	V1UpdatePoolerConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	UpdateSupavisorConfig(ctx context.Context, ref string, body UpdateSupavisorConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1UpdatePoolerConfig(ctx context.Context, ref string, body V1UpdatePoolerConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1GetPostgresConfig request
 	V1GetPostgresConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -328,8 +328,8 @@ type ClientInterface interface {
 	// GetDatabaseMetadata request
 	GetDatabaseMetadata(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// V1ListMigrations request
-	V1ListMigrations(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1ListMigrationHistory request
+	V1ListMigrationHistory(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1ApplyAMigrationWithBody request with any body
 	V1ApplyAMigrationWithBody(ctx context.Context, ref string, params *V1ApplyAMigrationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -347,8 +347,8 @@ type ClientInterface interface {
 	// V1ListAllFunctions request
 	V1ListAllFunctions(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// V1CreateAFunction request
-	V1CreateAFunction(ctx context.Context, ref string, params *V1CreateAFunctionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1CreateAFunctionWithBody request with any body
+	V1CreateAFunctionWithBody(ctx context.Context, ref string, params *V1CreateAFunctionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1BulkUpdateFunctionsWithBody request with any body
 	V1BulkUpdateFunctionsWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1315,8 +1315,8 @@ func (c *Client) V1GetProjectPgbouncerConfig(ctx context.Context, ref string, re
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetSupavisorConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetSupavisorConfigRequest(c.Server, ref)
+func (c *Client) V1GetPoolerConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetPoolerConfigRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -1327,8 +1327,8 @@ func (c *Client) GetSupavisorConfig(ctx context.Context, ref string, reqEditors 
 	return c.Client.Do(req)
 }
 
-func (c *Client) UpdateSupavisorConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdateSupavisorConfigRequestWithBody(c.Server, ref, contentType, body)
+func (c *Client) V1UpdatePoolerConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdatePoolerConfigRequestWithBody(c.Server, ref, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1339,8 +1339,8 @@ func (c *Client) UpdateSupavisorConfigWithBody(ctx context.Context, ref string, 
 	return c.Client.Do(req)
 }
 
-func (c *Client) UpdateSupavisorConfig(ctx context.Context, ref string, body UpdateSupavisorConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdateSupavisorConfigRequest(c.Server, ref, body)
+func (c *Client) V1UpdatePoolerConfig(ctx context.Context, ref string, body V1UpdatePoolerConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdatePoolerConfigRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1543,8 +1543,8 @@ func (c *Client) GetDatabaseMetadata(ctx context.Context, ref string, reqEditors
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1ListMigrations(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1ListMigrationsRequest(c.Server, ref)
+func (c *Client) V1ListMigrationHistory(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ListMigrationHistoryRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -1627,8 +1627,8 @@ func (c *Client) V1ListAllFunctions(ctx context.Context, ref string, reqEditors 
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1CreateAFunction(ctx context.Context, ref string, params *V1CreateAFunctionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1CreateAFunctionRequest(c.Server, ref, params)
+func (c *Client) V1CreateAFunctionWithBody(ctx context.Context, ref string, params *V1CreateAFunctionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1CreateAFunctionRequestWithBody(c.Server, ref, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4564,8 +4564,8 @@ func NewV1GetProjectPgbouncerConfigRequest(server string, ref string) (*http.Req
 	return req, nil
 }
 
-// NewGetSupavisorConfigRequest generates requests for GetSupavisorConfig
-func NewGetSupavisorConfigRequest(server string, ref string) (*http.Request, error) {
+// NewV1GetPoolerConfigRequest generates requests for V1GetPoolerConfig
+func NewV1GetPoolerConfigRequest(server string, ref string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4598,19 +4598,19 @@ func NewGetSupavisorConfigRequest(server string, ref string) (*http.Request, err
 	return req, nil
 }
 
-// NewUpdateSupavisorConfigRequest calls the generic UpdateSupavisorConfig builder with application/json body
-func NewUpdateSupavisorConfigRequest(server string, ref string, body UpdateSupavisorConfigJSONRequestBody) (*http.Request, error) {
+// NewV1UpdatePoolerConfigRequest calls the generic V1UpdatePoolerConfig builder with application/json body
+func NewV1UpdatePoolerConfigRequest(server string, ref string, body V1UpdatePoolerConfigJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewUpdateSupavisorConfigRequestWithBody(server, ref, "application/json", bodyReader)
+	return NewV1UpdatePoolerConfigRequestWithBody(server, ref, "application/json", bodyReader)
 }
 
-// NewUpdateSupavisorConfigRequestWithBody generates requests for UpdateSupavisorConfig with any type of body
-func NewUpdateSupavisorConfigRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+// NewV1UpdatePoolerConfigRequestWithBody generates requests for V1UpdatePoolerConfig with any type of body
+func NewV1UpdatePoolerConfigRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5105,8 +5105,8 @@ func NewGetDatabaseMetadataRequest(server string, ref string) (*http.Request, er
 	return req, nil
 }
 
-// NewV1ListMigrationsRequest generates requests for V1ListMigrations
-func NewV1ListMigrationsRequest(server string, ref string) (*http.Request, error) {
+// NewV1ListMigrationHistoryRequest generates requests for V1ListMigrationHistory
+func NewV1ListMigrationHistoryRequest(server string, ref string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5316,8 +5316,8 @@ func NewV1ListAllFunctionsRequest(server string, ref string) (*http.Request, err
 	return req, nil
 }
 
-// NewV1CreateAFunctionRequest generates requests for V1CreateAFunction
-func NewV1CreateAFunctionRequest(server string, ref string, params *V1CreateAFunctionParams) (*http.Request, error) {
+// NewV1CreateAFunctionRequestWithBody generates requests for V1CreateAFunction with any type of body
+func NewV1CreateAFunctionRequestWithBody(server string, ref string, params *V1CreateAFunctionParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5444,10 +5444,12 @@ func NewV1CreateAFunctionRequest(server string, ref string, params *V1CreateAFun
 		queryURL.RawQuery = queryValues.Encode()
 	}
 
-	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	req, err := http.NewRequest("POST", queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -7550,13 +7552,13 @@ type ClientWithResponsesInterface interface {
 	// V1GetProjectPgbouncerConfigWithResponse request
 	V1GetProjectPgbouncerConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectPgbouncerConfigResponse, error)
 
-	// GetSupavisorConfigWithResponse request
-	GetSupavisorConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetSupavisorConfigResponse, error)
+	// V1GetPoolerConfigWithResponse request
+	V1GetPoolerConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPoolerConfigResponse, error)
 
-	// UpdateSupavisorConfigWithBodyWithResponse request with any body
-	UpdateSupavisorConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSupavisorConfigResponse, error)
+	// V1UpdatePoolerConfigWithBodyWithResponse request with any body
+	V1UpdatePoolerConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdatePoolerConfigResponse, error)
 
-	UpdateSupavisorConfigWithResponse(ctx context.Context, ref string, body UpdateSupavisorConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSupavisorConfigResponse, error)
+	V1UpdatePoolerConfigWithResponse(ctx context.Context, ref string, body V1UpdatePoolerConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdatePoolerConfigResponse, error)
 
 	// V1GetPostgresConfigWithResponse request
 	V1GetPostgresConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPostgresConfigResponse, error)
@@ -7602,8 +7604,8 @@ type ClientWithResponsesInterface interface {
 	// GetDatabaseMetadataWithResponse request
 	GetDatabaseMetadataWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetDatabaseMetadataResponse, error)
 
-	// V1ListMigrationsWithResponse request
-	V1ListMigrationsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListMigrationsResponse, error)
+	// V1ListMigrationHistoryWithResponse request
+	V1ListMigrationHistoryWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListMigrationHistoryResponse, error)
 
 	// V1ApplyAMigrationWithBodyWithResponse request with any body
 	V1ApplyAMigrationWithBodyWithResponse(ctx context.Context, ref string, params *V1ApplyAMigrationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ApplyAMigrationResponse, error)
@@ -7621,8 +7623,8 @@ type ClientWithResponsesInterface interface {
 	// V1ListAllFunctionsWithResponse request
 	V1ListAllFunctionsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListAllFunctionsResponse, error)
 
-	// V1CreateAFunctionWithResponse request
-	V1CreateAFunctionWithResponse(ctx context.Context, ref string, params *V1CreateAFunctionParams, reqEditors ...RequestEditorFn) (*V1CreateAFunctionResponse, error)
+	// V1CreateAFunctionWithBodyWithResponse request with any body
+	V1CreateAFunctionWithBodyWithResponse(ctx context.Context, ref string, params *V1CreateAFunctionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1CreateAFunctionResponse, error)
 
 	// V1BulkUpdateFunctionsWithBodyWithResponse request with any body
 	V1BulkUpdateFunctionsWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1BulkUpdateFunctionsResponse, error)
@@ -8868,14 +8870,14 @@ func (r V1GetProjectPgbouncerConfigResponse) StatusCode() int {
 	return 0
 }
 
-type GetSupavisorConfigResponse struct {
+type V1GetPoolerConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *[]SupavisorConfigResponse
 }
 
 // Status returns HTTPResponse.Status
-func (r GetSupavisorConfigResponse) Status() string {
+func (r V1GetPoolerConfigResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -8883,21 +8885,21 @@ func (r GetSupavisorConfigResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r GetSupavisorConfigResponse) StatusCode() int {
+func (r V1GetPoolerConfigResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
 	return 0
 }
 
-type UpdateSupavisorConfigResponse struct {
+type V1UpdatePoolerConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *UpdateSupavisorConfigResponse
 }
 
 // Status returns HTTPResponse.Status
-func (r UpdateSupavisorConfigResponse) Status() string {
+func (r V1UpdatePoolerConfigResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -8905,7 +8907,7 @@ func (r UpdateSupavisorConfigResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r UpdateSupavisorConfigResponse) StatusCode() int {
+func (r V1UpdatePoolerConfigResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -9173,14 +9175,14 @@ func (r GetDatabaseMetadataResponse) StatusCode() int {
 	return 0
 }
 
-type V1ListMigrationsResponse struct {
+type V1ListMigrationHistoryResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *V1ListMigrationsResponse
 }
 
 // Status returns HTTPResponse.Status
-func (r V1ListMigrationsResponse) Status() string {
+func (r V1ListMigrationHistoryResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -9188,7 +9190,7 @@ func (r V1ListMigrationsResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r V1ListMigrationsResponse) StatusCode() int {
+func (r V1ListMigrationHistoryResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -10765,30 +10767,30 @@ func (c *ClientWithResponses) V1GetProjectPgbouncerConfigWithResponse(ctx contex
 	return ParseV1GetProjectPgbouncerConfigResponse(rsp)
 }
 
-// GetSupavisorConfigWithResponse request returning *GetSupavisorConfigResponse
-func (c *ClientWithResponses) GetSupavisorConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetSupavisorConfigResponse, error) {
-	rsp, err := c.GetSupavisorConfig(ctx, ref, reqEditors...)
+// V1GetPoolerConfigWithResponse request returning *V1GetPoolerConfigResponse
+func (c *ClientWithResponses) V1GetPoolerConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPoolerConfigResponse, error) {
+	rsp, err := c.V1GetPoolerConfig(ctx, ref, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseGetSupavisorConfigResponse(rsp)
+	return ParseV1GetPoolerConfigResponse(rsp)
 }
 
-// UpdateSupavisorConfigWithBodyWithResponse request with arbitrary body returning *UpdateSupavisorConfigResponse
-func (c *ClientWithResponses) UpdateSupavisorConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateSupavisorConfigResponse, error) {
-	rsp, err := c.UpdateSupavisorConfigWithBody(ctx, ref, contentType, body, reqEditors...)
+// V1UpdatePoolerConfigWithBodyWithResponse request with arbitrary body returning *V1UpdatePoolerConfigResponse
+func (c *ClientWithResponses) V1UpdatePoolerConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdatePoolerConfigResponse, error) {
+	rsp, err := c.V1UpdatePoolerConfigWithBody(ctx, ref, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseUpdateSupavisorConfigResponse(rsp)
+	return ParseV1UpdatePoolerConfigResponse(rsp)
 }
 
-func (c *ClientWithResponses) UpdateSupavisorConfigWithResponse(ctx context.Context, ref string, body UpdateSupavisorConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSupavisorConfigResponse, error) {
-	rsp, err := c.UpdateSupavisorConfig(ctx, ref, body, reqEditors...)
+func (c *ClientWithResponses) V1UpdatePoolerConfigWithResponse(ctx context.Context, ref string, body V1UpdatePoolerConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdatePoolerConfigResponse, error) {
+	rsp, err := c.V1UpdatePoolerConfig(ctx, ref, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseUpdateSupavisorConfigResponse(rsp)
+	return ParseV1UpdatePoolerConfigResponse(rsp)
 }
 
 // V1GetPostgresConfigWithResponse request returning *V1GetPostgresConfigResponse
@@ -10931,13 +10933,13 @@ func (c *ClientWithResponses) GetDatabaseMetadataWithResponse(ctx context.Contex
 	return ParseGetDatabaseMetadataResponse(rsp)
 }
 
-// V1ListMigrationsWithResponse request returning *V1ListMigrationsResponse
-func (c *ClientWithResponses) V1ListMigrationsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListMigrationsResponse, error) {
-	rsp, err := c.V1ListMigrations(ctx, ref, reqEditors...)
+// V1ListMigrationHistoryWithResponse request returning *V1ListMigrationHistoryResponse
+func (c *ClientWithResponses) V1ListMigrationHistoryWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListMigrationHistoryResponse, error) {
+	rsp, err := c.V1ListMigrationHistory(ctx, ref, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseV1ListMigrationsResponse(rsp)
+	return ParseV1ListMigrationHistoryResponse(rsp)
 }
 
 // V1ApplyAMigrationWithBodyWithResponse request with arbitrary body returning *V1ApplyAMigrationResponse
@@ -10992,9 +10994,9 @@ func (c *ClientWithResponses) V1ListAllFunctionsWithResponse(ctx context.Context
 	return ParseV1ListAllFunctionsResponse(rsp)
 }
 
-// V1CreateAFunctionWithResponse request returning *V1CreateAFunctionResponse
-func (c *ClientWithResponses) V1CreateAFunctionWithResponse(ctx context.Context, ref string, params *V1CreateAFunctionParams, reqEditors ...RequestEditorFn) (*V1CreateAFunctionResponse, error) {
-	rsp, err := c.V1CreateAFunction(ctx, ref, params, reqEditors...)
+// V1CreateAFunctionWithBodyWithResponse request with arbitrary body returning *V1CreateAFunctionResponse
+func (c *ClientWithResponses) V1CreateAFunctionWithBodyWithResponse(ctx context.Context, ref string, params *V1CreateAFunctionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1CreateAFunctionResponse, error) {
+	rsp, err := c.V1CreateAFunctionWithBody(ctx, ref, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -12723,15 +12725,15 @@ func ParseV1GetProjectPgbouncerConfigResponse(rsp *http.Response) (*V1GetProject
 	return response, nil
 }
 
-// ParseGetSupavisorConfigResponse parses an HTTP response from a GetSupavisorConfigWithResponse call
-func ParseGetSupavisorConfigResponse(rsp *http.Response) (*GetSupavisorConfigResponse, error) {
+// ParseV1GetPoolerConfigResponse parses an HTTP response from a V1GetPoolerConfigWithResponse call
+func ParseV1GetPoolerConfigResponse(rsp *http.Response) (*V1GetPoolerConfigResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &GetSupavisorConfigResponse{
+	response := &V1GetPoolerConfigResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -12749,15 +12751,15 @@ func ParseGetSupavisorConfigResponse(rsp *http.Response) (*GetSupavisorConfigRes
 	return response, nil
 }
 
-// ParseUpdateSupavisorConfigResponse parses an HTTP response from a UpdateSupavisorConfigWithResponse call
-func ParseUpdateSupavisorConfigResponse(rsp *http.Response) (*UpdateSupavisorConfigResponse, error) {
+// ParseV1UpdatePoolerConfigResponse parses an HTTP response from a V1UpdatePoolerConfigWithResponse call
+func ParseV1UpdatePoolerConfigResponse(rsp *http.Response) (*V1UpdatePoolerConfigResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &UpdateSupavisorConfigResponse{
+	response := &V1UpdatePoolerConfigResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -13057,15 +13059,15 @@ func ParseGetDatabaseMetadataResponse(rsp *http.Response) (*GetDatabaseMetadataR
 	return response, nil
 }
 
-// ParseV1ListMigrationsResponse parses an HTTP response from a V1ListMigrationsWithResponse call
-func ParseV1ListMigrationsResponse(rsp *http.Response) (*V1ListMigrationsResponse, error) {
+// ParseV1ListMigrationHistoryResponse parses an HTTP response from a V1ListMigrationHistoryWithResponse call
+func ParseV1ListMigrationHistoryResponse(rsp *http.Response) (*V1ListMigrationHistoryResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &V1ListMigrationsResponse{
+	response := &V1ListMigrationHistoryResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}

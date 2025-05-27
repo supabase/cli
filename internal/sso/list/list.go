@@ -26,7 +26,7 @@ func Run(ctx context.Context, ref, format string) error {
 
 	switch format {
 	case utils.OutputPretty:
-		return render.ListMarkdown(resp.JSON200.Items)
+		return render.ListMarkdown(*resp.JSON200)
 
 	default:
 		return utils.EncodeOutput(format, os.Stdout, map[string]any{

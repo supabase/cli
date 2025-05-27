@@ -43,7 +43,7 @@ func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsy
 	return nil
 }
 
-func ListSecrets(envFilePath string, fsys afero.Fs, envArgs ...string) ([]api.CreateSecretBody, error) {
+func ListSecrets(envFilePath string, fsys afero.Fs, envArgs ...string) (api.CreateSecretBody, error) {
 	envMap := map[string]string{}
 	for name, secret := range utils.Config.EdgeRuntime.Secrets {
 		if len(secret.SHA256) > 0 {
@@ -64,17 +64,17 @@ func ListSecrets(envFilePath string, fsys afero.Fs, envArgs ...string) ([]api.Cr
 		}
 		envMap[name] = value
 	}
-	var result []api.CreateSecretBody
+	var result api.CreateSecretBody
 	for name, value := range envMap {
 		// Lower case prefix is accepted by API
 		if strings.HasPrefix(name, "SUPABASE_") {
 			fmt.Fprintln(os.Stderr, "Env name cannot start with SUPABASE_, skipping: "+name)
 			continue
 		}
-		result = append(result, api.CreateSecretBody{
+		result = append(result, api.CreateSecretBody{{
 			Name:  name,
 			Value: value,
-		})
+		}}...)
 	}
 	return result, nil
 }

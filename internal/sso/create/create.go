@@ -49,12 +49,17 @@ func Run(ctx context.Context, params RunParams) error {
 	}
 
 	if params.AttributeMapping != "" {
-		data, err := saml.ReadAttributeMappingFile(Fs, params.AttributeMapping)
-		if err != nil {
+		body.AttributeMapping = &struct {
+			Keys map[string]struct {
+				Array   *bool        "json:\"array,omitempty\""
+				Default *interface{} "json:\"default,omitempty\""
+				Name    *string      "json:\"name,omitempty\""
+				Names   *[]string    "json:\"names,omitempty\""
+			} "json:\"keys\""
+		}{}
+		if err := saml.ReadAttributeMappingFile(Fs, params.AttributeMapping, body.AttributeMapping); err != nil {
 			return err
 		}
-
-		body.AttributeMapping = data
 	}
 
 	if params.Domains != nil {
@@ -76,13 +81,7 @@ func Run(ctx context.Context, params RunParams) error {
 
 	switch params.Format {
 	case utils.OutputPretty:
-		return render.SingleMarkdown(api.Provider{
-			Id:        resp.JSON201.Id,
-			Saml:      resp.JSON201.Saml,
-			Domains:   resp.JSON201.Domains,
-			CreatedAt: resp.JSON201.CreatedAt,
-			UpdatedAt: resp.JSON201.UpdatedAt,
-		})
+		return render.SingleMarkdown(api.GetProviderResponse(*resp.JSON201))
 	case utils.OutputEnv:
 		return nil
 	default:
