@@ -19,9 +19,8 @@ import (
 var TotalTableSizesQuery string
 
 type Result struct {
-	Schema string
-	Name   string
-	Size   string
+	Name string
+	Size string
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -30,7 +29,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 	defer conn.Close(context.Background())
-	rows, err := conn.Query(ctx, TotalTableSizesQuery, reset.LikeEscapeSchema(utils.PgSchemas))
+	rows, err := conn.Query(ctx, TotalTableSizesQuery, reset.LikeEscapeSchema(utils.InternalSchemas))
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}
@@ -39,9 +38,9 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "Schema|Table|Size|\n|-|-|-|\n"
+	table := "|Table|Size|\n|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%s`|`%s`|\n", r.Schema, r.Name, r.Size)
+		table += fmt.Sprintf("|`%s`|`%s`|\n", r.Name, r.Size)
 	}
 	return list.RenderTable(table)
 }

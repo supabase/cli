@@ -29,7 +29,7 @@ func TestUnusedIndexesCommand(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(UnusedIndexesQuery, reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
-				Table:       "test_table",
+				Name:        "public.test_table",
 				Index:       "test_table_idx",
 				Index_size:  "3GB",
 				Index_scans: 2,
