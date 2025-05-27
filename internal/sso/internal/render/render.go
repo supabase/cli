@@ -12,31 +12,22 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-func formatProtocol(provider api.Provider) string {
+func formatProtocol(provider api.GetProviderResponse) string {
 	protocol := "SAML 2.0"
-	if provider.Saml == nil || *provider.Saml == (api.SamlDescriptor{}) {
+	if provider.Saml == nil {
 		protocol = "unknown"
 	}
 
 	return protocol
 }
 
-func formatMetadataSource(provider api.Provider) string {
+func formatMetadataSource(provider api.GetProviderResponse) string {
 	source := "FILE"
 	if provider.Saml != nil && provider.Saml.MetadataUrl != nil && *provider.Saml.MetadataUrl != "" {
 		source = *provider.Saml.MetadataUrl
 	}
 
 	return source
-}
-
-func formatAttributeMapping(attributeMapping *api.AttributeMapping) (string, error) {
-	data, err := json.MarshalIndent(attributeMapping, "", "  ")
-	if err != nil {
-		return "", errors.Errorf("failed to marshal attribute mapping: %w", err)
-	}
-
-	return string(data), nil
 }
 
 func formatTimestamp(timestamp *string) string {
@@ -47,7 +38,7 @@ func formatTimestamp(timestamp *string) string {
 	return utils.FormatTimestamp(*timestamp)
 }
 
-func formatDomains(provider api.Provider) string {
+func formatDomains(provider api.GetProviderResponse) string {
 	var domains []string
 
 	if provider.Domains != nil {
@@ -66,7 +57,7 @@ func formatDomains(provider api.Provider) string {
 	return domainsString
 }
 
-func formatEntityID(provider api.Provider) string {
+func formatEntityID(provider api.GetProviderResponse) string {
 	entityID := "-"
 	if provider.Saml != nil && provider.Saml.EntityId != "" {
 		entityID = provider.Saml.EntityId
@@ -75,12 +66,12 @@ func formatEntityID(provider api.Provider) string {
 	return entityID
 }
 
-func ListMarkdown(providers []api.Provider) error {
+func ListMarkdown(providers api.ListProvidersResponse) error {
 	markdownTable := []string{
 		"|TYPE|IDENTITY PROVIDER ID|DOMAINS|SAML 2.0 `EntityID`|CREATED AT (UTC)|UPDATED AT (UTC)|\n|-|-|-|-|-|-|\n",
 	}
 
-	for _, item := range providers {
+	for _, item := range providers.Items {
 		markdownTable = append(markdownTable, fmt.Sprintf(
 			"|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
 			formatProtocol(item),
@@ -95,7 +86,7 @@ func ListMarkdown(providers []api.Provider) error {
 	return list.RenderTable(strings.Join(markdownTable, ""))
 }
 
-func SingleMarkdown(provider api.Provider) error {
+func SingleMarkdown(provider api.GetProviderResponse) error {
 	markdownTable := []string{
 		"|PROPERTY|VALUE|",
 		"|-|-|",
@@ -139,12 +130,12 @@ func SingleMarkdown(provider api.Provider) error {
 	))
 
 	if provider.Saml != nil && provider.Saml.AttributeMapping != nil && len(provider.Saml.AttributeMapping.Keys) > 0 {
-		attributeMapping, err := formatAttributeMapping(provider.Saml.AttributeMapping)
+		attributeMapping, err := json.MarshalIndent(provider.Saml.AttributeMapping, "", "  ")
 		if err != nil {
-			return err
+			return errors.Errorf("failed to marshal attribute mapping: %w", err)
 		}
 
-		markdownTable = append(markdownTable, "", "## Attribute Mapping", "```json", attributeMapping, "```")
+		markdownTable = append(markdownTable, "", "## Attribute Mapping", "```json", string(attributeMapping), "```")
 	}
 
 	if provider.Saml != nil && provider.Saml.MetadataXml != nil && *provider.Saml.MetadataXml != "" {

@@ -6,13 +6,18 @@ import (
 	"os"
 
 	"github.com/go-errors/errors"
+	"github.com/google/uuid"
 	"github.com/supabase/cli/internal/sso/internal/render"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
 
 func Run(ctx context.Context, ref, providerId, format string) error {
-	resp, err := utils.GetSupabase().V1DeleteASsoProviderWithResponse(ctx, ref, providerId)
+	parsed, err := uuid.Parse(providerId)
+	if err != nil {
+		return errors.Errorf("failed to parse provider ID: %w", err)
+	}
+	resp, err := utils.GetSupabase().V1DeleteASsoProviderWithResponse(ctx, ref, parsed)
 	if err != nil {
 		return errors.Errorf("failed to remove sso provider: %w", err)
 	}
@@ -27,13 +32,7 @@ func Run(ctx context.Context, ref, providerId, format string) error {
 
 	switch format {
 	case utils.OutputPretty:
-		return render.SingleMarkdown(api.Provider{
-			Id:        resp.JSON200.Id,
-			Saml:      resp.JSON200.Saml,
-			Domains:   resp.JSON200.Domains,
-			CreatedAt: resp.JSON200.CreatedAt,
-			UpdatedAt: resp.JSON200.UpdatedAt,
-		})
+		return render.SingleMarkdown(api.GetProviderResponse(*resp.JSON200))
 	case utils.OutputEnv:
 		return nil
 	default:

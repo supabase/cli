@@ -45,7 +45,7 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 	for _, f := range result {
 		exists[f.Slug] = struct{}{}
 	}
-	var toUpdate []api.BulkUpdateFunctionBody
+	var toUpdate api.BulkUpdateFunctionBody
 OUTER:
 	for slug, function := range functionConfig {
 		if !function.Enabled {
@@ -80,7 +80,7 @@ OUTER:
 		if err != nil {
 			return err
 		}
-		toUpdate = append(toUpdate, result)
+		toUpdate = append(toUpdate, result...)
 		policy.Reset()
 	}
 	if len(toUpdate) > 1 {
@@ -98,7 +98,7 @@ OUTER:
 	return nil
 }
 
-func (s *EdgeRuntimeAPI) updateFunction(ctx context.Context, slug string, meta api.FunctionDeployMetadata, body io.Reader) (api.BulkUpdateFunctionBody, error) {
+func (s *EdgeRuntimeAPI) updateFunction(ctx context.Context, slug string, meta FunctionDeployMetadata, body io.Reader) (api.BulkUpdateFunctionBody, error) {
 	resp, err := s.client.V1UpdateAFunctionWithBodyWithResponse(ctx, s.project, slug, &api.V1UpdateAFunctionParams{
 		VerifyJwt:      meta.VerifyJwt,
 		ImportMapPath:  meta.ImportMapPath,
@@ -109,7 +109,7 @@ func (s *EdgeRuntimeAPI) updateFunction(ctx context.Context, slug string, meta a
 	} else if resp.JSON200 == nil {
 		return api.BulkUpdateFunctionBody{}, errors.Errorf("unexpected update function status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
-	return api.BulkUpdateFunctionBody{
+	return api.BulkUpdateFunctionBody{{
 		Id:             resp.JSON200.Id,
 		Name:           resp.JSON200.Name,
 		Slug:           resp.JSON200.Slug,
@@ -120,10 +120,10 @@ func (s *EdgeRuntimeAPI) updateFunction(ctx context.Context, slug string, meta a
 		VerifyJwt:      resp.JSON200.VerifyJwt,
 		Status:         api.BulkUpdateFunctionBodyStatus(resp.JSON200.Status),
 		CreatedAt:      &resp.JSON200.CreatedAt,
-	}, nil
+	}}, nil
 }
 
-func (s *EdgeRuntimeAPI) createFunction(ctx context.Context, slug string, meta api.FunctionDeployMetadata, body io.Reader) (api.BulkUpdateFunctionBody, error) {
+func (s *EdgeRuntimeAPI) createFunction(ctx context.Context, slug string, meta FunctionDeployMetadata, body io.Reader) (api.BulkUpdateFunctionBody, error) {
 	resp, err := s.client.V1CreateAFunctionWithBodyWithResponse(ctx, s.project, &api.V1CreateAFunctionParams{
 		Slug:           &slug,
 		Name:           &slug,
@@ -136,7 +136,7 @@ func (s *EdgeRuntimeAPI) createFunction(ctx context.Context, slug string, meta a
 	} else if resp.JSON201 == nil {
 		return api.BulkUpdateFunctionBody{}, errors.Errorf("unexpected create function status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
-	return api.BulkUpdateFunctionBody{
+	return api.BulkUpdateFunctionBody{{
 		Id:             resp.JSON201.Id,
 		Name:           resp.JSON201.Name,
 		Slug:           resp.JSON201.Slug,
@@ -147,5 +147,5 @@ func (s *EdgeRuntimeAPI) createFunction(ctx context.Context, slug string, meta a
 		VerifyJwt:      resp.JSON201.VerifyJwt,
 		Status:         api.BulkUpdateFunctionBodyStatus(resp.JSON201.Status),
 		CreatedAt:      &resp.JSON201.CreatedAt,
-	}, nil
+	}}, nil
 }

@@ -53,17 +53,15 @@ func TestLinkCommand(t *testing.T) {
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		// Mock project status
-		postgres := api.V1DatabaseResponse{
-			Host:    utils.GetSupabaseDbHost(project),
-			Version: "15.1.0.117",
+		mockPostgres := api.V1ProjectWithDatabaseResponse{
+			Status: api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
 		}
+		mockPostgres.Database.Host = utils.GetSupabaseDbHost(project)
+		mockPostgres.Database.Version = "15.1.0.117"
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project).
 			Reply(200).
-			JSON(api.V1ProjectWithDatabaseResponse{
-				Status:   api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
-				Database: postgres,
-			})
+			JSON(mockPostgres)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
@@ -117,7 +115,7 @@ func TestLinkCommand(t *testing.T) {
 		assert.Equal(t, []byte(auth.Version), authVersion)
 		postgresVersion, err := afero.ReadFile(fsys, utils.PostgresVersionPath)
 		assert.NoError(t, err)
-		assert.Equal(t, []byte(postgres.Version), postgresVersion)
+		assert.Equal(t, []byte(mockPostgres.Database.Version), postgresVersion)
 	})
 
 	t.Run("ignores error linking services", func(t *testing.T) {
@@ -131,8 +129,7 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects/" + project).
 			Reply(200).
 			JSON(api.V1ProjectWithDatabaseResponse{
-				Status:   api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
-				Database: api.V1DatabaseResponse{},
+				Status: api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
 			})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
@@ -182,8 +179,7 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects/" + project).
 			Reply(200).
 			JSON(api.V1ProjectWithDatabaseResponse{
-				Status:   api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
-				Database: api.V1DatabaseResponse{},
+				Status: api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
 			})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
@@ -237,14 +233,15 @@ func TestStatusCheck(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
+		postgres := api.V1ProjectWithDatabaseResponse{
+			Status: api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
+		}
+		postgres.Database.Version = "15.6.1.139"
 		// Mock project status
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project).
 			Reply(http.StatusOK).
-			JSON(api.V1ProjectWithDatabaseResponse{
-				Status:   api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
-				Database: api.V1DatabaseResponse{Version: "15.6.1.139"},
-			})
+			JSON(postgres)
 		// Run test
 		err := checkRemoteProjectStatus(context.Background(), project, fsys)
 		// Check error

@@ -224,7 +224,7 @@ func updatePostgresConfig(conn *pgx.Conn) {
 }
 
 func linkPooler(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	resp, err := utils.GetSupabase().V1GetSupavisorConfigWithResponse(ctx, projectRef)
+	resp, err := utils.GetSupabase().V1GetPoolerConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to get pooler config: %w", err)
 	}

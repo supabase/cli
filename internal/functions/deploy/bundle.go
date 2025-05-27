@@ -14,7 +14,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/function"
 )
 
@@ -26,7 +25,7 @@ func NewDockerBundler(fsys afero.Fs) function.EszipBundler {
 	return &dockerBundler{fsys: fsys}
 }
 
-func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) (api.FunctionDeployMetadata, error) {
+func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) (function.FunctionDeployMetadata, error) {
 	meta := function.NewMetadata(slug, entrypoint, importMap, staticFiles)
 	fmt.Fprintln(os.Stderr, "Bundling Function:", utils.Bold(slug))
 	cwd, err := os.Getwd()

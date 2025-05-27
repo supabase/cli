@@ -44,11 +44,15 @@ func (s *storage) ToUpdateStorageConfigBody() v1API.UpdateStorageConfigBody {
 	}
 	// When local config is not set, we assume platform defaults should not change
 	if s.ImageTransformation != nil {
-		body.Features = &v1API.StorageFeatures{
-			ImageTransformation: v1API.StorageFeatureImageTransformation{
-				Enabled: s.ImageTransformation.Enabled,
-			},
-		}
+		body.Features = &struct {
+			ImageTransformation struct {
+				Enabled bool "json:\"enabled\""
+			} "json:\"imageTransformation\""
+			S3Protocol struct {
+				Enabled bool "json:\"enabled\""
+			} "json:\"s3Protocol\""
+		}{}
+		body.Features.ImageTransformation.Enabled = s.ImageTransformation.Enabled
 	}
 	return body
 }

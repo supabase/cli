@@ -14,11 +14,9 @@ func Run(ctx context.Context, projectRef string, enforceDbSsl bool, fsys afero.F
 	// 1. sanity checks
 	// 2. update restrictions
 	{
-		resp, err := utils.GetSupabase().V1UpdateSslEnforcementConfigWithResponse(ctx, projectRef, api.V1UpdateSslEnforcementConfigJSONRequestBody{
-			RequestedConfig: api.SslEnforcements{
-				Database: enforceDbSsl,
-			},
-		})
+		body := api.V1UpdateSslEnforcementConfigJSONRequestBody{}
+		body.RequestedConfig.Database = enforceDbSsl
+		resp, err := utils.GetSupabase().V1UpdateSslEnforcementConfigWithResponse(ctx, projectRef, body)
 		if err != nil {
 			return errors.Errorf("failed to update ssl enforcement: %w", err)
 		}

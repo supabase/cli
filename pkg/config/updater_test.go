@@ -219,17 +219,22 @@ func TestUpdateStorageConfig(t *testing.T) {
 		updater := NewConfigUpdater(*client)
 		// Setup mock server
 		defer gock.Off()
+		mockStorage := v1API.StorageConfigResponse{
+			FileSizeLimit: 100,
+			Features: struct {
+				ImageTransformation struct {
+					Enabled bool "json:\"enabled\""
+				} "json:\"imageTransformation\""
+				S3Protocol struct {
+					Enabled bool "json:\"enabled\""
+				} "json:\"s3Protocol\""
+			}{},
+		}
+		mockStorage.Features.ImageTransformation.Enabled = true
 		gock.New(server).
 			Get("/v1/projects/test-project/config/storage").
 			Reply(http.StatusOK).
-			JSON(v1API.StorageConfigResponse{
-				FileSizeLimit: 100,
-				Features: v1API.StorageFeatures{
-					ImageTransformation: v1API.StorageFeatureImageTransformation{
-						Enabled: true,
-					},
-				},
-			})
+			JSON(mockStorage)
 		gock.New(server).
 			Patch("/v1/projects/test-project/config/storage").
 			Reply(http.StatusOK)
