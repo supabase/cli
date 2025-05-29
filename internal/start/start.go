@@ -505,6 +505,7 @@ EOF
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_OTP=%v", utils.Config.Auth.RateLimit.SignInSignUps),
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_VERIFY=%v", utils.Config.Auth.RateLimit.TokenVerifications),
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_SMS_SENT=%v", utils.Config.Auth.RateLimit.SmsSent),
+			fmt.Sprintf("GOTRUE_RATE_LIMIT_WEB3=%v", utils.Config.Auth.RateLimit.Web3),
 		}
 
 		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.Enabled {
@@ -669,6 +670,7 @@ EOF
 				env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_%s_URL=%s", strings.ToUpper(name), config.Url))
 			}
 		}
+		env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED=%v", utils.Config.Auth.Web3.Solana.Enabled))
 
 		if _, err := utils.DockerStart(
 			ctx,

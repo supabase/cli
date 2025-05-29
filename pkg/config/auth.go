@@ -92,6 +92,7 @@ type (
 		Email     email     `toml:"email"`
 		Sms       sms       `toml:"sms"`
 		External  external  `toml:"external"`
+		Web3      web3      `toml:"web3"`
 
 		// Custom secrets can be injected from .env file
 		JwtSecret      Secret `toml:"jwt_secret"`
@@ -117,6 +118,7 @@ type (
 		TokenVerifications uint `toml:"token_verifications"`
 		EmailSent          uint `toml:"email_sent"`
 		SmsSent            uint `toml:"sms_sent"`
+		Web3               uint `toml:"web3"`
 	}
 
 	tpaFirebase struct {
@@ -265,6 +267,14 @@ type (
 		RedirectUri    string `toml:"redirect_uri"`
 		SkipNonceCheck bool   `toml:"skip_nonce_check"`
 	}
+
+	solana struct {
+		Enabled bool `toml:"enabled"`
+	}
+
+	web3 struct {
+		Solana solana `toml:"solana"`
+	}
 )
 
 func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
@@ -295,6 +305,7 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 	a.Email.toAuthConfigBody(&body)
 	a.Sms.toAuthConfigBody(&body)
 	a.External.toAuthConfigBody(&body)
+	a.Web3.toAuthConfigBody(&body)
 	return body
 }
 
@@ -321,6 +332,7 @@ func (a *auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	a.Email.fromAuthConfig(remoteConfig)
 	a.Sms.fromAuthConfig(remoteConfig)
 	a.External.fromAuthConfig(remoteConfig)
+	a.Web3.fromAuthConfig(remoteConfig)
 }
 
 func (r rateLimit) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
@@ -330,6 +342,7 @@ func (r rateLimit) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.RateLimitVerify = nullable.NewNullableWithValue(cast.UintToInt(r.TokenVerifications))
 	// Email rate limit is only updated when SMTP is enabled
 	body.RateLimitSmsSent = nullable.NewNullableWithValue(cast.UintToInt(r.SmsSent))
+	body.RateLimitWeb3 = nullable.NewNullableWithValue((cast.UintToInt(r.Web3)))
 }
 
 func (r *rateLimit) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
@@ -339,6 +352,7 @@ func (r *rateLimit) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	r.TokenVerifications = cast.IntToUint(ValOrDefault(remoteConfig.RateLimitVerify, 0))
 	// Email rate limit is only updated when SMTP is enabled
 	r.SmsSent = cast.IntToUint(ValOrDefault(remoteConfig.RateLimitSmsSent, 0))
+	r.Web3 = cast.IntToUint(ValOrDefault(remoteConfig.RateLimitWeb3, 0))
 }
 
 func (c captcha) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
@@ -1195,6 +1209,16 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 		}
 		p.Enabled = ValOrDefault(remoteConfig.ExternalZoomEnabled, false)
 		e["zoom"] = p
+	}
+}
+
+func (w web3) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+	body.ExternalWeb3SolanaEnabled = nullable.NewNullableWithValue(w.Solana.Enabled)
+}
+
+func (w *web3) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	if value, err := remoteConfig.ExternalWeb3SolanaEnabled.Get(); err == nil {
+		w.Solana.Enabled = value
 	}
 }
 

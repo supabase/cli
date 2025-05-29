@@ -1,8 +1,8 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -22,7 +22,7 @@
- sms_sent = 0
+@@ -23,7 +23,7 @@
+ web3 = 0
  
  [captcha]
 -enabled = true
