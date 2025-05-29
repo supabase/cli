@@ -242,11 +242,11 @@ func linkPooler(ctx context.Context, projectRef string, fsys afero.Fs) error {
 func updatePoolerConfig(config api.SupavisorConfigResponse) {
 	utils.Config.Db.Pooler.ConnectionString = config.ConnectionString
 	utils.Config.Db.Pooler.PoolMode = cliConfig.PoolMode(config.PoolMode)
-	if config.DefaultPoolSize != nil {
-		utils.Config.Db.Pooler.DefaultPoolSize = cast.IntToUint(*config.DefaultPoolSize)
+	if value, err := config.DefaultPoolSize.Get(); err == nil {
+		utils.Config.Db.Pooler.DefaultPoolSize = cast.IntToUint(value)
 	}
-	if config.MaxClientConn != nil {
-		utils.Config.Db.Pooler.MaxClientConn = cast.IntToUint(*config.MaxClientConn)
+	if value, err := config.MaxClientConn.Get(); err == nil {
+		utils.Config.Db.Pooler.MaxClientConn = cast.IntToUint(value)
 	}
 }
 

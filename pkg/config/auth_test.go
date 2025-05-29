@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/go-errors/errors"
+	"github.com/oapi-codegen/nullable"
 	"github.com/stretchr/testify/assert"
 	v1API "github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
@@ -50,16 +51,16 @@ func TestAuthDiff(t *testing.T) {
 		c.PasswordRequirements = LettersDigits
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			SiteUrl:                           cast.Ptr("http://127.0.0.1:3000"),
-			UriAllowList:                      cast.Ptr("https://127.0.0.1:3000"),
-			JwtExp:                            cast.Ptr(3600),
-			RefreshTokenRotationEnabled:       cast.Ptr(true),
-			SecurityRefreshTokenReuseInterval: cast.Ptr(10),
-			SecurityManualLinkingEnabled:      cast.Ptr(true),
-			DisableSignup:                     cast.Ptr(false),
-			ExternalAnonymousUsersEnabled:     cast.Ptr(true),
-			PasswordMinLength:                 cast.Ptr(6),
-			PasswordRequiredCharacters:        cast.Ptr(string(v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789)),
+			SiteUrl:                           nullable.NewNullableWithValue("http://127.0.0.1:3000"),
+			UriAllowList:                      nullable.NewNullableWithValue("https://127.0.0.1:3000"),
+			JwtExp:                            nullable.NewNullableWithValue(3600),
+			RefreshTokenRotationEnabled:       nullable.NewNullableWithValue(true),
+			SecurityRefreshTokenReuseInterval: nullable.NewNullableWithValue(10),
+			SecurityManualLinkingEnabled:      nullable.NewNullableWithValue(true),
+			DisableSignup:                     nullable.NewNullableWithValue(false),
+			ExternalAnonymousUsersEnabled:     nullable.NewNullableWithValue(true),
+			PasswordMinLength:                 nullable.NewNullableWithValue(6),
+			PasswordRequiredCharacters:        nullable.NewNullableWithValue(string(v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789)),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -80,16 +81,16 @@ func TestAuthDiff(t *testing.T) {
 		c.PasswordRequirements = LowerUpperLettersDigitsSymbols
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			SiteUrl:                           cast.Ptr(""),
-			UriAllowList:                      cast.Ptr("https://127.0.0.1:3000,https://ref.supabase.co"),
-			JwtExp:                            cast.Ptr(0),
-			RefreshTokenRotationEnabled:       cast.Ptr(true),
-			SecurityRefreshTokenReuseInterval: cast.Ptr(0),
-			SecurityManualLinkingEnabled:      cast.Ptr(true),
-			DisableSignup:                     cast.Ptr(false),
-			ExternalAnonymousUsersEnabled:     cast.Ptr(true),
-			PasswordMinLength:                 cast.Ptr(8),
-			PasswordRequiredCharacters:        cast.Ptr(string(v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789)),
+			SiteUrl:                           nullable.NewNullableWithValue(""),
+			UriAllowList:                      nullable.NewNullableWithValue("https://127.0.0.1:3000,https://ref.supabase.co"),
+			JwtExp:                            nullable.NewNullableWithValue(0),
+			RefreshTokenRotationEnabled:       nullable.NewNullableWithValue(true),
+			SecurityRefreshTokenReuseInterval: nullable.NewNullableWithValue(0),
+			SecurityManualLinkingEnabled:      nullable.NewNullableWithValue(true),
+			DisableSignup:                     nullable.NewNullableWithValue(false),
+			ExternalAnonymousUsersEnabled:     nullable.NewNullableWithValue(true),
+			PasswordMinLength:                 nullable.NewNullableWithValue(8),
+			PasswordRequiredCharacters:        nullable.NewNullableWithValue(string(v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789)),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -101,16 +102,16 @@ func TestAuthDiff(t *testing.T) {
 		c.EnableSignup = false
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			SiteUrl:                           cast.Ptr(""),
-			UriAllowList:                      cast.Ptr(""),
-			JwtExp:                            cast.Ptr(0),
-			RefreshTokenRotationEnabled:       cast.Ptr(false),
-			SecurityRefreshTokenReuseInterval: cast.Ptr(0),
-			SecurityManualLinkingEnabled:      cast.Ptr(false),
-			DisableSignup:                     cast.Ptr(true),
-			ExternalAnonymousUsersEnabled:     cast.Ptr(false),
-			PasswordMinLength:                 cast.Ptr(0),
-			PasswordRequiredCharacters:        cast.Ptr(""),
+			SiteUrl:                           nullable.NewNullableWithValue(""),
+			UriAllowList:                      nullable.NewNullableWithValue(""),
+			JwtExp:                            nullable.NewNullableWithValue(0),
+			RefreshTokenRotationEnabled:       nullable.NewNullableWithValue(false),
+			SecurityRefreshTokenReuseInterval: nullable.NewNullableWithValue(0),
+			SecurityManualLinkingEnabled:      nullable.NewNullableWithValue(false),
+			DisableSignup:                     nullable.NewNullableWithValue(true),
+			ExternalAnonymousUsersEnabled:     nullable.NewNullableWithValue(false),
+			PasswordMinLength:                 nullable.NewNullableWithValue(0),
+			PasswordRequiredCharacters:        nullable.NewNullableWithValue(""),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -131,9 +132,9 @@ func TestCaptchaDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			SecurityCaptchaEnabled:  cast.Ptr(true),
-			SecurityCaptchaProvider: cast.Ptr("hcaptcha"),
-			SecurityCaptchaSecret:   cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			SecurityCaptchaEnabled:  nullable.NewNullableWithValue(true),
+			SecurityCaptchaProvider: nullable.NewNullableWithValue("hcaptcha"),
+			SecurityCaptchaSecret:   nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -152,9 +153,9 @@ func TestCaptchaDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			SecurityCaptchaEnabled:  cast.Ptr(true),
-			SecurityCaptchaProvider: cast.Ptr("hcaptcha"),
-			SecurityCaptchaSecret:   cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			SecurityCaptchaEnabled:  nullable.NewNullableWithValue(true),
+			SecurityCaptchaProvider: nullable.NewNullableWithValue("hcaptcha"),
+			SecurityCaptchaSecret:   nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -173,9 +174,9 @@ func TestCaptchaDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			SecurityCaptchaEnabled:  cast.Ptr(false),
-			SecurityCaptchaProvider: cast.Ptr("hcaptcha"),
-			SecurityCaptchaSecret:   cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			SecurityCaptchaEnabled:  nullable.NewNullableWithValue(false),
+			SecurityCaptchaProvider: nullable.NewNullableWithValue("hcaptcha"),
+			SecurityCaptchaSecret:   nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -189,7 +190,7 @@ func TestCaptchaDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			SecurityCaptchaEnabled: cast.Ptr(false),
+			SecurityCaptchaEnabled: nullable.NewNullableWithValue(false),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -200,9 +201,9 @@ func TestCaptchaDiff(t *testing.T) {
 		c := newWithDefaults()
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			SecurityCaptchaEnabled:  cast.Ptr(true),
-			SecurityCaptchaProvider: cast.Ptr("hcaptcha"),
-			SecurityCaptchaSecret:   cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			SecurityCaptchaEnabled:  nullable.NewNullableWithValue(true),
+			SecurityCaptchaProvider: nullable.NewNullableWithValue("hcaptcha"),
+			SecurityCaptchaSecret:   nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -253,20 +254,20 @@ func TestHookDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			HookCustomAccessTokenEnabled:           cast.Ptr(true),
-			HookCustomAccessTokenUri:               cast.Ptr("http://example.com"),
-			HookCustomAccessTokenSecrets:           cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
-			HookSendSmsEnabled:                     cast.Ptr(true),
-			HookSendSmsUri:                         cast.Ptr("http://example.com"),
-			HookSendSmsSecrets:                     cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
-			HookSendEmailEnabled:                   cast.Ptr(true),
-			HookSendEmailUri:                       cast.Ptr("https://example.com"),
-			HookSendEmailSecrets:                   cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
-			HookMfaVerificationAttemptEnabled:      cast.Ptr(true),
-			HookMfaVerificationAttemptUri:          cast.Ptr("https://example.com"),
-			HookMfaVerificationAttemptSecrets:      cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
-			HookPasswordVerificationAttemptEnabled: cast.Ptr(true),
-			HookPasswordVerificationAttemptUri:     cast.Ptr("pg-functions://verifyPassword"),
+			HookCustomAccessTokenEnabled:           nullable.NewNullableWithValue(true),
+			HookCustomAccessTokenUri:               nullable.NewNullableWithValue("http://example.com"),
+			HookCustomAccessTokenSecrets:           nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			HookSendSmsEnabled:                     nullable.NewNullableWithValue(true),
+			HookSendSmsUri:                         nullable.NewNullableWithValue("http://example.com"),
+			HookSendSmsSecrets:                     nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			HookSendEmailEnabled:                   nullable.NewNullableWithValue(true),
+			HookSendEmailUri:                       nullable.NewNullableWithValue("https://example.com"),
+			HookSendEmailSecrets:                   nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			HookMfaVerificationAttemptEnabled:      nullable.NewNullableWithValue(true),
+			HookMfaVerificationAttemptUri:          nullable.NewNullableWithValue("https://example.com"),
+			HookMfaVerificationAttemptSecrets:      nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			HookPasswordVerificationAttemptEnabled: nullable.NewNullableWithValue(true),
+			HookPasswordVerificationAttemptUri:     nullable.NewNullableWithValue("pg-functions://verifyPassword"),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -295,19 +296,19 @@ func TestHookDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			HookCustomAccessTokenEnabled:           cast.Ptr(true),
-			HookCustomAccessTokenUri:               cast.Ptr("http://example.com"),
-			HookCustomAccessTokenSecrets:           cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
-			HookSendSmsEnabled:                     cast.Ptr(true),
-			HookSendSmsUri:                         cast.Ptr("https://example.com"),
-			HookSendSmsSecrets:                     cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
-			HookSendEmailEnabled:                   cast.Ptr(true),
-			HookSendEmailUri:                       cast.Ptr("pg-functions://postgres/public/sendEmail"),
-			HookMfaVerificationAttemptEnabled:      cast.Ptr(true),
-			HookMfaVerificationAttemptUri:          cast.Ptr("pg-functions://postgres/public/verifyMFA"),
-			HookPasswordVerificationAttemptEnabled: cast.Ptr(true),
-			HookPasswordVerificationAttemptUri:     cast.Ptr("https://example.com"),
-			HookPasswordVerificationAttemptSecrets: cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			HookCustomAccessTokenEnabled:           nullable.NewNullableWithValue(true),
+			HookCustomAccessTokenUri:               nullable.NewNullableWithValue("http://example.com"),
+			HookCustomAccessTokenSecrets:           nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			HookSendSmsEnabled:                     nullable.NewNullableWithValue(true),
+			HookSendSmsUri:                         nullable.NewNullableWithValue("https://example.com"),
+			HookSendSmsSecrets:                     nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			HookSendEmailEnabled:                   nullable.NewNullableWithValue(true),
+			HookSendEmailUri:                       nullable.NewNullableWithValue("pg-functions://postgres/public/sendEmail"),
+			HookMfaVerificationAttemptEnabled:      nullable.NewNullableWithValue(true),
+			HookMfaVerificationAttemptUri:          nullable.NewNullableWithValue("pg-functions://postgres/public/verifyMFA"),
+			HookPasswordVerificationAttemptEnabled: nullable.NewNullableWithValue(true),
+			HookPasswordVerificationAttemptUri:     nullable.NewNullableWithValue("https://example.com"),
+			HookPasswordVerificationAttemptSecrets: nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -345,17 +346,17 @@ func TestHookDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			HookCustomAccessTokenEnabled:           cast.Ptr(false),
-			HookCustomAccessTokenUri:               cast.Ptr("pg-functions://postgres/public/customToken"),
-			HookSendSmsEnabled:                     cast.Ptr(false),
-			HookSendSmsUri:                         cast.Ptr("https://example.com"),
-			HookSendSmsSecrets:                     cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
-			HookSendEmailEnabled:                   cast.Ptr(false),
-			HookSendEmailUri:                       cast.Ptr("https://example.com"),
-			HookSendEmailSecrets:                   cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
-			HookMfaVerificationAttemptEnabled:      cast.Ptr(false),
-			HookMfaVerificationAttemptUri:          cast.Ptr("pg-functions://postgres/public/verifyMFA"),
-			HookPasswordVerificationAttemptEnabled: cast.Ptr(false),
+			HookCustomAccessTokenEnabled:           nullable.NewNullableWithValue(false),
+			HookCustomAccessTokenUri:               nullable.NewNullableWithValue("pg-functions://postgres/public/customToken"),
+			HookSendSmsEnabled:                     nullable.NewNullableWithValue(false),
+			HookSendSmsUri:                         nullable.NewNullableWithValue("https://example.com"),
+			HookSendSmsSecrets:                     nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			HookSendEmailEnabled:                   nullable.NewNullableWithValue(false),
+			HookSendEmailUri:                       nullable.NewNullableWithValue("https://example.com"),
+			HookSendEmailSecrets:                   nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			HookMfaVerificationAttemptEnabled:      nullable.NewNullableWithValue(false),
+			HookMfaVerificationAttemptUri:          nullable.NewNullableWithValue("pg-functions://postgres/public/verifyMFA"),
+			HookPasswordVerificationAttemptEnabled: nullable.NewNullableWithValue(false),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -373,11 +374,11 @@ func TestHookDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			HookCustomAccessTokenEnabled:           cast.Ptr(false),
-			HookSendSmsEnabled:                     cast.Ptr(false),
-			HookSendEmailEnabled:                   cast.Ptr(false),
-			HookMfaVerificationAttemptEnabled:      cast.Ptr(false),
-			HookPasswordVerificationAttemptEnabled: cast.Ptr(false),
+			HookCustomAccessTokenEnabled:           nullable.NewNullableWithValue(false),
+			HookSendSmsEnabled:                     nullable.NewNullableWithValue(false),
+			HookSendEmailEnabled:                   nullable.NewNullableWithValue(false),
+			HookMfaVerificationAttemptEnabled:      nullable.NewNullableWithValue(false),
+			HookPasswordVerificationAttemptEnabled: nullable.NewNullableWithValue(false),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -410,16 +411,16 @@ func TestMfaDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			MfaMaxEnrolledFactors:    cast.Ptr(10),
-			MfaTotpEnrollEnabled:     cast.Ptr(true),
-			MfaTotpVerifyEnabled:     cast.Ptr(true),
-			MfaPhoneEnrollEnabled:    cast.Ptr(true),
-			MfaPhoneVerifyEnabled:    cast.Ptr(true),
+			MfaMaxEnrolledFactors:    nullable.NewNullableWithValue(10),
+			MfaTotpEnrollEnabled:     nullable.NewNullableWithValue(true),
+			MfaTotpVerifyEnabled:     nullable.NewNullableWithValue(true),
+			MfaPhoneEnrollEnabled:    nullable.NewNullableWithValue(true),
+			MfaPhoneVerifyEnabled:    nullable.NewNullableWithValue(true),
 			MfaPhoneOtpLength:        6,
-			MfaPhoneTemplate:         cast.Ptr("Your code is {{ .Code }}"),
-			MfaPhoneMaxFrequency:     cast.Ptr(5),
-			MfaWebAuthnEnrollEnabled: cast.Ptr(true),
-			MfaWebAuthnVerifyEnabled: cast.Ptr(true),
+			MfaPhoneTemplate:         nullable.NewNullableWithValue("Your code is {{ .Code }}"),
+			MfaPhoneMaxFrequency:     nullable.NewNullableWithValue(5),
+			MfaWebAuthnEnrollEnabled: nullable.NewNullableWithValue(true),
+			MfaWebAuthnVerifyEnabled: nullable.NewNullableWithValue(true),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -442,16 +443,16 @@ func TestMfaDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			MfaMaxEnrolledFactors:    cast.Ptr(10),
-			MfaTotpEnrollEnabled:     cast.Ptr(false),
-			MfaTotpVerifyEnabled:     cast.Ptr(false),
-			MfaPhoneEnrollEnabled:    cast.Ptr(false),
-			MfaPhoneVerifyEnabled:    cast.Ptr(false),
+			MfaMaxEnrolledFactors:    nullable.NewNullableWithValue(10),
+			MfaTotpEnrollEnabled:     nullable.NewNullableWithValue(false),
+			MfaTotpVerifyEnabled:     nullable.NewNullableWithValue(false),
+			MfaPhoneEnrollEnabled:    nullable.NewNullableWithValue(false),
+			MfaPhoneVerifyEnabled:    nullable.NewNullableWithValue(false),
 			MfaPhoneOtpLength:        6,
-			MfaPhoneTemplate:         cast.Ptr("Your code is {{ .Code }}"),
-			MfaPhoneMaxFrequency:     cast.Ptr(5),
-			MfaWebAuthnEnrollEnabled: cast.Ptr(false),
-			MfaWebAuthnVerifyEnabled: cast.Ptr(false),
+			MfaPhoneTemplate:         nullable.NewNullableWithValue("Your code is {{ .Code }}"),
+			MfaPhoneMaxFrequency:     nullable.NewNullableWithValue(5),
+			MfaWebAuthnEnrollEnabled: nullable.NewNullableWithValue(false),
+			MfaWebAuthnVerifyEnabled: nullable.NewNullableWithValue(false),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -470,16 +471,16 @@ func TestMfaDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			MfaMaxEnrolledFactors:    cast.Ptr(10),
-			MfaTotpEnrollEnabled:     cast.Ptr(false),
-			MfaTotpVerifyEnabled:     cast.Ptr(false),
-			MfaPhoneEnrollEnabled:    cast.Ptr(false),
-			MfaPhoneVerifyEnabled:    cast.Ptr(false),
+			MfaMaxEnrolledFactors:    nullable.NewNullableWithValue(10),
+			MfaTotpEnrollEnabled:     nullable.NewNullableWithValue(false),
+			MfaTotpVerifyEnabled:     nullable.NewNullableWithValue(false),
+			MfaPhoneEnrollEnabled:    nullable.NewNullableWithValue(false),
+			MfaPhoneVerifyEnabled:    nullable.NewNullableWithValue(false),
 			MfaPhoneOtpLength:        6,
-			MfaPhoneTemplate:         cast.Ptr("Your code is {{ .Code }}"),
-			MfaPhoneMaxFrequency:     cast.Ptr(5),
-			MfaWebAuthnEnrollEnabled: cast.Ptr(false),
-			MfaWebAuthnVerifyEnabled: cast.Ptr(false),
+			MfaPhoneTemplate:         nullable.NewNullableWithValue("Your code is {{ .Code }}"),
+			MfaPhoneMaxFrequency:     nullable.NewNullableWithValue(5),
+			MfaWebAuthnEnrollEnabled: nullable.NewNullableWithValue(false),
+			MfaWebAuthnVerifyEnabled: nullable.NewNullableWithValue(false),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -539,32 +540,32 @@ func TestEmailDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			ExternalEmailEnabled:           cast.Ptr(true),
-			MailerSecureEmailChangeEnabled: cast.Ptr(true),
-			MailerAutoconfirm:              cast.Ptr(false),
-			MailerOtpLength:                cast.Ptr(6),
+			ExternalEmailEnabled:           nullable.NewNullableWithValue(true),
+			MailerSecureEmailChangeEnabled: nullable.NewNullableWithValue(true),
+			MailerAutoconfirm:              nullable.NewNullableWithValue(false),
+			MailerOtpLength:                nullable.NewNullableWithValue(6),
 			MailerOtpExp:                   3600,
-			SecurityUpdatePasswordRequireReauthentication: cast.Ptr(true),
-			SmtpHost:         cast.Ptr("smtp.sendgrid.net"),
-			SmtpPort:         cast.Ptr("587"),
-			SmtpUser:         cast.Ptr("apikey"),
-			SmtpPass:         cast.Ptr("ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e"),
-			SmtpAdminEmail:   cast.Ptr("admin@email.com"),
-			SmtpSenderName:   cast.Ptr("Admin"),
-			SmtpMaxFrequency: cast.Ptr(1),
+			SecurityUpdatePasswordRequireReauthentication: nullable.NewNullableWithValue(true),
+			SmtpHost:         nullable.NewNullableWithValue("smtp.sendgrid.net"),
+			SmtpPort:         nullable.NewNullableWithValue("587"),
+			SmtpUser:         nullable.NewNullableWithValue("apikey"),
+			SmtpPass:         nullable.NewNullableWithValue("ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e"),
+			SmtpAdminEmail:   nullable.NewNullableWithValue("admin@email.com"),
+			SmtpSenderName:   nullable.NewNullableWithValue("Admin"),
+			SmtpMaxFrequency: nullable.NewNullableWithValue(1),
 			// Custom templates
-			MailerSubjectsInvite:                   cast.Ptr("invite-subject"),
-			MailerTemplatesInviteContent:           cast.Ptr("invite-content"),
-			MailerSubjectsConfirmation:             cast.Ptr("confirmation-subject"),
-			MailerTemplatesConfirmationContent:     cast.Ptr("confirmation-content"),
-			MailerSubjectsRecovery:                 cast.Ptr("recovery-subject"),
-			MailerTemplatesRecoveryContent:         cast.Ptr("recovery-content"),
-			MailerSubjectsMagicLink:                cast.Ptr("magic-link-subject"),
-			MailerTemplatesMagicLinkContent:        cast.Ptr("magic-link-content"),
-			MailerSubjectsEmailChange:              cast.Ptr("email-change-subject"),
-			MailerTemplatesEmailChangeContent:      cast.Ptr("email-change-content"),
-			MailerSubjectsReauthentication:         cast.Ptr("reauthentication-subject"),
-			MailerTemplatesReauthenticationContent: cast.Ptr("reauthentication-content"),
+			MailerSubjectsInvite:                   nullable.NewNullableWithValue("invite-subject"),
+			MailerTemplatesInviteContent:           nullable.NewNullableWithValue("invite-content"),
+			MailerSubjectsConfirmation:             nullable.NewNullableWithValue("confirmation-subject"),
+			MailerTemplatesConfirmationContent:     nullable.NewNullableWithValue("confirmation-content"),
+			MailerSubjectsRecovery:                 nullable.NewNullableWithValue("recovery-subject"),
+			MailerTemplatesRecoveryContent:         nullable.NewNullableWithValue("recovery-content"),
+			MailerSubjectsMagicLink:                nullable.NewNullableWithValue("magic-link-subject"),
+			MailerTemplatesMagicLinkContent:        nullable.NewNullableWithValue("magic-link-content"),
+			MailerSubjectsEmailChange:              nullable.NewNullableWithValue("email-change-subject"),
+			MailerTemplatesEmailChangeContent:      nullable.NewNullableWithValue("email-change-content"),
+			MailerSubjectsReauthentication:         nullable.NewNullableWithValue("reauthentication-subject"),
+			MailerTemplatesReauthenticationContent: nullable.NewNullableWithValue("reauthentication-content"),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -620,18 +621,18 @@ func TestEmailDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			ExternalEmailEnabled:           cast.Ptr(false),
-			MailerSecureEmailChangeEnabled: cast.Ptr(false),
-			MailerAutoconfirm:              cast.Ptr(true),
-			MailerOtpLength:                cast.Ptr(6),
+			ExternalEmailEnabled:           nullable.NewNullableWithValue(false),
+			MailerSecureEmailChangeEnabled: nullable.NewNullableWithValue(false),
+			MailerAutoconfirm:              nullable.NewNullableWithValue(true),
+			MailerOtpLength:                nullable.NewNullableWithValue(6),
 			MailerOtpExp:                   3600,
-			SecurityUpdatePasswordRequireReauthentication: cast.Ptr(false),
-			SmtpMaxFrequency: cast.Ptr(60),
+			SecurityUpdatePasswordRequireReauthentication: nullable.NewNullableWithValue(false),
+			SmtpMaxFrequency: nullable.NewNullableWithValue(60),
 			// Custom templates
-			MailerTemplatesConfirmationContent: cast.Ptr("confirmation-content"),
-			MailerSubjectsRecovery:             cast.Ptr("recovery-subject"),
-			MailerSubjectsMagicLink:            cast.Ptr("magic-link-subject"),
-			MailerTemplatesEmailChangeContent:  cast.Ptr("email-change-content"),
+			MailerTemplatesConfirmationContent: nullable.NewNullableWithValue("confirmation-content"),
+			MailerSubjectsRecovery:             nullable.NewNullableWithValue("recovery-subject"),
+			MailerSubjectsMagicLink:            nullable.NewNullableWithValue("magic-link-subject"),
+			MailerTemplatesEmailChangeContent:  nullable.NewNullableWithValue("email-change-content"),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -656,32 +657,32 @@ func TestEmailDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			ExternalEmailEnabled:           cast.Ptr(true),
-			MailerSecureEmailChangeEnabled: cast.Ptr(true),
-			MailerAutoconfirm:              cast.Ptr(false),
-			MailerOtpLength:                cast.Ptr(6),
+			ExternalEmailEnabled:           nullable.NewNullableWithValue(true),
+			MailerSecureEmailChangeEnabled: nullable.NewNullableWithValue(true),
+			MailerAutoconfirm:              nullable.NewNullableWithValue(false),
+			MailerOtpLength:                nullable.NewNullableWithValue(6),
 			MailerOtpExp:                   3600,
-			SecurityUpdatePasswordRequireReauthentication: cast.Ptr(true),
-			SmtpHost:         cast.Ptr("smtp.sendgrid.net"),
-			SmtpPort:         cast.Ptr("587"),
-			SmtpUser:         cast.Ptr("apikey"),
-			SmtpPass:         cast.Ptr("ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e"),
-			SmtpAdminEmail:   cast.Ptr("admin@email.com"),
-			SmtpSenderName:   cast.Ptr("Admin"),
-			SmtpMaxFrequency: cast.Ptr(1),
+			SecurityUpdatePasswordRequireReauthentication: nullable.NewNullableWithValue(true),
+			SmtpHost:         nullable.NewNullableWithValue("smtp.sendgrid.net"),
+			SmtpPort:         nullable.NewNullableWithValue("587"),
+			SmtpUser:         nullable.NewNullableWithValue("apikey"),
+			SmtpPass:         nullable.NewNullableWithValue("ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e"),
+			SmtpAdminEmail:   nullable.NewNullableWithValue("admin@email.com"),
+			SmtpSenderName:   nullable.NewNullableWithValue("Admin"),
+			SmtpMaxFrequency: nullable.NewNullableWithValue(1),
 			// Custom templates
-			MailerSubjectsInvite:                   cast.Ptr("invite-subject"),
-			MailerTemplatesInviteContent:           cast.Ptr("invite-content"),
-			MailerSubjectsConfirmation:             cast.Ptr("confirmation-subject"),
-			MailerTemplatesConfirmationContent:     cast.Ptr("confirmation-content"),
-			MailerSubjectsRecovery:                 cast.Ptr("recovery-subject"),
-			MailerTemplatesRecoveryContent:         cast.Ptr("recovery-content"),
-			MailerSubjectsMagicLink:                cast.Ptr("magic-link-subject"),
-			MailerTemplatesMagicLinkContent:        cast.Ptr("magic-link-content"),
-			MailerSubjectsEmailChange:              cast.Ptr("email-change-subject"),
-			MailerTemplatesEmailChangeContent:      cast.Ptr("email-change-content"),
-			MailerSubjectsReauthentication:         cast.Ptr("reauthentication-subject"),
-			MailerTemplatesReauthenticationContent: cast.Ptr("reauthentication-content"),
+			MailerSubjectsInvite:                   nullable.NewNullableWithValue("invite-subject"),
+			MailerTemplatesInviteContent:           nullable.NewNullableWithValue("invite-content"),
+			MailerSubjectsConfirmation:             nullable.NewNullableWithValue("confirmation-subject"),
+			MailerTemplatesConfirmationContent:     nullable.NewNullableWithValue("confirmation-content"),
+			MailerSubjectsRecovery:                 nullable.NewNullableWithValue("recovery-subject"),
+			MailerTemplatesRecoveryContent:         nullable.NewNullableWithValue("recovery-content"),
+			MailerSubjectsMagicLink:                nullable.NewNullableWithValue("magic-link-subject"),
+			MailerTemplatesMagicLinkContent:        nullable.NewNullableWithValue("magic-link-content"),
+			MailerSubjectsEmailChange:              nullable.NewNullableWithValue("email-change-subject"),
+			MailerTemplatesEmailChangeContent:      nullable.NewNullableWithValue("email-change-content"),
+			MailerSubjectsReauthentication:         nullable.NewNullableWithValue("reauthentication-subject"),
+			MailerTemplatesReauthenticationContent: nullable.NewNullableWithValue("reauthentication-content"),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -718,13 +719,13 @@ func TestEmailDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			ExternalEmailEnabled:           cast.Ptr(false),
-			MailerSecureEmailChangeEnabled: cast.Ptr(false),
-			MailerAutoconfirm:              cast.Ptr(true),
-			MailerOtpLength:                cast.Ptr(6),
+			ExternalEmailEnabled:           nullable.NewNullableWithValue(false),
+			MailerSecureEmailChangeEnabled: nullable.NewNullableWithValue(false),
+			MailerAutoconfirm:              nullable.NewNullableWithValue(true),
+			MailerOtpLength:                nullable.NewNullableWithValue(6),
 			MailerOtpExp:                   3600,
-			SecurityUpdatePasswordRequireReauthentication: cast.Ptr(false),
-			SmtpMaxFrequency: cast.Ptr(60),
+			SecurityUpdatePasswordRequireReauthentication: nullable.NewNullableWithValue(false),
+			SmtpMaxFrequency: nullable.NewNullableWithValue(60),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -753,30 +754,30 @@ func TestSmsDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			ExternalPhoneEnabled:       cast.Ptr(true),
-			SmsAutoconfirm:             cast.Ptr(true),
-			SmsMaxFrequency:            cast.Ptr(60),
-			SmsOtpExp:                  cast.Ptr(3600),
+			ExternalPhoneEnabled:       nullable.NewNullableWithValue(true),
+			SmsAutoconfirm:             nullable.NewNullableWithValue(true),
+			SmsMaxFrequency:            nullable.NewNullableWithValue(60),
+			SmsOtpExp:                  nullable.NewNullableWithValue(3600),
 			SmsOtpLength:               6,
-			SmsProvider:                cast.Ptr("twilio"),
-			SmsTemplate:                cast.Ptr("Your code is {{ .Code }}"),
-			SmsTestOtp:                 cast.Ptr("123=456"),
-			SmsTestOtpValidUntil:       cast.Ptr("2050-01-01T01:00:00Z"),
-			SmsTwilioAccountSid:        cast.Ptr("test-account"),
-			SmsTwilioAuthToken:         cast.Ptr("c84443bc59b92caef8ec8500ff443584793756749523811eb333af2bbc74fc88"),
-			SmsTwilioContentSid:        cast.Ptr("test-content"),
-			SmsTwilioMessageServiceSid: cast.Ptr("test-service"),
+			SmsProvider:                nullable.NewNullableWithValue("twilio"),
+			SmsTemplate:                nullable.NewNullableWithValue("Your code is {{ .Code }}"),
+			SmsTestOtp:                 nullable.NewNullableWithValue("123=456"),
+			SmsTestOtpValidUntil:       nullable.NewNullableWithValue("2050-01-01T01:00:00Z"),
+			SmsTwilioAccountSid:        nullable.NewNullableWithValue("test-account"),
+			SmsTwilioAuthToken:         nullable.NewNullableWithValue("c84443bc59b92caef8ec8500ff443584793756749523811eb333af2bbc74fc88"),
+			SmsTwilioContentSid:        nullable.NewNullableWithValue("test-content"),
+			SmsTwilioMessageServiceSid: nullable.NewNullableWithValue("test-service"),
 			// Extra configs returned from api can be ignored
-			SmsMessagebirdAccessKey:          cast.Ptr("test-messagebird-key"),
-			SmsMessagebirdOriginator:         cast.Ptr("test-messagebird-originator"),
-			SmsTextlocalApiKey:               cast.Ptr("test-textlocal-key"),
-			SmsTextlocalSender:               cast.Ptr("test-textlocal-sencer"),
-			SmsTwilioVerifyAccountSid:        cast.Ptr("test-verify-account"),
-			SmsTwilioVerifyAuthToken:         cast.Ptr("test-verify-token"),
-			SmsTwilioVerifyMessageServiceSid: cast.Ptr("test-verify-service"),
-			SmsVonageApiKey:                  cast.Ptr("test-vonage-key"),
-			SmsVonageApiSecret:               cast.Ptr("test-vonage-secret"),
-			SmsVonageFrom:                    cast.Ptr("test-vonage-from"),
+			SmsMessagebirdAccessKey:          nullable.NewNullableWithValue("test-messagebird-key"),
+			SmsMessagebirdOriginator:         nullable.NewNullableWithValue("test-messagebird-originator"),
+			SmsTextlocalApiKey:               nullable.NewNullableWithValue("test-textlocal-key"),
+			SmsTextlocalSender:               nullable.NewNullableWithValue("test-textlocal-sencer"),
+			SmsTwilioVerifyAccountSid:        nullable.NewNullableWithValue("test-verify-account"),
+			SmsTwilioVerifyAuthToken:         nullable.NewNullableWithValue("test-verify-token"),
+			SmsTwilioVerifyMessageServiceSid: nullable.NewNullableWithValue("test-verify-service"),
+			SmsVonageApiKey:                  nullable.NewNullableWithValue("test-vonage-key"),
+			SmsVonageApiSecret:               nullable.NewNullableWithValue("test-vonage-secret"),
+			SmsVonageFrom:                    nullable.NewNullableWithValue("test-vonage-from"),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -787,19 +788,19 @@ func TestSmsDiff(t *testing.T) {
 		c := newWithDefaults()
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			ExternalPhoneEnabled:       cast.Ptr(true),
-			SmsAutoconfirm:             cast.Ptr(true),
-			SmsMaxFrequency:            cast.Ptr(60),
-			SmsOtpExp:                  cast.Ptr(3600),
+			ExternalPhoneEnabled:       nullable.NewNullableWithValue(true),
+			SmsAutoconfirm:             nullable.NewNullableWithValue(true),
+			SmsMaxFrequency:            nullable.NewNullableWithValue(60),
+			SmsOtpExp:                  nullable.NewNullableWithValue(3600),
 			SmsOtpLength:               6,
-			SmsProvider:                cast.Ptr("twilio"),
-			SmsTemplate:                cast.Ptr("Your code is {{ .Code }}"),
-			SmsTestOtp:                 cast.Ptr("123=456,456=123"),
-			SmsTestOtpValidUntil:       cast.Ptr("2050-01-01T01:00:00Z"),
-			SmsTwilioAccountSid:        cast.Ptr("test-account"),
-			SmsTwilioAuthToken:         cast.Ptr("c84443bc59b92caef8ec8500ff443584793756749523811eb333af2bbc74fc88"),
-			SmsTwilioContentSid:        cast.Ptr("test-content"),
-			SmsTwilioMessageServiceSid: cast.Ptr("test-service"),
+			SmsProvider:                nullable.NewNullableWithValue("twilio"),
+			SmsTemplate:                nullable.NewNullableWithValue("Your code is {{ .Code }}"),
+			SmsTestOtp:                 nullable.NewNullableWithValue("123=456,456=123"),
+			SmsTestOtpValidUntil:       nullable.NewNullableWithValue("2050-01-01T01:00:00Z"),
+			SmsTwilioAccountSid:        nullable.NewNullableWithValue("test-account"),
+			SmsTwilioAuthToken:         nullable.NewNullableWithValue("c84443bc59b92caef8ec8500ff443584793756749523811eb333af2bbc74fc88"),
+			SmsTwilioContentSid:        nullable.NewNullableWithValue("test-content"),
+			SmsTwilioMessageServiceSid: nullable.NewNullableWithValue("test-service"),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -825,17 +826,17 @@ func TestSmsDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			ExternalPhoneEnabled:       cast.Ptr(false),
-			SmsAutoconfirm:             cast.Ptr(false),
-			SmsMaxFrequency:            cast.Ptr(0),
-			SmsOtpExp:                  cast.Ptr(3600),
+			ExternalPhoneEnabled:       nullable.NewNullableWithValue(false),
+			SmsAutoconfirm:             nullable.NewNullableWithValue(false),
+			SmsMaxFrequency:            nullable.NewNullableWithValue(0),
+			SmsOtpExp:                  nullable.NewNullableWithValue(3600),
 			SmsOtpLength:               6,
-			SmsProvider:                cast.Ptr("twilio"),
-			SmsTemplate:                cast.Ptr(""),
-			SmsTwilioAccountSid:        cast.Ptr("test-account"),
-			SmsTwilioAuthToken:         cast.Ptr("c84443bc59b92caef8ec8500ff443584793756749523811eb333af2bbc74fc88"),
-			SmsTwilioContentSid:        cast.Ptr("test-content"),
-			SmsTwilioMessageServiceSid: cast.Ptr("test-service"),
+			SmsProvider:                nullable.NewNullableWithValue("twilio"),
+			SmsTemplate:                nullable.NewNullableWithValue(""),
+			SmsTwilioAccountSid:        nullable.NewNullableWithValue("test-account"),
+			SmsTwilioAuthToken:         nullable.NewNullableWithValue("c84443bc59b92caef8ec8500ff443584793756749523811eb333af2bbc74fc88"),
+			SmsTwilioContentSid:        nullable.NewNullableWithValue("test-content"),
+			SmsTwilioMessageServiceSid: nullable.NewNullableWithValue("test-service"),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -853,17 +854,17 @@ func TestSmsDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			ExternalPhoneEnabled:     cast.Ptr(false),
-			SmsAutoconfirm:           cast.Ptr(true),
-			SmsMaxFrequency:          cast.Ptr(60),
-			SmsOtpExp:                cast.Ptr(3600),
+			ExternalPhoneEnabled:     nullable.NewNullableWithValue(false),
+			SmsAutoconfirm:           nullable.NewNullableWithValue(true),
+			SmsMaxFrequency:          nullable.NewNullableWithValue(60),
+			SmsOtpExp:                nullable.NewNullableWithValue(3600),
 			SmsOtpLength:             6,
-			SmsTemplate:              cast.Ptr("Your code is {{ .Code }}"),
-			SmsTestOtp:               cast.Ptr("123=456"),
-			SmsTestOtpValidUntil:     cast.Ptr("2050-01-01T01:00:00Z"),
-			SmsProvider:              cast.Ptr("messagebird"),
-			SmsMessagebirdAccessKey:  cast.Ptr("test-messagebird-key"),
-			SmsMessagebirdOriginator: cast.Ptr("test-messagebird-originator"),
+			SmsTemplate:              nullable.NewNullableWithValue("Your code is {{ .Code }}"),
+			SmsTestOtp:               nullable.NewNullableWithValue("123=456"),
+			SmsTestOtpValidUntil:     nullable.NewNullableWithValue("2050-01-01T01:00:00Z"),
+			SmsProvider:              nullable.NewNullableWithValue("messagebird"),
+			SmsMessagebirdAccessKey:  nullable.NewNullableWithValue("test-messagebird-key"),
+			SmsMessagebirdOriginator: nullable.NewNullableWithValue("test-messagebird-originator"),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -877,8 +878,8 @@ func TestSmsDiff(t *testing.T) {
 		c.Sms.EnableSignup = true
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			ExternalPhoneEnabled: cast.Ptr(false),
-			SmsProvider:          cast.Ptr("twilio"),
+			ExternalPhoneEnabled: nullable.NewNullableWithValue(false),
+			SmsProvider:          nullable.NewNullableWithValue("twilio"),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -890,9 +891,9 @@ func TestSmsDiff(t *testing.T) {
 		c.Sms.Messagebird.Enabled = true
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			ExternalPhoneEnabled:    cast.Ptr(false),
-			SmsProvider:             cast.Ptr("messagebird"),
-			SmsMessagebirdAccessKey: cast.Ptr(""),
+			ExternalPhoneEnabled:    nullable.NewNullableWithValue(false),
+			SmsProvider:             nullable.NewNullableWithValue("messagebird"),
+			SmsMessagebirdAccessKey: nullable.NewNullableWithValue(""),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -926,74 +927,74 @@ func TestExternalDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			ExternalAppleAdditionalClientIds:  cast.Ptr(""),
-			ExternalAppleClientId:             cast.Ptr(""),
-			ExternalAppleEnabled:              cast.Ptr(true),
-			ExternalAppleSecret:               cast.Ptr(""),
-			ExternalAzureClientId:             cast.Ptr(""),
-			ExternalAzureEnabled:              cast.Ptr(true),
-			ExternalAzureSecret:               cast.Ptr(""),
-			ExternalAzureUrl:                  cast.Ptr(""),
-			ExternalBitbucketClientId:         cast.Ptr(""),
-			ExternalBitbucketEnabled:          cast.Ptr(true),
-			ExternalBitbucketSecret:           cast.Ptr(""),
-			ExternalDiscordClientId:           cast.Ptr(""),
-			ExternalDiscordEnabled:            cast.Ptr(true),
-			ExternalDiscordSecret:             cast.Ptr(""),
-			ExternalFacebookClientId:          cast.Ptr(""),
-			ExternalFacebookEnabled:           cast.Ptr(true),
-			ExternalFacebookSecret:            cast.Ptr(""),
-			ExternalFigmaClientId:             cast.Ptr(""),
-			ExternalFigmaEnabled:              cast.Ptr(true),
-			ExternalFigmaSecret:               cast.Ptr(""),
-			ExternalGithubClientId:            cast.Ptr(""),
-			ExternalGithubEnabled:             cast.Ptr(true),
-			ExternalGithubSecret:              cast.Ptr(""),
-			ExternalGitlabClientId:            cast.Ptr(""),
-			ExternalGitlabEnabled:             cast.Ptr(true),
-			ExternalGitlabSecret:              cast.Ptr(""),
-			ExternalGitlabUrl:                 cast.Ptr(""),
-			ExternalGoogleAdditionalClientIds: cast.Ptr(""),
-			ExternalGoogleClientId:            cast.Ptr(""),
-			ExternalGoogleEnabled:             cast.Ptr(true),
-			ExternalGoogleSecret:              cast.Ptr(""),
-			ExternalGoogleSkipNonceCheck:      cast.Ptr(false),
-			ExternalKakaoClientId:             cast.Ptr(""),
-			ExternalKakaoEnabled:              cast.Ptr(true),
-			ExternalKakaoSecret:               cast.Ptr(""),
-			ExternalKeycloakClientId:          cast.Ptr(""),
-			ExternalKeycloakEnabled:           cast.Ptr(true),
-			ExternalKeycloakSecret:            cast.Ptr(""),
-			ExternalKeycloakUrl:               cast.Ptr(""),
-			ExternalLinkedinOidcClientId:      cast.Ptr(""),
-			ExternalLinkedinOidcEnabled:       cast.Ptr(true),
-			ExternalLinkedinOidcSecret:        cast.Ptr(""),
-			ExternalNotionClientId:            cast.Ptr(""),
-			ExternalNotionEnabled:             cast.Ptr(true),
-			ExternalNotionSecret:              cast.Ptr(""),
-			ExternalSlackOidcClientId:         cast.Ptr(""),
-			ExternalSlackOidcEnabled:          cast.Ptr(true),
-			ExternalSlackOidcSecret:           cast.Ptr(""),
-			ExternalSpotifyClientId:           cast.Ptr(""),
-			ExternalSpotifyEnabled:            cast.Ptr(true),
-			ExternalSpotifySecret:             cast.Ptr(""),
-			ExternalTwitchClientId:            cast.Ptr(""),
-			ExternalTwitchEnabled:             cast.Ptr(true),
-			ExternalTwitchSecret:              cast.Ptr(""),
-			ExternalTwitterClientId:           cast.Ptr(""),
-			ExternalTwitterEnabled:            cast.Ptr(true),
-			ExternalTwitterSecret:             cast.Ptr(""),
-			ExternalWorkosClientId:            cast.Ptr(""),
-			ExternalWorkosEnabled:             cast.Ptr(true),
-			ExternalWorkosSecret:              cast.Ptr(""),
-			ExternalWorkosUrl:                 cast.Ptr(""),
-			ExternalZoomClientId:              cast.Ptr(""),
-			ExternalZoomEnabled:               cast.Ptr(true),
-			ExternalZoomSecret:                cast.Ptr(""),
+			ExternalAppleAdditionalClientIds:  nullable.NewNullableWithValue(""),
+			ExternalAppleClientId:             nullable.NewNullableWithValue(""),
+			ExternalAppleEnabled:              nullable.NewNullableWithValue(true),
+			ExternalAppleSecret:               nullable.NewNullableWithValue(""),
+			ExternalAzureClientId:             nullable.NewNullableWithValue(""),
+			ExternalAzureEnabled:              nullable.NewNullableWithValue(true),
+			ExternalAzureSecret:               nullable.NewNullableWithValue(""),
+			ExternalAzureUrl:                  nullable.NewNullableWithValue(""),
+			ExternalBitbucketClientId:         nullable.NewNullableWithValue(""),
+			ExternalBitbucketEnabled:          nullable.NewNullableWithValue(true),
+			ExternalBitbucketSecret:           nullable.NewNullableWithValue(""),
+			ExternalDiscordClientId:           nullable.NewNullableWithValue(""),
+			ExternalDiscordEnabled:            nullable.NewNullableWithValue(true),
+			ExternalDiscordSecret:             nullable.NewNullableWithValue(""),
+			ExternalFacebookClientId:          nullable.NewNullableWithValue(""),
+			ExternalFacebookEnabled:           nullable.NewNullableWithValue(true),
+			ExternalFacebookSecret:            nullable.NewNullableWithValue(""),
+			ExternalFigmaClientId:             nullable.NewNullableWithValue(""),
+			ExternalFigmaEnabled:              nullable.NewNullableWithValue(true),
+			ExternalFigmaSecret:               nullable.NewNullableWithValue(""),
+			ExternalGithubClientId:            nullable.NewNullableWithValue(""),
+			ExternalGithubEnabled:             nullable.NewNullableWithValue(true),
+			ExternalGithubSecret:              nullable.NewNullableWithValue(""),
+			ExternalGitlabClientId:            nullable.NewNullableWithValue(""),
+			ExternalGitlabEnabled:             nullable.NewNullableWithValue(true),
+			ExternalGitlabSecret:              nullable.NewNullableWithValue(""),
+			ExternalGitlabUrl:                 nullable.NewNullableWithValue(""),
+			ExternalGoogleAdditionalClientIds: nullable.NewNullableWithValue(""),
+			ExternalGoogleClientId:            nullable.NewNullableWithValue(""),
+			ExternalGoogleEnabled:             nullable.NewNullableWithValue(true),
+			ExternalGoogleSecret:              nullable.NewNullableWithValue(""),
+			ExternalGoogleSkipNonceCheck:      nullable.NewNullableWithValue(false),
+			ExternalKakaoClientId:             nullable.NewNullableWithValue(""),
+			ExternalKakaoEnabled:              nullable.NewNullableWithValue(true),
+			ExternalKakaoSecret:               nullable.NewNullableWithValue(""),
+			ExternalKeycloakClientId:          nullable.NewNullableWithValue(""),
+			ExternalKeycloakEnabled:           nullable.NewNullableWithValue(true),
+			ExternalKeycloakSecret:            nullable.NewNullableWithValue(""),
+			ExternalKeycloakUrl:               nullable.NewNullableWithValue(""),
+			ExternalLinkedinOidcClientId:      nullable.NewNullableWithValue(""),
+			ExternalLinkedinOidcEnabled:       nullable.NewNullableWithValue(true),
+			ExternalLinkedinOidcSecret:        nullable.NewNullableWithValue(""),
+			ExternalNotionClientId:            nullable.NewNullableWithValue(""),
+			ExternalNotionEnabled:             nullable.NewNullableWithValue(true),
+			ExternalNotionSecret:              nullable.NewNullableWithValue(""),
+			ExternalSlackOidcClientId:         nullable.NewNullableWithValue(""),
+			ExternalSlackOidcEnabled:          nullable.NewNullableWithValue(true),
+			ExternalSlackOidcSecret:           nullable.NewNullableWithValue(""),
+			ExternalSpotifyClientId:           nullable.NewNullableWithValue(""),
+			ExternalSpotifyEnabled:            nullable.NewNullableWithValue(true),
+			ExternalSpotifySecret:             nullable.NewNullableWithValue(""),
+			ExternalTwitchClientId:            nullable.NewNullableWithValue(""),
+			ExternalTwitchEnabled:             nullable.NewNullableWithValue(true),
+			ExternalTwitchSecret:              nullable.NewNullableWithValue(""),
+			ExternalTwitterClientId:           nullable.NewNullableWithValue(""),
+			ExternalTwitterEnabled:            nullable.NewNullableWithValue(true),
+			ExternalTwitterSecret:             nullable.NewNullableWithValue(""),
+			ExternalWorkosClientId:            nullable.NewNullableWithValue(""),
+			ExternalWorkosEnabled:             nullable.NewNullableWithValue(true),
+			ExternalWorkosSecret:              nullable.NewNullableWithValue(""),
+			ExternalWorkosUrl:                 nullable.NewNullableWithValue(""),
+			ExternalZoomClientId:              nullable.NewNullableWithValue(""),
+			ExternalZoomEnabled:               nullable.NewNullableWithValue(true),
+			ExternalZoomSecret:                nullable.NewNullableWithValue(""),
 			// Deprecated fields should be ignored
-			ExternalSlackClientId: cast.Ptr(""),
-			ExternalSlackEnabled:  cast.Ptr(true),
-			ExternalSlackSecret:   cast.Ptr(""),
+			ExternalSlackClientId: nullable.NewNullableWithValue(""),
+			ExternalSlackEnabled:  nullable.NewNullableWithValue(true),
+			ExternalSlackSecret:   nullable.NewNullableWithValue(""),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -1044,18 +1045,18 @@ func TestExternalDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			ExternalAppleAdditionalClientIds:  cast.Ptr("test-client-2"),
-			ExternalAppleClientId:             cast.Ptr("test-client-1"),
-			ExternalAppleEnabled:              cast.Ptr(false),
-			ExternalAppleSecret:               cast.Ptr("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
-			ExternalGoogleAdditionalClientIds: cast.Ptr("test-client-2"),
-			ExternalGoogleClientId:            cast.Ptr("test-client-1"),
-			ExternalGoogleEnabled:             cast.Ptr(true),
-			ExternalGoogleSecret:              cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
-			ExternalGoogleSkipNonceCheck:      cast.Ptr(true),
-			ExternalKakaoClientId:             cast.Ptr("test-client-2"),
-			ExternalKakaoEnabled:              cast.Ptr(true),
-			ExternalKakaoSecret:               cast.Ptr("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalAppleAdditionalClientIds:  nullable.NewNullableWithValue("test-client-2"),
+			ExternalAppleClientId:             nullable.NewNullableWithValue("test-client-1"),
+			ExternalAppleEnabled:              nullable.NewNullableWithValue(false),
+			ExternalAppleSecret:               nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
+			ExternalGoogleAdditionalClientIds: nullable.NewNullableWithValue("test-client-2"),
+			ExternalGoogleClientId:            nullable.NewNullableWithValue("test-client-1"),
+			ExternalGoogleEnabled:             nullable.NewNullableWithValue(true),
+			ExternalGoogleSecret:              nullable.NewNullableWithValue("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
+			ExternalGoogleSkipNonceCheck:      nullable.NewNullableWithValue(true),
+			ExternalKakaoClientId:             nullable.NewNullableWithValue("test-client-2"),
+			ExternalKakaoEnabled:              nullable.NewNullableWithValue(true),
+			ExternalKakaoSecret:               nullable.NewNullableWithValue("b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -1087,28 +1088,28 @@ func TestExternalDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			ExternalAppleEnabled:         cast.Ptr(false),
-			ExternalAzureEnabled:         cast.Ptr(false),
-			ExternalBitbucketEnabled:     cast.Ptr(false),
-			ExternalDiscordEnabled:       cast.Ptr(false),
-			ExternalFacebookEnabled:      cast.Ptr(false),
-			ExternalFigmaEnabled:         cast.Ptr(false),
-			ExternalGithubEnabled:        cast.Ptr(false),
-			ExternalGitlabEnabled:        cast.Ptr(false),
-			ExternalGoogleEnabled:        cast.Ptr(false),
-			ExternalGoogleSkipNonceCheck: cast.Ptr(false),
-			ExternalKakaoEnabled:         cast.Ptr(false),
-			ExternalKeycloakEnabled:      cast.Ptr(false),
-			ExternalLinkedinOidcEnabled:  cast.Ptr(false),
-			ExternalNotionEnabled:        cast.Ptr(false),
-			ExternalSlackOidcEnabled:     cast.Ptr(false),
-			ExternalSpotifyEnabled:       cast.Ptr(false),
-			ExternalTwitchEnabled:        cast.Ptr(false),
-			ExternalTwitterEnabled:       cast.Ptr(false),
-			ExternalWorkosEnabled:        cast.Ptr(false),
-			ExternalZoomEnabled:          cast.Ptr(false),
+			ExternalAppleEnabled:         nullable.NewNullableWithValue(false),
+			ExternalAzureEnabled:         nullable.NewNullableWithValue(false),
+			ExternalBitbucketEnabled:     nullable.NewNullableWithValue(false),
+			ExternalDiscordEnabled:       nullable.NewNullableWithValue(false),
+			ExternalFacebookEnabled:      nullable.NewNullableWithValue(false),
+			ExternalFigmaEnabled:         nullable.NewNullableWithValue(false),
+			ExternalGithubEnabled:        nullable.NewNullableWithValue(false),
+			ExternalGitlabEnabled:        nullable.NewNullableWithValue(false),
+			ExternalGoogleEnabled:        nullable.NewNullableWithValue(false),
+			ExternalGoogleSkipNonceCheck: nullable.NewNullableWithValue(false),
+			ExternalKakaoEnabled:         nullable.NewNullableWithValue(false),
+			ExternalKeycloakEnabled:      nullable.NewNullableWithValue(false),
+			ExternalLinkedinOidcEnabled:  nullable.NewNullableWithValue(false),
+			ExternalNotionEnabled:        nullable.NewNullableWithValue(false),
+			ExternalSlackOidcEnabled:     nullable.NewNullableWithValue(false),
+			ExternalSpotifyEnabled:       nullable.NewNullableWithValue(false),
+			ExternalTwitchEnabled:        nullable.NewNullableWithValue(false),
+			ExternalTwitterEnabled:       nullable.NewNullableWithValue(false),
+			ExternalWorkosEnabled:        nullable.NewNullableWithValue(false),
+			ExternalZoomEnabled:          nullable.NewNullableWithValue(false),
 			// Deprecated fields should be ignored
-			ExternalSlackEnabled: cast.Ptr(false),
+			ExternalSlackEnabled: nullable.NewNullableWithValue(false),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -1129,13 +1130,13 @@ func TestRateLimitsDiff(t *testing.T) {
 		c.Email.Smtp = &smtp{Enabled: true}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			RateLimitAnonymousUsers: cast.Ptr(20),
-			RateLimitTokenRefresh:   cast.Ptr(30),
-			RateLimitOtp:            cast.Ptr(40),
-			RateLimitVerify:         cast.Ptr(50),
-			RateLimitEmailSent:      cast.Ptr(25),
-			RateLimitSmsSent:        cast.Ptr(35),
-			SmtpHost:                cast.Ptr(""),
+			RateLimitAnonymousUsers: nullable.NewNullableWithValue(20),
+			RateLimitTokenRefresh:   nullable.NewNullableWithValue(30),
+			RateLimitOtp:            nullable.NewNullableWithValue(40),
+			RateLimitVerify:         nullable.NewNullableWithValue(50),
+			RateLimitEmailSent:      nullable.NewNullableWithValue(25),
+			RateLimitSmsSent:        nullable.NewNullableWithValue(35),
+			SmtpHost:                nullable.NewNullableWithValue(""),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -1154,13 +1155,13 @@ func TestRateLimitsDiff(t *testing.T) {
 		c.Email.Smtp = &smtp{Enabled: true}
 		// Run test with different remote values
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			RateLimitAnonymousUsers: cast.Ptr(10), // Different value
-			RateLimitTokenRefresh:   cast.Ptr(30),
-			RateLimitOtp:            cast.Ptr(45), // Different value
-			RateLimitVerify:         cast.Ptr(50),
-			RateLimitEmailSent:      cast.Ptr(15), // Different value
-			RateLimitSmsSent:        cast.Ptr(55), // Different value
-			SmtpHost:                cast.Ptr(""),
+			RateLimitAnonymousUsers: nullable.NewNullableWithValue(10), // Different value
+			RateLimitTokenRefresh:   nullable.NewNullableWithValue(30),
+			RateLimitOtp:            nullable.NewNullableWithValue(45), // Different value
+			RateLimitVerify:         nullable.NewNullableWithValue(50),
+			RateLimitEmailSent:      nullable.NewNullableWithValue(15), // Different value
+			RateLimitSmsSent:        nullable.NewNullableWithValue(55), // Different value
+			SmtpHost:                nullable.NewNullableWithValue(""),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -1174,8 +1175,8 @@ func TestRateLimitsDiff(t *testing.T) {
 		c.RateLimit.EmailSent = 25
 		// Run test with remote rate limits
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
-			RateLimitEmailSent: cast.Ptr(15),
-			SmtpHost:           cast.Ptr(""),
+			RateLimitEmailSent: nullable.NewNullableWithValue(15),
+			SmtpHost:           nullable.NewNullableWithValue(""),
 		})
 		// Check error
 		assert.NoError(t, err)

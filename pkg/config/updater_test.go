@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/h2non/gock"
+	"github.com/oapi-codegen/nullable"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	v1API "github.com/supabase/cli/pkg/api"
@@ -168,7 +169,7 @@ func TestUpdateAuthConfig(t *testing.T) {
 			Get("/v1/projects/test-project/config/auth").
 			Reply(http.StatusOK).
 			JSON(v1API.AuthConfigResponse{
-				SiteUrl: cast.Ptr("http://localhost:3000"),
+				SiteUrl: nullable.NewNullableWithValue("http://localhost:3000"),
 			})
 		gock.New(server).
 			Patch("/v1/projects/test-project/config/auth").

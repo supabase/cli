@@ -1,4 +1,6 @@
 package: api
 generate:
   models: true
+output-options:
+  nullable-type: true
 output: pkg/api/types.gen.go
