@@ -26,7 +26,6 @@ func Report(ctx context.Context, out string, config pgconn.Config, fsys afero.Fs
 	if err := utils.MkdirIfNotExistFS(fsys, out); err != nil {
 		return err
 	}
-	// create a date-based subdirectory
 	dateDir := filepath.Join(out, date)
 	if err := utils.MkdirIfNotExistFS(fsys, dateDir); err != nil {
 		return err
@@ -56,7 +55,10 @@ func Report(ctx context.Context, out string, config pgconn.Config, fsys afero.Fs
 	}
 	// print the actual save location
 	if !filepath.IsAbs(dateDir) {
-		dateDir, _ = filepath.Abs(dateDir)
+		dateDir, err = filepath.Abs(dateDir)
+		if err != nil {
+			return err
+		}
 	}
 	fmt.Fprintln(os.Stderr, "Reports saved to "+utils.Bold(dateDir))
 	return nil

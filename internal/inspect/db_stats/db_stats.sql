@@ -1,4 +1,5 @@
 SELECT
+  'postgres' AS name,
   pg_size_pretty(pg_database_size('postgres'))                                                                            AS database_size,
   (SELECT pg_size_pretty(SUM(pg_relation_size(c.oid)))
    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind = 'i')                                         AS total_index_size,

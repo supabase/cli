@@ -18,6 +18,7 @@ import (
 var DBStatsQuery string
 
 type Result struct {
+	Name                   string
 	Database_size          string
 	Total_index_size       string
 	Total_table_size       string
@@ -43,9 +44,9 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "|Database Size|Total Index Size|Total Table Size|Total Toast Size|Time Since Stats Reset|Index Hit Rate|Table Hit Rate|WAL Size|\n|-|-|-|-|-|-|-|-|\n"
+	table := "|Name|Database Size|Total Index Size|Total Table Size|Total Toast Size|Time Since Stats Reset|Index Hit Rate|Table Hit Rate|WAL Size|\n|-|-|-|-|-|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|\n", r.Database_size, r.Total_index_size, r.Total_table_size, r.Total_toast_size, r.Time_since_stats_reset, r.Index_hit_rate, r.Table_hit_rate, r.WAL_size)
+		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|\n", r.Name, r.Database_size, r.Total_index_size, r.Total_table_size, r.Total_toast_size, r.Time_since_stats_reset, r.Index_hit_rate, r.Table_hit_rate, r.WAL_size)
 	}
 	return list.RenderTable(table)
 }

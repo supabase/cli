@@ -1,5 +1,5 @@
 SELECT
-  n.nspname || '.' || c.relname AS name,
+  FORMAT('%I.%I', n.nspname, c.relname) AS name,
   pg_size_pretty(pg_total_relation_size(c.oid)) AS size
 FROM pg_class c
 LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
