@@ -1,7 +1,7 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -52,12 +52,12 @@
+@@ -53,12 +53,12 @@
  otp_expiry = 0
  
  [sms]
@@ -19,7 +19,7 @@ diff remote[auth] local[auth]
  account_sid = ""
  message_service_sid = ""
  auth_token = ""
-@@ -67,9 +67,9 @@
+@@ -68,9 +68,9 @@
  message_service_sid = ""
  auth_token = ""
  [sms.messagebird]
@@ -32,11 +32,11 @@ diff remote[auth] local[auth]
  [sms.textlocal]
  enabled = false
  sender = ""
-@@ -80,6 +80,7 @@
+@@ -81,6 +81,7 @@
  api_key = ""
  api_secret = ""
  [sms.test_otp]
 +123 = "456"
  
- [third_party]
- [third_party.firebase]
+ [web3]
+ [web3.solana]
