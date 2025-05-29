@@ -570,55 +570,103 @@ func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	}
 	if t, ok := e.Template["invite"]; ok {
 		if t.Subject != nil {
-			t.Subject = cast.Ptr(ValOrDefault(remoteConfig.MailerSubjectsInvite, ""))
+			if value, err := remoteConfig.MailerSubjectsInvite.Get(); err == nil {
+				t.Subject = &value
+			} else {
+				t.Subject = nil
+			}
 		}
 		if t.Content != nil {
-			t.Content = cast.Ptr(ValOrDefault(remoteConfig.MailerTemplatesInviteContent, ""))
+			if value, err := remoteConfig.MailerTemplatesInviteContent.Get(); err == nil {
+				t.Content = &value
+			} else {
+				t.Content = nil
+			}
 		}
 		e.Template["invite"] = t
 	}
 	if t, ok := e.Template["confirmation"]; ok {
 		if t.Subject != nil {
-			t.Subject = cast.Ptr(ValOrDefault(remoteConfig.MailerSubjectsConfirmation, ""))
+			if value, err := remoteConfig.MailerSubjectsConfirmation.Get(); err == nil {
+				t.Subject = &value
+			} else {
+				t.Subject = nil
+			}
 		}
 		if t.Content != nil {
-			t.Content = cast.Ptr(ValOrDefault(remoteConfig.MailerTemplatesConfirmationContent, ""))
+			if value, err := remoteConfig.MailerTemplatesConfirmationContent.Get(); err == nil {
+				t.Content = &value
+			} else {
+				t.Content = nil
+			}
 		}
 		e.Template["confirmation"] = t
 	}
 	if t, ok := e.Template["recovery"]; ok {
 		if t.Subject != nil {
-			t.Subject = cast.Ptr(ValOrDefault(remoteConfig.MailerSubjectsRecovery, ""))
+			if value, err := remoteConfig.MailerSubjectsRecovery.Get(); err == nil {
+				t.Subject = &value
+			} else {
+				t.Subject = nil
+			}
 		}
 		if t.Content != nil {
-			t.Content = cast.Ptr(ValOrDefault(remoteConfig.MailerTemplatesRecoveryContent, ""))
+			if value, err := remoteConfig.MailerTemplatesRecoveryContent.Get(); err == nil {
+				t.Content = &value
+			} else {
+				t.Content = nil
+			}
 		}
 		e.Template["recovery"] = t
 	}
 	if t, ok := e.Template["magic_link"]; ok {
 		if t.Subject != nil {
-			t.Subject = cast.Ptr(ValOrDefault(remoteConfig.MailerSubjectsMagicLink, ""))
+			if value, err := remoteConfig.MailerSubjectsMagicLink.Get(); err == nil {
+				t.Subject = &value
+			} else {
+				t.Subject = nil
+			}
 		}
 		if t.Content != nil {
-			t.Content = cast.Ptr(ValOrDefault(remoteConfig.MailerTemplatesMagicLinkContent, ""))
+			if value, err := remoteConfig.MailerTemplatesMagicLinkContent.Get(); err == nil {
+				t.Content = &value
+			} else {
+				t.Content = nil
+			}
 		}
 		e.Template["magic_link"] = t
 	}
 	if t, ok := e.Template["email_change"]; ok {
 		if t.Subject != nil {
-			t.Subject = cast.Ptr(ValOrDefault(remoteConfig.MailerSubjectsEmailChange, ""))
+			if value, err := remoteConfig.MailerSubjectsEmailChange.Get(); err == nil {
+				t.Subject = &value
+			} else {
+				t.Subject = nil
+			}
 		}
 		if t.Content != nil {
-			t.Content = cast.Ptr(ValOrDefault(remoteConfig.MailerTemplatesEmailChangeContent, ""))
+			if value, err := remoteConfig.MailerTemplatesEmailChangeContent.Get(); err == nil {
+				t.Content = &value
+			} else {
+				t.Content = nil
+			}
 		}
 		e.Template["email_change"] = t
 	}
 	if t, ok := e.Template["reauthentication"]; ok {
 		if t.Subject != nil {
-			t.Subject = cast.Ptr(ValOrDefault(remoteConfig.MailerSubjectsReauthentication, ""))
+			if value, err := remoteConfig.MailerSubjectsReauthentication.Get(); err == nil {
+				t.Subject = &value
+			} else {
+				t.Subject = nil
+			}
 		}
 		if t.Content != nil {
-			t.Content = cast.Ptr(ValOrDefault(remoteConfig.MailerTemplatesReauthenticationContent, ""))
+			if value, err := remoteConfig.MailerTemplatesReauthenticationContent.Get(); err == nil {
+				t.Content = &value
+			} else {
+				t.Content = nil
+			}
 		}
 		e.Template["reauthentication"] = t
 	}
