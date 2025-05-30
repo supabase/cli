@@ -239,7 +239,6 @@ func DockerImagePullWithRetry(ctx context.Context, image string, retries int) er
 
 func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 	imageUrl := GetRegistryImageUrl(imageName)
-	fmt.Printf(imageUrl)
 	if _, err := Docker.ImageInspect(ctx, imageUrl); err == nil {
 		return nil
 	} else if !client.IsErrNotFound(err) {
