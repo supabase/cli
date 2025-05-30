@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/migration/down"
 	"github.com/supabase/cli/internal/migration/fetch"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/new"
@@ -90,6 +93,27 @@ var (
 		},
 	}
 
+	migrationDownCmd = &cobra.Command{
+		Use:   "down [n]",
+		Short: "Resets local migrations up to the last n versions",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			last := 1
+			if len(args) > 0 {
+				var err error
+				if last, err = strconv.Atoi(args[0]); err != nil {
+					return errors.Errorf("invalid last version: %w", err)
+				} else if last <= 0 {
+					return errors.Errorf("last version must be greater than 0")
+				}
+			}
+			return down.Run(cmd.Context(), last, flags.DbConfig, afero.NewOsFs())
+		},
+		PostRun: func(cmd *cobra.Command, args []string) {
+			fmt.Println("Local database is up to date.")
+		},
+	}
+
 	migrationFetchCmd = &cobra.Command{
 		Use:   "fetch",
 		Short: "Fetch migration files from history table",
@@ -141,6 +165,12 @@ func init() {
 	upFlags.Bool("local", true, "Applies pending migrations to the local database.")
 	migrationUpCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	migrationCmd.AddCommand(migrationUpCmd)
+	downFlags := migrationDownCmd.Flags()
+	downFlags.String("db-url", "", "Applies migrations to the database specified by the connection string (must be percent-encoded).")
+	downFlags.Bool("linked", false, "Applies pending migrations to the linked project.")
+	downFlags.Bool("local", true, "Applies pending migrations to the local database.")
+	migrationDownCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
+	migrationCmd.AddCommand(migrationDownCmd)
 	// Build up command
 	fetchFlags := migrationFetchCmd.Flags()
 	fetchFlags.String("db-url", "", "Fetches migrations from the database specified by the connection string (must be percent-encoded).")
