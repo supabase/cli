@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"fmt"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -22,6 +23,7 @@ func DiffSchemaMigra(ctx context.Context, source, target string, schema []string
 	// Passing in script string means command line args must be set manually, ie. "$@"
 	args := "set -- " + strings.Join(schema, " ") + ";"
 	cmd := []string{"/bin/sh", "-c", args + diffSchemaScript}
+	fmt.Printf("%v\n", cmd)
 	var out, stderr bytes.Buffer
 	if err := utils.DockerRunOnceWithConfig(
 		ctx,

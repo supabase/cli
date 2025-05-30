@@ -187,6 +187,7 @@ func GetRegistryAuth() string {
 const defaultRegistry = "public.ecr.aws"
 
 func GetRegistry() string {
+	// return "docker.io"
 	registry := viper.GetString("INTERNAL_IMAGE_REGISTRY")
 	if len(registry) == 0 {
 		return defaultRegistry
@@ -239,6 +240,7 @@ func DockerImagePullWithRetry(ctx context.Context, image string, retries int) er
 
 func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 	imageUrl := GetRegistryImageUrl(imageName)
+	fmt.Printf(imageUrl)
 	if _, err := Docker.ImageInspect(ctx, imageUrl); err == nil {
 		return nil
 	} else if !client.IsErrNotFound(err) {
