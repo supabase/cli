@@ -610,6 +610,10 @@ func (c *config) Load(path string, fsys fs.FS) error {
 			if i := strings.IndexByte(c.Db.Image, ':'); VersionCompare(c.Db.Image[i+1:], "15.1.0.55") >= 0 {
 				c.Db.Image = replaceImageTag(Images.Pg, string(version))
 			}
+			// Patch bugged version 15.8.1.094, see https://github.com/supabase/cli/issues/3632
+			if c.Db.Image == "supabase/postgres:15.8.1.094" {
+				c.Db.Image = "supabase/postgres:15.8.1.095"
+			}
 		}
 		if version, err := fs.ReadFile(fsys, builder.RestVersionPath); err == nil && len(version) > 0 {
 			c.Api.Image = replaceImageTag(Images.Postgrest, string(version))
