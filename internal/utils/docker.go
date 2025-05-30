@@ -187,7 +187,6 @@ func GetRegistryAuth() string {
 const defaultRegistry = "public.ecr.aws"
 
 func GetRegistry() string {
-	// return "docker.io"
 	registry := viper.GetString("INTERNAL_IMAGE_REGISTRY")
 	if len(registry) == 0 {
 		return defaultRegistry
