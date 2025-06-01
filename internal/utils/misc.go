@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/containerd/errdefs"
 	"github.com/docker/docker/client"
 	"github.com/go-errors/errors"
 	"github.com/go-git/go-git/v5"
@@ -167,7 +168,7 @@ func AssertSupabaseDbIsRunning() error {
 
 func AssertServiceIsRunning(ctx context.Context, containerId string) error {
 	if _, err := Docker.ContainerInspect(ctx, containerId); err != nil {
-		if client.IsErrNotFound(err) {
+		if errdefs.IsNotFound(err) {
 			return errors.New(ErrNotRunning)
 		}
 		if client.IsErrConnectionFailed(err) {

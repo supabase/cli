@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/containerd/errdefs"
 	podman "github.com/containers/common/libnetwork/types"
 	"github.com/docker/cli/cli/command"
 	"github.com/docker/cli/cli/compose/loader"
@@ -28,7 +29,6 @@ import (
 	"github.com/docker/docker/api/types/versions"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/go-errors/errors"
@@ -241,7 +241,7 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 	imageUrl := GetRegistryImageUrl(imageName)
 	if _, err := Docker.ImageInspect(ctx, imageUrl); err == nil {
 		return nil
-	} else if !client.IsErrNotFound(err) {
+	} else if !errdefs.IsNotFound(err) {
 		return errors.Errorf("failed to inspect docker image: %w", err)
 	}
 	return DockerImagePullWithRetry(ctx, imageUrl, 2)
