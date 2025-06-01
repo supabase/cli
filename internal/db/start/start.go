@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
@@ -169,7 +169,7 @@ EOF`}
 	}
 	// Creating volume will not override existing volume, so we must inspect explicitly
 	_, err := utils.Docker.VolumeInspect(ctx, utils.DbId)
-	utils.NoBackupVolume = client.IsErrNotFound(err)
+	utils.NoBackupVolume = errdefs.IsNotFound(err)
 	if utils.NoBackupVolume {
 		fmt.Fprintln(w, "Starting database...")
 	} else if len(fromBackup) > 0 {
