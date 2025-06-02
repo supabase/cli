@@ -32,22 +32,22 @@ func (r *PasswordRequirements) UnmarshalText(text []byte) error {
 func (r PasswordRequirements) ToChar() v1API.UpdateAuthConfigBodyPasswordRequiredCharacters {
 	switch r {
 	case LettersDigits:
-		return v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789
+		return v1API.UpdateAuthConfigBodyPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789
 	case LowerUpperLettersDigits:
-		return v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891
+		return v1API.UpdateAuthConfigBodyPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891
 	case LowerUpperLettersDigitsSymbols:
-		return v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892
+		return v1API.UpdateAuthConfigBodyPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892
 	}
-	return v1API.Empty
+	return v1API.UpdateAuthConfigBodyPasswordRequiredCharactersEmpty
 }
 
 func NewPasswordRequirement(c v1API.UpdateAuthConfigBodyPasswordRequiredCharacters) PasswordRequirements {
 	switch c {
-	case v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:
+	case v1API.UpdateAuthConfigBodyPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:
 		return LettersDigits
-	case v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891:
+	case v1API.UpdateAuthConfigBodyPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891:
 		return LowerUpperLettersDigits
-	case v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892:
+	case v1API.UpdateAuthConfigBodyPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892:
 		return LowerUpperLettersDigitsSymbols
 	}
 	return NoRequirements
@@ -738,33 +738,33 @@ func (s sms) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	// Api only overrides configs of enabled providers
 	switch {
 	case s.Twilio.Enabled:
-		body.SmsProvider = nullable.NewNullableWithValue(v1API.Twilio)
+		body.SmsProvider = nullable.NewNullableWithValue(v1API.UpdateAuthConfigBodySmsProviderTwilio)
 		if len(s.Twilio.AuthToken.SHA256) > 0 {
 			body.SmsTwilioAuthToken = nullable.NewNullableWithValue(s.Twilio.AuthToken.Value)
 		}
 		body.SmsTwilioAccountSid = nullable.NewNullableWithValue(s.Twilio.AccountSid)
 		body.SmsTwilioMessageServiceSid = nullable.NewNullableWithValue(s.Twilio.MessageServiceSid)
 	case s.TwilioVerify.Enabled:
-		body.SmsProvider = nullable.NewNullableWithValue(v1API.TwilioVerify)
+		body.SmsProvider = nullable.NewNullableWithValue(v1API.UpdateAuthConfigBodySmsProviderTwilioVerify)
 		if len(s.TwilioVerify.AuthToken.SHA256) > 0 {
 			body.SmsTwilioVerifyAuthToken = nullable.NewNullableWithValue(s.TwilioVerify.AuthToken.Value)
 		}
 		body.SmsTwilioVerifyAccountSid = nullable.NewNullableWithValue(s.TwilioVerify.AccountSid)
 		body.SmsTwilioVerifyMessageServiceSid = nullable.NewNullableWithValue(s.TwilioVerify.MessageServiceSid)
 	case s.Messagebird.Enabled:
-		body.SmsProvider = nullable.NewNullableWithValue(v1API.Messagebird)
+		body.SmsProvider = nullable.NewNullableWithValue(v1API.UpdateAuthConfigBodySmsProviderMessagebird)
 		if len(s.Messagebird.AccessKey.SHA256) > 0 {
 			body.SmsMessagebirdAccessKey = nullable.NewNullableWithValue(s.Messagebird.AccessKey.Value)
 		}
 		body.SmsMessagebirdOriginator = nullable.NewNullableWithValue(s.Messagebird.Originator)
 	case s.Textlocal.Enabled:
-		body.SmsProvider = nullable.NewNullableWithValue(v1API.Textlocal)
+		body.SmsProvider = nullable.NewNullableWithValue(v1API.UpdateAuthConfigBodySmsProviderTextlocal)
 		if len(s.Textlocal.ApiKey.SHA256) > 0 {
 			body.SmsTextlocalApiKey = nullable.NewNullableWithValue(s.Textlocal.ApiKey.Value)
 		}
 		body.SmsTextlocalSender = nullable.NewNullableWithValue(s.Textlocal.Sender)
 	case s.Vonage.Enabled:
-		body.SmsProvider = nullable.NewNullableWithValue(v1API.Vonage)
+		body.SmsProvider = nullable.NewNullableWithValue(v1API.UpdateAuthConfigBodySmsProviderVonage)
 		if len(s.Vonage.ApiSecret.SHA256) > 0 {
 			body.SmsVonageApiSecret = nullable.NewNullableWithValue(s.Vonage.ApiSecret.Value)
 		}

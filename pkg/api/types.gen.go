@@ -75,6 +75,29 @@ const (
 	ApplyProjectAddonBodyAddonVariant3Ipv4Default ApplyProjectAddonBodyAddonVariant3 = "ipv4_default"
 )
 
+// Defines values for AuthConfigResponsePasswordRequiredCharacters.
+const (
+	AuthConfigResponsePasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789  AuthConfigResponsePasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"
+	AuthConfigResponsePasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891 AuthConfigResponsePasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"
+	AuthConfigResponsePasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892 AuthConfigResponsePasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~"
+	AuthConfigResponsePasswordRequiredCharactersEmpty                                                           AuthConfigResponsePasswordRequiredCharacters = ""
+)
+
+// Defines values for AuthConfigResponseSecurityCaptchaProvider.
+const (
+	AuthConfigResponseSecurityCaptchaProviderHcaptcha  AuthConfigResponseSecurityCaptchaProvider = "hcaptcha"
+	AuthConfigResponseSecurityCaptchaProviderTurnstile AuthConfigResponseSecurityCaptchaProvider = "turnstile"
+)
+
+// Defines values for AuthConfigResponseSmsProvider.
+const (
+	AuthConfigResponseSmsProviderMessagebird  AuthConfigResponseSmsProvider = "messagebird"
+	AuthConfigResponseSmsProviderTextlocal    AuthConfigResponseSmsProvider = "textlocal"
+	AuthConfigResponseSmsProviderTwilio       AuthConfigResponseSmsProvider = "twilio"
+	AuthConfigResponseSmsProviderTwilioVerify AuthConfigResponseSmsProvider = "twilio_verify"
+	AuthConfigResponseSmsProviderVonage       AuthConfigResponseSmsProvider = "vonage"
+)
+
 // Defines values for BranchDeleteResponseMessage.
 const (
 	BranchDeleteResponseMessageOk BranchDeleteResponseMessage = "ok"
@@ -439,6 +462,22 @@ const (
 	Bearer OAuthTokenResponseTokenType = "Bearer"
 )
 
+// Defines values for OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan.
+const (
+	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanEnterprise OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "enterprise"
+	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanFree       OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "free"
+	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanPro        OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "pro"
+	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanTeam       OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "team"
+)
+
+// Defines values for OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan.
+const (
+	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanEnterprise OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "enterprise"
+	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanFree       OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "free"
+	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanPro        OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "pro"
+	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanTeam       OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "team"
+)
+
 // Defines values for PostgresConfigResponseSessionReplicationRole.
 const (
 	PostgresConfigResponseSessionReplicationRoleLocal   PostgresConfigResponseSessionReplicationRole = "local"
@@ -567,25 +606,25 @@ const (
 
 // Defines values for UpdateAuthConfigBodyPasswordRequiredCharacters.
 const (
-	AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789  UpdateAuthConfigBodyPasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"
-	AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891 UpdateAuthConfigBodyPasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"
-	AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892 UpdateAuthConfigBodyPasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~"
-	Empty                                                           UpdateAuthConfigBodyPasswordRequiredCharacters = ""
+	UpdateAuthConfigBodyPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789  UpdateAuthConfigBodyPasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"
+	UpdateAuthConfigBodyPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891 UpdateAuthConfigBodyPasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"
+	UpdateAuthConfigBodyPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892 UpdateAuthConfigBodyPasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~"
+	UpdateAuthConfigBodyPasswordRequiredCharactersEmpty                                                           UpdateAuthConfigBodyPasswordRequiredCharacters = ""
 )
 
 // Defines values for UpdateAuthConfigBodySecurityCaptchaProvider.
 const (
-	Hcaptcha  UpdateAuthConfigBodySecurityCaptchaProvider = "hcaptcha"
-	Turnstile UpdateAuthConfigBodySecurityCaptchaProvider = "turnstile"
+	UpdateAuthConfigBodySecurityCaptchaProviderHcaptcha  UpdateAuthConfigBodySecurityCaptchaProvider = "hcaptcha"
+	UpdateAuthConfigBodySecurityCaptchaProviderTurnstile UpdateAuthConfigBodySecurityCaptchaProvider = "turnstile"
 )
 
 // Defines values for UpdateAuthConfigBodySmsProvider.
 const (
-	Messagebird  UpdateAuthConfigBodySmsProvider = "messagebird"
-	Textlocal    UpdateAuthConfigBodySmsProvider = "textlocal"
-	Twilio       UpdateAuthConfigBodySmsProvider = "twilio"
-	TwilioVerify UpdateAuthConfigBodySmsProvider = "twilio_verify"
-	Vonage       UpdateAuthConfigBodySmsProvider = "vonage"
+	UpdateAuthConfigBodySmsProviderMessagebird  UpdateAuthConfigBodySmsProvider = "messagebird"
+	UpdateAuthConfigBodySmsProviderTextlocal    UpdateAuthConfigBodySmsProvider = "textlocal"
+	UpdateAuthConfigBodySmsProviderTwilio       UpdateAuthConfigBodySmsProvider = "twilio"
+	UpdateAuthConfigBodySmsProviderTwilioVerify UpdateAuthConfigBodySmsProvider = "twilio_verify"
+	UpdateAuthConfigBodySmsProviderVonage       UpdateAuthConfigBodySmsProvider = "vonage"
 )
 
 // Defines values for UpdateBranchBodyStatus.
@@ -856,18 +895,18 @@ const (
 	NotUsed          VanitySubdomainConfigResponseStatus = "not-used"
 )
 
-// Defines values for V1AuthorizeUserParamsResponseType.
-const (
-	Code         V1AuthorizeUserParamsResponseType = "code"
-	IdTokenToken V1AuthorizeUserParamsResponseType = "id_token token"
-	Token        V1AuthorizeUserParamsResponseType = "token"
-)
-
 // Defines values for V1AuthorizeUserParamsCodeChallengeMethod.
 const (
 	Plain  V1AuthorizeUserParamsCodeChallengeMethod = "plain"
 	S256   V1AuthorizeUserParamsCodeChallengeMethod = "S256"
 	Sha256 V1AuthorizeUserParamsCodeChallengeMethod = "sha256"
+)
+
+// Defines values for V1AuthorizeUserParamsResponseType.
+const (
+	Code         V1AuthorizeUserParamsResponseType = "code"
+	IdTokenToken V1AuthorizeUserParamsResponseType = "id_token token"
+	Token        V1AuthorizeUserParamsResponseType = "token"
 )
 
 // Defines values for GetApiCountsParamsInterval.
@@ -879,6 +918,16 @@ const (
 	N3day  GetApiCountsParamsInterval = "3day"
 	N3hr   GetApiCountsParamsInterval = "3hr"
 	N7day  GetApiCountsParamsInterval = "7day"
+)
+
+// Defines values for V1GetServicesHealthParamsServices.
+const (
+	Auth     V1GetServicesHealthParamsServices = "auth"
+	Db       V1GetServicesHealthParamsServices = "db"
+	Pooler   V1GetServicesHealthParamsServices = "pooler"
+	Realtime V1GetServicesHealthParamsServices = "realtime"
+	Rest     V1GetServicesHealthParamsServices = "rest"
+	Storage  V1GetServicesHealthParamsServices = "storage"
 )
 
 // Defines values for V1ListAllSnippetsParamsSortBy.
@@ -973,179 +1022,188 @@ type ApplyProjectAddonBody_AddonVariant struct {
 
 // AuthConfigResponse defines model for AuthConfigResponse.
 type AuthConfigResponse struct {
-	ApiMaxRequestDuration                         nullable.Nullable[int]    `json:"api_max_request_duration"`
-	DbMaxPoolSize                                 nullable.Nullable[int]    `json:"db_max_pool_size"`
-	DisableSignup                                 nullable.Nullable[bool]   `json:"disable_signup"`
-	ExternalAnonymousUsersEnabled                 nullable.Nullable[bool]   `json:"external_anonymous_users_enabled"`
-	ExternalAppleAdditionalClientIds              nullable.Nullable[string] `json:"external_apple_additional_client_ids"`
-	ExternalAppleClientId                         nullable.Nullable[string] `json:"external_apple_client_id"`
-	ExternalAppleEnabled                          nullable.Nullable[bool]   `json:"external_apple_enabled"`
-	ExternalAppleSecret                           nullable.Nullable[string] `json:"external_apple_secret"`
-	ExternalAzureClientId                         nullable.Nullable[string] `json:"external_azure_client_id"`
-	ExternalAzureEnabled                          nullable.Nullable[bool]   `json:"external_azure_enabled"`
-	ExternalAzureSecret                           nullable.Nullable[string] `json:"external_azure_secret"`
-	ExternalAzureUrl                              nullable.Nullable[string] `json:"external_azure_url"`
-	ExternalBitbucketClientId                     nullable.Nullable[string] `json:"external_bitbucket_client_id"`
-	ExternalBitbucketEnabled                      nullable.Nullable[bool]   `json:"external_bitbucket_enabled"`
-	ExternalBitbucketSecret                       nullable.Nullable[string] `json:"external_bitbucket_secret"`
-	ExternalDiscordClientId                       nullable.Nullable[string] `json:"external_discord_client_id"`
-	ExternalDiscordEnabled                        nullable.Nullable[bool]   `json:"external_discord_enabled"`
-	ExternalDiscordSecret                         nullable.Nullable[string] `json:"external_discord_secret"`
-	ExternalEmailEnabled                          nullable.Nullable[bool]   `json:"external_email_enabled"`
-	ExternalFacebookClientId                      nullable.Nullable[string] `json:"external_facebook_client_id"`
-	ExternalFacebookEnabled                       nullable.Nullable[bool]   `json:"external_facebook_enabled"`
-	ExternalFacebookSecret                        nullable.Nullable[string] `json:"external_facebook_secret"`
-	ExternalFigmaClientId                         nullable.Nullable[string] `json:"external_figma_client_id"`
-	ExternalFigmaEnabled                          nullable.Nullable[bool]   `json:"external_figma_enabled"`
-	ExternalFigmaSecret                           nullable.Nullable[string] `json:"external_figma_secret"`
-	ExternalGithubClientId                        nullable.Nullable[string] `json:"external_github_client_id"`
-	ExternalGithubEnabled                         nullable.Nullable[bool]   `json:"external_github_enabled"`
-	ExternalGithubSecret                          nullable.Nullable[string] `json:"external_github_secret"`
-	ExternalGitlabClientId                        nullable.Nullable[string] `json:"external_gitlab_client_id"`
-	ExternalGitlabEnabled                         nullable.Nullable[bool]   `json:"external_gitlab_enabled"`
-	ExternalGitlabSecret                          nullable.Nullable[string] `json:"external_gitlab_secret"`
-	ExternalGitlabUrl                             nullable.Nullable[string] `json:"external_gitlab_url"`
-	ExternalGoogleAdditionalClientIds             nullable.Nullable[string] `json:"external_google_additional_client_ids"`
-	ExternalGoogleClientId                        nullable.Nullable[string] `json:"external_google_client_id"`
-	ExternalGoogleEnabled                         nullable.Nullable[bool]   `json:"external_google_enabled"`
-	ExternalGoogleSecret                          nullable.Nullable[string] `json:"external_google_secret"`
-	ExternalGoogleSkipNonceCheck                  nullable.Nullable[bool]   `json:"external_google_skip_nonce_check"`
-	ExternalKakaoClientId                         nullable.Nullable[string] `json:"external_kakao_client_id"`
-	ExternalKakaoEnabled                          nullable.Nullable[bool]   `json:"external_kakao_enabled"`
-	ExternalKakaoSecret                           nullable.Nullable[string] `json:"external_kakao_secret"`
-	ExternalKeycloakClientId                      nullable.Nullable[string] `json:"external_keycloak_client_id"`
-	ExternalKeycloakEnabled                       nullable.Nullable[bool]   `json:"external_keycloak_enabled"`
-	ExternalKeycloakSecret                        nullable.Nullable[string] `json:"external_keycloak_secret"`
-	ExternalKeycloakUrl                           nullable.Nullable[string] `json:"external_keycloak_url"`
-	ExternalLinkedinOidcClientId                  nullable.Nullable[string] `json:"external_linkedin_oidc_client_id"`
-	ExternalLinkedinOidcEnabled                   nullable.Nullable[bool]   `json:"external_linkedin_oidc_enabled"`
-	ExternalLinkedinOidcSecret                    nullable.Nullable[string] `json:"external_linkedin_oidc_secret"`
-	ExternalNotionClientId                        nullable.Nullable[string] `json:"external_notion_client_id"`
-	ExternalNotionEnabled                         nullable.Nullable[bool]   `json:"external_notion_enabled"`
-	ExternalNotionSecret                          nullable.Nullable[string] `json:"external_notion_secret"`
-	ExternalPhoneEnabled                          nullable.Nullable[bool]   `json:"external_phone_enabled"`
-	ExternalSlackClientId                         nullable.Nullable[string] `json:"external_slack_client_id"`
-	ExternalSlackEnabled                          nullable.Nullable[bool]   `json:"external_slack_enabled"`
-	ExternalSlackOidcClientId                     nullable.Nullable[string] `json:"external_slack_oidc_client_id"`
-	ExternalSlackOidcEnabled                      nullable.Nullable[bool]   `json:"external_slack_oidc_enabled"`
-	ExternalSlackOidcSecret                       nullable.Nullable[string] `json:"external_slack_oidc_secret"`
-	ExternalSlackSecret                           nullable.Nullable[string] `json:"external_slack_secret"`
-	ExternalSpotifyClientId                       nullable.Nullable[string] `json:"external_spotify_client_id"`
-	ExternalSpotifyEnabled                        nullable.Nullable[bool]   `json:"external_spotify_enabled"`
-	ExternalSpotifySecret                         nullable.Nullable[string] `json:"external_spotify_secret"`
-	ExternalTwitchClientId                        nullable.Nullable[string] `json:"external_twitch_client_id"`
-	ExternalTwitchEnabled                         nullable.Nullable[bool]   `json:"external_twitch_enabled"`
-	ExternalTwitchSecret                          nullable.Nullable[string] `json:"external_twitch_secret"`
-	ExternalTwitterClientId                       nullable.Nullable[string] `json:"external_twitter_client_id"`
-	ExternalTwitterEnabled                        nullable.Nullable[bool]   `json:"external_twitter_enabled"`
-	ExternalTwitterSecret                         nullable.Nullable[string] `json:"external_twitter_secret"`
-	ExternalWeb3SolanaEnabled                     nullable.Nullable[bool]   `json:"external_web3_solana_enabled"`
-	ExternalWorkosClientId                        nullable.Nullable[string] `json:"external_workos_client_id"`
-	ExternalWorkosEnabled                         nullable.Nullable[bool]   `json:"external_workos_enabled"`
-	ExternalWorkosSecret                          nullable.Nullable[string] `json:"external_workos_secret"`
-	ExternalWorkosUrl                             nullable.Nullable[string] `json:"external_workos_url"`
-	ExternalZoomClientId                          nullable.Nullable[string] `json:"external_zoom_client_id"`
-	ExternalZoomEnabled                           nullable.Nullable[bool]   `json:"external_zoom_enabled"`
-	ExternalZoomSecret                            nullable.Nullable[string] `json:"external_zoom_secret"`
-	HookCustomAccessTokenEnabled                  nullable.Nullable[bool]   `json:"hook_custom_access_token_enabled"`
-	HookCustomAccessTokenSecrets                  nullable.Nullable[string] `json:"hook_custom_access_token_secrets"`
-	HookCustomAccessTokenUri                      nullable.Nullable[string] `json:"hook_custom_access_token_uri"`
-	HookMfaVerificationAttemptEnabled             nullable.Nullable[bool]   `json:"hook_mfa_verification_attempt_enabled"`
-	HookMfaVerificationAttemptSecrets             nullable.Nullable[string] `json:"hook_mfa_verification_attempt_secrets"`
-	HookMfaVerificationAttemptUri                 nullable.Nullable[string] `json:"hook_mfa_verification_attempt_uri"`
-	HookPasswordVerificationAttemptEnabled        nullable.Nullable[bool]   `json:"hook_password_verification_attempt_enabled"`
-	HookPasswordVerificationAttemptSecrets        nullable.Nullable[string] `json:"hook_password_verification_attempt_secrets"`
-	HookPasswordVerificationAttemptUri            nullable.Nullable[string] `json:"hook_password_verification_attempt_uri"`
-	HookSendEmailEnabled                          nullable.Nullable[bool]   `json:"hook_send_email_enabled"`
-	HookSendEmailSecrets                          nullable.Nullable[string] `json:"hook_send_email_secrets"`
-	HookSendEmailUri                              nullable.Nullable[string] `json:"hook_send_email_uri"`
-	HookSendSmsEnabled                            nullable.Nullable[bool]   `json:"hook_send_sms_enabled"`
-	HookSendSmsSecrets                            nullable.Nullable[string] `json:"hook_send_sms_secrets"`
-	HookSendSmsUri                                nullable.Nullable[string] `json:"hook_send_sms_uri"`
-	JwtExp                                        nullable.Nullable[int]    `json:"jwt_exp"`
-	MailerAllowUnverifiedEmailSignIns             nullable.Nullable[bool]   `json:"mailer_allow_unverified_email_sign_ins"`
-	MailerAutoconfirm                             nullable.Nullable[bool]   `json:"mailer_autoconfirm"`
-	MailerOtpExp                                  int                       `json:"mailer_otp_exp"`
-	MailerOtpLength                               nullable.Nullable[int]    `json:"mailer_otp_length"`
-	MailerSecureEmailChangeEnabled                nullable.Nullable[bool]   `json:"mailer_secure_email_change_enabled"`
-	MailerSubjectsConfirmation                    nullable.Nullable[string] `json:"mailer_subjects_confirmation"`
-	MailerSubjectsEmailChange                     nullable.Nullable[string] `json:"mailer_subjects_email_change"`
-	MailerSubjectsInvite                          nullable.Nullable[string] `json:"mailer_subjects_invite"`
-	MailerSubjectsMagicLink                       nullable.Nullable[string] `json:"mailer_subjects_magic_link"`
-	MailerSubjectsReauthentication                nullable.Nullable[string] `json:"mailer_subjects_reauthentication"`
-	MailerSubjectsRecovery                        nullable.Nullable[string] `json:"mailer_subjects_recovery"`
-	MailerTemplatesConfirmationContent            nullable.Nullable[string] `json:"mailer_templates_confirmation_content"`
-	MailerTemplatesEmailChangeContent             nullable.Nullable[string] `json:"mailer_templates_email_change_content"`
-	MailerTemplatesInviteContent                  nullable.Nullable[string] `json:"mailer_templates_invite_content"`
-	MailerTemplatesMagicLinkContent               nullable.Nullable[string] `json:"mailer_templates_magic_link_content"`
-	MailerTemplatesReauthenticationContent        nullable.Nullable[string] `json:"mailer_templates_reauthentication_content"`
-	MailerTemplatesRecoveryContent                nullable.Nullable[string] `json:"mailer_templates_recovery_content"`
-	MfaMaxEnrolledFactors                         nullable.Nullable[int]    `json:"mfa_max_enrolled_factors"`
-	MfaPhoneEnrollEnabled                         nullable.Nullable[bool]   `json:"mfa_phone_enroll_enabled"`
-	MfaPhoneMaxFrequency                          nullable.Nullable[int]    `json:"mfa_phone_max_frequency"`
-	MfaPhoneOtpLength                             int                       `json:"mfa_phone_otp_length"`
-	MfaPhoneTemplate                              nullable.Nullable[string] `json:"mfa_phone_template"`
-	MfaPhoneVerifyEnabled                         nullable.Nullable[bool]   `json:"mfa_phone_verify_enabled"`
-	MfaTotpEnrollEnabled                          nullable.Nullable[bool]   `json:"mfa_totp_enroll_enabled"`
-	MfaTotpVerifyEnabled                          nullable.Nullable[bool]   `json:"mfa_totp_verify_enabled"`
-	MfaWebAuthnEnrollEnabled                      nullable.Nullable[bool]   `json:"mfa_web_authn_enroll_enabled"`
-	MfaWebAuthnVerifyEnabled                      nullable.Nullable[bool]   `json:"mfa_web_authn_verify_enabled"`
-	PasswordHibpEnabled                           nullable.Nullable[bool]   `json:"password_hibp_enabled"`
-	PasswordMinLength                             nullable.Nullable[int]    `json:"password_min_length"`
-	PasswordRequiredCharacters                    nullable.Nullable[string] `json:"password_required_characters"`
-	RateLimitAnonymousUsers                       nullable.Nullable[int]    `json:"rate_limit_anonymous_users"`
-	RateLimitEmailSent                            nullable.Nullable[int]    `json:"rate_limit_email_sent"`
-	RateLimitOtp                                  nullable.Nullable[int]    `json:"rate_limit_otp"`
-	RateLimitSmsSent                              nullable.Nullable[int]    `json:"rate_limit_sms_sent"`
-	RateLimitTokenRefresh                         nullable.Nullable[int]    `json:"rate_limit_token_refresh"`
-	RateLimitVerify                               nullable.Nullable[int]    `json:"rate_limit_verify"`
-	RateLimitWeb3                                 nullable.Nullable[int]    `json:"rate_limit_web3"`
-	RefreshTokenRotationEnabled                   nullable.Nullable[bool]   `json:"refresh_token_rotation_enabled"`
-	SamlAllowEncryptedAssertions                  nullable.Nullable[bool]   `json:"saml_allow_encrypted_assertions"`
-	SamlEnabled                                   nullable.Nullable[bool]   `json:"saml_enabled"`
-	SamlExternalUrl                               nullable.Nullable[string] `json:"saml_external_url"`
-	SecurityCaptchaEnabled                        nullable.Nullable[bool]   `json:"security_captcha_enabled"`
-	SecurityCaptchaProvider                       nullable.Nullable[string] `json:"security_captcha_provider"`
-	SecurityCaptchaSecret                         nullable.Nullable[string] `json:"security_captcha_secret"`
-	SecurityManualLinkingEnabled                  nullable.Nullable[bool]   `json:"security_manual_linking_enabled"`
-	SecurityRefreshTokenReuseInterval             nullable.Nullable[int]    `json:"security_refresh_token_reuse_interval"`
-	SecurityUpdatePasswordRequireReauthentication nullable.Nullable[bool]   `json:"security_update_password_require_reauthentication"`
-	SessionsInactivityTimeout                     nullable.Nullable[int]    `json:"sessions_inactivity_timeout"`
-	SessionsSinglePerUser                         nullable.Nullable[bool]   `json:"sessions_single_per_user"`
-	SessionsTags                                  nullable.Nullable[string] `json:"sessions_tags"`
-	SessionsTimebox                               nullable.Nullable[int]    `json:"sessions_timebox"`
-	SiteUrl                                       nullable.Nullable[string] `json:"site_url"`
-	SmsAutoconfirm                                nullable.Nullable[bool]   `json:"sms_autoconfirm"`
-	SmsMaxFrequency                               nullable.Nullable[int]    `json:"sms_max_frequency"`
-	SmsMessagebirdAccessKey                       nullable.Nullable[string] `json:"sms_messagebird_access_key"`
-	SmsMessagebirdOriginator                      nullable.Nullable[string] `json:"sms_messagebird_originator"`
-	SmsOtpExp                                     nullable.Nullable[int]    `json:"sms_otp_exp"`
-	SmsOtpLength                                  int                       `json:"sms_otp_length"`
-	SmsProvider                                   nullable.Nullable[string] `json:"sms_provider"`
-	SmsTemplate                                   nullable.Nullable[string] `json:"sms_template"`
-	SmsTestOtp                                    nullable.Nullable[string] `json:"sms_test_otp"`
-	SmsTestOtpValidUntil                          nullable.Nullable[string] `json:"sms_test_otp_valid_until"`
-	SmsTextlocalApiKey                            nullable.Nullable[string] `json:"sms_textlocal_api_key"`
-	SmsTextlocalSender                            nullable.Nullable[string] `json:"sms_textlocal_sender"`
-	SmsTwilioAccountSid                           nullable.Nullable[string] `json:"sms_twilio_account_sid"`
-	SmsTwilioAuthToken                            nullable.Nullable[string] `json:"sms_twilio_auth_token"`
-	SmsTwilioContentSid                           nullable.Nullable[string] `json:"sms_twilio_content_sid"`
-	SmsTwilioMessageServiceSid                    nullable.Nullable[string] `json:"sms_twilio_message_service_sid"`
-	SmsTwilioVerifyAccountSid                     nullable.Nullable[string] `json:"sms_twilio_verify_account_sid"`
-	SmsTwilioVerifyAuthToken                      nullable.Nullable[string] `json:"sms_twilio_verify_auth_token"`
-	SmsTwilioVerifyMessageServiceSid              nullable.Nullable[string] `json:"sms_twilio_verify_message_service_sid"`
-	SmsVonageApiKey                               nullable.Nullable[string] `json:"sms_vonage_api_key"`
-	SmsVonageApiSecret                            nullable.Nullable[string] `json:"sms_vonage_api_secret"`
-	SmsVonageFrom                                 nullable.Nullable[string] `json:"sms_vonage_from"`
-	SmtpAdminEmail                                nullable.Nullable[string] `json:"smtp_admin_email"`
-	SmtpHost                                      nullable.Nullable[string] `json:"smtp_host"`
-	SmtpMaxFrequency                              nullable.Nullable[int]    `json:"smtp_max_frequency"`
-	SmtpPass                                      nullable.Nullable[string] `json:"smtp_pass"`
-	SmtpPort                                      nullable.Nullable[string] `json:"smtp_port"`
-	SmtpSenderName                                nullable.Nullable[string] `json:"smtp_sender_name"`
-	SmtpUser                                      nullable.Nullable[string] `json:"smtp_user"`
-	UriAllowList                                  nullable.Nullable[string] `json:"uri_allow_list"`
+	ApiMaxRequestDuration                         nullable.Nullable[int]                                          `json:"api_max_request_duration"`
+	DbMaxPoolSize                                 nullable.Nullable[int]                                          `json:"db_max_pool_size"`
+	DisableSignup                                 nullable.Nullable[bool]                                         `json:"disable_signup"`
+	ExternalAnonymousUsersEnabled                 nullable.Nullable[bool]                                         `json:"external_anonymous_users_enabled"`
+	ExternalAppleAdditionalClientIds              nullable.Nullable[string]                                       `json:"external_apple_additional_client_ids"`
+	ExternalAppleClientId                         nullable.Nullable[string]                                       `json:"external_apple_client_id"`
+	ExternalAppleEnabled                          nullable.Nullable[bool]                                         `json:"external_apple_enabled"`
+	ExternalAppleSecret                           nullable.Nullable[string]                                       `json:"external_apple_secret"`
+	ExternalAzureClientId                         nullable.Nullable[string]                                       `json:"external_azure_client_id"`
+	ExternalAzureEnabled                          nullable.Nullable[bool]                                         `json:"external_azure_enabled"`
+	ExternalAzureSecret                           nullable.Nullable[string]                                       `json:"external_azure_secret"`
+	ExternalAzureUrl                              nullable.Nullable[string]                                       `json:"external_azure_url"`
+	ExternalBitbucketClientId                     nullable.Nullable[string]                                       `json:"external_bitbucket_client_id"`
+	ExternalBitbucketEnabled                      nullable.Nullable[bool]                                         `json:"external_bitbucket_enabled"`
+	ExternalBitbucketSecret                       nullable.Nullable[string]                                       `json:"external_bitbucket_secret"`
+	ExternalDiscordClientId                       nullable.Nullable[string]                                       `json:"external_discord_client_id"`
+	ExternalDiscordEnabled                        nullable.Nullable[bool]                                         `json:"external_discord_enabled"`
+	ExternalDiscordSecret                         nullable.Nullable[string]                                       `json:"external_discord_secret"`
+	ExternalEmailEnabled                          nullable.Nullable[bool]                                         `json:"external_email_enabled"`
+	ExternalFacebookClientId                      nullable.Nullable[string]                                       `json:"external_facebook_client_id"`
+	ExternalFacebookEnabled                       nullable.Nullable[bool]                                         `json:"external_facebook_enabled"`
+	ExternalFacebookSecret                        nullable.Nullable[string]                                       `json:"external_facebook_secret"`
+	ExternalFigmaClientId                         nullable.Nullable[string]                                       `json:"external_figma_client_id"`
+	ExternalFigmaEnabled                          nullable.Nullable[bool]                                         `json:"external_figma_enabled"`
+	ExternalFigmaSecret                           nullable.Nullable[string]                                       `json:"external_figma_secret"`
+	ExternalGithubClientId                        nullable.Nullable[string]                                       `json:"external_github_client_id"`
+	ExternalGithubEnabled                         nullable.Nullable[bool]                                         `json:"external_github_enabled"`
+	ExternalGithubSecret                          nullable.Nullable[string]                                       `json:"external_github_secret"`
+	ExternalGitlabClientId                        nullable.Nullable[string]                                       `json:"external_gitlab_client_id"`
+	ExternalGitlabEnabled                         nullable.Nullable[bool]                                         `json:"external_gitlab_enabled"`
+	ExternalGitlabSecret                          nullable.Nullable[string]                                       `json:"external_gitlab_secret"`
+	ExternalGitlabUrl                             nullable.Nullable[string]                                       `json:"external_gitlab_url"`
+	ExternalGoogleAdditionalClientIds             nullable.Nullable[string]                                       `json:"external_google_additional_client_ids"`
+	ExternalGoogleClientId                        nullable.Nullable[string]                                       `json:"external_google_client_id"`
+	ExternalGoogleEnabled                         nullable.Nullable[bool]                                         `json:"external_google_enabled"`
+	ExternalGoogleSecret                          nullable.Nullable[string]                                       `json:"external_google_secret"`
+	ExternalGoogleSkipNonceCheck                  nullable.Nullable[bool]                                         `json:"external_google_skip_nonce_check"`
+	ExternalKakaoClientId                         nullable.Nullable[string]                                       `json:"external_kakao_client_id"`
+	ExternalKakaoEnabled                          nullable.Nullable[bool]                                         `json:"external_kakao_enabled"`
+	ExternalKakaoSecret                           nullable.Nullable[string]                                       `json:"external_kakao_secret"`
+	ExternalKeycloakClientId                      nullable.Nullable[string]                                       `json:"external_keycloak_client_id"`
+	ExternalKeycloakEnabled                       nullable.Nullable[bool]                                         `json:"external_keycloak_enabled"`
+	ExternalKeycloakSecret                        nullable.Nullable[string]                                       `json:"external_keycloak_secret"`
+	ExternalKeycloakUrl                           nullable.Nullable[string]                                       `json:"external_keycloak_url"`
+	ExternalLinkedinOidcClientId                  nullable.Nullable[string]                                       `json:"external_linkedin_oidc_client_id"`
+	ExternalLinkedinOidcEnabled                   nullable.Nullable[bool]                                         `json:"external_linkedin_oidc_enabled"`
+	ExternalLinkedinOidcSecret                    nullable.Nullable[string]                                       `json:"external_linkedin_oidc_secret"`
+	ExternalNotionClientId                        nullable.Nullable[string]                                       `json:"external_notion_client_id"`
+	ExternalNotionEnabled                         nullable.Nullable[bool]                                         `json:"external_notion_enabled"`
+	ExternalNotionSecret                          nullable.Nullable[string]                                       `json:"external_notion_secret"`
+	ExternalPhoneEnabled                          nullable.Nullable[bool]                                         `json:"external_phone_enabled"`
+	ExternalSlackClientId                         nullable.Nullable[string]                                       `json:"external_slack_client_id"`
+	ExternalSlackEnabled                          nullable.Nullable[bool]                                         `json:"external_slack_enabled"`
+	ExternalSlackOidcClientId                     nullable.Nullable[string]                                       `json:"external_slack_oidc_client_id"`
+	ExternalSlackOidcEnabled                      nullable.Nullable[bool]                                         `json:"external_slack_oidc_enabled"`
+	ExternalSlackOidcSecret                       nullable.Nullable[string]                                       `json:"external_slack_oidc_secret"`
+	ExternalSlackSecret                           nullable.Nullable[string]                                       `json:"external_slack_secret"`
+	ExternalSpotifyClientId                       nullable.Nullable[string]                                       `json:"external_spotify_client_id"`
+	ExternalSpotifyEnabled                        nullable.Nullable[bool]                                         `json:"external_spotify_enabled"`
+	ExternalSpotifySecret                         nullable.Nullable[string]                                       `json:"external_spotify_secret"`
+	ExternalTwitchClientId                        nullable.Nullable[string]                                       `json:"external_twitch_client_id"`
+	ExternalTwitchEnabled                         nullable.Nullable[bool]                                         `json:"external_twitch_enabled"`
+	ExternalTwitchSecret                          nullable.Nullable[string]                                       `json:"external_twitch_secret"`
+	ExternalTwitterClientId                       nullable.Nullable[string]                                       `json:"external_twitter_client_id"`
+	ExternalTwitterEnabled                        nullable.Nullable[bool]                                         `json:"external_twitter_enabled"`
+	ExternalTwitterSecret                         nullable.Nullable[string]                                       `json:"external_twitter_secret"`
+	ExternalWeb3SolanaEnabled                     nullable.Nullable[bool]                                         `json:"external_web3_solana_enabled"`
+	ExternalWorkosClientId                        nullable.Nullable[string]                                       `json:"external_workos_client_id"`
+	ExternalWorkosEnabled                         nullable.Nullable[bool]                                         `json:"external_workos_enabled"`
+	ExternalWorkosSecret                          nullable.Nullable[string]                                       `json:"external_workos_secret"`
+	ExternalWorkosUrl                             nullable.Nullable[string]                                       `json:"external_workos_url"`
+	ExternalZoomClientId                          nullable.Nullable[string]                                       `json:"external_zoom_client_id"`
+	ExternalZoomEnabled                           nullable.Nullable[bool]                                         `json:"external_zoom_enabled"`
+	ExternalZoomSecret                            nullable.Nullable[string]                                       `json:"external_zoom_secret"`
+	HookCustomAccessTokenEnabled                  nullable.Nullable[bool]                                         `json:"hook_custom_access_token_enabled"`
+	HookCustomAccessTokenSecrets                  nullable.Nullable[string]                                       `json:"hook_custom_access_token_secrets"`
+	HookCustomAccessTokenUri                      nullable.Nullable[string]                                       `json:"hook_custom_access_token_uri"`
+	HookMfaVerificationAttemptEnabled             nullable.Nullable[bool]                                         `json:"hook_mfa_verification_attempt_enabled"`
+	HookMfaVerificationAttemptSecrets             nullable.Nullable[string]                                       `json:"hook_mfa_verification_attempt_secrets"`
+	HookMfaVerificationAttemptUri                 nullable.Nullable[string]                                       `json:"hook_mfa_verification_attempt_uri"`
+	HookPasswordVerificationAttemptEnabled        nullable.Nullable[bool]                                         `json:"hook_password_verification_attempt_enabled"`
+	HookPasswordVerificationAttemptSecrets        nullable.Nullable[string]                                       `json:"hook_password_verification_attempt_secrets"`
+	HookPasswordVerificationAttemptUri            nullable.Nullable[string]                                       `json:"hook_password_verification_attempt_uri"`
+	HookSendEmailEnabled                          nullable.Nullable[bool]                                         `json:"hook_send_email_enabled"`
+	HookSendEmailSecrets                          nullable.Nullable[string]                                       `json:"hook_send_email_secrets"`
+	HookSendEmailUri                              nullable.Nullable[string]                                       `json:"hook_send_email_uri"`
+	HookSendSmsEnabled                            nullable.Nullable[bool]                                         `json:"hook_send_sms_enabled"`
+	HookSendSmsSecrets                            nullable.Nullable[string]                                       `json:"hook_send_sms_secrets"`
+	HookSendSmsUri                                nullable.Nullable[string]                                       `json:"hook_send_sms_uri"`
+	JwtExp                                        nullable.Nullable[int]                                          `json:"jwt_exp"`
+	MailerAllowUnverifiedEmailSignIns             nullable.Nullable[bool]                                         `json:"mailer_allow_unverified_email_sign_ins"`
+	MailerAutoconfirm                             nullable.Nullable[bool]                                         `json:"mailer_autoconfirm"`
+	MailerOtpExp                                  int                                                             `json:"mailer_otp_exp"`
+	MailerOtpLength                               nullable.Nullable[int]                                          `json:"mailer_otp_length"`
+	MailerSecureEmailChangeEnabled                nullable.Nullable[bool]                                         `json:"mailer_secure_email_change_enabled"`
+	MailerSubjectsConfirmation                    nullable.Nullable[string]                                       `json:"mailer_subjects_confirmation"`
+	MailerSubjectsEmailChange                     nullable.Nullable[string]                                       `json:"mailer_subjects_email_change"`
+	MailerSubjectsInvite                          nullable.Nullable[string]                                       `json:"mailer_subjects_invite"`
+	MailerSubjectsMagicLink                       nullable.Nullable[string]                                       `json:"mailer_subjects_magic_link"`
+	MailerSubjectsReauthentication                nullable.Nullable[string]                                       `json:"mailer_subjects_reauthentication"`
+	MailerSubjectsRecovery                        nullable.Nullable[string]                                       `json:"mailer_subjects_recovery"`
+	MailerTemplatesConfirmationContent            nullable.Nullable[string]                                       `json:"mailer_templates_confirmation_content"`
+	MailerTemplatesEmailChangeContent             nullable.Nullable[string]                                       `json:"mailer_templates_email_change_content"`
+	MailerTemplatesInviteContent                  nullable.Nullable[string]                                       `json:"mailer_templates_invite_content"`
+	MailerTemplatesMagicLinkContent               nullable.Nullable[string]                                       `json:"mailer_templates_magic_link_content"`
+	MailerTemplatesReauthenticationContent        nullable.Nullable[string]                                       `json:"mailer_templates_reauthentication_content"`
+	MailerTemplatesRecoveryContent                nullable.Nullable[string]                                       `json:"mailer_templates_recovery_content"`
+	MfaMaxEnrolledFactors                         nullable.Nullable[int]                                          `json:"mfa_max_enrolled_factors"`
+	MfaPhoneEnrollEnabled                         nullable.Nullable[bool]                                         `json:"mfa_phone_enroll_enabled"`
+	MfaPhoneMaxFrequency                          nullable.Nullable[int]                                          `json:"mfa_phone_max_frequency"`
+	MfaPhoneOtpLength                             int                                                             `json:"mfa_phone_otp_length"`
+	MfaPhoneTemplate                              nullable.Nullable[string]                                       `json:"mfa_phone_template"`
+	MfaPhoneVerifyEnabled                         nullable.Nullable[bool]                                         `json:"mfa_phone_verify_enabled"`
+	MfaTotpEnrollEnabled                          nullable.Nullable[bool]                                         `json:"mfa_totp_enroll_enabled"`
+	MfaTotpVerifyEnabled                          nullable.Nullable[bool]                                         `json:"mfa_totp_verify_enabled"`
+	MfaWebAuthnEnrollEnabled                      nullable.Nullable[bool]                                         `json:"mfa_web_authn_enroll_enabled"`
+	MfaWebAuthnVerifyEnabled                      nullable.Nullable[bool]                                         `json:"mfa_web_authn_verify_enabled"`
+	PasswordHibpEnabled                           nullable.Nullable[bool]                                         `json:"password_hibp_enabled"`
+	PasswordMinLength                             nullable.Nullable[int]                                          `json:"password_min_length"`
+	PasswordRequiredCharacters                    nullable.Nullable[AuthConfigResponsePasswordRequiredCharacters] `json:"password_required_characters"`
+	RateLimitAnonymousUsers                       nullable.Nullable[int]                                          `json:"rate_limit_anonymous_users"`
+	RateLimitEmailSent                            nullable.Nullable[int]                                          `json:"rate_limit_email_sent"`
+	RateLimitOtp                                  nullable.Nullable[int]                                          `json:"rate_limit_otp"`
+	RateLimitSmsSent                              nullable.Nullable[int]                                          `json:"rate_limit_sms_sent"`
+	RateLimitTokenRefresh                         nullable.Nullable[int]                                          `json:"rate_limit_token_refresh"`
+	RateLimitVerify                               nullable.Nullable[int]                                          `json:"rate_limit_verify"`
+	RateLimitWeb3                                 nullable.Nullable[int]                                          `json:"rate_limit_web3"`
+	RefreshTokenRotationEnabled                   nullable.Nullable[bool]                                         `json:"refresh_token_rotation_enabled"`
+	SamlAllowEncryptedAssertions                  nullable.Nullable[bool]                                         `json:"saml_allow_encrypted_assertions"`
+	SamlEnabled                                   nullable.Nullable[bool]                                         `json:"saml_enabled"`
+	SamlExternalUrl                               nullable.Nullable[string]                                       `json:"saml_external_url"`
+	SecurityCaptchaEnabled                        nullable.Nullable[bool]                                         `json:"security_captcha_enabled"`
+	SecurityCaptchaProvider                       nullable.Nullable[AuthConfigResponseSecurityCaptchaProvider]    `json:"security_captcha_provider"`
+	SecurityCaptchaSecret                         nullable.Nullable[string]                                       `json:"security_captcha_secret"`
+	SecurityManualLinkingEnabled                  nullable.Nullable[bool]                                         `json:"security_manual_linking_enabled"`
+	SecurityRefreshTokenReuseInterval             nullable.Nullable[int]                                          `json:"security_refresh_token_reuse_interval"`
+	SecurityUpdatePasswordRequireReauthentication nullable.Nullable[bool]                                         `json:"security_update_password_require_reauthentication"`
+	SessionsInactivityTimeout                     nullable.Nullable[int]                                          `json:"sessions_inactivity_timeout"`
+	SessionsSinglePerUser                         nullable.Nullable[bool]                                         `json:"sessions_single_per_user"`
+	SessionsTags                                  nullable.Nullable[string]                                       `json:"sessions_tags"`
+	SessionsTimebox                               nullable.Nullable[int]                                          `json:"sessions_timebox"`
+	SiteUrl                                       nullable.Nullable[string]                                       `json:"site_url"`
+	SmsAutoconfirm                                nullable.Nullable[bool]                                         `json:"sms_autoconfirm"`
+	SmsMaxFrequency                               nullable.Nullable[int]                                          `json:"sms_max_frequency"`
+	SmsMessagebirdAccessKey                       nullable.Nullable[string]                                       `json:"sms_messagebird_access_key"`
+	SmsMessagebirdOriginator                      nullable.Nullable[string]                                       `json:"sms_messagebird_originator"`
+	SmsOtpExp                                     nullable.Nullable[int]                                          `json:"sms_otp_exp"`
+	SmsOtpLength                                  int                                                             `json:"sms_otp_length"`
+	SmsProvider                                   nullable.Nullable[AuthConfigResponseSmsProvider]                `json:"sms_provider"`
+	SmsTemplate                                   nullable.Nullable[string]                                       `json:"sms_template"`
+	SmsTestOtp                                    nullable.Nullable[string]                                       `json:"sms_test_otp"`
+	SmsTestOtpValidUntil                          nullable.Nullable[time.Time]                                    `json:"sms_test_otp_valid_until"`
+	SmsTextlocalApiKey                            nullable.Nullable[string]                                       `json:"sms_textlocal_api_key"`
+	SmsTextlocalSender                            nullable.Nullable[string]                                       `json:"sms_textlocal_sender"`
+	SmsTwilioAccountSid                           nullable.Nullable[string]                                       `json:"sms_twilio_account_sid"`
+	SmsTwilioAuthToken                            nullable.Nullable[string]                                       `json:"sms_twilio_auth_token"`
+	SmsTwilioContentSid                           nullable.Nullable[string]                                       `json:"sms_twilio_content_sid"`
+	SmsTwilioMessageServiceSid                    nullable.Nullable[string]                                       `json:"sms_twilio_message_service_sid"`
+	SmsTwilioVerifyAccountSid                     nullable.Nullable[string]                                       `json:"sms_twilio_verify_account_sid"`
+	SmsTwilioVerifyAuthToken                      nullable.Nullable[string]                                       `json:"sms_twilio_verify_auth_token"`
+	SmsTwilioVerifyMessageServiceSid              nullable.Nullable[string]                                       `json:"sms_twilio_verify_message_service_sid"`
+	SmsVonageApiKey                               nullable.Nullable[string]                                       `json:"sms_vonage_api_key"`
+	SmsVonageApiSecret                            nullable.Nullable[string]                                       `json:"sms_vonage_api_secret"`
+	SmsVonageFrom                                 nullable.Nullable[string]                                       `json:"sms_vonage_from"`
+	SmtpAdminEmail                                nullable.Nullable[string]                                       `json:"smtp_admin_email"`
+	SmtpHost                                      nullable.Nullable[string]                                       `json:"smtp_host"`
+	SmtpMaxFrequency                              nullable.Nullable[int]                                          `json:"smtp_max_frequency"`
+	SmtpPass                                      nullable.Nullable[string]                                       `json:"smtp_pass"`
+	SmtpPort                                      nullable.Nullable[string]                                       `json:"smtp_port"`
+	SmtpSenderName                                nullable.Nullable[string]                                       `json:"smtp_sender_name"`
+	SmtpUser                                      nullable.Nullable[string]                                       `json:"smtp_user"`
+	UriAllowList                                  nullable.Nullable[string]                                       `json:"uri_allow_list"`
 }
+
+// AuthConfigResponsePasswordRequiredCharacters defines model for AuthConfigResponse.PasswordRequiredCharacters.
+type AuthConfigResponsePasswordRequiredCharacters string
+
+// AuthConfigResponseSecurityCaptchaProvider defines model for AuthConfigResponse.SecurityCaptchaProvider.
+type AuthConfigResponseSecurityCaptchaProvider string
+
+// AuthConfigResponseSmsProvider defines model for AuthConfigResponse.SmsProvider.
+type AuthConfigResponseSmsProvider string
 
 // BranchActionBody defines model for BranchActionBody.
 type BranchActionBody struct {
@@ -1228,7 +1286,7 @@ type BulkUpdateFunctionBodyStatus string
 // BulkUpdateFunctionResponse defines model for BulkUpdateFunctionResponse.
 type BulkUpdateFunctionResponse struct {
 	Functions []struct {
-		CreatedAt      int                                       `json:"created_at"`
+		CreatedAt      int64                                     `json:"created_at"`
 		EntrypointPath *string                                   `json:"entrypoint_path,omitempty"`
 		Id             string                                    `json:"id"`
 		ImportMap      *bool                                     `json:"import_map,omitempty"`
@@ -1236,7 +1294,7 @@ type BulkUpdateFunctionResponse struct {
 		Name           string                                    `json:"name"`
 		Slug           string                                    `json:"slug"`
 		Status         BulkUpdateFunctionResponseFunctionsStatus `json:"status"`
-		UpdatedAt      int                                       `json:"updated_at"`
+		UpdatedAt      int64                                     `json:"updated_at"`
 		VerifyJwt      *bool                                     `json:"verify_jwt,omitempty"`
 		Version        int                                       `json:"version"`
 	} `json:"functions"`
@@ -1286,6 +1344,15 @@ type CreateBranchBodyReleaseChannel string
 // CreateOrganizationV1 defines model for CreateOrganizationV1.
 type CreateOrganizationV1 struct {
 	Name string `json:"name"`
+}
+
+// CreateProjectClaimTokenResponse defines model for CreateProjectClaimTokenResponse.
+type CreateProjectClaimTokenResponse struct {
+	CreatedAt  string             `json:"created_at"`
+	CreatedBy  openapi_types.UUID `json:"created_by"`
+	ExpiresAt  string             `json:"expires_at"`
+	Token      string             `json:"token"`
+	TokenAlias string             `json:"token_alias"`
 }
 
 // CreateProviderBody defines model for CreateProviderBody.
@@ -1457,7 +1524,7 @@ type FunctionResponseStatus string
 
 // FunctionSlugResponse defines model for FunctionSlugResponse.
 type FunctionSlugResponse struct {
-	CreatedAt      int                        `json:"created_at"`
+	CreatedAt      int64                      `json:"created_at"`
 	EntrypointPath *string                    `json:"entrypoint_path,omitempty"`
 	Id             string                     `json:"id"`
 	ImportMap      *bool                      `json:"import_map,omitempty"`
@@ -1465,7 +1532,7 @@ type FunctionSlugResponse struct {
 	Name           string                     `json:"name"`
 	Slug           string                     `json:"slug"`
 	Status         FunctionSlugResponseStatus `json:"status"`
-	UpdatedAt      int                        `json:"updated_at"`
+	UpdatedAt      int64                      `json:"updated_at"`
 	VerifyJwt      *bool                      `json:"verify_jwt,omitempty"`
 	Version        int                        `json:"version"`
 }
@@ -1744,6 +1811,46 @@ type OAuthTokenResponse struct {
 // OAuthTokenResponseTokenType defines model for OAuthTokenResponse.TokenType.
 type OAuthTokenResponseTokenType string
 
+// OrganizationProjectClaimResponse defines model for OrganizationProjectClaimResponse.
+type OrganizationProjectClaimResponse struct {
+	CreatedAt string             `json:"created_at"`
+	CreatedBy openapi_types.UUID `json:"created_by"`
+	ExpiresAt string             `json:"expires_at"`
+	Preview   struct {
+		Errors []struct {
+			Key     string `json:"key"`
+			Message string `json:"message"`
+		} `json:"errors"`
+		Info []struct {
+			Key     string `json:"key"`
+			Message string `json:"message"`
+		} `json:"info"`
+		MembersExceedingFreeProjectLimit []struct {
+			Limit float32 `json:"limit"`
+			Name  string  `json:"name"`
+		} `json:"members_exceeding_free_project_limit"`
+		SourceSubscriptionPlan                OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan                    `json:"source_subscription_plan"`
+		TargetOrganizationEligible            nullable.Nullable[bool]                                                          `json:"target_organization_eligible"`
+		TargetOrganizationHasFreeProjectSlots nullable.Nullable[bool]                                                          `json:"target_organization_has_free_project_slots"`
+		TargetSubscriptionPlan                nullable.Nullable[OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan] `json:"target_subscription_plan"`
+		Valid                                 bool                                                                             `json:"valid"`
+		Warnings                              []struct {
+			Key     string `json:"key"`
+			Message string `json:"message"`
+		} `json:"warnings"`
+	} `json:"preview"`
+	Project struct {
+		Name string `json:"name"`
+		Ref  string `json:"ref"`
+	} `json:"project"`
+}
+
+// OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan defines model for OrganizationProjectClaimResponse.Preview.SourceSubscriptionPlan.
+type OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan string
+
+// OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan defines model for OrganizationProjectClaimResponse.Preview.TargetSubscriptionPlan.
+type OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan string
+
 // OrganizationResponseV1 defines model for OrganizationResponseV1.
 type OrganizationResponseV1 struct {
 	Id   string `json:"id"`
@@ -1794,6 +1901,14 @@ type PostgrestConfigWithJWTSecretResponse struct {
 	DbSchema  string                 `json:"db_schema"`
 	JwtSecret *string                `json:"jwt_secret,omitempty"`
 	MaxRows   int                    `json:"max_rows"`
+}
+
+// ProjectClaimTokenResponse defines model for ProjectClaimTokenResponse.
+type ProjectClaimTokenResponse struct {
+	CreatedAt  string             `json:"created_at"`
+	CreatedBy  openapi_types.UUID `json:"created_by"`
+	ExpiresAt  string             `json:"expires_at"`
+	TokenAlias string             `json:"token_alias"`
 }
 
 // ProjectUpgradeEligibilityResponse defines model for ProjectUpgradeEligibilityResponse.
@@ -2429,6 +2544,14 @@ type V1BackupsResponse struct {
 // V1BackupsResponseBackupsStatus defines model for V1BackupsResponse.Backups.Status.
 type V1BackupsResponseBackupsStatus string
 
+// V1CreateFunctionBody defines model for V1CreateFunctionBody.
+type V1CreateFunctionBody struct {
+	Body      string `json:"body"`
+	Name      string `json:"name"`
+	Slug      string `json:"slug"`
+	VerifyJwt *bool  `json:"verify_jwt,omitempty"`
+}
+
 // V1CreateMigrationBody defines model for V1CreateMigrationBody.
 type V1CreateMigrationBody struct {
 	Name  *string `json:"name,omitempty"`
@@ -2718,26 +2841,26 @@ type VanitySubdomainConfigResponseStatus string
 // V1AuthorizeUserParams defines parameters for V1AuthorizeUser.
 type V1AuthorizeUserParams struct {
 	ClientId            openapi_types.UUID                        `form:"client_id" json:"client_id"`
-	ResponseType        V1AuthorizeUserParamsResponseType         `form:"response_type" json:"response_type"`
-	RedirectUri         string                                    `form:"redirect_uri" json:"redirect_uri"`
-	Scope               *string                                   `form:"scope,omitempty" json:"scope,omitempty"`
-	State               *string                                   `form:"state,omitempty" json:"state,omitempty"`
-	ResponseMode        *string                                   `form:"response_mode,omitempty" json:"response_mode,omitempty"`
 	CodeChallenge       *string                                   `form:"code_challenge,omitempty" json:"code_challenge,omitempty"`
 	CodeChallengeMethod *V1AuthorizeUserParamsCodeChallengeMethod `form:"code_challenge_method,omitempty" json:"code_challenge_method,omitempty"`
+	RedirectUri         string                                    `form:"redirect_uri" json:"redirect_uri"`
+	ResponseMode        *string                                   `form:"response_mode,omitempty" json:"response_mode,omitempty"`
+	ResponseType        V1AuthorizeUserParamsResponseType         `form:"response_type" json:"response_type"`
+	Scope               *string                                   `form:"scope,omitempty" json:"scope,omitempty"`
+	State               *string                                   `form:"state,omitempty" json:"state,omitempty"`
 }
-
-// V1AuthorizeUserParamsResponseType defines parameters for V1AuthorizeUser.
-type V1AuthorizeUserParamsResponseType string
 
 // V1AuthorizeUserParamsCodeChallengeMethod defines parameters for V1AuthorizeUser.
 type V1AuthorizeUserParamsCodeChallengeMethod string
 
+// V1AuthorizeUserParamsResponseType defines parameters for V1AuthorizeUser.
+type V1AuthorizeUserParamsResponseType string
+
 // GetLogsParams defines parameters for GetLogs.
 type GetLogsParams struct {
-	Sql               *string    `form:"sql,omitempty" json:"sql,omitempty"`
-	IsoTimestampStart *time.Time `form:"iso_timestamp_start,omitempty" json:"iso_timestamp_start,omitempty"`
 	IsoTimestampEnd   *time.Time `form:"iso_timestamp_end,omitempty" json:"iso_timestamp_end,omitempty"`
+	IsoTimestampStart *time.Time `form:"iso_timestamp_start,omitempty" json:"iso_timestamp_start,omitempty"`
+	Sql               *string    `form:"sql,omitempty" json:"sql,omitempty"`
 }
 
 // GetApiCountsParams defines parameters for GetApiCounts.
@@ -2786,45 +2909,47 @@ type V1ApplyAMigrationParams struct {
 
 // V1CreateAFunctionParams defines parameters for V1CreateAFunction.
 type V1CreateAFunctionParams struct {
-	Slug *string `form:"slug,omitempty" json:"slug,omitempty"`
-	Name *string `form:"name,omitempty" json:"name,omitempty"`
+	EntrypointPath *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
+
+	// ImportMap Boolean string, true or false
+	ImportMap     *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
+	ImportMapPath *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
+	Name          *string `form:"name,omitempty" json:"name,omitempty"`
+	Slug          *string `form:"slug,omitempty" json:"slug,omitempty"`
 
 	// VerifyJwt Boolean string, true or false
 	VerifyJwt *bool `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
-
-	// ImportMap Boolean string, true or false
-	ImportMap      *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
-	EntrypointPath *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
-	ImportMapPath  *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
 }
 
 // V1DeployAFunctionParams defines parameters for V1DeployAFunction.
 type V1DeployAFunctionParams struct {
-	Slug *string `form:"slug,omitempty" json:"slug,omitempty"`
-
 	// BundleOnly Boolean string, true or false
-	BundleOnly *bool `form:"bundleOnly,omitempty" json:"bundleOnly,omitempty"`
+	BundleOnly *bool   `form:"bundleOnly,omitempty" json:"bundleOnly,omitempty"`
+	Slug       *string `form:"slug,omitempty" json:"slug,omitempty"`
 }
 
 // V1UpdateAFunctionParams defines parameters for V1UpdateAFunction.
 type V1UpdateAFunctionParams struct {
-	Slug *string `form:"slug,omitempty" json:"slug,omitempty"`
-	Name *string `form:"name,omitempty" json:"name,omitempty"`
+	EntrypointPath *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
+
+	// ImportMap Boolean string, true or false
+	ImportMap     *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
+	ImportMapPath *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
+	Name          *string `form:"name,omitempty" json:"name,omitempty"`
+	Slug          *string `form:"slug,omitempty" json:"slug,omitempty"`
 
 	// VerifyJwt Boolean string, true or false
 	VerifyJwt *bool `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
-
-	// ImportMap Boolean string, true or false
-	ImportMap      *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
-	EntrypointPath *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
-	ImportMapPath  *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
 }
 
 // V1GetServicesHealthParams defines parameters for V1GetServicesHealth.
 type V1GetServicesHealthParams struct {
-	Services  []interface{} `form:"services" json:"services"`
-	TimeoutMs *int          `form:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`
+	Services  []V1GetServicesHealthParamsServices `form:"services" json:"services"`
+	TimeoutMs *int                                `form:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`
 }
+
+// V1GetServicesHealthParamsServices defines parameters for V1GetServicesHealth.
+type V1GetServicesHealthParamsServices string
 
 // V1BulkDeleteSecretsJSONBody defines parameters for V1BulkDeleteSecrets.
 type V1BulkDeleteSecretsJSONBody = []string
@@ -2841,10 +2966,11 @@ type V1GetPostgresUpgradeStatusParams struct {
 
 // V1ListAllSnippetsParams defines parameters for V1ListAllSnippets.
 type V1ListAllSnippetsParams struct {
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *string `form:"limit,omitempty" json:"limit,omitempty"`
+
 	// ProjectRef Project ref
 	ProjectRef *string                           `form:"project_ref,omitempty" json:"project_ref,omitempty"`
-	Cursor     *string                           `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit      *string                           `form:"limit,omitempty" json:"limit,omitempty"`
 	SortBy     *V1ListAllSnippetsParamsSortBy    `form:"sort_by,omitempty" json:"sort_by,omitempty"`
 	SortOrder  *V1ListAllSnippetsParamsSortOrder `form:"sort_order,omitempty" json:"sort_order,omitempty"`
 }
@@ -2929,6 +3055,9 @@ type V1ApplyAMigrationJSONRequestBody = V1CreateMigrationBody
 
 // V1RunAQueryJSONRequestBody defines body for V1RunAQuery for application/json ContentType.
 type V1RunAQueryJSONRequestBody = V1RunQueryBody
+
+// V1CreateAFunctionJSONRequestBody defines body for V1CreateAFunction for application/json ContentType.
+type V1CreateAFunctionJSONRequestBody = V1CreateFunctionBody
 
 // V1BulkUpdateFunctionsJSONRequestBody defines body for V1BulkUpdateFunctions for application/json ContentType.
 type V1BulkUpdateFunctionsJSONRequestBody = BulkUpdateFunctionBody

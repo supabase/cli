@@ -60,7 +60,7 @@ func TestAuthDiff(t *testing.T) {
 			DisableSignup:                     nullable.NewNullableWithValue(false),
 			ExternalAnonymousUsersEnabled:     nullable.NewNullableWithValue(true),
 			PasswordMinLength:                 nullable.NewNullableWithValue(6),
-			PasswordRequiredCharacters:        nullable.NewNullableWithValue(string(v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789)),
+			PasswordRequiredCharacters:        nullable.NewNullableWithValue(v1API.AuthConfigResponsePasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -90,7 +90,7 @@ func TestAuthDiff(t *testing.T) {
 			DisableSignup:                     nullable.NewNullableWithValue(false),
 			ExternalAnonymousUsersEnabled:     nullable.NewNullableWithValue(true),
 			PasswordMinLength:                 nullable.NewNullableWithValue(8),
-			PasswordRequiredCharacters:        nullable.NewNullableWithValue(string(v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789)),
+			PasswordRequiredCharacters:        nullable.NewNullableWithValue(v1API.AuthConfigResponsePasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -111,7 +111,7 @@ func TestAuthDiff(t *testing.T) {
 			DisableSignup:                     nullable.NewNullableWithValue(true),
 			ExternalAnonymousUsersEnabled:     nullable.NewNullableWithValue(false),
 			PasswordMinLength:                 nullable.NewNullableWithValue(0),
-			PasswordRequiredCharacters:        nullable.NewNullableWithValue(""),
+			PasswordRequiredCharacters:        nullable.NewNullableWithValue(v1API.AuthConfigResponsePasswordRequiredCharactersEmpty),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -133,7 +133,7 @@ func TestCaptchaDiff(t *testing.T) {
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			SecurityCaptchaEnabled:  nullable.NewNullableWithValue(true),
-			SecurityCaptchaProvider: nullable.NewNullableWithValue("hcaptcha"),
+			SecurityCaptchaProvider: nullable.NewNullableWithValue(v1API.AuthConfigResponseSecurityCaptchaProviderHcaptcha),
 			SecurityCaptchaSecret:   nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
 		})
 		// Check error
@@ -154,7 +154,7 @@ func TestCaptchaDiff(t *testing.T) {
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			SecurityCaptchaEnabled:  nullable.NewNullableWithValue(true),
-			SecurityCaptchaProvider: nullable.NewNullableWithValue("hcaptcha"),
+			SecurityCaptchaProvider: nullable.NewNullableWithValue(v1API.AuthConfigResponseSecurityCaptchaProviderHcaptcha),
 			SecurityCaptchaSecret:   nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
 		})
 		// Check error
@@ -175,7 +175,7 @@ func TestCaptchaDiff(t *testing.T) {
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			SecurityCaptchaEnabled:  nullable.NewNullableWithValue(false),
-			SecurityCaptchaProvider: nullable.NewNullableWithValue("hcaptcha"),
+			SecurityCaptchaProvider: nullable.NewNullableWithValue(v1API.AuthConfigResponseSecurityCaptchaProviderHcaptcha),
 			SecurityCaptchaSecret:   nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
 		})
 		// Check error
@@ -202,7 +202,7 @@ func TestCaptchaDiff(t *testing.T) {
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			SecurityCaptchaEnabled:  nullable.NewNullableWithValue(true),
-			SecurityCaptchaProvider: nullable.NewNullableWithValue("hcaptcha"),
+			SecurityCaptchaProvider: nullable.NewNullableWithValue(v1API.AuthConfigResponseSecurityCaptchaProviderHcaptcha),
 			SecurityCaptchaSecret:   nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
 		})
 		// Check error
@@ -759,10 +759,10 @@ func TestSmsDiff(t *testing.T) {
 			SmsMaxFrequency:            nullable.NewNullableWithValue(60),
 			SmsOtpExp:                  nullable.NewNullableWithValue(3600),
 			SmsOtpLength:               6,
-			SmsProvider:                nullable.NewNullableWithValue("twilio"),
+			SmsProvider:                nullable.NewNullableWithValue(v1API.AuthConfigResponseSmsProviderTwilio),
 			SmsTemplate:                nullable.NewNullableWithValue("Your code is {{ .Code }}"),
 			SmsTestOtp:                 nullable.NewNullableWithValue("123=456"),
-			SmsTestOtpValidUntil:       nullable.NewNullableWithValue("2050-01-01T01:00:00Z"),
+			SmsTestOtpValidUntil:       nullable.NewNullableWithValue(time.Date(2050, 1, 1, 1, 0, 0, 0, time.UTC)),
 			SmsTwilioAccountSid:        nullable.NewNullableWithValue("test-account"),
 			SmsTwilioAuthToken:         nullable.NewNullableWithValue("c84443bc59b92caef8ec8500ff443584793756749523811eb333af2bbc74fc88"),
 			SmsTwilioContentSid:        nullable.NewNullableWithValue("test-content"),
@@ -793,10 +793,10 @@ func TestSmsDiff(t *testing.T) {
 			SmsMaxFrequency:            nullable.NewNullableWithValue(60),
 			SmsOtpExp:                  nullable.NewNullableWithValue(3600),
 			SmsOtpLength:               6,
-			SmsProvider:                nullable.NewNullableWithValue("twilio"),
+			SmsProvider:                nullable.NewNullableWithValue(v1API.AuthConfigResponseSmsProviderTwilio),
 			SmsTemplate:                nullable.NewNullableWithValue("Your code is {{ .Code }}"),
 			SmsTestOtp:                 nullable.NewNullableWithValue("123=456,456=123"),
-			SmsTestOtpValidUntil:       nullable.NewNullableWithValue("2050-01-01T01:00:00Z"),
+			SmsTestOtpValidUntil:       nullable.NewNullableWithValue(time.Date(2050, 1, 1, 1, 0, 0, 0, time.UTC)),
 			SmsTwilioAccountSid:        nullable.NewNullableWithValue("test-account"),
 			SmsTwilioAuthToken:         nullable.NewNullableWithValue("c84443bc59b92caef8ec8500ff443584793756749523811eb333af2bbc74fc88"),
 			SmsTwilioContentSid:        nullable.NewNullableWithValue("test-content"),
@@ -831,7 +831,7 @@ func TestSmsDiff(t *testing.T) {
 			SmsMaxFrequency:            nullable.NewNullableWithValue(0),
 			SmsOtpExp:                  nullable.NewNullableWithValue(3600),
 			SmsOtpLength:               6,
-			SmsProvider:                nullable.NewNullableWithValue("twilio"),
+			SmsProvider:                nullable.NewNullableWithValue(v1API.AuthConfigResponseSmsProviderTwilio),
 			SmsTemplate:                nullable.NewNullableWithValue(""),
 			SmsTwilioAccountSid:        nullable.NewNullableWithValue("test-account"),
 			SmsTwilioAuthToken:         nullable.NewNullableWithValue("c84443bc59b92caef8ec8500ff443584793756749523811eb333af2bbc74fc88"),
@@ -861,8 +861,8 @@ func TestSmsDiff(t *testing.T) {
 			SmsOtpLength:             6,
 			SmsTemplate:              nullable.NewNullableWithValue("Your code is {{ .Code }}"),
 			SmsTestOtp:               nullable.NewNullableWithValue("123=456"),
-			SmsTestOtpValidUntil:     nullable.NewNullableWithValue("2050-01-01T01:00:00Z"),
-			SmsProvider:              nullable.NewNullableWithValue("messagebird"),
+			SmsTestOtpValidUntil:     nullable.NewNullableWithValue(time.Date(2050, 1, 1, 1, 0, 0, 0, time.UTC)),
+			SmsProvider:              nullable.NewNullableWithValue(v1API.AuthConfigResponseSmsProviderMessagebird),
 			SmsMessagebirdAccessKey:  nullable.NewNullableWithValue("test-messagebird-key"),
 			SmsMessagebirdOriginator: nullable.NewNullableWithValue("test-messagebird-originator"),
 		})
@@ -879,7 +879,7 @@ func TestSmsDiff(t *testing.T) {
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			ExternalPhoneEnabled: nullable.NewNullableWithValue(false),
-			SmsProvider:          nullable.NewNullableWithValue("twilio"),
+			SmsProvider:          nullable.NewNullableWithValue(v1API.AuthConfigResponseSmsProviderTwilio),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -892,7 +892,7 @@ func TestSmsDiff(t *testing.T) {
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
 			ExternalPhoneEnabled:    nullable.NewNullableWithValue(false),
-			SmsProvider:             nullable.NewNullableWithValue("messagebird"),
+			SmsProvider:             nullable.NewNullableWithValue(v1API.AuthConfigResponseSmsProviderMessagebird),
 			SmsMessagebirdAccessKey: nullable.NewNullableWithValue(""),
 		})
 		// Check error
