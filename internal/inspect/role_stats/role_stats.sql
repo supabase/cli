@@ -15,4 +15,4 @@ SELECT
   array_to_string(rolconfig, ',', '*') as custom_config
 FROM
   pg_roles 
-ORDER BY 3 DESC
+ORDER BY 1 DESC
