@@ -2666,39 +2666,7 @@ func NewV1AuthorizeUserRequest(server string, params *V1AuthorizeUserParams) (*h
 			}
 		}
 
-		if params.CodeChallenge != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "code_challenge", runtime.ParamLocationQuery, *params.CodeChallenge); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.CodeChallengeMethod != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "code_challenge_method", runtime.ParamLocationQuery, *params.CodeChallengeMethod); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "redirect_uri", runtime.ParamLocationQuery, params.RedirectUri); err != nil {
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "response_type", runtime.ParamLocationQuery, params.ResponseType); err != nil {
 			return nil, err
 		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 			return nil, err
@@ -2710,23 +2678,7 @@ func NewV1AuthorizeUserRequest(server string, params *V1AuthorizeUserParams) (*h
 			}
 		}
 
-		if params.ResponseMode != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "response_mode", runtime.ParamLocationQuery, *params.ResponseMode); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "response_type", runtime.ParamLocationQuery, params.ResponseType); err != nil {
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "redirect_uri", runtime.ParamLocationQuery, params.RedirectUri); err != nil {
 			return nil, err
 		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 			return nil, err
@@ -2757,6 +2709,54 @@ func NewV1AuthorizeUserRequest(server string, params *V1AuthorizeUserParams) (*h
 		if params.State != nil {
 
 			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "state", runtime.ParamLocationQuery, *params.State); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.ResponseMode != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "response_mode", runtime.ParamLocationQuery, *params.ResponseMode); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.CodeChallenge != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "code_challenge", runtime.ParamLocationQuery, *params.CodeChallenge); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.CodeChallengeMethod != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "code_challenge_method", runtime.ParamLocationQuery, *params.CodeChallengeMethod); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -3310,9 +3310,9 @@ func NewGetLogsRequest(server string, ref string, params *GetLogsParams) (*http.
 	if params != nil {
 		queryValues := queryURL.Query()
 
-		if params.IsoTimestampEnd != nil {
+		if params.Sql != nil {
 
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "iso_timestamp_end", runtime.ParamLocationQuery, *params.IsoTimestampEnd); err != nil {
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "sql", runtime.ParamLocationQuery, *params.Sql); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -3342,9 +3342,9 @@ func NewGetLogsRequest(server string, ref string, params *GetLogsParams) (*http.
 
 		}
 
-		if params.Sql != nil {
+		if params.IsoTimestampEnd != nil {
 
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "sql", runtime.ParamLocationQuery, *params.Sql); err != nil {
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "iso_timestamp_end", runtime.ParamLocationQuery, *params.IsoTimestampEnd); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -5629,41 +5629,9 @@ func NewV1CreateAFunctionRequestWithBody(server string, ref string, params *V1Cr
 	if params != nil {
 		queryValues := queryURL.Query()
 
-		if params.EntrypointPath != nil {
+		if params.Slug != nil {
 
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "entrypoint_path", runtime.ParamLocationQuery, *params.EntrypointPath); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.ImportMap != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "import_map", runtime.ParamLocationQuery, *params.ImportMap); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.ImportMapPath != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "import_map_path", runtime.ParamLocationQuery, *params.ImportMapPath); err != nil {
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "slug", runtime.ParamLocationQuery, *params.Slug); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -5693,9 +5661,9 @@ func NewV1CreateAFunctionRequestWithBody(server string, ref string, params *V1Cr
 
 		}
 
-		if params.Slug != nil {
+		if params.VerifyJwt != nil {
 
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "slug", runtime.ParamLocationQuery, *params.Slug); err != nil {
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "verify_jwt", runtime.ParamLocationQuery, *params.VerifyJwt); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -5709,9 +5677,41 @@ func NewV1CreateAFunctionRequestWithBody(server string, ref string, params *V1Cr
 
 		}
 
-		if params.VerifyJwt != nil {
+		if params.ImportMap != nil {
 
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "verify_jwt", runtime.ParamLocationQuery, *params.VerifyJwt); err != nil {
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "import_map", runtime.ParamLocationQuery, *params.ImportMap); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.EntrypointPath != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "entrypoint_path", runtime.ParamLocationQuery, *params.EntrypointPath); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.ImportMapPath != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "import_map_path", runtime.ParamLocationQuery, *params.ImportMapPath); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -5814,9 +5814,9 @@ func NewV1DeployAFunctionRequestWithBody(server string, ref string, params *V1De
 	if params != nil {
 		queryValues := queryURL.Query()
 
-		if params.BundleOnly != nil {
+		if params.Slug != nil {
 
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "bundleOnly", runtime.ParamLocationQuery, *params.BundleOnly); err != nil {
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "slug", runtime.ParamLocationQuery, *params.Slug); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -5830,9 +5830,9 @@ func NewV1DeployAFunctionRequestWithBody(server string, ref string, params *V1De
 
 		}
 
-		if params.Slug != nil {
+		if params.BundleOnly != nil {
 
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "slug", runtime.ParamLocationQuery, *params.Slug); err != nil {
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "bundleOnly", runtime.ParamLocationQuery, *params.BundleOnly); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -5988,41 +5988,9 @@ func NewV1UpdateAFunctionRequestWithBody(server string, ref string, functionSlug
 	if params != nil {
 		queryValues := queryURL.Query()
 
-		if params.EntrypointPath != nil {
+		if params.Slug != nil {
 
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "entrypoint_path", runtime.ParamLocationQuery, *params.EntrypointPath); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.ImportMap != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "import_map", runtime.ParamLocationQuery, *params.ImportMap); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.ImportMapPath != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "import_map_path", runtime.ParamLocationQuery, *params.ImportMapPath); err != nil {
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "slug", runtime.ParamLocationQuery, *params.Slug); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -6052,9 +6020,9 @@ func NewV1UpdateAFunctionRequestWithBody(server string, ref string, functionSlug
 
 		}
 
-		if params.Slug != nil {
+		if params.VerifyJwt != nil {
 
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "slug", runtime.ParamLocationQuery, *params.Slug); err != nil {
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "verify_jwt", runtime.ParamLocationQuery, *params.VerifyJwt); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -6068,9 +6036,41 @@ func NewV1UpdateAFunctionRequestWithBody(server string, ref string, functionSlug
 
 		}
 
-		if params.VerifyJwt != nil {
+		if params.ImportMap != nil {
 
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "verify_jwt", runtime.ParamLocationQuery, *params.VerifyJwt); err != nil {
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "import_map", runtime.ParamLocationQuery, *params.ImportMap); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.EntrypointPath != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "entrypoint_path", runtime.ParamLocationQuery, *params.EntrypointPath); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.ImportMapPath != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "import_map_path", runtime.ParamLocationQuery, *params.ImportMapPath); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -7482,6 +7482,22 @@ func NewV1ListAllSnippetsRequest(server string, params *V1ListAllSnippetsParams)
 	if params != nil {
 		queryValues := queryURL.Query()
 
+		if params.ProjectRef != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "project_ref", runtime.ParamLocationQuery, *params.ProjectRef); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
 		if params.Cursor != nil {
 
 			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "cursor", runtime.ParamLocationQuery, *params.Cursor); err != nil {
@@ -7501,22 +7517,6 @@ func NewV1ListAllSnippetsRequest(server string, params *V1ListAllSnippetsParams)
 		if params.Limit != nil {
 
 			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.ProjectRef != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "project_ref", runtime.ParamLocationQuery, *params.ProjectRef); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err

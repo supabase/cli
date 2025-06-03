@@ -895,18 +895,18 @@ const (
 	NotUsed          VanitySubdomainConfigResponseStatus = "not-used"
 )
 
-// Defines values for V1AuthorizeUserParamsCodeChallengeMethod.
-const (
-	Plain  V1AuthorizeUserParamsCodeChallengeMethod = "plain"
-	S256   V1AuthorizeUserParamsCodeChallengeMethod = "S256"
-	Sha256 V1AuthorizeUserParamsCodeChallengeMethod = "sha256"
-)
-
 // Defines values for V1AuthorizeUserParamsResponseType.
 const (
 	Code         V1AuthorizeUserParamsResponseType = "code"
 	IdTokenToken V1AuthorizeUserParamsResponseType = "id_token token"
 	Token        V1AuthorizeUserParamsResponseType = "token"
+)
+
+// Defines values for V1AuthorizeUserParamsCodeChallengeMethod.
+const (
+	Plain  V1AuthorizeUserParamsCodeChallengeMethod = "plain"
+	S256   V1AuthorizeUserParamsCodeChallengeMethod = "S256"
+	Sha256 V1AuthorizeUserParamsCodeChallengeMethod = "sha256"
 )
 
 // Defines values for GetApiCountsParamsInterval.
@@ -2841,26 +2841,26 @@ type VanitySubdomainConfigResponseStatus string
 // V1AuthorizeUserParams defines parameters for V1AuthorizeUser.
 type V1AuthorizeUserParams struct {
 	ClientId            openapi_types.UUID                        `form:"client_id" json:"client_id"`
-	CodeChallenge       *string                                   `form:"code_challenge,omitempty" json:"code_challenge,omitempty"`
-	CodeChallengeMethod *V1AuthorizeUserParamsCodeChallengeMethod `form:"code_challenge_method,omitempty" json:"code_challenge_method,omitempty"`
-	RedirectUri         string                                    `form:"redirect_uri" json:"redirect_uri"`
-	ResponseMode        *string                                   `form:"response_mode,omitempty" json:"response_mode,omitempty"`
 	ResponseType        V1AuthorizeUserParamsResponseType         `form:"response_type" json:"response_type"`
+	RedirectUri         string                                    `form:"redirect_uri" json:"redirect_uri"`
 	Scope               *string                                   `form:"scope,omitempty" json:"scope,omitempty"`
 	State               *string                                   `form:"state,omitempty" json:"state,omitempty"`
+	ResponseMode        *string                                   `form:"response_mode,omitempty" json:"response_mode,omitempty"`
+	CodeChallenge       *string                                   `form:"code_challenge,omitempty" json:"code_challenge,omitempty"`
+	CodeChallengeMethod *V1AuthorizeUserParamsCodeChallengeMethod `form:"code_challenge_method,omitempty" json:"code_challenge_method,omitempty"`
 }
-
-// V1AuthorizeUserParamsCodeChallengeMethod defines parameters for V1AuthorizeUser.
-type V1AuthorizeUserParamsCodeChallengeMethod string
 
 // V1AuthorizeUserParamsResponseType defines parameters for V1AuthorizeUser.
 type V1AuthorizeUserParamsResponseType string
 
+// V1AuthorizeUserParamsCodeChallengeMethod defines parameters for V1AuthorizeUser.
+type V1AuthorizeUserParamsCodeChallengeMethod string
+
 // GetLogsParams defines parameters for GetLogs.
 type GetLogsParams struct {
-	IsoTimestampEnd   *time.Time `form:"iso_timestamp_end,omitempty" json:"iso_timestamp_end,omitempty"`
-	IsoTimestampStart *time.Time `form:"iso_timestamp_start,omitempty" json:"iso_timestamp_start,omitempty"`
 	Sql               *string    `form:"sql,omitempty" json:"sql,omitempty"`
+	IsoTimestampStart *time.Time `form:"iso_timestamp_start,omitempty" json:"iso_timestamp_start,omitempty"`
+	IsoTimestampEnd   *time.Time `form:"iso_timestamp_end,omitempty" json:"iso_timestamp_end,omitempty"`
 }
 
 // GetApiCountsParams defines parameters for GetApiCounts.
@@ -2909,37 +2909,38 @@ type V1ApplyAMigrationParams struct {
 
 // V1CreateAFunctionParams defines parameters for V1CreateAFunction.
 type V1CreateAFunctionParams struct {
-	EntrypointPath *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
-
-	// ImportMap Boolean string, true or false
-	ImportMap     *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
-	ImportMapPath *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
-	Name          *string `form:"name,omitempty" json:"name,omitempty"`
-	Slug          *string `form:"slug,omitempty" json:"slug,omitempty"`
+	Slug *string `form:"slug,omitempty" json:"slug,omitempty"`
+	Name *string `form:"name,omitempty" json:"name,omitempty"`
 
 	// VerifyJwt Boolean string, true or false
 	VerifyJwt *bool `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
+
+	// ImportMap Boolean string, true or false
+	ImportMap      *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
+	EntrypointPath *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
+	ImportMapPath  *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
 }
 
 // V1DeployAFunctionParams defines parameters for V1DeployAFunction.
 type V1DeployAFunctionParams struct {
+	Slug *string `form:"slug,omitempty" json:"slug,omitempty"`
+
 	// BundleOnly Boolean string, true or false
-	BundleOnly *bool   `form:"bundleOnly,omitempty" json:"bundleOnly,omitempty"`
-	Slug       *string `form:"slug,omitempty" json:"slug,omitempty"`
+	BundleOnly *bool `form:"bundleOnly,omitempty" json:"bundleOnly,omitempty"`
 }
 
 // V1UpdateAFunctionParams defines parameters for V1UpdateAFunction.
 type V1UpdateAFunctionParams struct {
-	EntrypointPath *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
-
-	// ImportMap Boolean string, true or false
-	ImportMap     *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
-	ImportMapPath *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
-	Name          *string `form:"name,omitempty" json:"name,omitempty"`
-	Slug          *string `form:"slug,omitempty" json:"slug,omitempty"`
+	Slug *string `form:"slug,omitempty" json:"slug,omitempty"`
+	Name *string `form:"name,omitempty" json:"name,omitempty"`
 
 	// VerifyJwt Boolean string, true or false
 	VerifyJwt *bool `form:"verify_jwt,omitempty" json:"verify_jwt,omitempty"`
+
+	// ImportMap Boolean string, true or false
+	ImportMap      *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
+	EntrypointPath *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
+	ImportMapPath  *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
 }
 
 // V1GetServicesHealthParams defines parameters for V1GetServicesHealth.
@@ -2966,11 +2967,10 @@ type V1GetPostgresUpgradeStatusParams struct {
 
 // V1ListAllSnippetsParams defines parameters for V1ListAllSnippets.
 type V1ListAllSnippetsParams struct {
-	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit  *string `form:"limit,omitempty" json:"limit,omitempty"`
-
 	// ProjectRef Project ref
 	ProjectRef *string                           `form:"project_ref,omitempty" json:"project_ref,omitempty"`
+	Cursor     *string                           `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit      *string                           `form:"limit,omitempty" json:"limit,omitempty"`
 	SortBy     *V1ListAllSnippetsParamsSortBy    `form:"sort_by,omitempty" json:"sort_by,omitempty"`
 	SortOrder  *V1ListAllSnippetsParamsSortOrder `form:"sort_order,omitempty" json:"sort_order,omitempty"`
 }
