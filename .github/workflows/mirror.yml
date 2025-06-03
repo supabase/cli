@@ -49,6 +49,10 @@ jobs:
   publish:
     needs:
       - setup
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     if: ${{ needs.setup.outputs.tags != needs.setup.outputs.curr }}
     strategy:
       matrix:
