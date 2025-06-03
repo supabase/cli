@@ -342,3 +342,5 @@ require (
 	mvdan.cc/gofumpt v0.8.0 // indirect
 	mvdan.cc/unparam v0.0.0-20250301125049-0df0534333a4 // indirect
 )
+
+replace github.com/supabase/cli/pkg v1.0.0 => ./pkg
