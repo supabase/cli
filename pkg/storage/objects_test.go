@@ -9,7 +9,6 @@ import (
 
 	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
-	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/pkg/fetcher"
 )
 
@@ -86,7 +85,8 @@ func TestParseFileOptionsContentTypeDetection(t *testing.T) {
 			err := mockApi.UploadObject(context.Background(), tt.filename, tt.filename, fsys, tt.opts...)
 			// Assert results
 			assert.NoError(t, err)
-			assert.Empty(t, apitest.ListUnmatchedRequests())
+			assert.Empty(t, gock.Pending())
+			assert.Empty(t, gock.GetUnmatchedRequests())
 		})
 	}
 }
