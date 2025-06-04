@@ -7,9 +7,11 @@ import (
 	"testing"
 
 	"github.com/jackc/pgconn"
+	"github.com/jackc/pgerrcode"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/pgtest"
@@ -72,5 +74,75 @@ func TestMigrationsDown(t *testing.T) {
 		err := Run(context.Background(), 1, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrNotExist)
+	})
+}
+
+var escapedSchemas = append(migration.ManagedSchemas, "extensions", "public")
+
+func TestResetRemote(t *testing.T) {
+	t.Run("resets remote database", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "0_schema.sql")
+		require.NoError(t, afero.WriteFile(fsys, path, nil, 0644))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(migration.ListSchemas, escapedSchemas).
+			Reply("SELECT 1", []interface{}{"private"}).
+			Query("DROP SCHEMA IF EXISTS private CASCADE").
+			Reply("DROP SCHEMA").
+			Query(migration.DropObjects).
+			Reply("INSERT 0")
+		helper.MockMigrationHistory(conn).
+			Query(migration.INSERT_MIGRATION_VERSION, "0", "schema", nil).
+			Reply("INSERT 0 1")
+		// Run test
+		err := ResetAll(context.Background(), "", conn.MockClient(t), fsys)
+		// Check error
+		assert.NoError(t, err)
+	})
+
+	t.Run("resets remote database with seed config disabled", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "0_schema.sql")
+		require.NoError(t, afero.WriteFile(fsys, path, nil, 0644))
+		seedPath := filepath.Join(utils.SupabaseDirPath, "seed.sql")
+		// Will raise an error when seeding
+		require.NoError(t, afero.WriteFile(fsys, seedPath, []byte("INSERT INTO test_table;"), 0644))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(migration.ListSchemas, escapedSchemas).
+			Reply("SELECT 1", []interface{}{"private"}).
+			Query("DROP SCHEMA IF EXISTS private CASCADE").
+			Reply("DROP SCHEMA").
+			Query(migration.DropObjects).
+			Reply("INSERT 0")
+		helper.MockMigrationHistory(conn).
+			Query(migration.INSERT_MIGRATION_VERSION, "0", "schema", nil).
+			Reply("INSERT 0 1")
+		utils.Config.Db.Seed.Enabled = false
+		// Run test
+		err := ResetAll(context.Background(), "", conn.MockClient(t), fsys)
+		// No error should be raised since we're skipping the seed
+		assert.NoError(t, err)
+	})
+
+	t.Run("throws error on drop schema failure", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(migration.ListSchemas, escapedSchemas).
+			Reply("SELECT 0").
+			Query(migration.DropObjects).
+			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations")
+		// Run test
+		err := ResetAll(context.Background(), "", conn.MockClient(t), fsys)
+		// Check error
+		assert.ErrorContains(t, err, "ERROR: permission denied for relation supabase_migrations (SQLSTATE 42501)")
 	})
 }
