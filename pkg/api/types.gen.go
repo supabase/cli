@@ -2838,6 +2838,11 @@ type VanitySubdomainConfigResponse struct {
 // VanitySubdomainConfigResponseStatus defines model for VanitySubdomainConfigResponse.Status.
 type VanitySubdomainConfigResponseStatus string
 
+// V1DiffABranchParams defines parameters for V1DiffABranch.
+type V1DiffABranchParams struct {
+	IncludedSchemas *string `form:"included_schemas,omitempty" json:"included_schemas,omitempty"`
+}
+
 // V1AuthorizeUserParams defines parameters for V1AuthorizeUser.
 type V1AuthorizeUserParams struct {
 	ClientId            openapi_types.UUID                        `form:"client_id" json:"client_id"`
