@@ -57,7 +57,7 @@ func TestMigrationsDown(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), 2, dbConfig, fsys, conn.Intercept)
 		// Check error
-		assert.ErrorIs(t, err, errOutOfRange)
+		assert.ErrorContains(t, err, "--last must be smaller than total applied migrations: 2")
 	})
 
 	t.Run("throws error on missing version", func(t *testing.T) {

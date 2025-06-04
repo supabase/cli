@@ -23,6 +23,7 @@ import (
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/migration/apply"
+	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/seed/buckets"
 	"github.com/supabase/cli/internal/utils"
@@ -30,13 +31,24 @@ import (
 	"github.com/supabase/cli/pkg/vault"
 )
 
-func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, version string, last uint, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if len(version) > 0 {
 		if _, err := strconv.Atoi(version); err != nil {
 			return errors.New(repair.ErrInvalidVersion)
 		}
 		if _, err := repair.GetMigrationFile(version, fsys); err != nil {
 			return err
+		}
+	} else if last > 0 {
+		localMigrations, err := list.LoadLocalVersions(fsys)
+		if err != nil {
+			return err
+		}
+		if total := uint(len(localMigrations)); last < total {
+			version = localMigrations[total-last-1]
+		} else {
+			// Negative skips all migrations
+			version = "-"
 		}
 	}
 	if !utils.IsLocalDatabase(config) {

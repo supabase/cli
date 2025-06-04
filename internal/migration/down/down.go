@@ -13,9 +13,7 @@ import (
 	"github.com/supabase/cli/pkg/migration"
 )
 
-var errOutOfRange = errors.New("last version must be smaller than total applied migrations")
-
-func Run(ctx context.Context, last int, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, last uint, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
 		return err
@@ -25,14 +23,11 @@ func Run(ctx context.Context, last int, config pgconn.Config, fsys afero.Fs, opt
 	if err != nil {
 		return err
 	}
-	version := ""
-	if i := len(remoteMigrations) - last; i > 0 {
-		version = remoteMigrations[i-1]
-	} else {
-		if i == 0 {
-			utils.CmdSuggestion = fmt.Sprintf("Try %s if you want to revert all migrations.", utils.Aqua("supabase db reset"))
-		}
-		return errors.New(errOutOfRange)
+	total := uint(len(remoteMigrations))
+	if total <= last {
+		utils.CmdSuggestion = fmt.Sprintf("Try %s if you want to revert all migrations.", utils.Aqua("supabase db reset"))
+		return errors.Errorf("--last must be smaller than total applied migrations: %d", total)
 	}
-	return reset.Run(ctx, version, config, fsys)
+	version := remoteMigrations[total-last-1]
+	return reset.Run(ctx, version, 0, config, fsys)
 }
