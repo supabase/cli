@@ -15,7 +15,7 @@ func Run(ctx context.Context, timestamp int64) error {
 	body := api.V1RestorePitrBody{RecoveryTimeTargetUnix: timestamp}
 	resp, err := utils.GetSupabase().V1RestorePitrBackupWithResponse(ctx, flags.ProjectRef, body)
 	if err != nil {
-		return errors.Errorf("failed to reset preview branch: %w", err)
+		return errors.Errorf("failed to restore backup: %w", err)
 	} else if resp.StatusCode() != http.StatusCreated {
 		return errors.Errorf("unexpected restore backup status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
