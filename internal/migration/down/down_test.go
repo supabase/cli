@@ -2,7 +2,6 @@ package down
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -62,18 +61,18 @@ func TestMigrationsDown(t *testing.T) {
 		assert.ErrorContains(t, err, "--last must be smaller than total applied migrations: 2")
 	})
 
-	t.Run("throws error on missing version", func(t *testing.T) {
+	t.Run("throws error on insufficient privilege", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
-			Reply("SELECT 2", []interface{}{"20221201000000"}, []interface{}{"20221201000001"})
+			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations")
 		// Run test
 		err := Run(context.Background(), 1, dbConfig, fsys, conn.Intercept)
 		// Check error
-		assert.ErrorIs(t, err, os.ErrNotExist)
+		assert.ErrorContains(t, err, "ERROR: permission denied for relation supabase_migrations (SQLSTATE 42501)")
 	})
 }
 
