@@ -96,7 +96,7 @@ func TestResetCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON([]storage.BucketResponse{})
 		// Run test
-		err := Run(context.Background(), "", dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), "", 0, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -106,7 +106,7 @@ func TestResetCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), "", pgconn.Config{Host: "db.supabase.co"}, fsys)
+		err := Run(context.Background(), "", 0, pgconn.Config{Host: "db.supabase.co"}, fsys)
 		// Check error
 		assert.ErrorIs(t, err, context.Canceled)
 	})
@@ -116,7 +116,7 @@ func TestResetCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), "", pgconn.Config{Host: "db.supabase.co"}, fsys)
+		err := Run(context.Background(), "", 0, pgconn.Config{Host: "db.supabase.co"}, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
@@ -131,7 +131,7 @@ func TestResetCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			Reply(http.StatusNotFound)
 		// Run test
-		err := Run(context.Background(), "", dbConfig, fsys)
+		err := Run(context.Background(), "", 0, dbConfig, fsys)
 		// Check error
 		assert.ErrorIs(t, err, utils.ErrNotRunning)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -153,7 +153,7 @@ func TestResetCommand(t *testing.T) {
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), "", dbConfig, fsys)
+		err := Run(context.Background(), "", 0, dbConfig, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
