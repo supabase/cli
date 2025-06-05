@@ -27,7 +27,7 @@ const (
 	SwiftInternalAccessControl = "internal"
 )
 
-func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang string, schemas []string, postgrestV9Compat bool, swiftAccessControl string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang string, schemas []string, postgrestV9Compat bool, postgrestVersion string, swiftAccessControl string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	originalURL := utils.ToPostgresURL(dbConfig)
 	// Add default schemas if --schema flag is not specified
 	if len(schemas) == 0 {
@@ -59,6 +59,9 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang str
 		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
 			return err
 		}
+
+		// Extract version from image tag and trim 'v' prefix
+		postgrestVersion = strings.TrimPrefix(utils.Config.Api.Image, "v")
 
 		if strings.Contains(utils.Config.Api.Image, "v9") {
 			postgrestV9Compat = true
@@ -94,6 +97,7 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang str
 				"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=" + included,
 				"PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL=" + swiftAccessControl,
 				fmt.Sprintf("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=%v", !postgrestV9Compat),
+				fmt.Sprintf("PG_META_POSTGREST_VERSION=%s", postgrestVersion),
 			},
 			Cmd: []string{"node", "dist/server/server.js"},
 		},
