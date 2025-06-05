@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/h2non/gock"
@@ -37,10 +38,22 @@ func TestServeCommand(t *testing.T) {
 			Reply(http.StatusOK)
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image), containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "success"))
-		// Run test
-		err := Run(context.Background(), "", nil, "", RuntimeOption{}, fsys)
-		// Check error
-		assert.NoError(t, err)
+
+		// Create a context with timeout to prevent test from hanging
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		// Create mock file watcher setup that doesn't watch any files
+		mockWatcherSetup := &MockFileWatcherSetup{
+			MockWatcher: nil, // No watcher needed for this test
+			MockPath:    "",  // No path needed
+			MockError:   nil, // No error
+		}
+
+		// Run test with timeout context and mock watcher
+		err := RunWithWatcher(ctx, "", nil, "", RuntimeOption{}, fsys, mockWatcherSetup)
+		// Check error - expect context.DeadlineExceeded because the server runs until cancelled
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
@@ -48,8 +61,16 @@ func TestServeCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
+
+		// Create mock file watcher setup
+		mockWatcherSetup := &MockFileWatcherSetup{
+			MockWatcher: nil,
+			MockPath:    "",
+			MockError:   nil,
+		}
+
 		// Run test
-		err := Run(context.Background(), "", nil, "", RuntimeOption{}, fsys)
+		err := RunWithWatcher(context.Background(), "", nil, "", RuntimeOption{}, fsys, mockWatcherSetup)
 		// Check error
 		assert.ErrorContains(t, err, "toml: expected = after a key, but the document ends there")
 	})
@@ -64,8 +85,16 @@ func TestServeCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_test/json").
 			Reply(http.StatusNotFound)
+
+		// Create mock file watcher setup
+		mockWatcherSetup := &MockFileWatcherSetup{
+			MockWatcher: nil,
+			MockPath:    "",
+			MockError:   nil,
+		}
+
 		// Run test
-		err := Run(context.Background(), "", nil, "", RuntimeOption{}, fsys)
+		err := RunWithWatcher(context.Background(), "", nil, "", RuntimeOption{}, fsys, mockWatcherSetup)
 		// Check error
 		assert.ErrorIs(t, err, utils.ErrNotRunning)
 	})
@@ -81,8 +110,16 @@ func TestServeCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_test/json").
 			Reply(http.StatusOK).
 			JSON(container.InspectResponse{})
+
+		// Create mock file watcher setup
+		mockWatcherSetup := &MockFileWatcherSetup{
+			MockWatcher: nil,
+			MockPath:    "",
+			MockError:   nil,
+		}
+
 		// Run test
-		err := Run(context.Background(), ".env", nil, "", RuntimeOption{}, fsys)
+		err := RunWithWatcher(context.Background(), ".env", nil, "", RuntimeOption{}, fsys, mockWatcherSetup)
 		// Check error
 		assert.ErrorContains(t, err, "open .env: file does not exist")
 	})
@@ -102,8 +139,16 @@ func TestServeCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_test/json").
 			Reply(http.StatusOK).
 			JSON(container.InspectResponse{})
+
+		// Create mock file watcher setup
+		mockWatcherSetup := &MockFileWatcherSetup{
+			MockWatcher: nil,
+			MockPath:    "",
+			MockError:   nil,
+		}
+
 		// Run test
-		err := Run(context.Background(), ".env", cast.Ptr(true), "import_map.json", RuntimeOption{}, fsys)
+		err := RunWithWatcher(context.Background(), ".env", cast.Ptr(true), "import_map.json", RuntimeOption{}, fsys, mockWatcherSetup)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrNotExist)
 	})

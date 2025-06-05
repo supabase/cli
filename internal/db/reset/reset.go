@@ -23,14 +23,15 @@ import (
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/migration/apply"
+	"github.com/supabase/cli/internal/migration/down"
+	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/seed/buckets"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/migration"
-	"github.com/supabase/cli/pkg/vault"
 )
 
-func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, version string, last uint, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if len(version) > 0 {
 		if _, err := strconv.Atoi(version); err != nil {
 			return errors.New(repair.ErrInvalidVersion)
@@ -38,14 +39,19 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 		if _, err := repair.GetMigrationFile(version, fsys); err != nil {
 			return err
 		}
+	} else if last > 0 {
+		localMigrations, err := list.LoadLocalVersions(fsys)
+		if err != nil {
+			return err
+		}
+		if total := uint(len(localMigrations)); last < total {
+			version = localMigrations[total-last-1]
+		} else {
+			// Negative skips all migrations
+			version = "-"
+		}
 	}
 	if !utils.IsLocalDatabase(config) {
-		msg := "Do you want to reset the remote database?"
-		if shouldReset, err := utils.NewConsole().PromptYesNo(ctx, msg, false); err != nil {
-			return err
-		} else if !shouldReset {
-			return errors.New(context.Canceled)
-		}
 		return resetRemote(ctx, version, config, fsys, options...)
 	}
 	// Config file is loaded before parsing --linked or --local flags
@@ -233,19 +239,19 @@ func listServicesToRestart() []string {
 }
 
 func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	msg := "Do you want to reset the remote database?"
+	if shouldReset, err := utils.NewConsole().PromptYesNo(ctx, msg, false); err != nil {
+		return err
+	} else if !shouldReset {
+		return errors.New(context.Canceled)
+	}
 	fmt.Fprintln(os.Stderr, "Resetting remote database"+toLogMessage(version))
 	conn, err := utils.ConnectByConfigStream(ctx, config, io.Discard, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
-	if err := migration.DropUserSchemas(ctx, conn); err != nil {
-		return err
-	}
-	if err := vault.UpsertVaultSecrets(ctx, utils.Config.Db.Vault, conn); err != nil {
-		return err
-	}
-	return apply.MigrateAndSeed(ctx, version, conn, fsys)
+	return down.ResetAll(ctx, version, conn, fsys)
 }
 
 func LikeEscapeSchema(schemas []string) (result []string) {
