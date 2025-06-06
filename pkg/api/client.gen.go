@@ -354,6 +354,11 @@ type ClientInterface interface {
 
 	V1ApplyAMigration(ctx context.Context, ref string, params *V1ApplyAMigrationParams, body V1ApplyAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1UpsertAMigrationWithBody request with any body
+	V1UpsertAMigrationWithBody(ctx context.Context, ref string, params *V1UpsertAMigrationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1UpsertAMigration(ctx context.Context, ref string, params *V1UpsertAMigrationParams, body V1UpsertAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1RunAQueryWithBody request with any body
 	V1RunAQueryWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1661,6 +1666,30 @@ func (c *Client) V1ApplyAMigrationWithBody(ctx context.Context, ref string, para
 
 func (c *Client) V1ApplyAMigration(ctx context.Context, ref string, params *V1ApplyAMigrationParams, body V1ApplyAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1ApplyAMigrationRequest(c.Server, ref, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpsertAMigrationWithBody(ctx context.Context, ref string, params *V1UpsertAMigrationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpsertAMigrationRequestWithBody(c.Server, ref, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpsertAMigration(ctx context.Context, ref string, params *V1UpsertAMigrationParams, body V1UpsertAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpsertAMigrationRequest(c.Server, ref, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5545,6 +5574,68 @@ func NewV1ApplyAMigrationRequestWithBody(server string, ref string, params *V1Ap
 	return req, nil
 }
 
+// NewV1UpsertAMigrationRequest calls the generic V1UpsertAMigration builder with application/json body
+func NewV1UpsertAMigrationRequest(server string, ref string, params *V1UpsertAMigrationParams, body V1UpsertAMigrationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1UpsertAMigrationRequestWithBody(server, ref, params, "application/json", bodyReader)
+}
+
+// NewV1UpsertAMigrationRequestWithBody generates requests for V1UpsertAMigration with any type of body
+func NewV1UpsertAMigrationRequestWithBody(server string, ref string, params *V1UpsertAMigrationParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/migrations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.IdempotencyKey != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "Idempotency-Key", runtime.ParamLocationHeader, *params.IdempotencyKey)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewV1RunAQueryRequest calls the generic V1RunAQuery builder with application/json body
 func NewV1RunAQueryRequest(server string, ref string, body V1RunAQueryJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -7985,6 +8076,11 @@ type ClientWithResponsesInterface interface {
 
 	V1ApplyAMigrationWithResponse(ctx context.Context, ref string, params *V1ApplyAMigrationParams, body V1ApplyAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ApplyAMigrationResponse, error)
 
+	// V1UpsertAMigrationWithBodyWithResponse request with any body
+	V1UpsertAMigrationWithBodyWithResponse(ctx context.Context, ref string, params *V1UpsertAMigrationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpsertAMigrationResponse, error)
+
+	V1UpsertAMigrationWithResponse(ctx context.Context, ref string, params *V1UpsertAMigrationParams, body V1UpsertAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpsertAMigrationResponse, error)
+
 	// V1RunAQueryWithBodyWithResponse request with any body
 	V1RunAQueryWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RunAQueryResponse, error)
 
@@ -9716,6 +9812,27 @@ func (r V1ApplyAMigrationResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1ApplyAMigrationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1UpsertAMigrationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1UpsertAMigrationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1UpsertAMigrationResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -11515,6 +11632,23 @@ func (c *ClientWithResponses) V1ApplyAMigrationWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseV1ApplyAMigrationResponse(rsp)
+}
+
+// V1UpsertAMigrationWithBodyWithResponse request with arbitrary body returning *V1UpsertAMigrationResponse
+func (c *ClientWithResponses) V1UpsertAMigrationWithBodyWithResponse(ctx context.Context, ref string, params *V1UpsertAMigrationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpsertAMigrationResponse, error) {
+	rsp, err := c.V1UpsertAMigrationWithBody(ctx, ref, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpsertAMigrationResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1UpsertAMigrationWithResponse(ctx context.Context, ref string, params *V1UpsertAMigrationParams, body V1UpsertAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpsertAMigrationResponse, error) {
+	rsp, err := c.V1UpsertAMigration(ctx, ref, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpsertAMigrationResponse(rsp)
 }
 
 // V1RunAQueryWithBodyWithResponse request with arbitrary body returning *V1RunAQueryResponse
@@ -13786,6 +13920,22 @@ func ParseV1ApplyAMigrationResponse(rsp *http.Response) (*V1ApplyAMigrationRespo
 	}
 
 	response := &V1ApplyAMigrationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1UpsertAMigrationResponse parses an HTTP response from a V1UpsertAMigrationWithResponse call
+func ParseV1UpsertAMigrationResponse(rsp *http.Response) (*V1UpsertAMigrationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1UpsertAMigrationResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
