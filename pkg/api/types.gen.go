@@ -705,6 +705,7 @@ const (
 	V1CreateProjectBodyDesiredInstanceSizeN48xlargeOptimizedMemory V1CreateProjectBodyDesiredInstanceSize = "48xlarge_optimized_memory"
 	V1CreateProjectBodyDesiredInstanceSizeN4xlarge                 V1CreateProjectBodyDesiredInstanceSize = "4xlarge"
 	V1CreateProjectBodyDesiredInstanceSizeN8xlarge                 V1CreateProjectBodyDesiredInstanceSize = "8xlarge"
+	V1CreateProjectBodyDesiredInstanceSizeNano                     V1CreateProjectBodyDesiredInstanceSize = "nano"
 	V1CreateProjectBodyDesiredInstanceSizePico                     V1CreateProjectBodyDesiredInstanceSize = "pico"
 	V1CreateProjectBodyDesiredInstanceSizeSmall                    V1CreateProjectBodyDesiredInstanceSize = "small"
 	V1CreateProjectBodyDesiredInstanceSizeXlarge                   V1CreateProjectBodyDesiredInstanceSize = "xlarge"
@@ -2824,6 +2825,12 @@ type V1UpdatePostgrestConfigBody struct {
 	MaxRows           *int    `json:"max_rows,omitempty"`
 }
 
+// V1UpsertMigrationBody defines model for V1UpsertMigrationBody.
+type V1UpsertMigrationBody struct {
+	Name  *string `json:"name,omitempty"`
+	Query string  `json:"query"`
+}
+
 // VanitySubdomainBody defines model for VanitySubdomainBody.
 type VanitySubdomainBody struct {
 	VanitySubdomain string `json:"vanity_subdomain"`
@@ -2908,6 +2915,12 @@ type UpdateApiKeyParams struct {
 
 // V1ApplyAMigrationParams defines parameters for V1ApplyAMigration.
 type V1ApplyAMigrationParams struct {
+	// IdempotencyKey A unique key to ensure the same migration is tracked only once.
+	IdempotencyKey *string `json:"Idempotency-Key,omitempty"`
+}
+
+// V1UpsertAMigrationParams defines parameters for V1UpsertAMigration.
+type V1UpsertAMigrationParams struct {
 	// IdempotencyKey A unique key to ensure the same migration is tracked only once.
 	IdempotencyKey *string `json:"Idempotency-Key,omitempty"`
 }
@@ -3057,6 +3070,9 @@ type V1RestorePitrBackupJSONRequestBody = V1RestorePitrBody
 
 // V1ApplyAMigrationJSONRequestBody defines body for V1ApplyAMigration for application/json ContentType.
 type V1ApplyAMigrationJSONRequestBody = V1CreateMigrationBody
+
+// V1UpsertAMigrationJSONRequestBody defines body for V1UpsertAMigration for application/json ContentType.
+type V1UpsertAMigrationJSONRequestBody = V1UpsertMigrationBody
 
 // V1RunAQueryJSONRequestBody defines body for V1RunAQuery for application/json ContentType.
 type V1RunAQueryJSONRequestBody = V1RunQueryBody
