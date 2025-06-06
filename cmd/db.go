@@ -125,7 +125,7 @@ var (
 				migration.WithSchema(schema...),
 				migration.WithoutTable(excludeTable...),
 				migration.WithComments(keepComments),
-				migration.WithCopy(useCopy),
+				migration.WithColumnInsert(!useCopy),
 			}
 			return dump.Run(cmd.Context(), file, flags.DbConfig, dataOnly, roleOnly, dryRun, afero.NewOsFs(), opts...)
 		},

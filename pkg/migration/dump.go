@@ -118,7 +118,7 @@ type pgDumpOption struct {
 	schema       []string
 	keepComments bool
 	excludeTable []string
-	useCopy      bool
+	columnInsert bool
 }
 
 type DumpOptionFunc func(*pgDumpOption)
@@ -135,9 +135,9 @@ func WithComments(keep bool) DumpOptionFunc {
 	}
 }
 
-func WithCopy(use bool) DumpOptionFunc {
+func WithColumnInsert(use bool) DumpOptionFunc {
 	return func(pdo *pgDumpOption) {
-		pdo.useCopy = use
+		pdo.columnInsert = use
 	}
 }
 
@@ -189,7 +189,7 @@ func DumpData(ctx context.Context, config pgconn.Config, w io.Writer, exec ExecF
 		env = append(env, "INCLUDED_SCHEMAS=*", "EXCLUDED_SCHEMAS="+strings.Join(excludedSchemas, "|"))
 	}
 	var extraFlags []string
-	if !opt.useCopy {
+	if opt.columnInsert {
 		extraFlags = append(extraFlags, "--column-inserts", "--rows-per-insert 100000")
 	}
 	for _, table := range opt.excludeTable {
