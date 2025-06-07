@@ -228,9 +228,29 @@ Deno.serve({
   },
 
   onListen: () => {
-    console.log(
-      `Serving functions on http://127.0.0.1:${HOST_PORT}/functions/v1/<function-name>\nUsing ${Deno.version.deno}`,
-    );
+    try {
+      const functionsConfigString = Deno.env.get(
+        "SUPABASE_INTERNAL_FUNCTIONS_CONFIG"
+      );
+      if (functionsConfigString) {
+        const functionsConfig = JSON.parse(functionsConfigString) as Record<
+          string,
+          unknown
+        >;
+        const functionsUrls = Object.keys(functionsConfig).map(
+          (fname) => ` - http://127.0.0.1:${HOST_PORT}/functions/v1/${fname}`
+        );
+        console.log(
+          `Serving functions on | \n${functionsUrls.join(`\n`)}\n${
+            Deno.version.deno
+          }`
+        );
+      }
+    } catch (e) {
+      console.log(
+        `Serving functions on http://127.0.0.1:${HOST_PORT}/functions/v1/<function-name>\nUsing ${Deno.version.deno}`
+      );
+    }
   },
 
   onError: e => {
