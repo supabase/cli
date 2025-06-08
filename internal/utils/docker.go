@@ -147,6 +147,60 @@ func DockerRemoveAll(ctx context.Context, w io.Writer, projectId string) error {
 	return nil
 }
 
+func DockerRestartAll(ctx context.Context, w io.Writer, projectId string) error {
+	fmt.Fprintln(w, "Restarting containers...")
+	args := CliProjectFilter(projectId)
+	containers, err := Docker.ContainerList(ctx, container.ListOptions{
+		All:     true,
+		Filters: args,
+	})
+	if err != nil {
+		return errors.Errorf("failed to list containers: %w", err)
+	}
+	// Restart containers
+	var ids []string
+	for _, c := range containers {
+		if c.State == "running" {
+			ids = append(ids, c.ID)
+		}
+	}
+	result := WaitAll(ids, func(id string) error {
+		if err := Docker.ContainerRestart(ctx, id, container.StopOptions{}); err != nil {
+			return errors.Errorf("failed to stop container: %w", err)
+		}
+		return nil
+	})
+	if err := errors.Join(result...); err != nil {
+		return err
+	}
+	// if report, err := Docker.ContainersPrune(ctx, args); err != nil {
+	// 	return errors.Errorf("failed to prune containers: %w", err)
+	// } else if viper.GetBool("DEBUG") {
+	// 	fmt.Fprintln(os.Stderr, "Pruned containers:", report.ContainersDeleted)
+	// }
+	// // Remove named volumes
+	// if NoBackupVolume {
+	// 	vargs := args.Clone()
+	// 	if versions.GreaterThanOrEqualTo(Docker.ClientVersion(), "1.42") {
+	// 		// Since docker engine 25.0.3, all flag is required to include named volumes.
+	// 		// https://github.com/docker/cli/blob/master/cli/command/volume/prune.go#L76
+	// 		vargs.Add("all", "true")
+	// 	}
+	// 	if report, err := Docker.VolumesPrune(ctx, vargs); err != nil {
+	// 		return errors.Errorf("failed to prune volumes: %w", err)
+	// 	} else if viper.GetBool("DEBUG") {
+	// 		fmt.Fprintln(os.Stderr, "Pruned volumes:", report.VolumesDeleted)
+	// 	}
+	// }
+	// // Remove networks.
+	// if report, err := Docker.NetworksPrune(ctx, args); err != nil {
+	// 	return errors.Errorf("failed to prune networks: %w", err)
+	// } else if viper.GetBool("DEBUG") {
+	// 	fmt.Fprintln(os.Stderr, "Pruned network:", report.NetworksDeleted)
+	// }
+	return nil
+}
+
 func CliProjectFilter(projectId string) filters.Args {
 	if len(projectId) == 0 {
 		return filters.NewArgs(
