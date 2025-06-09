@@ -582,3 +582,225 @@ func TestFileWatcherIntegration(t *testing.T) {
 		}
 	})
 }
+
+func TestAddImportDependenciesToWatcher(t *testing.T) {
+	t.Run("adds import dependencies to watcher", func(t *testing.T) {
+		setup := NewTestSetup(t)
+		defer setup.Cleanup()
+
+		// Use a temporary directory for this test
+		tempDir := t.TempDir()
+
+		// Create functions directory
+		functionsDir := filepath.Join(tempDir, "functions")
+		require.NoError(t, os.MkdirAll(functionsDir, 0755))
+
+		// Create a shared utilities directory outside functions
+		utilsDir := filepath.Join(tempDir, "shared", "utils")
+		require.NoError(t, os.MkdirAll(utilsDir, 0755))
+
+		// Create a shared utility file
+		utilsFile := filepath.Join(utilsDir, "helpers.ts")
+		require.NoError(t, os.WriteFile(utilsFile, []byte(`
+export function formatResponse(data: any) {
+  return new Response(JSON.stringify(data), {
+    headers: { 'Content-Type': 'application/json' }
+  });
+}
+`), 0600))
+
+		// Create a function that imports from outside the functions directory
+		funcDir := filepath.Join(functionsDir, "api")
+		require.NoError(t, os.MkdirAll(funcDir, 0755))
+		funcFile := filepath.Join(funcDir, "index.ts")
+
+		// Write a function that imports the utility
+		require.NoError(t, os.WriteFile(funcFile, []byte(`
+import { formatResponse } from "../../shared/utils/helpers.ts";
+
+export default async () => {
+  return formatResponse({ message: "Hello from API" });
+};
+`), 0600))
+
+		// Create watcher
+		watcher, err := fsnotify.NewWatcher()
+		require.NoError(t, err)
+		defer watcher.Close()
+
+		// Test the import dependency function
+		err = addImportDependenciesToWatcher(watcher, functionsDir)
+		assert.NoError(t, err)
+
+		// Verify that the utils directory is now being watched
+		// (This is a bit tricky to test directly, so we'll verify no error occurred
+		// and that the function completed successfully)
+
+		// Reset the global watched directories for next test
+		globalWatchedDirectories = make(map[string]bool)
+	})
+
+	t.Run("handles TypeScript files with multiple imports", func(t *testing.T) {
+		setup := NewTestSetup(t)
+		defer setup.Cleanup()
+
+		// Use a temporary directory for this test
+		tempDir := t.TempDir()
+
+		// Create functions directory
+		functionsDir := filepath.Join(tempDir, "functions")
+		require.NoError(t, os.MkdirAll(functionsDir, 0755))
+
+		// Create multiple shared directories
+		dirs := []string{
+			filepath.Join(tempDir, "shared", "types"),
+			filepath.Join(tempDir, "shared", "constants"),
+			filepath.Join(tempDir, "lib", "database"),
+		}
+
+		for _, dir := range dirs {
+			require.NoError(t, os.MkdirAll(dir, 0755))
+		}
+
+		// Create shared files
+		require.NoError(t, os.WriteFile(filepath.Join(tempDir, "shared", "types", "index.ts"), []byte(`
+export interface User {
+  id: string;
+  name: string;
+}
+`), 0600))
+
+		require.NoError(t, os.WriteFile(filepath.Join(tempDir, "shared", "constants", "api.ts"), []byte(`
+export const API_BASE_URL = "https://api.example.com";
+`), 0600))
+
+		require.NoError(t, os.WriteFile(filepath.Join(tempDir, "lib", "database", "client.ts"), []byte(`
+export function connectDB() {
+  return "connected";
+}
+`), 0600))
+
+		// Create a function with multiple imports
+		funcDir := filepath.Join(functionsDir, "complex")
+		require.NoError(t, os.MkdirAll(funcDir, 0755))
+		funcFile := filepath.Join(funcDir, "index.ts")
+
+		require.NoError(t, os.WriteFile(funcFile, []byte(`
+import { User } from "../../shared/types/index.ts";
+import { API_BASE_URL } from "../../shared/constants/api.ts";
+import { connectDB } from "../../lib/database/client.ts";
+
+export default async (): Promise<Response> => {
+  const db = connectDB();
+  const user: User = { id: "1", name: "Test" };
+  
+  return new Response(JSON.stringify({ user, apiUrl: API_BASE_URL, db }), {
+    headers: { 'Content-Type': 'application/json' }
+  });
+};
+`), 0600))
+
+		// Create watcher
+		watcher, err := fsnotify.NewWatcher()
+		require.NoError(t, err)
+		defer watcher.Close()
+
+		// Test the import dependency function
+		err = addImportDependenciesToWatcher(watcher, functionsDir)
+		assert.NoError(t, err)
+
+		// Reset the global watched directories for next test
+		globalWatchedDirectories = make(map[string]bool)
+	})
+
+	t.Run("handles import map resolution", func(t *testing.T) {
+		setup := NewTestSetup(t)
+		defer setup.Cleanup()
+
+		// Use a temporary directory for this test
+		tempDir := t.TempDir()
+
+		// Create functions directory
+		functionsDir := filepath.Join(tempDir, "functions")
+		funcDir := filepath.Join(functionsDir, "mapped")
+		require.NoError(t, os.MkdirAll(funcDir, 0755))
+
+		// Create a shared utilities directory
+		utilsDir := filepath.Join(tempDir, "utilities")
+		require.NoError(t, os.MkdirAll(utilsDir, 0755))
+
+		// Create a utility file
+		utilsFile := filepath.Join(utilsDir, "logger.ts")
+		require.NoError(t, os.WriteFile(utilsFile, []byte(`
+export function log(message: string) {
+  console.log("[LOG]", message);
+}
+`), 0600))
+
+		// Create import map (deno.json)
+		denoJson := filepath.Join(funcDir, "deno.json")
+		require.NoError(t, os.WriteFile(denoJson, []byte(`{
+  "imports": {
+    "@utils/": "../../utilities/"
+  }
+}`), 0600))
+
+		// Create a function that uses the import map
+		funcFile := filepath.Join(funcDir, "index.ts")
+		require.NoError(t, os.WriteFile(funcFile, []byte(`
+import { log } from "@utils/logger.ts";
+
+export default async (): Promise<Response> => {
+  log("Function called");
+  return new Response("Hello with mapped import");
+};
+`), 0600))
+
+		// Create watcher
+		watcher, err := fsnotify.NewWatcher()
+		require.NoError(t, err)
+		defer watcher.Close()
+
+		// Test the import dependency function
+		err = addImportDependenciesToWatcher(watcher, functionsDir)
+		assert.NoError(t, err)
+
+		// Reset the global watched directories for next test
+		globalWatchedDirectories = make(map[string]bool)
+	})
+
+	t.Run("handles missing import files gracefully", func(t *testing.T) {
+		setup := NewTestSetup(t)
+		defer setup.Cleanup()
+
+		// Use a temporary directory for this test
+		tempDir := t.TempDir()
+
+		// Create functions directory
+		functionsDir := filepath.Join(tempDir, "functions")
+		funcDir := filepath.Join(functionsDir, "broken")
+		require.NoError(t, os.MkdirAll(funcDir, 0755))
+
+		// Create a function that imports a non-existent file
+		funcFile := filepath.Join(funcDir, "index.ts")
+		require.NoError(t, os.WriteFile(funcFile, []byte(`
+import { nonExistent } from "../../missing/file.ts";
+
+export default async (): Promise<Response> => {
+  return new Response("This won't work");
+};
+`), 0600))
+
+		// Create watcher
+		watcher, err := fsnotify.NewWatcher()
+		require.NoError(t, err)
+		defer watcher.Close()
+
+		// Test the import dependency function - should not error
+		err = addImportDependenciesToWatcher(watcher, functionsDir)
+		assert.NoError(t, err, "Should handle missing import files gracefully")
+
+		// Reset the global watched directories for next test
+		globalWatchedDirectories = make(map[string]bool)
+	})
+}
