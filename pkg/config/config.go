@@ -317,10 +317,12 @@ func (c *baseConfig) Clone() baseConfig {
 	return copy
 }
 
-type ConfigEditor func(*config)
+type Config *config
+
+type ConfigEditor func(Config)
 
 func WithHostname(hostname string) ConfigEditor {
-	return func(c *config) {
+	return func(c Config) {
 		c.Hostname = hostname
 	}
 }
