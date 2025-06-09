@@ -344,6 +344,9 @@ func NewConfig(editors ...ConfigEditor) config {
 				EncryptionKey: "12345678901234567890123456789032",
 				SecretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
 			},
+			Migrations: migrations{
+				Enabled: true,
+			},
 			Seed: seed{
 				Enabled:  true,
 				SqlPaths: []string{"seed.sql"},

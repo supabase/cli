@@ -82,6 +82,7 @@ type (
 	}
 
 	migrations struct {
+		Enabled     bool `toml:"enabled"`
 		SchemaPaths Glob `toml:"schema_paths"`
 	}
 
