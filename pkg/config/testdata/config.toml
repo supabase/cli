@@ -31,6 +31,8 @@ shadow_port = 54320
 major_version = 17
 
 [db.migrations]
+# If disabled, migrations will be skipped during a db push or reset.
+enabled = true
 # Specifies an ordered list of schema files that describe your database.
 # Supports glob patterns relative to supabase directory: "./schemas/*.sql"
 schema_paths = ["./schemas/*.sql"]
