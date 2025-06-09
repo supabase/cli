@@ -27,7 +27,7 @@ const (
 	SwiftInternalAccessControl = "internal"
 )
 
-func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang string, schemas []string, postgrestV9Compat bool, swiftAccessControl string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang string, schemas []string, setDefault bool, postgrestV9Compat bool, swiftAccessControl string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	originalURL := utils.ToPostgresURL(dbConfig)
 	// Add default schemas if --schema flag is not specified
 	if len(schemas) == 0 {
@@ -36,7 +36,7 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang str
 	included := strings.Join(schemas, ",")
 
 	var defaultSchemaEnv string
-	if len(schemas) == 1 && schemas[0] != "public" {
+	if setDefault && len(schemas) == 1 && schemas[0] != "public" {
 		defaultSchemaEnv = schemas[0]
 	}
 
