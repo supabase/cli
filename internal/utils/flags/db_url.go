@@ -14,7 +14,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
-	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/config"
 )
 
 type connection int
@@ -50,7 +50,7 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 	// Update connection config
 	switch connType {
 	case direct:
-		if err := utils.Config.Load("", utils.NewRootFS(fsys)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := LoadConfig(fsys); err != nil {
 			return err
 		}
 		if flag := flagSet.Lookup("db-url"); flag != nil {
@@ -123,7 +123,7 @@ func PromptPassword(stdin *os.File) string {
 	}
 	// Generate a password, see ./Settings/Database/DatabaseSettings/ResetDbPassword.tsx#L83
 	var password []byte
-	charset := string(api.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891)
+	charset := string(config.LowerUpperLettersDigits.ToChar())
 	charset = strings.ReplaceAll(charset, ":", "")
 	maxRange := big.NewInt(int64(len(charset)))
 	for i := 0; i < PASSWORD_LENGTH; i++ {

@@ -146,7 +146,7 @@ func updatePackage(ctx context.Context, client *github.Client, repo, path string
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, "Committed changes to", *resp.Commit.SHA)
+	fmt.Fprintln(os.Stderr, "Committed changes to", *resp.SHA)
 	// Create pull request
 	pr := github.NewPullRequest{
 		Title: &message,

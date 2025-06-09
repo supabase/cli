@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -15,6 +16,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/debug"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"golang.org/x/mod/semver"
@@ -114,7 +116,7 @@ var (
 			}
 			// Prepare context
 			if viper.GetBool("DEBUG") {
-				ctx = utils.WithTraceContext(ctx)
+				http.DefaultTransport = debug.NewTransport()
 				fmt.Fprintln(os.Stderr, cmd.Root().Short)
 			}
 			cmd.SetContext(ctx)
@@ -231,7 +233,7 @@ func init() {
 	flags.String("workdir", "", "path to a Supabase project directory")
 	flags.Bool("experimental", false, "enable experimental features")
 	flags.String("network-id", "", "use the specified docker network instead of a generated one")
-	flags.Var(&utils.OutputFormat, "output", "output format of status variables")
+	flags.VarP(&utils.OutputFormat, "output", "o", "output format of status variables")
 	flags.Var(&utils.DNSResolver, "dns-resolver", "lookup domain names using the specified resolver")
 	flags.BoolVar(&createTicket, "create-ticket", false, "create a support ticket for any CLI error")
 	cobra.CheckErr(viper.BindPFlags(flags))

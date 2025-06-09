@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/go-errors/errors"
+	"github.com/oapi-codegen/nullable"
 	v1API "github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/diff"
@@ -31,22 +32,22 @@ func (r *PasswordRequirements) UnmarshalText(text []byte) error {
 func (r PasswordRequirements) ToChar() v1API.UpdateAuthConfigBodyPasswordRequiredCharacters {
 	switch r {
 	case LettersDigits:
-		return v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789
+		return v1API.UpdateAuthConfigBodyPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789
 	case LowerUpperLettersDigits:
-		return v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891
+		return v1API.UpdateAuthConfigBodyPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891
 	case LowerUpperLettersDigitsSymbols:
-		return v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892
+		return v1API.UpdateAuthConfigBodyPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892
 	}
-	return v1API.Empty
+	return v1API.UpdateAuthConfigBodyPasswordRequiredCharactersEmpty
 }
 
 func NewPasswordRequirement(c v1API.UpdateAuthConfigBodyPasswordRequiredCharacters) PasswordRequirements {
 	switch c {
-	case v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:
+	case v1API.UpdateAuthConfigBodyPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:
 		return LettersDigits
-	case v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891:
+	case v1API.UpdateAuthConfigBodyPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891:
 		return LowerUpperLettersDigits
-	case v1API.AbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892:
+	case v1API.UpdateAuthConfigBodyPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892:
 		return LowerUpperLettersDigitsSymbols
 	}
 	return NoRequirements
@@ -72,7 +73,7 @@ type (
 		Enabled bool   `toml:"enabled"`
 		Image   string `toml:"-"`
 
-		SiteUrl                    string               `toml:"site_url" mapstructure:"site_url"`
+		SiteUrl                    string               `toml:"site_url"`
 		AdditionalRedirectUrls     []string             `toml:"additional_redirect_urls"`
 		JwtExpiry                  uint                 `toml:"jwt_expiry"`
 		EnableRefreshTokenRotation bool                 `toml:"enable_refresh_token_rotation"`
@@ -91,11 +92,12 @@ type (
 		Email     email     `toml:"email"`
 		Sms       sms       `toml:"sms"`
 		External  external  `toml:"external"`
+		Web3      web3      `toml:"web3"`
 
 		// Custom secrets can be injected from .env file
-		JwtSecret      string `toml:"-" mapstructure:"jwt_secret"`
-		AnonKey        string `toml:"-" mapstructure:"anon_key"`
-		ServiceRoleKey string `toml:"-" mapstructure:"service_role_key"`
+		JwtSecret      Secret `toml:"jwt_secret"`
+		AnonKey        Secret `toml:"anon_key"`
+		ServiceRoleKey Secret `toml:"service_role_key"`
 
 		ThirdParty thirdParty `toml:"third_party"`
 	}
@@ -106,6 +108,7 @@ type (
 		Firebase tpaFirebase `toml:"firebase"`
 		Auth0    tpaAuth0    `toml:"auth0"`
 		Cognito  tpaCognito  `toml:"aws_cognito"`
+		Clerk    tpaClerk    `toml:"clerk"`
 	}
 
 	rateLimit struct {
@@ -115,6 +118,7 @@ type (
 		TokenVerifications uint `toml:"token_verifications"`
 		EmailSent          uint `toml:"email_sent"`
 		SmsSent            uint `toml:"sms_sent"`
+		Web3               uint `toml:"web3"`
 	}
 
 	tpaFirebase struct {
@@ -135,6 +139,12 @@ type (
 
 		UserPoolID     string `toml:"user_pool_id"`
 		UserPoolRegion string `toml:"user_pool_region"`
+	}
+
+	tpaClerk struct {
+		Enabled bool `toml:"enabled"`
+
+		Domain string `toml:"domain"`
 	}
 
 	email struct {
@@ -170,11 +180,11 @@ type (
 		EnableSignup        bool              `toml:"enable_signup"`
 		EnableConfirmations bool              `toml:"enable_confirmations"`
 		Template            string            `toml:"template"`
-		Twilio              twilioConfig      `toml:"twilio" mapstructure:"twilio"`
-		TwilioVerify        twilioConfig      `toml:"twilio_verify" mapstructure:"twilio_verify"`
-		Messagebird         messagebirdConfig `toml:"messagebird" mapstructure:"messagebird"`
-		Textlocal           textlocalConfig   `toml:"textlocal" mapstructure:"textlocal"`
-		Vonage              vonageConfig      `toml:"vonage" mapstructure:"vonage"`
+		Twilio              twilioConfig      `toml:"twilio"`
+		TwilioVerify        twilioConfig      `toml:"twilio_verify"`
+		Messagebird         messagebirdConfig `toml:"messagebird"`
+		Textlocal           textlocalConfig   `toml:"textlocal"`
+		Vonage              vonageConfig      `toml:"vonage"`
 		TestOTP             map[string]string `toml:"test_otp"`
 		MaxFrequency        time.Duration     `toml:"max_frequency"`
 	}
@@ -227,26 +237,26 @@ type (
 		Enabled           bool   `toml:"enabled"`
 		AccountSid        string `toml:"account_sid"`
 		MessageServiceSid string `toml:"message_service_sid"`
-		AuthToken         Secret `toml:"auth_token" mapstructure:"auth_token"`
+		AuthToken         Secret `toml:"auth_token"`
 	}
 
 	messagebirdConfig struct {
 		Enabled    bool   `toml:"enabled"`
 		Originator string `toml:"originator"`
-		AccessKey  Secret `toml:"access_key" mapstructure:"access_key"`
+		AccessKey  Secret `toml:"access_key"`
 	}
 
 	textlocalConfig struct {
 		Enabled bool   `toml:"enabled"`
 		Sender  string `toml:"sender"`
-		ApiKey  Secret `toml:"api_key" mapstructure:"api_key"`
+		ApiKey  Secret `toml:"api_key"`
 	}
 
 	vonageConfig struct {
 		Enabled   bool   `toml:"enabled"`
 		From      string `toml:"from"`
-		ApiKey    string `toml:"api_key" mapstructure:"api_key"`
-		ApiSecret Secret `toml:"api_secret" mapstructure:"api_secret"`
+		ApiKey    string `toml:"api_key"`
+		ApiSecret Secret `toml:"api_secret"`
 	}
 
 	provider struct {
@@ -257,25 +267,33 @@ type (
 		RedirectUri    string `toml:"redirect_uri"`
 		SkipNonceCheck bool   `toml:"skip_nonce_check"`
 	}
+
+	solana struct {
+		Enabled bool `toml:"enabled"`
+	}
+
+	web3 struct {
+		Solana solana `toml:"solana"`
+	}
 )
 
 func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 	body := v1API.UpdateAuthConfigBody{
-		SiteUrl:                           &a.SiteUrl,
-		UriAllowList:                      cast.Ptr(strings.Join(a.AdditionalRedirectUrls, ",")),
-		JwtExp:                            cast.UintToIntPtr(&a.JwtExpiry),
-		RefreshTokenRotationEnabled:       &a.EnableRefreshTokenRotation,
-		SecurityRefreshTokenReuseInterval: cast.UintToIntPtr(&a.RefreshTokenReuseInterval),
-		SecurityManualLinkingEnabled:      &a.EnableManualLinking,
-		DisableSignup:                     cast.Ptr(!a.EnableSignup),
-		ExternalAnonymousUsersEnabled:     &a.EnableAnonymousSignIns,
-		PasswordMinLength:                 cast.UintToIntPtr(&a.MinimumPasswordLength),
-		PasswordRequiredCharacters:        cast.Ptr(a.PasswordRequirements.ToChar()),
+		SiteUrl:                           nullable.NewNullableWithValue(a.SiteUrl),
+		UriAllowList:                      nullable.NewNullableWithValue(strings.Join(a.AdditionalRedirectUrls, ",")),
+		JwtExp:                            nullable.NewNullableWithValue(cast.UintToInt(a.JwtExpiry)),
+		RefreshTokenRotationEnabled:       nullable.NewNullableWithValue(a.EnableRefreshTokenRotation),
+		SecurityRefreshTokenReuseInterval: nullable.NewNullableWithValue(cast.UintToInt(a.RefreshTokenReuseInterval)),
+		SecurityManualLinkingEnabled:      nullable.NewNullableWithValue(a.EnableManualLinking),
+		DisableSignup:                     nullable.NewNullableWithValue(!a.EnableSignup),
+		ExternalAnonymousUsersEnabled:     nullable.NewNullableWithValue(a.EnableAnonymousSignIns),
+		PasswordMinLength:                 nullable.NewNullableWithValue(cast.UintToInt(a.MinimumPasswordLength)),
+		PasswordRequiredCharacters:        nullable.NewNullableWithValue(a.PasswordRequirements.ToChar()),
 	}
 	// Add rate limit fields
 	a.RateLimit.toAuthConfigBody(&body)
 	if s := a.Email.Smtp; s != nil && s.Enabled {
-		body.RateLimitEmailSent = cast.Ptr(cast.UintToInt(a.RateLimit.EmailSent))
+		body.RateLimitEmailSent = nullable.NewNullableWithValue(cast.UintToInt(a.RateLimit.EmailSent))
 	}
 	// When local config is not set, we assume platform defaults should not change
 	if a.Captcha != nil {
@@ -287,24 +305,25 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 	a.Email.toAuthConfigBody(&body)
 	a.Sms.toAuthConfigBody(&body)
 	a.External.toAuthConfigBody(&body)
+	a.Web3.toAuthConfigBody(&body)
 	return body
 }
 
 func (a *auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) {
-	a.SiteUrl = cast.Val(remoteConfig.SiteUrl, "")
-	a.AdditionalRedirectUrls = strToArr(cast.Val(remoteConfig.UriAllowList, ""))
-	a.JwtExpiry = cast.IntToUint(cast.Val(remoteConfig.JwtExp, 0))
-	a.EnableRefreshTokenRotation = cast.Val(remoteConfig.RefreshTokenRotationEnabled, false)
-	a.RefreshTokenReuseInterval = cast.IntToUint(cast.Val(remoteConfig.SecurityRefreshTokenReuseInterval, 0))
-	a.EnableManualLinking = cast.Val(remoteConfig.SecurityManualLinkingEnabled, false)
-	a.EnableSignup = !cast.Val(remoteConfig.DisableSignup, false)
-	a.EnableAnonymousSignIns = cast.Val(remoteConfig.ExternalAnonymousUsersEnabled, false)
-	a.MinimumPasswordLength = cast.IntToUint(cast.Val(remoteConfig.PasswordMinLength, 0))
-	prc := cast.Val(remoteConfig.PasswordRequiredCharacters, "")
+	a.SiteUrl = ValOrDefault(remoteConfig.SiteUrl, "")
+	a.AdditionalRedirectUrls = strToArr(ValOrDefault(remoteConfig.UriAllowList, ""))
+	a.JwtExpiry = cast.IntToUint(ValOrDefault(remoteConfig.JwtExp, 0))
+	a.EnableRefreshTokenRotation = ValOrDefault(remoteConfig.RefreshTokenRotationEnabled, false)
+	a.RefreshTokenReuseInterval = cast.IntToUint(ValOrDefault(remoteConfig.SecurityRefreshTokenReuseInterval, 0))
+	a.EnableManualLinking = ValOrDefault(remoteConfig.SecurityManualLinkingEnabled, false)
+	a.EnableSignup = !ValOrDefault(remoteConfig.DisableSignup, false)
+	a.EnableAnonymousSignIns = ValOrDefault(remoteConfig.ExternalAnonymousUsersEnabled, false)
+	a.MinimumPasswordLength = cast.IntToUint(ValOrDefault(remoteConfig.PasswordMinLength, 0))
+	prc := ValOrDefault(remoteConfig.PasswordRequiredCharacters, "")
 	a.PasswordRequirements = NewPasswordRequirement(v1API.UpdateAuthConfigBodyPasswordRequiredCharacters(prc))
 	a.RateLimit.fromAuthConfig(remoteConfig)
 	if s := a.Email.Smtp; s != nil && s.Enabled {
-		a.RateLimit.EmailSent = cast.IntToUint(cast.Val(remoteConfig.RateLimitEmailSent, 0))
+		a.RateLimit.EmailSent = cast.IntToUint(ValOrDefault(remoteConfig.RateLimitEmailSent, 0))
 	}
 	a.Captcha.fromAuthConfig(remoteConfig)
 	a.Hook.fromAuthConfig(remoteConfig)
@@ -313,31 +332,34 @@ func (a *auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	a.Email.fromAuthConfig(remoteConfig)
 	a.Sms.fromAuthConfig(remoteConfig)
 	a.External.fromAuthConfig(remoteConfig)
+	a.Web3.fromAuthConfig(remoteConfig)
 }
 
 func (r rateLimit) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
-	body.RateLimitAnonymousUsers = cast.Ptr(cast.UintToInt(r.AnonymousUsers))
-	body.RateLimitTokenRefresh = cast.Ptr(cast.UintToInt(r.TokenRefresh))
-	body.RateLimitOtp = cast.Ptr(cast.UintToInt(r.SignInSignUps))
-	body.RateLimitVerify = cast.Ptr(cast.UintToInt(r.TokenVerifications))
+	body.RateLimitAnonymousUsers = nullable.NewNullableWithValue(cast.UintToInt(r.AnonymousUsers))
+	body.RateLimitTokenRefresh = nullable.NewNullableWithValue(cast.UintToInt(r.TokenRefresh))
+	body.RateLimitOtp = nullable.NewNullableWithValue(cast.UintToInt(r.SignInSignUps))
+	body.RateLimitVerify = nullable.NewNullableWithValue(cast.UintToInt(r.TokenVerifications))
 	// Email rate limit is only updated when SMTP is enabled
-	body.RateLimitSmsSent = cast.Ptr(cast.UintToInt(r.SmsSent))
+	body.RateLimitSmsSent = nullable.NewNullableWithValue(cast.UintToInt(r.SmsSent))
+	body.RateLimitWeb3 = nullable.NewNullableWithValue((cast.UintToInt(r.Web3)))
 }
 
 func (r *rateLimit) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
-	r.AnonymousUsers = cast.IntToUint(cast.Val(remoteConfig.RateLimitAnonymousUsers, 0))
-	r.TokenRefresh = cast.IntToUint(cast.Val(remoteConfig.RateLimitTokenRefresh, 0))
-	r.SignInSignUps = cast.IntToUint(cast.Val(remoteConfig.RateLimitOtp, 0))
-	r.TokenVerifications = cast.IntToUint(cast.Val(remoteConfig.RateLimitVerify, 0))
+	r.AnonymousUsers = cast.IntToUint(ValOrDefault(remoteConfig.RateLimitAnonymousUsers, 0))
+	r.TokenRefresh = cast.IntToUint(ValOrDefault(remoteConfig.RateLimitTokenRefresh, 0))
+	r.SignInSignUps = cast.IntToUint(ValOrDefault(remoteConfig.RateLimitOtp, 0))
+	r.TokenVerifications = cast.IntToUint(ValOrDefault(remoteConfig.RateLimitVerify, 0))
 	// Email rate limit is only updated when SMTP is enabled
-	r.SmsSent = cast.IntToUint(cast.Val(remoteConfig.RateLimitSmsSent, 0))
+	r.SmsSent = cast.IntToUint(ValOrDefault(remoteConfig.RateLimitSmsSent, 0))
+	r.Web3 = cast.IntToUint(ValOrDefault(remoteConfig.RateLimitWeb3, 0))
 }
 
 func (c captcha) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
-	if body.SecurityCaptchaEnabled = &c.Enabled; c.Enabled {
-		body.SecurityCaptchaProvider = cast.Ptr(string(c.Provider))
+	if body.SecurityCaptchaEnabled = nullable.NewNullableWithValue(c.Enabled); c.Enabled {
+		body.SecurityCaptchaProvider = nullable.NewNullableWithValue(v1API.UpdateAuthConfigBodySecurityCaptchaProvider(c.Provider))
 		if len(c.Secret.SHA256) > 0 {
-			body.SecurityCaptchaSecret = &c.Secret.Value
+			body.SecurityCaptchaSecret = nullable.NewNullableWithValue(c.Secret.Value)
 		}
 	}
 }
@@ -349,54 +371,54 @@ func (c *captcha) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	}
 	// Ignore disabled captcha fields to minimise config diff
 	if c.Enabled {
-		c.Provider = CaptchaProvider(cast.Val(remoteConfig.SecurityCaptchaProvider, ""))
+		c.Provider = CaptchaProvider(ValOrDefault(remoteConfig.SecurityCaptchaProvider, ""))
 		if len(c.Secret.SHA256) > 0 {
-			c.Secret.SHA256 = cast.Val(remoteConfig.SecurityCaptchaSecret, "")
+			c.Secret.SHA256 = ValOrDefault(remoteConfig.SecurityCaptchaSecret, "")
 		}
 	}
-	c.Enabled = cast.Val(remoteConfig.SecurityCaptchaEnabled, false)
+	c.Enabled = ValOrDefault(remoteConfig.SecurityCaptchaEnabled, false)
 }
 
 func (h hook) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	// When local config is not set, we assume platform defaults should not change
 	if hook := h.CustomAccessToken; hook != nil {
-		if body.HookCustomAccessTokenEnabled = &hook.Enabled; hook.Enabled {
-			body.HookCustomAccessTokenUri = &hook.URI
+		if body.HookCustomAccessTokenEnabled = nullable.NewNullableWithValue(hook.Enabled); hook.Enabled {
+			body.HookCustomAccessTokenUri = nullable.NewNullableWithValue(hook.URI)
 			if len(hook.Secrets.SHA256) > 0 {
-				body.HookCustomAccessTokenSecrets = &hook.Secrets.Value
+				body.HookCustomAccessTokenSecrets = nullable.NewNullableWithValue(hook.Secrets.Value)
 			}
 		}
 	}
 	if hook := h.SendEmail; hook != nil {
-		if body.HookSendEmailEnabled = &hook.Enabled; hook.Enabled {
-			body.HookSendEmailUri = &hook.URI
+		if body.HookSendEmailEnabled = nullable.NewNullableWithValue(hook.Enabled); hook.Enabled {
+			body.HookSendEmailUri = nullable.NewNullableWithValue(hook.URI)
 			if len(hook.Secrets.SHA256) > 0 {
-				body.HookSendEmailSecrets = &hook.Secrets.Value
+				body.HookSendEmailSecrets = nullable.NewNullableWithValue(hook.Secrets.Value)
 			}
 		}
 	}
 	if hook := h.SendSMS; hook != nil {
-		if body.HookSendSmsEnabled = &hook.Enabled; hook.Enabled {
-			body.HookSendSmsUri = &hook.URI
+		if body.HookSendSmsEnabled = nullable.NewNullableWithValue(hook.Enabled); hook.Enabled {
+			body.HookSendSmsUri = nullable.NewNullableWithValue(hook.URI)
 			if len(hook.Secrets.SHA256) > 0 {
-				body.HookSendSmsSecrets = &hook.Secrets.Value
+				body.HookSendSmsSecrets = nullable.NewNullableWithValue(hook.Secrets.Value)
 			}
 		}
 	}
 	// Enterprise and team only features
 	if hook := h.MFAVerificationAttempt; hook != nil {
-		if body.HookMfaVerificationAttemptEnabled = &hook.Enabled; hook.Enabled {
-			body.HookMfaVerificationAttemptUri = &hook.URI
+		if body.HookMfaVerificationAttemptEnabled = nullable.NewNullableWithValue(hook.Enabled); hook.Enabled {
+			body.HookMfaVerificationAttemptUri = nullable.NewNullableWithValue(hook.URI)
 			if len(hook.Secrets.SHA256) > 0 {
-				body.HookMfaVerificationAttemptSecrets = &hook.Secrets.Value
+				body.HookMfaVerificationAttemptSecrets = nullable.NewNullableWithValue(hook.Secrets.Value)
 			}
 		}
 	}
 	if hook := h.PasswordVerificationAttempt; hook != nil {
-		if body.HookPasswordVerificationAttemptEnabled = &hook.Enabled; hook.Enabled {
-			body.HookPasswordVerificationAttemptUri = &hook.URI
+		if body.HookPasswordVerificationAttemptEnabled = nullable.NewNullableWithValue(hook.Enabled); hook.Enabled {
+			body.HookPasswordVerificationAttemptUri = nullable.NewNullableWithValue(hook.URI)
 			if len(hook.Secrets.SHA256) > 0 {
-				body.HookPasswordVerificationAttemptSecrets = &hook.Secrets.Value
+				body.HookPasswordVerificationAttemptSecrets = nullable.NewNullableWithValue(hook.Secrets.Value)
 			}
 		}
 	}
@@ -406,96 +428,96 @@ func (h *hook) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if hook := h.CustomAccessToken; hook != nil {
 		// Ignore disabled hooks because their envs are not loaded
 		if hook.Enabled {
-			hook.URI = cast.Val(remoteConfig.HookCustomAccessTokenUri, "")
+			hook.URI = ValOrDefault(remoteConfig.HookCustomAccessTokenUri, "")
 			if len(hook.Secrets.SHA256) > 0 {
-				hook.Secrets.SHA256 = cast.Val(remoteConfig.HookCustomAccessTokenSecrets, "")
+				hook.Secrets.SHA256 = ValOrDefault(remoteConfig.HookCustomAccessTokenSecrets, "")
 			}
 		}
-		hook.Enabled = cast.Val(remoteConfig.HookCustomAccessTokenEnabled, false)
+		hook.Enabled = ValOrDefault(remoteConfig.HookCustomAccessTokenEnabled, false)
 	}
 	if hook := h.SendEmail; hook != nil {
 		if hook.Enabled {
-			hook.URI = cast.Val(remoteConfig.HookSendEmailUri, "")
+			hook.URI = ValOrDefault(remoteConfig.HookSendEmailUri, "")
 			if len(hook.Secrets.SHA256) > 0 {
-				hook.Secrets.SHA256 = cast.Val(remoteConfig.HookSendEmailSecrets, "")
+				hook.Secrets.SHA256 = ValOrDefault(remoteConfig.HookSendEmailSecrets, "")
 			}
 		}
-		hook.Enabled = cast.Val(remoteConfig.HookSendEmailEnabled, false)
+		hook.Enabled = ValOrDefault(remoteConfig.HookSendEmailEnabled, false)
 	}
 	if hook := h.SendSMS; hook != nil {
 		if hook.Enabled {
-			hook.URI = cast.Val(remoteConfig.HookSendSmsUri, "")
+			hook.URI = ValOrDefault(remoteConfig.HookSendSmsUri, "")
 			if len(hook.Secrets.SHA256) > 0 {
-				hook.Secrets.SHA256 = cast.Val(remoteConfig.HookSendSmsSecrets, "")
+				hook.Secrets.SHA256 = ValOrDefault(remoteConfig.HookSendSmsSecrets, "")
 			}
 		}
-		hook.Enabled = cast.Val(remoteConfig.HookSendSmsEnabled, false)
+		hook.Enabled = ValOrDefault(remoteConfig.HookSendSmsEnabled, false)
 	}
 	// Enterprise and team only features
 	if hook := h.MFAVerificationAttempt; hook != nil {
 		if hook.Enabled {
-			hook.URI = cast.Val(remoteConfig.HookMfaVerificationAttemptUri, "")
+			hook.URI = ValOrDefault(remoteConfig.HookMfaVerificationAttemptUri, "")
 			if len(hook.Secrets.SHA256) > 0 {
-				hook.Secrets.SHA256 = cast.Val(remoteConfig.HookMfaVerificationAttemptSecrets, "")
+				hook.Secrets.SHA256 = ValOrDefault(remoteConfig.HookMfaVerificationAttemptSecrets, "")
 			}
 		}
-		hook.Enabled = cast.Val(remoteConfig.HookMfaVerificationAttemptEnabled, false)
+		hook.Enabled = ValOrDefault(remoteConfig.HookMfaVerificationAttemptEnabled, false)
 	}
 	if hook := h.PasswordVerificationAttempt; hook != nil {
 		if hook.Enabled {
-			hook.URI = cast.Val(remoteConfig.HookPasswordVerificationAttemptUri, "")
+			hook.URI = ValOrDefault(remoteConfig.HookPasswordVerificationAttemptUri, "")
 			if len(hook.Secrets.SHA256) > 0 {
-				hook.Secrets.SHA256 = cast.Val(remoteConfig.HookPasswordVerificationAttemptSecrets, "")
+				hook.Secrets.SHA256 = ValOrDefault(remoteConfig.HookPasswordVerificationAttemptSecrets, "")
 			}
 		}
-		hook.Enabled = cast.Val(remoteConfig.HookPasswordVerificationAttemptEnabled, false)
+		hook.Enabled = ValOrDefault(remoteConfig.HookPasswordVerificationAttemptEnabled, false)
 	}
 }
 
 func (m mfa) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
-	body.MfaMaxEnrolledFactors = cast.UintToIntPtr(&m.MaxEnrolledFactors)
-	body.MfaTotpEnrollEnabled = &m.TOTP.EnrollEnabled
-	body.MfaTotpVerifyEnabled = &m.TOTP.VerifyEnabled
-	body.MfaPhoneEnrollEnabled = &m.Phone.EnrollEnabled
-	body.MfaPhoneVerifyEnabled = &m.Phone.VerifyEnabled
-	body.MfaPhoneOtpLength = cast.UintToIntPtr(&m.Phone.OtpLength)
-	body.MfaPhoneTemplate = &m.Phone.Template
-	body.MfaPhoneMaxFrequency = cast.Ptr(int(m.Phone.MaxFrequency.Seconds()))
-	body.MfaWebAuthnEnrollEnabled = &m.WebAuthn.EnrollEnabled
-	body.MfaWebAuthnVerifyEnabled = &m.WebAuthn.VerifyEnabled
+	body.MfaMaxEnrolledFactors = nullable.NewNullableWithValue(cast.UintToInt(m.MaxEnrolledFactors))
+	body.MfaTotpEnrollEnabled = nullable.NewNullableWithValue(m.TOTP.EnrollEnabled)
+	body.MfaTotpVerifyEnabled = nullable.NewNullableWithValue(m.TOTP.VerifyEnabled)
+	body.MfaPhoneEnrollEnabled = nullable.NewNullableWithValue(m.Phone.EnrollEnabled)
+	body.MfaPhoneVerifyEnabled = nullable.NewNullableWithValue(m.Phone.VerifyEnabled)
+	body.MfaPhoneOtpLength = nullable.NewNullableWithValue(cast.UintToInt(m.Phone.OtpLength))
+	body.MfaPhoneTemplate = nullable.NewNullableWithValue(m.Phone.Template)
+	body.MfaPhoneMaxFrequency = nullable.NewNullableWithValue(int(m.Phone.MaxFrequency.Seconds()))
+	body.MfaWebAuthnEnrollEnabled = nullable.NewNullableWithValue(m.WebAuthn.EnrollEnabled)
+	body.MfaWebAuthnVerifyEnabled = nullable.NewNullableWithValue(m.WebAuthn.VerifyEnabled)
 }
 
 func (m *mfa) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
-	m.MaxEnrolledFactors = cast.IntToUint(cast.Val(remoteConfig.MfaMaxEnrolledFactors, 0))
-	m.TOTP.EnrollEnabled = cast.Val(remoteConfig.MfaTotpEnrollEnabled, false)
-	m.TOTP.VerifyEnabled = cast.Val(remoteConfig.MfaTotpVerifyEnabled, false)
-	m.Phone.EnrollEnabled = cast.Val(remoteConfig.MfaPhoneEnrollEnabled, false)
-	m.Phone.VerifyEnabled = cast.Val(remoteConfig.MfaPhoneVerifyEnabled, false)
+	m.MaxEnrolledFactors = cast.IntToUint(ValOrDefault(remoteConfig.MfaMaxEnrolledFactors, 0))
+	m.TOTP.EnrollEnabled = ValOrDefault(remoteConfig.MfaTotpEnrollEnabled, false)
+	m.TOTP.VerifyEnabled = ValOrDefault(remoteConfig.MfaTotpVerifyEnabled, false)
+	m.Phone.EnrollEnabled = ValOrDefault(remoteConfig.MfaPhoneEnrollEnabled, false)
+	m.Phone.VerifyEnabled = ValOrDefault(remoteConfig.MfaPhoneVerifyEnabled, false)
 	m.Phone.OtpLength = cast.IntToUint(remoteConfig.MfaPhoneOtpLength)
-	m.Phone.Template = cast.Val(remoteConfig.MfaPhoneTemplate, "")
-	m.Phone.MaxFrequency = time.Duration(cast.Val(remoteConfig.MfaPhoneMaxFrequency, 0)) * time.Second
-	m.WebAuthn.EnrollEnabled = cast.Val(remoteConfig.MfaWebAuthnEnrollEnabled, false)
-	m.WebAuthn.VerifyEnabled = cast.Val(remoteConfig.MfaWebAuthnVerifyEnabled, false)
+	m.Phone.Template = ValOrDefault(remoteConfig.MfaPhoneTemplate, "")
+	m.Phone.MaxFrequency = time.Duration(ValOrDefault(remoteConfig.MfaPhoneMaxFrequency, 0)) * time.Second
+	m.WebAuthn.EnrollEnabled = ValOrDefault(remoteConfig.MfaWebAuthnEnrollEnabled, false)
+	m.WebAuthn.VerifyEnabled = ValOrDefault(remoteConfig.MfaWebAuthnVerifyEnabled, false)
 }
 
 func (s sessions) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
-	body.SessionsTimebox = cast.Ptr(int(s.Timebox.Seconds()))
-	body.SessionsInactivityTimeout = cast.Ptr(int(s.InactivityTimeout.Seconds()))
+	body.SessionsTimebox = nullable.NewNullableWithValue(int(s.Timebox.Hours()))
+	body.SessionsInactivityTimeout = nullable.NewNullableWithValue(int(s.InactivityTimeout.Hours()))
 }
 
 func (s *sessions) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
-	s.Timebox = time.Duration(cast.Val(remoteConfig.SessionsTimebox, 0)) * time.Second
-	s.InactivityTimeout = time.Duration(cast.Val(remoteConfig.SessionsInactivityTimeout, 0)) * time.Second
+	s.Timebox = time.Duration(ValOrDefault(remoteConfig.SessionsTimebox, 0)) * time.Hour
+	s.InactivityTimeout = time.Duration(ValOrDefault(remoteConfig.SessionsInactivityTimeout, 0)) * time.Hour
 }
 
 func (e email) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
-	body.ExternalEmailEnabled = &e.EnableSignup
-	body.MailerSecureEmailChangeEnabled = &e.DoubleConfirmChanges
-	body.MailerAutoconfirm = cast.Ptr(!e.EnableConfirmations)
-	body.MailerOtpLength = cast.UintToIntPtr(&e.OtpLength)
+	body.ExternalEmailEnabled = nullable.NewNullableWithValue(e.EnableSignup)
+	body.MailerSecureEmailChangeEnabled = nullable.NewNullableWithValue(e.DoubleConfirmChanges)
+	body.MailerAutoconfirm = nullable.NewNullableWithValue(!e.EnableConfirmations)
+	body.MailerOtpLength = nullable.NewNullableWithValue(cast.UintToInt(e.OtpLength))
 	body.MailerOtpExp = cast.UintToIntPtr(&e.OtpExpiry)
-	body.SecurityUpdatePasswordRequireReauthentication = &e.SecurePasswordChange
-	body.SmtpMaxFrequency = cast.Ptr(int(e.MaxFrequency.Seconds()))
+	body.SecurityUpdatePasswordRequireReauthentication = nullable.NewNullableWithValue(e.SecurePasswordChange)
+	body.SmtpMaxFrequency = nullable.NewNullableWithValue(int(e.MaxFrequency.Seconds()))
 	// When local config is not set, we assume platform defaults should not change
 	if e.Smtp != nil {
 		e.Smtp.toAuthConfigBody(body)
@@ -505,88 +527,160 @@ func (e email) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	}
 	var tmpl *emailTemplate
 	tmpl = cast.Ptr(e.Template["invite"])
-	body.MailerSubjectsInvite = tmpl.Subject
-	body.MailerTemplatesInviteContent = tmpl.Content
+	if tmpl.Subject != nil {
+		body.MailerSubjectsInvite = nullable.NewNullableWithValue(*tmpl.Subject)
+	}
+	if tmpl.Content != nil {
+		body.MailerTemplatesInviteContent = nullable.NewNullableWithValue(*tmpl.Content)
+	}
 	tmpl = cast.Ptr(e.Template["confirmation"])
-	body.MailerSubjectsConfirmation = tmpl.Subject
-	body.MailerTemplatesConfirmationContent = tmpl.Content
+	if tmpl.Subject != nil {
+		body.MailerSubjectsConfirmation = nullable.NewNullableWithValue(*tmpl.Subject)
+	}
+	if tmpl.Content != nil {
+		body.MailerTemplatesConfirmationContent = nullable.NewNullableWithValue(*tmpl.Content)
+	}
 	tmpl = cast.Ptr(e.Template["recovery"])
-	body.MailerSubjectsRecovery = tmpl.Subject
-	body.MailerTemplatesRecoveryContent = tmpl.Content
+	if tmpl.Subject != nil {
+		body.MailerSubjectsRecovery = nullable.NewNullableWithValue(*tmpl.Subject)
+	}
+	if tmpl.Content != nil {
+		body.MailerTemplatesRecoveryContent = nullable.NewNullableWithValue(*tmpl.Content)
+	}
 	tmpl = cast.Ptr(e.Template["magic_link"])
-	body.MailerSubjectsMagicLink = tmpl.Subject
-	body.MailerTemplatesMagicLinkContent = tmpl.Content
+	if tmpl.Subject != nil {
+		body.MailerSubjectsMagicLink = nullable.NewNullableWithValue(*tmpl.Subject)
+	}
+	if tmpl.Content != nil {
+		body.MailerTemplatesMagicLinkContent = nullable.NewNullableWithValue(*tmpl.Content)
+	}
 	tmpl = cast.Ptr(e.Template["email_change"])
-	body.MailerSubjectsEmailChange = tmpl.Subject
-	body.MailerTemplatesEmailChangeContent = tmpl.Content
+	if tmpl.Subject != nil {
+		body.MailerSubjectsEmailChange = nullable.NewNullableWithValue(*tmpl.Subject)
+	}
+	if tmpl.Content != nil {
+		body.MailerTemplatesEmailChangeContent = nullable.NewNullableWithValue(*tmpl.Content)
+	}
 	tmpl = cast.Ptr(e.Template["reauthentication"])
-	body.MailerSubjectsReauthentication = tmpl.Subject
-	body.MailerTemplatesReauthenticationContent = tmpl.Content
+	if tmpl.Subject != nil {
+		body.MailerSubjectsReauthentication = nullable.NewNullableWithValue(*tmpl.Subject)
+	}
+	if tmpl.Content != nil {
+		body.MailerTemplatesReauthenticationContent = nullable.NewNullableWithValue(*tmpl.Content)
+	}
 }
 
 func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
-	e.EnableSignup = cast.Val(remoteConfig.ExternalEmailEnabled, false)
-	e.DoubleConfirmChanges = cast.Val(remoteConfig.MailerSecureEmailChangeEnabled, false)
-	e.EnableConfirmations = !cast.Val(remoteConfig.MailerAutoconfirm, false)
-	e.OtpLength = cast.IntToUint(cast.Val(remoteConfig.MailerOtpLength, 0))
+	e.EnableSignup = ValOrDefault(remoteConfig.ExternalEmailEnabled, false)
+	e.DoubleConfirmChanges = ValOrDefault(remoteConfig.MailerSecureEmailChangeEnabled, false)
+	e.EnableConfirmations = !ValOrDefault(remoteConfig.MailerAutoconfirm, false)
+	e.OtpLength = cast.IntToUint(ValOrDefault(remoteConfig.MailerOtpLength, 0))
 	e.OtpExpiry = cast.IntToUint(remoteConfig.MailerOtpExp)
-	e.SecurePasswordChange = cast.Val(remoteConfig.SecurityUpdatePasswordRequireReauthentication, false)
-	e.MaxFrequency = time.Duration(cast.Val(remoteConfig.SmtpMaxFrequency, 0)) * time.Second
+	e.SecurePasswordChange = ValOrDefault(remoteConfig.SecurityUpdatePasswordRequireReauthentication, false)
+	e.MaxFrequency = time.Duration(ValOrDefault(remoteConfig.SmtpMaxFrequency, 0)) * time.Second
 	e.Smtp.fromAuthConfig(remoteConfig)
 	if len(e.Template) == 0 {
 		return
 	}
 	if t, ok := e.Template["invite"]; ok {
 		if t.Subject != nil {
-			t.Subject = remoteConfig.MailerSubjectsInvite
+			if value, err := remoteConfig.MailerSubjectsInvite.Get(); err == nil {
+				t.Subject = &value
+			} else {
+				t.Subject = nil
+			}
 		}
 		if t.Content != nil {
-			t.Content = remoteConfig.MailerTemplatesInviteContent
+			if value, err := remoteConfig.MailerTemplatesInviteContent.Get(); err == nil {
+				t.Content = &value
+			} else {
+				t.Content = nil
+			}
 		}
 		e.Template["invite"] = t
 	}
 	if t, ok := e.Template["confirmation"]; ok {
 		if t.Subject != nil {
-			t.Subject = remoteConfig.MailerSubjectsConfirmation
+			if value, err := remoteConfig.MailerSubjectsConfirmation.Get(); err == nil {
+				t.Subject = &value
+			} else {
+				t.Subject = nil
+			}
 		}
 		if t.Content != nil {
-			t.Content = remoteConfig.MailerTemplatesConfirmationContent
+			if value, err := remoteConfig.MailerTemplatesConfirmationContent.Get(); err == nil {
+				t.Content = &value
+			} else {
+				t.Content = nil
+			}
 		}
 		e.Template["confirmation"] = t
 	}
 	if t, ok := e.Template["recovery"]; ok {
 		if t.Subject != nil {
-			t.Subject = remoteConfig.MailerSubjectsRecovery
+			if value, err := remoteConfig.MailerSubjectsRecovery.Get(); err == nil {
+				t.Subject = &value
+			} else {
+				t.Subject = nil
+			}
 		}
 		if t.Content != nil {
-			t.Content = remoteConfig.MailerTemplatesRecoveryContent
+			if value, err := remoteConfig.MailerTemplatesRecoveryContent.Get(); err == nil {
+				t.Content = &value
+			} else {
+				t.Content = nil
+			}
 		}
 		e.Template["recovery"] = t
 	}
 	if t, ok := e.Template["magic_link"]; ok {
 		if t.Subject != nil {
-			t.Subject = remoteConfig.MailerSubjectsMagicLink
+			if value, err := remoteConfig.MailerSubjectsMagicLink.Get(); err == nil {
+				t.Subject = &value
+			} else {
+				t.Subject = nil
+			}
 		}
 		if t.Content != nil {
-			t.Content = remoteConfig.MailerTemplatesMagicLinkContent
+			if value, err := remoteConfig.MailerTemplatesMagicLinkContent.Get(); err == nil {
+				t.Content = &value
+			} else {
+				t.Content = nil
+			}
 		}
 		e.Template["magic_link"] = t
 	}
 	if t, ok := e.Template["email_change"]; ok {
 		if t.Subject != nil {
-			t.Subject = remoteConfig.MailerSubjectsEmailChange
+			if value, err := remoteConfig.MailerSubjectsEmailChange.Get(); err == nil {
+				t.Subject = &value
+			} else {
+				t.Subject = nil
+			}
 		}
 		if t.Content != nil {
-			t.Content = remoteConfig.MailerTemplatesEmailChangeContent
+			if value, err := remoteConfig.MailerTemplatesEmailChangeContent.Get(); err == nil {
+				t.Content = &value
+			} else {
+				t.Content = nil
+			}
 		}
 		e.Template["email_change"] = t
 	}
 	if t, ok := e.Template["reauthentication"]; ok {
 		if t.Subject != nil {
-			t.Subject = remoteConfig.MailerSubjectsReauthentication
+			if value, err := remoteConfig.MailerSubjectsReauthentication.Get(); err == nil {
+				t.Subject = &value
+			} else {
+				t.Subject = nil
+			}
 		}
 		if t.Content != nil {
-			t.Content = remoteConfig.MailerTemplatesReauthenticationContent
+			if value, err := remoteConfig.MailerTemplatesReauthenticationContent.Get(); err == nil {
+				t.Content = &value
+			} else {
+				t.Content = nil
+			}
 		}
 		e.Template["reauthentication"] = t
 	}
@@ -595,17 +689,17 @@ func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 func (s smtp) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if !s.Enabled {
 		// Setting a single empty string disables SMTP
-		body.SmtpHost = cast.Ptr("")
+		body.SmtpHost = nullable.NewNullableWithValue("")
 		return
 	}
-	body.SmtpHost = &s.Host
-	body.SmtpPort = cast.Ptr(strconv.Itoa(int(s.Port)))
-	body.SmtpUser = &s.User
+	body.SmtpHost = nullable.NewNullableWithValue(s.Host)
+	body.SmtpPort = nullable.NewNullableWithValue(strconv.Itoa(int(s.Port)))
+	body.SmtpUser = nullable.NewNullableWithValue(s.User)
 	if len(s.Pass.SHA256) > 0 {
-		body.SmtpPass = &s.Pass.Value
+		body.SmtpPass = nullable.NewNullableWithValue(s.Pass.Value)
 	}
-	body.SmtpAdminEmail = &s.AdminEmail
-	body.SmtpSenderName = &s.SenderName
+	body.SmtpAdminEmail = nullable.NewNullableWithValue(s.AdminEmail)
+	body.SmtpSenderName = nullable.NewNullableWithValue(s.SenderName)
 }
 
 func (s *smtp) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
@@ -614,14 +708,14 @@ func (s *smtp) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 		return
 	}
 	if s.Enabled {
-		s.Host = cast.Val(remoteConfig.SmtpHost, "")
-		s.User = cast.Val(remoteConfig.SmtpUser, "")
+		s.Host = ValOrDefault(remoteConfig.SmtpHost, "")
+		s.User = ValOrDefault(remoteConfig.SmtpUser, "")
 		if len(s.Pass.SHA256) > 0 {
-			s.Pass.SHA256 = cast.Val(remoteConfig.SmtpPass, "")
+			s.Pass.SHA256 = ValOrDefault(remoteConfig.SmtpPass, "")
 		}
-		s.AdminEmail = cast.Val(remoteConfig.SmtpAdminEmail, "")
-		s.SenderName = cast.Val(remoteConfig.SmtpSenderName, "")
-		portStr := cast.Val(remoteConfig.SmtpPort, "0")
+		s.AdminEmail = ValOrDefault(remoteConfig.SmtpAdminEmail, "")
+		s.SenderName = ValOrDefault(remoteConfig.SmtpSenderName, "")
+		portStr := ValOrDefault(remoteConfig.SmtpPort, "0")
 		if port, err := strconv.ParseUint(portStr, 10, 16); err == nil {
 			s.Port = uint16(port)
 		}
@@ -631,95 +725,95 @@ func (s *smtp) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 }
 
 func (s sms) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
-	body.ExternalPhoneEnabled = &s.EnableSignup
-	body.SmsMaxFrequency = cast.Ptr(int(s.MaxFrequency.Seconds()))
-	body.SmsAutoconfirm = &s.EnableConfirmations
-	body.SmsTemplate = &s.Template
+	body.ExternalPhoneEnabled = nullable.NewNullableWithValue(s.EnableSignup)
+	body.SmsMaxFrequency = nullable.NewNullableWithValue(int(s.MaxFrequency.Seconds()))
+	body.SmsAutoconfirm = nullable.NewNullableWithValue(s.EnableConfirmations)
+	body.SmsTemplate = nullable.NewNullableWithValue(s.Template)
 	if otpString := mapToEnv(s.TestOTP); len(otpString) > 0 {
-		body.SmsTestOtp = &otpString
+		body.SmsTestOtp = nullable.NewNullableWithValue(otpString)
 		// Set a 10 year validity for test OTP
-		timestamp := time.Now().UTC().AddDate(10, 0, 0).Format(time.RFC3339)
-		body.SmsTestOtpValidUntil = &timestamp
+		timestamp := time.Now().UTC().AddDate(10, 0, 0)
+		body.SmsTestOtpValidUntil = nullable.NewNullableWithValue(timestamp)
 	}
 	// Api only overrides configs of enabled providers
 	switch {
 	case s.Twilio.Enabled:
-		body.SmsProvider = cast.Ptr("twilio")
+		body.SmsProvider = nullable.NewNullableWithValue(v1API.UpdateAuthConfigBodySmsProviderTwilio)
 		if len(s.Twilio.AuthToken.SHA256) > 0 {
-			body.SmsTwilioAuthToken = &s.Twilio.AuthToken.Value
+			body.SmsTwilioAuthToken = nullable.NewNullableWithValue(s.Twilio.AuthToken.Value)
 		}
-		body.SmsTwilioAccountSid = &s.Twilio.AccountSid
-		body.SmsTwilioMessageServiceSid = &s.Twilio.MessageServiceSid
+		body.SmsTwilioAccountSid = nullable.NewNullableWithValue(s.Twilio.AccountSid)
+		body.SmsTwilioMessageServiceSid = nullable.NewNullableWithValue(s.Twilio.MessageServiceSid)
 	case s.TwilioVerify.Enabled:
-		body.SmsProvider = cast.Ptr("twilio_verify")
+		body.SmsProvider = nullable.NewNullableWithValue(v1API.UpdateAuthConfigBodySmsProviderTwilioVerify)
 		if len(s.TwilioVerify.AuthToken.SHA256) > 0 {
-			body.SmsTwilioVerifyAuthToken = &s.TwilioVerify.AuthToken.Value
+			body.SmsTwilioVerifyAuthToken = nullable.NewNullableWithValue(s.TwilioVerify.AuthToken.Value)
 		}
-		body.SmsTwilioVerifyAccountSid = &s.TwilioVerify.AccountSid
-		body.SmsTwilioVerifyMessageServiceSid = &s.TwilioVerify.MessageServiceSid
+		body.SmsTwilioVerifyAccountSid = nullable.NewNullableWithValue(s.TwilioVerify.AccountSid)
+		body.SmsTwilioVerifyMessageServiceSid = nullable.NewNullableWithValue(s.TwilioVerify.MessageServiceSid)
 	case s.Messagebird.Enabled:
-		body.SmsProvider = cast.Ptr("messagebird")
+		body.SmsProvider = nullable.NewNullableWithValue(v1API.UpdateAuthConfigBodySmsProviderMessagebird)
 		if len(s.Messagebird.AccessKey.SHA256) > 0 {
-			body.SmsMessagebirdAccessKey = &s.Messagebird.AccessKey.Value
+			body.SmsMessagebirdAccessKey = nullable.NewNullableWithValue(s.Messagebird.AccessKey.Value)
 		}
-		body.SmsMessagebirdOriginator = &s.Messagebird.Originator
+		body.SmsMessagebirdOriginator = nullable.NewNullableWithValue(s.Messagebird.Originator)
 	case s.Textlocal.Enabled:
-		body.SmsProvider = cast.Ptr("textlocal")
+		body.SmsProvider = nullable.NewNullableWithValue(v1API.UpdateAuthConfigBodySmsProviderTextlocal)
 		if len(s.Textlocal.ApiKey.SHA256) > 0 {
-			body.SmsTextlocalApiKey = &s.Textlocal.ApiKey.Value
+			body.SmsTextlocalApiKey = nullable.NewNullableWithValue(s.Textlocal.ApiKey.Value)
 		}
-		body.SmsTextlocalSender = &s.Textlocal.Sender
+		body.SmsTextlocalSender = nullable.NewNullableWithValue(s.Textlocal.Sender)
 	case s.Vonage.Enabled:
-		body.SmsProvider = cast.Ptr("vonage")
+		body.SmsProvider = nullable.NewNullableWithValue(v1API.UpdateAuthConfigBodySmsProviderVonage)
 		if len(s.Vonage.ApiSecret.SHA256) > 0 {
-			body.SmsVonageApiSecret = &s.Vonage.ApiSecret.Value
+			body.SmsVonageApiSecret = nullable.NewNullableWithValue(s.Vonage.ApiSecret.Value)
 		}
-		body.SmsVonageApiKey = &s.Vonage.ApiKey
-		body.SmsVonageFrom = &s.Vonage.From
+		body.SmsVonageApiKey = nullable.NewNullableWithValue(s.Vonage.ApiKey)
+		body.SmsVonageFrom = nullable.NewNullableWithValue(s.Vonage.From)
 	}
 }
 
 func (s *sms) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
-	s.EnableSignup = cast.Val(remoteConfig.ExternalPhoneEnabled, false)
-	s.MaxFrequency = time.Duration(cast.Val(remoteConfig.SmsMaxFrequency, 0)) * time.Second
-	s.EnableConfirmations = cast.Val(remoteConfig.SmsAutoconfirm, false)
-	s.Template = cast.Val(remoteConfig.SmsTemplate, "")
-	s.TestOTP = envToMap(cast.Val(remoteConfig.SmsTestOtp, ""))
+	s.EnableSignup = ValOrDefault(remoteConfig.ExternalPhoneEnabled, false)
+	s.MaxFrequency = time.Duration(ValOrDefault(remoteConfig.SmsMaxFrequency, 0)) * time.Second
+	s.EnableConfirmations = ValOrDefault(remoteConfig.SmsAutoconfirm, false)
+	s.Template = ValOrDefault(remoteConfig.SmsTemplate, "")
+	s.TestOTP = envToMap(ValOrDefault(remoteConfig.SmsTestOtp, ""))
 	// We are only interested in the provider that's enabled locally
 	switch {
 	case s.Twilio.Enabled:
 		if len(s.Twilio.AuthToken.SHA256) > 0 {
-			s.Twilio.AuthToken.SHA256 = cast.Val(remoteConfig.SmsTwilioAuthToken, "")
+			s.Twilio.AuthToken.SHA256 = ValOrDefault(remoteConfig.SmsTwilioAuthToken, "")
 		}
-		s.Twilio.AccountSid = cast.Val(remoteConfig.SmsTwilioAccountSid, "")
-		s.Twilio.MessageServiceSid = cast.Val(remoteConfig.SmsTwilioMessageServiceSid, "")
+		s.Twilio.AccountSid = ValOrDefault(remoteConfig.SmsTwilioAccountSid, "")
+		s.Twilio.MessageServiceSid = ValOrDefault(remoteConfig.SmsTwilioMessageServiceSid, "")
 	case s.TwilioVerify.Enabled:
 		if len(s.TwilioVerify.AuthToken.SHA256) > 0 {
-			s.TwilioVerify.AuthToken.SHA256 = cast.Val(remoteConfig.SmsTwilioVerifyAuthToken, "")
+			s.TwilioVerify.AuthToken.SHA256 = ValOrDefault(remoteConfig.SmsTwilioVerifyAuthToken, "")
 		}
-		s.TwilioVerify.AccountSid = cast.Val(remoteConfig.SmsTwilioVerifyAccountSid, "")
-		s.TwilioVerify.MessageServiceSid = cast.Val(remoteConfig.SmsTwilioVerifyMessageServiceSid, "")
+		s.TwilioVerify.AccountSid = ValOrDefault(remoteConfig.SmsTwilioVerifyAccountSid, "")
+		s.TwilioVerify.MessageServiceSid = ValOrDefault(remoteConfig.SmsTwilioVerifyMessageServiceSid, "")
 	case s.Messagebird.Enabled:
 		if len(s.Messagebird.AccessKey.SHA256) > 0 {
-			s.Messagebird.AccessKey.SHA256 = cast.Val(remoteConfig.SmsMessagebirdAccessKey, "")
+			s.Messagebird.AccessKey.SHA256 = ValOrDefault(remoteConfig.SmsMessagebirdAccessKey, "")
 		}
-		s.Messagebird.Originator = cast.Val(remoteConfig.SmsMessagebirdOriginator, "")
+		s.Messagebird.Originator = ValOrDefault(remoteConfig.SmsMessagebirdOriginator, "")
 	case s.Textlocal.Enabled:
 		if len(s.Textlocal.ApiKey.SHA256) > 0 {
-			s.Textlocal.ApiKey.SHA256 = cast.Val(remoteConfig.SmsTextlocalApiKey, "")
+			s.Textlocal.ApiKey.SHA256 = ValOrDefault(remoteConfig.SmsTextlocalApiKey, "")
 		}
-		s.Textlocal.Sender = cast.Val(remoteConfig.SmsTextlocalSender, "")
+		s.Textlocal.Sender = ValOrDefault(remoteConfig.SmsTextlocalSender, "")
 	case s.Vonage.Enabled:
 		if len(s.Vonage.ApiSecret.SHA256) > 0 {
-			s.Vonage.ApiSecret.SHA256 = cast.Val(remoteConfig.SmsVonageApiSecret, "")
+			s.Vonage.ApiSecret.SHA256 = ValOrDefault(remoteConfig.SmsVonageApiSecret, "")
 		}
-		s.Vonage.ApiKey = cast.Val(remoteConfig.SmsVonageApiKey, "")
-		s.Vonage.From = cast.Val(remoteConfig.SmsVonageFrom, "")
+		s.Vonage.ApiKey = ValOrDefault(remoteConfig.SmsVonageApiKey, "")
+		s.Vonage.From = ValOrDefault(remoteConfig.SmsVonageFrom, "")
 	case !s.EnableSignup:
 		// Nothing to do if both local and remote providers are disabled.
 		return
 	}
-	if provider := cast.Val(remoteConfig.SmsProvider, ""); len(provider) > 0 {
+	if provider := ValOrDefault(remoteConfig.SmsProvider, ""); len(provider) > 0 {
 		s.Twilio.Enabled = provider == "twilio"
 		s.TwilioVerify.Enabled = provider == "twilio_verify"
 		s.Messagebird.Enabled = provider == "messagebird"
@@ -734,159 +828,159 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	}
 	// Ignore configs of disabled providers because their envs are not loaded
 	if p, ok := e["apple"]; ok {
-		if body.ExternalAppleEnabled = &p.Enabled; *body.ExternalAppleEnabled {
-			body.ExternalAppleClientId = &p.ClientId
+		if body.ExternalAppleEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
+			body.ExternalAppleClientId = nullable.NewNullableWithValue(p.ClientId)
 			if len(p.Secret.SHA256) > 0 {
-				body.ExternalAppleSecret = &p.Secret.Value
+				body.ExternalAppleSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
 		}
 	}
 	if p, ok := e["azure"]; ok {
-		if body.ExternalAzureEnabled = &p.Enabled; *body.ExternalAzureEnabled {
-			body.ExternalAzureClientId = &p.ClientId
+		if body.ExternalAzureEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
+			body.ExternalAzureClientId = nullable.NewNullableWithValue(p.ClientId)
 			if len(p.Secret.SHA256) > 0 {
-				body.ExternalAzureSecret = &p.Secret.Value
+				body.ExternalAzureSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
-			body.ExternalAzureUrl = &p.Url
+			body.ExternalAzureUrl = nullable.NewNullableWithValue(p.Url)
 		}
 	}
 	if p, ok := e["bitbucket"]; ok {
-		if body.ExternalBitbucketEnabled = &p.Enabled; *body.ExternalBitbucketEnabled {
-			body.ExternalBitbucketClientId = &p.ClientId
+		if body.ExternalBitbucketEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
+			body.ExternalBitbucketClientId = nullable.NewNullableWithValue(p.ClientId)
 			if len(p.Secret.SHA256) > 0 {
-				body.ExternalBitbucketSecret = &p.Secret.Value
+				body.ExternalBitbucketSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
 		}
 	}
 	if p, ok := e["discord"]; ok {
-		if body.ExternalDiscordEnabled = &p.Enabled; *body.ExternalDiscordEnabled {
-			body.ExternalDiscordClientId = &p.ClientId
+		if body.ExternalDiscordEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
+			body.ExternalDiscordClientId = nullable.NewNullableWithValue(p.ClientId)
 			if len(p.Secret.SHA256) > 0 {
-				body.ExternalDiscordSecret = &p.Secret.Value
+				body.ExternalDiscordSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
 		}
 	}
 	if p, ok := e["facebook"]; ok {
-		if body.ExternalFacebookEnabled = &p.Enabled; *body.ExternalFacebookEnabled {
-			body.ExternalFacebookClientId = &p.ClientId
+		if body.ExternalFacebookEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
+			body.ExternalFacebookClientId = nullable.NewNullableWithValue(p.ClientId)
 			if len(p.Secret.SHA256) > 0 {
-				body.ExternalFacebookSecret = &p.Secret.Value
+				body.ExternalFacebookSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
 		}
 	}
 	if p, ok := e["figma"]; ok {
-		if body.ExternalFigmaEnabled = &p.Enabled; *body.ExternalFigmaEnabled {
-			body.ExternalFigmaClientId = &p.ClientId
+		if body.ExternalFigmaEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
+			body.ExternalFigmaClientId = nullable.NewNullableWithValue(p.ClientId)
 			if len(p.Secret.SHA256) > 0 {
-				body.ExternalFigmaSecret = &p.Secret.Value
+				body.ExternalFigmaSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
 		}
 	}
 	if p, ok := e["github"]; ok {
-		if body.ExternalGithubEnabled = &p.Enabled; *body.ExternalGithubEnabled {
-			body.ExternalGithubClientId = &p.ClientId
+		if body.ExternalGithubEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
+			body.ExternalGithubClientId = nullable.NewNullableWithValue(p.ClientId)
 			if len(p.Secret.SHA256) > 0 {
-				body.ExternalGithubSecret = &p.Secret.Value
+				body.ExternalGithubSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
 		}
 	}
 	if p, ok := e["gitlab"]; ok {
-		if body.ExternalGitlabEnabled = &p.Enabled; *body.ExternalGitlabEnabled {
-			body.ExternalGitlabClientId = &p.ClientId
+		if body.ExternalGitlabEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
+			body.ExternalGitlabClientId = nullable.NewNullableWithValue(p.ClientId)
 			if len(p.Secret.SHA256) > 0 {
-				body.ExternalGitlabSecret = &p.Secret.Value
+				body.ExternalGitlabSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
-			body.ExternalGitlabUrl = &p.Url
+			body.ExternalGitlabUrl = nullable.NewNullableWithValue(p.Url)
 		}
 	}
 	if p, ok := e["google"]; ok {
-		if body.ExternalGoogleEnabled = &p.Enabled; *body.ExternalGoogleEnabled {
-			body.ExternalGoogleClientId = &p.ClientId
+		if body.ExternalGoogleEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
+			body.ExternalGoogleClientId = nullable.NewNullableWithValue(p.ClientId)
 			if len(p.Secret.SHA256) > 0 {
-				body.ExternalGoogleSecret = &p.Secret.Value
+				body.ExternalGoogleSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
-			body.ExternalGoogleSkipNonceCheck = &p.SkipNonceCheck
+			body.ExternalGoogleSkipNonceCheck = nullable.NewNullableWithValue(p.SkipNonceCheck)
 		}
 	}
 	if p, ok := e["kakao"]; ok {
-		if body.ExternalKakaoEnabled = &p.Enabled; *body.ExternalKakaoEnabled {
-			body.ExternalKakaoClientId = &p.ClientId
+		if body.ExternalKakaoEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
+			body.ExternalKakaoClientId = nullable.NewNullableWithValue(p.ClientId)
 			if len(p.Secret.SHA256) > 0 {
-				body.ExternalKakaoSecret = &p.Secret.Value
+				body.ExternalKakaoSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
 		}
 	}
 	if p, ok := e["keycloak"]; ok {
-		if body.ExternalKeycloakEnabled = &p.Enabled; *body.ExternalKeycloakEnabled {
-			body.ExternalKeycloakClientId = &p.ClientId
+		if body.ExternalKeycloakEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
+			body.ExternalKeycloakClientId = nullable.NewNullableWithValue(p.ClientId)
 			if len(p.Secret.SHA256) > 0 {
-				body.ExternalKeycloakSecret = &p.Secret.Value
+				body.ExternalKeycloakSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
-			body.ExternalKeycloakUrl = &p.Url
+			body.ExternalKeycloakUrl = nullable.NewNullableWithValue(p.Url)
 		}
 	}
 	if p, ok := e["linkedin_oidc"]; ok {
-		if body.ExternalLinkedinOidcEnabled = &p.Enabled; *body.ExternalLinkedinOidcEnabled {
-			body.ExternalLinkedinOidcClientId = &p.ClientId
+		if body.ExternalLinkedinOidcEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
+			body.ExternalLinkedinOidcClientId = nullable.NewNullableWithValue(p.ClientId)
 			if len(p.Secret.SHA256) > 0 {
-				body.ExternalLinkedinOidcSecret = &p.Secret.Value
+				body.ExternalLinkedinOidcSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
 		}
 	}
 	if p, ok := e["notion"]; ok {
-		if body.ExternalNotionEnabled = &p.Enabled; *body.ExternalNotionEnabled {
-			body.ExternalNotionClientId = &p.ClientId
+		if body.ExternalNotionEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
+			body.ExternalNotionClientId = nullable.NewNullableWithValue(p.ClientId)
 			if len(p.Secret.SHA256) > 0 {
-				body.ExternalNotionSecret = &p.Secret.Value
+				body.ExternalNotionSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
 		}
 	}
 	if p, ok := e["slack_oidc"]; ok {
-		if body.ExternalSlackOidcEnabled = &p.Enabled; *body.ExternalSlackOidcEnabled {
-			body.ExternalSlackOidcClientId = &p.ClientId
+		if body.ExternalSlackOidcEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
+			body.ExternalSlackOidcClientId = nullable.NewNullableWithValue(p.ClientId)
 			if len(p.Secret.SHA256) > 0 {
-				body.ExternalSlackOidcSecret = &p.Secret.Value
+				body.ExternalSlackOidcSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
 		}
 	}
 	if p, ok := e["spotify"]; ok {
-		if body.ExternalSpotifyEnabled = &p.Enabled; *body.ExternalSpotifyEnabled {
-			body.ExternalSpotifyClientId = &p.ClientId
+		if body.ExternalSpotifyEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
+			body.ExternalSpotifyClientId = nullable.NewNullableWithValue(p.ClientId)
 			if len(p.Secret.SHA256) > 0 {
-				body.ExternalSpotifySecret = &p.Secret.Value
+				body.ExternalSpotifySecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
 		}
 	}
 	if p, ok := e["twitch"]; ok {
-		if body.ExternalTwitchEnabled = &p.Enabled; *body.ExternalTwitchEnabled {
-			body.ExternalTwitchClientId = &p.ClientId
+		if body.ExternalTwitchEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
+			body.ExternalTwitchClientId = nullable.NewNullableWithValue(p.ClientId)
 			if len(p.Secret.SHA256) > 0 {
-				body.ExternalTwitchSecret = &p.Secret.Value
+				body.ExternalTwitchSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
 		}
 	}
 	if p, ok := e["twitter"]; ok {
-		if body.ExternalTwitterEnabled = &p.Enabled; *body.ExternalTwitterEnabled {
-			body.ExternalTwitterClientId = &p.ClientId
+		if body.ExternalTwitterEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
+			body.ExternalTwitterClientId = nullable.NewNullableWithValue(p.ClientId)
 			if len(p.Secret.SHA256) > 0 {
-				body.ExternalTwitterSecret = &p.Secret.Value
+				body.ExternalTwitterSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
 		}
 	}
 	if p, ok := e["workos"]; ok {
-		if body.ExternalWorkosEnabled = &p.Enabled; *body.ExternalWorkosEnabled {
-			body.ExternalWorkosClientId = &p.ClientId
+		if body.ExternalWorkosEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
+			body.ExternalWorkosClientId = nullable.NewNullableWithValue(p.ClientId)
 			if len(p.Secret.SHA256) > 0 {
-				body.ExternalWorkosSecret = &p.Secret.Value
+				body.ExternalWorkosSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
-			body.ExternalWorkosUrl = &p.Url
+			body.ExternalWorkosUrl = nullable.NewNullableWithValue(p.Url)
 		}
 	}
 	if p, ok := e["zoom"]; ok {
-		if body.ExternalZoomEnabled = &p.Enabled; *body.ExternalZoomEnabled {
-			body.ExternalZoomClientId = &p.ClientId
+		if body.ExternalZoomEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
+			body.ExternalZoomClientId = nullable.NewNullableWithValue(p.ClientId)
 			if len(p.Secret.SHA256) > 0 {
-				body.ExternalZoomSecret = &p.Secret.Value
+				body.ExternalZoomSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
 		}
 	}
@@ -899,222 +993,232 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	// Ignore configs of disabled providers because their envs are not loaded
 	if p, ok := e["apple"]; ok {
 		if p.Enabled {
-			p.ClientId = cast.Val(remoteConfig.ExternalAppleClientId, "")
-			if ids := cast.Val(remoteConfig.ExternalAppleAdditionalClientIds, ""); len(ids) > 0 {
+			p.ClientId = ValOrDefault(remoteConfig.ExternalAppleClientId, "")
+			if ids := ValOrDefault(remoteConfig.ExternalAppleAdditionalClientIds, ""); len(ids) > 0 {
 				p.ClientId += "," + ids
 			}
 			if len(p.Secret.SHA256) > 0 {
-				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalAppleSecret, "")
+				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalAppleSecret, "")
 			}
 		}
-		p.Enabled = cast.Val(remoteConfig.ExternalAppleEnabled, false)
+		p.Enabled = ValOrDefault(remoteConfig.ExternalAppleEnabled, false)
 		e["apple"] = p
 	}
 
 	if p, ok := e["azure"]; ok {
 		if p.Enabled {
-			p.ClientId = cast.Val(remoteConfig.ExternalAzureClientId, "")
+			p.ClientId = ValOrDefault(remoteConfig.ExternalAzureClientId, "")
 			if len(p.Secret.SHA256) > 0 {
-				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalAzureSecret, "")
+				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalAzureSecret, "")
 			}
-			p.Url = cast.Val(remoteConfig.ExternalAzureUrl, "")
+			p.Url = ValOrDefault(remoteConfig.ExternalAzureUrl, "")
 		}
-		p.Enabled = cast.Val(remoteConfig.ExternalAzureEnabled, false)
+		p.Enabled = ValOrDefault(remoteConfig.ExternalAzureEnabled, false)
 		e["azure"] = p
 	}
 
 	if p, ok := e["bitbucket"]; ok {
 		if p.Enabled {
-			p.ClientId = cast.Val(remoteConfig.ExternalBitbucketClientId, "")
+			p.ClientId = ValOrDefault(remoteConfig.ExternalBitbucketClientId, "")
 			if len(p.Secret.SHA256) > 0 {
-				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalBitbucketSecret, "")
+				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalBitbucketSecret, "")
 			}
 		}
-		p.Enabled = cast.Val(remoteConfig.ExternalBitbucketEnabled, false)
+		p.Enabled = ValOrDefault(remoteConfig.ExternalBitbucketEnabled, false)
 		e["bitbucket"] = p
 	}
 
 	if p, ok := e["discord"]; ok {
 		if p.Enabled {
-			p.ClientId = cast.Val(remoteConfig.ExternalDiscordClientId, "")
+			p.ClientId = ValOrDefault(remoteConfig.ExternalDiscordClientId, "")
 			if len(p.Secret.SHA256) > 0 {
-				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalDiscordSecret, "")
+				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalDiscordSecret, "")
 			}
 		}
-		p.Enabled = cast.Val(remoteConfig.ExternalDiscordEnabled, false)
+		p.Enabled = ValOrDefault(remoteConfig.ExternalDiscordEnabled, false)
 		e["discord"] = p
 	}
 
 	if p, ok := e["facebook"]; ok {
 		if p.Enabled {
-			p.ClientId = cast.Val(remoteConfig.ExternalFacebookClientId, "")
+			p.ClientId = ValOrDefault(remoteConfig.ExternalFacebookClientId, "")
 			if len(p.Secret.SHA256) > 0 {
-				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalFacebookSecret, "")
+				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalFacebookSecret, "")
 			}
 		}
-		p.Enabled = cast.Val(remoteConfig.ExternalFacebookEnabled, false)
+		p.Enabled = ValOrDefault(remoteConfig.ExternalFacebookEnabled, false)
 		e["facebook"] = p
 	}
 
 	if p, ok := e["figma"]; ok {
 		if p.Enabled {
-			p.ClientId = cast.Val(remoteConfig.ExternalFigmaClientId, "")
+			p.ClientId = ValOrDefault(remoteConfig.ExternalFigmaClientId, "")
 			if len(p.Secret.SHA256) > 0 {
-				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalFigmaSecret, "")
+				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalFigmaSecret, "")
 			}
 		}
-		p.Enabled = cast.Val(remoteConfig.ExternalFigmaEnabled, false)
+		p.Enabled = ValOrDefault(remoteConfig.ExternalFigmaEnabled, false)
 		e["figma"] = p
 	}
 
 	if p, ok := e["github"]; ok {
 		if p.Enabled {
-			p.ClientId = cast.Val(remoteConfig.ExternalGithubClientId, "")
+			p.ClientId = ValOrDefault(remoteConfig.ExternalGithubClientId, "")
 			if len(p.Secret.SHA256) > 0 {
-				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalGithubSecret, "")
+				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalGithubSecret, "")
 			}
 		}
-		p.Enabled = cast.Val(remoteConfig.ExternalGithubEnabled, false)
+		p.Enabled = ValOrDefault(remoteConfig.ExternalGithubEnabled, false)
 		e["github"] = p
 	}
 
 	if p, ok := e["gitlab"]; ok {
 		if p.Enabled {
-			p.ClientId = cast.Val(remoteConfig.ExternalGitlabClientId, "")
+			p.ClientId = ValOrDefault(remoteConfig.ExternalGitlabClientId, "")
 			if len(p.Secret.SHA256) > 0 {
-				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalGitlabSecret, "")
+				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalGitlabSecret, "")
 			}
-			p.Url = cast.Val(remoteConfig.ExternalGitlabUrl, "")
+			p.Url = ValOrDefault(remoteConfig.ExternalGitlabUrl, "")
 		}
-		p.Enabled = cast.Val(remoteConfig.ExternalGitlabEnabled, false)
+		p.Enabled = ValOrDefault(remoteConfig.ExternalGitlabEnabled, false)
 		e["gitlab"] = p
 	}
 
 	if p, ok := e["google"]; ok {
 		if p.Enabled {
-			p.ClientId = cast.Val(remoteConfig.ExternalGoogleClientId, "")
-			if ids := cast.Val(remoteConfig.ExternalGoogleAdditionalClientIds, ""); len(ids) > 0 {
+			p.ClientId = ValOrDefault(remoteConfig.ExternalGoogleClientId, "")
+			if ids := ValOrDefault(remoteConfig.ExternalGoogleAdditionalClientIds, ""); len(ids) > 0 {
 				p.ClientId += "," + ids
 			}
 			if len(p.Secret.SHA256) > 0 {
-				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalGoogleSecret, "")
+				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalGoogleSecret, "")
 			}
-			p.SkipNonceCheck = cast.Val(remoteConfig.ExternalGoogleSkipNonceCheck, false)
+			p.SkipNonceCheck = ValOrDefault(remoteConfig.ExternalGoogleSkipNonceCheck, false)
 		}
-		p.Enabled = cast.Val(remoteConfig.ExternalGoogleEnabled, false)
+		p.Enabled = ValOrDefault(remoteConfig.ExternalGoogleEnabled, false)
 		e["google"] = p
 	}
 
 	if p, ok := e["kakao"]; ok {
 		if p.Enabled {
-			p.ClientId = cast.Val(remoteConfig.ExternalKakaoClientId, "")
+			p.ClientId = ValOrDefault(remoteConfig.ExternalKakaoClientId, "")
 			if len(p.Secret.SHA256) > 0 {
-				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalKakaoSecret, "")
+				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalKakaoSecret, "")
 			}
 		}
-		p.Enabled = cast.Val(remoteConfig.ExternalKakaoEnabled, false)
+		p.Enabled = ValOrDefault(remoteConfig.ExternalKakaoEnabled, false)
 		e["kakao"] = p
 	}
 
 	if p, ok := e["keycloak"]; ok {
 		if p.Enabled {
-			p.ClientId = cast.Val(remoteConfig.ExternalKeycloakClientId, "")
+			p.ClientId = ValOrDefault(remoteConfig.ExternalKeycloakClientId, "")
 			if len(p.Secret.SHA256) > 0 {
-				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalKeycloakSecret, "")
+				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalKeycloakSecret, "")
 			}
-			p.Url = cast.Val(remoteConfig.ExternalKeycloakUrl, "")
+			p.Url = ValOrDefault(remoteConfig.ExternalKeycloakUrl, "")
 		}
-		p.Enabled = cast.Val(remoteConfig.ExternalKeycloakEnabled, false)
+		p.Enabled = ValOrDefault(remoteConfig.ExternalKeycloakEnabled, false)
 		e["keycloak"] = p
 	}
 
 	if p, ok := e["linkedin_oidc"]; ok {
 		if p.Enabled {
-			p.ClientId = cast.Val(remoteConfig.ExternalLinkedinOidcClientId, "")
+			p.ClientId = ValOrDefault(remoteConfig.ExternalLinkedinOidcClientId, "")
 			if len(p.Secret.SHA256) > 0 {
-				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalLinkedinOidcSecret, "")
+				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalLinkedinOidcSecret, "")
 			}
 		}
-		p.Enabled = cast.Val(remoteConfig.ExternalLinkedinOidcEnabled, false)
+		p.Enabled = ValOrDefault(remoteConfig.ExternalLinkedinOidcEnabled, false)
 		e["linkedin_oidc"] = p
 	}
 
 	if p, ok := e["notion"]; ok {
 		if p.Enabled {
-			p.ClientId = cast.Val(remoteConfig.ExternalNotionClientId, "")
+			p.ClientId = ValOrDefault(remoteConfig.ExternalNotionClientId, "")
 			if len(p.Secret.SHA256) > 0 {
-				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalNotionSecret, "")
+				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalNotionSecret, "")
 			}
 		}
-		p.Enabled = cast.Val(remoteConfig.ExternalNotionEnabled, false)
+		p.Enabled = ValOrDefault(remoteConfig.ExternalNotionEnabled, false)
 		e["notion"] = p
 	}
 
 	if p, ok := e["slack_oidc"]; ok {
 		if p.Enabled {
-			p.ClientId = cast.Val(remoteConfig.ExternalSlackOidcClientId, "")
+			p.ClientId = ValOrDefault(remoteConfig.ExternalSlackOidcClientId, "")
 			if len(p.Secret.SHA256) > 0 {
-				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalSlackOidcSecret, "")
+				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalSlackOidcSecret, "")
 			}
 		}
-		p.Enabled = cast.Val(remoteConfig.ExternalSlackOidcEnabled, false)
+		p.Enabled = ValOrDefault(remoteConfig.ExternalSlackOidcEnabled, false)
 		e["slack_oidc"] = p
 	}
 
 	if p, ok := e["spotify"]; ok {
 		if p.Enabled {
-			p.ClientId = cast.Val(remoteConfig.ExternalSpotifyClientId, "")
+			p.ClientId = ValOrDefault(remoteConfig.ExternalSpotifyClientId, "")
 			if len(p.Secret.SHA256) > 0 {
-				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalSpotifySecret, "")
+				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalSpotifySecret, "")
 			}
 		}
-		p.Enabled = cast.Val(remoteConfig.ExternalSpotifyEnabled, false)
+		p.Enabled = ValOrDefault(remoteConfig.ExternalSpotifyEnabled, false)
 		e["spotify"] = p
 	}
 
 	if p, ok := e["twitch"]; ok {
 		if p.Enabled {
-			p.ClientId = cast.Val(remoteConfig.ExternalTwitchClientId, "")
+			p.ClientId = ValOrDefault(remoteConfig.ExternalTwitchClientId, "")
 			if len(p.Secret.SHA256) > 0 {
-				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalTwitchSecret, "")
+				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalTwitchSecret, "")
 			}
 		}
-		p.Enabled = cast.Val(remoteConfig.ExternalTwitchEnabled, false)
+		p.Enabled = ValOrDefault(remoteConfig.ExternalTwitchEnabled, false)
 		e["twitch"] = p
 	}
 
 	if p, ok := e["twitter"]; ok {
 		if p.Enabled {
-			p.ClientId = cast.Val(remoteConfig.ExternalTwitterClientId, "")
+			p.ClientId = ValOrDefault(remoteConfig.ExternalTwitterClientId, "")
 			if len(p.Secret.SHA256) > 0 {
-				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalTwitterSecret, "")
+				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalTwitterSecret, "")
 			}
 		}
-		p.Enabled = cast.Val(remoteConfig.ExternalTwitterEnabled, false)
+		p.Enabled = ValOrDefault(remoteConfig.ExternalTwitterEnabled, false)
 		e["twitter"] = p
 	}
 
 	if p, ok := e["workos"]; ok {
 		if p.Enabled {
-			p.ClientId = cast.Val(remoteConfig.ExternalWorkosClientId, "")
+			p.ClientId = ValOrDefault(remoteConfig.ExternalWorkosClientId, "")
 			if len(p.Secret.SHA256) > 0 {
-				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalWorkosSecret, "")
+				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalWorkosSecret, "")
 			}
-			p.Url = cast.Val(remoteConfig.ExternalWorkosUrl, "")
+			p.Url = ValOrDefault(remoteConfig.ExternalWorkosUrl, "")
 		}
-		p.Enabled = cast.Val(remoteConfig.ExternalWorkosEnabled, false)
+		p.Enabled = ValOrDefault(remoteConfig.ExternalWorkosEnabled, false)
 		e["workos"] = p
 	}
 
 	if p, ok := e["zoom"]; ok {
 		if p.Enabled {
-			p.ClientId = cast.Val(remoteConfig.ExternalZoomClientId, "")
+			p.ClientId = ValOrDefault(remoteConfig.ExternalZoomClientId, "")
 			if len(p.Secret.SHA256) > 0 {
-				p.Secret.SHA256 = cast.Val(remoteConfig.ExternalZoomSecret, "")
+				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalZoomSecret, "")
 			}
 		}
-		p.Enabled = cast.Val(remoteConfig.ExternalZoomEnabled, false)
+		p.Enabled = ValOrDefault(remoteConfig.ExternalZoomEnabled, false)
 		e["zoom"] = p
+	}
+}
+
+func (w web3) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+	body.ExternalWeb3SolanaEnabled = nullable.NewNullableWithValue(w.Solana.Enabled)
+}
+
+func (w *web3) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	if value, err := remoteConfig.ExternalWeb3SolanaEnabled.Get(); err == nil {
+		w.Solana.Enabled = value
 	}
 }
 
@@ -1131,4 +1235,11 @@ func (a *auth) DiffWithRemote(remoteConfig v1API.AuthConfigResponse) ([]byte, er
 		return nil, err
 	}
 	return diff.Diff("remote[auth]", remoteCompare, "local[auth]", currentValue), nil
+}
+
+func ValOrDefault[T any](v nullable.Nullable[T], def T) T {
+	if value, err := v.Get(); err == nil {
+		return value
+	}
+	return def
 }

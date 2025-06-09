@@ -75,6 +75,6 @@ func TestMigrationFile(t *testing.T) {
 		err := migration.ExecBatch(context.Background(), conn.MockClient(t))
 		// Check error
 		assert.ErrorContains(t, err, "ERROR: schema \"public\" already exists (SQLSTATE 42P06)")
-		assert.ErrorContains(t, err, "At statement 0:\ncreate schema public")
+		assert.ErrorContains(t, err, "At statement: 0\ncreate schema public")
 	})
 }

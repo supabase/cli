@@ -31,9 +31,9 @@ func Run(ctx context.Context, projectRef, format string, names CustomName, fsys 
 	return utils.EncodeOutput(format, os.Stdout, map[string]string{
 		names.DbHost:         fmt.Sprintf("%s-%s.fly.dev", projectRef, branch),
 		names.DbPassword:     utils.Config.Db.Password,
-		names.JWTSecret:      utils.Config.Auth.JwtSecret,
-		names.AnonKey:        utils.Config.Auth.AnonKey,
-		names.ServiceRoleKey: utils.Config.Auth.ServiceRoleKey,
+		names.JWTSecret:      utils.Config.Auth.JwtSecret.Value,
+		names.AnonKey:        utils.Config.Auth.AnonKey.Value,
+		names.ServiceRoleKey: utils.Config.Auth.ServiceRoleKey.Value,
 	})
 }
 
@@ -46,11 +46,11 @@ func GenerateSecrets(ctx context.Context, projectRef, branch string, fsys afero.
 	if resp.JSON200 == nil {
 		return errors.New("Unexpected error retrieving JWT secret: " + string(resp.Body))
 	}
-	utils.Config.Auth.JwtSecret = *resp.JSON200.JwtSecret
+	utils.Config.Auth.JwtSecret.Value = *resp.JSON200.JwtSecret
 	// Generate database password
 	key := strings.Join([]string{
 		projectRef,
-		utils.Config.Auth.JwtSecret,
+		utils.Config.Auth.JwtSecret.Value,
 		branch,
 	}, ":")
 	hash := sha256.Sum256([]byte(key))
@@ -61,7 +61,7 @@ func GenerateSecrets(ctx context.Context, projectRef, branch string, fsys afero.
 		Ref:    projectRef,
 		Role:   "anon",
 	}.NewToken()
-	if utils.Config.Auth.AnonKey, err = anonToken.SignedString([]byte(utils.Config.Auth.JwtSecret)); err != nil {
+	if utils.Config.Auth.AnonKey.Value, err = anonToken.SignedString([]byte(utils.Config.Auth.JwtSecret.Value)); err != nil {
 		return errors.Errorf("failed to sign anon key: %w", err)
 	}
 	serviceToken := config.CustomClaims{
@@ -69,7 +69,7 @@ func GenerateSecrets(ctx context.Context, projectRef, branch string, fsys afero.
 		Ref:    projectRef,
 		Role:   "service_role",
 	}.NewToken()
-	if utils.Config.Auth.ServiceRoleKey, err = serviceToken.SignedString([]byte(utils.Config.Auth.JwtSecret)); err != nil {
+	if utils.Config.Auth.ServiceRoleKey.Value, err = serviceToken.SignedString([]byte(utils.Config.Auth.JwtSecret.Value)); err != nil {
 		return errors.Errorf("failed to sign service_role key: %w", err)
 	}
 	return nil

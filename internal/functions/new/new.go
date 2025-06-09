@@ -45,7 +45,7 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 	}
 	// Load config if available
 	if err := flags.LoadConfig(fsys); err != nil {
-		utils.CmdSuggestion = ""
+		fmt.Fprintln(utils.GetDebugLogger(), err)
 	}
 	if err := createEntrypointFile(slug, fsys); err != nil {
 		return err
@@ -73,7 +73,7 @@ func createEntrypointFile(slug string, fsys afero.Fs) error {
 	defer f.Close()
 	if err := indexTemplate.Option("missingkey=error").Execute(f, indexConfig{
 		URL:   utils.GetApiUrl("/functions/v1/" + slug),
-		Token: utils.Config.Auth.AnonKey,
+		Token: utils.Config.Auth.AnonKey.Value,
 	}); err != nil {
 		return errors.Errorf("failed to write entrypoint: %w", err)
 	}

@@ -61,7 +61,7 @@ func updateSelfHosted(ctx context.Context, branch string) error {
 }
 
 func getStableVersions() map[string]string {
-	images := append(config.Images.Services(), config.Images.Pg15)
+	images := append(config.Images.Services(), config.Images.Pg)
 	result := make(map[string]string, len(images))
 	for _, img := range images {
 		parts := strings.Split(img, ":")
@@ -111,6 +111,6 @@ func updateComposeVersion(ctx context.Context, client *github.Client, path, ref 
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, "Committed changes to", *resp.Commit.SHA)
+	fmt.Fprintln(os.Stderr, "Committed changes to", *resp.SHA)
 	return nil
 }

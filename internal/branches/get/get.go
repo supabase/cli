@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/go-errors/errors"
+	"github.com/google/uuid"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/list"
@@ -52,7 +53,11 @@ func Run(ctx context.Context, branchId string, fsys afero.Fs) error {
 
 func getBranchDetail(ctx context.Context, branchId string) (api.BranchDetailResponse, error) {
 	var result api.BranchDetailResponse
-	resp, err := utils.GetSupabase().V1GetABranchConfigWithResponse(ctx, branchId)
+	parsed, err := uuid.Parse(branchId)
+	if err != nil {
+		return result, errors.Errorf("failed to parse branch ID: %w", err)
+	}
+	resp, err := utils.GetSupabase().V1GetABranchConfigWithResponse(ctx, parsed)
 	if err != nil {
 		return result, errors.Errorf("failed to get branch: %w", err)
 	} else if resp.JSON200 == nil {
@@ -73,7 +78,7 @@ func getBranchDetail(ctx context.Context, branchId string) (api.BranchDetailResp
 
 func getPoolerConfig(ctx context.Context, ref string) (api.SupavisorConfigResponse, error) {
 	var result api.SupavisorConfigResponse
-	resp, err := utils.GetSupabase().V1GetSupavisorConfigWithResponse(ctx, ref)
+	resp, err := utils.GetSupabase().V1GetPoolerConfigWithResponse(ctx, ref)
 	if err != nil {
 		return result, errors.Errorf("failed to get pooler: %w", err)
 	} else if resp.JSON200 == nil {
@@ -105,5 +110,6 @@ func toStandardEnvs(detail api.BranchDetailResponse, pooler api.SupavisorConfigR
 	envs["POSTGRES_URL"] = utils.ToPostgresURL(*config)
 	envs["POSTGRES_URL_NON_POOLING"] = utils.ToPostgresURL(direct)
 	envs["SUPABASE_URL"] = "https://" + utils.GetSupabaseHost(detail.Ref)
+	envs["SUPABASE_JWT_SECRET"] = *detail.JwtSecret
 	return envs
 }

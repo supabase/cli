@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -52,6 +53,12 @@ func Run(ctx context.Context, projectRef string, values []string, replaceOverrid
 	{
 		if noRestart {
 			finalOverrides["restart_database"] = false
+		}
+		// statement_timeout and wal_sender_timeout must be typed as string
+		for k, v := range finalOverrides {
+			if _, ok := v.(string); strings.HasSuffix(k, "_timeout") && !ok {
+				finalOverrides[k] = fmt.Sprintf("%v", v)
+			}
 		}
 		bts, err := json.Marshal(finalOverrides)
 		if err != nil {

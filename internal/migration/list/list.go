@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/glamour/styles"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
@@ -73,7 +74,7 @@ func makeTable(remoteMigrations, localMigrations []string) string {
 
 func RenderTable(markdown string) error {
 	r, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
+		glamour.WithStandardStyle(styles.AsciiStyle),
 		glamour.WithWordWrap(-1),
 	)
 	if err != nil {

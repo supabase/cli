@@ -10,11 +10,13 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/containerd/errdefs"
 	"github.com/docker/docker/client"
 	"github.com/go-errors/errors"
 	"github.com/go-git/go-git/v5"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/pkg/migration"
 )
 
 // Assigned using `-ldflags` https://stackoverflow.com/q/11354518
@@ -52,69 +54,8 @@ var (
 	ImageNamePattern   = regexp.MustCompile(`\/(.*):`)
 
 	// These schemas are ignored from db diff and db dump
-	PgSchemas = []string{
-		"information_schema",
-		"pg_*", // Wildcard pattern follows pg_dump
-	}
-	// Initialised by postgres image and owned by postgres role
-	InternalSchemas = append([]string{
-		"_analytics",
-		"_realtime",
-		"_supavisor",
-		"auth",
-		"extensions",
-		"pgbouncer",
-		"realtime",
-		"storage",
-		"supabase_functions",
-		"supabase_migrations",
-		// Owned by extensions
-		"cron",
-		"dbdev",
-		"graphql",
-		"graphql_public",
-		"net",
-		"pgmq",
-		"pgsodium",
-		"pgsodium_masks",
-		"pgtle",
-		"repack",
-		"tiger",
-		"tiger_data",
-		"timescaledb_*",
-		"_timescaledb_*",
-		"topology",
-		"vault",
-	}, PgSchemas...)
-	ReservedRoles = []string{
-		"anon",
-		"authenticated",
-		"authenticator",
-		"dashboard_user",
-		"pgbouncer",
-		"postgres",
-		"service_role",
-		"supabase_admin",
-		"supabase_auth_admin",
-		"supabase_functions_admin",
-		"supabase_read_only_user",
-		"supabase_realtime_admin",
-		"supabase_replication_admin",
-		"supabase_storage_admin",
-		// Managed by extensions
-		"pgsodium_keyholder",
-		"pgsodium_keyiduser",
-		"pgsodium_keymaker",
-		"pgtle_admin",
-	}
-	AllowedConfigs = []string{
-		// Ref: https://github.com/supabase/postgres/blob/develop/ansible/files/postgresql_config/supautils.conf.j2#L10
-		"pgaudit.*",
-		"pgrst.*",
-		"session_replication_role",
-		"statement_timeout",
-		"track_io_timing",
-	}
+	PgSchemas       = migration.InternalSchemas[:2]
+	InternalSchemas = migration.InternalSchemas
 
 	SupabaseDirPath       = "supabase"
 	ConfigPath            = filepath.Join(SupabaseDirPath, "config.toml")
@@ -149,7 +90,7 @@ var (
 
 func GetCurrentTimestamp() string {
 	// Magic number: https://stackoverflow.com/q/45160822.
-	return time.Now().UTC().Format("20060102150405")
+	return time.Now().UTC().Format(layoutVersion)
 }
 
 func GetCurrentBranchFS(fsys afero.Fs) (string, error) {
@@ -167,7 +108,7 @@ func AssertSupabaseDbIsRunning() error {
 
 func AssertServiceIsRunning(ctx context.Context, containerId string) error {
 	if _, err := Docker.ContainerInspect(ctx, containerId); err != nil {
-		if client.IsErrNotFound(err) {
+		if errdefs.IsNotFound(err) {
 			return errors.New(ErrNotRunning)
 		}
 		if client.IsErrConnectionFailed(err) {

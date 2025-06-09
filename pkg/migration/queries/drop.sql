@@ -42,7 +42,7 @@ begin
     execute format('drop materialized view if exists %I.%I cascade', rec.relnamespace::regnamespace::name, rec.relname);
   end loop;
 
-  -- tables (cascade to views)
+  -- tables (cascade to dependent objects)
   for rec in
     select *
     from pg_class c
@@ -55,18 +55,17 @@ begin
     execute format('drop table if exists %I.%I cascade', rec.relnamespace::regnamespace::name, rec.relname);
   end loop;
 
-  -- truncate tables in auth, storage, webhooks, and migrations schema
+  -- truncate tables in auth, webhooks, and migrations schema
   for rec in
     select *
     from pg_class c
     where
       (c.relnamespace::regnamespace::name = 'auth' and c.relname != 'schema_migrations'
-      or c.relnamespace::regnamespace::name = 'storage' and c.relname != 'migrations'
       or c.relnamespace::regnamespace::name = 'supabase_functions' and c.relname != 'migrations'
       or c.relnamespace::regnamespace::name = 'supabase_migrations')
       and c.relkind = 'r'
   loop
-    execute format('truncate %I.%I restart identity cascade', rec.relnamespace::regnamespace::name, rec.relname);
+    execute format('truncate %I.%I cascade', rec.relnamespace::regnamespace::name, rec.relname);
   end loop;
 
   -- sequences
@@ -104,7 +103,7 @@ begin
     select *
     from pg_publication p
     where
-      p.pubname not like 'supabase_realtime%' and p.pubname not like 'realtime_messages%'
+      not p.pubname like any(array['supabase\_realtime%', 'realtime\_messages%'])
   loop
     execute format('drop publication if exists %I', rec.pubname);
   end loop;

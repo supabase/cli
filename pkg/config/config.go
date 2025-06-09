@@ -26,9 +26,9 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
 	"github.com/go-errors/errors"
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
-	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/fetcher"
@@ -156,16 +156,6 @@ func (c CustomClaims) NewToken() *jwt.Token {
 //
 // > secret = "env(SUPABASE_AUTH_EXTERNAL_APPLE_SECRET)"
 //
-// If you are adding an internal config or secret that doesn't need to be overridden by the user,
-// exclude the field from toml serialization. For example,
-//
-//	type auth struct {
-//		AnonKey string `toml:"-" mapstructure:"anon_key"`
-//	}
-//
-// Use `mapstructure:"anon_key"` tag only if you want inject values from a predictable environment
-// variable, such as SUPABASE_AUTH_ANON_KEY.
-//
 // Default values for internal configs should be added to `var Config` initializer.
 type (
 	// Common config fields between our "base" config and any "remote" branch specific
@@ -173,12 +163,12 @@ type (
 		ProjectId    string         `toml:"project_id"`
 		Hostname     string         `toml:"-"`
 		Api          api            `toml:"api"`
-		Db           db             `toml:"db" mapstructure:"db"`
+		Db           db             `toml:"db"`
 		Realtime     realtime       `toml:"realtime"`
 		Studio       studio         `toml:"studio"`
 		Inbucket     inbucket       `toml:"inbucket"`
 		Storage      storage        `toml:"storage"`
-		Auth         auth           `toml:"auth" mapstructure:"auth"`
+		Auth         auth           `toml:"auth"`
 		EdgeRuntime  edgeRuntime    `toml:"edge_runtime"`
 		Functions    FunctionConfig `toml:"functions"`
 		Analytics    analytics      `toml:"analytics"`
@@ -186,8 +176,8 @@ type (
 	}
 
 	config struct {
-		baseConfig `mapstructure:",squash"`
-		Remotes    map[string]baseConfig `toml:"remotes"`
+		baseConfig
+		Remotes map[string]baseConfig `toml:"remotes"`
 	}
 
 	realtime struct {
@@ -224,8 +214,11 @@ type (
 		Image         string        `toml:"-"`
 		Policy        RequestPolicy `toml:"policy"`
 		InspectorPort uint16        `toml:"inspector_port"`
+		Secrets       SecretsConfig `toml:"secrets"`
+		DenoVersion   uint          `toml:"deno_version"`
 	}
 
+	SecretsConfig  map[string]Secret
 	FunctionConfig map[string]function
 
 	function struct {
@@ -245,7 +238,7 @@ type (
 		GcpProjectId     string          `toml:"gcp_project_id"`
 		GcpProjectNumber string          `toml:"gcp_project_number"`
 		GcpJwtPath       string          `toml:"gcp_jwt_path"`
-		ApiKey           string          `toml:"-" mapstructure:"api_key"`
+		ApiKey           string          `toml:"-"`
 		// Deprecated together with syslog
 		VectorPort uint16 `toml:"vector_port"`
 	}
@@ -312,7 +305,9 @@ func (s *storage) Clone() storage {
 
 func (c *baseConfig) Clone() baseConfig {
 	copy := *c
+	copy.Db.Vault = maps.Clone(c.Db.Vault)
 	copy.Storage = c.Storage.Clone()
+	copy.EdgeRuntime.Secrets = maps.Clone(c.EdgeRuntime.Secrets)
 	copy.Functions = maps.Clone(c.Functions)
 	copy.Auth = c.Auth.Clone()
 	if c.Experimental.Webhooks != nil {
@@ -338,14 +333,19 @@ func NewConfig(editors ...ConfigEditor) config {
 			KongImage: Images.Kong,
 		},
 		Db: db{
-			Image:    Images.Pg15,
+			Image:    Images.Pg,
 			Password: "postgres",
-			RootKey:  "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
+			RootKey: Secret{
+				Value: "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
+			},
 			Pooler: pooler{
 				Image:         Images.Supavisor,
 				TenantId:      "pooler-dev",
 				EncryptionKey: "12345678901234567890123456789032",
 				SecretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
+			},
+			Migrations: migrations{
+				Enabled: true,
 			},
 			Seed: seed{
 				Enabled:  true,
@@ -377,8 +377,10 @@ func NewConfig(editors ...ConfigEditor) config {
 			Sms: sms{
 				TestOTP: map[string]string{},
 			},
-			External:  map[string]provider{},
-			JwtSecret: defaultJwtSecret,
+			External: map[string]provider{},
+			JwtSecret: Secret{
+				Value: defaultJwtSecret,
+			},
 		},
 		Inbucket: inbucket{
 			Image:      Images.Inbucket,
@@ -434,16 +436,48 @@ func (c *config) Eject(w io.Writer) error {
 
 // Loads custom config file to struct fields tagged with toml.
 func (c *config) loadFromFile(filename string, fsys fs.FS) error {
-	v := viper.New()
+	v := viper.NewWithOptions(
+		viper.ExperimentalBindStruct(),
+		viper.EnvKeyReplacer(strings.NewReplacer(".", "_")),
+	)
+	v.SetEnvPrefix("SUPABASE")
+	v.AutomaticEnv()
+	if err := c.mergeDefaultValues(v); err != nil {
+		return err
+	} else if err := mergeFileConfig(v, filename, fsys); err != nil {
+		return err
+	}
+	// Find [remotes.*] block to override base config
+	idToName := map[string]string{}
+	for name, remote := range v.GetStringMap("remotes") {
+		projectId := v.GetString(fmt.Sprintf("remotes.%s.project_id", name))
+		// Track remote project_id to check for duplication
+		if other, exists := idToName[projectId]; exists {
+			return errors.Errorf("duplicate project_id for [remotes.%s] and %s", name, other)
+		}
+		idToName[projectId] = fmt.Sprintf("[remotes.%s]", name)
+		if projectId == c.ProjectId {
+			fmt.Fprintln(os.Stderr, "Loading config override:", idToName[projectId])
+			if err := mergeRemoteConfig(v, remote.(map[string]any)); err != nil {
+				return err
+			}
+		}
+	}
+	return c.load(v)
+}
+
+func (c *config) mergeDefaultValues(v *viper.Viper) error {
 	v.SetConfigType("toml")
-	// Load default values
 	var buf bytes.Buffer
 	if err := c.Eject(&buf); err != nil {
 		return err
-	} else if err := c.loadFromReader(v, &buf); err != nil {
-		return err
+	} else if err := v.MergeConfig(&buf); err != nil {
+		return errors.Errorf("failed to merge default values: %w", err)
 	}
-	// Load custom config
+	return nil
+}
+
+func mergeFileConfig(v *viper.Viper, filename string, fsys fs.FS) error {
 	if ext := filepath.Ext(filename); len(ext) > 0 {
 		v.SetConfigType(ext[1:])
 	}
@@ -454,31 +488,27 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 		return errors.Errorf("failed to read file config: %w", err)
 	}
 	defer f.Close()
-	return c.loadFromReader(v, f)
+	if err := v.MergeConfig(f); err != nil {
+		return errors.Errorf("failed to merge file config: %w", err)
+	}
+	return nil
 }
 
-func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
-	if err := v.MergeConfig(r); err != nil {
-		return errors.Errorf("failed to merge config: %w", err)
+func mergeRemoteConfig(v *viper.Viper, remote map[string]any) error {
+	u := viper.New()
+	if err := u.MergeConfigMap(remote); err != nil {
+		return errors.Errorf("failed to merge remote config: %w", err)
 	}
-	// Find [remotes.*] block to override base config
-	baseId := v.GetString("project_id")
-	idToName := map[string]string{baseId: "base"}
-	for name, remote := range v.GetStringMap("remotes") {
-		projectId := v.GetString(fmt.Sprintf("remotes.%s.project_id", name))
-		// Track remote project_id to check for duplication
-		if other, exists := idToName[projectId]; exists {
-			return errors.Errorf("duplicate project_id for [remotes.%s] and %s", name, other)
-		}
-		idToName[projectId] = fmt.Sprintf("[remotes.%s]", name)
-		if projectId == c.ProjectId {
-			fmt.Fprintln(os.Stderr, "Loading config override:", idToName[projectId])
-			if err := v.MergeConfigMap(remote.(map[string]any)); err != nil {
-				return err
-			}
-			v.Set("project_id", baseId)
-		}
+	for _, k := range u.AllKeys() {
+		v.Set(k, u.Get(k))
 	}
+	if key := "db.seed.enabled"; !u.IsSet(key) {
+		v.Set(key, false)
+	}
+	return nil
+}
+
+func (c *config) load(v *viper.Viper) error {
 	// Set default values for [functions.*] when config struct is empty
 	for key, value := range v.GetStringMap("functions") {
 		if _, ok := value.(map[string]any); !ok {
@@ -506,6 +536,12 @@ func (c *config) loadFromReader(v *viper.Viper, r io.Reader) error {
 	}); err != nil {
 		return errors.Errorf("failed to parse config: %w", err)
 	}
+	// Convert keys to upper case: https://github.com/spf13/viper/issues/1014
+	secrets := make(SecretsConfig, len(c.EdgeRuntime.Secrets))
+	for k, v := range c.EdgeRuntime.Secrets {
+		secrets[strings.ToUpper(k)] = v
+	}
+	c.EdgeRuntime.Secrets = secrets
 	return nil
 }
 
@@ -520,33 +556,6 @@ func (c *config) newDecodeHook(fs ...mapstructure.DecodeHookFunc) mapstructure.D
 	return mapstructure.ComposeDecodeHookFunc(fs...)
 }
 
-// Loads envs prefixed with supabase_ to struct fields tagged with mapstructure.
-func (c *config) loadFromEnv() error {
-	v := viper.New()
-	v.SetEnvPrefix("SUPABASE")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.AutomaticEnv()
-	// Viper does not parse env vars automatically. Instead of calling viper.BindEnv
-	// per key, we decode all keys from an existing struct, and merge them to viper.
-	// Ref: https://github.com/spf13/viper/issues/761#issuecomment-859306364
-	envKeysMap := map[string]interface{}{}
-	if dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
-		Result:               &envKeysMap,
-		IgnoreUntaggedFields: true,
-	}); err != nil {
-		return errors.Errorf("failed to create decoder: %w", err)
-	} else if err := dec.Decode(c.baseConfig); err != nil {
-		return errors.Errorf("failed to decode env: %w", err)
-	} else if err := v.MergeConfigMap(envKeysMap); err != nil {
-		return errors.Errorf("failed to merge env config: %w", err)
-	}
-	// Writes viper state back to config struct, with automatic env substitution
-	if err := v.UnmarshalExact(c, viper.DecodeHook(c.newDecodeHook())); err != nil {
-		return errors.Errorf("failed to parse env override: %w", err)
-	}
-	return nil
-}
-
 func (c *config) Load(path string, fsys fs.FS) error {
 	builder := NewPathBuilder(path)
 	// Load secrets from .env file
@@ -556,24 +565,21 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if err := c.loadFromFile(builder.ConfigPath, fsys); err != nil {
 		return err
 	}
-	if err := c.loadFromEnv(); err != nil {
-		return err
-	}
 	// Generate JWT tokens
-	if len(c.Auth.AnonKey) == 0 {
+	if len(c.Auth.AnonKey.Value) == 0 {
 		anonToken := CustomClaims{Role: "anon"}.NewToken()
-		if signed, err := anonToken.SignedString([]byte(c.Auth.JwtSecret)); err != nil {
+		if signed, err := anonToken.SignedString([]byte(c.Auth.JwtSecret.Value)); err != nil {
 			return errors.Errorf("failed to generate anon key: %w", err)
 		} else {
-			c.Auth.AnonKey = signed
+			c.Auth.AnonKey.Value = signed
 		}
 	}
-	if len(c.Auth.ServiceRoleKey) == 0 {
+	if len(c.Auth.ServiceRoleKey.Value) == 0 {
 		anonToken := CustomClaims{Role: "service_role"}.NewToken()
-		if signed, err := anonToken.SignedString([]byte(c.Auth.JwtSecret)); err != nil {
+		if signed, err := anonToken.SignedString([]byte(c.Auth.JwtSecret.Value)); err != nil {
 			return errors.Errorf("failed to generate service_role key: %w", err)
 		} else {
-			c.Auth.ServiceRoleKey = signed
+			c.Auth.ServiceRoleKey.Value = signed
 		}
 	}
 	// TODO: move linked pooler connection string elsewhere
@@ -593,20 +599,32 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		c.Api.ExternalUrl = apiUrl.String()
 	}
 	// Update image versions
-	if version, err := fs.ReadFile(fsys, builder.PostgresVersionPath); err == nil {
-		if strings.HasPrefix(string(version), "15.") && semver.Compare(string(version[3:]), "1.0.55") >= 0 {
-			c.Db.Image = replaceImageTag(Images.Pg15, string(version))
-		}
+	switch c.Db.MajorVersion {
+	case 13:
+		c.Db.Image = pg15
+	case 14:
+		c.Db.Image = pg14
+	case 15:
+		c.Db.Image = pg15
 	}
 	if c.Db.MajorVersion > 14 {
+		if version, err := fs.ReadFile(fsys, builder.PostgresVersionPath); err == nil {
+			// Only replace image if postgres version is above 15.1.0.55
+			if i := strings.IndexByte(c.Db.Image, ':'); VersionCompare(c.Db.Image[i+1:], "15.1.0.55") >= 0 {
+				c.Db.Image = replaceImageTag(Images.Pg, string(version))
+			}
+		}
 		if version, err := fs.ReadFile(fsys, builder.RestVersionPath); err == nil && len(version) > 0 {
 			c.Api.Image = replaceImageTag(Images.Postgrest, string(version))
 		}
-		if version, err := fs.ReadFile(fsys, builder.StorageVersionPath); err == nil && len(version) > 0 {
-			c.Storage.Image = replaceImageTag(Images.Storage, string(version))
-		}
 		if version, err := fs.ReadFile(fsys, builder.GotrueVersionPath); err == nil && len(version) > 0 {
 			c.Auth.Image = replaceImageTag(Images.Gotrue, string(version))
+		}
+	}
+	if version, err := fs.ReadFile(fsys, builder.StorageVersionPath); err == nil && len(version) > 0 {
+		// For backwards compatibility, exclude all strings that look like semver
+		if v := strings.TrimSpace(string(version)); !semver.IsValid(v) {
+			c.Storage.TargetMigration = v
 		}
 	}
 	if version, err := fs.ReadFile(fsys, builder.EdgeRuntimeVersionPath); err == nil && len(version) > 0 {
@@ -625,10 +643,26 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		c.Studio.PgmetaImage = replaceImageTag(Images.Pgmeta, string(version))
 	}
 	// TODO: replace derived config resolution with viper decode hooks
-	if err := c.baseConfig.resolve(builder, fsys); err != nil {
+	if err := c.resolve(builder, fsys); err != nil {
 		return err
 	}
 	return c.Validate(fsys)
+}
+
+func VersionCompare(a, b string) int {
+	var pA, pB string
+	if vA := strings.Split(a, "."); len(vA) > 3 {
+		a = strings.Join(vA[:3], ".")
+		pA = strings.TrimLeft(strings.Join(vA[3:], "."), "0")
+	}
+	if vB := strings.Split(b, "."); len(vB) > 3 {
+		b = strings.Join(vB[:3], ".")
+		pB = strings.TrimLeft(strings.Join(vB[3:], "."), "0")
+	}
+	if r := semver.Compare("v"+a, "v"+b); r != 0 {
+		return r
+	}
+	return semver.Compare("v"+pA, "v"+pB)
 }
 
 func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
@@ -722,10 +756,8 @@ func (c *config) Validate(fsys fs.FS) error {
 		return errors.New("Missing required field in config: db.major_version")
 	case 12:
 		return errors.New("Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.")
-	case 13:
-		c.Db.Image = pg13
-	case 14:
-		c.Db.Image = pg14
+	case 13, 14, 17:
+		// TODO: support oriole db 17 eventually
 	case 15:
 		if len(c.Experimental.OrioleDBVersion) > 0 {
 			c.Db.Image = "supabase/postgres:orioledb-" + c.Experimental.OrioleDBVersion
@@ -817,6 +849,16 @@ func (c *config) Validate(fsys fs.FS) error {
 			return err
 		}
 	}
+	switch c.EdgeRuntime.DenoVersion {
+	case 0:
+		return errors.New("Missing required field in config: edge_runtime.deno_version")
+	case 1:
+		break
+	case 2:
+		c.EdgeRuntime.Image = deno2
+	default:
+		return errors.Errorf("Failed reading config: Invalid %s: %v.", "edge_runtime.deno_version", c.EdgeRuntime.DenoVersion)
+	}
 	// Validate logflare config
 	if c.Analytics.Enabled {
 		if c.Analytics.Backend == LogflareBigQuery {
@@ -905,7 +947,33 @@ func loadDefaultEnv(env string) error {
 
 func loadEnvIfExists(path string) error {
 	if err := godotenv.Load(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return errors.Errorf("failed to load %s: %w", ".env", err)
+		// If DEBUG=1, return the error as is for full debugability
+		if viper.GetBool("DEBUG") {
+			return errors.Errorf("failed to load %s: %w", path, err)
+		}
+		msg := err.Error()
+		switch {
+		case strings.HasPrefix(msg, "unexpected character"):
+			// Try to extract the character, fallback to generic
+			start := strings.Index(msg, "unexpected character \"")
+			if start != -1 {
+				start += len("unexpected character \"")
+				end := strings.Index(msg[start:], "\"")
+				if end != -1 {
+					char := msg[start : start+end]
+					return errors.Errorf("failed to parse environment file: %s (unexpected character '%s' in variable name)", path, char)
+				}
+			}
+			return errors.Errorf("failed to parse environment file: %s (unexpected character in variable name)", path)
+		case strings.HasPrefix(msg, "unterminated quoted value"):
+			return errors.Errorf("failed to parse environment file: %s (unterminated quoted value)", path)
+		// If the error message contains newlines, there is a high chance that the actual content of the
+		// dotenv file is being leaked. In such cases, we return a generic error to avoid unwanted leaks in the logs
+		case strings.Contains(msg, "\n"):
+			return errors.Errorf("failed to parse environment file: %s (syntax error)", path)
+		default:
+			return errors.Errorf("failed to load %s: %w", path, err)
+		}
 	}
 	return nil
 }
@@ -1199,6 +1267,26 @@ func (c *tpaCognito) validate() (err error) {
 	return nil
 }
 
+var clerkDomainPattern = regexp.MustCompile("^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$")
+
+func (c *tpaClerk) issuerURL() string {
+	return fmt.Sprintf("https://%s", c.Domain)
+}
+
+func (c *tpaClerk) validate() (err error) {
+	if c.Domain == "" {
+		return errors.New("Invalid config: auth.third_party.clerk is enabled but without a domain.")
+	} else if err := assertEnvLoaded(c.Domain); err != nil {
+		return err
+	}
+
+	if !clerkDomainPattern.MatchString(c.Domain) {
+		return errors.New("Invalid config: auth.third_party.clerk has invalid domain, it usually is like clerk.example.com or example.clerk.accounts.dev. Check https://clerk.com/setup/supabase on how to find the correct value.")
+	}
+
+	return nil
+}
+
 func (tpa *thirdParty) validate() error {
 	enabled := 0
 
@@ -1226,6 +1314,14 @@ func (tpa *thirdParty) validate() error {
 		}
 	}
 
+	if tpa.Clerk.Enabled {
+		enabled += 1
+
+		if err := tpa.Clerk.validate(); err != nil {
+			return err
+		}
+	}
+
 	if enabled > 1 {
 		return errors.New("Invalid config: Only one third_party provider allowed to be enabled at a time.")
 	}
@@ -1244,6 +1340,10 @@ func (tpa *thirdParty) IssuerURL() string {
 
 	if tpa.Cognito.Enabled {
 		return tpa.Cognito.issuerURL()
+	}
+
+	if tpa.Clerk.Enabled {
+		return tpa.Clerk.issuerURL()
 	}
 
 	return ""
@@ -1319,7 +1419,7 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 	}
 
 	secretJWK.KeyType = "oct"
-	secretJWK.KeyBase64URL = base64.RawURLEncoding.EncodeToString([]byte(a.JwtSecret))
+	secretJWK.KeyBase64URL = base64.RawURLEncoding.EncodeToString([]byte(a.JwtSecret.Value))
 
 	secretJWKEncoded, err := json.Marshal(&secretJWK)
 	if err != nil {
@@ -1354,7 +1454,7 @@ func (c *baseConfig) GetServiceImages() []string {
 // Retrieve the final base config to use taking into account the remotes override
 // Pre: config must be loaded after setting config.ProjectID = "ref"
 func (c *config) GetRemoteByProjectRef(projectRef string) (baseConfig, error) {
-	base := c.baseConfig.Clone()
+	base := c.Clone()
 	for _, remote := range c.Remotes {
 		if remote.ProjectId == projectRef {
 			base.ProjectId = projectRef

@@ -5,16 +5,18 @@ import (
 	"regexp"
 
 	"github.com/go-errors/errors"
-	"github.com/mitchellh/mapstructure"
+	"github.com/go-viper/mapstructure/v2"
 )
 
 const (
-	pg13 = "supabase/postgres:13.3.0"
-	pg14 = "supabase/postgres:14.1.0.89"
+	pg13  = "supabase/postgres:13.3.0"
+	pg14  = "supabase/postgres:14.1.0.89"
+	pg15  = "supabase/postgres:15.8.1.085"
+	deno2 = "supabase/edge-runtime:v1.68.0-develop.14"
 )
 
 type images struct {
-	Pg15 string `mapstructure:"pg15"`
+	Pg string `mapstructure:"pg"`
 	// Append to Services when adding new dependencies below
 	Kong        string `mapstructure:"kong"`
 	Inbucket    string `mapstructure:"mailpit"`

@@ -33,14 +33,16 @@ type DiffFunc func(context.Context, string, string, []string) (string, error)
 func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
 	// Sanity checks.
 	if utils.IsLocalDatabase(config) {
-		if container, err := createShadowIfNotExists(ctx, fsys); err != nil {
+		if declared, err := loadDeclaredSchemas(fsys); err != nil {
+			return err
+		} else if container, err := createShadowIfNotExists(ctx, declared); err != nil {
 			return err
 		} else if len(container) > 0 {
 			defer utils.DockerRemove(container)
 			if err := start.WaitForHealthyService(ctx, start.HealthTimeout, container); err != nil {
 				return err
 			}
-			if err := migrateBaseDatabase(ctx, container, fsys, options...); err != nil {
+			if err := migrateBaseDatabase(ctx, container, declared, fsys, options...); err != nil {
 				return err
 			}
 		}
@@ -70,22 +72,30 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 	return nil
 }
 
-func createShadowIfNotExists(ctx context.Context, fsys afero.Fs) (string, error) {
-	if exists, err := afero.DirExists(fsys, utils.SchemasDir); err != nil {
-		return "", errors.Errorf("failed to check schemas: %w", err)
-	} else if !exists {
+func createShadowIfNotExists(ctx context.Context, migrations []string) (string, error) {
+	if len(migrations) == 0 {
 		return "", nil
 	}
 	if err := utils.AssertSupabaseDbIsRunning(); !errors.Is(err, utils.ErrNotRunning) {
 		return "", err
 	}
-	fmt.Fprintf(os.Stderr, "Creating local database from %s...\n", utils.Bold(utils.SchemasDir))
+	fmt.Fprintln(os.Stderr, "Creating local database from declarative schemas:")
+	msg := make([]string, len(migrations))
+	for i, m := range migrations {
+		msg[i] = fmt.Sprintf(" • %s", utils.Bold(m))
+	}
+	fmt.Fprintln(os.Stderr, strings.Join(msg, "\n"))
 	return CreateShadowDatabase(ctx, utils.Config.Db.Port)
 }
 
 func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
 	if schemas := utils.Config.Db.Migrations.SchemaPaths; len(schemas) > 0 {
 		return schemas.Files(afero.NewIOFS(fsys))
+	}
+	if exists, err := afero.DirExists(fsys, utils.SchemasDir); err != nil {
+		return nil, errors.Errorf("failed to check schemas: %w", err)
+	} else if !exists {
+		return nil, nil
 	}
 	var declared []string
 	if err := afero.Walk(fsys, utils.SchemasDir, func(path string, info fs.FileInfo, err error) error {
@@ -170,11 +180,7 @@ func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs,
 	return migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys))
 }
 
-func migrateBaseDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	migrations, err := loadDeclaredSchemas(fsys)
-	if err != nil {
-		return err
-	}
+func migrateBaseDatabase(ctx context.Context, container string, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
 	if err != nil {
 		return err

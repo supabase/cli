@@ -1,8 +1,8 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -11,12 +11,12 @@
- password_requirements = ""
+@@ -14,12 +14,12 @@
+ service_role_key = ""
  
  [rate_limit]
 -anonymous_users = 10
@@ -15,6 +15,6 @@ diff remote[auth] local[auth]
 -sms_sent = 55
 +email_sent = 25
 +sms_sent = 35
+ web3 = 0
  
  [hook]
- 

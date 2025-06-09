@@ -18,13 +18,12 @@ import (
 	"github.com/supabase/cli/internal/db/lint"
 	"github.com/supabase/cli/internal/db/pull"
 	"github.com/supabase/cli/internal/db/push"
-	"github.com/supabase/cli/internal/db/remote/changes"
-	"github.com/supabase/cli/internal/db/remote/commit"
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/db/test"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/migration"
 )
 
 var (
@@ -122,7 +121,13 @@ var (
 			}
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return dump.Run(cmd.Context(), file, flags.DbConfig, schema, excludeTable, dataOnly, roleOnly, keepComments, useCopy, dryRun, afero.NewOsFs())
+			opts := []migration.DumpOptionFunc{
+				migration.WithSchema(schema...),
+				migration.WithoutTable(excludeTable...),
+				migration.WithComments(keepComments),
+				migration.WithColumnInsert(!useCopy),
+			}
+			return dump.Run(cmd.Context(), file, flags.DbConfig, dataOnly, roleOnly, dryRun, afero.NewOsFs(), opts...)
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			if len(file) > 0 {
@@ -175,7 +180,7 @@ var (
 		Short:      "Show changes on the remote database",
 		Long:       "Show changes on the remote database since last migration.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return changes.Run(cmd.Context(), schema, flags.DbConfig, afero.NewOsFs())
+			return diff.Run(cmd.Context(), schema, file, flags.DbConfig, diff.DiffSchemaMigra, afero.NewOsFs())
 		},
 	}
 
@@ -184,7 +189,7 @@ var (
 		Use:        "commit",
 		Short:      "Commit remote changes as a new migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return commit.Run(cmd.Context(), schema, flags.DbConfig, afero.NewOsFs())
+			return pull.Run(cmd.Context(), schema, flags.DbConfig, "remote_commit", afero.NewOsFs())
 		},
 	}
 
@@ -197,7 +202,7 @@ var (
 			if noSeed {
 				utils.Config.Db.Seed.Enabled = false
 			}
-			return reset.Run(cmd.Context(), migrationVersion, flags.DbConfig, afero.NewOsFs())
+			return reset.Run(cmd.Context(), migrationVersion, nLastVersion, flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -304,10 +309,12 @@ func init() {
 	dbCmd.AddCommand(dbPullCmd)
 	// Build remote command
 	remoteFlags := dbRemoteCmd.PersistentFlags()
+	remoteFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	remoteFlags.String("db-url", "", "Connect using the specified Postgres URL (must be percent-encoded).")
+	remoteFlags.Bool("linked", true, "Connect to the linked project.")
+	dbRemoteCmd.MarkFlagsMutuallyExclusive("db-url", "linked")
 	remoteFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", remoteFlags.Lookup("password")))
-	remoteFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	dbRemoteCmd.AddCommand(dbRemoteChangesCmd)
 	dbRemoteCmd.AddCommand(dbRemoteCommitCmd)
 	dbCmd.AddCommand(dbRemoteCmd)
@@ -319,6 +326,8 @@ func init() {
 	resetFlags.BoolVar(&noSeed, "no-seed", false, "Skip running the seed script after reset.")
 	dbResetCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	resetFlags.StringVar(&migrationVersion, "version", "", "Reset up to the specified version.")
+	resetFlags.UintVar(&nLastVersion, "last", 0, "Reset up to the last n migration versions.")
+	dbResetCmd.MarkFlagsMutuallyExclusive("version", "last")
 	dbCmd.AddCommand(dbResetCmd)
 	// Build lint command
 	lintFlags := dbLintCmd.Flags()

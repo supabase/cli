@@ -6,6 +6,9 @@ on:
     branches:
       - develop
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test
@@ -21,8 +24,9 @@ jobs:
       # Required by: internal/utils/credentials/keyring_test.go
       - uses: t1m0thyj/unlock-keyring@v1
       - run: |
-          go run gotest.tools/gotestsum -- -race -v -count=1 -coverprofile=coverage.out \
-          `go list ./... | grep -Ev 'cmd|docs|examples|pkg/api|tools'`
+          pkgs=$(go list ./pkg/... | grep -Ev 'pkg/api' | paste -sd ',' -)
+          go run gotest.tools/gotestsum -- -race -v -count=1 ./... \
+          -coverpkg="./cmd/...,./internal/...,${pkgs}" -coverprofile=coverage.out
 
       - uses: coverallsapp/github-action@v2
         with:
@@ -41,7 +45,7 @@ jobs:
           # Linter requires no cache
           cache: false
 
-      - uses: golangci/golangci-lint-action@v6
+      - uses: golangci/golangci-lint-action@v8
         with:
           args: --timeout 3m --verbose
 

@@ -54,6 +54,10 @@ func TestDeployCommand(t *testing.T) {
 			apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 			require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
 		}
+		gock.New(utils.DefaultApiHost).
+			Put("/v1/projects/" + flags.ProjectRef + "/functions").
+			Reply(http.StatusOK).
+			JSON(api.BulkUpdateFunctionResponse{})
 		// Setup output file
 		for _, v := range functions {
 			outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", v))
@@ -80,8 +84,7 @@ import_map = "./import_map.json"
 `)
 		require.NoError(t, err)
 		require.NoError(t, f.Close())
-		importMapPath, err := filepath.Abs(filepath.Join(utils.SupabaseDirPath, "import_map.json"))
-		require.NoError(t, err)
+		importMapPath := filepath.Join(utils.SupabaseDirPath, "import_map.json")
 		require.NoError(t, afero.WriteFile(fsys, importMapPath, []byte("{}"), 0644))
 		// Setup function entrypoint
 		entrypointPath := filepath.Join(utils.FunctionsDir, slug, "index.ts")

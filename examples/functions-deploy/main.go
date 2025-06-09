@@ -19,17 +19,15 @@ func main() {
 	}
 }
 
-// Requires edge runtime binary to be added to PATH
 func deploy(ctx context.Context, fsys fs.FS) error {
 	project := os.Getenv("SUPABASE_PROJECT_ID")
 	apiClient := newAPIClient(os.Getenv("SUPABASE_ACCESS_TOKEN"))
-	eszipBundler := function.NewNativeBundler(".", fsys)
-	functionClient := function.NewEdgeRuntimeAPI(project, apiClient, eszipBundler)
+	functionClient := function.NewEdgeRuntimeAPI(project, apiClient)
 	fc := config.FunctionConfig{"my-slug": {
 		Entrypoint: "supabase/functions/my-slug/index.ts",
 		ImportMap:  "supabase/functions/import_map.json",
 	}}
-	return functionClient.UpsertFunctions(ctx, fc)
+	return functionClient.Deploy(ctx, fc, fsys)
 }
 
 func newAPIClient(token string) api.ClientWithResponses {

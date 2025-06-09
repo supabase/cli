@@ -25,18 +25,17 @@ func NewDockerBundler(fsys afero.Fs) function.EszipBundler {
 	return &dockerBundler{fsys: fsys}
 }
 
-func (b *dockerBundler) Bundle(ctx context.Context, entrypoint string, importMap string, staticFiles []string, output io.Writer) error {
-	// Create temp directory to store generated eszip
-	slug := filepath.Base(filepath.Dir(entrypoint))
+func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) (function.FunctionDeployMetadata, error) {
+	meta := function.NewMetadata(slug, entrypoint, importMap, staticFiles)
 	fmt.Fprintln(os.Stderr, "Bundling Function:", utils.Bold(slug))
 	cwd, err := os.Getwd()
 	if err != nil {
-		return errors.Errorf("failed to get working directory: %w", err)
+		return meta, errors.Errorf("failed to get working directory: %w", err)
 	}
 	// BitBucket pipelines require docker bind mounts to be world writable
 	hostOutputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
 	if err := b.fsys.MkdirAll(hostOutputDir, 0777); err != nil {
-		return errors.Errorf("failed to mkdir: %w", err)
+		return meta, errors.Errorf("failed to mkdir: %w", err)
 	}
 	defer func() {
 		if err := b.fsys.RemoveAll(hostOutputDir); err != nil {
@@ -46,7 +45,7 @@ func (b *dockerBundler) Bundle(ctx context.Context, entrypoint string, importMap
 	// Create bind mounts
 	binds, err := GetBindMounts(cwd, utils.FunctionsDir, hostOutputDir, entrypoint, importMap, b.fsys)
 	if err != nil {
-		return err
+		return meta, err
 	}
 	hostOutputPath := filepath.Join(hostOutputDir, "output.eszip")
 	// Create exec command
@@ -54,12 +53,13 @@ func (b *dockerBundler) Bundle(ctx context.Context, entrypoint string, importMap
 	if len(importMap) > 0 {
 		cmd = append(cmd, "--import-map", utils.ToDockerPath(importMap))
 	}
-	for _, staticFile := range staticFiles {
-		cmd = append(cmd, "--static", utils.ToDockerPath(staticFile))
+	for _, sf := range staticFiles {
+		cmd = append(cmd, "--static", utils.ToDockerPath(sf))
 	}
 	if viper.GetBool("DEBUG") {
 		cmd = append(cmd, "--verbose")
 	}
+	cmd = append(cmd, function.BundleFlags...)
 
 	env := []string{}
 	if custom_registry := os.Getenv("NPM_CONFIG_REGISTRY"); custom_registry != "" {
@@ -82,15 +82,15 @@ func (b *dockerBundler) Bundle(ctx context.Context, entrypoint string, importMap
 		os.Stdout,
 		os.Stderr,
 	); err != nil {
-		return err
+		return meta, err
 	}
 	// Read and compress
 	eszipBytes, err := b.fsys.Open(hostOutputPath)
 	if err != nil {
-		return errors.Errorf("failed to open eszip: %w", err)
+		return meta, errors.Errorf("failed to open eszip: %w", err)
 	}
 	defer eszipBytes.Close()
-	return function.Compress(eszipBytes, output)
+	return meta, function.Compress(eszipBytes, output)
 }
 
 func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointPath, hostImportMapPath string, fsys afero.Fs) ([]string, error) {
@@ -122,41 +122,17 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointPath, hostImpo
 			binds = append(binds, hostOutputDir+":"+dockerOutputDir+":rw")
 		}
 	}
-	// Allow entrypoints outside the functions directory
-	hostEntrypointDir := filepath.Dir(hostEntrypointPath)
-	if len(hostEntrypointDir) > 0 {
-		if !filepath.IsAbs(hostEntrypointDir) {
-			hostEntrypointDir = filepath.Join(cwd, hostEntrypointDir)
-		}
-		if !strings.HasSuffix(hostEntrypointDir, sep) {
-			hostEntrypointDir += sep
-		}
-		if !strings.HasPrefix(hostEntrypointDir, hostFuncDir) &&
-			!strings.HasPrefix(hostEntrypointDir, hostOutputDir) {
-			dockerEntrypointDir := utils.ToDockerPath(hostEntrypointDir)
-			binds = append(binds, hostEntrypointDir+":"+dockerEntrypointDir+":ro")
-		}
+	// Imports outside of ./supabase/functions will be bound by walking the entrypoint
+	modules, err := utils.BindHostModules(cwd, hostEntrypointPath, hostImportMapPath, fsys)
+	if err != nil {
+		return nil, err
 	}
-	// Imports outside of ./supabase/functions will be bound by absolute path
-	if len(hostImportMapPath) > 0 {
-		if !filepath.IsAbs(hostImportMapPath) {
-			hostImportMapPath = filepath.Join(cwd, hostImportMapPath)
-		}
-		importMap, err := utils.NewImportMap(hostImportMapPath, fsys)
-		if err != nil {
-			return nil, err
-		}
-		modules := importMap.BindHostModules()
-		dockerImportMapPath := utils.ToDockerPath(hostImportMapPath)
-		modules = append(modules, hostImportMapPath+":"+dockerImportMapPath+":ro")
-		// Remove any duplicate mount points
-		for _, mod := range modules {
-			hostPath := strings.Split(mod, ":")[0]
-			if !strings.HasPrefix(hostPath, hostFuncDir) &&
-				(len(hostOutputDir) == 0 || !strings.HasPrefix(hostPath, hostOutputDir)) &&
-				(len(hostEntrypointDir) == 0 || !strings.HasPrefix(hostPath, hostEntrypointDir)) {
-				binds = append(binds, mod)
-			}
+	// Remove any duplicate mount points
+	for _, mod := range modules {
+		hostPath := strings.Split(mod, ":")[0]
+		if !strings.HasPrefix(hostPath, hostFuncDir) &&
+			(len(hostOutputDir) == 0 || !strings.HasPrefix(hostPath, hostOutputDir)) {
+			binds = append(binds, mod)
 		}
 	}
 	return binds, nil

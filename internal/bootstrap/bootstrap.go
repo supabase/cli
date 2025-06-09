@@ -77,7 +77,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 		return err
 	}
 	// 2. Create project
-	params := api.V1CreateProjectBodyDto{
+	params := api.V1CreateProjectBody{
 		Name:        filepath.Base(workdir),
 		TemplateUrl: &starter.Url,
 	}
@@ -152,9 +152,7 @@ func suggestAppStart(cwd, command string) string {
 
 func checkProjectHealth(ctx context.Context) error {
 	params := api.V1GetServicesHealthParams{
-		Services: []api.V1GetServicesHealthParamsServices{
-			api.V1GetServicesHealthParamsServicesDb,
-		},
+		Services: []api.V1GetServicesHealthParamsServices{api.Db},
 	}
 	resp, err := utils.GetSupabase().V1GetServicesHealthWithResponse(ctx, flags.ProjectRef, &params)
 	if err != nil {

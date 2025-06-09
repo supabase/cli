@@ -3,6 +3,7 @@ package list
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/go-errors/errors"
@@ -19,27 +20,39 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		return err
 	}
 
-	table := `|ID|NAME|DEFAULT|GIT BRANCH|STATUS|CREATED AT (UTC)|UPDATED AT (UTC)|
+	switch utils.OutputFormat.Value {
+	case utils.OutputPretty:
+		table := `|ID|NAME|DEFAULT|GIT BRANCH|STATUS|CREATED AT (UTC)|UPDATED AT (UTC)|
 |-|-|-|-|-|-|-|
 `
-	for _, branch := range branches {
-		gitBranch := " "
-		if branch.GitBranch != nil {
-			gitBranch = *branch.GitBranch
+		for _, branch := range branches {
+			gitBranch := " "
+			if branch.GitBranch != nil {
+				gitBranch = *branch.GitBranch
+			}
+			table += fmt.Sprintf(
+				"|`%s`|`%s`|`%t`|`%s`|`%s`|`%s`|`%s`|\n",
+				branch.Id,
+				strings.ReplaceAll(branch.Name, "|", "\\|"),
+				branch.IsDefault,
+				strings.ReplaceAll(gitBranch, "|", "\\|"),
+				branch.Status,
+				utils.FormatTimestamp(branch.CreatedAt),
+				utils.FormatTimestamp(branch.UpdatedAt),
+			)
 		}
-		table += fmt.Sprintf(
-			"|`%s`|`%s`|`%t`|`%s`|`%s`|`%s`|`%s`|\n",
-			branch.Id,
-			strings.ReplaceAll(branch.Name, "|", "\\|"),
-			branch.IsDefault,
-			strings.ReplaceAll(gitBranch, "|", "\\|"),
-			branch.Status,
-			utils.FormatTimestamp(branch.CreatedAt),
-			utils.FormatTimestamp(branch.UpdatedAt),
-		)
+		return list.RenderTable(table)
+	case utils.OutputToml:
+		return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, struct {
+			Branches []api.BranchResponse `toml:"branches"`
+		}{
+			Branches: branches,
+		})
+	case utils.OutputEnv:
+		return errors.Errorf("--output env flag is not supported")
 	}
 
-	return list.RenderTable(table)
+	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, branches)
 }
 
 type BranchFilter func(api.BranchResponse) bool

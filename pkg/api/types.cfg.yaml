@@ -1,4 +1,8 @@
 package: api
 generate:
   models: true
+output-options:
+  nullable-type: true
+  overlay:
+    path: api/overlay.yaml
 output: pkg/api/types.gen.go

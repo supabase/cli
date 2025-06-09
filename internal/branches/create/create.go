@@ -22,8 +22,8 @@ func Run(ctx context.Context, body api.CreateBranchBody, fsys afero.Fs) error {
 			return errors.New(context.Canceled)
 		}
 		body.BranchName = gitBranch
+		body.GitBranch = &gitBranch
 	}
-	body.GitBranch = &gitBranch
 
 	resp, err := utils.GetSupabase().V1CreateABranchWithResponse(ctx, flags.ProjectRef, body)
 	if err != nil {

@@ -31,7 +31,6 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/config"
-	"golang.org/x/mod/semver"
 )
 
 func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool) error {
@@ -90,18 +89,10 @@ type kongConfig struct {
 	ApiPort       uint16
 }
 
-// TODO: deprecate after removing storage headers from kong
-func StorageVersionBelow(target string) bool {
-	parts := strings.Split(utils.Config.Storage.Image, ":v")
-	return semver.Compare(parts[len(parts)-1], target) < 0
-}
-
 var (
 	//go:embed templates/kong.yml
 	kongConfigEmbed    string
-	kongConfigTemplate = template.Must(template.New("kongConfig").Funcs(template.FuncMap{
-		"StorageVersionBelow": StorageVersionBelow,
-	}).Parse(kongConfigEmbed))
+	kongConfigTemplate = template.Must(template.New("kongConfig").Parse(kongConfigEmbed))
 
 	//go:embed templates/custom_nginx.template
 	nginxConfigEmbed string
@@ -185,7 +176,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 			"LOGFLARE_MIN_CLUSTER_SIZE=1",
 			"LOGFLARE_SINGLE_TENANT=true",
 			"LOGFLARE_SUPABASE_MODE=true",
-			"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
+			"LOGFLARE_PRIVATE_ACCESS_TOKEN=" + utils.Config.Analytics.ApiKey,
 			"LOGFLARE_LOG_LEVEL=warn",
 			"LOGFLARE_NODE_HOST=127.0.0.1",
 			"LOGFLARE_FEATURE_FLAG_OVERRIDE='multibackend=true'",
@@ -289,7 +280,8 @@ EOF
 			}
 			env = append(env, "DOCKER_HOST="+dindHost.String())
 		case "npipe":
-			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires docker daemon exposed on tcp://localhost:2375")
+			const dockerDaemonNeededErr = "Analytics on Windows requires Docker daemon exposed on tcp://localhost:2375.\nSee https://supabase.com/docs/guides/local-development/cli/getting-started?queryGroups=platform&platform=windows#running-supabase-locally for more details."
+			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), dockerDaemonNeededErr)
 			env = append(env, "DOCKER_HOST="+dindHost.String())
 		case "unix":
 			if dindHost, err = client.ParseHostURL(client.DefaultDockerHost); err != nil {
@@ -337,7 +329,9 @@ EOF
 		); err != nil {
 			return err
 		}
-		started = append(started, utils.VectorId)
+		if parsed.Scheme != "npipe" {
+			started = append(started, utils.VectorId)
+		}
 	}
 
 	// Start Kong.
@@ -464,7 +458,7 @@ EOF
 			"GOTRUE_JWT_AUD=authenticated",
 			"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
 			fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
-			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
 			"GOTRUE_JWT_ISSUER=" + utils.GetApiUrl("/auth/v1"),
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", utils.Config.Auth.Email.EnableSignup),
@@ -511,11 +505,12 @@ EOF
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_OTP=%v", utils.Config.Auth.RateLimit.SignInSignUps),
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_VERIFY=%v", utils.Config.Auth.RateLimit.TokenVerifications),
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_SMS_SENT=%v", utils.Config.Auth.RateLimit.SmsSent),
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_EMAIL_SENT=%v", utils.Config.Auth.RateLimit.EmailSent),
+			fmt.Sprintf("GOTRUE_RATE_LIMIT_WEB3=%v", utils.Config.Auth.RateLimit.Web3),
 		}
 
 		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.Enabled {
 			env = append(env,
+				fmt.Sprintf("GOTRUE_RATE_LIMIT_EMAIL_SENT=%v", utils.Config.Auth.RateLimit.EmailSent),
 				fmt.Sprintf("GOTRUE_SMTP_HOST=%s", utils.Config.Auth.Email.Smtp.Host),
 				fmt.Sprintf("GOTRUE_SMTP_PORT=%d", utils.Config.Auth.Email.Smtp.Port),
 				fmt.Sprintf("GOTRUE_SMTP_USER=%s", utils.Config.Auth.Email.Smtp.User),
@@ -675,6 +670,7 @@ EOF
 				env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_%s_URL=%s", strings.ToUpper(name), config.Url))
 			}
 		}
+		env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED=%v", utils.Config.Auth.Web3.Solana.Enabled))
 
 		if _, err := utils.DockerStart(
 			ctx,
@@ -755,9 +751,9 @@ EOF
 					"DB_NAME=" + dbConfig.Database,
 					"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
 					"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
-					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
 					fmt.Sprintf("API_JWT_JWKS=%s", jwks),
-					"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+					"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
 					"APP_NAME=realtime",
 					"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
 					"ERL_AFLAGS=" + utils.ToRealtimeEnv(utils.Config.Realtime.IpVersion),
@@ -838,10 +834,11 @@ EOF
 			container.Config{
 				Image: utils.Config.Storage.Image,
 				Env: []string{
-					"ANON_KEY=" + utils.Config.Auth.AnonKey,
-					"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
-					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-					fmt.Sprintf("AUTH_JWT_JWKS=%s", jwks),
+					"DB_MIGRATIONS_FREEZE_AT=" + utils.Config.Storage.TargetMigration,
+					"ANON_KEY=" + utils.Config.Auth.AnonKey.Value,
+					"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
+					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
+					fmt.Sprintf("JWT_JWKS=%s", jwks),
 					fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:%d/%s", dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
 					fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
 					"STORAGE_BACKEND=file",
@@ -856,7 +853,6 @@ EOF
 					"S3_PROTOCOL_ACCESS_KEY_ID=" + utils.Config.Storage.S3Credentials.AccessKeyId,
 					"S3_PROTOCOL_ACCESS_KEY_SECRET=" + utils.Config.Storage.S3Credentials.SecretAccessKey,
 					"S3_PROTOCOL_PREFIX=/storage/v1",
-					fmt.Sprintf("S3_ALLOW_FORWARDED_HEADER=%v", StorageVersionBelow("1.10.1")),
 					"UPLOAD_FILE_SIZE_LIMIT=52428800000",
 					"UPLOAD_FILE_SIZE_LIMIT_STANDARD=5242880000",
 				},
@@ -982,14 +978,15 @@ EOF
 			container.Config{
 				Image: utils.Config.Studio.Image,
 				Env: []string{
+					"CURRENT_CLI_VERSION=" + utils.Version,
 					"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
 					"POSTGRES_PASSWORD=" + dbConfig.Password,
 					"SUPABASE_URL=http://" + utils.KongId + ":8000",
 					"SUPABASE_PUBLIC_URL=" + utils.Config.Studio.ApiUrl,
-					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-					"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey,
-					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey,
-					"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
+					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
+					"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey.Value,
+					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
+					"LOGFLARE_PRIVATE_ACCESS_TOKEN=" + utils.Config.Analytics.ApiKey,
 					"OPENAI_API_KEY=" + utils.Config.Studio.OpenaiApiKey.Value,
 					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
 					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
@@ -1056,8 +1053,8 @@ EOF
 					"CLUSTER_POSTGRES=true",
 					"SECRET_KEY_BASE=" + utils.Config.Db.Pooler.SecretKeyBase,
 					"VAULT_ENC_KEY=" + utils.Config.Db.Pooler.EncryptionKey,
-					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
-					"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret,
+					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
+					"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
 					"REGION=local",
 					"RUN_JANITOR=true",
 					"ERL_AFLAGS=-proto_dist inet_tcp",

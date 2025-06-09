@@ -32,16 +32,29 @@ func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool,
 	if len(slugs) == 0 {
 		return errors.Errorf("No Functions specified or found in %s", utils.Bold(utils.FunctionsDir))
 	}
+	// Flag import map is specified relative to current directory instead of workdir
+	cwd, err := os.Getwd()
+	if err != nil {
+		return errors.Errorf("failed to get working directory: %w", err)
+	}
+	if len(importMapPath) > 0 {
+		if !filepath.IsAbs(importMapPath) {
+			importMapPath = filepath.Join(utils.CurrentDirAbs, importMapPath)
+		}
+		if importMapPath, err = filepath.Rel(cwd, importMapPath); err != nil {
+			return errors.Errorf("failed to resolve relative path: %w", err)
+		}
+	}
 	functionConfig, err := GetFunctionConfig(slugs, importMapPath, noVerifyJWT, fsys)
 	if err != nil {
 		return err
 	}
+	opt := function.WithMaxJobs(maxJobs)
 	if useDocker {
-		api := function.NewEdgeRuntimeAPI(flags.ProjectRef, *utils.GetSupabase(), NewDockerBundler(fsys))
-		if err := api.UpsertFunctions(ctx, functionConfig); err != nil {
-			return err
-		}
-	} else if err := deploy(ctx, functionConfig, maxJobs, fsys); errors.Is(err, errNoDeploy) {
+		opt = function.WithBundler(NewDockerBundler(fsys))
+	}
+	api := function.NewEdgeRuntimeAPI(flags.ProjectRef, *utils.GetSupabase(), opt)
+	if err := api.Deploy(ctx, functionConfig, afero.NewIOFS(fsys)); errors.Is(err, function.ErrNoDeploy) {
 		fmt.Fprintln(os.Stderr, err)
 		return nil
 	} else if err != nil {
@@ -82,10 +95,6 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 		fallbackExists = false
 	} else if err != nil {
 		return nil, errors.Errorf("failed to fallback import map: %w", err)
-	}
-	// Flag import map is specified relative to current directory instead of workdir
-	if len(importMapPath) > 0 && !filepath.IsAbs(importMapPath) {
-		importMapPath = filepath.Join(utils.CurrentDirAbs, importMapPath)
 	}
 	functionConfig := make(config.FunctionConfig, len(slugs))
 	for _, name := range slugs {

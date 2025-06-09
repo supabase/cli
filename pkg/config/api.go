@@ -28,8 +28,8 @@ type (
 	}
 )
 
-func (a *api) ToUpdatePostgrestConfigBody() v1API.UpdatePostgrestConfigBody {
-	body := v1API.UpdatePostgrestConfigBody{}
+func (a *api) ToUpdatePostgrestConfigBody() v1API.V1UpdatePostgrestConfigBody {
+	body := v1API.V1UpdatePostgrestConfigBody{}
 
 	// When the api is disabled, remote side it just set the dbSchema to an empty value
 	if !a.Enabled {
