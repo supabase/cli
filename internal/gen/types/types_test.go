@@ -2,14 +2,11 @@ package types
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"testing"
 
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
@@ -191,7 +188,6 @@ func TestGenRemoteCommand(t *testing.T) {
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
-
 }
 
 func TestGenWithSetDefault(t *testing.T) {
@@ -219,36 +215,8 @@ func TestGenWithSetDefault(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(container.InspectResponse{})
 
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
-			Reply(http.StatusOK).
-			JSON(image.InspectResponse{})
-
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/networks/create").
-			Reply(http.StatusCreated).
-			JSON(network.CreateResponse{})
-
 		var capturedEnv []string
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/create").
-			AddMatcher(func(req *http.Request, ereq *gock.Request) (bool, error) {
-				var config struct {
-					Env []string `json:"Env"`
-				}
-				if err := json.NewDecoder(req.Body).Decode(&config); err != nil {
-					return false, err
-				}
-				capturedEnv = config.Env
-				return true, nil
-			}).
-			Reply(http.StatusOK).
-			JSON(container.CreateResponse{ID: containerId})
-
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + containerId + "/start").
-			Reply(http.StatusAccepted)
-
+		apitest.MockDockerStartWithEnvCapture(utils.Docker, imageUrl, containerId, &capturedEnv)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
 
 		conn := pgtest.NewConn()
@@ -281,36 +249,8 @@ func TestGenWithSetDefault(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(container.InspectResponse{})
 
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
-			Reply(http.StatusOK).
-			JSON(image.InspectResponse{})
-
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/networks/create").
-			Reply(http.StatusCreated).
-			JSON(network.CreateResponse{})
-
 		var capturedEnv []string
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/create").
-			AddMatcher(func(req *http.Request, ereq *gock.Request) (bool, error) {
-				var config struct {
-					Env []string `json:"Env"`
-				}
-				if err := json.NewDecoder(req.Body).Decode(&config); err != nil {
-					return false, err
-				}
-				capturedEnv = config.Env
-				return true, nil
-			}).
-			Reply(http.StatusOK).
-			JSON(container.CreateResponse{ID: containerId})
-
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + containerId + "/start").
-			Reply(http.StatusAccepted)
-
+		apitest.MockDockerStartWithEnvCapture(utils.Docker, imageUrl, containerId, &capturedEnv)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
 
 		conn := pgtest.NewConn()
@@ -338,36 +278,8 @@ func TestGenWithSetDefault(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(container.InspectResponse{})
 
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
-			Reply(http.StatusOK).
-			JSON(image.InspectResponse{})
-
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/networks/create").
-			Reply(http.StatusCreated).
-			JSON(network.CreateResponse{})
-
 		var capturedEnv []string
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/create").
-			AddMatcher(func(req *http.Request, ereq *gock.Request) (bool, error) {
-				var config struct {
-					Env []string `json:"Env"`
-				}
-				if err := json.NewDecoder(req.Body).Decode(&config); err != nil {
-					return false, err
-				}
-				capturedEnv = config.Env
-				return true, nil
-			}).
-			Reply(http.StatusOK).
-			JSON(container.CreateResponse{ID: containerId})
-
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + containerId + "/start").
-			Reply(http.StatusAccepted)
-
+		apitest.MockDockerStartWithEnvCapture(utils.Docker, imageUrl, containerId, &capturedEnv)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
 
 		conn := pgtest.NewConn()
@@ -395,36 +307,8 @@ func TestGenWithSetDefault(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(container.InspectResponse{})
 
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
-			Reply(http.StatusOK).
-			JSON(image.InspectResponse{})
-
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/networks/create").
-			Reply(http.StatusCreated).
-			JSON(network.CreateResponse{})
-
 		var capturedEnv []string
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/create").
-			AddMatcher(func(req *http.Request, ereq *gock.Request) (bool, error) {
-				var config struct {
-					Env []string `json:"Env"`
-				}
-				if err := json.NewDecoder(req.Body).Decode(&config); err != nil {
-					return false, err
-				}
-				capturedEnv = config.Env
-				return true, nil
-			}).
-			Reply(http.StatusOK).
-			JSON(container.CreateResponse{ID: containerId})
-
-		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + containerId + "/start").
-			Reply(http.StatusAccepted)
-
+		apitest.MockDockerStartWithEnvCapture(utils.Docker, imageUrl, containerId, &capturedEnv)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
 
 		conn := pgtest.NewConn()
