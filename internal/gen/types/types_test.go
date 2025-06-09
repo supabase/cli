@@ -2,11 +2,14 @@ package types
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"testing"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
@@ -186,6 +189,253 @@ func TestGenRemoteCommand(t *testing.T) {
 		// Run test
 		assert.NoError(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{"public"}, false, true, "", afero.NewMemMapFs(), conn.Intercept))
 		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+}
+
+func TestGenWithSetDefault(t *testing.T) {
+	utils.DbId = "test-db"
+	utils.Config.Hostname = "localhost"
+	utils.Config.Db.Port = 5432
+
+	dbConfig := pgconn.Config{
+		Host:     utils.Config.Hostname,
+		Port:     utils.Config.Db.Port,
+		User:     "admin",
+		Password: "password",
+	}
+
+	t.Run("sets default schema env var with single non-public schema", func(t *testing.T) {
+		const containerId = "test-pgmeta"
+		imageUrl := utils.GetRegistryImageUrl(utils.Config.Studio.PgmetaImage)
+		fsys := afero.NewMemMapFs()
+
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{})
+
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
+			Reply(http.StatusOK).
+			JSON(image.InspectResponse{})
+
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/networks/create").
+			Reply(http.StatusCreated).
+			JSON(network.CreateResponse{})
+
+		var capturedEnv []string
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/create").
+			AddMatcher(func(req *http.Request, ereq *gock.Request) (bool, error) {
+				var config struct {
+					Env []string `json:"Env"`
+				}
+				if err := json.NewDecoder(req.Body).Decode(&config); err != nil {
+					return false, err
+				}
+				capturedEnv = config.Env
+				return true, nil
+			}).
+			Reply(http.StatusOK).
+			JSON(container.CreateResponse{ID: containerId})
+
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + containerId + "/start").
+			Reply(http.StatusAccepted)
+
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
+
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+
+		err := Run(context.Background(), "", dbConfig, LangTypescript, []string{"private"}, true, true, "", fsys, conn.Intercept)
+		assert.NoError(t, err)
+
+		found := false
+		for _, env := range capturedEnv {
+			if env == "PG_META_GENERATE_TYPES_DEFAULT_SCHEMA=private" {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "Expected PG_META_GENERATE_TYPES_DEFAULT_SCHEMA=private to be set in environment variables")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("does not set default schema env var without flag", func(t *testing.T) {
+		const containerId = "test-pgmeta"
+		imageUrl := utils.GetRegistryImageUrl(utils.Config.Studio.PgmetaImage)
+		fsys := afero.NewMemMapFs()
+
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{})
+
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
+			Reply(http.StatusOK).
+			JSON(image.InspectResponse{})
+
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/networks/create").
+			Reply(http.StatusCreated).
+			JSON(network.CreateResponse{})
+
+		var capturedEnv []string
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/create").
+			AddMatcher(func(req *http.Request, ereq *gock.Request) (bool, error) {
+				var config struct {
+					Env []string `json:"Env"`
+				}
+				if err := json.NewDecoder(req.Body).Decode(&config); err != nil {
+					return false, err
+				}
+				capturedEnv = config.Env
+				return true, nil
+			}).
+			Reply(http.StatusOK).
+			JSON(container.CreateResponse{ID: containerId})
+
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + containerId + "/start").
+			Reply(http.StatusAccepted)
+
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
+
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+
+		err := Run(context.Background(), "", dbConfig, LangTypescript, []string{"private"}, false, true, "", fsys, conn.Intercept)
+		assert.NoError(t, err)
+
+		for _, env := range capturedEnv {
+			assert.NotContains(t, env, "PG_META_GENERATE_TYPES_DEFAULT_SCHEMA", "Should not set default schema env var when flag is false")
+		}
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("does not set default schema env var with multiple schemas", func(t *testing.T) {
+		const containerId = "test-pgmeta"
+		imageUrl := utils.GetRegistryImageUrl(utils.Config.Studio.PgmetaImage)
+		fsys := afero.NewMemMapFs()
+
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{})
+
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
+			Reply(http.StatusOK).
+			JSON(image.InspectResponse{})
+
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/networks/create").
+			Reply(http.StatusCreated).
+			JSON(network.CreateResponse{})
+
+		var capturedEnv []string
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/create").
+			AddMatcher(func(req *http.Request, ereq *gock.Request) (bool, error) {
+				var config struct {
+					Env []string `json:"Env"`
+				}
+				if err := json.NewDecoder(req.Body).Decode(&config); err != nil {
+					return false, err
+				}
+				capturedEnv = config.Env
+				return true, nil
+			}).
+			Reply(http.StatusOK).
+			JSON(container.CreateResponse{ID: containerId})
+
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + containerId + "/start").
+			Reply(http.StatusAccepted)
+
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
+
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+
+		err := Run(context.Background(), "", dbConfig, LangTypescript, []string{"public", "private"}, true, true, "", fsys, conn.Intercept)
+		assert.NoError(t, err)
+
+		for _, env := range capturedEnv {
+			assert.NotContains(t, env, "PG_META_GENERATE_TYPES_DEFAULT_SCHEMA", "Should not set default schema env var with multiple schemas")
+		}
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("does not set default schema env var with public schema", func(t *testing.T) {
+		const containerId = "test-pgmeta"
+		imageUrl := utils.GetRegistryImageUrl(utils.Config.Studio.PgmetaImage)
+		fsys := afero.NewMemMapFs()
+
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{})
+
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
+			Reply(http.StatusOK).
+			JSON(image.InspectResponse{})
+
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/networks/create").
+			Reply(http.StatusCreated).
+			JSON(network.CreateResponse{})
+
+		var capturedEnv []string
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/create").
+			AddMatcher(func(req *http.Request, ereq *gock.Request) (bool, error) {
+				var config struct {
+					Env []string `json:"Env"`
+				}
+				if err := json.NewDecoder(req.Body).Decode(&config); err != nil {
+					return false, err
+				}
+				capturedEnv = config.Env
+				return true, nil
+			}).
+			Reply(http.StatusOK).
+			JSON(container.CreateResponse{ID: containerId})
+
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + containerId + "/start").
+			Reply(http.StatusAccepted)
+
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
+
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+
+		err := Run(context.Background(), "", dbConfig, LangTypescript, []string{"public"}, true, true, "", fsys, conn.Intercept)
+		assert.NoError(t, err)
+
+		for _, env := range capturedEnv {
+			assert.NotContains(t, env, "PG_META_GENERATE_TYPES_DEFAULT_SCHEMA", "Should not set default schema env var with public schema")
+		}
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
