@@ -300,6 +300,9 @@ func runFileWatcher(ctx context.Context, watcher *fsnotify.Watcher, watchedPath 
 		return
 	}
 
+	// Store the original functions path for dependency scanning
+	functionsPath := watchedPath
+
 	for {
 		select {
 		case event, ok := <-watcher.Events:
@@ -307,9 +310,8 @@ func runFileWatcher(ctx context.Context, watcher *fsnotify.Watcher, watchedPath 
 				return
 			}
 
-			if !strings.HasPrefix(event.Name, watchedPath) && event.Name != watchedPath {
-				continue
-			}
+			// Note: We now accept events from any watched directory (including dependency directories)
+			// not just the main functions directory, so we remove the watchedPath prefix check
 
 			if isIgnoredFileEvent(event.Name, event.Op) {
 				continue
@@ -319,22 +321,26 @@ func runFileWatcher(ctx context.Context, watcher *fsnotify.Watcher, watchedPath 
 			if event.Has(fsnotify.Create) {
 				if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
 					newDirPath := event.Name
-					if !isIgnoredDir(info.Name(), watchedPath, newDirPath) {
+					if !isIgnoredDir(info.Name(), functionsPath, newDirPath) {
 						if errAdd := watcher.Add(newDirPath); errAdd != nil {
 							log.Printf("Warning: could not add new directory %s to watcher: %v", newDirPath, errAdd)
 						} else {
 							// Recursively add subdirectories of the new directory
-							if walkErr := addDirectoriesToWatcher(watcher, newDirPath, watchedPath); walkErr != nil {
+							if walkErr := addDirectoriesToWatcher(watcher, newDirPath, functionsPath); walkErr != nil {
 								log.Printf("Warning: error walking new directory %s: %v", newDirPath, walkErr)
 							}
 						}
 					}
 				} else if info != nil && !info.IsDir() {
 					// Handle TypeScript/JavaScript file creation - rescan dependencies for this file
+					// Only rescan dependencies if the file is within the functions directory
 					if strings.HasSuffix(event.Name, ".ts") || strings.HasSuffix(event.Name, ".js") {
-						if depErr := addDependenciesForFile(watcher, event.Name, watchedPath, globalWatchedDirectories); depErr != nil {
-							log.Printf("Warning: error rescanning dependencies after file creation %s: %v", event.Name, depErr)
+						if strings.HasPrefix(event.Name, functionsPath) {
+							if depErr := addDependenciesForFile(watcher, event.Name, functionsPath, globalWatchedDirectories); depErr != nil {
+								log.Printf("Warning: error rescanning dependencies after file creation %s: %v", event.Name, depErr)
+							}
 						}
+						// Note: For dependency files outside functionsPath, we just let them trigger restarts
 					}
 				}
 			}
@@ -342,9 +348,13 @@ func runFileWatcher(ctx context.Context, watcher *fsnotify.Watcher, watchedPath 
 			// Handle TypeScript/JavaScript file modifications - rescan dependencies for this file
 			if event.Has(fsnotify.Write) {
 				if strings.HasSuffix(event.Name, ".ts") || strings.HasSuffix(event.Name, ".js") {
-					if depErr := addDependenciesForFile(watcher, event.Name, watchedPath, globalWatchedDirectories); depErr != nil {
-						log.Printf("Warning: error rescanning dependencies after file modification %s: %v", event.Name, depErr)
+					// Only rescan dependencies if the file is within the functions directory
+					if strings.HasPrefix(event.Name, functionsPath) {
+						if depErr := addDependenciesForFile(watcher, event.Name, functionsPath, globalWatchedDirectories); depErr != nil {
+							log.Printf("Warning: error rescanning dependencies after file modification %s: %v", event.Name, depErr)
+						}
 					}
+					// Note: For dependency files outside functionsPath, we just let them trigger restarts
 				}
 			}
 
