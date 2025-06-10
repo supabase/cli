@@ -628,16 +628,16 @@ export default async () => {
 		require.NoError(t, err)
 		defer watcher.Close()
 
+		// Create watched directories map
+		watchedDirectories := make(map[string]bool)
+
 		// Test the import dependency function
-		err = addImportDependenciesToWatcher(watcher, functionsDir)
+		err = addImportDependenciesToWatcher(watcher, functionsDir, watchedDirectories)
 		assert.NoError(t, err)
 
 		// Verify that the utils directory is now being watched
 		// (This is a bit tricky to test directly, so we'll verify no error occurred
 		// and that the function completed successfully)
-
-		// Reset the global watched directories for next test
-		globalWatchedDirectories = make(map[string]bool)
 	})
 
 	t.Run("handles TypeScript files with multiple imports", func(t *testing.T) {
@@ -705,12 +705,12 @@ export default async (): Promise<Response> => {
 		require.NoError(t, err)
 		defer watcher.Close()
 
-		// Test the import dependency function
-		err = addImportDependenciesToWatcher(watcher, functionsDir)
-		assert.NoError(t, err)
+		// Create watched directories map
+		watchedDirectories := make(map[string]bool)
 
-		// Reset the global watched directories for next test
-		globalWatchedDirectories = make(map[string]bool)
+		// Test the import dependency function
+		err = addImportDependenciesToWatcher(watcher, functionsDir, watchedDirectories)
+		assert.NoError(t, err)
 	})
 
 	t.Run("handles import map resolution", func(t *testing.T) {
@@ -761,12 +761,12 @@ export default async (): Promise<Response> => {
 		require.NoError(t, err)
 		defer watcher.Close()
 
-		// Test the import dependency function
-		err = addImportDependenciesToWatcher(watcher, functionsDir)
-		assert.NoError(t, err)
+		// Create watched directories map
+		watchedDirectories := make(map[string]bool)
 
-		// Reset the global watched directories for next test
-		globalWatchedDirectories = make(map[string]bool)
+		// Test the import dependency function
+		err = addImportDependenciesToWatcher(watcher, functionsDir, watchedDirectories)
+		assert.NoError(t, err)
 	})
 
 	t.Run("handles missing import files gracefully", func(t *testing.T) {
@@ -796,11 +796,11 @@ export default async (): Promise<Response> => {
 		require.NoError(t, err)
 		defer watcher.Close()
 
-		// Test the import dependency function - should not error
-		err = addImportDependenciesToWatcher(watcher, functionsDir)
-		assert.NoError(t, err, "Should handle missing import files gracefully")
+		// Create watched directories map
+		watchedDirectories := make(map[string]bool)
 
-		// Reset the global watched directories for next test
-		globalWatchedDirectories = make(map[string]bool)
+		// Test the import dependency function - should not error
+		err = addImportDependenciesToWatcher(watcher, functionsDir, watchedDirectories)
+		assert.NoError(t, err, "Should handle missing import files gracefully")
 	})
 }

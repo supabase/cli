@@ -16,7 +16,26 @@ import (
 	"github.com/supabase/cli/pkg/function"
 )
 
+const (
+	// Configuration file names
+	denoJsonName  = "deno.json"
+	denoJsoncName = "deno.jsonc"
+	importMapName = "import_map.json"
+
+	// Debounce duration for file changes
+	debounceDuration = 500 * time.Millisecond
+)
+
 var (
+	// File suffixes that should be watched for changes
+	watchedFileSuffixes = map[string]bool{
+		".ts":   true,
+		".js":   true,
+		".d.ts": true,
+		".tsx":  true,
+		".jsx":  true,
+	}
+
 	// Directories to ignore.
 	ignoredDirNames = []string{
 		".git",
@@ -44,6 +63,16 @@ var (
 		{Suffix: "___", Op: fsnotify.Chmod}, // Deno specific temp file pattern during write (often involves a chmod)
 	}
 )
+
+// hasWatchedSuffix checks if a file has one of the watched suffixes
+func hasWatchedSuffix(filename string) bool {
+	for suffix := range watchedFileSuffixes {
+		if strings.HasSuffix(filename, suffix) {
+			return true
+		}
+	}
+	return false
+}
 
 // isIgnoredDir checks if a directory should be ignored by the watcher.
 // rootWatchedPath is the main directory being watched (e.g., "supabase/functions").
@@ -126,15 +155,11 @@ func addDirectoriesToWatcher(watcher *fsnotify.Watcher, rootPath, watchedPath st
 	})
 }
 
-// Global set to track directories already added for dependencies
-var globalWatchedDirectories = make(map[string]bool)
-
 // addImportDependenciesToWatcher finds TypeScript files in the functions directory,
 // parses their import statements, and adds the directories containing imported files
 // to the watcher. This ensures that changes to files outside the functions directory
 // that are imported by functions will trigger reloads.
-func addImportDependenciesToWatcher(watcher *fsnotify.Watcher, functionsPath string) error {
-
+func addImportDependenciesToWatcher(watcher *fsnotify.Watcher, functionsPath string, watchedDirectories map[string]bool) error {
 	// Walk through all TypeScript files in the functions directory
 	err := filepath.Walk(functionsPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -142,9 +167,9 @@ func addImportDependenciesToWatcher(watcher *fsnotify.Watcher, functionsPath str
 			return nil
 		}
 
-		// Only process TypeScript files
-		if !info.IsDir() && (strings.HasSuffix(info.Name(), ".ts") || strings.HasSuffix(info.Name(), ".js")) {
-			if err := addDependenciesForFile(watcher, path, functionsPath, globalWatchedDirectories); err != nil {
+		// Only process files with watched suffixes
+		if !info.IsDir() && hasWatchedSuffix(info.Name()) {
+			if err := addDependenciesForFile(watcher, path, functionsPath, watchedDirectories); err != nil {
 				log.Printf("Warning: error processing dependencies for %s: %v", path, err)
 			}
 		}
@@ -166,9 +191,9 @@ func addDependenciesForFile(watcher *fsnotify.Watcher, filePath, functionsPath s
 	// Check for import map in the same directory or parent directories
 	dir := filepath.Dir(filePath)
 	for {
-		denoJsonPath := filepath.Join(dir, "deno.json")
-		denoJsoncPath := filepath.Join(dir, "deno.jsonc")
-		importMapPath := filepath.Join(dir, "import_map.json")
+		denoJsonPath := filepath.Join(dir, denoJsonName)
+		denoJsoncPath := filepath.Join(dir, denoJsoncName)
+		importMapPath := filepath.Join(dir, importMapName)
 
 		if _, err := fsys.Stat(denoJsonPath); err == nil {
 			if loadErr := importMap.LoadAsDeno(filepath.ToSlash(denoJsonPath), afero.NewIOFS(fsys)); loadErr != nil {
@@ -284,7 +309,8 @@ func setupFileWatcher() (*fsnotify.Watcher, string, error) {
 	}
 
 	// Add directories containing imported dependencies
-	if err := addImportDependenciesToWatcher(watcher, absFunctionsPath); err != nil {
+	watchedDirectories := make(map[string]bool)
+	if err := addImportDependenciesToWatcher(watcher, absFunctionsPath, watchedDirectories); err != nil {
 		log.Printf("Warning: an error occurred while adding import dependencies to watcher: %v", err)
 	}
 
@@ -294,7 +320,6 @@ func setupFileWatcher() (*fsnotify.Watcher, string, error) {
 // runFileWatcher listens for events from the watcher, debounces them, and signals for a restart.
 func runFileWatcher(ctx context.Context, watcher *fsnotify.Watcher, watchedPath string, restartChan chan<- struct{}) {
 	var restartTimer *time.Timer // Timer for debouncing restarts
-	const debounceDuration = 500 * time.Millisecond
 
 	if watchedPath == "" {
 		return
@@ -302,6 +327,7 @@ func runFileWatcher(ctx context.Context, watcher *fsnotify.Watcher, watchedPath 
 
 	// Store the original functions path for dependency scanning
 	functionsPath := watchedPath
+	watchedDirectories := make(map[string]bool)
 
 	for {
 		select {
@@ -309,9 +335,6 @@ func runFileWatcher(ctx context.Context, watcher *fsnotify.Watcher, watchedPath 
 			if !ok {
 				return
 			}
-
-			// Note: We now accept events from any watched directory (including dependency directories)
-			// not just the main functions directory, so we remove the watchedPath prefix check
 
 			if isIgnoredFileEvent(event.Name, event.Op) {
 				continue
@@ -332,29 +355,27 @@ func runFileWatcher(ctx context.Context, watcher *fsnotify.Watcher, watchedPath 
 						}
 					}
 				} else if info != nil && !info.IsDir() {
-					// Handle TypeScript/JavaScript file creation - rescan dependencies for this file
+					// Handle file creation - rescan dependencies for this file
 					// Only rescan dependencies if the file is within the functions directory
-					if strings.HasSuffix(event.Name, ".ts") || strings.HasSuffix(event.Name, ".js") {
+					if hasWatchedSuffix(event.Name) {
 						if strings.HasPrefix(event.Name, functionsPath) {
-							if depErr := addDependenciesForFile(watcher, event.Name, functionsPath, globalWatchedDirectories); depErr != nil {
+							if depErr := addDependenciesForFile(watcher, event.Name, functionsPath, watchedDirectories); depErr != nil {
 								log.Printf("Warning: error rescanning dependencies after file creation %s: %v", event.Name, depErr)
 							}
 						}
-						// Note: For dependency files outside functionsPath, we just let them trigger restarts
 					}
 				}
 			}
 
-			// Handle TypeScript/JavaScript file modifications - rescan dependencies for this file
+			// Handle file modifications - rescan dependencies for this file
 			if event.Has(fsnotify.Write) {
-				if strings.HasSuffix(event.Name, ".ts") || strings.HasSuffix(event.Name, ".js") {
+				if hasWatchedSuffix(event.Name) {
 					// Only rescan dependencies if the file is within the functions directory
 					if strings.HasPrefix(event.Name, functionsPath) {
-						if depErr := addDependenciesForFile(watcher, event.Name, functionsPath, globalWatchedDirectories); depErr != nil {
+						if depErr := addDependenciesForFile(watcher, event.Name, functionsPath, watchedDirectories); depErr != nil {
 							log.Printf("Warning: error rescanning dependencies after file modification %s: %v", event.Name, depErr)
 						}
 					}
-					// Note: For dependency files outside functionsPath, we just let them trigger restarts
 				}
 			}
 
