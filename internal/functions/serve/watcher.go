@@ -251,7 +251,9 @@ func addDependenciesForFile(watcher *fsnotify.Watcher, filePath, functionsPath s
 		// Write the file content to the writer (required by WalkImportPaths interface)
 		if f, err := fsys.Open(absDepPath); err == nil {
 			defer f.Close()
-			io.Copy(w, f)
+			if _, err := io.Copy(w, f); err != nil {
+				return errors.Errorf("failed to copy file content for %s: %w", absDepPath, err)
+			}
 		}
 
 		return nil
