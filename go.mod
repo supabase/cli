@@ -17,7 +17,7 @@ require (
 	github.com/docker/go-connections v0.5.0
 	github.com/getsentry/sentry-go v0.33.0
 	github.com/go-errors/errors v1.5.1
-	github.com/go-git/go-git/v5 v5.16.1
+	github.com/go-git/go-git/v5 v5.16.2
 	github.com/go-xmlfmt/xmlfmt v1.1.3
 	github.com/golangci/golangci-lint/v2 v2.1.6
 	github.com/google/go-github/v62 v62.0.0
