@@ -122,18 +122,23 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointPath, hostImpo
 			binds = append(binds, hostOutputDir+":"+dockerOutputDir+":rw")
 		}
 	}
+
+	// Get all paths and their bind mounts
 	// Imports outside of ./supabase/functions will be bound by walking the entrypoint
-	modules, err := utils.BindHostModules(cwd, hostEntrypointPath, hostImportMapPath, fsys)
+	functionPaths, err := utils.BindHostModules(cwd, hostEntrypointPath, hostImportMapPath, fsys)
 	if err != nil {
 		return nil, err
 	}
+
+	// Add bind mounts that aren't already covered by the functions directory or output directory
 	// Remove any duplicate mount points
-	for _, mod := range modules {
-		hostPath := strings.Split(mod, ":")[0]
+	for _, bind := range functionPaths.Binds {
+		hostPath := strings.Split(bind, ":")[0]
 		if !strings.HasPrefix(hostPath, hostFuncDir) &&
 			(len(hostOutputDir) == 0 || !strings.HasPrefix(hostPath, hostOutputDir)) {
-			binds = append(binds, mod)
+			binds = append(binds, bind)
 		}
 	}
+
 	return binds, nil
 }

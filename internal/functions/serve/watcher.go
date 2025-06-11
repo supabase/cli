@@ -2,8 +2,6 @@ package serve
 
 import (
 	"context"
-	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,30 +10,16 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/functions/deploy"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/function"
 )
 
 const (
-	// Configuration file names
-	denoJsonName  = "deno.json"
-	denoJsoncName = "deno.jsonc"
-	importMapName = "import_map.json"
-
 	// Debounce duration for file changes
 	debounceDuration = 500 * time.Millisecond
 )
 
 var (
-	// File suffixes that should be watched for changes
-	watchedFileSuffixes = map[string]bool{
-		".ts":   true,
-		".js":   true,
-		".d.ts": true,
-		".tsx":  true,
-		".jsx":  true,
-	}
-
 	// Directories to ignore.
 	ignoredDirNames = []string{
 		".git",
@@ -63,16 +47,6 @@ var (
 		{Suffix: "___", Op: fsnotify.Chmod}, // Deno specific temp file pattern during write (often involves a chmod)
 	}
 )
-
-// hasWatchedSuffix checks if a file has one of the watched suffixes
-func hasWatchedSuffix(filename string) bool {
-	for suffix := range watchedFileSuffixes {
-		if strings.HasSuffix(filename, suffix) {
-			return true
-		}
-	}
-	return false
-}
 
 // isIgnoredDir checks if a directory should be ignored by the watcher.
 // rootWatchedPath is the main directory being watched (e.g., "supabase/functions").
@@ -132,137 +106,86 @@ func isIgnoredFileEvent(eventName string, eventOp fsnotify.Op) bool {
 	return false
 }
 
-// addDirectoriesToWatcher recursively walks a directory tree and adds non-ignored
-// directories to the watcher. It handles errors gracefully and continues walking
-// even if some directories cannot be watched.
-func addDirectoriesToWatcher(watcher *fsnotify.Watcher, rootPath, watchedPath string) error {
-	return filepath.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			log.Printf("Warning: error accessing path %s during walk: %v", path, err)
-			return nil
-		}
-
-		if info.IsDir() {
-			if isIgnoredDir(info.Name(), watchedPath, path) {
-				return filepath.SkipDir
-			}
-
-			if err := watcher.Add(path); err != nil {
-				log.Printf("Warning: could not watch directory %s: %v", path, err)
-			}
-		}
-		return nil
-	})
-}
-
-// addImportDependenciesToWatcher finds TypeScript files in the functions directory,
-// parses their import statements, and adds the directories containing imported files
-// to the watcher. This ensures that changes to files outside the functions directory
-// that are imported by functions will trigger reloads.
-func addImportDependenciesToWatcher(watcher *fsnotify.Watcher, functionsPath string, watchedDirectories map[string]bool) error {
-	// Walk through all TypeScript files in the functions directory
-	err := filepath.Walk(functionsPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			log.Printf("Warning: error accessing path %s during walk: %v", path, err)
-			return nil
-		}
-
-		// Only process files with watched suffixes
-		if !info.IsDir() && hasWatchedSuffix(info.Name()) {
-			if err := addDependenciesForFile(watcher, path, functionsPath, watchedDirectories); err != nil {
-				log.Printf("Warning: error processing dependencies for %s: %v", path, err)
-			}
-		}
-		return nil
-	})
-
-	return err
-}
-
-// addDependenciesForFile processes a single TypeScript/JavaScript file to find its imports
-// and adds the directories of imported files to the watcher
-func addDependenciesForFile(watcher *fsnotify.Watcher, filePath, functionsPath string, watchedDirectories map[string]bool) error {
-	// Create a filesystem accessor
-	fsys := afero.NewOsFs()
-
-	// Create an ImportMap for parsing imports
-	importMap := function.ImportMap{}
-
-	// Check for import map in the same directory or parent directories
-	dir := filepath.Dir(filePath)
-	for {
-		denoJsonPath := filepath.Join(dir, denoJsonName)
-		denoJsoncPath := filepath.Join(dir, denoJsoncName)
-		importMapPath := filepath.Join(dir, importMapName)
-
-		if _, err := fsys.Stat(denoJsonPath); err == nil {
-			if loadErr := importMap.LoadAsDeno(filepath.ToSlash(denoJsonPath), afero.NewIOFS(fsys)); loadErr != nil {
-				log.Printf("Warning: failed to load deno.json at %s: %v", denoJsonPath, loadErr)
-			}
-			break
-		} else if _, err := fsys.Stat(denoJsoncPath); err == nil {
-			if loadErr := importMap.LoadAsDeno(filepath.ToSlash(denoJsoncPath), afero.NewIOFS(fsys)); loadErr != nil {
-				log.Printf("Warning: failed to load deno.jsonc at %s: %v", denoJsoncPath, loadErr)
-			}
-			break
-		} else if _, err := fsys.Stat(importMapPath); err == nil {
-			if loadErr := importMap.Load(filepath.ToSlash(importMapPath), afero.NewIOFS(fsys)); loadErr != nil {
-				log.Printf("Warning: failed to load import_map.json at %s: %v", importMapPath, loadErr)
-			}
-			break
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break // reached root
-		}
-		dir = parent
+// addImportDependenciesToWatcher adds all import dependencies to the watcher
+// and removes directories that are no longer needed
+func addImportDependenciesToWatcher(watcher *fsnotify.Watcher, watchedDirs map[string]bool, fsys afero.Fs) error {
+	slugs, err := deploy.GetFunctionSlugs(fsys)
+	if err != nil {
+		return err
 	}
 
-	// Function to add a dependency file's directory to the watcher
-	addDependency := func(depPath string, w io.Writer) error {
-		// Convert to absolute path
-		var absDepPath string
-		if filepath.IsAbs(depPath) {
-			absDepPath = depPath
+	functionsConfig, err := deploy.GetFunctionConfig(slugs, "", nil, fsys)
+	if err != nil {
+		return err
+	}
+
+	// Calculate which directories should be watched
+	shouldWatchDirs := make(map[string]bool)
+
+	// Always watch the functions directory itself if it exists
+	functionsDir := utils.FunctionsDir
+	absFunctionsPath := functionsDir
+	if filepath.IsAbs(functionsDir) {
+		absFunctionsPath = functionsDir
+	} else {
+		if utils.CurrentDirAbs != "" {
+			absFunctionsPath = filepath.Join(utils.CurrentDirAbs, functionsDir)
 		} else {
-			absDepPath = filepath.Join(filepath.Dir(filePath), depPath)
-		}
-		absDepPath = filepath.Clean(absDepPath)
-
-		// Get the directory containing the imported file
-		depDir := filepath.Dir(absDepPath)
-
-		// Only add directories that exist and aren't already watched
-		if _, err := fsys.Stat(depDir); err == nil {
-			if !watchedDirectories[depDir] {
-				// Don't re-add directories that are already being watched by the main functions watcher
-				if !strings.HasPrefix(depDir, functionsPath) {
-					if err := watcher.Add(depDir); err != nil {
-						log.Printf("Warning: could not watch dependency directory %s: %v", depDir, err)
-					} else {
-						log.Printf("Added dependency directory to watcher: %s", depDir)
-						watchedDirectories[depDir] = true
-					}
-				}
+			cwd, CWDerr := os.Getwd()
+			if CWDerr != nil {
+				utils.Warning("could not get current working directory: %v", CWDerr)
+			} else {
+				absFunctionsPath = filepath.Join(cwd, functionsDir)
 			}
 		}
+	}
+	absFunctionsPath = filepath.Clean(absFunctionsPath)
 
-		// Write the file content to the writer (required by WalkImportPaths interface)
-		if f, err := fsys.Open(absDepPath); err == nil {
-			defer f.Close()
-			if _, err := io.Copy(w, f); err != nil {
-				return errors.Errorf("failed to copy file content for %s: %w", absDepPath, err)
-			}
-		}
-
-		return nil
+	// Only add functions directory if it exists
+	if _, err := os.Stat(absFunctionsPath); err == nil {
+		shouldWatchDirs[absFunctionsPath] = true
 	}
 
-	// Walk through all imports starting from this file
-	relFilePath := filepath.ToSlash(filePath)
-	if err := importMap.WalkImportPaths(relFilePath, addDependency); err != nil {
-		return errors.Errorf("failed to walk import paths for %s: %w", filePath, err)
+	for _, fc := range functionsConfig {
+		if !fc.Enabled {
+			continue
+		}
+
+		modulePaths, err := utils.BindHostModules(utils.CurrentDirAbs, fc.Entrypoint, fc.ImportMap, fsys)
+		if err != nil {
+			utils.Warning("could not get function paths: %v", err)
+			continue
+		}
+
+		for _, path := range modulePaths.Paths {
+			// Get the directory containing the path
+			dir := filepath.Dir(path)
+			shouldWatchDirs[dir] = true
+		}
+	}
+
+	// Remove directories that are no longer needed
+	for watchedDir := range watchedDirs {
+		if !shouldWatchDirs[watchedDir] {
+			if err := watcher.Remove(watchedDir); err != nil {
+				utils.Warning("could not remove directory from watcher %s: %v", watchedDir, err)
+			} else {
+				utils.Info(1, "Removed directory from watcher: %s", watchedDir)
+				delete(watchedDirs, watchedDir)
+			}
+		}
+	}
+
+	// Add new directories that should be watched but aren't yet
+	for dir := range shouldWatchDirs {
+		if !watchedDirs[dir] {
+			if err := watcher.Add(dir); err != nil {
+				utils.Warning("could not watch directory %s: %v", dir, err)
+			} else {
+				utils.Info(1, "Added directory to watcher: %s", dir)
+				watchedDirs[dir] = true
+			}
+		}
 	}
 
 	return nil
@@ -270,11 +193,14 @@ func addDependenciesForFile(watcher *fsnotify.Watcher, filePath, functionsPath s
 
 // setupFileWatcher initializes a new fsnotify.Watcher and adds the functions directory
 // and its subdirectories to it.
-func setupFileWatcher() (*fsnotify.Watcher, string, error) {
+func setupFileWatcher(fsys afero.Fs) (*fsnotify.Watcher, string, error) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, "", errors.Errorf("failed to create file watcher: %w", err)
 	}
+
+	// Track which directories we've already added to the watcher
+	watchedDirs := make(map[string]bool)
 
 	// e.g., "supabase/functions"
 	functionsDir := utils.FunctionsDir
@@ -290,7 +216,7 @@ func setupFileWatcher() (*fsnotify.Watcher, string, error) {
 			// Fallback to current working directory
 			cwd, CWDerr := os.Getwd()
 			if CWDerr != nil {
-				log.Printf("Warning: could not get current working directory: %v. Using relative path for watcher: %s", CWDerr, functionsDir)
+				utils.Warning("could not get current working directory: %v. Using relative path for watcher: %s", CWDerr, functionsDir)
 			} else {
 				absFunctionsPath = filepath.Join(cwd, functionsDir)
 			}
@@ -298,38 +224,30 @@ func setupFileWatcher() (*fsnotify.Watcher, string, error) {
 	}
 	absFunctionsPath = filepath.Clean(absFunctionsPath)
 
-	err = watcher.Add(absFunctionsPath)
-	if err != nil {
-		log.Printf("Warning: could not watch functions directory %s - hot-reloading will be unavailable. Error: %v", absFunctionsPath, err)
+	// Add all import dependencies to the watcher (including the functions directory itself)
+	if err := addImportDependenciesToWatcher(watcher, watchedDirs, fsys); err != nil {
+		utils.Warning("could not add import dependencies to watcher: %v", err)
 		// Return the watcher but an empty path to signal that watching isn't properly set up.
 		return watcher, "", nil
 	}
 
-	// Recursively add subdirectories
-	if err := addDirectoriesToWatcher(watcher, absFunctionsPath, absFunctionsPath); err != nil {
-		log.Printf("Warning: an error occurred during directory walk for watcher setup on %s: %v", absFunctionsPath, err)
+	// If no directories are being watched (e.g., functions directory doesn't exist), return empty path
+	if len(watchedDirs) == 0 {
+		utils.Info(1, "No directories found to watch")
+		return watcher, "", nil
 	}
 
-	// Add directories containing imported dependencies
-	watchedDirectories := make(map[string]bool)
-	if err := addImportDependenciesToWatcher(watcher, absFunctionsPath, watchedDirectories); err != nil {
-		log.Printf("Warning: an error occurred while adding import dependencies to watcher: %v", err)
-	}
-
+	utils.Info(1, "File watcher initialized, watching %d directories", len(watchedDirs))
 	return watcher, absFunctionsPath, nil
 }
 
 // runFileWatcher listens for events from the watcher, debounces them, and signals for a restart.
-func runFileWatcher(ctx context.Context, watcher *fsnotify.Watcher, watchedPath string, restartChan chan<- struct{}) {
+func runFileWatcher(ctx context.Context, watcher *fsnotify.Watcher, watchedPath string, restartChan chan<- struct{}, watchedDirs map[string]bool, fsys afero.Fs) {
 	var restartTimer *time.Timer // Timer for debouncing restarts
 
 	if watchedPath == "" {
 		return
 	}
-
-	// Store the original functions path for dependency scanning
-	functionsPath := watchedPath
-	watchedDirectories := make(map[string]bool)
 
 	for {
 		select {
@@ -339,53 +257,21 @@ func runFileWatcher(ctx context.Context, watcher *fsnotify.Watcher, watchedPath 
 			}
 
 			if isIgnoredFileEvent(event.Name, event.Op) {
+				utils.Debug("Ignoring file event: %s (%s)", event.Name, event.Op.String())
 				continue
-			}
-
-			// Handle directory creation immediately for watcher updates
-			if event.Has(fsnotify.Create) {
-				if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
-					newDirPath := event.Name
-					if !isIgnoredDir(info.Name(), functionsPath, newDirPath) {
-						if errAdd := watcher.Add(newDirPath); errAdd != nil {
-							log.Printf("Warning: could not add new directory %s to watcher: %v", newDirPath, errAdd)
-						} else {
-							// Recursively add subdirectories of the new directory
-							if walkErr := addDirectoriesToWatcher(watcher, newDirPath, functionsPath); walkErr != nil {
-								log.Printf("Warning: error walking new directory %s: %v", newDirPath, walkErr)
-							}
-						}
-					}
-				} else if info != nil && !info.IsDir() {
-					// Handle file creation - rescan dependencies for this file
-					// Only rescan dependencies if the file is within the functions directory
-					if hasWatchedSuffix(event.Name) {
-						if strings.HasPrefix(event.Name, functionsPath) {
-							if depErr := addDependenciesForFile(watcher, event.Name, functionsPath, watchedDirectories); depErr != nil {
-								log.Printf("Warning: error rescanning dependencies after file creation %s: %v", event.Name, depErr)
-							}
-						}
-					}
-				}
-			}
-
-			// Handle file modifications - rescan dependencies for this file
-			if event.Has(fsnotify.Write) {
-				if hasWatchedSuffix(event.Name) {
-					// Only rescan dependencies if the file is within the functions directory
-					if strings.HasPrefix(event.Name, functionsPath) {
-						if depErr := addDependenciesForFile(watcher, event.Name, functionsPath, watchedDirectories); depErr != nil {
-							log.Printf("Warning: error rescanning dependencies after file modification %s: %v", event.Name, depErr)
-						}
-					}
-				}
 			}
 
 			// Handle file change events that should trigger a restart
 			isSignificantEventForRestart := event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename)
 
 			if isSignificantEventForRestart {
-				log.Printf("File change detected: %s (%s)", event.Name, event.Op.String())
+				utils.Info(2, "File change detected: %s (%s)", event.Name, event.Op.String())
+
+				// Re-add import dependencies to catch any new dependencies
+				if err := addImportDependenciesToWatcher(watcher, watchedDirs, fsys); err != nil {
+					utils.Warning("could not update import dependencies: %v", err)
+				}
+
 				if restartTimer != nil {
 					restartTimer.Stop()
 				}
@@ -398,7 +284,7 @@ func runFileWatcher(ctx context.Context, watcher *fsnotify.Watcher, watchedPath 
 			if !ok {
 				return
 			}
-			log.Printf("File watcher error: %v", err)
+			utils.Warning("File watcher error: %v", err)
 		case <-ctx.Done():
 			if restartTimer != nil {
 				restartTimer.Stop()
@@ -410,23 +296,21 @@ func runFileWatcher(ctx context.Context, watcher *fsnotify.Watcher, watchedPath 
 
 // FileWatcherSetup interface allows for dependency injection of file watching functionality
 type FileWatcherSetup interface {
-	SetupFileWatcher() (*fsnotify.Watcher, string, error)
+	SetupFileWatcher(fsys afero.Fs) (*fsnotify.Watcher, string, error)
 }
 
-// RealFileWatcherSetup implements FileWatcherSetup using the real filesystem
 type RealFileWatcherSetup struct{}
 
-func (r *RealFileWatcherSetup) SetupFileWatcher() (*fsnotify.Watcher, string, error) {
-	return setupFileWatcher()
+func (r *RealFileWatcherSetup) SetupFileWatcher(fsys afero.Fs) (*fsnotify.Watcher, string, error) {
+	return setupFileWatcher(fsys)
 }
 
-// MockFileWatcherSetup implements FileWatcherSetup for testing
 type MockFileWatcherSetup struct {
 	MockWatcher *fsnotify.Watcher
 	MockPath    string
 	MockError   error
 }
 
-func (m *MockFileWatcherSetup) SetupFileWatcher() (*fsnotify.Watcher, string, error) {
+func (m *MockFileWatcherSetup) SetupFileWatcher(fsys afero.Fs) (*fsnotify.Watcher, string, error) {
 	return m.MockWatcher, m.MockPath, m.MockError
 }

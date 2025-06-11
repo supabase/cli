@@ -29,12 +29,19 @@ import "./child/index.ts"`
 		mods, err := BindHostModules("/app", "supabase/functions/hello/index.ts", "", fsys)
 		// Check error
 		assert.NoError(t, err)
-		assert.ElementsMatch(t, mods, []string{
+		assert.ElementsMatch(t, mods.Binds, []string{
 			"/app/supabase/functions/hello/index.ts:/app/supabase/functions/hello/index.ts:ro",
 			"/tmp/index.ts:/tmp/index.ts:ro",
 			"/app/supabase/functions/common/index.ts:/app/supabase/functions/common/index.ts:ro",
 			"/app/supabase/tests/index.ts:/app/supabase/tests/index.ts:ro",
 			"/app/supabase/functions/hello/child/index.ts:/app/supabase/functions/hello/child/index.ts:ro",
+		})
+		assert.ElementsMatch(t, mods.Paths, []string{
+			"/app/supabase/functions/hello/index.ts",
+			"/tmp/index.ts",
+			"/app/supabase/functions/common/index.ts",
+			"/app/supabase/tests/index.ts",
+			"/app/supabase/functions/hello/child/index.ts",
 		})
 	})
 }

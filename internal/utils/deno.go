@@ -209,20 +209,31 @@ func CopyDenoScripts(ctx context.Context, fsys afero.Fs) (*DenoScriptDir, error)
 	return &sd, nil
 }
 
-func BindHostModules(cwd, relEntrypointPath, relImportMapPath string, fsys afero.Fs) ([]string, error) {
-	var modules []string
+// ModulePaths contains both the raw paths and their Docker bind mount equivalents
+type ModulePaths struct {
+	Paths []string // Raw host paths
+	Binds []string // Docker bind mount strings
+}
+
+func BindHostModules(cwd, relEntrypointPath, relImportMapPath string, fsys afero.Fs) (*ModulePaths, error) {
+	var paths []string
+	var binds []string
+
 	bindModule := func(srcPath string, r io.Reader) error {
 		hostPath := filepath.Join(cwd, filepath.FromSlash(srcPath))
 		dockerPath := ToDockerPath(hostPath)
-		modules = append(modules, hostPath+":"+dockerPath+":ro")
+		paths = append(paths, hostPath)
+		binds = append(binds, hostPath+":"+dockerPath+":ro")
 		return nil
 	}
+
 	importMap := function.ImportMap{}
 	if imPath := filepath.ToSlash(relImportMapPath); len(imPath) > 0 {
 		if err := importMap.LoadAsDeno(imPath, afero.NewIOFS(fsys), bindModule); err != nil {
 			return nil, err
 		}
 	}
+
 	// Resolving all Import Graph
 	addModule := func(unixPath string, w io.Writer) error {
 		hostPath := filepath.FromSlash(unixPath)
@@ -240,15 +251,21 @@ func BindHostModules(cwd, relEntrypointPath, relImportMapPath string, fsys afero
 			return errors.Errorf("failed to copy file content: %w", err)
 		}
 		dockerPath := ToDockerPath(hostPath)
-		modules = append(modules, hostPath+":"+dockerPath+":ro")
+		paths = append(paths, hostPath)
+		binds = append(binds, hostPath+":"+dockerPath+":ro")
 		return nil
 	}
+
 	unixPath := filepath.ToSlash(relEntrypointPath)
 	if err := importMap.WalkImportPaths(unixPath, addModule); err != nil {
 		return nil, err
 	}
+
 	// TODO: support scopes
-	return modules, nil
+	return &ModulePaths{
+		Paths: paths,
+		Binds: binds,
+	}, nil
 }
 
 func ToDockerPath(absHostPath string) string {

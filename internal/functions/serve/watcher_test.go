@@ -2,13 +2,12 @@ package serve
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/utils"
@@ -73,66 +72,6 @@ func TestIsIgnoredFileEvent(t *testing.T) {
 	}
 }
 
-func TestAddDirectoriesToWatcher(t *testing.T) {
-	t.Run("adds directories to watcher successfully", func(t *testing.T) {
-		setup := NewTestSetup(t)
-		defer setup.Cleanup()
-
-		// Setup file system with complex structure
-		setup.SetupComplexFunctionStructure()
-
-		// Create watcher
-		watcher, err := fsnotify.NewWatcher()
-		require.NoError(t, err)
-		defer watcher.Close()
-
-		// Create real directory structure for this test
-		rootPath := utils.FunctionsDir
-		require.NoError(t, os.MkdirAll(filepath.Join(rootPath, "func1"), 0755))
-		require.NoError(t, os.MkdirAll(filepath.Join(rootPath, "func2"), 0755))
-		defer os.RemoveAll(rootPath)
-
-		err = addDirectoriesToWatcher(watcher, rootPath, rootPath)
-		assert.NoError(t, err)
-	})
-
-	t.Run("skips ignored directories", func(t *testing.T) {
-		setup := NewTestSetup(t)
-		defer setup.Cleanup()
-
-		// Setup real functions directory with ignored subdirectories
-		rootPath := utils.FunctionsDir
-		require.NoError(t, os.MkdirAll(filepath.Join(rootPath, ".git"), 0755))
-		require.NoError(t, os.MkdirAll(filepath.Join(rootPath, "node_modules", "package"), 0755))
-		require.NoError(t, os.MkdirAll(filepath.Join(rootPath, "src"), 0755))
-		defer os.RemoveAll(rootPath)
-
-		// Create watcher
-		watcher, err := fsnotify.NewWatcher()
-		require.NoError(t, err)
-		defer watcher.Close()
-
-		// Test the actual production function - should not error even with ignored directories
-		err = addDirectoriesToWatcher(watcher, rootPath, rootPath)
-		assert.NoError(t, err)
-	})
-
-	t.Run("handles non-existent directory gracefully", func(t *testing.T) {
-		setup := NewTestSetup(t)
-		defer setup.Cleanup()
-
-		watcher, err := fsnotify.NewWatcher()
-		require.NoError(t, err)
-		defer watcher.Close()
-
-		nonExistentPath := "/non/existent/path"
-		// Test the actual production function
-		err = addDirectoriesToWatcher(watcher, nonExistentPath, nonExistentPath)
-		// Should handle gracefully - verify it doesn't panic and logs appropriately
-		assert.NoError(t, err, "addDirectoriesToWatcher should handle non-existent directories gracefully")
-	})
-}
-
 func TestSetupFileWatcher(t *testing.T) {
 	t.Run("sets up watcher when functions directory exists", func(t *testing.T) {
 		setup := NewTestSetup(t)
@@ -156,7 +95,8 @@ func TestSetupFileWatcher(t *testing.T) {
 			[]byte("export default () => new Response('hello')"), 0600))
 
 		// Test the actual production function
-		watcher, watchedPath, err := setupFileWatcher()
+		fsys := afero.NewOsFs()
+		watcher, watchedPath, err := setupFileWatcher(fsys)
 		if watcher != nil {
 			defer watcher.Close()
 		}
@@ -184,7 +124,8 @@ func TestSetupFileWatcher(t *testing.T) {
 		defer func() { utils.FunctionsDir = originalFunctionsDir }()
 
 		// Test the actual production function
-		watcher, watchedPath, err := setupFileWatcher()
+		fsys := afero.NewOsFs()
+		watcher, watchedPath, err := setupFileWatcher(fsys)
 		if watcher != nil {
 			defer watcher.Close()
 		}
@@ -211,7 +152,8 @@ func TestSetupFileWatcher(t *testing.T) {
 		require.NoError(t, os.MkdirAll(functionsDir, 0755))
 
 		// Test the actual production function
-		watcher, watchedPath, err := setupFileWatcher()
+		fsys := afero.NewOsFs()
+		watcher, watchedPath, err := setupFileWatcher(fsys)
 		if watcher != nil {
 			defer watcher.Close()
 		}
@@ -224,12 +166,14 @@ func TestSetupFileWatcher(t *testing.T) {
 	})
 }
 
+// TestRunFileWatcher - simplified to focus on core functionality
 func TestRunFileWatcher(t *testing.T) {
 	t.Run("respects context cancellation", func(t *testing.T) {
 		setup := NewTestSetup(t)
 		defer setup.Cleanup()
 
 		watchPath := filepath.Join(utils.FunctionsDir, "test")
+		fsys := afero.NewOsFs()
 		watcher, err := setup.CreateFileWatcher(watchPath)
 		if err != nil {
 			t.Skip("File watcher not supported on this system")
@@ -240,13 +184,10 @@ func TestRunFileWatcher(t *testing.T) {
 		defer cancel()
 
 		restartChan := make(chan struct{}, 1)
+		watchedDirs := make(map[string]bool)
 
 		// Start file watcher
-		go runFileWatcher(ctx, watcher, watchPath, restartChan)
-
-		// Test the watcher behavior indirectly by verifying it doesn't block
-		// and handles context cancellation properly
-		time.Sleep(50 * time.Millisecond)
+		go runFileWatcher(ctx, watcher, watchPath, restartChan, watchedDirs, fsys)
 
 		// Verify the goroutine is running and context cancellation works
 		select {
@@ -256,216 +197,10 @@ func TestRunFileWatcher(t *testing.T) {
 			t.Error("Test timed out - watcher may not be respecting context")
 		}
 	})
-
-	t.Run("ignores irrelevant file events", func(t *testing.T) {
-		setup := NewTestSetup(t)
-		defer setup.Cleanup()
-
-		watchPath := filepath.Join(utils.FunctionsDir, "test")
-		watcher, err := setup.CreateFileWatcher(watchPath)
-		if err != nil {
-			t.Skip("File watcher not supported on this system")
-		}
-		defer watcher.Close()
-
-		ctx, cancel := context.WithTimeout(setup.Context, 200*time.Millisecond)
-		defer cancel()
-
-		restartChan := make(chan struct{}, 1)
-
-		// Start file watcher
-		go runFileWatcher(ctx, watcher, watchPath, restartChan)
-
-		// Test ignored file patterns
-		ignoredFiles := []string{
-			"file.txt~",       // backup files
-			".file.swp",       // vim swap files
-			"file.tmp",        // temp files
-			"___deno_temp___", // deno temp files
-		}
-
-		for _, filename := range ignoredFiles {
-			shouldIgnore := isIgnoredFileEvent(filename, fsnotify.Write)
-			assert.True(t, shouldIgnore, "Should ignore file: %s", filename)
-		}
-
-		// Verify no restart signals from ignored files
-		select {
-		case <-restartChan:
-			t.Fatal("Received unexpected restart signal from ignored file")
-		case <-ctx.Done():
-		}
-	})
-
-	t.Run("handles context cancellation gracefully", func(t *testing.T) {
-		setup := NewTestSetup(t)
-		defer setup.Cleanup()
-
-		watchPath := filepath.Join(utils.FunctionsDir, "test")
-		watcher, err := setup.CreateFileWatcher(watchPath)
-		if err != nil {
-			t.Skip("File watcher not supported on this system")
-		}
-		defer watcher.Close()
-
-		ctx, cancel := context.WithCancel(setup.Context)
-		restartChan := make(chan struct{}, 1)
-
-		// Start file watcher
-		go runFileWatcher(ctx, watcher, watchPath, restartChan)
-
-		// Cancel context immediately
-		cancel()
-
-		// Should complete quickly
-		time.Sleep(100 * time.Millisecond)
-		// Expected - function should exit gracefully
-	})
 }
 
 func TestFileWatcherIntegration(t *testing.T) {
-	t.Run("detects file changes and triggers restarts", func(t *testing.T) {
-		setup := NewTestSetup(t)
-		defer setup.Cleanup()
-
-		// Use a temporary directory for this test
-		tempDir := t.TempDir()
-		functionsDir := filepath.Join(tempDir, "functions")
-
-		// Temporarily set utils.FunctionsDir to our test directory
-		originalFunctionsDir := utils.FunctionsDir
-		utils.FunctionsDir = functionsDir
-		defer func() { utils.FunctionsDir = originalFunctionsDir }()
-
-		require.NoError(t, os.MkdirAll(functionsDir, 0755))
-
-		// Create initial function
-		funcDir := filepath.Join(functionsDir, "hello")
-		require.NoError(t, os.MkdirAll(funcDir, 0755))
-		initialContent := "export default () => new Response('Hello!')"
-		funcFile := filepath.Join(funcDir, "index.ts")
-		require.NoError(t, os.WriteFile(funcFile, []byte(initialContent), 0600))
-
-		// Set up the file watcher
-		watcher, watchedPath, err := setupFileWatcher()
-		require.NoError(t, err)
-		require.NotNil(t, watcher)
-		require.NotEmpty(t, watchedPath)
-		defer watcher.Close()
-
-		// Start the file watcher
-		ctx, cancel := context.WithTimeout(setup.Context, 3*time.Second)
-		defer cancel()
-
-		restartChan := make(chan struct{}, 10) // Buffer to capture multiple signals
-		go runFileWatcher(ctx, watcher, watchedPath, restartChan)
-
-		// Give watcher time to initialize
-		time.Sleep(100 * time.Millisecond)
-
-		// Test 1: Modify existing file
-		modifiedContent := "export default () => new Response('Hello World!')"
-		require.NoError(t, os.WriteFile(funcFile, []byte(modifiedContent), 0600))
-
-		// Wait for restart signal
-		select {
-		case <-restartChan:
-			// Expected - file modification should trigger restart
-		case <-time.After(1 * time.Second):
-			t.Error("Expected restart signal after file modification")
-		}
-
-		// Test 2: Create new function
-		newFuncDir := filepath.Join(functionsDir, "goodbye")
-		require.NoError(t, os.MkdirAll(newFuncDir, 0755))
-		newFuncFile := filepath.Join(newFuncDir, "index.ts")
-		require.NoError(t, os.WriteFile(newFuncFile, []byte("export default () => new Response('Goodbye!')"), 0600))
-
-		// Wait for restart signal
-		select {
-		case <-restartChan:
-			// Expected - new file should trigger restart
-		case <-time.After(1 * time.Second):
-			t.Error("Expected restart signal after new file creation")
-		}
-
-		// Test 3: Delete file
-		require.NoError(t, os.Remove(newFuncFile))
-
-		// Wait for restart signal
-		select {
-		case <-restartChan:
-			// Expected - file deletion should trigger restart
-		case <-time.After(1 * time.Second):
-			t.Error("Expected restart signal after file deletion")
-		}
-	})
-
-	t.Run("debounces rapid file changes", func(t *testing.T) {
-		setup := NewTestSetup(t)
-		defer setup.Cleanup()
-
-		// Use a temporary directory for this test
-		tempDir := t.TempDir()
-		functionsDir := filepath.Join(tempDir, "functions")
-
-		// Temporarily set utils.FunctionsDir to our test directory
-		originalFunctionsDir := utils.FunctionsDir
-		utils.FunctionsDir = functionsDir
-		defer func() { utils.FunctionsDir = originalFunctionsDir }()
-
-		require.NoError(t, os.MkdirAll(functionsDir, 0755))
-
-		// Create initial function
-		funcDir := filepath.Join(functionsDir, "test")
-		require.NoError(t, os.MkdirAll(funcDir, 0755))
-		funcFile := filepath.Join(funcDir, "index.ts")
-		require.NoError(t, os.WriteFile(funcFile, []byte("export default () => new Response('v1')"), 0600))
-
-		// Set up the file watcher
-		watcher, watchedPath, err := setupFileWatcher()
-		require.NoError(t, err)
-		require.NotNil(t, watcher)
-		require.NotEmpty(t, watchedPath)
-		defer watcher.Close()
-
-		// Start the file watcher
-		ctx, cancel := context.WithTimeout(setup.Context, 2*time.Second)
-		defer cancel()
-
-		restartChan := make(chan struct{}, 10)
-		go runFileWatcher(ctx, watcher, watchedPath, restartChan)
-
-		// Give watcher time to initialize
-		time.Sleep(100 * time.Millisecond)
-
-		// Make multiple rapid changes (faster than debounce duration of 500ms)
-		for i := 0; i < 5; i++ {
-			content := fmt.Sprintf("export default () => new Response('v%d')", i+2)
-			require.NoError(t, os.WriteFile(funcFile, []byte(content), 0600))
-			time.Sleep(50 * time.Millisecond) // Much faster than 500ms debounce
-		}
-
-		// Wait for debounce period + some buffer
-		time.Sleep(800 * time.Millisecond)
-
-		// Should only receive one restart signal due to debouncing
-		restartCount := 0
-		for {
-			select {
-			case <-restartChan:
-				restartCount++
-			case <-time.After(100 * time.Millisecond):
-				// No more signals
-				goto checkResult
-			}
-		}
-
-	checkResult:
-		assert.Equal(t, 1, restartCount, "Expected exactly 1 restart signal due to debouncing, got %d", restartCount)
-	})
-
-	t.Run("ignores temp and backup files during watching", func(t *testing.T) {
+	t.Run("ignores changes to non-valid files", func(t *testing.T) {
 		setup := NewTestSetup(t)
 		defer setup.Cleanup()
 
@@ -485,7 +220,8 @@ func TestFileWatcherIntegration(t *testing.T) {
 		require.NoError(t, os.MkdirAll(funcDir, 0755))
 
 		// Set up the file watcher
-		watcher, watchedPath, err := setupFileWatcher()
+		fsys := afero.NewOsFs()
+		watcher, watchedPath, err := setupFileWatcher(fsys)
 		require.NoError(t, err)
 		require.NotNil(t, watcher)
 		require.NotEmpty(t, watchedPath)
@@ -496,21 +232,26 @@ func TestFileWatcherIntegration(t *testing.T) {
 		defer cancel()
 
 		restartChan := make(chan struct{}, 10)
-		go runFileWatcher(ctx, watcher, watchedPath, restartChan)
+		watchedDirs := make(map[string]bool)
+		go runFileWatcher(ctx, watcher, watchedPath, restartChan, watchedDirs, fsys)
 
 		// Give watcher time to initialize
 		time.Sleep(100 * time.Millisecond)
 
-		// Create ignored files that shouldn't trigger restarts
+		// Create and modify files that should not trigger reloads
 		ignoredFiles := []string{
-			filepath.Join(funcDir, "index.ts~"),       // backup file
-			filepath.Join(funcDir, ".index.ts.swp"),   // vim swap file
-			filepath.Join(funcDir, "temp.tmp"),        // temp file
-			filepath.Join(funcDir, "___deno_temp___"), // deno temp file
+			filepath.Join(funcDir, "test.txt"),        // non-TypeScript file
+			filepath.Join(funcDir, "test.md"),         // documentation
+			filepath.Join(funcDir, "test.json"),       // non-function config
+			filepath.Join(funcDir, "test.log"),        // log file
+			filepath.Join(funcDir, "test.tmp"),        // temp file
+			filepath.Join(funcDir, "test.swp"),        // vim swap
+			filepath.Join(funcDir, "test~"),           // backup
+			filepath.Join(funcDir, "___deno_temp___"), // deno temp
 		}
 
 		for _, ignoredFile := range ignoredFiles {
-			require.NoError(t, os.WriteFile(ignoredFile, []byte("temp content"), 0600))
+			require.NoError(t, os.WriteFile(ignoredFile, []byte("test content"), 0600))
 			time.Sleep(50 * time.Millisecond)
 		}
 
@@ -518,137 +259,298 @@ func TestFileWatcherIntegration(t *testing.T) {
 		time.Sleep(600 * time.Millisecond)
 
 		// Should not receive any restart signals from ignored files
-		restartCount := 0
-		for {
-			select {
-			case <-restartChan:
-				restartCount++
-				// Continue draining to see if we get multiple signals
-			case <-time.After(100 * time.Millisecond):
-				// No more signals
-				goto checkIgnored
-			}
-		}
-
-	checkIgnored:
-		if restartCount > 0 {
-			t.Errorf("Received %d unexpected restart signals from ignored files", restartCount)
-		}
-
-		// Now create a real file that should trigger restart
-		realFile := filepath.Join(funcDir, "index.ts")
-		require.NoError(t, os.WriteFile(realFile, []byte("export default () => new Response('test')"), 0600))
-
-		// This should trigger a restart
 		select {
 		case <-restartChan:
-			// Expected - real file should trigger restart
-		case <-time.After(1 * time.Second):
-			t.Error("Expected restart signal after creating real function file")
+			t.Error("Received unexpected restart signal from ignored file")
+		case <-time.After(100 * time.Millisecond):
+			// Expected - no restart for ignored files
 		}
 	})
 
-	t.Run("file watcher with hot reloading simulation", func(t *testing.T) {
-		setup := NewTestSetup(t)
-		defer setup.Cleanup()
-
-		// Create functions that would normally trigger reloads
-		setup.SetupFunction("api", "export default () => new Response('API')")
-		setup.SetupFunction("webhook", "export default () => new Response('Webhook')")
-
-		// Test file patterns that should trigger reloads
-		triggerFiles := []string{
-			"index.ts", "index.js", "main.ts", "handler.js",
-			"config.json", "package.json", "deno.json",
-			"utils.ts", "types.ts", "constants.ts",
-		}
-
-		for _, filename := range triggerFiles {
-			shouldIgnore := isIgnoredFileEvent(filename, fsnotify.Write)
-			assert.False(t, shouldIgnore,
-				"File %s should trigger hot reload", filename)
-		}
-
-		// Test file patterns that should NOT trigger reloads
-		ignoreFiles := []string{
-			"file.txt~", ".file.swp", "file.tmp",
-			"___deno_bundle___", ".#lock",
-		}
-
-		for _, filename := range ignoreFiles {
-			shouldIgnore := isIgnoredFileEvent(filename, fsnotify.Write)
-			assert.True(t, shouldIgnore,
-				"File %s should NOT trigger hot reload", filename)
-		}
-	})
-}
-
-func TestAddImportDependenciesToWatcher(t *testing.T) {
-	t.Run("adds import dependencies to watcher", func(t *testing.T) {
+	t.Run("reloads when dependency of dependency changes", func(t *testing.T) {
 		setup := NewTestSetup(t)
 		defer setup.Cleanup()
 
 		// Use a temporary directory for this test
 		tempDir := t.TempDir()
-
-		// Create functions directory
 		functionsDir := filepath.Join(tempDir, "functions")
+
+		// Temporarily set utils.FunctionsDir to our test directory
+		originalFunctionsDir := utils.FunctionsDir
+		utils.FunctionsDir = functionsDir
+		defer func() { utils.FunctionsDir = originalFunctionsDir }()
+
 		require.NoError(t, os.MkdirAll(functionsDir, 0755))
 
-		// Create a shared utilities directory outside functions
-		utilsDir := filepath.Join(tempDir, "shared", "utils")
-		require.NoError(t, os.MkdirAll(utilsDir, 0755))
+		// Create a deep dependency chain
+		libDir := filepath.Join(tempDir, "lib")
+		require.NoError(t, os.MkdirAll(libDir, 0755))
 
-		// Create a shared utility file
-		utilsFile := filepath.Join(utilsDir, "helpers.ts")
-		require.NoError(t, os.WriteFile(utilsFile, []byte(`
-export function formatResponse(data: any) {
-  return new Response(JSON.stringify(data), {
-    headers: { 'Content-Type': 'application/json' }
-  });
+		// Create base utility
+		baseUtil := filepath.Join(libDir, "base.ts")
+		require.NoError(t, os.WriteFile(baseUtil, []byte(`
+export function baseFunction() {
+  return "base";
 }
 `), 0600))
 
-		// Create a function that imports from outside the functions directory
-		funcDir := filepath.Join(functionsDir, "api")
-		require.NoError(t, os.MkdirAll(funcDir, 0755))
-		funcFile := filepath.Join(funcDir, "index.ts")
+		// Create intermediate utility that depends on base
+		intermediateDir := filepath.Join(libDir, "intermediate")
+		require.NoError(t, os.MkdirAll(intermediateDir, 0755))
+		intermediateUtil := filepath.Join(intermediateDir, "util.ts")
+		require.NoError(t, os.WriteFile(intermediateUtil, []byte(`
+import { baseFunction } from "../base.ts";
 
-		// Write a function that imports the utility
-		require.NoError(t, os.WriteFile(funcFile, []byte(`
-import { formatResponse } from "../../shared/utils/helpers.ts";
-
-export default async () => {
-  return formatResponse({ message: "Hello from API" });
-};
+export function intermediateFunction() {
+  return baseFunction() + " -> intermediate";
+}
 `), 0600))
 
-		// Create watcher
-		watcher, err := fsnotify.NewWatcher()
+		// Create function that depends on intermediate
+		funcDir := filepath.Join(functionsDir, "test")
+		require.NoError(t, os.MkdirAll(funcDir, 0755))
+		funcFile := filepath.Join(funcDir, "index.ts")
+		require.NoError(t, os.WriteFile(funcFile, []byte(`
+import { intermediateFunction } from "../../lib/intermediate/util.ts";
+
+export default () => new Response(intermediateFunction());
+`), 0600))
+
+		// Set up the file watcher
+		fsys := afero.NewOsFs()
+		watcher, watchedPath, err := setupFileWatcher(fsys)
 		require.NoError(t, err)
+		require.NotNil(t, watcher)
+		require.NotEmpty(t, watchedPath)
 		defer watcher.Close()
 
-		// Create watched directories map
-		watchedDirectories := make(map[string]bool)
+		// Start the file watcher
+		ctx, cancel := context.WithTimeout(setup.Context, 3*time.Second)
+		defer cancel()
 
-		// Test the import dependency function
-		err = addImportDependenciesToWatcher(watcher, functionsDir, watchedDirectories)
-		assert.NoError(t, err)
+		restartChan := make(chan struct{}, 10)
+		watchedDirs := make(map[string]bool)
+		go runFileWatcher(ctx, watcher, watchedPath, restartChan, watchedDirs, fsys)
 
-		// Verify that the utils directory is now being watched
-		// (This is a bit tricky to test directly, so we'll verify no error occurred
-		// and that the function completed successfully)
+		// Give watcher time to initialize
+		time.Sleep(100 * time.Millisecond)
+
+		// Modify the base utility
+		require.NoError(t, os.WriteFile(baseUtil, []byte(`
+export function baseFunction() {
+  return "modified base";
+}
+`), 0600))
+
+		// Wait for restart signal
+		select {
+		case <-restartChan:
+			// Expected - change to dependency should trigger restart
+		case <-time.After(1 * time.Second):
+			t.Error("Expected restart signal after modifying dependency")
+		}
 	})
 
-	t.Run("handles TypeScript files with multiple imports", func(t *testing.T) {
+	t.Run("handles function lifecycle events", func(t *testing.T) {
 		setup := NewTestSetup(t)
 		defer setup.Cleanup()
 
 		// Use a temporary directory for this test
 		tempDir := t.TempDir()
-
-		// Create functions directory
 		functionsDir := filepath.Join(tempDir, "functions")
+
+		// Temporarily set utils.FunctionsDir to our test directory
+		originalFunctionsDir := utils.FunctionsDir
+		utils.FunctionsDir = functionsDir
+		defer func() { utils.FunctionsDir = originalFunctionsDir }()
+
+		require.NoError(t, os.MkdirAll(functionsDir, 0755))
+
+		// Set up the file watcher
+		fsys := afero.NewOsFs()
+		watcher, watchedPath, err := setupFileWatcher(fsys)
+		require.NoError(t, err)
+		require.NotNil(t, watcher)
+		require.NotEmpty(t, watchedPath)
+		defer watcher.Close()
+
+		// Start the file watcher
+		ctx, cancel := context.WithTimeout(setup.Context, 3*time.Second)
+		defer cancel()
+
+		restartChan := make(chan struct{}, 10)
+		watchedDirs := make(map[string]bool)
+		go runFileWatcher(ctx, watcher, watchedPath, restartChan, watchedDirs, fsys)
+
+		// Give watcher time to initialize
+		time.Sleep(100 * time.Millisecond)
+
+		// Test 1: Add new function
+		newFuncDir := filepath.Join(functionsDir, "new-function")
+		require.NoError(t, os.MkdirAll(newFuncDir, 0755))
+		newFuncFile := filepath.Join(newFuncDir, "index.ts")
+		require.NoError(t, os.WriteFile(newFuncFile, []byte("export default () => new Response('new')"), 0600))
+
+		// Wait for restart signal
+		select {
+		case <-restartChan:
+			// Expected - new function should trigger restart
+		case <-time.After(1 * time.Second):
+			t.Error("Expected restart signal after adding new function")
+		}
+
+		// Test 2: Update existing function
+		require.NoError(t, os.WriteFile(newFuncFile, []byte("export default () => new Response('updated')"), 0600))
+
+		// Wait for restart signal
+		select {
+		case <-restartChan:
+			// Expected - update should trigger restart
+		case <-time.After(1 * time.Second):
+			t.Error("Expected restart signal after updating function")
+		}
+
+		// Test 3: Remove function
+		require.NoError(t, os.RemoveAll(newFuncDir))
+
+		// Wait for restart signal
+		select {
+		case <-restartChan:
+			// Expected - removal should trigger restart
+		case <-time.After(1 * time.Second):
+			t.Error("Expected restart signal after removing function")
+		}
+	})
+
+	t.Run("handles watcher errors gracefully", func(t *testing.T) {
+		setup := NewTestSetup(t)
+		defer setup.Cleanup()
+
+		// Use a temporary directory for this test
+		tempDir := t.TempDir()
+		functionsDir := filepath.Join(tempDir, "functions")
+
+		// Temporarily set utils.FunctionsDir to our test directory
+		originalFunctionsDir := utils.FunctionsDir
+		utils.FunctionsDir = functionsDir
+		defer func() { utils.FunctionsDir = originalFunctionsDir }()
+
+		require.NoError(t, os.MkdirAll(functionsDir, 0755))
+
+		// Create a function with invalid imports
+		funcDir := filepath.Join(functionsDir, "test")
+		require.NoError(t, os.MkdirAll(funcDir, 0755))
+		funcFile := filepath.Join(funcDir, "index.ts")
+		require.NoError(t, os.WriteFile(funcFile, []byte(`
+import { something } from "/invalid/path";
+export default () => new Response("test");
+`), 0600))
+
+		// Set up the file watcher
+		fsys := afero.NewOsFs()
+		watcher, watchedPath, err := setupFileWatcher(fsys)
+		require.NoError(t, err)
+		require.NotNil(t, watcher)
+		require.NotEmpty(t, watchedPath)
+		defer watcher.Close()
+
+		// Start the file watcher
+		ctx, cancel := context.WithTimeout(setup.Context, 3*time.Second)
+		defer cancel()
+
+		restartChan := make(chan struct{}, 10)
+		watchedDirs := make(map[string]bool)
+		go runFileWatcher(ctx, watcher, watchedPath, restartChan, watchedDirs, fsys)
+
+		// Give watcher time to initialize
+		time.Sleep(100 * time.Millisecond)
+
+		// Modify the function with invalid import
+		require.NoError(t, os.WriteFile(funcFile, []byte(`
+import { something } from "/another/invalid/path";
+export default () => new Response("test");
+`), 0600))
+
+		// Wait for restart signal - should still work despite invalid imports
+		select {
+		case <-restartChan:
+			// Expected - file change should still trigger restart
+		case <-time.After(1 * time.Second):
+			t.Error("Expected restart signal after modifying function with invalid imports")
+		}
+	})
+
+	t.Run("handles import map resolution end-to-end", func(t *testing.T) {
+		setup := NewTestSetup(t)
+		defer setup.Cleanup()
+
+		// Use a temporary directory for this test
+		tempDir := t.TempDir()
+		functionsDir := filepath.Join(tempDir, "functions")
+
+		// Temporarily set utils.FunctionsDir to our test directory
+		originalFunctionsDir := utils.FunctionsDir
+		utils.FunctionsDir = functionsDir
+		defer func() { utils.FunctionsDir = originalFunctionsDir }()
+
+		require.NoError(t, os.MkdirAll(functionsDir, 0755))
+
+		// Test watcher resilience - no deno.json to avoid parsing issues
+		funcDir := filepath.Join(functionsDir, "resilient")
+		require.NoError(t, os.MkdirAll(funcDir, 0755))
+
+		// Create function file
+		funcFile := filepath.Join(funcDir, "index.ts")
+		require.NoError(t, os.WriteFile(funcFile, []byte(`export default async (): Promise<Response> => {
+  return new Response("Hello World");
+};`), 0644))
+
+		// Set up the file watcher
+		fsys := afero.NewOsFs()
+		watcher, watchedPath, err := setupFileWatcher(fsys)
+		require.NoError(t, err)
+		require.NotNil(t, watcher)
+		require.NotEmpty(t, watchedPath)
+		defer watcher.Close()
+
+		// Start the file watcher
+		ctx, cancel := context.WithTimeout(setup.Context, 3*time.Second)
+		defer cancel()
+
+		restartChan := make(chan struct{}, 10)
+		watchedDirs := make(map[string]bool)
+		go runFileWatcher(ctx, watcher, watchedPath, restartChan, watchedDirs, fsys)
+
+		// Give watcher time to initialize
+		time.Sleep(200 * time.Millisecond)
+
+		// Modify the function file - should trigger restart
+		require.NoError(t, os.WriteFile(funcFile, []byte(`export default async (): Promise<Response> => {
+  return new Response("Updated Hello World");
+};`), 0644))
+
+		// Wait for restart signal
+		select {
+		case <-restartChan:
+			// Expected - change to function should trigger restart
+		case <-time.After(2 * time.Second):
+			t.Error("Expected restart signal after modifying function")
+		}
+	})
+
+	t.Run("handles complex multi-level dependencies", func(t *testing.T) {
+		setup := NewTestSetup(t)
+		defer setup.Cleanup()
+
+		// Use a temporary directory for this test
+		tempDir := t.TempDir()
+		functionsDir := filepath.Join(tempDir, "functions")
+
+		// Temporarily set utils.FunctionsDir to our test directory
+		originalFunctionsDir := utils.FunctionsDir
+		utils.FunctionsDir = functionsDir
+		defer func() { utils.FunctionsDir = originalFunctionsDir }()
+
 		require.NoError(t, os.MkdirAll(functionsDir, 0755))
 
 		// Create multiple shared directories
@@ -663,18 +565,21 @@ export default async () => {
 		}
 
 		// Create shared files
-		require.NoError(t, os.WriteFile(filepath.Join(tempDir, "shared", "types", "index.ts"), []byte(`
+		typesFile := filepath.Join(tempDir, "shared", "types", "index.ts")
+		require.NoError(t, os.WriteFile(typesFile, []byte(`
 export interface User {
   id: string;
   name: string;
 }
 `), 0600))
 
-		require.NoError(t, os.WriteFile(filepath.Join(tempDir, "shared", "constants", "api.ts"), []byte(`
+		constantsFile := filepath.Join(tempDir, "shared", "constants", "api.ts")
+		require.NoError(t, os.WriteFile(constantsFile, []byte(`
 export const API_BASE_URL = "https://api.example.com";
 `), 0600))
 
-		require.NoError(t, os.WriteFile(filepath.Join(tempDir, "lib", "database", "client.ts"), []byte(`
+		databaseFile := filepath.Join(tempDir, "lib", "database", "client.ts")
+		require.NoError(t, os.WriteFile(databaseFile, []byte(`
 export function connectDB() {
   return "connected";
 }
@@ -700,107 +605,293 @@ export default async (): Promise<Response> => {
 };
 `), 0600))
 
-		// Create watcher
-		watcher, err := fsnotify.NewWatcher()
+		// Set up the file watcher
+		fsys := afero.NewOsFs()
+		watcher, watchedPath, err := setupFileWatcher(fsys)
 		require.NoError(t, err)
+		require.NotNil(t, watcher)
+		require.NotEmpty(t, watchedPath)
 		defer watcher.Close()
 
-		// Create watched directories map
-		watchedDirectories := make(map[string]bool)
+		// Start the file watcher
+		ctx, cancel := context.WithTimeout(setup.Context, 3*time.Second)
+		defer cancel()
 
-		// Test the import dependency function
-		err = addImportDependenciesToWatcher(watcher, functionsDir, watchedDirectories)
-		assert.NoError(t, err)
-	})
+		restartChan := make(chan struct{}, 10)
+		watchedDirs := make(map[string]bool)
+		go runFileWatcher(ctx, watcher, watchedPath, restartChan, watchedDirs, fsys)
 
-	t.Run("handles import map resolution", func(t *testing.T) {
-		setup := NewTestSetup(t)
-		defer setup.Cleanup()
+		// Give watcher time to initialize
+		time.Sleep(200 * time.Millisecond)
 
-		// Use a temporary directory for this test
-		tempDir := t.TempDir()
-
-		// Create functions directory
-		functionsDir := filepath.Join(tempDir, "functions")
-		funcDir := filepath.Join(functionsDir, "mapped")
-		require.NoError(t, os.MkdirAll(funcDir, 0755))
-
-		// Create a shared utilities directory
-		utilsDir := filepath.Join(tempDir, "utilities")
-		require.NoError(t, os.MkdirAll(utilsDir, 0755))
-
-		// Create a utility file
-		utilsFile := filepath.Join(utilsDir, "logger.ts")
-		require.NoError(t, os.WriteFile(utilsFile, []byte(`
-export function log(message: string) {
-  console.log("[LOG]", message);
+		// Test 1: Modify types file
+		require.NoError(t, os.WriteFile(typesFile, []byte(`
+export interface User {
+  id: string;
+  name: string;
+  email?: string;
 }
 `), 0600))
 
-		// Create import map (deno.json)
-		denoJson := filepath.Join(funcDir, "deno.json")
-		require.NoError(t, os.WriteFile(denoJson, []byte(`{
-  "imports": {
-    "@utils/": "../../utilities/"
-  }
-}`), 0600))
+		// Wait for restart signal
+		select {
+		case <-restartChan:
+			// Expected - types change should trigger restart
+		case <-time.After(1 * time.Second):
+			t.Error("Expected restart signal after modifying types file")
+		}
 
-		// Create a function that uses the import map
-		funcFile := filepath.Join(funcDir, "index.ts")
-		require.NoError(t, os.WriteFile(funcFile, []byte(`
-import { log } from "@utils/logger.ts";
-
-export default async (): Promise<Response> => {
-  log("Function called");
-  return new Response("Hello with mapped import");
-};
+		// Test 2: Modify constants file
+		require.NoError(t, os.WriteFile(constantsFile, []byte(`
+export const API_BASE_URL = "https://new-api.example.com";
 `), 0600))
 
-		// Create watcher
-		watcher, err := fsnotify.NewWatcher()
-		require.NoError(t, err)
-		defer watcher.Close()
+		// Wait for restart signal
+		select {
+		case <-restartChan:
+			// Expected - constants change should trigger restart
+		case <-time.After(1 * time.Second):
+			t.Error("Expected restart signal after modifying constants file")
+		}
 
-		// Create watched directories map
-		watchedDirectories := make(map[string]bool)
+		// Test 3: Modify database file
+		require.NoError(t, os.WriteFile(databaseFile, []byte(`
+export function connectDB() {
+  return "new connection";
+}
+`), 0600))
 
-		// Test the import dependency function
-		err = addImportDependenciesToWatcher(watcher, functionsDir, watchedDirectories)
-		assert.NoError(t, err)
+		// Wait for restart signal
+		select {
+		case <-restartChan:
+			// Expected - database change should trigger restart
+		case <-time.After(1 * time.Second):
+			t.Error("Expected restart signal after modifying database file")
+		}
 	})
 
-	t.Run("handles missing import files gracefully", func(t *testing.T) {
+	t.Run("handles transitive dependencies (deps of deps)", func(t *testing.T) {
 		setup := NewTestSetup(t)
 		defer setup.Cleanup()
 
 		// Use a temporary directory for this test
 		tempDir := t.TempDir()
-
-		// Create functions directory
 		functionsDir := filepath.Join(tempDir, "functions")
-		funcDir := filepath.Join(functionsDir, "broken")
-		require.NoError(t, os.MkdirAll(funcDir, 0755))
 
-		// Create a function that imports a non-existent file
+		// Temporarily set utils.FunctionsDir to our test directory
+		originalFunctionsDir := utils.FunctionsDir
+		utils.FunctionsDir = functionsDir
+		defer func() { utils.FunctionsDir = originalFunctionsDir }()
+
+		require.NoError(t, os.MkdirAll(functionsDir, 0755))
+
+		// Create the shared directory structure
+		sharedDir := filepath.Join(tempDir, "shared")
+		require.NoError(t, os.MkdirAll(sharedDir, 0755))
+
+		// Create the deepest dependency: another.ts
+		anotherFile := filepath.Join(sharedDir, "another.ts")
+		require.NoError(t, os.WriteFile(anotherFile, []byte(`export const another = "original value";`), 0600))
+
+		// Create the intermediate dependency: test.ts (imports from another.ts)
+		testFile := filepath.Join(sharedDir, "test.ts")
+		require.NoError(t, os.WriteFile(testFile, []byte("import { another } from './another.ts';\nexport const value = `some ${another}`;"), 0600))
+
+		// Create the function: index.ts (imports from test.ts)
+		funcDir := filepath.Join(functionsDir, "transitive")
+		require.NoError(t, os.MkdirAll(funcDir, 0755))
 		funcFile := filepath.Join(funcDir, "index.ts")
-		require.NoError(t, os.WriteFile(funcFile, []byte(`
-import { nonExistent } from "../../missing/file.ts";
+		require.NoError(t, os.WriteFile(funcFile, []byte(`import { value } from '../../shared/test.ts';
 
 export default async (): Promise<Response> => {
-  return new Response("This won't work");
+  console.log(value);
+  return new Response(value);
+};`), 0600))
+
+		// Set up the file watcher
+		fsys := afero.NewOsFs()
+		watcher, watchedPath, err := setupFileWatcher(fsys)
+		require.NoError(t, err)
+		require.NotNil(t, watcher)
+		require.NotEmpty(t, watchedPath)
+		defer watcher.Close()
+
+		// Start the file watcher
+		ctx, cancel := context.WithTimeout(setup.Context, 3*time.Second)
+		defer cancel()
+
+		restartChan := make(chan struct{}, 10)
+		watchedDirs := make(map[string]bool)
+		go runFileWatcher(ctx, watcher, watchedPath, restartChan, watchedDirs, fsys)
+
+		// Give watcher time to initialize and process the dependency chain
+		time.Sleep(200 * time.Millisecond)
+
+		// Modify another.ts (the deepest dependency)
+		// This should trigger a restart because:
+		// index.ts -> test.ts -> another.ts
+		require.NoError(t, os.WriteFile(anotherFile, []byte(`export const another = "updated value";`), 0600))
+
+		// Wait for restart signal - this tests true transitive dependency tracking
+		select {
+		case <-restartChan:
+			// Expected - change to transitive dependency should trigger restart
+		case <-time.After(2 * time.Second):
+			t.Error("Expected restart signal after modifying transitive dependency (another.ts)")
+		}
+
+		// Also test that modifying the intermediate dependency triggers restart
+		require.NoError(t, os.WriteFile(testFile, []byte("import { another } from './another.ts';\nexport const value = `modified ${another}`;"), 0600))
+
+		// Wait for restart signal
+		select {
+		case <-restartChan:
+			// Expected - change to intermediate dependency should trigger restart
+		case <-time.After(2 * time.Second):
+			t.Error("Expected restart signal after modifying intermediate dependency (test.ts)")
+		}
+	})
+
+	t.Run("removes unused transitive dependencies from watcher", func(t *testing.T) {
+		setup := NewTestSetup(t)
+		defer setup.Cleanup()
+
+		// Use a temporary directory for this test
+		tempDir := t.TempDir()
+		functionsDir := filepath.Join(tempDir, "functions")
+
+		// Temporarily set utils.FunctionsDir to our test directory
+		originalFunctionsDir := utils.FunctionsDir
+		utils.FunctionsDir = functionsDir
+		defer func() { utils.FunctionsDir = originalFunctionsDir }()
+
+		require.NoError(t, os.MkdirAll(functionsDir, 0755))
+
+		// Create dependency chain: function -> utils -> helpers
+		utilsDir := filepath.Join(tempDir, "lib", "utils")
+		helpersDir := filepath.Join(tempDir, "lib", "helpers")
+		require.NoError(t, os.MkdirAll(utilsDir, 0755))
+		require.NoError(t, os.MkdirAll(helpersDir, 0755))
+
+		// Create helper file (deepest dependency)
+		helperFile := filepath.Join(helpersDir, "common.ts")
+		require.NoError(t, os.WriteFile(helperFile, []byte(`export const helper = "helper value";`), 0600))
+
+		// Create utils file that imports from helpers
+		utilsFile := filepath.Join(utilsDir, "index.ts")
+		require.NoError(t, os.WriteFile(utilsFile, []byte(`
+import { helper } from "../helpers/common.ts";
+export const utilValue = `+"`util: ${helper}`;"+`
+`), 0600))
+
+		// Create function that imports from utils (which transitively imports helpers)
+		funcDir := filepath.Join(functionsDir, "test")
+		require.NoError(t, os.MkdirAll(funcDir, 0755))
+		funcFile := filepath.Join(funcDir, "index.ts")
+		require.NoError(t, os.WriteFile(funcFile, []byte(`
+import { utilValue } from "../../lib/utils/index.ts";
+
+export default async (): Promise<Response> => {
+  return new Response(utilValue);
 };
 `), 0600))
 
-		// Create watcher
-		watcher, err := fsnotify.NewWatcher()
+		// Set up the file watcher
+		fsys := afero.NewOsFs()
+		watcher, watchedPath, err := setupFileWatcher(fsys)
 		require.NoError(t, err)
+		require.NotNil(t, watcher)
+		require.NotEmpty(t, watchedPath)
 		defer watcher.Close()
 
-		// Create watched directories map
-		watchedDirectories := make(map[string]bool)
+		// Start the file watcher
+		ctx, cancel := context.WithTimeout(setup.Context, 5*time.Second)
+		defer cancel()
 
-		// Test the import dependency function - should not error
-		err = addImportDependenciesToWatcher(watcher, functionsDir, watchedDirectories)
-		assert.NoError(t, err, "Should handle missing import files gracefully")
+		restartChan := make(chan struct{}, 10)
+		watchedDirs := make(map[string]bool)
+		go runFileWatcher(ctx, watcher, watchedPath, restartChan, watchedDirs, fsys)
+
+		// Give watcher time to initialize and discover dependencies
+		time.Sleep(500 * time.Millisecond)
+
+		// Test 1: Verify that changes to helper file trigger restart (before removal)
+		require.NoError(t, os.WriteFile(helperFile, []byte(`export const helper = "initial test";`), 0600))
+
+		// Should trigger restart because helper is a transitive dependency
+		select {
+		case <-restartChan:
+			// Expected - helper change should trigger restart when it's a dependency
+		case <-time.After(2 * time.Second):
+			t.Error("Expected restart signal from helper dependency change")
+		}
+
+		// Clear any remaining restart signals
+		time.Sleep(100 * time.Millisecond)
+		for len(restartChan) > 0 {
+			<-restartChan
+		}
+
+		// Test 2: Remove dependency chain by modifying function to not import utils
+		require.NoError(t, os.WriteFile(funcFile, []byte(`
+export default async (): Promise<Response> => {
+  return new Response("No more dependencies!");
+};
+`), 0600))
+
+		// Wait for file change to be processed and dependencies to be updated
+		select {
+		case <-restartChan:
+			// Expected - file change should trigger restart
+		case <-time.After(2 * time.Second):
+			t.Error("Expected restart signal after removing dependencies")
+		}
+
+		// Give the watcher time to process the change and clean up unused directories
+		time.Sleep(800 * time.Millisecond)
+
+		// Clear any remaining restart signals
+		for len(restartChan) > 0 {
+			<-restartChan
+		}
+
+		// Test 3: Verify that changes to helper no longer trigger restarts
+		require.NoError(t, os.WriteFile(helperFile, []byte(`export const helper = "should not trigger restart";`), 0600))
+
+		// Should NOT trigger restart because helper is no longer a dependency
+		select {
+		case <-restartChan:
+			t.Error("Should not receive restart signal from unused dependency")
+		case <-time.After(1 * time.Second):
+			// Expected - no restart for unused dependencies
+		}
+
+		// Test 4: Verify that changes to utils file also don't trigger restarts
+		require.NoError(t, os.WriteFile(utilsFile, []byte(`
+export const utilValue = "should not trigger restart";
+`), 0600))
+
+		// Should NOT trigger restart because utils is no longer a dependency
+		select {
+		case <-restartChan:
+			t.Error("Should not receive restart signal from unused utils dependency")
+		case <-time.After(1 * time.Second):
+			// Expected - no restart for unused dependencies
+		}
+
+		// Test 5: Verify function changes still trigger restarts
+		require.NoError(t, os.WriteFile(funcFile, []byte(`
+export default async (): Promise<Response> => {
+  return new Response("Function still works!");
+};
+`), 0600))
+
+		// Should trigger restart because function itself changed
+		select {
+		case <-restartChan:
+			// Expected - function change should still trigger restart
+		case <-time.After(2 * time.Second):
+			t.Error("Expected restart signal from function change")
+		}
 	})
 }

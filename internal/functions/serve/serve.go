@@ -65,7 +65,7 @@ func RunWithWatcher(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		return err
 	}
 
-	watcher, watchedPath, err := watcherSetup.SetupFileWatcher()
+	watcher, watchedPath, err := watcherSetup.SetupFileWatcher(fsys)
 	if err != nil {
 		return err
 	}
@@ -73,14 +73,16 @@ func RunWithWatcher(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		defer watcher.Close()
 	}
 
+	// Create a channel to signal when a restart is needed
 	restartChan := make(chan struct{})
-	errChan := make(chan error, 1)
 
-	if watcher != nil && watchedPath != "" {
-		go runFileWatcher(ctx, watcher, watchedPath, restartChan)
-	} else {
-		log.Println("File watcher is not initialized or not watching a path; hot-reloading disabled.")
-	}
+	// Create a map to track watched directories
+	watchedDirs := make(map[string]bool)
+
+	// Start the file watcher in a goroutine
+	go runFileWatcher(ctx, watcher, watchedPath, restartChan, watchedDirs, fsys)
+
+	errChan := make(chan error, 1)
 
 	for {
 		select {
