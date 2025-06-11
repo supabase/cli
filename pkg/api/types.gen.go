@@ -462,22 +462,6 @@ const (
 	Bearer OAuthTokenResponseTokenType = "Bearer"
 )
 
-// Defines values for OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan.
-const (
-	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanEnterprise OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "enterprise"
-	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanFree       OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "free"
-	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanPro        OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "pro"
-	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanTeam       OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "team"
-)
-
-// Defines values for OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan.
-const (
-	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanEnterprise OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "enterprise"
-	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanFree       OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "free"
-	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanPro        OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "pro"
-	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanTeam       OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "team"
-)
-
 // Defines values for PostgresConfigResponseSessionReplicationRole.
 const (
 	PostgresConfigResponseSessionReplicationRoleLocal   PostgresConfigResponseSessionReplicationRole = "local"
@@ -1347,15 +1331,6 @@ type CreateOrganizationV1 struct {
 	Name string `json:"name"`
 }
 
-// CreateProjectClaimTokenResponse defines model for CreateProjectClaimTokenResponse.
-type CreateProjectClaimTokenResponse struct {
-	CreatedAt  string             `json:"created_at"`
-	CreatedBy  openapi_types.UUID `json:"created_by"`
-	ExpiresAt  string             `json:"expires_at"`
-	Token      string             `json:"token"`
-	TokenAlias string             `json:"token_alias"`
-}
-
 // CreateProviderBody defines model for CreateProviderBody.
 type CreateProviderBody struct {
 	AttributeMapping *struct {
@@ -1812,46 +1787,6 @@ type OAuthTokenResponse struct {
 // OAuthTokenResponseTokenType defines model for OAuthTokenResponse.TokenType.
 type OAuthTokenResponseTokenType string
 
-// OrganizationProjectClaimResponse defines model for OrganizationProjectClaimResponse.
-type OrganizationProjectClaimResponse struct {
-	CreatedAt string             `json:"created_at"`
-	CreatedBy openapi_types.UUID `json:"created_by"`
-	ExpiresAt string             `json:"expires_at"`
-	Preview   struct {
-		Errors []struct {
-			Key     string `json:"key"`
-			Message string `json:"message"`
-		} `json:"errors"`
-		Info []struct {
-			Key     string `json:"key"`
-			Message string `json:"message"`
-		} `json:"info"`
-		MembersExceedingFreeProjectLimit []struct {
-			Limit float32 `json:"limit"`
-			Name  string  `json:"name"`
-		} `json:"members_exceeding_free_project_limit"`
-		SourceSubscriptionPlan                OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan                    `json:"source_subscription_plan"`
-		TargetOrganizationEligible            nullable.Nullable[bool]                                                          `json:"target_organization_eligible"`
-		TargetOrganizationHasFreeProjectSlots nullable.Nullable[bool]                                                          `json:"target_organization_has_free_project_slots"`
-		TargetSubscriptionPlan                nullable.Nullable[OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan] `json:"target_subscription_plan"`
-		Valid                                 bool                                                                             `json:"valid"`
-		Warnings                              []struct {
-			Key     string `json:"key"`
-			Message string `json:"message"`
-		} `json:"warnings"`
-	} `json:"preview"`
-	Project struct {
-		Name string `json:"name"`
-		Ref  string `json:"ref"`
-	} `json:"project"`
-}
-
-// OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan defines model for OrganizationProjectClaimResponse.Preview.SourceSubscriptionPlan.
-type OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan string
-
-// OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan defines model for OrganizationProjectClaimResponse.Preview.TargetSubscriptionPlan.
-type OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan string
-
 // OrganizationResponseV1 defines model for OrganizationResponseV1.
 type OrganizationResponseV1 struct {
 	Id   string `json:"id"`
@@ -1902,14 +1837,6 @@ type PostgrestConfigWithJWTSecretResponse struct {
 	DbSchema  string                 `json:"db_schema"`
 	JwtSecret *string                `json:"jwt_secret,omitempty"`
 	MaxRows   int                    `json:"max_rows"`
-}
-
-// ProjectClaimTokenResponse defines model for ProjectClaimTokenResponse.
-type ProjectClaimTokenResponse struct {
-	CreatedAt  string             `json:"created_at"`
-	CreatedBy  openapi_types.UUID `json:"created_by"`
-	ExpiresAt  string             `json:"expires_at"`
-	TokenAlias string             `json:"token_alias"`
 }
 
 // ProjectUpgradeEligibilityResponse defines model for ProjectUpgradeEligibilityResponse.

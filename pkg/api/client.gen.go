@@ -146,12 +146,6 @@ type ClientInterface interface {
 	// V1ListOrganizationMembers request
 	V1ListOrganizationMembers(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// V1GetOrganizationProjectClaim request
-	V1GetOrganizationProjectClaim(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// V1ClaimProjectForOrganization request
-	V1ClaimProjectForOrganization(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// V1ListAllProjects request
 	V1ListAllProjects(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -221,15 +215,6 @@ type ClientInterface interface {
 	V1CreateABranchWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	V1CreateABranch(ctx context.Context, ref string, body V1CreateABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// V1DeleteProjectClaimToken request
-	V1DeleteProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// V1GetProjectClaimToken request
-	V1GetProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// V1CreateProjectClaimToken request
-	V1CreateProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1GetAuthServiceConfig request
 	V1GetAuthServiceConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -776,30 +761,6 @@ func (c *Client) V1ListOrganizationMembers(ctx context.Context, slug string, req
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1GetOrganizationProjectClaim(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1GetOrganizationProjectClaimRequest(c.Server, slug, token)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) V1ClaimProjectForOrganization(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1ClaimProjectForOrganizationRequest(c.Server, slug, token)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 func (c *Client) V1ListAllProjects(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1ListAllProjectsRequest(c.Server)
 	if err != nil {
@@ -1090,42 +1051,6 @@ func (c *Client) V1CreateABranchWithBody(ctx context.Context, ref string, conten
 
 func (c *Client) V1CreateABranch(ctx context.Context, ref string, body V1CreateABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1CreateABranchRequest(c.Server, ref, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) V1DeleteProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1DeleteProjectClaimTokenRequest(c.Server, ref)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) V1GetProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1GetProjectClaimTokenRequest(c.Server, ref)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) V1CreateProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1CreateProjectClaimTokenRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -3096,88 +3021,6 @@ func NewV1ListOrganizationMembersRequest(server string, slug string) (*http.Requ
 	return req, nil
 }
 
-// NewV1GetOrganizationProjectClaimRequest generates requests for V1GetOrganizationProjectClaim
-func NewV1GetOrganizationProjectClaimRequest(server string, slug string, token string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "slug", runtime.ParamLocationPath, slug)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "token", runtime.ParamLocationPath, token)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/organizations/%s/project-claim/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewV1ClaimProjectForOrganizationRequest generates requests for V1ClaimProjectForOrganization
-func NewV1ClaimProjectForOrganizationRequest(server string, slug string, token string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "slug", runtime.ParamLocationPath, slug)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "token", runtime.ParamLocationPath, token)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/organizations/%s/project-claim/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
 // NewV1ListAllProjectsRequest generates requests for V1ListAllProjects
 func NewV1ListAllProjectsRequest(server string) (*http.Request, error) {
 	var err error
@@ -4119,108 +3962,6 @@ func NewV1CreateABranchRequestWithBody(server string, ref string, contentType st
 	}
 
 	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewV1DeleteProjectClaimTokenRequest generates requests for V1DeleteProjectClaimToken
-func NewV1DeleteProjectClaimTokenRequest(server string, ref string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/claim-token", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewV1GetProjectClaimTokenRequest generates requests for V1GetProjectClaimToken
-func NewV1GetProjectClaimTokenRequest(server string, ref string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/claim-token", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewV1CreateProjectClaimTokenRequest generates requests for V1CreateProjectClaimToken
-func NewV1CreateProjectClaimTokenRequest(server string, ref string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/projects/%s/claim-token", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
 
 	return req, nil
 }
@@ -7868,12 +7609,6 @@ type ClientWithResponsesInterface interface {
 	// V1ListOrganizationMembersWithResponse request
 	V1ListOrganizationMembersWithResponse(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*V1ListOrganizationMembersResponse, error)
 
-	// V1GetOrganizationProjectClaimWithResponse request
-	V1GetOrganizationProjectClaimWithResponse(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*V1GetOrganizationProjectClaimResponse, error)
-
-	// V1ClaimProjectForOrganizationWithResponse request
-	V1ClaimProjectForOrganizationWithResponse(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*V1ClaimProjectForOrganizationResponse, error)
-
 	// V1ListAllProjectsWithResponse request
 	V1ListAllProjectsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*V1ListAllProjectsResponse, error)
 
@@ -7943,15 +7678,6 @@ type ClientWithResponsesInterface interface {
 	V1CreateABranchWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1CreateABranchResponse, error)
 
 	V1CreateABranchWithResponse(ctx context.Context, ref string, body V1CreateABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateABranchResponse, error)
-
-	// V1DeleteProjectClaimTokenWithResponse request
-	V1DeleteProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteProjectClaimTokenResponse, error)
-
-	// V1GetProjectClaimTokenWithResponse request
-	V1GetProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectClaimTokenResponse, error)
-
-	// V1CreateProjectClaimTokenWithResponse request
-	V1CreateProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1CreateProjectClaimTokenResponse, error)
 
 	// V1GetAuthServiceConfigWithResponse request
 	V1GetAuthServiceConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetAuthServiceConfigResponse, error)
@@ -8551,49 +8277,6 @@ func (r V1ListOrganizationMembersResponse) StatusCode() int {
 	return 0
 }
 
-type V1GetOrganizationProjectClaimResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *OrganizationProjectClaimResponse
-}
-
-// Status returns HTTPResponse.Status
-func (r V1GetOrganizationProjectClaimResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r V1GetOrganizationProjectClaimResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type V1ClaimProjectForOrganizationResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-}
-
-// Status returns HTTPResponse.Status
-func (r V1ClaimProjectForOrganizationResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r V1ClaimProjectForOrganizationResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
 type V1ListAllProjectsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -9025,71 +8708,6 @@ func (r V1CreateABranchResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1CreateABranchResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type V1DeleteProjectClaimTokenResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-}
-
-// Status returns HTTPResponse.Status
-func (r V1DeleteProjectClaimTokenResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r V1DeleteProjectClaimTokenResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type V1GetProjectClaimTokenResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *ProjectClaimTokenResponse
-}
-
-// Status returns HTTPResponse.Status
-func (r V1GetProjectClaimTokenResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r V1GetProjectClaimTokenResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type V1CreateProjectClaimTokenResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *CreateProjectClaimTokenResponse
-}
-
-// Status returns HTTPResponse.Status
-func (r V1CreateProjectClaimTokenResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r V1CreateProjectClaimTokenResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -10976,24 +10594,6 @@ func (c *ClientWithResponses) V1ListOrganizationMembersWithResponse(ctx context.
 	return ParseV1ListOrganizationMembersResponse(rsp)
 }
 
-// V1GetOrganizationProjectClaimWithResponse request returning *V1GetOrganizationProjectClaimResponse
-func (c *ClientWithResponses) V1GetOrganizationProjectClaimWithResponse(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*V1GetOrganizationProjectClaimResponse, error) {
-	rsp, err := c.V1GetOrganizationProjectClaim(ctx, slug, token, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseV1GetOrganizationProjectClaimResponse(rsp)
-}
-
-// V1ClaimProjectForOrganizationWithResponse request returning *V1ClaimProjectForOrganizationResponse
-func (c *ClientWithResponses) V1ClaimProjectForOrganizationWithResponse(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*V1ClaimProjectForOrganizationResponse, error) {
-	rsp, err := c.V1ClaimProjectForOrganization(ctx, slug, token, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseV1ClaimProjectForOrganizationResponse(rsp)
-}
-
 // V1ListAllProjectsWithResponse request returning *V1ListAllProjectsResponse
 func (c *ClientWithResponses) V1ListAllProjectsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*V1ListAllProjectsResponse, error) {
 	rsp, err := c.V1ListAllProjects(ctx, reqEditors...)
@@ -11212,33 +10812,6 @@ func (c *ClientWithResponses) V1CreateABranchWithResponse(ctx context.Context, r
 		return nil, err
 	}
 	return ParseV1CreateABranchResponse(rsp)
-}
-
-// V1DeleteProjectClaimTokenWithResponse request returning *V1DeleteProjectClaimTokenResponse
-func (c *ClientWithResponses) V1DeleteProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteProjectClaimTokenResponse, error) {
-	rsp, err := c.V1DeleteProjectClaimToken(ctx, ref, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseV1DeleteProjectClaimTokenResponse(rsp)
-}
-
-// V1GetProjectClaimTokenWithResponse request returning *V1GetProjectClaimTokenResponse
-func (c *ClientWithResponses) V1GetProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectClaimTokenResponse, error) {
-	rsp, err := c.V1GetProjectClaimToken(ctx, ref, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseV1GetProjectClaimTokenResponse(rsp)
-}
-
-// V1CreateProjectClaimTokenWithResponse request returning *V1CreateProjectClaimTokenResponse
-func (c *ClientWithResponses) V1CreateProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1CreateProjectClaimTokenResponse, error) {
-	rsp, err := c.V1CreateProjectClaimToken(ctx, ref, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseV1CreateProjectClaimTokenResponse(rsp)
 }
 
 // V1GetAuthServiceConfigWithResponse request returning *V1GetAuthServiceConfigResponse
@@ -12509,48 +12082,6 @@ func ParseV1ListOrganizationMembersResponse(rsp *http.Response) (*V1ListOrganiza
 	return response, nil
 }
 
-// ParseV1GetOrganizationProjectClaimResponse parses an HTTP response from a V1GetOrganizationProjectClaimWithResponse call
-func ParseV1GetOrganizationProjectClaimResponse(rsp *http.Response) (*V1GetOrganizationProjectClaimResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &V1GetOrganizationProjectClaimResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest OrganizationProjectClaimResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseV1ClaimProjectForOrganizationResponse parses an HTTP response from a V1ClaimProjectForOrganizationWithResponse call
-func ParseV1ClaimProjectForOrganizationResponse(rsp *http.Response) (*V1ClaimProjectForOrganizationResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &V1ClaimProjectForOrganizationResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	return response, nil
-}
-
 // ParseV1ListAllProjectsResponse parses an HTTP response from a V1ListAllProjectsWithResponse call
 func ParseV1ListAllProjectsResponse(rsp *http.Response) (*V1ListAllProjectsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -13035,74 +12566,6 @@ func ParseV1CreateABranchResponse(rsp *http.Response) (*V1CreateABranchResponse,
 			return nil, err
 		}
 		response.JSON201 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseV1DeleteProjectClaimTokenResponse parses an HTTP response from a V1DeleteProjectClaimTokenWithResponse call
-func ParseV1DeleteProjectClaimTokenResponse(rsp *http.Response) (*V1DeleteProjectClaimTokenResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &V1DeleteProjectClaimTokenResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	return response, nil
-}
-
-// ParseV1GetProjectClaimTokenResponse parses an HTTP response from a V1GetProjectClaimTokenWithResponse call
-func ParseV1GetProjectClaimTokenResponse(rsp *http.Response) (*V1GetProjectClaimTokenResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &V1GetProjectClaimTokenResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ProjectClaimTokenResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseV1CreateProjectClaimTokenResponse parses an HTTP response from a V1CreateProjectClaimTokenWithResponse call
-func ParseV1CreateProjectClaimTokenResponse(rsp *http.Response) (*V1CreateProjectClaimTokenResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &V1CreateProjectClaimTokenResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest CreateProjectClaimTokenResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
 
 	}
 
