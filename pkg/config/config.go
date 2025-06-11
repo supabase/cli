@@ -317,10 +317,12 @@ func (c *baseConfig) Clone() baseConfig {
 	return copy
 }
 
-type ConfigEditor func(*config)
+type Config *config
+
+type ConfigEditor func(Config)
 
 func WithHostname(hostname string) ConfigEditor {
-	return func(c *config) {
+	return func(c Config) {
 		c.Hostname = hostname
 	}
 }
@@ -343,6 +345,9 @@ func NewConfig(editors ...ConfigEditor) config {
 				TenantId:      "pooler-dev",
 				EncryptionKey: "12345678901234567890123456789032",
 				SecretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
+			},
+			Migrations: migrations{
+				Enabled: true,
 			},
 			Seed: seed{
 				Enabled:  true,

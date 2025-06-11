@@ -51,7 +51,11 @@ func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool,
 	}
 	opt := function.WithMaxJobs(maxJobs)
 	if useDocker {
-		opt = function.WithBundler(NewDockerBundler(fsys))
+		if utils.IsDockerRunning(ctx) {
+			opt = function.WithBundler(NewDockerBundler(fsys))
+		} else {
+			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Docker is not running")
+		}
 	}
 	api := function.NewEdgeRuntimeAPI(flags.ProjectRef, *utils.GetSupabase(), opt)
 	if err := api.Deploy(ctx, functionConfig, afero.NewIOFS(fsys)); errors.Is(err, function.ErrNoDeploy) {

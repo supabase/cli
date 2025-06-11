@@ -490,6 +490,11 @@ func DockerExecOnceWithStream(ctx context.Context, containerId, workdir string, 
 	return err
 }
 
+func IsDockerRunning(ctx context.Context) bool {
+	_, err := Docker.Ping(ctx)
+	return !client.IsErrConnectionFailed(err)
+}
+
 var portErrorPattern = regexp.MustCompile("Bind for (.*) failed: port is already allocated")
 
 func parsePortBindError(err error) string {
