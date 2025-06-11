@@ -20,7 +20,7 @@ func GetDebugLogger() io.Writer {
 	return io.Discard
 }
 
-// TODO: refactor accross all codebase for consistency
+// TODO: refactor across all codebase for consistency
 // Info logs an info message to stderr if the current verbosity level is >= the required level
 // level 0: always shown (important info)
 // level 1: normal verbosity

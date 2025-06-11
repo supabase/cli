@@ -503,7 +503,7 @@ export default () => new Response("test");
 		funcFile := filepath.Join(funcDir, "index.ts")
 		require.NoError(t, os.WriteFile(funcFile, []byte(`export default async (): Promise<Response> => {
   return new Response("Hello World");
-};`), 0644))
+};`), 0600))
 
 		// Set up the file watcher
 		fsys := afero.NewOsFs()
@@ -527,7 +527,7 @@ export default () => new Response("test");
 		// Modify the function file - should trigger restart
 		require.NoError(t, os.WriteFile(funcFile, []byte(`export default async (): Promise<Response> => {
   return new Response("Updated Hello World");
-};`), 0644))
+};`), 0600))
 
 		// Wait for restart signal
 		select {
