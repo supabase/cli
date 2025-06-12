@@ -5,7 +5,6 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -76,36 +75,6 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 	if err := utils.AssertSupabaseDbIsRunning(); err != nil {
 		return err
 	}
-	// 2. Remove existing container.
-	_ = utils.Docker.ContainerRemove(ctx, utils.EdgeRuntimeId, container.RemoveOptions{
-		RemoveVolumes: true,
-		Force:         true,
-	})
-	// Use network alias because Deno cannot resolve `_` in hostname
-	dbUrl := fmt.Sprintf("postgresql://postgres:postgres@%s:5432/postgres", utils.DbAliases[0])
-	// 3. Serve and log to console
-	utils.Info(0, "Setting up Edge Functions runtime...\n")
-	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys); err != nil {
-		return err
-	}
-	utils.Info(0, "Edge Functions runtime is ready.\n")
-
-	if err := utils.DockerStreamLogs(ctx, utils.EdgeRuntimeId, os.Stdout, os.Stderr); err != nil {
-		return err
-	}
-	utils.Info(0, "Stopped serving %s \n", utils.Bold(utils.FunctionsDir))
-	return nil
-}
-
-// RunWithWatcher runs the functions server with file watching capabilities
-func RunWithWatcher(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
-	// 1. Sanity checks.
-	if err := flags.LoadConfig(fsys); err != nil {
-		return err
-	}
-	if err := utils.AssertSupabaseDbIsRunning(); err != nil {
-		return err
-	}
 
 	fileWatcher, err := NewFileWatcher(utils.FunctionsDir, fsys)
 	if err != nil {
@@ -121,7 +90,7 @@ func RunWithWatcher(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println("Stopping functions server...")
+			utils.Info(0, "Stopping functions server...\n")
 			// 2. Remove existing container if any.
 			_ = utils.Docker.ContainerRemove(context.Background(), utils.EdgeRuntimeId, container.RemoveOptions{
 				RemoveVolumes: true,
@@ -139,7 +108,7 @@ func RunWithWatcher(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 
 			select {
 			case <-restartChan:
-				log.Println("Reloading Edge Functions due to file changes...")
+				utils.Info(1, "Reloading Edge Functions due to file changes...")
 				if serviceCancel != nil {
 					serviceCancel()
 				}
@@ -160,7 +129,7 @@ func RunWithWatcher(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 				_ = utils.Docker.ContainerRemove(context.Background(), utils.EdgeRuntimeId, container.RemoveOptions{Force: true})
 				return err
 			case <-ctx.Done():
-				fmt.Println("Stopping functions server (received done signal during active service)...")
+				utils.Info(0, "Stopping functions server (received done signal during active service)...\n")
 				if serviceCancel != nil {
 					serviceCancel()
 				}
@@ -192,10 +161,10 @@ func manageFunctionServices(
 		RemoveVolumes: true,
 		Force:         true,
 	}); err != nil {
-		log.Println("Warning: Failed to remove existing Edge Runtime container before start:", err)
+		utils.Warning("Failed to remove existing Edge Runtime container before start: %v\n", err)
 	}
 
-	fmt.Fprintln(os.Stderr, "Setting up Edge Functions runtime...")
+	utils.Info(0, "Setting up Edge Functions runtime...\n")
 	// Create a new context for ServeFunctions and DockerStreamLogs that can be cancelled independently for restarts.
 	serviceCtx, serviceCancel := context.WithCancel(ctx)
 
@@ -205,7 +174,7 @@ func manageFunctionServices(
 		return nil, nil, errors.Errorf("Failed to serve functions: %w", err)
 	}
 
-	fmt.Fprintln(os.Stderr, "Edge Functions runtime is ready.")
+	utils.Info(0, "Edge Functions runtime is ready.\n")
 
 	// To signal completion of log streaming
 	logsDone := make(chan struct{})
@@ -219,7 +188,7 @@ func manageFunctionServices(
 				select {
 				case errChan <- errors.Errorf("Docker log streaming error: %w", logErr):
 				default: // Avoid blocking if errChan is full
-					log.Println("Error channel full, dropping Docker log streaming error:", logErr)
+					utils.Error("Error channel full, dropping Docker log streaming error: %v", logErr)
 				}
 			}
 		}
@@ -352,7 +321,7 @@ func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 	binds := []string{}
 	for slug, fc := range functionsConfig {
 		if !fc.Enabled {
-			fmt.Fprintln(os.Stderr, "Skipped serving Function:", slug)
+			utils.Warning("Skipped serving Function: %s\n", slug)
 			continue
 		}
 		modules, err := deploy.GetBindMounts(cwd, utils.FunctionsDir, "", fc.Entrypoint, fc.ImportMap, fsys)

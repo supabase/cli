@@ -121,7 +121,7 @@ func TestServeCommand(t *testing.T) {
 		defer cancel()
 
 		// Run test with timeout context
-		err := RunWithWatcher(ctx, "", nil, "", RuntimeOption{}, fsys)
+		err := Run(ctx, "", nil, "", RuntimeOption{}, fsys)
 		// Check error - expect context.DeadlineExceeded because the server runs until cancelled
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -133,7 +133,7 @@ func TestServeCommand(t *testing.T) {
 		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
 
 		// Run test
-		err := RunWithWatcher(context.Background(), "", nil, "", RuntimeOption{}, fsys)
+		err := Run(context.Background(), "", nil, "", RuntimeOption{}, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "toml: expected = after a key, but the document ends there")
 	})
@@ -150,7 +150,7 @@ func TestServeCommand(t *testing.T) {
 			Reply(http.StatusNotFound)
 
 		// Run test
-		err := RunWithWatcher(context.Background(), "", nil, "", RuntimeOption{}, fsys)
+		err := Run(context.Background(), "", nil, "", RuntimeOption{}, fsys)
 		// Check error
 		assert.ErrorIs(t, err, utils.ErrNotRunning)
 	})
@@ -168,7 +168,7 @@ func TestServeCommand(t *testing.T) {
 			JSON(container.InspectResponse{})
 
 		// Run test
-		err := RunWithWatcher(context.Background(), ".env", nil, "", RuntimeOption{}, fsys)
+		err := Run(context.Background(), ".env", nil, "", RuntimeOption{}, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "open .env: file does not exist")
 	})
@@ -190,7 +190,7 @@ func TestServeCommand(t *testing.T) {
 			JSON(container.InspectResponse{})
 
 		// Run test
-		err := RunWithWatcher(context.Background(), ".env", cast.Ptr(true), "import_map.json", RuntimeOption{}, fsys)
+		err := Run(context.Background(), ".env", cast.Ptr(true), "import_map.json", RuntimeOption{}, fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
