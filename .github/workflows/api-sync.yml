@@ -40,6 +40,7 @@ jobs:
         if: steps.check.outputs.has_changes == 'true'
         uses: peter-evans/create-pull-request@v5
         with:
+          token: ${{ secrets.GH_PAT }}
           commit-message: "chore: sync API types from infrastructure"
           title: "chore: sync API types from infrastructure"
           body: |
