@@ -7,15 +7,63 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/utils"
 )
 
+// Test helper functions for watcher tests
+func (s *TestSetup) CreateFileWatcher(watchPath string) (*fsnotify.Watcher, error) {
+	// Create the watch directory in virtual filesystem only
+	require.NoError(s.T, s.Fsys.MkdirAll(watchPath, 0755))
+
+	// For tests that actually need a watcher, create one but don't try to watch virtual filesystem
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, err
+	}
+
+	return watcher, nil
+}
+
 type DirectoryTestCase struct {
 	Name         string
 	DirName      string
+	ShouldIgnore bool
+}
+
+// GetFileEventTestCases returns test cases for file event handling
+func GetFileEventTestCases() []FileEventTestCase {
+	return []FileEventTestCase{
+		// Regular files that should not be ignored
+		{"TypeScript file", "index.ts", fsnotify.Write, false},
+		{"JavaScript file", "function.js", fsnotify.Create, false},
+		{"JSON config", "config.json", fsnotify.Write, false},
+		{"Markdown doc", "README.md", fsnotify.Write, false},
+
+		// Editor files that should be ignored
+		{"Vim backup", "file.txt~", fsnotify.Write, true},
+		{"Vim swap", ".file.swp", fsnotify.Create, true},
+		{"Emacs lock", ".#file.txt", fsnotify.Create, true},
+		{"Temp file", "file.tmp", fsnotify.Write, true},
+
+		// Deno temporary files
+		{"Deno bundle", "___deno_bundle_123___", fsnotify.Create, true},
+		{"Deno temp", "___temp_file___", fsnotify.Write, true},
+
+		// Special operation cases
+		{"CHMOD on underscore file", "file___", fsnotify.Chmod, true},
+		{"Write on underscore file", "file___", fsnotify.Write, false},
+	}
+}
+
+// FileEventTestCase represents a test case for file event handling
+type FileEventTestCase struct {
+	Name         string
+	Filename     string
+	Op           fsnotify.Op
 	ShouldIgnore bool
 }
 
