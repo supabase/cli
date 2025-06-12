@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"bufio"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
@@ -68,6 +70,29 @@ const (
 var mainFuncEmbed string
 
 func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
+	if err := restartEdgeRuntime(ctx, envFilePath, noVerifyJWT, importMapPath, runtimeOption, fsys); err != nil {
+		return err
+	}
+	watcher := NewFileWatcher()
+	go watcher.Start(ctx)
+	streamer := NewLogStreamer()
+	go streamer.Start(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("Stopped serving " + utils.Bold(utils.FunctionsDir))
+			return ctx.Err()
+		case <-watcher.RestartCh:
+			if err := restartEdgeRuntime(ctx, envFilePath, noVerifyJWT, importMapPath, runtimeOption, fsys); err != nil {
+				return err
+			}
+		case err := <-streamer.ErrCh:
+			return err
+		}
+	}
+}
+
+func restartEdgeRuntime(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
@@ -84,14 +109,50 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 	dbUrl := fmt.Sprintf("postgresql://postgres:postgres@%s:5432/postgres", utils.DbAliases[0])
 	// 3. Serve and log to console
 	fmt.Fprintln(os.Stderr, "Setting up Edge Functions runtime...")
-	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys); err != nil {
-		return err
+	return ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys)
+}
+
+type logStreamer struct {
+	ErrCh chan error
+}
+
+func NewLogStreamer() logStreamer {
+	return logStreamer{
+		ErrCh: make(chan error, 1),
 	}
-	if err := utils.DockerStreamLogs(ctx, utils.EdgeRuntimeId, os.Stdout, os.Stderr); err != nil {
-		return err
+}
+
+func (s logStreamer) Start(ctx context.Context) {
+	for {
+		if err := utils.DockerStreamLogs(ctx, utils.EdgeRuntimeId, os.Stdout, os.Stderr, func(lo *container.LogsOptions) {
+			lo.Timestamps = true
+		}); err != nil &&
+			!errdefs.IsNotFound(err) &&
+			!strings.HasSuffix(err.Error(), "exit 137") &&
+			!strings.HasSuffix(err.Error(), "can not get logs from container which is dead or marked for removal") {
+			s.ErrCh <- err
+			break
+		}
 	}
-	fmt.Println("Stopped serving " + utils.Bold(utils.FunctionsDir))
-	return nil
+}
+
+type fileWatcher struct {
+	RestartCh chan struct{}
+}
+
+func NewFileWatcher() fileWatcher {
+	return fileWatcher{
+		RestartCh: make(chan struct{}, 1),
+	}
+}
+
+func (w *fileWatcher) Start(ctx context.Context) {
+	// TODO: implement fs.notify
+	fmt.Fprintln(os.Stderr, "Press enter to reload...")
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		w.RestartCh <- struct{}{}
+	}
 }
 
 func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, runtimeOption RuntimeOption, fsys afero.Fs) error {
