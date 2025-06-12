@@ -294,23 +294,51 @@ func runFileWatcher(ctx context.Context, watcher *fsnotify.Watcher, watchedPath 
 	}
 }
 
-// FileWatcherSetup interface allows for dependency injection of file watching functionality
-type FileWatcherSetup interface {
-	SetupFileWatcher(fsys afero.Fs) (*fsnotify.Watcher, string, error)
+type FileWatcher interface {
+	Watch(ctx context.Context, fsys afero.Fs) (<-chan struct{}, <-chan error)
+	Close() error
 }
 
-type RealFileWatcherSetup struct{}
-
-func (r *RealFileWatcherSetup) SetupFileWatcher(fsys afero.Fs) (*fsnotify.Watcher, string, error) {
-	return setupFileWatcher(fsys)
+type RealFileWatcher struct {
+	watcher     *fsnotify.Watcher
+	watchedDirs map[string]bool
+	watchedPath string
+	RestartChan chan struct{}
+	ErrChan     chan error
 }
 
-type MockFileWatcherSetup struct {
-	MockWatcher *fsnotify.Watcher
-	MockPath    string
-	MockError   error
+func NewFileWatcher(watchedPath string, fsys afero.Fs) (FileWatcher, error) {
+	watcher, path, err := setupFileWatcher(fsys)
+	if err != nil {
+		return nil, err
+	}
+
+	return &RealFileWatcher{
+		watcher:     watcher,
+		watchedDirs: make(map[string]bool),
+		watchedPath: path,
+		RestartChan: make(chan struct{}),
+		ErrChan:     make(chan error),
+	}, nil
 }
 
-func (m *MockFileWatcherSetup) SetupFileWatcher(fsys afero.Fs) (*fsnotify.Watcher, string, error) {
-	return m.MockWatcher, m.MockPath, m.MockError
+func (r *RealFileWatcher) Watch(ctx context.Context, fsys afero.Fs) (<-chan struct{}, <-chan error) {
+	// Initialize watched directories if needed
+	if r.watcher != nil && len(r.watchedDirs) == 0 {
+		if err := addImportDependenciesToWatcher(r.watcher, r.watchedDirs, fsys); err != nil {
+			go func() { r.ErrChan <- err }()
+		}
+	}
+
+	// Start the file watching goroutine
+	go runFileWatcher(ctx, r.watcher, r.watchedPath, r.RestartChan, r.watchedDirs, fsys)
+
+	return r.RestartChan, r.ErrChan
+}
+
+func (r *RealFileWatcher) Close() error {
+	if r.watcher != nil {
+		return r.watcher.Close()
+	}
+	return nil
 }

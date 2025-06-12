@@ -130,3 +130,29 @@ func GetFileEventTestCases() []FileEventTestCase {
 		{"Write on underscore file", "file___", fsnotify.Write, false},
 	}
 }
+
+type MockFileWatcher struct {
+	MockRestartChan chan struct{}
+	MockErrChan     chan error
+	MockError       error
+	Closed          bool
+}
+
+func NewMockFileWatcher() *MockFileWatcher {
+	return &MockFileWatcher{
+		MockRestartChan: make(chan struct{}),
+		MockErrChan:     make(chan error),
+	}
+}
+
+func (m *MockFileWatcher) Watch(ctx context.Context, fsys afero.Fs) (<-chan struct{}, <-chan error) {
+	if m.MockError != nil {
+		go func() { m.MockErrChan <- m.MockError }()
+	}
+	return m.MockRestartChan, m.MockErrChan
+}
+
+func (m *MockFileWatcher) Close() error {
+	m.Closed = true
+	return nil
+}

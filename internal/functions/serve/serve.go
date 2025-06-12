@@ -53,10 +53,10 @@ func (i *RuntimeOption) toArgs() []string {
 }
 
 func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
-	return RunWithWatcher(ctx, envFilePath, noVerifyJWT, importMapPath, runtimeOption, fsys, &RealFileWatcherSetup{})
+	return RunWithWatcher(ctx, envFilePath, noVerifyJWT, importMapPath, runtimeOption, fsys)
 }
 
-func RunWithWatcher(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs, watcherSetup FileWatcherSetup) error {
+func RunWithWatcher(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
@@ -65,22 +65,14 @@ func RunWithWatcher(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		return err
 	}
 
-	watcher, watchedPath, err := watcherSetup.SetupFileWatcher(fsys)
+	fileWatcher, err := NewFileWatcher(utils.FunctionsDir, fsys)
 	if err != nil {
 		return err
 	}
-	if watcher != nil {
-		defer watcher.Close()
-	}
+	defer fileWatcher.Close()
 
-	// Create a channel to signal when a restart is needed
-	restartChan := make(chan struct{})
-
-	// Create a map to track watched directories
-	watchedDirs := make(map[string]bool)
-
-	// Start the file watcher in a goroutine
-	go runFileWatcher(ctx, watcher, watchedPath, restartChan, watchedDirs, fsys)
+	// Start watching for file changes
+	restartChan, watcherErrChan := fileWatcher.Watch(ctx, fsys)
 
 	errChan := make(chan error, 1)
 
@@ -111,6 +103,13 @@ func RunWithWatcher(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 				}
 				<-logsDone
 				continue
+			case err := <-watcherErrChan:
+				if serviceCancel != nil {
+					serviceCancel()
+				}
+				<-logsDone
+				_ = utils.Docker.ContainerRemove(context.Background(), utils.EdgeRuntimeId, container.RemoveOptions{Force: true})
+				return fmt.Errorf("file watcher error: %w", err)
 			case err := <-errChan:
 				if serviceCancel != nil {
 					serviceCancel()
