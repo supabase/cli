@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
@@ -87,6 +88,13 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 
 	errChan := make(chan error, 1)
 
+	// Start log streaming in a separate goroutine that persists across restarts
+	logStreamCancel, logStreamDone := startLogStreaming(ctx, errChan)
+	defer func() {
+		logStreamCancel()
+		<-logStreamDone
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -98,42 +106,31 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 			})
 			return ctx.Err()
 		default:
+			// Reload config.toml file in case verify_jwt settings changed
+			if err := flags.LoadConfig(fsys); err != nil {
+				return errors.Errorf("Failed to reload config: %w", err)
+			}
+
 			// Use network alias because Deno cannot resolve `_` in hostname
 			dbUrl := fmt.Sprintf("postgresql://postgres:postgres@%s:5432/postgres", utils.DbAliases[0])
 
-			serviceCancel, logsDone, err := manageFunctionServices(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys, errChan)
-			if err != nil {
+			if err := recreateContainer(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys); err != nil {
 				return err
 			}
 
 			select {
 			case <-restartChan:
 				utils.Info(1, "Reloading Edge Functions due to file changes...")
-				if serviceCancel != nil {
-					serviceCancel()
-				}
-				<-logsDone
+				// Just continue the loop to recreate container with updated config
 				continue
 			case err := <-watcherErrChan:
-				if serviceCancel != nil {
-					serviceCancel()
-				}
-				<-logsDone
 				_ = utils.Docker.ContainerRemove(context.Background(), utils.EdgeRuntimeId, container.RemoveOptions{Force: true})
 				return fmt.Errorf("file watcher error: %w", err)
 			case err := <-errChan:
-				if serviceCancel != nil {
-					serviceCancel()
-				}
-				<-logsDone
 				_ = utils.Docker.ContainerRemove(context.Background(), utils.EdgeRuntimeId, container.RemoveOptions{Force: true})
 				return err
 			case <-ctx.Done():
 				utils.Info(0, "Stopping functions server (received done signal during active service)...\n")
-				if serviceCancel != nil {
-					serviceCancel()
-				}
-				<-logsDone
 				_ = utils.Docker.ContainerRemove(context.Background(), utils.EdgeRuntimeId, container.RemoveOptions{
 					RemoveVolumes: true,
 					Force:         true,
@@ -144,9 +141,62 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 	}
 }
 
-// manageFunctionServices handles the lifecycle of serving functions and streaming logs.
-// It returns a context cancellation function for the log streaming and a channel that closes when log streaming is done.
-func manageFunctionServices(
+// startLogStreaming starts log streaming in a separate goroutine that persists across container restarts
+func startLogStreaming(ctx context.Context, errChan chan<- error) (context.CancelFunc, <-chan struct{}) {
+	logCtx, logCancel := context.WithCancel(ctx)
+	logsDone := make(chan struct{})
+
+	go func() {
+		defer close(logsDone)
+		for {
+			select {
+			case <-logCtx.Done():
+				return
+			default:
+				// Wait for container to be ready, then start streaming
+				if containerReady(logCtx) {
+					if logErr := utils.DockerStreamLogs(logCtx, utils.EdgeRuntimeId, os.Stdout, os.Stderr); logErr != nil {
+						if !errors.Is(logErr, context.Canceled) && !strings.Contains(logErr.Error(), "context canceled") {
+							// Check if container was killed due to OOM
+							if strings.Contains(logErr.Error(), "exit 137") {
+								utils.Warning("Container was killed due to memory limits. Consider increasing memory limits or optimizing your functions.\n")
+							}
+
+							// Only send error if it's not a container removal error
+							if !strings.Contains(logErr.Error(), "container which is dead or marked for removal") {
+								select {
+								case errChan <- errors.Errorf("Docker log streaming error: %w", logErr):
+								default: // Avoid blocking if errChan is full
+									utils.Error("Error channel full, dropping Docker log streaming error: %v", logErr)
+								}
+							}
+						}
+					}
+				}
+				// Brief pause before retrying if container isn't ready
+				select {
+				case <-logCtx.Done():
+					return
+				case <-time.After(500 * time.Millisecond):
+				}
+			}
+		}
+	}()
+
+	return logCancel, logsDone
+}
+
+// containerReady checks if the Edge Runtime container is running and ready for log streaming
+func containerReady(ctx context.Context) bool {
+	inspect, err := utils.Docker.ContainerInspect(ctx, utils.EdgeRuntimeId)
+	if err != nil {
+		return false
+	}
+	return inspect.State.Running
+}
+
+// recreateContainer handles the lifecycle of recreating the functions container
+func recreateContainer(
 	ctx context.Context,
 	envFilePath string,
 	noVerifyJWT *bool,
@@ -154,8 +204,7 @@ func manageFunctionServices(
 	dbUrl string,
 	runtimeOption RuntimeOption,
 	fsys afero.Fs,
-	errChan chan<- error,
-) (context.CancelFunc, <-chan struct{}, error) {
+) error {
 	// Remove existing container before starting a new one.
 	if err := utils.Docker.ContainerRemove(context.Background(), utils.EdgeRuntimeId, container.RemoveOptions{
 		RemoveVolumes: true,
@@ -165,36 +214,13 @@ func manageFunctionServices(
 	}
 
 	utils.Info(0, "Setting up Edge Functions runtime...\n")
-	// Create a new context for ServeFunctions and DockerStreamLogs that can be cancelled independently for restarts.
-	serviceCtx, serviceCancel := context.WithCancel(ctx)
 
-	if err := ServeFunctions(serviceCtx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys); err != nil {
-		// Clean up the context if ServeFunctions fails
-		serviceCancel()
-		return nil, nil, errors.Errorf("Failed to serve functions: %w", err)
+	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys); err != nil {
+		return errors.Errorf("Failed to serve functions: %w", err)
 	}
 
 	utils.Info(0, "Edge Functions runtime is ready.\n")
-
-	// To signal completion of log streaming
-	logsDone := make(chan struct{})
-	go func() {
-		defer close(logsDone)
-		// Ensure cancel is called if DockerStreamLogs returns or panics
-		defer serviceCancel()
-
-		if logErr := utils.DockerStreamLogs(serviceCtx, utils.EdgeRuntimeId, os.Stdout, os.Stderr); logErr != nil {
-			if !errors.Is(logErr, context.Canceled) && !strings.Contains(logErr.Error(), "context canceled") {
-				select {
-				case errChan <- errors.Errorf("Docker log streaming error: %w", logErr):
-				default: // Avoid blocking if errChan is full
-					utils.Error("Error channel full, dropping Docker log streaming error: %v", logErr)
-				}
-			}
-		}
-	}()
-
-	return serviceCancel, logsDone, nil
+	return nil
 }
 
 func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, runtimeOption RuntimeOption, fsys afero.Fs) error {
@@ -276,6 +302,15 @@ EOF
 		container.HostConfig{
 			Binds:        binds,
 			PortBindings: portBindings,
+			Resources: container.Resources{
+				Memory:            512 * 1024 * 1024, // 512MB memory limit
+				MemorySwap:        -1,                // Disable swap
+				MemoryReservation: 256 * 1024 * 1024, // 256MB soft limit
+			},
+			RestartPolicy: container.RestartPolicy{
+				Name:              "on-failure",
+				MaximumRetryCount: 3,
+			},
 		},
 		network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{

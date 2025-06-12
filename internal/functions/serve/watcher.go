@@ -146,6 +146,24 @@ func addImportDependenciesToWatcher(watcher *fsnotify.Watcher, watchedDirs map[s
 		shouldWatchDirs[absFunctionsPath] = true
 	}
 
+	// Watch the config.toml file
+	configPath := utils.ConfigPath
+	if utils.CurrentDirAbs != "" {
+		configPath = filepath.Join(utils.CurrentDirAbs, utils.ConfigPath)
+	} else {
+		cwd, CWDerr := os.Getwd()
+		if CWDerr != nil {
+			utils.Warning("could not get current working directory: %v", CWDerr)
+		} else {
+			configPath = filepath.Join(cwd, utils.ConfigPath)
+		}
+	}
+	configPath = filepath.Clean(configPath)
+	configDir := filepath.Dir(configPath)
+	if _, err := os.Stat(configPath); err == nil {
+		shouldWatchDirs[configDir] = true
+	}
+
 	for _, fc := range functionsConfig {
 		if !fc.Enabled {
 			continue
@@ -265,7 +283,13 @@ func runFileWatcher(ctx context.Context, watcher *fsnotify.Watcher, watchedPath 
 			isSignificantEventForRestart := event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename)
 
 			if isSignificantEventForRestart {
-				utils.Info(2, "File change detected: %s (%s)", event.Name, event.Op.String())
+				fileName := filepath.Base(event.Name)
+
+				if fileName == "config.toml" {
+					utils.Info(2, "Config file change detected: %s (%s) - will reload configuration", event.Name, event.Op.String())
+				} else {
+					utils.Info(2, "File change detected: %s (%s)", event.Name, event.Op.String())
+				}
 
 				// Re-add import dependencies to catch any new dependencies
 				if err := addImportDependenciesToWatcher(watcher, watchedDirs, fsys); err != nil {
