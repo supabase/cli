@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -97,19 +96,7 @@ verify_jwt = false`
 }
 
 func TestServeCommand(t *testing.T) {
-	setupMockConfig := func() {
-		utils.Config.Auth.AnonKey.Value = "anon_key"
-		utils.Config.Auth.ServiceRoleKey.Value = "service_role_key"
-		utils.Config.Auth.JwtSecret.Value = "jwt_secret"
-		utils.Config.Api.Port = 8000
-		utils.Config.EdgeRuntime.Policy = "permissive"
-		utils.Config.EdgeRuntime.Image = "supabase/edge-runtime:test"
-		utils.KongAliases = []string{"supabase_kong_test"}
-		utils.EdgeRuntimeId = "supabase_edge_runtime_test"
-	}
-
 	t.Run("serves all functions", func(t *testing.T) {
-		setupMockConfig()
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.InitConfig(utils.InitParams{ProjectId: "test"}, fsys))
@@ -122,41 +109,12 @@ func TestServeCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_test/json").
 			Reply(http.StatusOK).
 			JSON(container.InspectResponse{})
-		// Use the EdgeRuntimeId from the mock config
-		containerId := utils.EdgeRuntimeId
-
-		// Mock multiple container removal calls (for initial cleanup and during shutdown)
-		for i := 0; i < 5; i++ {
-			gock.New(utils.Docker.DaemonHost()).
-				Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + containerId).
-				Reply(http.StatusOK)
-		}
-
+		containerId := "supabase_edge_runtime_test"
+		gock.New(utils.Docker.DaemonHost()).
+			Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + containerId).
+			Reply(http.StatusOK)
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image), containerId)
-
-		// Add multiple container inspect mocks for the log streaming logic
-		for i := 0; i < 15; i++ {
-			gock.New(utils.Docker.DaemonHost()).
-				Get("/v" + utils.Docker.ClientVersion() + "/containers/" + containerId + "/json").
-				Reply(http.StatusOK).
-				JSON(container.InspectResponse{
-					ContainerJSONBase: &container.ContainerJSONBase{
-						State: &container.State{
-							Running: true,
-						},
-					},
-				})
-		}
-
-		// Mock log streaming that will timeout gracefully
-		for i := 0; i < 10; i++ {
-			gock.New(utils.Docker.DaemonHost()).
-				Get("/v"+utils.Docker.ClientVersion()+"/containers/"+containerId+"/logs").
-				Reply(http.StatusOK).
-				SetHeader("Content-Type", "application/vnd.docker.raw-stream").
-				Delay(300 * time.Millisecond). // Delay to ensure timeout
-				Body(strings.NewReader(""))
-		}
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "success"))
 
 		// Create a context with timeout to prevent test from hanging
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -404,7 +362,7 @@ func TestServeFunctions(t *testing.T) {
 	})
 }
 
-func TestRecreateContainer(t *testing.T) {
+func TestManageFunctionServices(t *testing.T) {
 	// Save original values
 	originalConfig := utils.Config
 	defer func() {
@@ -419,10 +377,10 @@ func TestRecreateContainer(t *testing.T) {
 		utils.Config.EdgeRuntime.Policy = "permissive"
 		utils.Config.EdgeRuntime.Image = "supabase/edge-runtime:test"
 		utils.KongAliases = []string{"supabase_kong_test"}
-		utils.EdgeRuntimeId = "supabase_edge_runtime_test"
+		utils.EdgeRuntimeId = "test-edge-runtime"
 	}
 
-	t.Run("recreates container successfully", func(t *testing.T) {
+	t.Run("manages function services successfully", func(t *testing.T) {
 		setupMockConfig()
 
 		// Setup in-memory fs
@@ -437,9 +395,14 @@ func TestRecreateContainer(t *testing.T) {
 			Reply(http.StatusOK)
 		// Mock container start
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image), utils.EdgeRuntimeId)
+		// Mock log streaming
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, utils.EdgeRuntimeId, "service started"))
+
+		// Create error channel
+		errChan := make(chan error, 1)
 
 		// Test function
-		err := recreateContainer(
+		cancel, logsDone, err := manageFunctionServices(
 			context.Background(),
 			"",
 			nil,
@@ -447,9 +410,24 @@ func TestRecreateContainer(t *testing.T) {
 			"postgresql://localhost:5432/test",
 			RuntimeOption{},
 			fsys,
+			errChan,
 		)
 
 		assert.NoError(t, err)
+		assert.NotNil(t, cancel)
+		assert.NotNil(t, logsDone)
+
+		// Cancel and wait for cleanup if we got valid results
+		if cancel != nil {
+			cancel()
+			select {
+			case <-logsDone:
+				// Expected
+			case <-time.After(1 * time.Second):
+				t.Error("Expected logsDone to close after cancel")
+			}
+		}
+
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
@@ -466,8 +444,11 @@ func TestRecreateContainer(t *testing.T) {
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.EdgeRuntimeId).
 			Reply(http.StatusOK)
 
+		// Create error channel
+		errChan := make(chan error, 1)
+
 		// Test function
-		err := recreateContainer(
+		cancel, logsDone, err := manageFunctionServices(
 			context.Background(),
 			"nonexistent.env",
 			nil,
@@ -475,157 +456,115 @@ func TestRecreateContainer(t *testing.T) {
 			"postgresql://localhost:5432/test",
 			RuntimeOption{},
 			fsys,
+			errChan,
 		)
 
 		assert.Error(t, err)
+		assert.Nil(t, cancel)
+		assert.Nil(t, logsDone)
 		assert.Contains(t, err.Error(), "Failed to serve functions")
 	})
-}
 
-func TestStartLogStreaming(t *testing.T) {
-	// Save original values
-	originalConfig := utils.Config
-	defer func() {
-		utils.Config = originalConfig
-	}()
-
-	setupMockConfig := func() {
-		utils.Config.Auth.AnonKey.Value = "anon_key"
-		utils.Config.Auth.ServiceRoleKey.Value = "service_role_key"
-		utils.Config.Auth.JwtSecret.Value = "jwt_secret"
-		utils.Config.Api.Port = 8000
-		utils.Config.EdgeRuntime.Policy = "permissive"
-		utils.Config.EdgeRuntime.Image = "supabase/edge-runtime:test"
-		utils.KongAliases = []string{"supabase_kong_test"}
-		utils.EdgeRuntimeId = "supabase_edge_runtime_test"
-	}
-
-	t.Run("starts log streaming successfully", func(t *testing.T) {
+	t.Run("handles context cancellation", func(t *testing.T) {
 		setupMockConfig()
+
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
 
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-
-		// Mock container inspect for ready check
+		// Mock container removal
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.EdgeRuntimeId + "/json").
-			Reply(http.StatusOK).
-			JSON(container.InspectResponse{
-				ContainerJSONBase: &container.ContainerJSONBase{
-					State: &container.State{
-						Running: true,
-					},
-				},
-			})
-
-		// Mock log streaming
+			Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.EdgeRuntimeId).
+			Reply(http.StatusOK)
+		// Mock container start
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image), utils.EdgeRuntimeId)
+		// Mock log streaming that will be cancelled
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v"+utils.Docker.ClientVersion()+"/containers/"+utils.EdgeRuntimeId+"/logs").
 			Reply(http.StatusOK).
 			SetHeader("Content-Type", "application/vnd.docker.raw-stream").
-			Body(strings.NewReader("test log output"))
+			Delay(100 * time.Millisecond) // Delay to allow cancellation
 
-		// Create context with timeout
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-
-		// Create error channel
+		// Create context that will be cancelled
+		ctx, cancel := context.WithCancel(context.Background())
 		errChan := make(chan error, 1)
 
 		// Test function
-		logCancel, logsDone := startLogStreaming(ctx, errChan)
+		serviceCancel, logsDone, err := manageFunctionServices(
+			ctx,
+			"",
+			nil,
+			"",
+			"postgresql://localhost:5432/test",
+			RuntimeOption{},
+			fsys,
+			errChan,
+		)
 
-		// Cancel immediately to ensure cleanup
-		logCancel()
+		assert.NoError(t, err)
+		assert.NotNil(t, serviceCancel)
+		assert.NotNil(t, logsDone)
 
-		// Wait for logs to be done or timeout
+		// Cancel the context
+		cancel()
+
+		// Wait for logs to be done
 		select {
 		case <-logsDone:
 			// Expected
 		case <-time.After(1 * time.Second):
-			t.Error("Expected logsDone to close")
+			t.Error("Expected logsDone to close after context cancellation")
 		}
 
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
-	t.Run("handles container not ready", func(t *testing.T) {
-		setupMockConfig()
-
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-
-		// Mock container inspect for not ready check
-		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.EdgeRuntimeId + "/json").
-			Reply(http.StatusOK).
-			JSON(container.InspectResponse{
-				ContainerJSONBase: &container.ContainerJSONBase{
-					State: &container.State{
-						Running: false,
-					},
-				},
-			})
-
-		// Create context with timeout
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-
-		// Create error channel
-		errChan := make(chan error, 1)
-
-		// Test function
-		logCancel, logsDone := startLogStreaming(ctx, errChan)
-
-		// Cancel immediately to ensure cleanup
-		logCancel()
-
-		// Wait for logs to be done or timeout
+		// No error should be sent to errChan for context cancellation
 		select {
-		case <-logsDone:
-			// Expected
-		case <-time.After(1 * time.Second):
-			t.Error("Expected logsDone to close")
+		case err := <-errChan:
+			t.Errorf("Unexpected error in errChan: %v", err)
+		default:
+			// Expected - no error for context cancellation
 		}
-
-		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("handles log streaming errors", func(t *testing.T) {
+	t.Run("sends error to channel on docker log streaming failure", func(t *testing.T) {
 		setupMockConfig()
+
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
 
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-
-		// Mock container inspect for ready check
+		// Mock container removal
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.EdgeRuntimeId + "/json").
-			Reply(http.StatusOK).
-			JSON(container.InspectResponse{
-				ContainerJSONBase: &container.ContainerJSONBase{
-					State: &container.State{
-						Running: true,
-					},
-				},
-			})
-
-		// Mock log streaming error
+			Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.EdgeRuntimeId).
+			Reply(http.StatusOK)
+		// Mock container start
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image), utils.EdgeRuntimeId)
+		// Mock log streaming failure
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.EdgeRuntimeId + "/logs").
 			Reply(http.StatusServiceUnavailable)
 
-		// Create context with timeout
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-
 		// Create error channel
 		errChan := make(chan error, 1)
 
 		// Test function
-		logCancel, logsDone := startLogStreaming(ctx, errChan)
+		serviceCancel, logsDone, err := manageFunctionServices(
+			context.Background(),
+			"",
+			nil,
+			"",
+			"postgresql://localhost:5432/test",
+			RuntimeOption{},
+			fsys,
+			errChan,
+		)
+
+		assert.NoError(t, err)
+		assert.NotNil(t, serviceCancel)
+		assert.NotNil(t, logsDone)
 
 		// Wait for error or timeout
 		select {
@@ -636,54 +575,53 @@ func TestStartLogStreaming(t *testing.T) {
 			t.Error("Expected error in errChan")
 		}
 
-		// Cancel and wait for cleanup
-		logCancel()
+		// Wait for cleanup
 		select {
 		case <-logsDone:
 			// Expected
 		case <-time.After(1 * time.Second):
-			t.Error("Expected logsDone to close after cancel")
+			t.Error("Expected logsDone to close")
 		}
-
-		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("handles full error channel gracefully", func(t *testing.T) {
 		setupMockConfig()
 
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-
-		// Mock container inspect for ready check
+		// Mock container removal
 		gock.New(utils.Docker.DaemonHost()).
-			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.EdgeRuntimeId + "/json").
-			Reply(http.StatusOK).
-			JSON(container.InspectResponse{
-				ContainerJSONBase: &container.ContainerJSONBase{
-					State: &container.State{
-						Running: true,
-					},
-				},
-			})
-
-		// Mock log streaming error
+			Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.EdgeRuntimeId).
+			Reply(http.StatusOK)
+		// Mock container start
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image), utils.EdgeRuntimeId)
+		// Mock log streaming failure
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.EdgeRuntimeId + "/logs").
 			Reply(http.StatusServiceUnavailable)
-
-		// Create context with timeout
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
 
 		// Create full error channel (capacity 0)
 		errChan := make(chan error)
 
 		// Test function
-		logCancel, logsDone := startLogStreaming(ctx, errChan)
+		serviceCancel, logsDone, err := manageFunctionServices(
+			context.Background(),
+			"",
+			nil,
+			"",
+			"postgresql://localhost:5432/test",
+			RuntimeOption{},
+			fsys,
+			errChan,
+		)
 
-		// Cancel immediately to ensure cleanup
-		logCancel()
+		assert.NoError(t, err)
+		assert.NotNil(t, serviceCancel)
+		assert.NotNil(t, logsDone)
 
 		// Wait for cleanup - should not hang even with full error channel
 		select {
@@ -692,7 +630,5 @@ func TestStartLogStreaming(t *testing.T) {
 		case <-time.After(1 * time.Second):
 			t.Error("Expected logsDone to close even with full error channel")
 		}
-
-		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
