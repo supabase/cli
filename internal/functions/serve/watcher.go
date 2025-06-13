@@ -6,12 +6,14 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -19,9 +21,22 @@ const (
 	// Debounce duration for file changes
 	debounceDuration = 500 * time.Millisecond
 	restartEvents    = fsnotify.Write | fsnotify.Create | fsnotify.Remove | fsnotify.Rename
+	maxFileLimit     = 1000
 )
 
 var (
+	errTooManyFiles = errors.New("too many files")
+
+	// Directories to ignore.
+	ignoredDirNames = []string{
+		".git",
+		"node_modules",
+		".vscode",
+		".idea",
+		".DS_Store",
+		"vendor",
+	}
+
 	// Patterns for ignoring file events.
 	ignoredFilePatterns = []struct {
 		Prefix     string      // File basename prefix
@@ -112,13 +127,7 @@ func (w *debounceFileWatcher) Start(ctx context.Context) {
 			continue
 		}
 
-		fileName := filepath.Base(event.Name)
-		if fileName == "config.toml" {
-			fmt.Fprintf(os.Stderr, "Config file change detected: %s (%s) - will reload configuration\n", event.Name, event.Op.String())
-		} else {
-			fmt.Fprintf(os.Stderr, "File change detected: %s (%s)\n", event.Name, event.Op.String())
-		}
-
+		fmt.Fprintf(os.Stderr, "File change detected: %s (%s)\n", event.Name, event.Op.String())
 		if !w.restartTimer.Reset(debounceDuration) {
 			fmt.Fprintln(utils.GetDebugLogger(), "Failed to restart debounce timer.")
 		}
@@ -126,18 +135,32 @@ func (w *debounceFileWatcher) Start(ctx context.Context) {
 }
 
 func (w *debounceFileWatcher) SetWatchPaths(watchPaths []string, fsys afero.Fs) error {
+	watchLimit := viper.GetUint("FUNCTIONS_WATCH_LIMIT")
+	if watchLimit == 0 {
+		watchLimit = maxFileLimit
+	}
 	shouldWatchDirs := make(map[string]struct{})
 	for _, hostPath := range watchPaths {
-		// Ignore non-existent paths
+		// Ignore non-existent paths and symlink directories
 		if err := afero.Walk(fsys, hostPath, func(path string, info fs.FileInfo, err error) error {
 			if err != nil {
 				return errors.New(err)
 			}
-			if path == hostPath || info.IsDir() {
+			if slices.Contains(ignoredDirNames, filepath.Base(path)) {
+				return nil
+			}
+			if info.IsDir() {
 				shouldWatchDirs[path] = struct{}{}
+			} else if path == hostPath {
+				shouldWatchDirs[filepath.Dir(path)] = struct{}{}
+			}
+			if uint(len(shouldWatchDirs)) >= watchLimit {
+				return errors.Errorf("file watcher stopped at %s: %w", path, errTooManyFiles)
 			}
 			return nil
-		}); err != nil {
+		}); errors.Is(err, errTooManyFiles) {
+			fmt.Fprintf(os.Stderr, "%s\nYou can increase this limit by setting SUPABASE_FUNCTIONS_WATCH_LIMIT=%d", err.Error(), watchLimit<<2)
+		} else if err != nil {
 			return err
 		}
 	}
