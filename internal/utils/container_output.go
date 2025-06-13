@@ -208,18 +208,13 @@ func ProcessDiffOutput(diffBytes []byte) ([]byte, error) {
 
 func ProcessPsqlOutput(out io.Reader, p Program) error {
 	r, w := io.Pipe()
-	doneCh := make(chan struct{}, 1)
+	doneCh := make(chan struct{})
 
 	go func() {
+		defer close(doneCh) // closes when goroutine ends
 		scanner := bufio.NewScanner(r)
 
 		for scanner.Scan() {
-			select {
-			case <-doneCh:
-				return
-			default:
-			}
-
 			line := scanner.Text()
 			p.Send(PsqlMsg(&line))
 		}
@@ -227,13 +222,18 @@ func ProcessPsqlOutput(out io.Reader, p Program) error {
 
 	var errBuf bytes.Buffer
 	if _, err := stdcopy.StdCopy(w, &errBuf, out); err != nil {
+		w.Close()
+		<-doneCh // Wait for goroutine to finish
 		return err
 	}
+	w.Close() // Close the writer to signal EOF to the scanner
+
 	if errBuf.Len() > 0 {
+		<-doneCh // Wait for goroutine to finish
 		return errors.New("Error running SQL: " + errBuf.String())
 	}
 
-	doneCh <- struct{}{}
+	<-doneCh // Wait for goroutine to finish
 	p.Send(PsqlMsg(nil))
 
 	return nil

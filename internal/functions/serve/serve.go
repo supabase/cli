@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"bufio"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
@@ -75,23 +77,54 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 	if err := utils.AssertSupabaseDbIsRunning(); err != nil {
 		return err
 	}
-	// 2. Remove existing container.
-	_ = utils.Docker.ContainerRemove(ctx, utils.EdgeRuntimeId, container.RemoveOptions{
-		RemoveVolumes: true,
-		Force:         true,
-	})
-	// Use network alias because Deno cannot resolve `_` in hostname
-	dbUrl := fmt.Sprintf("postgresql://postgres:postgres@%s:5432/postgres", utils.DbAliases[0])
-	// 3. Serve and log to console
-	fmt.Fprintln(os.Stderr, "Setting up Edge Functions runtime...")
-	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys); err != nil {
+
+	// Ensure cleanup on exit
+	defer func() {
+		_ = utils.Docker.ContainerRemove(context.Background(), utils.EdgeRuntimeId, container.RemoveOptions{
+			RemoveVolumes: true,
+			Force:         true,
+		})
+	}()
+
+	watcher := NewSimpleFileWatcher()
+	go watcher.Start(ctx, fsys)
+
+	var streamer logStreamer
+	var streamerStarted bool
+
+	// Function to start/restart both runtime and streamer
+	startServices := func() error {
+		if err := restartEdgeRuntime(ctx, envFilePath, noVerifyJWT, importMapPath, runtimeOption, fsys); err != nil {
+			return err
+		}
+
+		// Start log streamer after container is running
+		streamer = NewLogStreamer()
+		go streamer.Start(ctx)
+		streamerStarted = true
+		return nil
+	}
+
+	// Initial start
+	if err := startServices(); err != nil {
 		return err
 	}
-	if err := utils.DockerStreamLogs(ctx, utils.EdgeRuntimeId, os.Stdout, os.Stderr); err != nil {
-		return err
+
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("Stopped serving " + utils.Bold(utils.FunctionsDir))
+			return ctx.Err()
+		case <-watcher.RestartCh:
+			if err := startServices(); err != nil {
+				return err
+			}
+		case err := <-streamer.ErrCh:
+			if streamerStarted {
+				return err
+			}
+		}
 	}
-	fmt.Println("Stopped serving " + utils.Bold(utils.FunctionsDir))
-	return nil
 }
 
 func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, runtimeOption RuntimeOption, fsys afero.Fs) error {
@@ -196,6 +229,10 @@ func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
 	}
 	env := []string{}
 	secrets, err := set.ListSecrets(envFilePath, fsys)
+	if err != nil {
+		// If parsing fails, return empty slice and error
+		return nil, err
+	}
 	for _, v := range secrets {
 		env = append(env, fmt.Sprintf("%s=%s", v.Name, v.Value))
 	}
@@ -214,7 +251,7 @@ func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 	binds := []string{}
 	for slug, fc := range functionsConfig {
 		if !fc.Enabled {
-			fmt.Fprintln(os.Stderr, "Skipped serving Function:", slug)
+			utils.Warning("Skipped serving Function: %s\n", slug)
 			continue
 		}
 		modules, err := deploy.GetBindMounts(cwd, utils.FunctionsDir, "", fc.Entrypoint, fc.ImportMap, fsys)
@@ -234,4 +271,102 @@ func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 		return nil, "", errors.Errorf("failed to marshal config json: %w", err)
 	}
 	return utils.RemoveDuplicates(binds), string(functionsConfigBytes), nil
+}
+
+func restartEdgeRuntime(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
+	// Reload config.toml file in case functions settings has been changed
+	if err := flags.LoadConfig(fsys); err != nil {
+		return errors.Errorf("Failed to reload config: %w", err)
+	}
+
+	// Remove existing container before starting a new one.
+	if err := utils.Docker.ContainerRemove(context.Background(), utils.EdgeRuntimeId, container.RemoveOptions{
+		RemoveVolumes: true,
+		Force:         true,
+	}); err != nil {
+		utils.Warning("Failed to remove existing Edge Runtime container before start: %v\n", err)
+	}
+
+	// Use network alias because Deno cannot resolve `_` in hostname
+	dbUrl := fmt.Sprintf("postgresql://postgres:postgres@%s:5432/postgres", utils.DbAliases[0])
+
+	utils.Info(0, "Setting up Edge Functions runtime...\n")
+	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys); err != nil {
+		return errors.Errorf("Failed to serve functions: %w", err)
+	}
+
+	utils.Info(0, "Edge Functions runtime is ready.\n")
+	return nil
+}
+
+type logStreamer struct {
+	ErrCh chan error
+}
+
+func NewLogStreamer() logStreamer {
+	return logStreamer{
+		ErrCh: make(chan error, 1),
+	}
+}
+
+func (s *logStreamer) Start(ctx context.Context) {
+	// Stream logs from the edge runtime container
+	if err := utils.DockerStreamLogs(ctx, utils.EdgeRuntimeId, os.Stdout, os.Stderr); err != nil &&
+		!errdefs.IsNotFound(err) &&
+		!strings.HasSuffix(err.Error(), "exit 137") &&
+		!strings.HasSuffix(err.Error(), "can not get logs from container which is dead or marked for removal") {
+		s.ErrCh <- err
+		return
+	}
+}
+
+type fileWatcher struct {
+	RestartCh chan struct{}
+}
+
+func NewSimpleFileWatcher() fileWatcher {
+	return fileWatcher{
+		RestartCh: make(chan struct{}, 1),
+	}
+}
+
+func (w *fileWatcher) Start(ctx context.Context, fsys afero.Fs) {
+	edgeWatcher, err := NewEdgeFunctionWatcher(fsys)
+	if err != nil {
+		utils.Error("Failed to create edge function watcher: %v\n", err)
+		utils.Warning("Press enter to reload...\n")
+		scanner := bufio.NewScanner(os.Stdin)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				if scanner.Scan() {
+					w.RestartCh <- struct{}{}
+				}
+			}
+		}
+	}
+	defer edgeWatcher.Close()
+
+	// Start watching for file changes
+	restartChan, errChan := edgeWatcher.Watch(ctx)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-restartChan:
+			w.RestartCh <- struct{}{}
+		case err := <-errChan:
+			utils.Error("Edge function watcher error: %v\n", err)
+			// Fall back to manual reload on error
+			utils.Warning("Press enter to reload...\n")
+			scanner := bufio.NewScanner(os.Stdin)
+			for scanner.Scan() {
+				w.RestartCh <- struct{}{}
+			}
+			return
+		}
+	}
 }
