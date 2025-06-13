@@ -22,16 +22,6 @@ const (
 )
 
 var (
-	// Directories to ignore.
-	ignoredDirNames = []string{
-		".git",
-		"node_modules",
-		".vscode",
-		".idea",
-		".DS_Store",
-		"vendor",
-	}
-
 	// Patterns for ignoring file events.
 	ignoredFilePatterns = []struct {
 		Prefix     string      // File basename prefix

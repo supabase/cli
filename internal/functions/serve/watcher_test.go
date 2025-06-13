@@ -61,7 +61,7 @@ func (s *WatcherIntegrationSetup) SetupSupabaseDirectory() string {
 func (s *WatcherIntegrationSetup) createFunction(name, content string) {
 	funcDir := filepath.Join(s.TempDir, "supabase", "functions", name)
 	require.NoError(s.T, os.MkdirAll(funcDir, 0755))
-	require.NoError(s.T, os.WriteFile(filepath.Join(funcDir, "index.ts"), []byte(content), 0644))
+	require.NoError(s.T, os.WriteFile(filepath.Join(funcDir, "index.ts"), []byte(content), 0600))
 }
 
 // CreateFileWatcher creates and configures a debounce file watcher for testing
@@ -106,7 +106,7 @@ func TestFileWatcherIntegration(t *testing.T) {
 		// Modify a function file
 		funcFile := filepath.Join(functionsDir, "hello", "index.ts")
 		newContent := `export default () => new Response("Hello Modified World")`
-		require.NoError(t, os.WriteFile(funcFile, []byte(newContent), 0644))
+		require.NoError(t, os.WriteFile(funcFile, []byte(newContent), 0600))
 
 		// Wait for restart signal
 		select {
@@ -145,7 +145,7 @@ func TestFileWatcherIntegration(t *testing.T) {
 		}
 
 		for _, tempFile := range tempFiles {
-			require.NoError(t, os.WriteFile(tempFile, []byte("temp content"), 0644))
+			require.NoError(t, os.WriteFile(tempFile, []byte("temp content"), 0600))
 			time.Sleep(50 * time.Millisecond)
 		}
 
@@ -184,7 +184,7 @@ func TestFileWatcherIntegration(t *testing.T) {
 		configContent := `[functions.hello]
 enabled = true
 verify_jwt = false`
-		require.NoError(t, os.WriteFile(configFile, []byte(configContent), 0644))
+		require.NoError(t, os.WriteFile(configFile, []byte(configContent), 0600))
 
 		// Wait for restart signal
 		select {
@@ -241,7 +241,7 @@ verify_jwt = false`
 		funcFile := filepath.Join(functionsDir, "hello", "index.ts")
 		for i := 0; i < 5; i++ {
 			content := fmt.Sprintf(`export default () => new Response("Hello %d")`, i)
-			require.NoError(t, os.WriteFile(funcFile, []byte(content), 0644))
+			require.NoError(t, os.WriteFile(funcFile, []byte(content), 0600))
 			time.Sleep(50 * time.Millisecond) // Less than debounce duration
 		}
 
@@ -276,7 +276,7 @@ verify_jwt = false`
 
 		// Create a utility file in lib directory
 		utilFile := filepath.Join(libDir, "utils.ts")
-		require.NoError(t, os.WriteFile(utilFile, []byte(`export function util() { return "utility"; }`), 0644))
+		require.NoError(t, os.WriteFile(utilFile, []byte(`export function util() { return "utility"; }`), 0600))
 
 		watcher, err := NewDebounceFileWatcher()
 		require.NoError(t, err)
@@ -296,7 +296,7 @@ verify_jwt = false`
 		time.Sleep(100 * time.Millisecond)
 
 		// Modify file in lib directory
-		require.NoError(t, os.WriteFile(utilFile, []byte(`export function util() { return "modified utility"; }`), 0644))
+		require.NoError(t, os.WriteFile(utilFile, []byte(`export function util() { return "modified utility"; }`), 0600))
 
 		// Wait for restart signal
 		select {
