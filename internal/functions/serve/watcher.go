@@ -122,13 +122,7 @@ func (w *debounceFileWatcher) Start(ctx context.Context) {
 			continue
 		}
 
-		fileName := filepath.Base(event.Name)
-		if fileName == "config.toml" {
-			fmt.Fprintf(os.Stderr, "Config file change detected: %s (%s) - will reload configuration\n", event.Name, event.Op.String())
-		} else {
-			fmt.Fprintf(os.Stderr, "File change detected: %s (%s)\n", event.Name, event.Op.String())
-		}
-
+		fmt.Fprintf(os.Stderr, "File change detected: %s (%s)\n", event.Name, event.Op.String())
 		if !w.restartTimer.Reset(debounceDuration) {
 			fmt.Fprintln(utils.GetDebugLogger(), "Failed to restart debounce timer.")
 		}
