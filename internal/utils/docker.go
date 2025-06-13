@@ -376,13 +376,17 @@ func DockerRunOnceWithConfig(ctx context.Context, config container.Config, hostC
 	return DockerStreamLogs(ctx, container, stdout, stderr)
 }
 
-func DockerStreamLogs(ctx context.Context, containerId string, stdout, stderr io.Writer) error {
-	// Stream logs
-	logs, err := Docker.ContainerLogs(ctx, containerId, container.LogsOptions{
+func DockerStreamLogs(ctx context.Context, containerId string, stdout, stderr io.Writer, opts ...func(*container.LogsOptions)) error {
+	logsOptions := container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Follow:     true,
-	})
+	}
+	for _, apply := range opts {
+		apply(&logsOptions)
+	}
+	// Stream logs
+	logs, err := Docker.ContainerLogs(ctx, containerId, logsOptions)
 	if err != nil {
 		return errors.Errorf("failed to read docker logs: %w", err)
 	}
