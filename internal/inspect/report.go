@@ -26,6 +26,10 @@ func Report(ctx context.Context, out string, config pgconn.Config, fsys afero.Fs
 	if err := utils.MkdirIfNotExistFS(fsys, out); err != nil {
 		return err
 	}
+	dateDir := filepath.Join(out, date)
+	if err := utils.MkdirIfNotExistFS(fsys, dateDir); err != nil {
+		return err
+	}
 	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
 		return err
@@ -44,15 +48,19 @@ func Report(ctx context.Context, out string, config pgconn.Config, fsys afero.Fs
 			return errors.Errorf("failed to read query: %w", err)
 		}
 		name := strings.Split(d.Name(), ".")[0]
-		outPath := filepath.Join(out, fmt.Sprintf("%s_%s.csv", name, date))
+		outPath := filepath.Join(dateDir, fmt.Sprintf("%s.csv", name))
 		return copyToCSV(ctx, string(query), outPath, conn.PgConn(), fsys)
 	}); err != nil {
 		return err
 	}
-	if !filepath.IsAbs(out) {
-		out, _ = filepath.Abs(out)
+	// print the actual save location
+	if !filepath.IsAbs(dateDir) {
+		dateDir, err = filepath.Abs(dateDir)
+		if err != nil {
+			return err
+		}
 	}
-	fmt.Fprintln(os.Stderr, "Reports saved to "+utils.Bold(out))
+	fmt.Fprintln(os.Stderr, "Reports saved to "+utils.Bold(dateDir))
 	return nil
 }
 
