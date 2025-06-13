@@ -1,7 +1,6 @@
 package serve
 
 import (
-	"bufio"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -11,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
@@ -48,6 +46,7 @@ func (mode InspectMode) toFlag() string {
 type RuntimeOption struct {
 	InspectMode *InspectMode
 	InspectMain bool
+	fileWatcher *debounceFileWatcher
 }
 
 func (i *RuntimeOption) toArgs() []string {
@@ -70,13 +69,20 @@ const (
 var mainFuncEmbed string
 
 func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
+	watcher, err := NewDebounceFileWatcher()
+	if err != nil {
+		return err
+	}
+	go watcher.Start(ctx)
+	defer watcher.Close()
+	// TODO: refactor this to edge runtime service
+	runtimeOption.fileWatcher = watcher
 	if err := restartEdgeRuntime(ctx, envFilePath, noVerifyJWT, importMapPath, runtimeOption, fsys); err != nil {
 		return err
 	}
-	watcher := NewFileWatcher()
-	go watcher.Start(ctx)
-	streamer := NewLogStreamer()
-	go streamer.Start(ctx)
+	streamer := NewLogStreamer(ctx)
+	go streamer.Start(utils.EdgeRuntimeId)
+	defer streamer.Close()
 	for {
 		select {
 		case <-ctx.Done():
@@ -110,49 +116,6 @@ func restartEdgeRuntime(ctx context.Context, envFilePath string, noVerifyJWT *bo
 	// 3. Serve and log to console
 	fmt.Fprintln(os.Stderr, "Setting up Edge Functions runtime...")
 	return ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys)
-}
-
-type logStreamer struct {
-	ErrCh chan error
-}
-
-func NewLogStreamer() logStreamer {
-	return logStreamer{
-		ErrCh: make(chan error, 1),
-	}
-}
-
-func (s logStreamer) Start(ctx context.Context) {
-	for {
-		if err := utils.DockerStreamLogs(ctx, utils.EdgeRuntimeId, os.Stdout, os.Stderr, func(lo *container.LogsOptions) {
-			lo.Timestamps = true
-		}); err != nil &&
-			!errdefs.IsNotFound(err) &&
-			!strings.HasSuffix(err.Error(), "exit 137") &&
-			!strings.HasSuffix(err.Error(), "can not get logs from container which is dead or marked for removal") {
-			s.ErrCh <- err
-			break
-		}
-	}
-}
-
-type fileWatcher struct {
-	RestartCh chan struct{}
-}
-
-func NewFileWatcher() fileWatcher {
-	return fileWatcher{
-		RestartCh: make(chan struct{}, 1),
-	}
-}
-
-func (w *fileWatcher) Start(ctx context.Context) {
-	// TODO: implement fs.notify
-	fmt.Fprintln(os.Stderr, "Press enter to reload...")
-	scanner := bufio.NewScanner(os.Stdin)
-	for scanner.Scan() {
-		w.RestartCh <- struct{}{}
-	}
 }
 
 func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, runtimeOption RuntimeOption, fsys afero.Fs) error {
@@ -191,6 +154,19 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	binds, functionsConfigString, err := populatePerFunctionConfigs(cwd, importMapPath, noVerifyJWT, fsys)
 	if err != nil {
 		return err
+	}
+	if watcher := runtimeOption.fileWatcher; watcher != nil {
+		var watchPaths []string
+		for _, b := range binds {
+			// Get the directory containing the path
+			hostPath := strings.Split(b, ":")[0]
+			if filepath.IsAbs(hostPath) {
+				watchPaths = append(watchPaths, hostPath)
+			}
+		}
+		if err := watcher.SetWatchPaths(watchPaths, fsys); err != nil {
+			return err
+		}
 	}
 	env = append(env, "SUPABASE_INTERNAL_FUNCTIONS_CONFIG="+functionsConfigString)
 	// 3. Parse entrypoint script
