@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"bytes"
 	"encoding/json"
 	"io"
 	"sync"
@@ -9,7 +8,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/docker/docker/pkg/jsonmessage"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -62,41 +60,6 @@ func TestProcessDiffOutput(t *testing.T) {
 
 		assert.NoError(t, err)
 		assert.Nil(t, output)
-	})
-}
-
-func TestProcessPsqlOutput(t *testing.T) {
-	t.Run("processes psql output", func(t *testing.T) {
-		var buf bytes.Buffer
-		writer := stdcopy.NewStdWriter(&buf, stdcopy.Stdout)
-		_, err := writer.Write([]byte("test output\n"))
-		require.NoError(t, err)
-
-		var lastLine *string
-		p := NewMockProgram(func(msg tea.Msg) {
-			if m, ok := msg.(PsqlMsg); ok {
-				lastLine = m
-			}
-		})
-
-		err = ProcessPsqlOutput(&buf, p)
-
-		assert.NoError(t, err)
-		assert.Nil(t, lastLine)
-	})
-
-	t.Run("handles stderr output", func(t *testing.T) {
-		var buf bytes.Buffer
-		writer := stdcopy.NewStdWriter(&buf, stdcopy.Stderr)
-		_, err := writer.Write([]byte("error message\n"))
-		require.NoError(t, err)
-
-		p := NewMockProgram(nil)
-
-		err = ProcessPsqlOutput(&buf, p)
-
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "error message")
 	})
 }
 

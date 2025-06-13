@@ -12,8 +12,6 @@ import (
 	"strings"
 
 	"github.com/docker/docker/pkg/jsonmessage"
-	"github.com/docker/docker/pkg/stdcopy"
-	"github.com/go-errors/errors"
 )
 
 func ProcessPullOutput(out io.ReadCloser, p Program) error {
@@ -204,37 +202,4 @@ func ProcessDiffOutput(diffBytes []byte) ([]byte, error) {
 		return nil, nil
 	}
 	return []byte(diffHeader + "\n\n" + strings.Join(filteredDiffDdls, "\n\n") + "\n"), nil
-}
-
-func ProcessPsqlOutput(out io.Reader, p Program) error {
-	r, w := io.Pipe()
-	doneCh := make(chan struct{}, 1)
-
-	go func() {
-		scanner := bufio.NewScanner(r)
-
-		for scanner.Scan() {
-			select {
-			case <-doneCh:
-				return
-			default:
-			}
-
-			line := scanner.Text()
-			p.Send(PsqlMsg(&line))
-		}
-	}()
-
-	var errBuf bytes.Buffer
-	if _, err := stdcopy.StdCopy(w, &errBuf, out); err != nil {
-		return err
-	}
-	if errBuf.Len() > 0 {
-		return errors.New("Error running SQL: " + errBuf.String())
-	}
-
-	doneCh <- struct{}{}
-	p.Send(PsqlMsg(nil))
-
-	return nil
 }
