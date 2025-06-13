@@ -10,7 +10,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/docker/cli/cli/compose/loader"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
 	"github.com/go-errors/errors"
@@ -158,10 +160,10 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	if watcher := runtimeOption.fileWatcher; watcher != nil {
 		var watchPaths []string
 		for _, b := range binds {
-			// Get the directory containing the path
-			hostPath := strings.Split(b, ":")[0]
-			if filepath.IsAbs(hostPath) {
-				watchPaths = append(watchPaths, hostPath)
+			if spec, err := loader.ParseVolume(b); err != nil {
+				return errors.Errorf("failed to parse docker volume: %w", err)
+			} else if spec.Type == string(mount.TypeBind) {
+				watchPaths = append(watchPaths, spec.Source)
 			}
 		}
 		if err := watcher.SetWatchPaths(watchPaths, fsys); err != nil {
