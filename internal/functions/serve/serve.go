@@ -331,9 +331,9 @@ func NewSimpleFileWatcher() fileWatcher {
 }
 
 func (w *fileWatcher) Start(ctx context.Context, fsys afero.Fs) {
-	realWatcher, err := NewFileWatcher(utils.FunctionsDir, fsys)
+	edgeWatcher, err := NewEdgeFunctionWatcher(fsys)
 	if err != nil {
-		utils.Error("Failed to create file watcher: %v\n", err)
+		utils.Error("Failed to create edge function watcher: %v\n", err)
 		utils.Warning("Press enter to reload...\n")
 		scanner := bufio.NewScanner(os.Stdin)
 		for {
@@ -347,10 +347,10 @@ func (w *fileWatcher) Start(ctx context.Context, fsys afero.Fs) {
 			}
 		}
 	}
-	defer realWatcher.Close()
+	defer edgeWatcher.Close()
 
 	// Start watching for file changes
-	restartChan, errChan := realWatcher.Watch(ctx, fsys)
+	restartChan, errChan := edgeWatcher.Watch(ctx)
 
 	for {
 		select {
@@ -359,9 +359,9 @@ func (w *fileWatcher) Start(ctx context.Context, fsys afero.Fs) {
 		case <-restartChan:
 			w.RestartCh <- struct{}{}
 		case err := <-errChan:
-			fmt.Fprintf(os.Stderr, "File watcher error: %v\n", err)
+			utils.Error("Edge function watcher error: %v\n", err)
 			// Fall back to manual reload on error
-			fmt.Fprintln(os.Stderr, "Press enter to reload...")
+			utils.Warning("Press enter to reload...\n")
 			scanner := bufio.NewScanner(os.Stdin)
 			for scanner.Scan() {
 				w.RestartCh <- struct{}{}
