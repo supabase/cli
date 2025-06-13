@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -114,25 +115,25 @@ func TestFileWatcherIntegration(t *testing.T) {
 	})
 
 	t.Run("ignores editor temporary files", func(t *testing.T) {
-		setup := NewWatcherIntegrationSetup(t)
-		defer setup.Cleanup()
-
-		functionsDir := setup.SetupFunctionsDirectory()
-		watcher, err := setup.CreateFileWatcher()
+		watcher, err := NewDebounceFileWatcher()
 		require.NoError(t, err)
 
 		// Create various temporary/editor files that should be ignored
 		go func() {
 			defer watcher.Close()
 			tempFiles := []string{
-				filepath.Join(functionsDir, "hello", "test.txt~"),       // Backup file
-				filepath.Join(functionsDir, "hello", ".test.swp"),       // Vim swap
-				filepath.Join(functionsDir, "hello", ".#test.ts"),       // Emacs lock
-				filepath.Join(functionsDir, "hello", "test.tmp"),        // Temp file
-				filepath.Join(functionsDir, "hello", "___deno_temp___"), // Deno temp
+				filepath.Join("/tmp", "test.txt~"),       // Backup file
+				filepath.Join("/tmp", ".test.swp"),       // Vim swap
+				filepath.Join("/tmp", ".#test.ts"),       // Emacs lock
+				filepath.Join("/tmp", "test.tmp"),        // Temp file
+				filepath.Join("/tmp", "___deno_temp___"), // Deno temp
 			}
 			for _, tempFile := range tempFiles {
-				require.NoError(t, os.WriteFile(tempFile, []byte("temp content"), 0600))
+				// Fire events directly since we only care about ignore files
+				watcher.watcher.Events <- fsnotify.Event{
+					Name: tempFile,
+					Op:   fsnotify.Create,
+				}
 			}
 		}()
 
