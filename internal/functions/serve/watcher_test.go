@@ -99,6 +99,8 @@ func TestFileWatcherIntegration(t *testing.T) {
 			funcFile := filepath.Join(functionsDir, "hello", "index.ts")
 			newContent := `export default () => new Response("Hello Modified World")`
 			require.NoError(t, os.WriteFile(funcFile, []byte(newContent), 0600))
+			// https://github.com/fsnotify/fsnotify/blob/main/fsnotify_test.go#L181
+			time.Sleep(50 * time.Millisecond)
 		}()
 
 		// Run watcher on main thread to avoid sleeping
@@ -168,6 +170,8 @@ func TestFileWatcherIntegration(t *testing.T) {
 				enabled = true
 				verify_jwt = false
 			`), 0600))
+			// https://github.com/fsnotify/fsnotify/blob/main/fsnotify_test.go#L181
+			time.Sleep(50 * time.Millisecond)
 		}()
 
 		// Run watcher on main thread to avoid sleeping
@@ -199,6 +203,8 @@ func TestFileWatcherIntegration(t *testing.T) {
 		for i := range 5 {
 			content := fmt.Sprintf(`export default () => new Response("Hello %d")`, i)
 			require.NoError(t, os.WriteFile(funcFile, []byte(content), 0600))
+			// https://github.com/fsnotify/fsnotify/blob/main/fsnotify_test.go#L181
+			time.Sleep(50 * time.Millisecond)
 		}
 
 		// Wait for debounce duration
@@ -242,6 +248,8 @@ func TestFileWatcherIntegration(t *testing.T) {
 			require.NoError(t, watcher.SetWatchPaths(watchPaths, fsys))
 			// Modify file in lib directory
 			require.NoError(t, os.WriteFile(utilFile, []byte(`export function util() { return "modified utility"; }`), 0600))
+			// https://github.com/fsnotify/fsnotify/blob/main/fsnotify_test.go#L181
+			time.Sleep(50 * time.Millisecond)
 		}()
 
 		// Run watcher on main thread to avoid sleeping
