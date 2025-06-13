@@ -203,8 +203,6 @@ func TestFileWatcherIntegration(t *testing.T) {
 		for i := range 5 {
 			content := fmt.Sprintf(`export default () => new Response("Hello %d")`, i)
 			require.NoError(t, os.WriteFile(funcFile, []byte(content), 0600))
-			// https://github.com/fsnotify/fsnotify/blob/main/fsnotify_test.go#L181
-			time.Sleep(50 * time.Millisecond)
 		}
 
 		// Wait for debounce duration
@@ -218,7 +216,7 @@ func TestFileWatcherIntegration(t *testing.T) {
 		select {
 		case <-watcher.RestartCh:
 			assert.Fail(t, "should only get one restart signal due to debouncing")
-		case ts, ok := <-time.After(debounceDuration):
+		case ts, ok := <-time.After(debounceDuration + 50*time.Millisecond):
 			assert.NotZero(t, ts)
 			assert.True(t, ok)
 		}
