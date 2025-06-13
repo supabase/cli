@@ -26,3 +26,10 @@ func parse(layout, value string) string {
 	}
 	return t.UTC().Format(layoutHuman)
 }
+
+func FormatRegion(region string) string {
+	if readable, ok := RegionMap[region]; ok {
+		return readable
+	}
+	return region
+}

@@ -462,22 +462,6 @@ const (
 	Bearer OAuthTokenResponseTokenType = "Bearer"
 )
 
-// Defines values for OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan.
-const (
-	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanEnterprise OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "enterprise"
-	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanFree       OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "free"
-	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanPro        OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "pro"
-	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanTeam       OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "team"
-)
-
-// Defines values for OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan.
-const (
-	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanEnterprise OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "enterprise"
-	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanFree       OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "free"
-	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanPro        OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "pro"
-	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanTeam       OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "team"
-)
-
 // Defines values for PostgresConfigResponseSessionReplicationRole.
 const (
 	PostgresConfigResponseSessionReplicationRoleLocal   PostgresConfigResponseSessionReplicationRole = "local"
@@ -705,6 +689,7 @@ const (
 	V1CreateProjectBodyDesiredInstanceSizeN48xlargeOptimizedMemory V1CreateProjectBodyDesiredInstanceSize = "48xlarge_optimized_memory"
 	V1CreateProjectBodyDesiredInstanceSizeN4xlarge                 V1CreateProjectBodyDesiredInstanceSize = "4xlarge"
 	V1CreateProjectBodyDesiredInstanceSizeN8xlarge                 V1CreateProjectBodyDesiredInstanceSize = "8xlarge"
+	V1CreateProjectBodyDesiredInstanceSizeNano                     V1CreateProjectBodyDesiredInstanceSize = "nano"
 	V1CreateProjectBodyDesiredInstanceSizePico                     V1CreateProjectBodyDesiredInstanceSize = "pico"
 	V1CreateProjectBodyDesiredInstanceSizeSmall                    V1CreateProjectBodyDesiredInstanceSize = "small"
 	V1CreateProjectBodyDesiredInstanceSizeXlarge                   V1CreateProjectBodyDesiredInstanceSize = "xlarge"
@@ -750,7 +735,9 @@ const (
 
 // Defines values for V1OrganizationSlugResponseOptInTags.
 const (
-	AISQLGENERATOROPTIN V1OrganizationSlugResponseOptInTags = "AI_SQL_GENERATOR_OPT_IN"
+	AIDATAGENERATOROPTIN V1OrganizationSlugResponseOptInTags = "AI_DATA_GENERATOR_OPT_IN"
+	AILOGGENERATOROPTIN  V1OrganizationSlugResponseOptInTags = "AI_LOG_GENERATOR_OPT_IN"
+	AISQLGENERATOROPTIN  V1OrganizationSlugResponseOptInTags = "AI_SQL_GENERATOR_OPT_IN"
 )
 
 // Defines values for V1OrganizationSlugResponsePlan.
@@ -1096,6 +1083,9 @@ type AuthConfigResponse struct {
 	ExternalZoomClientId                          nullable.Nullable[string]                                       `json:"external_zoom_client_id"`
 	ExternalZoomEnabled                           nullable.Nullable[bool]                                         `json:"external_zoom_enabled"`
 	ExternalZoomSecret                            nullable.Nullable[string]                                       `json:"external_zoom_secret"`
+	HookBeforeUserCreatedEnabled                  nullable.Nullable[bool]                                         `json:"hook_before_user_created_enabled"`
+	HookBeforeUserCreatedSecrets                  nullable.Nullable[string]                                       `json:"hook_before_user_created_secrets"`
+	HookBeforeUserCreatedUri                      nullable.Nullable[string]                                       `json:"hook_before_user_created_uri"`
 	HookCustomAccessTokenEnabled                  nullable.Nullable[bool]                                         `json:"hook_custom_access_token_enabled"`
 	HookCustomAccessTokenSecrets                  nullable.Nullable[string]                                       `json:"hook_custom_access_token_secrets"`
 	HookCustomAccessTokenUri                      nullable.Nullable[string]                                       `json:"hook_custom_access_token_uri"`
@@ -1344,15 +1334,6 @@ type CreateBranchBodyReleaseChannel string
 // CreateOrganizationV1 defines model for CreateOrganizationV1.
 type CreateOrganizationV1 struct {
 	Name string `json:"name"`
-}
-
-// CreateProjectClaimTokenResponse defines model for CreateProjectClaimTokenResponse.
-type CreateProjectClaimTokenResponse struct {
-	CreatedAt  string             `json:"created_at"`
-	CreatedBy  openapi_types.UUID `json:"created_by"`
-	ExpiresAt  string             `json:"expires_at"`
-	Token      string             `json:"token"`
-	TokenAlias string             `json:"token_alias"`
 }
 
 // CreateProviderBody defines model for CreateProviderBody.
@@ -1811,46 +1792,6 @@ type OAuthTokenResponse struct {
 // OAuthTokenResponseTokenType defines model for OAuthTokenResponse.TokenType.
 type OAuthTokenResponseTokenType string
 
-// OrganizationProjectClaimResponse defines model for OrganizationProjectClaimResponse.
-type OrganizationProjectClaimResponse struct {
-	CreatedAt string             `json:"created_at"`
-	CreatedBy openapi_types.UUID `json:"created_by"`
-	ExpiresAt string             `json:"expires_at"`
-	Preview   struct {
-		Errors []struct {
-			Key     string `json:"key"`
-			Message string `json:"message"`
-		} `json:"errors"`
-		Info []struct {
-			Key     string `json:"key"`
-			Message string `json:"message"`
-		} `json:"info"`
-		MembersExceedingFreeProjectLimit []struct {
-			Limit float32 `json:"limit"`
-			Name  string  `json:"name"`
-		} `json:"members_exceeding_free_project_limit"`
-		SourceSubscriptionPlan                OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan                    `json:"source_subscription_plan"`
-		TargetOrganizationEligible            nullable.Nullable[bool]                                                          `json:"target_organization_eligible"`
-		TargetOrganizationHasFreeProjectSlots nullable.Nullable[bool]                                                          `json:"target_organization_has_free_project_slots"`
-		TargetSubscriptionPlan                nullable.Nullable[OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan] `json:"target_subscription_plan"`
-		Valid                                 bool                                                                             `json:"valid"`
-		Warnings                              []struct {
-			Key     string `json:"key"`
-			Message string `json:"message"`
-		} `json:"warnings"`
-	} `json:"preview"`
-	Project struct {
-		Name string `json:"name"`
-		Ref  string `json:"ref"`
-	} `json:"project"`
-}
-
-// OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan defines model for OrganizationProjectClaimResponse.Preview.SourceSubscriptionPlan.
-type OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan string
-
-// OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan defines model for OrganizationProjectClaimResponse.Preview.TargetSubscriptionPlan.
-type OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan string
-
 // OrganizationResponseV1 defines model for OrganizationResponseV1.
 type OrganizationResponseV1 struct {
 	Id   string `json:"id"`
@@ -1901,14 +1842,6 @@ type PostgrestConfigWithJWTSecretResponse struct {
 	DbSchema  string                 `json:"db_schema"`
 	JwtSecret *string                `json:"jwt_secret,omitempty"`
 	MaxRows   int                    `json:"max_rows"`
-}
-
-// ProjectClaimTokenResponse defines model for ProjectClaimTokenResponse.
-type ProjectClaimTokenResponse struct {
-	CreatedAt  string             `json:"created_at"`
-	CreatedBy  openapi_types.UUID `json:"created_by"`
-	ExpiresAt  string             `json:"expires_at"`
-	TokenAlias string             `json:"token_alias"`
 }
 
 // ProjectUpgradeEligibilityResponse defines model for ProjectUpgradeEligibilityResponse.
@@ -2236,6 +2169,9 @@ type UpdateAuthConfigBody struct {
 	ExternalZoomClientId                          nullable.Nullable[string]                                         `json:"external_zoom_client_id,omitempty"`
 	ExternalZoomEnabled                           nullable.Nullable[bool]                                           `json:"external_zoom_enabled,omitempty"`
 	ExternalZoomSecret                            nullable.Nullable[string]                                         `json:"external_zoom_secret,omitempty"`
+	HookBeforeUserCreatedEnabled                  nullable.Nullable[bool]                                           `json:"hook_before_user_created_enabled,omitempty"`
+	HookBeforeUserCreatedSecrets                  nullable.Nullable[string]                                         `json:"hook_before_user_created_secrets,omitempty"`
+	HookBeforeUserCreatedUri                      nullable.Nullable[string]                                         `json:"hook_before_user_created_uri,omitempty"`
 	HookCustomAccessTokenEnabled                  nullable.Nullable[bool]                                           `json:"hook_custom_access_token_enabled,omitempty"`
 	HookCustomAccessTokenSecrets                  nullable.Nullable[string]                                         `json:"hook_custom_access_token_secrets,omitempty"`
 	HookCustomAccessTokenUri                      nullable.Nullable[string]                                         `json:"hook_custom_access_token_uri,omitempty"`
@@ -2824,6 +2760,12 @@ type V1UpdatePostgrestConfigBody struct {
 	MaxRows           *int    `json:"max_rows,omitempty"`
 }
 
+// V1UpsertMigrationBody defines model for V1UpsertMigrationBody.
+type V1UpsertMigrationBody struct {
+	Name  *string `json:"name,omitempty"`
+	Query string  `json:"query"`
+}
+
 // VanitySubdomainBody defines model for VanitySubdomainBody.
 type VanitySubdomainBody struct {
 	VanitySubdomain string `json:"vanity_subdomain"`
@@ -2837,6 +2779,11 @@ type VanitySubdomainConfigResponse struct {
 
 // VanitySubdomainConfigResponseStatus defines model for VanitySubdomainConfigResponse.Status.
 type VanitySubdomainConfigResponseStatus string
+
+// V1DiffABranchParams defines parameters for V1DiffABranch.
+type V1DiffABranchParams struct {
+	IncludedSchemas *string `form:"included_schemas,omitempty" json:"included_schemas,omitempty"`
+}
 
 // V1AuthorizeUserParams defines parameters for V1AuthorizeUser.
 type V1AuthorizeUserParams struct {
@@ -2903,6 +2850,12 @@ type UpdateApiKeyParams struct {
 
 // V1ApplyAMigrationParams defines parameters for V1ApplyAMigration.
 type V1ApplyAMigrationParams struct {
+	// IdempotencyKey A unique key to ensure the same migration is tracked only once.
+	IdempotencyKey *string `json:"Idempotency-Key,omitempty"`
+}
+
+// V1UpsertAMigrationParams defines parameters for V1UpsertAMigration.
+type V1UpsertAMigrationParams struct {
 	// IdempotencyKey A unique key to ensure the same migration is tracked only once.
 	IdempotencyKey *string `json:"Idempotency-Key,omitempty"`
 }
@@ -3052,6 +3005,9 @@ type V1RestorePitrBackupJSONRequestBody = V1RestorePitrBody
 
 // V1ApplyAMigrationJSONRequestBody defines body for V1ApplyAMigration for application/json ContentType.
 type V1ApplyAMigrationJSONRequestBody = V1CreateMigrationBody
+
+// V1UpsertAMigrationJSONRequestBody defines body for V1UpsertAMigration for application/json ContentType.
+type V1UpsertAMigrationJSONRequestBody = V1UpsertMigrationBody
 
 // V1RunAQueryJSONRequestBody defines body for V1RunAQuery for application/json ContentType.
 type V1RunAQueryJSONRequestBody = V1RunQueryBody

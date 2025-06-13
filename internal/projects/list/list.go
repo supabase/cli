@@ -53,7 +53,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 				project.OrganizationId,
 				project.Id,
 				strings.ReplaceAll(project.Name, "|", "\\|"),
-				formatRegion(project.Region),
+				utils.FormatRegion(project.Region),
 				utils.FormatTimestamp(project.CreatedAt),
 			)
 		}
@@ -76,11 +76,4 @@ func formatBullet(value bool) string {
 		return "  ●"
 	}
 	return " "
-}
-
-func formatRegion(region string) string {
-	if readable, ok := utils.RegionMap[region]; ok {
-		return readable
-	}
-	return region
 }

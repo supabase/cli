@@ -10,11 +10,14 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"strings"
 
+	"github.com/andybalholm/brotli"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
@@ -121,11 +124,13 @@ func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bo
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err := fsys.Remove(eszipPath); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
+	if !viper.GetBool("DEBUG") {
+		defer func() {
+			if err := fsys.Remove(eszipPath); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+			}
+		}()
+	}
 	// Extract eszip to functions directory
 	err = extractOne(ctx, slug, eszipPath)
 	if err != nil {
@@ -148,12 +153,16 @@ func downloadOne(ctx context.Context, slug, projectRef string, fsys afero.Fs) (s
 		}
 		return "", errors.Errorf("Error status %d: %s", resp.StatusCode, string(body))
 	}
+	r := io.Reader(resp.Body)
+	if strings.EqualFold(resp.Header.Get("Content-Encoding"), "br") {
+		r = brotli.NewReader(resp.Body)
+	}
 	// Create temp file to store downloaded eszip
 	eszipPath := filepath.Join(utils.TempDir, fmt.Sprintf("output_%s.eszip", slug))
 	if err := utils.MkdirIfNotExistFS(fsys, utils.TempDir); err != nil {
 		return "", err
 	}
-	if err := afero.WriteReader(fsys, eszipPath, resp.Body); err != nil {
+	if err := afero.WriteReader(fsys, eszipPath, r); err != nil {
 		return "", errors.Errorf("failed to download file: %w", err)
 	}
 	return eszipPath, nil

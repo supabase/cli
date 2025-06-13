@@ -165,7 +165,9 @@ sinks:
     method: "post"
     request:
       retry_max_duration_secs: 10
-    uri: "http://{{ .LogflareId }}:4000/api/logs?source_name=gotrue.logs.prod&api_key={{ .ApiKey }}"
+      headers:
+        x-api-key: "{{ .ApiKey }}"
+    uri: "http://{{ .LogflareId }}:4000/api/logs?source_name=gotrue.logs.prod"
   logflare_realtime:
     type: "http"
     inputs:
@@ -175,7 +177,9 @@ sinks:
     method: "post"
     request:
       retry_max_duration_secs: 10
-    uri: "http://{{ .LogflareId }}:4000/api/logs?source_name=realtime.logs.prod&api_key={{ .ApiKey }}"
+      headers:
+        x-api-key: "{{ .ApiKey }}"
+    uri: "http://{{ .LogflareId }}:4000/api/logs?source_name=realtime.logs.prod"
   logflare_rest:
     type: "http"
     inputs:
@@ -185,7 +189,9 @@ sinks:
     method: "post"
     request:
       retry_max_duration_secs: 10
-    uri: "http://{{ .LogflareId }}:4000/api/logs?source_name=postgREST.logs.prod&api_key={{ .ApiKey }}"
+      headers:
+        x-api-key: "{{ .ApiKey }}"
+    uri: "http://{{ .LogflareId }}:4000/api/logs?source_name=postgREST.logs.prod"
   logflare_db:
     type: "http"
     inputs:
@@ -195,7 +201,9 @@ sinks:
     method: "post"
     request:
       retry_max_duration_secs: 10
-    uri: "http://{{ .LogflareId }}:4000/api/logs?source_name=postgres.logs&api_key={{ .ApiKey }}"
+      headers:
+        x-api-key: "{{ .ApiKey }}"
+    uri: "http://{{ .LogflareId }}:4000/api/logs?source_name=postgres.logs"
   logflare_functions:
     type: "http"
     inputs:
@@ -205,7 +213,9 @@ sinks:
     method: "post"
     request:
       retry_max_duration_secs: 10
-    uri: "http://{{ .LogflareId }}:4000/api/logs?source_name=deno-relay-logs&api_key={{ .ApiKey }}"
+      headers:
+        x-api-key: "{{ .ApiKey }}"
+    uri: "http://{{ .LogflareId }}:4000/api/logs?source_name=deno-relay-logs"
   logflare_storage:
     type: "http"
     inputs:
@@ -215,7 +225,9 @@ sinks:
     method: "post"
     request:
       retry_max_duration_secs: 10
-    uri: "http://{{ .LogflareId }}:4000/api/logs?source_name=storage.logs.prod.2&api_key={{ .ApiKey }}"
+      headers:
+        x-api-key: "{{ .ApiKey }}"
+    uri: "http://{{ .LogflareId }}:4000/api/logs?source_name=storage.logs.prod.2"
   logflare_kong:
     type: "http"
     inputs:
@@ -226,4 +238,6 @@ sinks:
     method: "post"
     request:
       retry_max_duration_secs: 10
-    uri: "http://{{ .LogflareId }}:4000/api/logs?source_name=cloudflare.logs.prod&api_key={{ .ApiKey }}"
+      headers:
+        x-api-key: "{{ .ApiKey }}"
+    uri: "http://{{ .LogflareId }}:4000/api/logs?source_name=cloudflare.logs.prod"

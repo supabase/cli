@@ -11,14 +11,21 @@ import (
 )
 
 func MigrateAndSeed(ctx context.Context, version string, conn *pgx.Conn, fsys afero.Fs) error {
+	if err := applyMigrationFiles(ctx, version, conn, fsys); err != nil {
+		return err
+	}
+	return applySeedFiles(ctx, conn, fsys)
+}
+
+func applyMigrationFiles(ctx context.Context, version string, conn *pgx.Conn, fsys afero.Fs) error {
+	if !utils.Config.Db.Migrations.Enabled {
+		return nil
+	}
 	migrations, err := list.LoadPartialMigrations(version, fsys)
 	if err != nil {
 		return err
 	}
-	if err := migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys)); err != nil {
-		return err
-	}
-	return applySeedFiles(ctx, conn, fsys)
+	return migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys))
 }
 
 func applySeedFiles(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {

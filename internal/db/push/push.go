@@ -26,8 +26,10 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 		return err
 	}
 	defer conn.Close(context.Background())
-	pending, err := up.GetPendingMigrations(ctx, ignoreVersionMismatch, conn, fsys)
-	if err != nil {
+	var pending []string
+	if !utils.Config.Db.Migrations.Enabled {
+		fmt.Fprintln(os.Stderr, "Skipping migrations because it is disabled in config.toml for project:", flags.ProjectRef)
+	} else if pending, err = up.GetPendingMigrations(ctx, ignoreVersionMismatch, conn, fsys); err != nil {
 		return err
 	}
 	var seeds []migration.SeedFile

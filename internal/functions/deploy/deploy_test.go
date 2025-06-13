@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,6 +27,11 @@ func TestDeployCommand(t *testing.T) {
 	const containerId = "test-container"
 	imageUrl := utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image)
 
+	parsed, err := url.Parse(utils.Docker.DaemonHost())
+	require.NoError(t, err)
+	parsed.Scheme = "http:"
+	dockerHost := parsed.String()
+
 	t.Run("deploys multiple functions", func(t *testing.T) {
 		functions := []string{slug, slug + "-2"}
 		// Setup in-memory fs
@@ -39,6 +45,9 @@ func TestDeployCommand(t *testing.T) {
 		require.NoError(t, err)
 		// Setup mock api
 		defer gock.OffAll()
+		gock.New(dockerHost).
+			Head("/_ping").
+			Reply(http.StatusOK)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + flags.ProjectRef + "/functions").
 			Reply(http.StatusOK).
@@ -99,6 +108,9 @@ import_map = "./import_map.json"
 		require.NoError(t, err)
 		// Setup mock api
 		defer gock.OffAll()
+		gock.New(dockerHost).
+			Head("/_ping").
+			Reply(http.StatusOK)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + flags.ProjectRef + "/functions").
 			Reply(http.StatusOK).
@@ -151,6 +163,9 @@ import_map = "./import_map.json"
 		require.NoError(t, err)
 		// Setup mock api
 		defer gock.OffAll()
+		gock.New(dockerHost).
+			Head("/_ping").
+			Reply(http.StatusOK)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + flags.ProjectRef + "/functions").
 			Reply(http.StatusOK).
@@ -214,6 +229,9 @@ verify_jwt = false
 		require.NoError(t, err)
 		// Setup mock api
 		defer gock.OffAll()
+		gock.New(dockerHost).
+			Head("/_ping").
+			Reply(http.StatusOK)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + flags.ProjectRef + "/functions").
 			Reply(http.StatusOK).
@@ -257,6 +275,9 @@ verify_jwt = false
 		require.NoError(t, err)
 		// Setup mock api
 		defer gock.OffAll()
+		gock.New(dockerHost).
+			Head("/_ping").
+			Reply(http.StatusOK)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + flags.ProjectRef + "/functions").
 			Reply(http.StatusOK).

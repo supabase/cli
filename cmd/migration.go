@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/migration/down"
 	"github.com/supabase/cli/internal/migration/fetch"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/new"
@@ -90,6 +91,17 @@ var (
 		},
 	}
 
+	nLastVersion uint
+
+	migrationDownCmd = &cobra.Command{
+		Use:   "down",
+		Short: "Resets applied migrations up to the last n versions",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return down.Run(cmd.Context(), nLastVersion, flags.DbConfig, afero.NewOsFs())
+		},
+	}
+
 	migrationFetchCmd = &cobra.Command{
 		Use:   "fetch",
 		Short: "Fetch migration files from history table",
@@ -141,6 +153,13 @@ func init() {
 	upFlags.Bool("local", true, "Applies pending migrations to the local database.")
 	migrationUpCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	migrationCmd.AddCommand(migrationUpCmd)
+	downFlags := migrationDownCmd.Flags()
+	downFlags.UintVar(&nLastVersion, "last", 1, "Reset up to the last n migration versions.")
+	downFlags.String("db-url", "", "Resets applied migrations on the database specified by the connection string (must be percent-encoded).")
+	downFlags.Bool("linked", false, "Resets applied migrations on the linked project.")
+	downFlags.Bool("local", true, "Resets applied migrations on the local database.")
+	migrationDownCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
+	migrationCmd.AddCommand(migrationDownCmd)
 	// Build up command
 	fetchFlags := migrationFetchCmd.Flags()
 	fetchFlags.String("db-url", "", "Fetches migrations from the database specified by the connection string (must be percent-encoded).")

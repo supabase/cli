@@ -96,7 +96,7 @@ func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, o
 		return err
 	}
 	// Assuming entities in managed schemas are not altered, we can simply diff the dumps before and after migrations.
-	schemas := []string{"auth", "storage"}
+	opt := migration.WithSchema("auth", "storage")
 	config := pgconn.Config{
 		Host:     utils.Config.Hostname,
 		Port:     utils.Config.Db.ShadowPort,
@@ -105,14 +105,14 @@ func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, o
 		Database: "postgres",
 	}
 	var before, after bytes.Buffer
-	if err := dump.DumpSchema(ctx, config, schemas, false, false, &before); err != nil {
+	if err := migration.DumpSchema(ctx, config, &before, dump.DockerExec, opt); err != nil {
 		return err
 	}
 	// 2. Migrate to target version
 	if err := migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys)); err != nil {
 		return err
 	}
-	if err := dump.DumpSchema(ctx, config, schemas, false, false, &after); err != nil {
+	if err := migration.DumpSchema(ctx, config, &after, dump.DockerExec, opt); err != nil {
 		return err
 	}
 	// 3. Dump migrated schema
@@ -122,7 +122,7 @@ func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, o
 		return errors.Errorf("failed to open migration file: %w", err)
 	}
 	defer f.Close()
-	if err := dump.DumpSchema(ctx, config, nil, false, false, f); err != nil {
+	if err := migration.DumpSchema(ctx, config, f, dump.DockerExec); err != nil {
 		return err
 	}
 	// 4. Append managed schema diffs
