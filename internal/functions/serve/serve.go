@@ -86,15 +86,29 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 		})
 	}()
 
-	if err := restartEdgeRuntime(ctx, envFilePath, noVerifyJWT, importMapPath, runtimeOption, fsys); err != nil {
-		return err
-	}
-
 	watcher := NewSimpleFileWatcher()
 	go watcher.Start(ctx, fsys)
 
-	streamer := NewLogStreamer()
-	go streamer.Start(ctx)
+	var streamer logStreamer
+	var streamerStarted bool
+
+	// Function to start/restart both runtime and streamer
+	startServices := func() error {
+		if err := restartEdgeRuntime(ctx, envFilePath, noVerifyJWT, importMapPath, runtimeOption, fsys); err != nil {
+			return err
+		}
+
+		// Start log streamer after container is running
+		streamer = NewLogStreamer()
+		go streamer.Start(ctx)
+		streamerStarted = true
+		return nil
+	}
+
+	// Initial start
+	if err := startServices(); err != nil {
+		return err
+	}
 
 	for {
 		select {
@@ -102,11 +116,13 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 			fmt.Println("Stopped serving " + utils.Bold(utils.FunctionsDir))
 			return ctx.Err()
 		case <-watcher.RestartCh:
-			if err := restartEdgeRuntime(ctx, envFilePath, noVerifyJWT, importMapPath, runtimeOption, fsys); err != nil {
+			if err := startServices(); err != nil {
 				return err
 			}
 		case err := <-streamer.ErrCh:
-			return err
+			if streamerStarted {
+				return err
+			}
 		}
 	}
 }
