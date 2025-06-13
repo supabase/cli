@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"bufio"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
@@ -76,130 +78,37 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 		return err
 	}
 
-	fileWatcher, err := NewFileWatcher(utils.FunctionsDir, fsys)
-	if err != nil {
+	// Ensure cleanup on exit
+	defer func() {
+		_ = utils.Docker.ContainerRemove(context.Background(), utils.EdgeRuntimeId, container.RemoveOptions{
+			RemoveVolumes: true,
+			Force:         true,
+		})
+	}()
+
+	if err := restartEdgeRuntime(ctx, envFilePath, noVerifyJWT, importMapPath, runtimeOption, fsys); err != nil {
 		return err
 	}
-	defer fileWatcher.Close()
 
-	// Start watching for file changes
-	restartChan, watcherErrChan := fileWatcher.Watch(ctx, fsys)
+	watcher := NewSimpleFileWatcher()
+	go watcher.Start(ctx, fsys)
 
-	errChan := make(chan error, 1)
+	streamer := NewLogStreamer()
+	go streamer.Start(ctx)
 
 	for {
 		select {
 		case <-ctx.Done():
-			utils.Info(0, "Stopping functions server...\n")
-			// 2. Remove existing container if any.
-			_ = utils.Docker.ContainerRemove(context.Background(), utils.EdgeRuntimeId, container.RemoveOptions{
-				RemoveVolumes: true,
-				Force:         true,
-			})
+			fmt.Println("Stopped serving " + utils.Bold(utils.FunctionsDir))
 			return ctx.Err()
-		default:
-			// Reload config.toml file in case functions settings has been changed
-			if err := flags.LoadConfig(fsys); err != nil {
-				return errors.Errorf("Failed to reload config: %w", err)
-			}
-
-			// Use network alias because Deno cannot resolve `_` in hostname
-			dbUrl := fmt.Sprintf("postgresql://postgres:postgres@%s:5432/postgres", utils.DbAliases[0])
-
-			serviceCancel, logsDone, err := manageFunctionServices(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys, errChan)
-			if err != nil {
+		case <-watcher.RestartCh:
+			if err := restartEdgeRuntime(ctx, envFilePath, noVerifyJWT, importMapPath, runtimeOption, fsys); err != nil {
 				return err
 			}
-
-			select {
-			case <-restartChan:
-				utils.Info(1, "Reloading Edge Functions due to file changes...")
-				if serviceCancel != nil {
-					serviceCancel()
-				}
-				<-logsDone
-				continue
-			case err := <-watcherErrChan:
-				if serviceCancel != nil {
-					serviceCancel()
-				}
-				<-logsDone
-				_ = utils.Docker.ContainerRemove(context.Background(), utils.EdgeRuntimeId, container.RemoveOptions{Force: true})
-				return fmt.Errorf("file watcher error: %w", err)
-			case err := <-errChan:
-				if serviceCancel != nil {
-					serviceCancel()
-				}
-				<-logsDone
-				_ = utils.Docker.ContainerRemove(context.Background(), utils.EdgeRuntimeId, container.RemoveOptions{Force: true})
-				return err
-			case <-ctx.Done():
-				utils.Info(0, "Stopping functions server (received done signal during active service)...\n")
-				if serviceCancel != nil {
-					serviceCancel()
-				}
-				<-logsDone
-				_ = utils.Docker.ContainerRemove(context.Background(), utils.EdgeRuntimeId, container.RemoveOptions{
-					RemoveVolumes: true,
-					Force:         true,
-				})
-				return ctx.Err()
-			}
+		case err := <-streamer.ErrCh:
+			return err
 		}
 	}
-}
-
-// manageFunctionServices handles the lifecycle of serving functions and streaming logs.
-// It returns a context cancellation function for the log streaming and a channel that closes when log streaming is done.
-func manageFunctionServices(
-	ctx context.Context,
-	envFilePath string,
-	noVerifyJWT *bool,
-	importMapPath string,
-	dbUrl string,
-	runtimeOption RuntimeOption,
-	fsys afero.Fs,
-	errChan chan<- error,
-) (context.CancelFunc, <-chan struct{}, error) {
-	// Remove existing container before starting a new one.
-	if err := utils.Docker.ContainerRemove(context.Background(), utils.EdgeRuntimeId, container.RemoveOptions{
-		RemoveVolumes: true,
-		Force:         true,
-	}); err != nil {
-		utils.Warning("Failed to remove existing Edge Runtime container before start: %v\n", err)
-	}
-
-	utils.Info(0, "Setting up Edge Functions runtime...\n")
-	// Create a new context for ServeFunctions and DockerStreamLogs that can be cancelled independently for restarts.
-	serviceCtx, serviceCancel := context.WithCancel(ctx)
-
-	if err := ServeFunctions(serviceCtx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys); err != nil {
-		// Clean up the context if ServeFunctions fails
-		serviceCancel()
-		return nil, nil, errors.Errorf("Failed to serve functions: %w", err)
-	}
-
-	utils.Info(0, "Edge Functions runtime is ready.\n")
-
-	// To signal completion of log streaming
-	logsDone := make(chan struct{})
-	go func() {
-		defer close(logsDone)
-		// Ensure cancel is called if DockerStreamLogs returns or panics
-		defer serviceCancel()
-
-		if logErr := utils.DockerStreamLogs(serviceCtx, utils.EdgeRuntimeId, os.Stdout, os.Stderr); logErr != nil {
-			if !errors.Is(logErr, context.Canceled) && !strings.Contains(logErr.Error(), "context canceled") {
-				select {
-				case errChan <- errors.Errorf("Docker log streaming error: %w", logErr):
-				default: // Avoid blocking if errChan is full
-					utils.Error("Error channel full, dropping Docker log streaming error: %v", logErr)
-				}
-			}
-		}
-	}()
-
-	return serviceCancel, logsDone, nil
 }
 
 func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, runtimeOption RuntimeOption, fsys afero.Fs) error {
@@ -346,4 +255,102 @@ func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 		return nil, "", errors.Errorf("failed to marshal config json: %w", err)
 	}
 	return utils.RemoveDuplicates(binds), string(functionsConfigBytes), nil
+}
+
+func restartEdgeRuntime(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
+	// Reload config.toml file in case functions settings has been changed
+	if err := flags.LoadConfig(fsys); err != nil {
+		return errors.Errorf("Failed to reload config: %w", err)
+	}
+
+	// Remove existing container before starting a new one.
+	if err := utils.Docker.ContainerRemove(context.Background(), utils.EdgeRuntimeId, container.RemoveOptions{
+		RemoveVolumes: true,
+		Force:         true,
+	}); err != nil {
+		utils.Warning("Failed to remove existing Edge Runtime container before start: %v\n", err)
+	}
+
+	// Use network alias because Deno cannot resolve `_` in hostname
+	dbUrl := fmt.Sprintf("postgresql://postgres:postgres@%s:5432/postgres", utils.DbAliases[0])
+
+	utils.Info(0, "Setting up Edge Functions runtime...\n")
+	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys); err != nil {
+		return errors.Errorf("Failed to serve functions: %w", err)
+	}
+
+	utils.Info(0, "Edge Functions runtime is ready.\n")
+	return nil
+}
+
+type logStreamer struct {
+	ErrCh chan error
+}
+
+func NewLogStreamer() logStreamer {
+	return logStreamer{
+		ErrCh: make(chan error, 1),
+	}
+}
+
+func (s *logStreamer) Start(ctx context.Context) {
+	// Stream logs from the edge runtime container
+	if err := utils.DockerStreamLogs(ctx, utils.EdgeRuntimeId, os.Stdout, os.Stderr); err != nil &&
+		!errdefs.IsNotFound(err) &&
+		!strings.HasSuffix(err.Error(), "exit 137") &&
+		!strings.HasSuffix(err.Error(), "can not get logs from container which is dead or marked for removal") {
+		s.ErrCh <- err
+		return
+	}
+}
+
+type fileWatcher struct {
+	RestartCh chan struct{}
+}
+
+func NewSimpleFileWatcher() fileWatcher {
+	return fileWatcher{
+		RestartCh: make(chan struct{}, 1),
+	}
+}
+
+func (w *fileWatcher) Start(ctx context.Context, fsys afero.Fs) {
+	realWatcher, err := NewFileWatcher(utils.FunctionsDir, fsys)
+	if err != nil {
+		utils.Error("Failed to create file watcher: %v\n", err)
+		utils.Warning("Press enter to reload...\n")
+		scanner := bufio.NewScanner(os.Stdin)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				if scanner.Scan() {
+					w.RestartCh <- struct{}{}
+				}
+			}
+		}
+	}
+	defer realWatcher.Close()
+
+	// Start watching for file changes
+	restartChan, errChan := realWatcher.Watch(ctx, fsys)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-restartChan:
+			w.RestartCh <- struct{}{}
+		case err := <-errChan:
+			fmt.Fprintf(os.Stderr, "File watcher error: %v\n", err)
+			// Fall back to manual reload on error
+			fmt.Fprintln(os.Stderr, "Press enter to reload...")
+			scanner := bufio.NewScanner(os.Stdin)
+			for scanner.Scan() {
+				w.RestartCh <- struct{}{}
+			}
+			return
+		}
+	}
 }
