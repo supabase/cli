@@ -75,7 +75,7 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 	if err != nil {
 		return err
 	}
-	go watcher.Start(ctx)
+	go watcher.Start()
 	defer watcher.Close()
 	// TODO: refactor this to edge runtime service
 	runtimeOption.fileWatcher = watcher
