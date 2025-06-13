@@ -89,31 +89,27 @@ func TestFileWatcherIntegration(t *testing.T) {
 		defer setup.Cleanup()
 
 		functionsDir := setup.SetupFunctionsDirectory()
-
 		watcher, err := setup.CreateFileWatcher()
 		require.NoError(t, err)
-		defer watcher.Close()
 
-		// Start the watcher
-		ctx, cancel := context.WithTimeout(setup.Context, 5*time.Second)
-		defer cancel()
+		// Modify a function file in background
+		go func() {
+			defer watcher.Close()
+			funcFile := filepath.Join(functionsDir, "hello", "index.ts")
+			newContent := `export default () => new Response("Hello Modified World")`
+			require.NoError(t, os.WriteFile(funcFile, []byte(newContent), 0600))
+		}()
 
-		go watcher.Start(ctx)
-
-		// Give watcher time to initialize
-		time.Sleep(100 * time.Millisecond)
-
-		// Modify a function file
-		funcFile := filepath.Join(functionsDir, "hello", "index.ts")
-		newContent := `export default () => new Response("Hello Modified World")`
-		require.NoError(t, os.WriteFile(funcFile, []byte(newContent), 0600))
+		// Run watcher on main thread to avoid sleeping
+		watcher.Start()
 
 		// Wait for restart signal
 		select {
-		case <-watcher.RestartCh:
-			// Expected - file change should trigger restart
+		case ts, ok := <-watcher.RestartCh:
+			assert.NotZero(t, ts, "file change should trigger restart")
+			assert.True(t, ok, "timer channel should be closed")
 		case <-time.After(2 * time.Second):
-			t.Error("Expected restart signal after modifying TypeScript file")
+			assert.Fail(t, "missing restart signal after modifying TypeScript file")
 		}
 	})
 
@@ -122,42 +118,35 @@ func TestFileWatcherIntegration(t *testing.T) {
 		defer setup.Cleanup()
 
 		functionsDir := setup.SetupFunctionsDirectory()
-
 		watcher, err := setup.CreateFileWatcher()
 		require.NoError(t, err)
-		defer watcher.Close()
-
-		ctx, cancel := context.WithTimeout(setup.Context, 3*time.Second)
-		defer cancel()
-
-		go watcher.Start(ctx)
-
-		// Give watcher time to initialize
-		time.Sleep(100 * time.Millisecond)
 
 		// Create various temporary/editor files that should be ignored
-		tempFiles := []string{
-			filepath.Join(functionsDir, "hello", "test.txt~"),       // Backup file
-			filepath.Join(functionsDir, "hello", ".test.swp"),       // Vim swap
-			filepath.Join(functionsDir, "hello", ".#test.ts"),       // Emacs lock
-			filepath.Join(functionsDir, "hello", "test.tmp"),        // Temp file
-			filepath.Join(functionsDir, "hello", "___deno_temp___"), // Deno temp
-		}
+		go func() {
+			defer watcher.Close()
+			tempFiles := []string{
+				filepath.Join(functionsDir, "hello", "test.txt~"),       // Backup file
+				filepath.Join(functionsDir, "hello", ".test.swp"),       // Vim swap
+				filepath.Join(functionsDir, "hello", ".#test.ts"),       // Emacs lock
+				filepath.Join(functionsDir, "hello", "test.tmp"),        // Temp file
+				filepath.Join(functionsDir, "hello", "___deno_temp___"), // Deno temp
+			}
+			for _, tempFile := range tempFiles {
+				require.NoError(t, os.WriteFile(tempFile, []byte("temp content"), 0600))
+			}
+		}()
 
-		for _, tempFile := range tempFiles {
-			require.NoError(t, os.WriteFile(tempFile, []byte("temp content"), 0600))
-			time.Sleep(50 * time.Millisecond)
-		}
+		// Run watcher on main thread to avoid sleeping
+		watcher.Start()
 
-		// Wait for debounce period
-		time.Sleep(600 * time.Millisecond)
-
-		// Should not receive any restart signals from ignored files
-		select {
-		case <-watcher.RestartCh:
-			t.Error("Received unexpected restart signal from ignored files")
-		case <-time.After(100 * time.Millisecond):
-			// Expected - no restart for ignored files
+		// Wait multiple times for out of order events
+		for range 3 {
+			select {
+			case <-watcher.RestartCh:
+				assert.Fail(t, "should not receive any restart signals from ignored files")
+			case err := <-watcher.ErrCh:
+				assert.NoError(t, err)
+			}
 		}
 	})
 
@@ -166,56 +155,30 @@ func TestFileWatcherIntegration(t *testing.T) {
 		defer setup.Cleanup()
 
 		supabaseDir := setup.SetupSupabaseDirectory()
-
 		watcher, err := setup.CreateFileWatcher()
 		require.NoError(t, err)
-		defer watcher.Close()
-
-		ctx, cancel := context.WithTimeout(setup.Context, 3*time.Second)
-		defer cancel()
-
-		go watcher.Start(ctx)
-
-		// Give watcher time to initialize
-		time.Sleep(100 * time.Millisecond)
 
 		// Create and modify a config.toml file
-		configFile := filepath.Join(supabaseDir, "config.toml")
-		configContent := `[functions.hello]
-enabled = true
-verify_jwt = false`
-		require.NoError(t, os.WriteFile(configFile, []byte(configContent), 0600))
+		go func() {
+			defer watcher.Close()
+			configFile := filepath.Join(supabaseDir, "config.toml")
+			require.NoError(t, os.WriteFile(configFile, []byte(`
+				[functions.hello]
+				enabled = true
+				verify_jwt = false
+			`), 0600))
+		}()
+
+		// Run watcher on main thread to avoid sleeping
+		watcher.Start()
 
 		// Wait for restart signal
 		select {
-		case <-watcher.RestartCh:
-			// Expected - config change should trigger restart
+		case ts, ok := <-watcher.RestartCh:
+			assert.NotZero(t, ts, "config change should trigger restart")
+			assert.True(t, ok, "timer channel should be closed")
 		case <-time.After(2 * time.Second):
-			t.Error("Expected restart signal after modifying config file")
-		}
-	})
-
-	t.Run("handles file watcher errors gracefully", func(t *testing.T) {
-		setup := NewWatcherIntegrationSetup(t)
-		defer setup.Cleanup()
-
-		watcher, err := setup.CreateFileWatcher()
-		require.NoError(t, err)
-		defer watcher.Close()
-
-		ctx, cancel := context.WithTimeout(setup.Context, 1*time.Second)
-		defer cancel()
-
-		// Start watcher
-		go watcher.Start(ctx)
-
-		// Monitor for errors
-		select {
-		case err := <-watcher.ErrCh:
-			// If we get an error, it should be handled gracefully
-			t.Logf("Watcher error (handled gracefully): %v", err)
-		case <-ctx.Done():
-			// Expected - timeout without critical errors
+			assert.Fail(t, "missing restart signal after modifying config file")
 		}
 	})
 
@@ -224,45 +187,34 @@ verify_jwt = false`
 		defer setup.Cleanup()
 
 		functionsDir := setup.SetupFunctionsDirectory()
-
 		watcher, err := setup.CreateFileWatcher()
 		require.NoError(t, err)
 		defer watcher.Close()
 
-		ctx, cancel := context.WithTimeout(setup.Context, 5*time.Second)
-		defer cancel()
-
-		go watcher.Start(ctx)
-
-		// Give watcher time to initialize
-		time.Sleep(100 * time.Millisecond)
+		go watcher.Start()
 
 		// Make rapid changes to a file
 		funcFile := filepath.Join(functionsDir, "hello", "index.ts")
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			content := fmt.Sprintf(`export default () => new Response("Hello %d")`, i)
 			require.NoError(t, os.WriteFile(funcFile, []byte(content), 0600))
-			time.Sleep(50 * time.Millisecond) // Less than debounce duration
 		}
 
-		// Should only get one restart signal due to debouncing
-		restartCount := 0
-		timeout := time.After(1 * time.Second)
-
-		for {
-			select {
-			case <-watcher.RestartCh:
-				restartCount++
-				// Continue to see if more signals come through
-			case <-timeout:
-				// Done counting
-				goto done
-			}
+		// Wait for debounce duration
+		select {
+		case ts, ok := <-watcher.RestartCh:
+			assert.NotZero(t, ts)
+			assert.True(t, ok)
+		case <-time.After(debounceDuration):
+			assert.Fail(t, "missing restart signal after rapid file changes")
 		}
-
-	done:
-		// Should have only one restart signal due to debouncing
-		assert.Equal(t, 1, restartCount, "Expected exactly one restart signal due to debouncing")
+		select {
+		case <-watcher.RestartCh:
+			assert.Fail(t, "should only get one restart signal due to debouncing")
+		case ts, ok := <-time.After(debounceDuration):
+			assert.NotZero(t, ts)
+			assert.True(t, ok)
+		}
 	})
 
 	t.Run("watches multiple directories", func(t *testing.T) {
@@ -280,53 +232,27 @@ verify_jwt = false`
 
 		watcher, err := NewDebounceFileWatcher()
 		require.NoError(t, err)
-		defer watcher.Close()
 
-		// Set up watch paths to include both directories
-		fsys := afero.NewOsFs()
-		watchPaths := []string{functionsDir, libDir}
-		require.NoError(t, watcher.SetWatchPaths(watchPaths, fsys))
+		go func() {
+			defer watcher.Close()
+			// Set up watch paths to include both directories
+			fsys := afero.NewOsFs()
+			watchPaths := []string{functionsDir, libDir}
+			require.NoError(t, watcher.SetWatchPaths(watchPaths, fsys))
+			// Modify file in lib directory
+			require.NoError(t, os.WriteFile(utilFile, []byte(`export function util() { return "modified utility"; }`), 0600))
+		}()
 
-		ctx, cancel := context.WithTimeout(setup.Context, 3*time.Second)
-		defer cancel()
-
-		go watcher.Start(ctx)
-
-		// Give watcher time to initialize
-		time.Sleep(100 * time.Millisecond)
-
-		// Modify file in lib directory
-		require.NoError(t, os.WriteFile(utilFile, []byte(`export function util() { return "modified utility"; }`), 0600))
+		// Run watcher on main thread to avoid sleeping
+		watcher.Start()
 
 		// Wait for restart signal
 		select {
-		case <-watcher.RestartCh:
-			// Expected - change in watched lib directory should trigger restart
+		case ts, ok := <-watcher.RestartCh:
+			assert.NotZero(t, ts, "change in watched lib directory should trigger restart")
+			assert.True(t, ok, "timer channel should be closed")
 		case <-time.After(2 * time.Second):
-			t.Error("Expected restart signal after modifying file in watched lib directory")
+			assert.Fail(t, "missing restart signal after modifying file in watched lib directory")
 		}
-	})
-
-	t.Run("stops watching when context is cancelled", func(t *testing.T) {
-		setup := NewWatcherIntegrationSetup(t)
-		defer setup.Cleanup()
-
-		setup.SetupFunctionsDirectory()
-
-		watcher, err := setup.CreateFileWatcher()
-		require.NoError(t, err)
-		defer watcher.Close()
-
-		ctx, cancel := context.WithTimeout(setup.Context, 500*time.Millisecond)
-		defer cancel()
-
-		// Start watcher - it should respect context cancellation
-		go watcher.Start(ctx)
-
-		// Wait for context to be cancelled
-		<-ctx.Done()
-
-		// Watcher should have stopped gracefully
-		// This test mainly ensures no goroutine leaks or panics occur
 	})
 }
