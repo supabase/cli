@@ -48,6 +48,7 @@ const DENO_SB_ERROR_MAP = new Map([
     SB_SPECIFIC_ERROR_CODE.WorkerLimit,
   ],
 ]);
+const GENERIC_FUNCTION_SERVE_MESSAGE = `Serving functions on http://127.0.0.1:${HOST_PORT}/functions/v1/<function-name>`
 
 interface FunctionConfig {
   entrypointPath: string;
@@ -228,9 +229,36 @@ Deno.serve({
   },
 
   onListen: () => {
-    console.log(
-      `Serving functions on http://127.0.0.1:${HOST_PORT}/functions/v1/<function-name>\nUsing ${Deno.version.deno}`,
-    );
+    try {
+      const functionsConfigString = Deno.env.get(
+        "SUPABASE_INTERNAL_FUNCTIONS_CONFIG"
+      );
+      if (functionsConfigString) {
+        const MAX_FUNCTIONS_URL_EXAMPLES = 5
+        const functionsConfig = JSON.parse(functionsConfigString) as Record<
+          string,
+          unknown
+        >;
+        const functionNames = Object.keys(functionsConfig);
+        const exampleFunctions = functionNames.slice(0, MAX_FUNCTIONS_URL_EXAMPLES);
+        const functionsUrls = exampleFunctions.map(
+          (fname) => ` - http://127.0.0.1:${HOST_PORT}/functions/v1/${fname}`
+        );
+        const functionsExamplesMessages = functionNames.length > 0
+          // Show some functions urls examples
+          ? `\n${functionsUrls.join(`\n`)}${functionNames.length > MAX_FUNCTIONS_URL_EXAMPLES
+            // If we have more than 10 functions to serve, then show examples for first 10
+            // and a count for the remaining ones
+            ? `\n... and ${functionNames.length - MAX_FUNCTIONS_URL_EXAMPLES} more functions`
+            : ''}`
+          : ''
+        console.log(`${GENERIC_FUNCTION_SERVE_MESSAGE}${functionsExamplesMessages}\nUsing ${Deno.version.deno}`);
+      }
+    } catch (e) {
+      console.log(
+        `${GENERIC_FUNCTION_SERVE_MESSAGE}\nUsing ${Deno.version.deno}`
+      );
+    }
   },
 
   onError: e => {
