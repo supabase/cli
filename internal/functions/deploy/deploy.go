@@ -15,7 +15,7 @@ import (
 	"github.com/supabase/cli/pkg/function"
 )
 
-func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool, importMapPath string, maxJobs uint, fsys afero.Fs) error {
+func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool, importMapPath string, maxJobs uint, prune bool, force bool, fsys afero.Fs) error {
 	// Load function config and project id
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
@@ -64,6 +64,14 @@ func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool,
 	} else if err != nil {
 		return err
 	}
+
+	// Handle pruning if requested
+	if prune {
+		if err := pruneFunctions(ctx, slugs, flags.ProjectRef, force); err != nil {
+			return err
+		}
+	}
+
 	fmt.Printf("Deployed Functions on project %s: %s\n", utils.Aqua(flags.ProjectRef), strings.Join(slugs, ", "))
 	url := fmt.Sprintf("%s/project/%v/functions", utils.GetSupabaseDashboardURL(), flags.ProjectRef)
 	fmt.Println("You can inspect your deployment in the Dashboard: " + url)
@@ -87,6 +95,86 @@ func GetFunctionSlugs(fsys afero.Fs) (slugs []string, err error) {
 		slugs = append(slugs, slug)
 	}
 	return slugs, nil
+}
+
+// getRemoteFunctions gets the list of functions from the Supabase project
+func getRemoteFunctions(ctx context.Context, projectRef string) ([]string, error) {
+	resp, err := utils.GetSupabase().V1ListAllFunctionsWithResponse(ctx, projectRef)
+	if err != nil {
+		return nil, errors.Errorf("failed to list remote functions: %w", err)
+	}
+
+	if resp.JSON200 == nil {
+		return nil, errors.New("Unexpected error retrieving functions: " + string(resp.Body))
+	}
+
+	var remoteSlugs []string
+	for _, function := range *resp.JSON200 {
+		remoteSlugs = append(remoteSlugs, function.Slug)
+	}
+
+	return remoteSlugs, nil
+}
+
+// pruneFunctions deletes functions that exist remotely but not locally
+func pruneFunctions(ctx context.Context, localSlugs []string, projectRef string, force bool) error {
+	// Get remote functions
+	remoteSlugs, err := getRemoteFunctions(ctx, projectRef)
+	if err != nil {
+		return err
+	}
+
+	// Create a set of local function slugs for fast lookup
+	localSet := make(map[string]bool)
+	for _, slug := range localSlugs {
+		localSet[slug] = true
+	}
+
+	// Find functions to prune (exist remotely but not locally)
+	var functionsToDelete []string
+	for _, remoteSlug := range remoteSlugs {
+		if !localSet[remoteSlug] {
+			functionsToDelete = append(functionsToDelete, remoteSlug)
+		}
+	}
+
+	// If no functions to prune, return early
+	if len(functionsToDelete) == 0 {
+		fmt.Fprintln(os.Stderr, "No functions to prune.")
+		return nil
+	}
+
+	// In interactive mode, prompt for confirmation (unless force is used)
+	if !force && utils.NewConsole().IsTTY {
+		message := fmt.Sprintf("The following functions will be DELETED from your project: %s", strings.Join(functionsToDelete, ", "))
+		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), message)
+
+		if confirmed, err := utils.NewConsole().PromptYesNo(ctx, "Are you sure?", false); err != nil {
+			return err
+		} else if !confirmed {
+			fmt.Fprintln(os.Stderr, "Aborted.")
+			return nil
+		}
+	}
+
+	// Delete functions
+	for _, slug := range functionsToDelete {
+		fmt.Fprintf(os.Stderr, "Deleting function: %s\n", utils.Aqua(slug))
+		resp, err := utils.GetSupabase().V1DeleteAFunctionWithResponse(ctx, projectRef, slug)
+		if err != nil {
+			return errors.Errorf("failed to delete function %s: %w", slug, err)
+		}
+		switch resp.StatusCode() {
+		case 404:
+			fmt.Fprintf(os.Stderr, "Function %s was already deleted.\n", utils.Aqua(slug))
+		case 200:
+			fmt.Fprintf(os.Stderr, "Successfully deleted function: %s\n", utils.Aqua(slug))
+		default:
+			return errors.Errorf("failed to delete function %s: %s", slug, string(resp.Body))
+		}
+	}
+
+	return nil
 }
 
 func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) (config.FunctionConfig, error) {
