@@ -1,7 +1,6 @@
 package serve
 
 import (
-	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -115,22 +114,21 @@ func NewDebounceFileWatcher() (*debounceFileWatcher, error) {
 	}, nil
 }
 
-func (w *debounceFileWatcher) Start(ctx context.Context) {
+func (w *debounceFileWatcher) Start() {
 	for {
 		event, ok := <-w.watcher.Events
+		if event.Has(restartEvents) && !isIgnoredFileEvent(event.Name, event.Op) {
+			fmt.Fprintf(os.Stderr, "File change detected: %s (%s)\n", event.Name, event.Op.String())
+			// Fire immediately when timer is inactive, without blocking this thread
+			if active := w.restartTimer.Reset(0); active {
+				w.restartTimer.Reset(debounceDuration)
+			}
+		}
+		// Ensure the last event is fired before channel close
 		if !ok {
 			return
 		}
-
-		if !event.Has(restartEvents) || isIgnoredFileEvent(event.Name, event.Op) {
-			fmt.Fprintf(utils.GetDebugLogger(), "Ignoring file event: %s (%s)\n", event.Name, event.Op.String())
-			continue
-		}
-
-		fmt.Fprintf(os.Stderr, "File change detected: %s (%s)\n", event.Name, event.Op.String())
-		if !w.restartTimer.Reset(debounceDuration) {
-			fmt.Fprintln(utils.GetDebugLogger(), "Failed to restart debounce timer.")
-		}
+		fmt.Fprintf(utils.GetDebugLogger(), "Ignoring file event: %s (%s)\n", event.Name, event.Op.String())
 	}
 }
 
@@ -184,11 +182,6 @@ func (w *debounceFileWatcher) SetWatchPaths(watchPaths []string, fsys afero.Fs) 
 }
 
 func (r *debounceFileWatcher) Close() error {
-	if r.watcher != nil {
-		return r.watcher.Close()
-	}
-	if r.restartTimer != nil {
-		r.restartTimer.Stop()
-	}
-	return nil
+	// Don't stop the timer to allow debounced events to fire
+	return r.watcher.Close()
 }
