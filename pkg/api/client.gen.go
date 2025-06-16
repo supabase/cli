@@ -183,6 +183,12 @@ type ClientInterface interface {
 
 	CreateApiKey(ctx context.Context, ref string, params *CreateApiKeyParams, body CreateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CheckLegacyApiKeys request
+	CheckLegacyApiKeys(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateLegacyApiKeys request
+	UpdateLegacyApiKeys(ctx context.Context, ref string, params *UpdateLegacyApiKeysParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DeleteApiKey request
 	DeleteApiKey(ctx context.Context, ref string, id openapi_types.UUID, params *DeleteApiKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -907,6 +913,30 @@ func (c *Client) CreateApiKeyWithBody(ctx context.Context, ref string, params *C
 
 func (c *Client) CreateApiKey(ctx context.Context, ref string, params *CreateApiKeyParams, body CreateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateApiKeyRequest(c.Server, ref, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CheckLegacyApiKeys(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCheckLegacyApiKeysRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateLegacyApiKeys(ctx context.Context, ref string, params *UpdateLegacyApiKeysParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateLegacyApiKeysRequest(c.Server, ref, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3527,6 +3557,92 @@ func NewCreateApiKeyRequestWithBody(server string, ref string, params *CreateApi
 	return req, nil
 }
 
+// NewCheckLegacyApiKeysRequest generates requests for CheckLegacyApiKeys
+func NewCheckLegacyApiKeysRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/api-keys/legacy", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateLegacyApiKeysRequest generates requests for UpdateLegacyApiKeys
+func NewUpdateLegacyApiKeysRequest(server string, ref string, params *UpdateLegacyApiKeysParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/api-keys/legacy", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "enabled", runtime.ParamLocationQuery, params.Enabled); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewDeleteApiKeyRequest generates requests for DeleteApiKey
 func NewDeleteApiKeyRequest(server string, ref string, id openapi_types.UUID, params *DeleteApiKeyParams) (*http.Request, error) {
 	var err error
@@ -3566,6 +3682,38 @@ func NewDeleteApiKeyRequest(server string, ref string, id openapi_types.UUID, pa
 		if params.Reveal != nil {
 
 			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "reveal", runtime.ParamLocationQuery, *params.Reveal); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.WasCompromised != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "was_compromised", runtime.ParamLocationQuery, *params.WasCompromised); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Reason != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "reason", runtime.ParamLocationQuery, *params.Reason); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -7646,6 +7794,12 @@ type ClientWithResponsesInterface interface {
 
 	CreateApiKeyWithResponse(ctx context.Context, ref string, params *CreateApiKeyParams, body CreateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateApiKeyResponse, error)
 
+	// CheckLegacyApiKeysWithResponse request
+	CheckLegacyApiKeysWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*CheckLegacyApiKeysResponse, error)
+
+	// UpdateLegacyApiKeysWithResponse request
+	UpdateLegacyApiKeysWithResponse(ctx context.Context, ref string, params *UpdateLegacyApiKeysParams, reqEditors ...RequestEditorFn) (*UpdateLegacyApiKeysResponse, error)
+
 	// DeleteApiKeyWithResponse request
 	DeleteApiKeyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, params *DeleteApiKeyParams, reqEditors ...RequestEditorFn) (*DeleteApiKeyResponse, error)
 
@@ -8513,6 +8667,50 @@ func (r CreateApiKeyResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r CreateApiKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CheckLegacyApiKeysResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *LegacyApiKeysResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r CheckLegacyApiKeysResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CheckLegacyApiKeysResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UpdateLegacyApiKeysResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *LegacyApiKeysResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateLegacyApiKeysResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateLegacyApiKeysResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -10709,6 +10907,24 @@ func (c *ClientWithResponses) CreateApiKeyWithResponse(ctx context.Context, ref 
 	return ParseCreateApiKeyResponse(rsp)
 }
 
+// CheckLegacyApiKeysWithResponse request returning *CheckLegacyApiKeysResponse
+func (c *ClientWithResponses) CheckLegacyApiKeysWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*CheckLegacyApiKeysResponse, error) {
+	rsp, err := c.CheckLegacyApiKeys(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCheckLegacyApiKeysResponse(rsp)
+}
+
+// UpdateLegacyApiKeysWithResponse request returning *UpdateLegacyApiKeysResponse
+func (c *ClientWithResponses) UpdateLegacyApiKeysWithResponse(ctx context.Context, ref string, params *UpdateLegacyApiKeysParams, reqEditors ...RequestEditorFn) (*UpdateLegacyApiKeysResponse, error) {
+	rsp, err := c.UpdateLegacyApiKeys(ctx, ref, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateLegacyApiKeysResponse(rsp)
+}
+
 // DeleteApiKeyWithResponse request returning *DeleteApiKeyResponse
 func (c *ClientWithResponses) DeleteApiKeyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, params *DeleteApiKeyParams, reqEditors ...RequestEditorFn) (*DeleteApiKeyResponse, error) {
 	rsp, err := c.DeleteApiKey(ctx, ref, id, params, reqEditors...)
@@ -12362,6 +12578,58 @@ func ParseCreateApiKeyResponse(rsp *http.Response) (*CreateApiKeyResponse, error
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCheckLegacyApiKeysResponse parses an HTTP response from a CheckLegacyApiKeysWithResponse call
+func ParseCheckLegacyApiKeysResponse(rsp *http.Response) (*CheckLegacyApiKeysResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CheckLegacyApiKeysResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest LegacyApiKeysResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateLegacyApiKeysResponse parses an HTTP response from a UpdateLegacyApiKeysWithResponse call
+func ParseUpdateLegacyApiKeysResponse(rsp *http.Response) (*UpdateLegacyApiKeysResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateLegacyApiKeysResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest LegacyApiKeysResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	}
 
