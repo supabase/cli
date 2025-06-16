@@ -254,6 +254,7 @@ func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 	for slug, fc := range functionsConfig {
 		if !fc.Enabled {
 			fmt.Fprintln(os.Stderr, "Skipped serving Function:", slug)
+			delete(functionsConfig, slug)
 			continue
 		}
 		modules, err := deploy.GetBindMounts(cwd, utils.FunctionsDir, "", fc.Entrypoint, fc.ImportMap, fsys)

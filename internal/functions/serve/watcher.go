@@ -120,11 +120,10 @@ func (w *debounceFileWatcher) SetWatchPaths(watchPaths []string, fsys afero.Fs) 
 	for _, hostPath := range watchPaths {
 		// Ignore non-existent paths and symlink directories
 		if err := afero.Walk(fsys, hostPath, func(path string, info fs.FileInfo, err error) error {
-			if err != nil {
-				return errors.New(err)
-			}
-			if slices.Contains(ignoredDirNames, filepath.Base(path)) {
+			if errors.Is(err, os.ErrNotExist) || slices.Contains(ignoredDirNames, filepath.Base(path)) {
 				return nil
+			} else if err != nil {
+				return errors.Errorf("failed to walk path: %w", err)
 			}
 			if info.IsDir() {
 				shouldWatchDirs[path] = struct{}{}
