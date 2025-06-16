@@ -44,7 +44,7 @@ func TestServeCommand(t *testing.T) {
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/" + containerId).
 			Reply(http.StatusOK)
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image), containerId)
-		apitest.MockDockerLogsStream(utils.Docker, containerId, 1, strings.NewReader("failed"))
+		require.NoError(t, apitest.MockDockerLogsStream(utils.Docker, containerId, 1, strings.NewReader("failed")))
 		// Run test with timeout context
 		err := Run(context.Background(), "", nil, "", RuntimeOption{}, fsys)
 		// Check error

@@ -22,7 +22,7 @@ func TestLogStreamer(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		apitest.MockDockerLogsStream(utils.Docker, containerID, 1, strings.NewReader("failed"))
+		require.NoError(t, apitest.MockDockerLogsStream(utils.Docker, containerID, 1, strings.NewReader("failed")))
 		// Run test
 		streamer := NewLogStreamer(context.Background())
 		streamer.Start(containerID)
@@ -40,9 +40,9 @@ func TestLogStreamer(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
-		apitest.MockDockerLogsStream(utils.Docker, containerID, 0, strings.NewReader("stopped"))
-		apitest.MockDockerLogsStream(utils.Docker, containerID, 137, strings.NewReader("killed"))
-		apitest.MockDockerLogsStream(utils.Docker, containerID, 1, strings.NewReader("failed"))
+		require.NoError(t, apitest.MockDockerLogsStream(utils.Docker, containerID, 0, strings.NewReader("stopped")))
+		require.NoError(t, apitest.MockDockerLogsStream(utils.Docker, containerID, 137, strings.NewReader("killed")))
+		require.NoError(t, apitest.MockDockerLogsStream(utils.Docker, containerID, 1, strings.NewReader("failed")))
 		// Run test
 		streamer := NewLogStreamer(context.Background())
 		streamer.Start(containerID)
