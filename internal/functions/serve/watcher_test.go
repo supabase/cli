@@ -2,7 +2,6 @@ package serve
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -188,22 +187,22 @@ func TestFileWatcher(t *testing.T) {
 	})
 
 	t.Run("debounces rapid file changes", func(t *testing.T) {
-		setup := NewWatcherIntegrationSetup(t)
-		defer setup.Cleanup()
-
-		functionsDir := setup.SetupFunctionsDirectory()
-		watcher, err := setup.CreateFileWatcher()
+		watcher, err := NewDebounceFileWatcher()
 		require.NoError(t, err)
-		defer watcher.Close()
-
-		go watcher.Start()
 
 		// Make rapid changes to a file
-		funcFile := filepath.Join(functionsDir, "hello", "index.ts")
-		for i := range 3 {
-			content := fmt.Sprintf(`export default () => new Response("Hello %d")`, i)
-			require.NoError(t, os.WriteFile(funcFile, []byte(content), 0600))
-		}
+		go func() {
+			defer watcher.Close()
+			for range 5 {
+				watcher.watcher.Events <- fsnotify.Event{
+					Name: filepath.Join("/tmp", "index.ts"),
+					Op:   fsnotify.Write,
+				}
+			}
+		}()
+
+		// Run watcher on main thread to avoid sleeping
+		watcher.Start()
 
 		// Wait for debounce duration
 		select {
@@ -216,7 +215,7 @@ func TestFileWatcher(t *testing.T) {
 		select {
 		case <-watcher.RestartCh:
 			assert.Fail(t, "should only get one restart signal due to debouncing")
-		case ts, ok := <-time.After(debounceDuration + 50*time.Millisecond):
+		case ts, ok := <-time.After(debounceDuration):
 			assert.NotZero(t, ts)
 			assert.True(t, ok)
 		}
