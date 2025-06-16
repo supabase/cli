@@ -84,7 +84,7 @@ func (s *WatcherIntegrationSetup) CreateFileWatcher() (*debounceFileWatcher, err
 	return watcher, nil
 }
 
-func TestFileWatcherIntegration(t *testing.T) {
+func TestFileWatcher(t *testing.T) {
 	t.Run("detects TypeScript function changes and triggers restart", func(t *testing.T) {
 		setup := NewWatcherIntegrationSetup(t)
 		defer setup.Cleanup()

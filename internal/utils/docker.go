@@ -376,6 +376,8 @@ func DockerRunOnceWithConfig(ctx context.Context, config container.Config, hostC
 	return DockerStreamLogs(ctx, container, stdout, stderr)
 }
 
+var ErrContainerKilled = errors.New("exit 137")
+
 func DockerStreamLogs(ctx context.Context, containerId string, stdout, stderr io.Writer, opts ...func(*container.LogsOptions)) error {
 	logsOptions := container.LogsOptions{
 		ShowStdout: true,
@@ -399,10 +401,15 @@ func DockerStreamLogs(ctx context.Context, containerId string, stdout, stderr io
 	if err != nil {
 		return errors.Errorf("failed to inspect docker container: %w", err)
 	}
-	if resp.State.ExitCode > 0 {
-		return errors.Errorf("error running container: exit %d", resp.State.ExitCode)
+	switch resp.State.ExitCode {
+	case 0:
+		return nil
+	case 137:
+		err = ErrContainerKilled
+	default:
+		err = errors.Errorf("exit %d", resp.State.ExitCode)
 	}
-	return nil
+	return errors.Errorf("error running container: %w", err)
 }
 
 func DockerStreamLogsOnce(ctx context.Context, containerId string, stdout, stderr io.Writer) error {
