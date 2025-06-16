@@ -1581,6 +1581,11 @@ type GetProviderResponse struct {
 	UpdatedAt *string `json:"updated_at,omitempty"`
 }
 
+// LegacyApiKeysResponse defines model for LegacyApiKeysResponse.
+type LegacyApiKeysResponse struct {
+	Enabled bool `json:"enabled"`
+}
+
 // ListProjectAddonsResponse defines model for ListProjectAddonsResponse.
 type ListProjectAddonsResponse struct {
 	AvailableAddons []struct {
@@ -2830,10 +2835,20 @@ type CreateApiKeyParams struct {
 	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
 }
 
+// UpdateLegacyApiKeysParams defines parameters for UpdateLegacyApiKeys.
+type UpdateLegacyApiKeysParams struct {
+	// Enabled Boolean string, true or false
+	Enabled bool `form:"enabled" json:"enabled"`
+}
+
 // DeleteApiKeyParams defines parameters for DeleteApiKey.
 type DeleteApiKeyParams struct {
 	// Reveal Boolean string, true or false
 	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
+
+	// WasCompromised Boolean string, true or false
+	WasCompromised *bool   `form:"was_compromised,omitempty" json:"was_compromised,omitempty"`
+	Reason         *string `form:"reason,omitempty" json:"reason,omitempty"`
 }
 
 // GetApiKeyParams defines parameters for GetApiKey.
