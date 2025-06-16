@@ -38,53 +38,32 @@ var (
 
 	// Patterns for ignoring file events.
 	ignoredFilePatterns = []struct {
-		Prefix     string      // File basename prefix
-		Suffix     string      // File basename suffix
-		ExactMatch string      // File basename exact match
-		Op         fsnotify.Op // Specific operation to ignore for this pattern (0 for any op)
+		Prefix     string // File basename prefix
+		Suffix     string // File basename suffix
+		ExactMatch bool   // File basename exact match
 	}{
-		{Suffix: "~"},                       // Common backup files (e.g., emacs, gedit)
-		{Prefix: ".", Suffix: ".swp"},       // Vim swap files
-		{Prefix: ".", Suffix: ".swx"},       // Vim swap files (extended)
-		{Prefix: "___", Suffix: "___"},      // Deno deploy/bundle temporary files often look like ___<slug>___<hash>___
-		{Prefix: "___"},                     // Some other editor temp files might start with this
-		{Suffix: ".tmp"},                    // Generic temp files
-		{Prefix: ".#"},                      // Emacs lock files
-		{Suffix: "___", Op: fsnotify.Chmod}, // Deno specific temp file pattern during write (often involves a chmod)
+		{Suffix: "~"},                 // Common backup files (e.g., emacs, gedit)
+		{Prefix: ".", Suffix: ".swp"}, // Vim swap files
+		{Prefix: ".", Suffix: ".swx"}, // Vim swap files (extended)
+		{Prefix: "___"},               // Deno temp files often start with this
+		{Suffix: ".tmp"},              // Generic temp files
+		{Prefix: ".#"},                // Emacs lock files
 	}
 )
 
 // isIgnoredFileEvent checks if a file event should be ignored based on predefined patterns.
-func isIgnoredFileEvent(eventName string, eventOp fsnotify.Op) bool {
-	baseName := filepath.Base(eventName)
+func isIgnoredFileEvent(event fsnotify.Event) bool {
+	if !event.Has(restartEvents) {
+		return true
+	}
+	baseName := filepath.Base(event.Name)
 	for _, p := range ignoredFilePatterns {
-		match := false
-		if p.ExactMatch != "" && baseName == p.ExactMatch {
-			match = true
-		} else {
-			// Check prefix if specified
-			prefixMatch := p.Prefix == "" || strings.HasPrefix(baseName, p.Prefix)
-			// Check suffix if specified
-			suffixMatch := p.Suffix == "" || strings.HasSuffix(baseName, p.Suffix)
-
-			// Both prefix and suffix must match
-			if p.Prefix != "" && p.Suffix != "" {
-				match = prefixMatch && suffixMatch
-				// Only prefix specified
-			} else if p.Prefix != "" {
-				match = prefixMatch
-				// Only suffix specified
-			} else if p.Suffix != "" {
-				match = suffixMatch
+		if strings.HasPrefix(baseName, p.Prefix) && strings.HasSuffix(baseName, p.Suffix) {
+			// An exact match means all characters match both prefix and suffix
+			if p.ExactMatch && len(baseName) > len(p.Prefix)+len(p.Suffix) {
+				continue
 			}
-		}
-
-		if match {
-			// If Op is 0, it means the pattern applies to any operation.
-			// Otherwise, check if the event's operation is relevant to the pattern's Op.
-			if p.Op == 0 || (eventOp&p.Op) != 0 {
-				return true
-			}
+			return true
 		}
 	}
 	return false
@@ -117,7 +96,7 @@ func NewDebounceFileWatcher() (*debounceFileWatcher, error) {
 func (w *debounceFileWatcher) Start() {
 	for {
 		event, ok := <-w.watcher.Events
-		if event.Has(restartEvents) && !isIgnoredFileEvent(event.Name, event.Op) {
+		if !isIgnoredFileEvent(event) {
 			fmt.Fprintf(os.Stderr, "File change detected: %s (%s)\n", event.Name, event.Op.String())
 			// Fire immediately when timer is inactive, without blocking this thread
 			if active := w.restartTimer.Reset(0); active {

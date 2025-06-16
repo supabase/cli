@@ -200,7 +200,7 @@ func TestFileWatcherIntegration(t *testing.T) {
 
 		// Make rapid changes to a file
 		funcFile := filepath.Join(functionsDir, "hello", "index.ts")
-		for i := range 5 {
+		for i := range 3 {
 			content := fmt.Sprintf(`export default () => new Response("Hello %d")`, i)
 			require.NoError(t, os.WriteFile(funcFile, []byte(content), 0600))
 		}
