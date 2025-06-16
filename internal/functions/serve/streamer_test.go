@@ -4,11 +4,9 @@ import (
 	"context"
 	"net/http"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/cenkalti/backoff/v4"
 	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,28 +14,9 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-type stepClock struct {
-	mu   sync.Mutex
-	now  time.Time
-	step time.Duration
-}
-
-func (c *stepClock) Now() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.now = c.now.Add(c.step)
-	return c.now
-}
-
-func NewStepClock(step time.Duration) backoff.Clock {
-	return &stepClock{
-		now:  time.Now(),
-		step: step,
-	}
-}
-
 func TestLogStreamer(t *testing.T) {
 	containerID := "test-container"
+	retryInterval = 0
 
 	t.Run("streams logs from container", func(t *testing.T) {
 		// Setup mock docker
@@ -45,9 +24,7 @@ func TestLogStreamer(t *testing.T) {
 		defer gock.OffAll()
 		apitest.MockDockerLogsStream(utils.Docker, containerID, 1, strings.NewReader("failed"))
 		// Run test
-		streamer := NewLogStreamer(context.Background(), func(ls *logStreamer) {
-			ls.clock = NewStepClock(time.Second)
-		})
+		streamer := NewLogStreamer(context.Background())
 		streamer.Start(containerID)
 		// Check error
 		select {
@@ -67,9 +44,7 @@ func TestLogStreamer(t *testing.T) {
 		apitest.MockDockerLogsStream(utils.Docker, containerID, 137, strings.NewReader("killed"))
 		apitest.MockDockerLogsStream(utils.Docker, containerID, 1, strings.NewReader("failed"))
 		// Run test
-		streamer := NewLogStreamer(context.Background(), func(ls *logStreamer) {
-			ls.clock = NewStepClock(time.Second)
-		})
+		streamer := NewLogStreamer(context.Background())
 		streamer.Start(containerID)
 		// Check error
 		select {
@@ -102,9 +77,7 @@ func TestLogStreamer(t *testing.T) {
 			BodyString("No such object")
 		apitest.MockDockerLogsStream(utils.Docker, containerID, 1, strings.NewReader("failed"))
 		// Run test
-		streamer := NewLogStreamer(context.Background(), func(ls *logStreamer) {
-			ls.clock = NewStepClock(time.Second)
-		})
+		streamer := NewLogStreamer(context.Background())
 		streamer.Start(containerID)
 		// Check error
 		select {

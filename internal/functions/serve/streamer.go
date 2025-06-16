@@ -14,34 +14,25 @@ import (
 
 type logStreamer struct {
 	ctx   context.Context
-	clock backoff.Clock
 	Close context.CancelFunc
 	ErrCh chan error
 }
 
-func NewLogStreamer(ctx context.Context, opts ...func(*logStreamer)) logStreamer {
-	s := logStreamer{
-		clock: backoff.SystemClock,
+func NewLogStreamer(ctx context.Context) logStreamer {
+	cancelCtx, cancel := context.WithCancel(ctx)
+	return logStreamer{
+		ctx:   cancelCtx,
+		Close: cancel,
 		ErrCh: make(chan error, 1),
 	}
-	s.ctx, s.Close = context.WithCancel(ctx)
-	for _, apply := range opts {
-		apply(&s)
-	}
-	return s
 }
 
-const (
-	initialInterval = time.Millisecond * 50
-	maxElapsedTime  = time.Second * 20
-)
+// Used by unit tests
+var retryInterval = time.Millisecond * 400
 
 func (s *logStreamer) Start(containerID string) {
-	policy := backoff.WithContext(backoff.NewExponentialBackOff(
-		backoff.WithInitialInterval(initialInterval),
-		backoff.WithMaxElapsedTime(maxElapsedTime),
-		backoff.WithClockProvider(s.clock),
-	), s.ctx)
+	// Retry indefinitely until stream is closed
+	policy := backoff.WithContext(backoff.NewConstantBackOff(retryInterval), s.ctx)
 	fetch := func() error {
 		if err := utils.DockerStreamLogs(s.ctx, containerID, os.Stdout, os.Stderr, func(lo *container.LogsOptions) {
 			lo.Timestamps = true
