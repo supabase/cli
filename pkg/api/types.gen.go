@@ -735,7 +735,9 @@ const (
 
 // Defines values for V1OrganizationSlugResponseOptInTags.
 const (
-	AISQLGENERATOROPTIN V1OrganizationSlugResponseOptInTags = "AI_SQL_GENERATOR_OPT_IN"
+	AIDATAGENERATOROPTIN V1OrganizationSlugResponseOptInTags = "AI_DATA_GENERATOR_OPT_IN"
+	AILOGGENERATOROPTIN  V1OrganizationSlugResponseOptInTags = "AI_LOG_GENERATOR_OPT_IN"
+	AISQLGENERATOROPTIN  V1OrganizationSlugResponseOptInTags = "AI_SQL_GENERATOR_OPT_IN"
 )
 
 // Defines values for V1OrganizationSlugResponsePlan.
@@ -1081,6 +1083,9 @@ type AuthConfigResponse struct {
 	ExternalZoomClientId                          nullable.Nullable[string]                                       `json:"external_zoom_client_id"`
 	ExternalZoomEnabled                           nullable.Nullable[bool]                                         `json:"external_zoom_enabled"`
 	ExternalZoomSecret                            nullable.Nullable[string]                                       `json:"external_zoom_secret"`
+	HookBeforeUserCreatedEnabled                  nullable.Nullable[bool]                                         `json:"hook_before_user_created_enabled"`
+	HookBeforeUserCreatedSecrets                  nullable.Nullable[string]                                       `json:"hook_before_user_created_secrets"`
+	HookBeforeUserCreatedUri                      nullable.Nullable[string]                                       `json:"hook_before_user_created_uri"`
 	HookCustomAccessTokenEnabled                  nullable.Nullable[bool]                                         `json:"hook_custom_access_token_enabled"`
 	HookCustomAccessTokenSecrets                  nullable.Nullable[string]                                       `json:"hook_custom_access_token_secrets"`
 	HookCustomAccessTokenUri                      nullable.Nullable[string]                                       `json:"hook_custom_access_token_uri"`
@@ -1574,6 +1579,11 @@ type GetProviderResponse struct {
 		MetadataXml *string `json:"metadata_xml,omitempty"`
 	} `json:"saml,omitempty"`
 	UpdatedAt *string `json:"updated_at,omitempty"`
+}
+
+// LegacyApiKeysResponse defines model for LegacyApiKeysResponse.
+type LegacyApiKeysResponse struct {
+	Enabled bool `json:"enabled"`
 }
 
 // ListProjectAddonsResponse defines model for ListProjectAddonsResponse.
@@ -2164,6 +2174,9 @@ type UpdateAuthConfigBody struct {
 	ExternalZoomClientId                          nullable.Nullable[string]                                         `json:"external_zoom_client_id,omitempty"`
 	ExternalZoomEnabled                           nullable.Nullable[bool]                                           `json:"external_zoom_enabled,omitempty"`
 	ExternalZoomSecret                            nullable.Nullable[string]                                         `json:"external_zoom_secret,omitempty"`
+	HookBeforeUserCreatedEnabled                  nullable.Nullable[bool]                                           `json:"hook_before_user_created_enabled,omitempty"`
+	HookBeforeUserCreatedSecrets                  nullable.Nullable[string]                                         `json:"hook_before_user_created_secrets,omitempty"`
+	HookBeforeUserCreatedUri                      nullable.Nullable[string]                                         `json:"hook_before_user_created_uri,omitempty"`
 	HookCustomAccessTokenEnabled                  nullable.Nullable[bool]                                           `json:"hook_custom_access_token_enabled,omitempty"`
 	HookCustomAccessTokenSecrets                  nullable.Nullable[string]                                         `json:"hook_custom_access_token_secrets,omitempty"`
 	HookCustomAccessTokenUri                      nullable.Nullable[string]                                         `json:"hook_custom_access_token_uri,omitempty"`
@@ -2822,10 +2835,20 @@ type CreateApiKeyParams struct {
 	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
 }
 
+// UpdateLegacyApiKeysParams defines parameters for UpdateLegacyApiKeys.
+type UpdateLegacyApiKeysParams struct {
+	// Enabled Boolean string, true or false
+	Enabled bool `form:"enabled" json:"enabled"`
+}
+
 // DeleteApiKeyParams defines parameters for DeleteApiKey.
 type DeleteApiKeyParams struct {
 	// Reveal Boolean string, true or false
 	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
+
+	// WasCompromised Boolean string, true or false
+	WasCompromised *bool   `form:"was_compromised,omitempty" json:"was_compromised,omitempty"`
+	Reason         *string `form:"reason,omitempty" json:"reason,omitempty"`
 }
 
 // GetApiKeyParams defines parameters for GetApiKey.
