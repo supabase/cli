@@ -211,12 +211,39 @@ var (
 		},
 	}
 
+	inspectTableRecordCountsCmd = &cobra.Command{
+		Deprecated: `use "table-stats" instead.`,
+		Use:        "table-record-counts",
+		Short:      "Show estimated number of rows per table",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return index_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
+		},
+	}
+
 	inspectSeqScansCmd = &cobra.Command{
 		Deprecated: `use "index-stats" instead.`,
 		Use:        "seq-scans",
 		Short:      "Show number of sequential scans recorded against all tables",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return index_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
+		},
+	}
+
+	inspectRoleConfigsCmd = &cobra.Command{
+		Deprecated: `use "role-stats" instead.`,
+		Use:        "role-configs",
+		Short:      "Show configuration settings for database roles when they have been modified",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return role_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
+		},
+	}
+
+	inspectRoleConnectionsCmd = &cobra.Command{
+		Deprecated: `use "role-stats" instead.`,
+		Use:        "role-connections",
+		Short:      "Show number of active connections for all database roles",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return role_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
