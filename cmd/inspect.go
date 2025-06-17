@@ -149,64 +149,72 @@ var (
 	// DEPRECATED
 
 	inspectCacheHitCmd = &cobra.Command{
-		Use:   "cache-hit",
-		Short: "DEPRECATED: use db-stats instead. Show cache hit rates for tables and indices",
+		Deprecated: `use "db-stats" instead.`,
+		Use:        "cache-hit",
+		Short:      "Show cache hit rates for tables and indices",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return db_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
 	inspectIndexUsageCmd = &cobra.Command{
-		Use:   "index-usage",
-		Short: "DEPRECATED: use index-stats instead. Show information about the efficiency of indexes",
+		Deprecated: `use "index-stats" instead.`,
+		Use:        "index-usage",
+		Short:      "Show information about the efficiency of indexes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return index_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
 	inspectTotalIndexSizeCmd = &cobra.Command{
-		Use:   "total-index-size",
-		Short: "DEPRECATED: use index-stats instead. Show total size of all indexes",
+		Deprecated: `use "index-stats" instead.`,
+		Use:        "total-index-size",
+		Short:      "Show total size of all indexes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return index_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
 	inspectTableSizesCmd = &cobra.Command{
-		Use:   "table-sizes",
-		Short: "DEPRECATED: use table-stats instead. Show table sizes of individual tables without their index sizes",
+		Deprecated: `use "table-stats" instead.`,
+		Use:        "table-sizes",
+		Short:      "Show table sizes of individual tables without their index sizes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return table_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
 	inspectTableIndexSizesCmd = &cobra.Command{
-		Use:   "table-index-sizes",
-		Short: "DEPRECATED: use table-stats instead. Show index sizes of individual tables",
+		Deprecated: `use "table-stats" instead.`,
+		Use:        "table-index-sizes",
+		Short:      "Show index sizes of individual tables",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return table_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
 	inspectTotalTableSizesCmd = &cobra.Command{
-		Use:   "total-table-sizes",
-		Short: "DEPRECATED: use table-stats instead. Show total table sizes, including table index sizes",
+		Deprecated: `use "table-stats" instead.`,
+		Use:        "total-table-sizes",
+		Short:      "Show total table sizes, including table index sizes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return table_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
 	inspectUnusedIndexesCmd = &cobra.Command{
-		Use:   "unused-indexes",
-		Short: "DEPRECATED: use index-stats instead. Show indexes with low usage",
+		Deprecated: `use "index-stats" instead.`,
+		Use:        "unused-indexes",
+		Short:      "Show indexes with low usage",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return index_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
 	inspectSeqScansCmd = &cobra.Command{
-		Use:   "seq-scans",
-		Short: "DEPRECATED: use index-stats instead. Show number of sequential scans recorded against all tables",
+		Deprecated: `use "index-stats" instead.`,
+		Use:        "seq-scans",
+		Short:      "Show number of sequential scans recorded against all tables",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return index_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
