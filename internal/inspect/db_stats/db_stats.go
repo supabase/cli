@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/pgxv5"
@@ -34,7 +35,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 	defer conn.Close(context.Background())
-	rows, err := conn.Query(ctx, DBStatsQuery, utils.InternalSchemas, config.Database)
+	rows, err := conn.Query(ctx, DBStatsQuery, reset.LikeEscapeSchema(utils.InternalSchemas), config.Database)
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}

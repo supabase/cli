@@ -146,8 +146,6 @@ var (
 		},
 	}
 
-	// DEPRECATED
-
 	inspectCacheHitCmd = &cobra.Command{
 		Deprecated: `use "db-stats" instead.`,
 		Use:        "cache-hit",
@@ -295,6 +293,7 @@ func init() {
 	inspectDBCmd.AddCommand(inspectTableStatsCmd)
 	inspectDBCmd.AddCommand(inspectRoleStatsCmd)
 	inspectDBCmd.AddCommand(inspectDBStatsCmd)
+	// DEPRECATED
 	inspectDBCmd.AddCommand(inspectCacheHitCmd)
 	inspectDBCmd.AddCommand(inspectIndexUsageCmd)
 	inspectDBCmd.AddCommand(inspectSeqScansCmd)
@@ -303,6 +302,9 @@ func init() {
 	inspectDBCmd.AddCommand(inspectTableIndexSizesCmd)
 	inspectDBCmd.AddCommand(inspectTotalIndexSizeCmd)
 	inspectDBCmd.AddCommand(inspectTableSizesCmd)
+	inspectDBCmd.AddCommand(inspectTableRecordCountsCmd)
+	inspectDBCmd.AddCommand(inspectRoleConfigsCmd)
+	inspectDBCmd.AddCommand(inspectRoleConnectionsCmd)
 	inspectCmd.AddCommand(inspectDBCmd)
 	reportCmd.Flags().StringVar(&outputDir, "output-dir", "", "Path to save CSV files in")
 	inspectCmd.AddCommand(reportCmd)
