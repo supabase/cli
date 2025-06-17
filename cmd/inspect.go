@@ -162,6 +162,15 @@ var (
 		},
 	}
 
+	inspectIndexSizesCmd = &cobra.Command{
+		Deprecated: `use "index-stats" instead.`,
+		Use:        "index-sizes",
+		Short:      "Show index sizes of individual indexes",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return index_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
+		},
+	}
+
 	inspectTableSizesCmd = &cobra.Command{
 		Deprecated: `use "table-stats" instead.`,
 		Use:        "table-sizes",
@@ -271,6 +280,7 @@ func init() {
 	inspectDBCmd.AddCommand(inspectTotalTableSizesCmd)
 	inspectDBCmd.AddCommand(inspectTableIndexSizesCmd)
 	inspectDBCmd.AddCommand(inspectTotalIndexSizeCmd)
+	inspectDBCmd.AddCommand(inspectIndexSizesCmd)
 	inspectDBCmd.AddCommand(inspectTableSizesCmd)
 	inspectDBCmd.AddCommand(inspectTableRecordCountsCmd)
 	inspectDBCmd.AddCommand(inspectRoleConfigsCmd)
