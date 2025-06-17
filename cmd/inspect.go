@@ -1,25 +1,14 @@
 package cmd
 
 import (
-	"database/sql"
-	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"time"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/inspect/bloat"
 	"github.com/supabase/cli/internal/inspect/blocking"
-	"github.com/supabase/cli/internal/inspect/role_stats"
-
-	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/flags"
-
-	"github.com/BurntSushi/toml"
-	_ "github.com/mithrandie/csvq-driver"
-	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/inspect/calls"
 	"github.com/supabase/cli/internal/inspect/db_stats"
 	"github.com/supabase/cli/internal/inspect/index_stats"
@@ -27,10 +16,10 @@ import (
 	"github.com/supabase/cli/internal/inspect/long_running_queries"
 	"github.com/supabase/cli/internal/inspect/outliers"
 	"github.com/supabase/cli/internal/inspect/replication_slots"
+	"github.com/supabase/cli/internal/inspect/role_stats"
 	"github.com/supabase/cli/internal/inspect/table_stats"
-
 	"github.com/supabase/cli/internal/inspect/vacuum_stats"
-	"github.com/supabase/cli/internal/migration/list"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 var (
@@ -251,29 +240,10 @@ var (
 		Use:   "report",
 		Short: "Generate a CSV output for all inspect commands",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			if err := inspect.Report(ctx, outputDir, flags.DbConfig, afero.NewOsFs()); err != nil {
-				return err
-			}
-			return printReportSummary(outputDir)
+			return inspect.Report(cmd.Context(), outputDir, flags.DbConfig, afero.NewOsFs())
 		},
 	}
 )
-
-// Load rules file at runtime (tools/inspect_rules.toml)
-
-// Rule defines a validation rule for a CSV file
-type Rule struct {
-	Query string `toml:"query"`
-	Pass  string `toml:"pass"`
-	Fail  string `toml:"fail"`
-	Name  string `toml:"name"`
-}
-
-// Config holds all rules
-type Config struct {
-	Rules []Rule `toml:"rule"`
-}
 
 func init() {
 	inspectFlags := inspectCmd.PersistentFlags()
@@ -309,58 +279,4 @@ func init() {
 	reportCmd.Flags().StringVar(&outputDir, "output-dir", "", "Path to save CSV files in")
 	inspectCmd.AddCommand(reportCmd)
 	rootCmd.AddCommand(inspectCmd)
-}
-
-func printReportSummary(outDir string) error {
-	// point to the date-based subdirectory
-	date := time.Now().Format("2006-01-02")
-	outDir = filepath.Join(outDir, date)
-	// Load rules from tools/inspect_rules.toml
-	data, err := os.ReadFile(filepath.Join(utils.CurrentDirAbs, "tools", "inspect_rules.toml"))
-	if err != nil {
-		return err
-	}
-	var cfg Config
-	if err := toml.Unmarshal(data, &cfg); err != nil {
-		return err
-	}
-	// Open csvq database rooted at the output directory
-	db, err := sql.Open("csvq", outDir)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	// Build report summary table
-	table := "RULE|STATUS|MATCHES\n|-|-|-|\n"
-
-	// find matching rule
-	var status string
-	for i := range cfg.Rules {
-		r := &cfg.Rules[i]
-		name := r.Name
-
-		row := db.QueryRow(r.Query)
-		var match sql.NullString
-
-		if err := row.Scan(&match); err != nil {
-			if err == sql.ErrNoRows {
-				status = r.Pass
-			} else {
-				status = err.Error()
-			}
-		} else {
-			if !match.Valid || match.String == "" {
-				status = r.Pass
-			} else {
-				status = r.Fail
-			}
-		}
-		matchStr := "-"
-		if match.Valid {
-			matchStr = match.String
-		}
-		table += fmt.Sprintf("|`%s`|`%s`|`%s`|\n", name, status, matchStr)
-	}
-	return list.RenderTable(table)
 }

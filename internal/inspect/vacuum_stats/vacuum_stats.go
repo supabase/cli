@@ -44,7 +44,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "|Name|Last Vacuum|Last Auto Vacuum|Row count|Dead row count|Expect autovacuum?\n|-|-|-|-|-|-|\n"
+	table := "|Table|Last Vacuum|Last Auto Vacuum|Row count|Dead row count|Expect autovacuum?\n|-|-|-|-|-|-|\n"
 	for _, r := range result {
 		rowcount := strings.Replace(r.Rowcount, "-1", "No stats", 1)
 		table += fmt.Sprintf("|`%s`|%s|%s|`%s`|`%s`|`%s`|\n", r.Name, r.Last_vacuum, r.Last_autovacuum, rowcount, r.Dead_rowcount, r.Expect_autovacuum)
