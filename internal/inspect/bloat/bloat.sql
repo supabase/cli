@@ -25,7 +25,8 @@ WITH constants AS (
       (CASE WHEN datahdr%ma=0 THEN ma ELSE datahdr%ma END))+nullhdr2+4))/(bs-20::float)) AS otta
   FROM bloat_info
   JOIN pg_class cc ON cc.relname = bloat_info.tablename
-  JOIN pg_namespace nn ON cc.relnamespace = nn.oid AND nn.nspname = bloat_info.schemaname AND nn.nspname <> 'information_schema'
+  JOIN pg_namespace nn ON cc.relnamespace = nn.oid AND nn.nspname = bloat_info.schemaname
+  WHERE NOT nn.nspname LIKE ANY($1)
 ), index_bloat AS (
   SELECT
     schemaname, tablename, bs,
@@ -33,29 +34,25 @@ WITH constants AS (
     COALESCE(CEIL((c2.reltuples*(datahdr-12))/(bs-20::float)),0) AS iotta -- very rough approximation, assumes all cols
   FROM bloat_info
   JOIN pg_class cc ON cc.relname = bloat_info.tablename
-  JOIN pg_namespace nn ON cc.relnamespace = nn.oid AND nn.nspname = bloat_info.schemaname AND nn.nspname <> 'information_schema'
+  JOIN pg_namespace nn ON cc.relnamespace = nn.oid AND nn.nspname = bloat_info.schemaname
   JOIN pg_index i ON indrelid = cc.oid
   JOIN pg_class c2 ON c2.oid = i.indexrelid
-)
-SELECT
-  type, name, bloat, pg_size_pretty(raw_waste) as waste
-FROM
-(SELECT
-  'table' as type,
-  schemaname,
-  schemaname || '.' || tablename as name,
-  ROUND(CASE WHEN otta=0 THEN 0.0 ELSE table_bloat.relpages/otta::numeric END,1) AS bloat,
-  CASE WHEN relpages < otta THEN '0' ELSE (bs*(table_bloat.relpages-otta)::bigint)::bigint END AS raw_waste
-FROM
-  table_bloat
+  WHERE NOT nn.nspname LIKE ANY($1)
+), bloat_summary AS (
+  SELECT
+    'table' as type,
+    FORMAT('%I.%I', schemaname, tablename) AS name,
+    ROUND(CASE WHEN otta=0 THEN 0.0 ELSE table_bloat.relpages/otta::numeric END,1) AS bloat,
+    CASE WHEN relpages < otta THEN '0' ELSE (bs*(table_bloat.relpages-otta)::bigint)::bigint END AS raw_waste
+  FROM table_bloat
     UNION
-SELECT
-  'index' as type,
-  schemaname,
-  schemaname || '.' || tablename || '::' || iname as name,
-  ROUND(CASE WHEN iotta=0 OR ipages=0 THEN 0.0 ELSE ipages/iotta::numeric END,1) AS bloat,
+  SELECT
+    'index' as type,
+    FORMAT('%I.%I::%I', schemaname, tablename, iname) AS name,
+    ROUND(CASE WHEN iotta=0 OR ipages=0 THEN 0.0 ELSE ipages/iotta::numeric END,1) AS bloat,
   CASE WHEN ipages < iotta THEN '0' ELSE (bs*(ipages-iotta))::bigint END AS raw_waste
-FROM
-  index_bloat) bloat_summary
-WHERE NOT schemaname LIKE ANY($1)
+  FROM index_bloat
+)
+SELECT type, name, bloat, pg_size_pretty(raw_waste) as waste
+FROM bloat_summary
 ORDER BY raw_waste DESC, bloat DESC

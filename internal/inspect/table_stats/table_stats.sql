@@ -7,7 +7,7 @@ SELECT
   COALESCE(rc.seq_scans, 0) AS seq_scans
 FROM (
   SELECT
-    n.nspname || '.' || c.relname AS name,
+    FORMAT('%I.%I', n.nspname, c.relname) AS name,
     pg_table_size(c.oid) AS table_size_bytes,
     pg_indexes_size(c.oid) AS index_size_bytes,
     pg_total_relation_size(c.oid) AS total_size_bytes
@@ -18,7 +18,7 @@ FROM (
 ) ts
 LEFT JOIN (
   SELECT
-    schemaname || '.' || relname AS name,
+    FORMAT('%I.%I', schemaname, relname) AS name,
     n_live_tup AS estimated_row_count,
     seq_scan AS seq_scans
   FROM pg_stat_user_tables

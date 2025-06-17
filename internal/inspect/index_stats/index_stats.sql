@@ -2,7 +2,7 @@
 WITH idx_sizes AS (
   SELECT
     i.indexrelid AS oid,
-    n.nspname || '.' || c.relname AS name,
+    FORMAT('%I.%I', n.nspname, c.relname) AS name,
     pg_relation_size(i.indexrelid) AS index_size_bytes
   FROM pg_stat_user_indexes ui
   JOIN pg_index i ON ui.indexrelid = i.indexrelid
