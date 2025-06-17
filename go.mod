@@ -32,7 +32,6 @@ require (
 	github.com/mithrandie/csvq-driver v1.7.0
 	github.com/muesli/reflow v0.3.0
 	github.com/oapi-codegen/oapi-codegen/v2 v2.4.1
-	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/slack-go/slack v0.17.1
 	github.com/spf13/afero v1.14.0
 	github.com/spf13/cobra v1.9.1
@@ -250,6 +249,7 @@ require (
 	github.com/olekukonko/tablewriter v0.0.5 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
+	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect
 	github.com/pjbgf/sha1cd v0.3.2 // indirect
 	github.com/pkg/errors v0.9.1 // indirect

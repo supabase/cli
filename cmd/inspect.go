@@ -17,8 +17,8 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 
+	"github.com/BurntSushi/toml"
 	_ "github.com/mithrandie/csvq-driver"
-	"github.com/pelletier/go-toml/v2"
 	"github.com/supabase/cli/internal/inspect"
 	"github.com/supabase/cli/internal/inspect/calls"
 	"github.com/supabase/cli/internal/inspect/db_stats"

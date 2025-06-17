@@ -14,13 +14,13 @@ fail = "There is at least one ungranted lock"
 
 [[rule]]
 query = "SELECT LISTAGG(index, ',') AS match FROM `unused_indexes.csv`"
+name = "No unused indexes"
 pass = "✔"
 fail = "There is at least one unused index"
-name = "No unused indexes"
 
 [[rule]]
-name = "Check cache hit is within acceptable bounds"
 query = "SELECT LISTAGG(name, ',') AS match FROM `db_stats.csv` WHERE index_hit_rate < 0.94 OR table_hit_rate < 0.94"
+name = "Check cache hit is within acceptable bounds"
 pass = "✔"
 fail = "There is a cache hit ratio (table or index) below 94%"
 
