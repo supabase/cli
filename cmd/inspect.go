@@ -286,7 +286,7 @@ func init() {
 	inspectDBCmd.AddCommand(inspectRoleConfigsCmd)
 	inspectDBCmd.AddCommand(inspectRoleConnectionsCmd)
 	inspectCmd.AddCommand(inspectDBCmd)
-	reportCmd.Flags().StringVar(&outputDir, "output-dir", "", "Path to save CSV files in")
+	reportCmd.Flags().StringVar(&outputDir, "output-dir", ".", "Path to save CSV files in")
 	inspectCmd.AddCommand(reportCmd)
 	rootCmd.AddCommand(inspectCmd)
 }

@@ -26,10 +26,10 @@ import (
 var queries embed.FS
 
 func Report(ctx context.Context, outDir string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	outDir = filepath.Join(outDir, time.Now().Format("2006-01-02"))
 	if !filepath.IsAbs(outDir) {
 		outDir = filepath.Join(utils.CurrentDirAbs, outDir)
 	}
-	outDir = filepath.Join(outDir, time.Now().Format("2006-01-02"))
 	if err := utils.MkdirIfNotExistFS(fsys, outDir); err != nil {
 		return err
 	}
@@ -52,15 +52,21 @@ func Report(ctx context.Context, outDir string, config pgconn.Config, fsys afero
 		}
 		name := strings.Split(d.Name(), ".")[0]
 		outPath := filepath.Join(outDir, fmt.Sprintf("%s.csv", name))
-		return copyToCSV(ctx, string(query), outPath, conn.PgConn(), fsys)
+		return copyToCSV(ctx, string(query), config.Database, outPath, conn.PgConn(), fsys)
 	}); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "Reports saved to "+utils.Bold(outDir))
-	return printReportSummary(outDir, fsys)
+	var cfg RulesConfig
+	if err := cfg.Load(fsys); err != nil {
+		return err
+	}
+	return cfg.PrintSummary(ctx, outDir)
 }
 
-func copyToCSV(ctx context.Context, query, outPath string, conn *pgconn.PgConn, fsys afero.Fs) error {
+var ignoreSchemas = fmt.Sprintf("'{%s}'::text[]", strings.Join(reset.LikeEscapeSchema(utils.InternalSchemas), ","))
+
+func copyToCSV(ctx context.Context, query, database, outPath string, conn *pgconn.PgConn, fsys afero.Fs) error {
 	// Create output file
 	f, err := fsys.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
@@ -68,19 +74,18 @@ func copyToCSV(ctx context.Context, query, outPath string, conn *pgconn.PgConn, 
 	}
 	defer f.Close()
 	// Execute query
-	csvQuery := wrapQuery(query)
+	csvQuery := wrapQuery(query, ignoreSchemas, fmt.Sprintf("'%s'", database))
 	if _, err = conn.CopyTo(ctx, f, csvQuery); err != nil {
 		return errors.Errorf("failed to copy output: %w", err)
 	}
 	return nil
 }
 
-var ignoreSchemas = fmt.Sprintf("'{%s}'::text[]", strings.Join(reset.LikeEscapeSchema(utils.InternalSchemas), ","))
-
-func wrapQuery(query string) string {
-	fullQuery := strings.ReplaceAll(query, "$1", ignoreSchemas)
-	fullQuery = strings.ReplaceAll(fullQuery, "$2", "'postgres'")
-	return fmt.Sprintf("COPY (%s) TO STDOUT WITH CSV HEADER", fullQuery)
+func wrapQuery(query string, args ...string) string {
+	for i, v := range args {
+		query = strings.ReplaceAll(query, fmt.Sprintf("$%d", i+1), v)
+	}
+	return fmt.Sprintf("COPY (%s) TO STDOUT WITH CSV HEADER", query)
 }
 
 // Rule defines a validation rule for a CSV file
@@ -92,58 +97,53 @@ type Rule struct {
 }
 
 // Config holds all rules
-type Config struct {
+type RulesConfig struct {
 	Rules []Rule `toml:"rule"`
 }
 
 //go:embed templates/rules.toml
 var rulesConfig embed.FS
 
-func printReportSummary(dateDir string, fsys afero.Fs) error {
-	var cfg Config
+func (c *RulesConfig) Load(fsys afero.Fs) error {
 	rulesPath := filepath.Join("tools", "inspect_rules.toml")
-	if _, err := toml.DecodeFS(afero.NewIOFS(fsys), rulesPath, &cfg); errors.Is(err, os.ErrNotExist) {
-		if _, err := toml.DecodeFS(rulesConfig, "templates/rules.toml", &cfg); err != nil {
+	if _, err := toml.DecodeFS(afero.NewIOFS(fsys), rulesPath, c); errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintln(os.Stderr, "Loading default rules...")
+		if _, err := toml.DecodeFS(rulesConfig, "templates/rules.toml", c); err != nil {
 			return errors.Errorf("failed load default rules: %w", err)
 		}
 	} else if err != nil {
 		return errors.Errorf("failed to parse inspect rules: %w", err)
 	}
+	return nil
+}
 
+func (c RulesConfig) PrintSummary(ctx context.Context, outDir string) error {
 	// Open csvq database rooted at the output directory
-	db, err := sql.Open("csvq", dateDir)
+	db, err := sql.Open("csvq", outDir)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-
 	// Build report summary table
 	table := "RULE|STATUS|MATCHES\n|-|-|-|\n"
-
-	// find matching rule
-	var status string
-	for _, r := range cfg.Rules {
-		row := db.QueryRow(r.Query)
+	for _, r := range c.Rules {
+		row := db.QueryRowContext(ctx, r.Query)
+		// find matching rule
+		var status string
 		var match sql.NullString
-
-		if err := row.Scan(&match); err != nil {
-			if err == sql.ErrNoRows {
-				status = r.Pass
-			} else {
-				status = err.Error()
-			}
+		if err := row.Scan(&match); errors.Is(err, sql.ErrNoRows) {
+			status = r.Pass
+		} else if err != nil {
+			status = err.Error()
+		} else if !match.Valid || match.String == "" {
+			status = r.Pass
 		} else {
-			if !match.Valid || match.String == "" {
-				status = r.Pass
-			} else {
-				status = r.Fail
-			}
+			status = r.Fail
 		}
-		matchStr := "-"
-		if match.Valid {
-			matchStr = match.String
+		if !match.Valid {
+			match.String = "-"
 		}
-		table += fmt.Sprintf("|`%s`|`%s`|`%s`|\n", r.Name, status, matchStr)
+		table += fmt.Sprintf("|`%s`|`%s`|`%s`|\n", r.Name, status, match.String)
 	}
 	return list.RenderTable(table)
 }

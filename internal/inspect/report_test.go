@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/pkg/pgtest"
 )
 
@@ -23,31 +24,24 @@ var dbConfig = pgconn.Config{
 func TestReportCommand(t *testing.T) {
 	t.Run("runs all queries", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
+		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Iterate over all embedded SQL files
-		var sqlCount int
-		err := fs.WalkDir(queries, ".", func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() {
-				return nil
-			}
-			data, err := queries.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			conn.Query(wrapQuery(string(data))).Reply("COPY 0")
-			sqlCount++
-			return nil
-		})
-		assert.NoError(t, err)
+		sqlPaths, err := fs.Glob(queries, "*/*.sql")
+		require.NoError(t, err)
+		for _, fp := range sqlPaths {
+			data, err := queries.ReadFile(fp)
+			require.NoError(t, err)
+			sql := wrapQuery(string(data), ignoreSchemas, fmt.Sprintf("'%s'", dbConfig.Database))
+			conn.Query(sql).Reply("COPY 0")
+		}
+		// Run test
 		err = Report(context.Background(), ".", dbConfig, fsys, conn.Intercept)
 		assert.NoError(t, err)
 		matches, err := afero.Glob(fsys, "*/*.csv")
 		assert.NoError(t, err)
-		assert.Len(t, matches, sqlCount)
+		assert.Len(t, matches, len(sqlPaths))
 	})
 }
 
@@ -62,7 +56,7 @@ func TestWrapQuery(t *testing.T) {
 	t.Run("replaces placeholder value", func(t *testing.T) {
 		assert.Equal(t,
 			fmt.Sprintf("COPY (SELECT 'a' LIKE ANY(%s)) TO STDOUT WITH CSV HEADER", ignoreSchemas),
-			wrapQuery("SELECT 'a' LIKE ANY($1)"),
+			wrapQuery("SELECT 'a' LIKE ANY($1)", ignoreSchemas),
 		)
 	})
 }
