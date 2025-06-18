@@ -10,7 +10,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/docker/cli/cli/compose/loader"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
 	"github.com/go-errors/errors"
@@ -46,6 +48,7 @@ func (mode InspectMode) toFlag() string {
 type RuntimeOption struct {
 	InspectMode *InspectMode
 	InspectMain bool
+	fileWatcher *debounceFileWatcher
 }
 
 func (i *RuntimeOption) toArgs() []string {
@@ -68,6 +71,36 @@ const (
 var mainFuncEmbed string
 
 func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
+	watcher, err := NewDebounceFileWatcher()
+	if err != nil {
+		return err
+	}
+	go watcher.Start()
+	defer watcher.Close()
+	// TODO: refactor this to edge runtime service
+	runtimeOption.fileWatcher = watcher
+	if err := restartEdgeRuntime(ctx, envFilePath, noVerifyJWT, importMapPath, runtimeOption, fsys); err != nil {
+		return err
+	}
+	streamer := NewLogStreamer(ctx)
+	go streamer.Start(utils.EdgeRuntimeId)
+	defer streamer.Close()
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("Stopped serving " + utils.Bold(utils.FunctionsDir))
+			return ctx.Err()
+		case <-watcher.RestartCh:
+			if err := restartEdgeRuntime(ctx, envFilePath, noVerifyJWT, importMapPath, runtimeOption, fsys); err != nil {
+				return err
+			}
+		case err := <-streamer.ErrCh:
+			return err
+		}
+	}
+}
+
+func restartEdgeRuntime(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
@@ -84,14 +117,7 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 	dbUrl := fmt.Sprintf("postgresql://postgres:postgres@%s:5432/postgres", utils.DbAliases[0])
 	// 3. Serve and log to console
 	fmt.Fprintln(os.Stderr, "Setting up Edge Functions runtime...")
-	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys); err != nil {
-		return err
-	}
-	if err := utils.DockerStreamLogs(ctx, utils.EdgeRuntimeId, os.Stdout, os.Stderr); err != nil {
-		return err
-	}
-	fmt.Println("Stopped serving " + utils.Bold(utils.FunctionsDir))
-	return nil
+	return ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys)
 }
 
 func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, runtimeOption RuntimeOption, fsys afero.Fs) error {
@@ -130,6 +156,19 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	binds, functionsConfigString, err := populatePerFunctionConfigs(cwd, importMapPath, noVerifyJWT, fsys)
 	if err != nil {
 		return err
+	}
+	if watcher := runtimeOption.fileWatcher; watcher != nil {
+		var watchPaths []string
+		for _, b := range binds {
+			if spec, err := loader.ParseVolume(b); err != nil {
+				return errors.Errorf("failed to parse docker volume: %w", err)
+			} else if spec.Type == string(mount.TypeBind) {
+				watchPaths = append(watchPaths, spec.Source)
+			}
+		}
+		if err := watcher.SetWatchPaths(watchPaths, fsys); err != nil {
+			return err
+		}
 	}
 	env = append(env, "SUPABASE_INTERNAL_FUNCTIONS_CONFIG="+functionsConfigString)
 	// 3. Parse entrypoint script
@@ -215,6 +254,7 @@ func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 	for slug, fc := range functionsConfig {
 		if !fc.Enabled {
 			fmt.Fprintln(os.Stderr, "Skipped serving Function:", slug)
+			delete(functionsConfig, slug)
 			continue
 		}
 		modules, err := deploy.GetBindMounts(cwd, utils.FunctionsDir, "", fc.Entrypoint, fc.ImportMap, fsys)

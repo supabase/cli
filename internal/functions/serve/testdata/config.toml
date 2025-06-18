@@ -1,0 +1,8 @@
+project_id = "test"
+
+[functions.hello]
+static_files = ["image.png"]
+
+[functions.world]
+enabled = false
+verify_jwt = false
