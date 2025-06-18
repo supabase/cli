@@ -25,7 +25,7 @@ jobs:
       - uses: t1m0thyj/unlock-keyring@v1
       - run: |
           pkgs=$(go list ./pkg/... | grep -Ev 'pkg/api' | paste -sd ',' -)
-          go run gotest.tools/gotestsum -- -race -v -count=1 ./... \
+          go tool gotestsum -- -race -v -count=1 ./... \
           -coverpkg="./cmd/...,./internal/...,${pkgs}" -coverprofile=coverage.out
 
       - uses: coverallsapp/github-action@v2
