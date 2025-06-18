@@ -12,7 +12,7 @@ const (
 	pg13  = "supabase/postgres:13.3.0"
 	pg14  = "supabase/postgres:14.1.0.89"
 	pg15  = "supabase/postgres:15.8.1.085"
-	deno2 = "supabase/edge-runtime:v1.68.0-develop.14"
+	deno2 = "supabase/edge-runtime:v1.68.0-develop.18"
 )
 
 type images struct {
