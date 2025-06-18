@@ -1,10 +1,11 @@
 module github.com/supabase/cli
 
-go 1.24.2
+go 1.24.4
 
 require (
 	github.com/BurntSushi/toml v1.5.0
 	github.com/Netflix/go-env v0.1.2
+	github.com/andybalholm/brotli v1.1.1
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/charmbracelet/bubbles v0.18.0
 	github.com/charmbracelet/bubbletea v0.25.0
@@ -15,11 +16,11 @@ require (
 	github.com/docker/cli v28.2.2+incompatible
 	github.com/docker/docker v28.2.2+incompatible
 	github.com/docker/go-connections v0.5.0
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/getsentry/sentry-go v0.33.0
 	github.com/go-errors/errors v1.5.1
 	github.com/go-git/go-git/v5 v5.16.2
 	github.com/go-xmlfmt/xmlfmt v1.1.3
-	github.com/golangci/golangci-lint/v2 v2.1.6
 	github.com/google/go-github/v62 v62.0.0
 	github.com/google/go-querystring v1.1.0
 	github.com/google/uuid v1.6.0
@@ -31,7 +32,6 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/mithrandie/csvq-driver v1.7.0
 	github.com/muesli/reflow v0.3.0
-	github.com/oapi-codegen/oapi-codegen/v2 v2.4.1
 	github.com/slack-go/slack v0.17.1
 	github.com/spf13/afero v1.14.0
 	github.com/spf13/cobra v1.9.1
@@ -49,7 +49,6 @@ require (
 	golang.org/x/term v0.32.0
 	google.golang.org/grpc v1.73.0
 	gopkg.in/yaml.v3 v3.0.1
-	gotest.tools/gotestsum v1.12.2
 )
 
 require (
@@ -75,7 +74,6 @@ require (
 	github.com/alexkohler/prealloc v1.0.0 // indirect
 	github.com/alingse/asasalint v0.0.11 // indirect
 	github.com/alingse/nilnesserr v0.2.0 // indirect
-	github.com/andybalholm/brotli v1.1.1 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/ashanbrown/forbidigo v1.6.0 // indirect
 	github.com/ashanbrown/makezero v1.2.0 // indirect
@@ -129,7 +127,6 @@ require (
 	github.com/fatih/structtag v1.2.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/firefart/nonamedreturns v1.0.6 // indirect
-	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fvbommel/sortorder v1.1.0 // indirect
 	github.com/fzipp/gocyclo v0.6.0 // indirect
 	github.com/getkin/kin-openapi v0.131.0 // indirect
@@ -159,6 +156,7 @@ require (
 	github.com/golangci/dupl v0.0.0-20250308024227-f665c8d69b32 // indirect
 	github.com/golangci/go-printf-func-name v0.1.0 // indirect
 	github.com/golangci/gofmt v0.0.0-20250106114630-d62b90e6713d // indirect
+	github.com/golangci/golangci-lint/v2 v2.1.6 // indirect
 	github.com/golangci/golines v0.0.0-20250217134842-442fd0091d95 // indirect
 	github.com/golangci/misspell v0.6.0 // indirect
 	github.com/golangci/plugin-module-register v0.1.1 // indirect
@@ -243,6 +241,7 @@ require (
 	github.com/nishanths/predeclared v0.2.2 // indirect
 	github.com/nunnatsa/ginkgolinter v0.19.1 // indirect
 	github.com/oapi-codegen/nullable v1.1.0 // indirect
+	github.com/oapi-codegen/oapi-codegen/v2 v2.4.1 // indirect
 	github.com/oapi-codegen/runtime v1.1.1 // indirect
 	github.com/oasdiff/yaml v0.0.0-20250309154309-f31be36b4037 // indirect
 	github.com/oasdiff/yaml3 v0.0.0-20250309153720-d2182401db90 // indirect
@@ -343,9 +342,16 @@ require (
 	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
+	gotest.tools/gotestsum v1.12.2 // indirect
 	honnef.co/go/tools v0.6.1 // indirect
 	mvdan.cc/gofumpt v0.8.0 // indirect
 	mvdan.cc/unparam v0.0.0-20250301125049-0df0534333a4 // indirect
 )
 
 replace github.com/supabase/cli/pkg v1.0.0 => ./pkg
+
+tool (
+	github.com/golangci/golangci-lint/v2/cmd/golangci-lint
+	github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
+	gotest.tools/gotestsum
+)
