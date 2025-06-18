@@ -57,11 +57,7 @@ func Report(ctx context.Context, outDir string, config pgconn.Config, fsys afero
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "Reports saved to "+utils.Bold(outDir))
-	var cfg RulesConfig
-	if err := cfg.Load(fsys); err != nil {
-		return err
-	}
-	return cfg.PrintSummary(ctx, outDir)
+	return printSummary(ctx, outDir)
 }
 
 var ignoreSchemas = fmt.Sprintf("'{%s}'::text[]", strings.Join(reset.LikeEscapeSchema(utils.InternalSchemas), ","))
@@ -88,36 +84,16 @@ func wrapQuery(query string, args ...string) string {
 	return fmt.Sprintf("COPY (%s) TO STDOUT WITH CSV HEADER", query)
 }
 
-// Rule defines a validation rule for a CSV file
-type Rule struct {
-	Query string `toml:"query"`
-	Name  string `toml:"name"`
-	Pass  string `toml:"pass"`
-	Fail  string `toml:"fail"`
-}
-
-// Config holds all rules
-type RulesConfig struct {
-	Rules []Rule `toml:"rule"`
-}
-
 //go:embed templates/rules.toml
 var rulesConfig embed.FS
 
-func (c *RulesConfig) Load(fsys afero.Fs) error {
-	rulesPath := filepath.Join("tools", "inspect_rules.toml")
-	if _, err := toml.DecodeFS(afero.NewIOFS(fsys), rulesPath, c); errors.Is(err, os.ErrNotExist) {
+func printSummary(ctx context.Context, outDir string) error {
+	if len(utils.Config.Experimental.Inspect.Rules) == 0 {
 		fmt.Fprintln(os.Stderr, "Loading default rules...")
-		if _, err := toml.DecodeFS(rulesConfig, "templates/rules.toml", c); err != nil {
+		if _, err := toml.DecodeFS(rulesConfig, "templates/rules.toml", &utils.Config.Experimental.Inspect); err != nil {
 			return errors.Errorf("failed load default rules: %w", err)
 		}
-	} else if err != nil {
-		return errors.Errorf("failed to parse inspect rules: %w", err)
 	}
-	return nil
-}
-
-func (c RulesConfig) PrintSummary(ctx context.Context, outDir string) error {
 	// Open csvq database rooted at the output directory
 	db, err := sql.Open("csvq", outDir)
 	if err != nil {
@@ -126,7 +102,7 @@ func (c RulesConfig) PrintSummary(ctx context.Context, outDir string) error {
 	defer db.Close()
 	// Build report summary table
 	table := "RULE|STATUS|MATCHES\n|-|-|-|\n"
-	for _, r := range c.Rules {
+	for _, r := range utils.Config.Experimental.Inspect.Rules {
 		row := db.QueryRowContext(ctx, r.Query)
 		// find matching rule
 		var status string
