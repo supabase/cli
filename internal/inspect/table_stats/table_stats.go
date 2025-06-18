@@ -1,4 +1,4 @@
-package seq_scans
+package table_stats
 
 import (
 	"context"
@@ -15,12 +15,16 @@ import (
 	"github.com/supabase/cli/pkg/pgxv5"
 )
 
-//go:embed seq_scans.sql
-var SeqScansQuery string
+//go:embed table_stats.sql
+var TableStatsQuery string
 
 type Result struct {
-	Name  string
-	Count int64
+	Name                string
+	Table_size          string
+	Index_size          string
+	Total_size          string
+	Estimated_row_count int64
+	Seq_scans           int64
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -29,7 +33,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 	defer conn.Close(context.Background())
-	rows, err := conn.Query(ctx, SeqScansQuery, reset.LikeEscapeSchema(utils.InternalSchemas))
+	rows, err := conn.Query(ctx, TableStatsQuery, reset.LikeEscapeSchema(utils.InternalSchemas))
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}
@@ -38,9 +42,9 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "|Name|Count|\n|-|-|\n"
+	table := "|Name|Table size|Index size|Total size|Estimated row count|Seq scans|\n|-|-|-|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%d`|\n", r.Name, r.Count)
+		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%s`|`%d`|`%d`|\n", r.Name, r.Table_size, r.Index_size, r.Total_size, r.Estimated_row_count, r.Seq_scans)
 	}
 	return list.RenderTable(table)
 }

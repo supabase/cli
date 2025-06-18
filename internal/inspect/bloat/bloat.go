@@ -19,11 +19,10 @@ import (
 var BloatQuery string
 
 type Result struct {
-	Type        string
-	Schemaname  string
-	Object_name string
-	Bloat       string
-	Waste       string
+	Type  string
+	Name  string
+	Bloat string
+	Waste string
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -41,9 +40,9 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "|Type|Schema name|Object name|Bloat|Waste\n|-|-|-|-|-|\n"
+	table := "|Type|Name|Bloat|Waste\n|-|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%s`|`%s`|\n", r.Type, r.Schemaname, r.Object_name, r.Bloat, r.Waste)
+		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%s`|\n", r.Type, r.Name, r.Bloat, r.Waste)
 	}
 	return list.RenderTable(table)
 }

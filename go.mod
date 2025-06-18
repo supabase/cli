@@ -29,6 +29,7 @@ require (
 	github.com/jackc/pgproto3/v2 v2.3.3
 	github.com/jackc/pgx/v4 v4.18.3
 	github.com/joho/godotenv v1.5.1
+	github.com/mithrandie/csvq-driver v1.7.0
 	github.com/muesli/reflow v0.3.0
 	github.com/oapi-codegen/oapi-codegen/v2 v2.4.1
 	github.com/slack-go/slack v0.17.1
@@ -223,6 +224,10 @@ require (
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/hashstructure/v2 v2.0.2 // indirect
+	github.com/mithrandie/csvq v1.18.1 // indirect
+	github.com/mithrandie/go-file/v2 v2.1.0 // indirect
+	github.com/mithrandie/go-text v1.6.0 // indirect
+	github.com/mithrandie/ternary v1.1.1 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/sys/atomicwriter v0.1.0 // indirect
 	github.com/moby/sys/sequential v0.6.0 // indirect

@@ -1,4 +1,4 @@
-package role_connections
+package role_stats
 
 import (
 	"context"
@@ -14,13 +14,14 @@ import (
 	"github.com/supabase/cli/pkg/pgxv5"
 )
 
-//go:embed role_connections.sql
-var RoleConnectionsQuery string
+//go:embed role_stats.sql
+var RoleStatsQuery string
 
 type Result struct {
-	Rolname            string
+	Role_name          string
 	Active_connections int
 	Connection_limit   int
+	Custom_config      string
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -29,7 +30,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 	defer conn.Close(context.Background())
-	rows, err := conn.Query(ctx, RoleConnectionsQuery)
+	rows, err := conn.Query(ctx, RoleStatsQuery)
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}
@@ -38,25 +39,10 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "|Role Name|Active connction|\n|-|-|\n"
-	sum := 0
+	table := "|Role name|Active connections|Connection limit|Custom config|\n|-|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%d`|\n", r.Rolname, r.Active_connections)
-		sum += r.Active_connections
+		table += fmt.Sprintf("|`%s`|`%d`|`%d`|`%s`|\n", r.Role_name, r.Active_connections, r.Connection_limit, r.Custom_config)
 	}
 
-	if err := list.RenderTable(table); err != nil {
-		return err
-	}
-
-	if len(result) > 0 {
-		fmt.Printf("\nActive connections %d/%d\n\n", sum, result[0].Connection_limit)
-	}
-
-	if matches := utils.ProjectHostPattern.FindStringSubmatch(config.Host); len(matches) == 4 {
-		fmt.Println("Go to the dashboard for more here:")
-		fmt.Printf("https://app.supabase.com/project/%s/database/roles\n", matches[2])
-	}
-
-	return nil
+	return list.RenderTable(table)
 }

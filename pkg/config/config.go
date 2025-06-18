@@ -247,6 +247,17 @@ type (
 		Enabled bool `toml:"enabled"`
 	}
 
+	inspect struct {
+		Rules []rule `toml:"rules"`
+	}
+
+	rule struct {
+		Query string `toml:"query"`
+		Name  string `toml:"name"`
+		Pass  string `toml:"pass"`
+		Fail  string `toml:"fail"`
+	}
+
 	experimental struct {
 		OrioleDBVersion string    `toml:"orioledb_version"`
 		S3Host          string    `toml:"s3_host"`
@@ -254,6 +265,7 @@ type (
 		S3AccessKey     string    `toml:"s3_access_key"`
 		S3SecretKey     string    `toml:"s3_secret_key"`
 		Webhooks        *webhooks `toml:"webhooks"`
+		Inspect         inspect   `toml:"inspect"`
 	}
 )
 

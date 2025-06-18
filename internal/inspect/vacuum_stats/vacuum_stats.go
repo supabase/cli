@@ -20,8 +20,7 @@ import (
 var VacuumStatsQuery string
 
 type Result struct {
-	Schema               string
-	Table                string
+	Name                 string
 	Last_vacuum          string
 	Last_autovacuum      string
 	Rowcount             string
@@ -45,10 +44,10 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "|Schema|Table|Last Vacuum|Last Auto Vacuum|Row count|Dead row count|Expect autovacuum?\n|-|-|-|-|-|-|-|\n"
+	table := "|Table|Last Vacuum|Last Auto Vacuum|Row count|Dead row count|Expect autovacuum?\n|-|-|-|-|-|-|\n"
 	for _, r := range result {
 		rowcount := strings.Replace(r.Rowcount, "-1", "No stats", 1)
-		table += fmt.Sprintf("|`%s`|`%s`|%s|%s|`%s`|`%s`|`%s`|\n", r.Schema, r.Table, r.Last_vacuum, r.Last_autovacuum, rowcount, r.Dead_rowcount, r.Expect_autovacuum)
+		table += fmt.Sprintf("|`%s`|%s|%s|`%s`|`%s`|`%s`|\n", r.Name, r.Last_vacuum, r.Last_autovacuum, rowcount, r.Dead_rowcount, r.Expect_autovacuum)
 	}
 	return list.RenderTable(table)
 }
