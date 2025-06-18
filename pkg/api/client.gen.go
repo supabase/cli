@@ -122,6 +122,9 @@ type ClientInterface interface {
 	// V1AuthorizeUser request
 	V1AuthorizeUser(ctx context.Context, params *V1AuthorizeUserParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1OauthAuthorizeProjectClaim request
+	V1OauthAuthorizeProjectClaim(ctx context.Context, params *V1OauthAuthorizeProjectClaimParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1RevokeTokenWithBody request with any body
 	V1RevokeTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -146,6 +149,12 @@ type ClientInterface interface {
 	// V1ListOrganizationMembers request
 	V1ListOrganizationMembers(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1GetOrganizationProjectClaim request
+	V1GetOrganizationProjectClaim(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1ClaimProjectForOrganization request
+	V1ClaimProjectForOrganization(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1ListAllProjects request
 	V1ListAllProjects(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -164,7 +173,7 @@ type ClientInterface interface {
 	GetPerformanceAdvisors(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetSecurityAdvisors request
-	GetSecurityAdvisors(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetSecurityAdvisors(ctx context.Context, ref string, params *GetSecurityAdvisorsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetLogs request
 	GetLogs(ctx context.Context, ref string, params *GetLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -221,6 +230,15 @@ type ClientInterface interface {
 	V1CreateABranchWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	V1CreateABranch(ctx context.Context, ref string, body V1CreateABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1DeleteProjectClaimToken request
+	V1DeleteProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetProjectClaimToken request
+	V1GetProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1CreateProjectClaimToken request
+	V1CreateProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1GetAuthServiceConfig request
 	V1GetAuthServiceConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -333,6 +351,19 @@ type ClientInterface interface {
 	V1RestorePitrBackupWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	V1RestorePitrBackup(ctx context.Context, ref string, body V1RestorePitrBackupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetRestorePoint request
+	V1GetRestorePoint(ctx context.Context, ref string, params *V1GetRestorePointParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1CreateRestorePointWithBody request with any body
+	V1CreateRestorePointWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1CreateRestorePoint(ctx context.Context, ref string, body V1CreateRestorePointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1UndoWithBody request with any body
+	V1UndoWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1Undo(ctx context.Context, ref string, body V1UndoJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetDatabaseMetadata request
 	GetDatabaseMetadata(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -659,6 +690,18 @@ func (c *Client) V1AuthorizeUser(ctx context.Context, params *V1AuthorizeUserPar
 	return c.Client.Do(req)
 }
 
+func (c *Client) V1OauthAuthorizeProjectClaim(ctx context.Context, params *V1OauthAuthorizeProjectClaimParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1OauthAuthorizeProjectClaimRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) V1RevokeTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1RevokeTokenRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -767,6 +810,30 @@ func (c *Client) V1ListOrganizationMembers(ctx context.Context, slug string, req
 	return c.Client.Do(req)
 }
 
+func (c *Client) V1GetOrganizationProjectClaim(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetOrganizationProjectClaimRequest(c.Server, slug, token)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ClaimProjectForOrganization(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ClaimProjectForOrganizationRequest(c.Server, slug, token)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) V1ListAllProjects(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1ListAllProjectsRequest(c.Server)
 	if err != nil {
@@ -839,8 +906,8 @@ func (c *Client) GetPerformanceAdvisors(ctx context.Context, ref string, reqEdit
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetSecurityAdvisors(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetSecurityAdvisorsRequest(c.Server, ref)
+func (c *Client) GetSecurityAdvisors(ctx context.Context, ref string, params *GetSecurityAdvisorsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSecurityAdvisorsRequest(c.Server, ref, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1081,6 +1148,42 @@ func (c *Client) V1CreateABranchWithBody(ctx context.Context, ref string, conten
 
 func (c *Client) V1CreateABranch(ctx context.Context, ref string, body V1CreateABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1CreateABranchRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1DeleteProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1DeleteProjectClaimTokenRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetProjectClaimTokenRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1CreateProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1CreateProjectClaimTokenRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -1573,6 +1676,66 @@ func (c *Client) V1RestorePitrBackupWithBody(ctx context.Context, ref string, co
 
 func (c *Client) V1RestorePitrBackup(ctx context.Context, ref string, body V1RestorePitrBackupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1RestorePitrBackupRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetRestorePoint(ctx context.Context, ref string, params *V1GetRestorePointParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetRestorePointRequest(c.Server, ref, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1CreateRestorePointWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1CreateRestorePointRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1CreateRestorePoint(ctx context.Context, ref string, body V1CreateRestorePointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1CreateRestorePointRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UndoWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UndoRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1Undo(ctx context.Context, ref string, body V1UndoJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UndoRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2836,6 +2999,151 @@ func NewV1AuthorizeUserRequest(server string, params *V1AuthorizeUserParams) (*h
 	return req, nil
 }
 
+// NewV1OauthAuthorizeProjectClaimRequest generates requests for V1OauthAuthorizeProjectClaim
+func NewV1OauthAuthorizeProjectClaimRequest(server string, params *V1OauthAuthorizeProjectClaimParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/oauth/authorize/project-claim")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "project_ref", runtime.ParamLocationQuery, params.ProjectRef); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "client_id", runtime.ParamLocationQuery, params.ClientId); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "response_type", runtime.ParamLocationQuery, params.ResponseType); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "redirect_uri", runtime.ParamLocationQuery, params.RedirectUri); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		if params.State != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "state", runtime.ParamLocationQuery, *params.State); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.ResponseMode != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "response_mode", runtime.ParamLocationQuery, *params.ResponseMode); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.CodeChallenge != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "code_challenge", runtime.ParamLocationQuery, *params.CodeChallenge); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.CodeChallengeMethod != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "code_challenge_method", runtime.ParamLocationQuery, *params.CodeChallengeMethod); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewV1RevokeTokenRequest calls the generic V1RevokeToken builder with application/json body
 func NewV1RevokeTokenRequest(server string, body V1RevokeTokenJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -3051,6 +3359,88 @@ func NewV1ListOrganizationMembersRequest(server string, slug string) (*http.Requ
 	return req, nil
 }
 
+// NewV1GetOrganizationProjectClaimRequest generates requests for V1GetOrganizationProjectClaim
+func NewV1GetOrganizationProjectClaimRequest(server string, slug string, token string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "slug", runtime.ParamLocationPath, slug)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "token", runtime.ParamLocationPath, token)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/organizations/%s/project-claim/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1ClaimProjectForOrganizationRequest generates requests for V1ClaimProjectForOrganization
+func NewV1ClaimProjectForOrganizationRequest(server string, slug string, token string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "slug", runtime.ParamLocationPath, slug)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "token", runtime.ParamLocationPath, token)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/organizations/%s/project-claim/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewV1ListAllProjectsRequest generates requests for V1ListAllProjects
 func NewV1ListAllProjectsRequest(server string) (*http.Request, error) {
 	var err error
@@ -3221,7 +3611,7 @@ func NewGetPerformanceAdvisorsRequest(server string, ref string) (*http.Request,
 }
 
 // NewGetSecurityAdvisorsRequest generates requests for GetSecurityAdvisors
-func NewGetSecurityAdvisorsRequest(server string, ref string) (*http.Request, error) {
+func NewGetSecurityAdvisorsRequest(server string, ref string, params *GetSecurityAdvisorsParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -3244,6 +3634,28 @@ func NewGetSecurityAdvisorsRequest(server string, ref string) (*http.Request, er
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.LintType != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "lint_type", runtime.ParamLocationQuery, *params.LintType); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -4110,6 +4522,108 @@ func NewV1CreateABranchRequestWithBody(server string, ref string, contentType st
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1DeleteProjectClaimTokenRequest generates requests for V1DeleteProjectClaimToken
+func NewV1DeleteProjectClaimTokenRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/claim-token", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1GetProjectClaimTokenRequest generates requests for V1GetProjectClaimToken
+func NewV1GetProjectClaimTokenRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/claim-token", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1CreateProjectClaimTokenRequest generates requests for V1CreateProjectClaimToken
+func NewV1CreateProjectClaimTokenRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/claim-token", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -5314,6 +5828,156 @@ func NewV1RestorePitrBackupRequestWithBody(server string, ref string, contentTyp
 	}
 
 	operationPath := fmt.Sprintf("/v1/projects/%s/database/backups/restore-pitr", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1GetRestorePointRequest generates requests for V1GetRestorePoint
+func NewV1GetRestorePointRequest(server string, ref string, params *V1GetRestorePointParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/backups/restore-point", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Name != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "name", runtime.ParamLocationQuery, *params.Name); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1CreateRestorePointRequest calls the generic V1CreateRestorePoint builder with application/json body
+func NewV1CreateRestorePointRequest(server string, ref string, body V1CreateRestorePointJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1CreateRestorePointRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1CreateRestorePointRequestWithBody generates requests for V1CreateRestorePoint with any type of body
+func NewV1CreateRestorePointRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/backups/restore-point", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1UndoRequest calls the generic V1Undo builder with application/json body
+func NewV1UndoRequest(server string, ref string, body V1UndoJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1UndoRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1UndoRequestWithBody generates requests for V1Undo with any type of body
+func NewV1UndoRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/backups/undo", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -7733,6 +8397,9 @@ type ClientWithResponsesInterface interface {
 	// V1AuthorizeUserWithResponse request
 	V1AuthorizeUserWithResponse(ctx context.Context, params *V1AuthorizeUserParams, reqEditors ...RequestEditorFn) (*V1AuthorizeUserResponse, error)
 
+	// V1OauthAuthorizeProjectClaimWithResponse request
+	V1OauthAuthorizeProjectClaimWithResponse(ctx context.Context, params *V1OauthAuthorizeProjectClaimParams, reqEditors ...RequestEditorFn) (*V1OauthAuthorizeProjectClaimResponse, error)
+
 	// V1RevokeTokenWithBodyWithResponse request with any body
 	V1RevokeTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RevokeTokenResponse, error)
 
@@ -7757,6 +8424,12 @@ type ClientWithResponsesInterface interface {
 	// V1ListOrganizationMembersWithResponse request
 	V1ListOrganizationMembersWithResponse(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*V1ListOrganizationMembersResponse, error)
 
+	// V1GetOrganizationProjectClaimWithResponse request
+	V1GetOrganizationProjectClaimWithResponse(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*V1GetOrganizationProjectClaimResponse, error)
+
+	// V1ClaimProjectForOrganizationWithResponse request
+	V1ClaimProjectForOrganizationWithResponse(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*V1ClaimProjectForOrganizationResponse, error)
+
 	// V1ListAllProjectsWithResponse request
 	V1ListAllProjectsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*V1ListAllProjectsResponse, error)
 
@@ -7775,7 +8448,7 @@ type ClientWithResponsesInterface interface {
 	GetPerformanceAdvisorsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetPerformanceAdvisorsResponse, error)
 
 	// GetSecurityAdvisorsWithResponse request
-	GetSecurityAdvisorsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetSecurityAdvisorsResponse, error)
+	GetSecurityAdvisorsWithResponse(ctx context.Context, ref string, params *GetSecurityAdvisorsParams, reqEditors ...RequestEditorFn) (*GetSecurityAdvisorsResponse, error)
 
 	// GetLogsWithResponse request
 	GetLogsWithResponse(ctx context.Context, ref string, params *GetLogsParams, reqEditors ...RequestEditorFn) (*GetLogsResponse, error)
@@ -7832,6 +8505,15 @@ type ClientWithResponsesInterface interface {
 	V1CreateABranchWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1CreateABranchResponse, error)
 
 	V1CreateABranchWithResponse(ctx context.Context, ref string, body V1CreateABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateABranchResponse, error)
+
+	// V1DeleteProjectClaimTokenWithResponse request
+	V1DeleteProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteProjectClaimTokenResponse, error)
+
+	// V1GetProjectClaimTokenWithResponse request
+	V1GetProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectClaimTokenResponse, error)
+
+	// V1CreateProjectClaimTokenWithResponse request
+	V1CreateProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1CreateProjectClaimTokenResponse, error)
 
 	// V1GetAuthServiceConfigWithResponse request
 	V1GetAuthServiceConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetAuthServiceConfigResponse, error)
@@ -7944,6 +8626,19 @@ type ClientWithResponsesInterface interface {
 	V1RestorePitrBackupWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RestorePitrBackupResponse, error)
 
 	V1RestorePitrBackupWithResponse(ctx context.Context, ref string, body V1RestorePitrBackupJSONRequestBody, reqEditors ...RequestEditorFn) (*V1RestorePitrBackupResponse, error)
+
+	// V1GetRestorePointWithResponse request
+	V1GetRestorePointWithResponse(ctx context.Context, ref string, params *V1GetRestorePointParams, reqEditors ...RequestEditorFn) (*V1GetRestorePointResponse, error)
+
+	// V1CreateRestorePointWithBodyWithResponse request with any body
+	V1CreateRestorePointWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1CreateRestorePointResponse, error)
+
+	V1CreateRestorePointWithResponse(ctx context.Context, ref string, body V1CreateRestorePointJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateRestorePointResponse, error)
+
+	// V1UndoWithBodyWithResponse request with any body
+	V1UndoWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UndoResponse, error)
+
+	V1UndoWithResponse(ctx context.Context, ref string, body V1UndoJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UndoResponse, error)
 
 	// GetDatabaseMetadataWithResponse request
 	GetDatabaseMetadataWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetDatabaseMetadataResponse, error)
@@ -8300,6 +8995,27 @@ func (r V1AuthorizeUserResponse) StatusCode() int {
 	return 0
 }
 
+type V1OauthAuthorizeProjectClaimResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1OauthAuthorizeProjectClaimResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1OauthAuthorizeProjectClaimResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1RevokeTokenResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -8425,6 +9141,49 @@ func (r V1ListOrganizationMembersResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1ListOrganizationMembersResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetOrganizationProjectClaimResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *OrganizationProjectClaimResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetOrganizationProjectClaimResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetOrganizationProjectClaimResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1ClaimProjectForOrganizationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1ClaimProjectForOrganizationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1ClaimProjectForOrganizationResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -8906,6 +9665,71 @@ func (r V1CreateABranchResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1CreateABranchResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1DeleteProjectClaimTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1DeleteProjectClaimTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1DeleteProjectClaimTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetProjectClaimTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ProjectClaimTokenResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetProjectClaimTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetProjectClaimTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1CreateProjectClaimTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *CreateProjectClaimTokenResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1CreateProjectClaimTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1CreateProjectClaimTokenResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -9563,6 +10387,71 @@ func (r V1RestorePitrBackupResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1RestorePitrBackupResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetRestorePointResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *V1RestorePointResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetRestorePointResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetRestorePointResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1CreateRestorePointResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *V1RestorePointResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1CreateRestorePointResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1CreateRestorePointResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1UndoResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1UndoResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1UndoResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -10714,6 +11603,15 @@ func (c *ClientWithResponses) V1AuthorizeUserWithResponse(ctx context.Context, p
 	return ParseV1AuthorizeUserResponse(rsp)
 }
 
+// V1OauthAuthorizeProjectClaimWithResponse request returning *V1OauthAuthorizeProjectClaimResponse
+func (c *ClientWithResponses) V1OauthAuthorizeProjectClaimWithResponse(ctx context.Context, params *V1OauthAuthorizeProjectClaimParams, reqEditors ...RequestEditorFn) (*V1OauthAuthorizeProjectClaimResponse, error) {
+	rsp, err := c.V1OauthAuthorizeProjectClaim(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1OauthAuthorizeProjectClaimResponse(rsp)
+}
+
 // V1RevokeTokenWithBodyWithResponse request with arbitrary body returning *V1RevokeTokenResponse
 func (c *ClientWithResponses) V1RevokeTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RevokeTokenResponse, error) {
 	rsp, err := c.V1RevokeTokenWithBody(ctx, contentType, body, reqEditors...)
@@ -10792,6 +11690,24 @@ func (c *ClientWithResponses) V1ListOrganizationMembersWithResponse(ctx context.
 	return ParseV1ListOrganizationMembersResponse(rsp)
 }
 
+// V1GetOrganizationProjectClaimWithResponse request returning *V1GetOrganizationProjectClaimResponse
+func (c *ClientWithResponses) V1GetOrganizationProjectClaimWithResponse(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*V1GetOrganizationProjectClaimResponse, error) {
+	rsp, err := c.V1GetOrganizationProjectClaim(ctx, slug, token, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetOrganizationProjectClaimResponse(rsp)
+}
+
+// V1ClaimProjectForOrganizationWithResponse request returning *V1ClaimProjectForOrganizationResponse
+func (c *ClientWithResponses) V1ClaimProjectForOrganizationWithResponse(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*V1ClaimProjectForOrganizationResponse, error) {
+	rsp, err := c.V1ClaimProjectForOrganization(ctx, slug, token, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ClaimProjectForOrganizationResponse(rsp)
+}
+
 // V1ListAllProjectsWithResponse request returning *V1ListAllProjectsResponse
 func (c *ClientWithResponses) V1ListAllProjectsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*V1ListAllProjectsResponse, error) {
 	rsp, err := c.V1ListAllProjects(ctx, reqEditors...)
@@ -10846,8 +11762,8 @@ func (c *ClientWithResponses) GetPerformanceAdvisorsWithResponse(ctx context.Con
 }
 
 // GetSecurityAdvisorsWithResponse request returning *GetSecurityAdvisorsResponse
-func (c *ClientWithResponses) GetSecurityAdvisorsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetSecurityAdvisorsResponse, error) {
-	rsp, err := c.GetSecurityAdvisors(ctx, ref, reqEditors...)
+func (c *ClientWithResponses) GetSecurityAdvisorsWithResponse(ctx context.Context, ref string, params *GetSecurityAdvisorsParams, reqEditors ...RequestEditorFn) (*GetSecurityAdvisorsResponse, error) {
+	rsp, err := c.GetSecurityAdvisors(ctx, ref, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -11028,6 +11944,33 @@ func (c *ClientWithResponses) V1CreateABranchWithResponse(ctx context.Context, r
 		return nil, err
 	}
 	return ParseV1CreateABranchResponse(rsp)
+}
+
+// V1DeleteProjectClaimTokenWithResponse request returning *V1DeleteProjectClaimTokenResponse
+func (c *ClientWithResponses) V1DeleteProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteProjectClaimTokenResponse, error) {
+	rsp, err := c.V1DeleteProjectClaimToken(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1DeleteProjectClaimTokenResponse(rsp)
+}
+
+// V1GetProjectClaimTokenWithResponse request returning *V1GetProjectClaimTokenResponse
+func (c *ClientWithResponses) V1GetProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectClaimTokenResponse, error) {
+	rsp, err := c.V1GetProjectClaimToken(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetProjectClaimTokenResponse(rsp)
+}
+
+// V1CreateProjectClaimTokenWithResponse request returning *V1CreateProjectClaimTokenResponse
+func (c *ClientWithResponses) V1CreateProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1CreateProjectClaimTokenResponse, error) {
+	rsp, err := c.V1CreateProjectClaimToken(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1CreateProjectClaimTokenResponse(rsp)
 }
 
 // V1GetAuthServiceConfigWithResponse request returning *V1GetAuthServiceConfigResponse
@@ -11386,6 +12329,49 @@ func (c *ClientWithResponses) V1RestorePitrBackupWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseV1RestorePitrBackupResponse(rsp)
+}
+
+// V1GetRestorePointWithResponse request returning *V1GetRestorePointResponse
+func (c *ClientWithResponses) V1GetRestorePointWithResponse(ctx context.Context, ref string, params *V1GetRestorePointParams, reqEditors ...RequestEditorFn) (*V1GetRestorePointResponse, error) {
+	rsp, err := c.V1GetRestorePoint(ctx, ref, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetRestorePointResponse(rsp)
+}
+
+// V1CreateRestorePointWithBodyWithResponse request with arbitrary body returning *V1CreateRestorePointResponse
+func (c *ClientWithResponses) V1CreateRestorePointWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1CreateRestorePointResponse, error) {
+	rsp, err := c.V1CreateRestorePointWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1CreateRestorePointResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1CreateRestorePointWithResponse(ctx context.Context, ref string, body V1CreateRestorePointJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateRestorePointResponse, error) {
+	rsp, err := c.V1CreateRestorePoint(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1CreateRestorePointResponse(rsp)
+}
+
+// V1UndoWithBodyWithResponse request with arbitrary body returning *V1UndoResponse
+func (c *ClientWithResponses) V1UndoWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UndoResponse, error) {
+	rsp, err := c.V1UndoWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UndoResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1UndoWithResponse(ctx context.Context, ref string, body V1UndoJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UndoResponse, error) {
+	rsp, err := c.V1Undo(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UndoResponse(rsp)
 }
 
 // GetDatabaseMetadataWithResponse request returning *GetDatabaseMetadataResponse
@@ -12152,6 +13138,22 @@ func ParseV1AuthorizeUserResponse(rsp *http.Response) (*V1AuthorizeUserResponse,
 	return response, nil
 }
 
+// ParseV1OauthAuthorizeProjectClaimResponse parses an HTTP response from a V1OauthAuthorizeProjectClaimWithResponse call
+func ParseV1OauthAuthorizeProjectClaimResponse(rsp *http.Response) (*V1OauthAuthorizeProjectClaimResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1OauthAuthorizeProjectClaimResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
 // ParseV1RevokeTokenResponse parses an HTTP response from a V1RevokeTokenWithResponse call
 func ParseV1RevokeTokenResponse(rsp *http.Response) (*V1RevokeTokenResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -12293,6 +13295,48 @@ func ParseV1ListOrganizationMembersResponse(rsp *http.Response) (*V1ListOrganiza
 		}
 		response.JSON200 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseV1GetOrganizationProjectClaimResponse parses an HTTP response from a V1GetOrganizationProjectClaimWithResponse call
+func ParseV1GetOrganizationProjectClaimResponse(rsp *http.Response) (*V1GetOrganizationProjectClaimResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetOrganizationProjectClaimResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OrganizationProjectClaimResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1ClaimProjectForOrganizationResponse parses an HTTP response from a V1ClaimProjectForOrganizationWithResponse call
+func ParseV1ClaimProjectForOrganizationResponse(rsp *http.Response) (*V1ClaimProjectForOrganizationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1ClaimProjectForOrganizationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
 	}
 
 	return response, nil
@@ -12834,6 +13878,74 @@ func ParseV1CreateABranchResponse(rsp *http.Response) (*V1CreateABranchResponse,
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1DeleteProjectClaimTokenResponse parses an HTTP response from a V1DeleteProjectClaimTokenWithResponse call
+func ParseV1DeleteProjectClaimTokenResponse(rsp *http.Response) (*V1DeleteProjectClaimTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1DeleteProjectClaimTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1GetProjectClaimTokenResponse parses an HTTP response from a V1GetProjectClaimTokenWithResponse call
+func ParseV1GetProjectClaimTokenResponse(rsp *http.Response) (*V1GetProjectClaimTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetProjectClaimTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ProjectClaimTokenResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1CreateProjectClaimTokenResponse parses an HTTP response from a V1CreateProjectClaimTokenWithResponse call
+func ParseV1CreateProjectClaimTokenResponse(rsp *http.Response) (*V1CreateProjectClaimTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1CreateProjectClaimTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CreateProjectClaimTokenResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	}
 
@@ -13583,6 +14695,74 @@ func ParseV1RestorePitrBackupResponse(rsp *http.Response) (*V1RestorePitrBackupR
 	}
 
 	response := &V1RestorePitrBackupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1GetRestorePointResponse parses an HTTP response from a V1GetRestorePointWithResponse call
+func ParseV1GetRestorePointResponse(rsp *http.Response) (*V1GetRestorePointResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetRestorePointResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest V1RestorePointResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1CreateRestorePointResponse parses an HTTP response from a V1CreateRestorePointWithResponse call
+func ParseV1CreateRestorePointResponse(rsp *http.Response) (*V1CreateRestorePointResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1CreateRestorePointResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest V1RestorePointResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1UndoResponse parses an HTTP response from a V1UndoWithResponse call
+func ParseV1UndoResponse(rsp *http.Response) (*V1UndoResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1UndoResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}

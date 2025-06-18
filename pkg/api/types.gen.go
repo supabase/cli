@@ -462,6 +462,22 @@ const (
 	Bearer OAuthTokenResponseTokenType = "Bearer"
 )
 
+// Defines values for OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan.
+const (
+	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanEnterprise OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "enterprise"
+	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanFree       OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "free"
+	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanPro        OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "pro"
+	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanTeam       OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "team"
+)
+
+// Defines values for OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan.
+const (
+	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanEnterprise OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "enterprise"
+	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanFree       OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "free"
+	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanPro        OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "pro"
+	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanTeam       OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "team"
+)
+
 // Defines values for PostgresConfigResponseSessionReplicationRole.
 const (
 	PostgresConfigResponseSessionReplicationRoleLocal   PostgresConfigResponseSessionReplicationRole = "local"
@@ -853,6 +869,13 @@ const (
 	V1ProjectWithDatabaseResponseStatusUPGRADING       V1ProjectWithDatabaseResponseStatus = "UPGRADING"
 )
 
+// Defines values for V1RestorePointResponseStatus.
+const (
+	V1RestorePointResponseStatusAVAILABLE V1RestorePointResponseStatus = "AVAILABLE"
+	V1RestorePointResponseStatusPENDING   V1RestorePointResponseStatus = "PENDING"
+	V1RestorePointResponseStatusREMOVED   V1RestorePointResponseStatus = "REMOVED"
+)
+
 // Defines values for V1ServiceHealthResponseInfo0Name.
 const (
 	GoTrue V1ServiceHealthResponseInfo0Name = "GoTrue"
@@ -870,9 +893,9 @@ const (
 
 // Defines values for V1ServiceHealthResponseStatus.
 const (
-	V1ServiceHealthResponseStatusACTIVEHEALTHY V1ServiceHealthResponseStatus = "ACTIVE_HEALTHY"
-	V1ServiceHealthResponseStatusCOMINGUP      V1ServiceHealthResponseStatus = "COMING_UP"
-	V1ServiceHealthResponseStatusUNHEALTHY     V1ServiceHealthResponseStatus = "UNHEALTHY"
+	ACTIVEHEALTHY V1ServiceHealthResponseStatus = "ACTIVE_HEALTHY"
+	COMINGUP      V1ServiceHealthResponseStatus = "COMING_UP"
+	UNHEALTHY     V1ServiceHealthResponseStatus = "UNHEALTHY"
 )
 
 // Defines values for VanitySubdomainConfigResponseStatus.
@@ -884,16 +907,35 @@ const (
 
 // Defines values for V1AuthorizeUserParamsResponseType.
 const (
-	Code         V1AuthorizeUserParamsResponseType = "code"
-	IdTokenToken V1AuthorizeUserParamsResponseType = "id_token token"
-	Token        V1AuthorizeUserParamsResponseType = "token"
+	V1AuthorizeUserParamsResponseTypeCode         V1AuthorizeUserParamsResponseType = "code"
+	V1AuthorizeUserParamsResponseTypeIdTokenToken V1AuthorizeUserParamsResponseType = "id_token token"
+	V1AuthorizeUserParamsResponseTypeToken        V1AuthorizeUserParamsResponseType = "token"
 )
 
 // Defines values for V1AuthorizeUserParamsCodeChallengeMethod.
 const (
-	Plain  V1AuthorizeUserParamsCodeChallengeMethod = "plain"
-	S256   V1AuthorizeUserParamsCodeChallengeMethod = "S256"
-	Sha256 V1AuthorizeUserParamsCodeChallengeMethod = "sha256"
+	V1AuthorizeUserParamsCodeChallengeMethodPlain  V1AuthorizeUserParamsCodeChallengeMethod = "plain"
+	V1AuthorizeUserParamsCodeChallengeMethodS256   V1AuthorizeUserParamsCodeChallengeMethod = "S256"
+	V1AuthorizeUserParamsCodeChallengeMethodSha256 V1AuthorizeUserParamsCodeChallengeMethod = "sha256"
+)
+
+// Defines values for V1OauthAuthorizeProjectClaimParamsResponseType.
+const (
+	V1OauthAuthorizeProjectClaimParamsResponseTypeCode         V1OauthAuthorizeProjectClaimParamsResponseType = "code"
+	V1OauthAuthorizeProjectClaimParamsResponseTypeIdTokenToken V1OauthAuthorizeProjectClaimParamsResponseType = "id_token token"
+	V1OauthAuthorizeProjectClaimParamsResponseTypeToken        V1OauthAuthorizeProjectClaimParamsResponseType = "token"
+)
+
+// Defines values for V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod.
+const (
+	V1OauthAuthorizeProjectClaimParamsCodeChallengeMethodPlain  V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod = "plain"
+	V1OauthAuthorizeProjectClaimParamsCodeChallengeMethodS256   V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod = "S256"
+	V1OauthAuthorizeProjectClaimParamsCodeChallengeMethodSha256 V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod = "sha256"
+)
+
+// Defines values for GetSecurityAdvisorsParamsLintType.
+const (
+	Sql GetSecurityAdvisorsParamsLintType = "sql"
 )
 
 // Defines values for GetApiCountsParamsInterval.
@@ -1334,6 +1376,15 @@ type CreateBranchBodyReleaseChannel string
 // CreateOrganizationV1 defines model for CreateOrganizationV1.
 type CreateOrganizationV1 struct {
 	Name string `json:"name"`
+}
+
+// CreateProjectClaimTokenResponse defines model for CreateProjectClaimTokenResponse.
+type CreateProjectClaimTokenResponse struct {
+	CreatedAt  string             `json:"created_at"`
+	CreatedBy  openapi_types.UUID `json:"created_by"`
+	ExpiresAt  string             `json:"expires_at"`
+	Token      string             `json:"token"`
+	TokenAlias string             `json:"token_alias"`
 }
 
 // CreateProviderBody defines model for CreateProviderBody.
@@ -1797,6 +1848,46 @@ type OAuthTokenResponse struct {
 // OAuthTokenResponseTokenType defines model for OAuthTokenResponse.TokenType.
 type OAuthTokenResponseTokenType string
 
+// OrganizationProjectClaimResponse defines model for OrganizationProjectClaimResponse.
+type OrganizationProjectClaimResponse struct {
+	CreatedAt string             `json:"created_at"`
+	CreatedBy openapi_types.UUID `json:"created_by"`
+	ExpiresAt string             `json:"expires_at"`
+	Preview   struct {
+		Errors []struct {
+			Key     string `json:"key"`
+			Message string `json:"message"`
+		} `json:"errors"`
+		Info []struct {
+			Key     string `json:"key"`
+			Message string `json:"message"`
+		} `json:"info"`
+		MembersExceedingFreeProjectLimit []struct {
+			Limit float32 `json:"limit"`
+			Name  string  `json:"name"`
+		} `json:"members_exceeding_free_project_limit"`
+		SourceSubscriptionPlan                OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan                    `json:"source_subscription_plan"`
+		TargetOrganizationEligible            nullable.Nullable[bool]                                                          `json:"target_organization_eligible"`
+		TargetOrganizationHasFreeProjectSlots nullable.Nullable[bool]                                                          `json:"target_organization_has_free_project_slots"`
+		TargetSubscriptionPlan                nullable.Nullable[OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan] `json:"target_subscription_plan"`
+		Valid                                 bool                                                                             `json:"valid"`
+		Warnings                              []struct {
+			Key     string `json:"key"`
+			Message string `json:"message"`
+		} `json:"warnings"`
+	} `json:"preview"`
+	Project struct {
+		Name string `json:"name"`
+		Ref  string `json:"ref"`
+	} `json:"project"`
+}
+
+// OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan defines model for OrganizationProjectClaimResponse.Preview.SourceSubscriptionPlan.
+type OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan string
+
+// OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan defines model for OrganizationProjectClaimResponse.Preview.TargetSubscriptionPlan.
+type OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan string
+
 // OrganizationResponseV1 defines model for OrganizationResponseV1.
 type OrganizationResponseV1 struct {
 	Id   string `json:"id"`
@@ -1847,6 +1938,14 @@ type PostgrestConfigWithJWTSecretResponse struct {
 	DbSchema  string                 `json:"db_schema"`
 	JwtSecret *string                `json:"jwt_secret,omitempty"`
 	MaxRows   int                    `json:"max_rows"`
+}
+
+// ProjectClaimTokenResponse defines model for ProjectClaimTokenResponse.
+type ProjectClaimTokenResponse struct {
+	CreatedAt  string             `json:"created_at"`
+	CreatedBy  openapi_types.UUID `json:"created_by"`
+	ExpiresAt  string             `json:"expires_at"`
+	TokenAlias string             `json:"token_alias"`
 }
 
 // ProjectUpgradeEligibilityResponse defines model for ProjectUpgradeEligibilityResponse.
@@ -2697,6 +2796,20 @@ type V1RestorePitrBody struct {
 	RecoveryTimeTargetUnix int64 `json:"recovery_time_target_unix"`
 }
 
+// V1RestorePointPostBody defines model for V1RestorePointPostBody.
+type V1RestorePointPostBody struct {
+	Name string `json:"name"`
+}
+
+// V1RestorePointResponse defines model for V1RestorePointResponse.
+type V1RestorePointResponse struct {
+	Name   string                       `json:"name"`
+	Status V1RestorePointResponseStatus `json:"status"`
+}
+
+// V1RestorePointResponseStatus defines model for V1RestorePointResponse.Status.
+type V1RestorePointResponseStatus string
+
 // V1RunQueryBody defines model for V1RunQueryBody.
 type V1RunQueryBody struct {
 	Query    string `json:"query"`
@@ -2748,6 +2861,11 @@ type V1StorageBucketResponse struct {
 	Owner     string `json:"owner"`
 	Public    bool   `json:"public"`
 	UpdatedAt string `json:"updated_at"`
+}
+
+// V1UndoBody defines model for V1UndoBody.
+type V1UndoBody struct {
+	Name string `json:"name"`
 }
 
 // V1UpdateFunctionBody defines model for V1UpdateFunctionBody.
@@ -2808,6 +2926,33 @@ type V1AuthorizeUserParamsResponseType string
 // V1AuthorizeUserParamsCodeChallengeMethod defines parameters for V1AuthorizeUser.
 type V1AuthorizeUserParamsCodeChallengeMethod string
 
+// V1OauthAuthorizeProjectClaimParams defines parameters for V1OauthAuthorizeProjectClaim.
+type V1OauthAuthorizeProjectClaimParams struct {
+	// ProjectRef Project ref
+	ProjectRef          string                                                 `form:"project_ref" json:"project_ref"`
+	ClientId            openapi_types.UUID                                     `form:"client_id" json:"client_id"`
+	ResponseType        V1OauthAuthorizeProjectClaimParamsResponseType         `form:"response_type" json:"response_type"`
+	RedirectUri         string                                                 `form:"redirect_uri" json:"redirect_uri"`
+	State               *string                                                `form:"state,omitempty" json:"state,omitempty"`
+	ResponseMode        *string                                                `form:"response_mode,omitempty" json:"response_mode,omitempty"`
+	CodeChallenge       *string                                                `form:"code_challenge,omitempty" json:"code_challenge,omitempty"`
+	CodeChallengeMethod *V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod `form:"code_challenge_method,omitempty" json:"code_challenge_method,omitempty"`
+}
+
+// V1OauthAuthorizeProjectClaimParamsResponseType defines parameters for V1OauthAuthorizeProjectClaim.
+type V1OauthAuthorizeProjectClaimParamsResponseType string
+
+// V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod defines parameters for V1OauthAuthorizeProjectClaim.
+type V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod string
+
+// GetSecurityAdvisorsParams defines parameters for GetSecurityAdvisors.
+type GetSecurityAdvisorsParams struct {
+	LintType *GetSecurityAdvisorsParamsLintType `form:"lint_type,omitempty" json:"lint_type,omitempty"`
+}
+
+// GetSecurityAdvisorsParamsLintType defines parameters for GetSecurityAdvisors.
+type GetSecurityAdvisorsParamsLintType string
+
 // GetLogsParams defines parameters for GetLogs.
 type GetLogsParams struct {
 	Sql               *string    `form:"sql,omitempty" json:"sql,omitempty"`
@@ -2861,6 +3006,11 @@ type GetApiKeyParams struct {
 type UpdateApiKeyParams struct {
 	// Reveal Boolean string, true or false
 	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
+}
+
+// V1GetRestorePointParams defines parameters for V1GetRestorePoint.
+type V1GetRestorePointParams struct {
+	Name *string `form:"name,omitempty" json:"name,omitempty"`
 }
 
 // V1ApplyAMigrationParams defines parameters for V1ApplyAMigration.
@@ -3017,6 +3167,12 @@ type V1UpdateHostnameConfigJSONRequestBody = UpdateCustomHostnameBody
 
 // V1RestorePitrBackupJSONRequestBody defines body for V1RestorePitrBackup for application/json ContentType.
 type V1RestorePitrBackupJSONRequestBody = V1RestorePitrBody
+
+// V1CreateRestorePointJSONRequestBody defines body for V1CreateRestorePoint for application/json ContentType.
+type V1CreateRestorePointJSONRequestBody = V1RestorePointPostBody
+
+// V1UndoJSONRequestBody defines body for V1Undo for application/json ContentType.
+type V1UndoJSONRequestBody = V1UndoBody
 
 // V1ApplyAMigrationJSONRequestBody defines body for V1ApplyAMigration for application/json ContentType.
 type V1ApplyAMigrationJSONRequestBody = V1CreateMigrationBody
