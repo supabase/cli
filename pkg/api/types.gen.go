@@ -933,20 +933,20 @@ const (
 	V1OauthAuthorizeProjectClaimParamsCodeChallengeMethodSha256 V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod = "sha256"
 )
 
-// Defines values for GetSecurityAdvisorsParamsLintType.
+// Defines values for V1GetSecurityAdvisorsParamsLintType.
 const (
-	Sql GetSecurityAdvisorsParamsLintType = "sql"
+	Sql V1GetSecurityAdvisorsParamsLintType = "sql"
 )
 
-// Defines values for GetApiCountsParamsInterval.
+// Defines values for V1GetProjectUsageApiCountParamsInterval.
 const (
-	N15min GetApiCountsParamsInterval = "15min"
-	N1day  GetApiCountsParamsInterval = "1day"
-	N1hr   GetApiCountsParamsInterval = "1hr"
-	N30min GetApiCountsParamsInterval = "30min"
-	N3day  GetApiCountsParamsInterval = "3day"
-	N3hr   GetApiCountsParamsInterval = "3hr"
-	N7day  GetApiCountsParamsInterval = "7day"
+	N15min V1GetProjectUsageApiCountParamsInterval = "15min"
+	N1day  V1GetProjectUsageApiCountParamsInterval = "1day"
+	N1hr   V1GetProjectUsageApiCountParamsInterval = "1hr"
+	N30min V1GetProjectUsageApiCountParamsInterval = "30min"
+	N3day  V1GetProjectUsageApiCountParamsInterval = "3day"
+	N3hr   V1GetProjectUsageApiCountParamsInterval = "3hr"
+	N7day  V1GetProjectUsageApiCountParamsInterval = "7day"
 )
 
 // Defines values for V1GetServicesHealthParamsServices.
@@ -2945,28 +2945,28 @@ type V1OauthAuthorizeProjectClaimParamsResponseType string
 // V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod defines parameters for V1OauthAuthorizeProjectClaim.
 type V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod string
 
-// GetSecurityAdvisorsParams defines parameters for GetSecurityAdvisors.
-type GetSecurityAdvisorsParams struct {
-	LintType *GetSecurityAdvisorsParamsLintType `form:"lint_type,omitempty" json:"lint_type,omitempty"`
+// V1GetSecurityAdvisorsParams defines parameters for V1GetSecurityAdvisors.
+type V1GetSecurityAdvisorsParams struct {
+	LintType *V1GetSecurityAdvisorsParamsLintType `form:"lint_type,omitempty" json:"lint_type,omitempty"`
 }
 
-// GetSecurityAdvisorsParamsLintType defines parameters for GetSecurityAdvisors.
-type GetSecurityAdvisorsParamsLintType string
+// V1GetSecurityAdvisorsParamsLintType defines parameters for V1GetSecurityAdvisors.
+type V1GetSecurityAdvisorsParamsLintType string
 
-// GetLogsParams defines parameters for GetLogs.
-type GetLogsParams struct {
+// V1GetProjectLogsParams defines parameters for V1GetProjectLogs.
+type V1GetProjectLogsParams struct {
 	Sql               *string    `form:"sql,omitempty" json:"sql,omitempty"`
 	IsoTimestampStart *time.Time `form:"iso_timestamp_start,omitempty" json:"iso_timestamp_start,omitempty"`
 	IsoTimestampEnd   *time.Time `form:"iso_timestamp_end,omitempty" json:"iso_timestamp_end,omitempty"`
 }
 
-// GetApiCountsParams defines parameters for GetApiCounts.
-type GetApiCountsParams struct {
-	Interval *GetApiCountsParamsInterval `form:"interval,omitempty" json:"interval,omitempty"`
+// V1GetProjectUsageApiCountParams defines parameters for V1GetProjectUsageApiCount.
+type V1GetProjectUsageApiCountParams struct {
+	Interval *V1GetProjectUsageApiCountParamsInterval `form:"interval,omitempty" json:"interval,omitempty"`
 }
 
-// GetApiCountsParamsInterval defines parameters for GetApiCounts.
-type GetApiCountsParamsInterval string
+// V1GetProjectUsageApiCountParamsInterval defines parameters for V1GetProjectUsageApiCount.
+type V1GetProjectUsageApiCountParamsInterval string
 
 // V1GetProjectApiKeysParams defines parameters for V1GetProjectApiKeys.
 type V1GetProjectApiKeysParams struct {
@@ -2974,20 +2974,20 @@ type V1GetProjectApiKeysParams struct {
 	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
 }
 
-// CreateApiKeyParams defines parameters for CreateApiKey.
-type CreateApiKeyParams struct {
+// V1CreateProjectApiKeyParams defines parameters for V1CreateProjectApiKey.
+type V1CreateProjectApiKeyParams struct {
 	// Reveal Boolean string, true or false
 	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
 }
 
-// UpdateLegacyApiKeysParams defines parameters for UpdateLegacyApiKeys.
-type UpdateLegacyApiKeysParams struct {
+// V1UpdateProjectLegacyApiKeysParams defines parameters for V1UpdateProjectLegacyApiKeys.
+type V1UpdateProjectLegacyApiKeysParams struct {
 	// Enabled Boolean string, true or false
 	Enabled bool `form:"enabled" json:"enabled"`
 }
 
-// DeleteApiKeyParams defines parameters for DeleteApiKey.
-type DeleteApiKeyParams struct {
+// V1DeleteProjectApiKeyParams defines parameters for V1DeleteProjectApiKey.
+type V1DeleteProjectApiKeyParams struct {
 	// Reveal Boolean string, true or false
 	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
 
@@ -2996,14 +2996,14 @@ type DeleteApiKeyParams struct {
 	Reason         *string `form:"reason,omitempty" json:"reason,omitempty"`
 }
 
-// GetApiKeyParams defines parameters for GetApiKey.
-type GetApiKeyParams struct {
+// V1GetProjectApiKeyParams defines parameters for V1GetProjectApiKey.
+type V1GetProjectApiKeyParams struct {
 	// Reveal Boolean string, true or false
 	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
 }
 
-// UpdateApiKeyParams defines parameters for UpdateApiKey.
-type UpdateApiKeyParams struct {
+// V1UpdateProjectApiKeyParams defines parameters for V1UpdateProjectApiKey.
+type V1UpdateProjectApiKeyParams struct {
 	// Reveal Boolean string, true or false
 	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
 }
@@ -3123,11 +3123,11 @@ type V1CreateAnOrganizationJSONRequestBody = CreateOrganizationV1
 // V1CreateAProjectJSONRequestBody defines body for V1CreateAProject for application/json ContentType.
 type V1CreateAProjectJSONRequestBody = V1CreateProjectBody
 
-// CreateApiKeyJSONRequestBody defines body for CreateApiKey for application/json ContentType.
-type CreateApiKeyJSONRequestBody = CreateApiKeyBody
+// V1CreateProjectApiKeyJSONRequestBody defines body for V1CreateProjectApiKey for application/json ContentType.
+type V1CreateProjectApiKeyJSONRequestBody = CreateApiKeyBody
 
-// UpdateApiKeyJSONRequestBody defines body for UpdateApiKey for application/json ContentType.
-type UpdateApiKeyJSONRequestBody = UpdateApiKeyBody
+// V1UpdateProjectApiKeyJSONRequestBody defines body for V1UpdateProjectApiKey for application/json ContentType.
+type V1UpdateProjectApiKeyJSONRequestBody = UpdateApiKeyBody
 
 // V1ApplyProjectAddonJSONRequestBody defines body for V1ApplyProjectAddon for application/json ContentType.
 type V1ApplyProjectAddonJSONRequestBody = ApplyProjectAddonBody
@@ -3138,11 +3138,11 @@ type V1CreateABranchJSONRequestBody = CreateBranchBody
 // V1UpdateAuthServiceConfigJSONRequestBody defines body for V1UpdateAuthServiceConfig for application/json ContentType.
 type V1UpdateAuthServiceConfigJSONRequestBody = UpdateAuthConfigBody
 
-// CreateSigningKeyForProjectJSONRequestBody defines body for CreateSigningKeyForProject for application/json ContentType.
-type CreateSigningKeyForProjectJSONRequestBody = CreateSigningKeyBody
+// V1CreateProjectSigningKeyJSONRequestBody defines body for V1CreateProjectSigningKey for application/json ContentType.
+type V1CreateProjectSigningKeyJSONRequestBody = CreateSigningKeyBody
 
-// PatchSigningKeyJSONRequestBody defines body for PatchSigningKey for application/json ContentType.
-type PatchSigningKeyJSONRequestBody = UpdateSigningKeyBody
+// V1UpdateProjectSigningKeyJSONRequestBody defines body for V1UpdateProjectSigningKey for application/json ContentType.
+type V1UpdateProjectSigningKeyJSONRequestBody = UpdateSigningKeyBody
 
 // V1CreateASsoProviderJSONRequestBody defines body for V1CreateASsoProvider for application/json ContentType.
 type V1CreateASsoProviderJSONRequestBody = CreateProviderBody
@@ -3150,8 +3150,8 @@ type V1CreateASsoProviderJSONRequestBody = CreateProviderBody
 // V1UpdateASsoProviderJSONRequestBody defines body for V1UpdateASsoProvider for application/json ContentType.
 type V1UpdateASsoProviderJSONRequestBody = UpdateProviderBody
 
-// CreateTPAForProjectJSONRequestBody defines body for CreateTPAForProject for application/json ContentType.
-type CreateTPAForProjectJSONRequestBody = CreateThirdPartyAuthBody
+// V1CreateProjectTpaIntegrationJSONRequestBody defines body for V1CreateProjectTpaIntegration for application/json ContentType.
+type V1CreateProjectTpaIntegrationJSONRequestBody = CreateThirdPartyAuthBody
 
 // V1UpdatePoolerConfigJSONRequestBody defines body for V1UpdatePoolerConfig for application/json ContentType.
 type V1UpdatePoolerConfigJSONRequestBody = UpdateSupavisorConfigBody
