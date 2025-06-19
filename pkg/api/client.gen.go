@@ -256,6 +256,12 @@ type ClientInterface interface {
 
 	V1CreateProjectSigningKey(ctx context.Context, ref string, body V1CreateProjectSigningKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1GetLegacySigningKey request
+	V1GetLegacySigningKey(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1CreateLegacySigningKey request
+	V1CreateLegacySigningKey(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1RemoveProjectSigningKey request
 	V1RemoveProjectSigningKey(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1256,6 +1262,30 @@ func (c *Client) V1CreateProjectSigningKeyWithBody(ctx context.Context, ref stri
 
 func (c *Client) V1CreateProjectSigningKey(ctx context.Context, ref string, body V1CreateProjectSigningKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1CreateProjectSigningKeyRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetLegacySigningKey(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetLegacySigningKeyRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1CreateLegacySigningKey(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1CreateLegacySigningKeyRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -4786,6 +4816,74 @@ func NewV1CreateProjectSigningKeyRequestWithBody(server string, ref string, cont
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1GetLegacySigningKeyRequest generates requests for V1GetLegacySigningKey
+func NewV1GetLegacySigningKeyRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth/signing-keys/legacy", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1CreateLegacySigningKeyRequest generates requests for V1CreateLegacySigningKey
+func NewV1CreateLegacySigningKeyRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth/signing-keys/legacy", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -8531,6 +8629,12 @@ type ClientWithResponsesInterface interface {
 
 	V1CreateProjectSigningKeyWithResponse(ctx context.Context, ref string, body V1CreateProjectSigningKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateProjectSigningKeyResponse, error)
 
+	// V1GetLegacySigningKeyWithResponse request
+	V1GetLegacySigningKeyWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetLegacySigningKeyResponse, error)
+
+	// V1CreateLegacySigningKeyWithResponse request
+	V1CreateLegacySigningKeyWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1CreateLegacySigningKeyResponse, error)
+
 	// V1RemoveProjectSigningKeyWithResponse request
 	V1RemoveProjectSigningKeyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1RemoveProjectSigningKeyResponse, error)
 
@@ -9818,6 +9922,50 @@ func (r V1CreateProjectSigningKeyResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1CreateProjectSigningKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetLegacySigningKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *SigningKeyResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetLegacySigningKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetLegacySigningKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1CreateLegacySigningKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *SigningKeyResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1CreateLegacySigningKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1CreateLegacySigningKeyResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -12025,6 +12173,24 @@ func (c *ClientWithResponses) V1CreateProjectSigningKeyWithResponse(ctx context.
 	return ParseV1CreateProjectSigningKeyResponse(rsp)
 }
 
+// V1GetLegacySigningKeyWithResponse request returning *V1GetLegacySigningKeyResponse
+func (c *ClientWithResponses) V1GetLegacySigningKeyWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetLegacySigningKeyResponse, error) {
+	rsp, err := c.V1GetLegacySigningKey(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetLegacySigningKeyResponse(rsp)
+}
+
+// V1CreateLegacySigningKeyWithResponse request returning *V1CreateLegacySigningKeyResponse
+func (c *ClientWithResponses) V1CreateLegacySigningKeyWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1CreateLegacySigningKeyResponse, error) {
+	rsp, err := c.V1CreateLegacySigningKey(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1CreateLegacySigningKeyResponse(rsp)
+}
+
 // V1RemoveProjectSigningKeyWithResponse request returning *V1RemoveProjectSigningKeyResponse
 func (c *ClientWithResponses) V1RemoveProjectSigningKeyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1RemoveProjectSigningKeyResponse, error) {
 	rsp, err := c.V1RemoveProjectSigningKey(ctx, ref, id, reqEditors...)
@@ -14039,6 +14205,58 @@ func ParseV1CreateProjectSigningKeyResponse(rsp *http.Response) (*V1CreateProjec
 	}
 
 	response := &V1CreateProjectSigningKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest SigningKeyResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetLegacySigningKeyResponse parses an HTTP response from a V1GetLegacySigningKeyWithResponse call
+func ParseV1GetLegacySigningKeyResponse(rsp *http.Response) (*V1GetLegacySigningKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetLegacySigningKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SigningKeyResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1CreateLegacySigningKeyResponse parses an HTTP response from a V1CreateLegacySigningKeyWithResponse call
+func ParseV1CreateLegacySigningKeyResponse(rsp *http.Response) (*V1CreateLegacySigningKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1CreateLegacySigningKeyResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
