@@ -2,6 +2,8 @@
 
 Link your local development project to a hosted Supabase project.
 
+Use your project ID for `--project-ref`, you can find it in your dashboard url: `https://app.supabase.com/project/<project-id>`
+
 PostgREST configurations are fetched from the Supabase platform and validated against your local configuration file.
 
 Optionally, database settings can be validated if you provide a password. Your database password is saved in native credentials storage if available.
