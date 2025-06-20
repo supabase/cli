@@ -87,12 +87,15 @@ func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, o
 	if err := start.WaitForHealthyService(ctx, start.HealthTimeout, shadow); err != nil {
 		return err
 	}
+	if err := start.InitDatabase(ctx, shadow[:12], os.Stderr); err != nil {
+		return err
+	}
 	conn, err := diff.ConnectShadowDatabase(ctx, 10*time.Second, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
-	if err := start.SetupDatabase(ctx, conn, shadow[:12], os.Stderr, fsys); err != nil {
+	if err := start.SetupDatabase(ctx, conn, os.Stderr, fsys); err != nil {
 		return err
 	}
 	// Assuming entities in managed schemas are not altered, we can simply diff the dumps before and after migrations.

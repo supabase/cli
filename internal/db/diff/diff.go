@@ -19,6 +19,7 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
@@ -33,16 +34,19 @@ type DiffFunc func(context.Context, string, string, []string) (string, error)
 func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
 	// Sanity checks.
 	if utils.IsLocalDatabase(config) {
-		if declared, err := loadDeclaredSchemas(fsys); err != nil {
-			return err
-		} else if container, err := createShadowIfNotExists(ctx, declared); err != nil {
-			return err
-		} else if len(container) > 0 {
-			defer utils.DockerRemove(container)
-			if err := start.WaitForHealthyService(ctx, start.HealthTimeout, container); err != nil {
+		if err := utils.AssertSupabaseDbIsRunning(); errors.Is(err, utils.ErrNotRunning) {
+			if err := start.StartDatabase(ctx, "", fsys, os.Stderr); err != nil {
 				return err
 			}
-			if err := migrateBaseDatabase(ctx, container, declared, fsys, options...); err != nil {
+		} else if err != nil {
+			return err
+		}
+		if declared, err := loadDeclaredSchemas(fsys); err != nil {
+			return err
+		} else if len(declared) > 0 {
+			// Required to bypass pg_cron check: https://github.com/citusdata/pg_cron/blob/main/pg_cron.sql#L3
+			config.Database = "contrib_regression"
+			if err := migrateBaseDatabase(ctx, config.Database, declared, fsys); err != nil {
 				return err
 			}
 		}
@@ -70,22 +74,6 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 		fmt.Fprintln(os.Stderr, utils.Yellow(strings.Join(drops, "\n")))
 	}
 	return nil
-}
-
-func createShadowIfNotExists(ctx context.Context, migrations []string) (string, error) {
-	if len(migrations) == 0 {
-		return "", nil
-	}
-	if err := utils.AssertSupabaseDbIsRunning(); !errors.Is(err, utils.ErrNotRunning) {
-		return "", err
-	}
-	fmt.Fprintln(os.Stderr, "Creating local database from declarative schemas:")
-	msg := make([]string, len(migrations))
-	for i, m := range migrations {
-		msg[i] = fmt.Sprintf(" • %s", utils.Bold(m))
-	}
-	fmt.Fprintln(os.Stderr, strings.Join(msg, "\n"))
-	return CreateShadowDatabase(ctx, utils.Config.Db.Port)
 }
 
 func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
@@ -169,26 +157,55 @@ func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs,
 	if err != nil {
 		return err
 	}
+	if err := start.InitDatabase(ctx, container[:12], os.Stderr); err != nil {
+		return err
+	}
 	conn, err := ConnectShadowDatabase(ctx, 10*time.Second, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
-	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys); err != nil {
+	if err := start.SetupDatabase(ctx, conn, os.Stderr, fsys); err != nil {
 		return err
 	}
 	return migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys))
 }
 
-func migrateBaseDatabase(ctx context.Context, container string, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
+func createBaseDatabase(ctx context.Context, database string, options ...func(*pgx.ConnConfig)) error {
+	pgc := pgconn.Config{Database: "template1"}
+	conn, err := utils.ConnectLocalPostgres(ctx, pgc, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
-	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys); err != nil {
+	if _, err := conn.Exec(ctx, "DROP DATABASE IF EXISTS "+database); err != nil {
+		return errors.Errorf("failed to drop database: %w", err)
+	}
+	if _, err := conn.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s TEMPLATE _shadow", database)); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.InvalidCatalogName {
+			utils.CmdSuggestion = fmt.Sprintf("Run %s to initialise the shadow database.", utils.Aqua("supabase db reset"))
+		}
+		return errors.Errorf("failed to create database: %w", err)
+	}
+	return nil
+}
+
+func migrateBaseDatabase(ctx context.Context, database string, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	fmt.Fprintln(os.Stderr, "Creating local database from declarative schemas:")
+	msg := make([]string, len(migrations))
+	for i, m := range migrations {
+		msg[i] = fmt.Sprintf(" • %s", utils.Bold(m))
+	}
+	fmt.Fprintln(os.Stderr, strings.Join(msg, "\n"))
+	if err := createBaseDatabase(ctx, database, options...); err != nil {
 		return err
 	}
+	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{Database: database}, options...)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
 	return migration.SeedGlobals(ctx, migrations, conn, afero.NewIOFS(fsys))
 }
 
