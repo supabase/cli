@@ -960,35 +960,139 @@ func loadDefaultEnv(env string) error {
 }
 
 func loadEnvIfExists(path string) error {
+	// Check if we're in a branching execution context
+	shouldForceDotenvPrecedence := isBranchingExecutionContext()
+
+	if shouldForceDotenvPrecedence {
+		// In branching context, we want dotenv to override environment variables
+		// (except SUPABASE_* and DOTENV_* variables)
+		return loadEnvWithPrecedence(path)
+	}
+
+	// Default behavior: environment variables take precedence
 	if err := godotenv.Load(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		// If DEBUG=1, return the error as is for full debugability
-		if viper.GetBool("DEBUG") {
-			return errors.Errorf("failed to load %s: %w", path, err)
-		}
-		msg := err.Error()
-		switch {
-		case strings.HasPrefix(msg, "unexpected character"):
-			// Try to extract the character, fallback to generic
-			start := strings.Index(msg, "unexpected character \"")
-			if start != -1 {
-				start += len("unexpected character \"")
-				end := strings.Index(msg[start:], "\"")
-				if end != -1 {
-					char := msg[start : start+end]
-					return errors.Errorf("failed to parse environment file: %s (unexpected character '%s' in variable name)", path, char)
-				}
+		return handleDotenvError(path, err)
+	}
+	return nil
+}
+
+// isBranchingExecutionContext detects if we're running in a branching execution context
+// This checks for common CI/branching environment variables
+func isBranchingExecutionContext() bool {
+	// Check for explicit environment variable to enable dotenv precedence
+	if os.Getenv("SUPABASE_ENABLE_DOTENV_PRECEDENCE") == "true" {
+		return true
+	}
+
+	return false
+}
+
+// handleDotenvError provides consistent error handling for dotenv parsing errors
+func handleDotenvError(path string, err error) error {
+	// If DEBUG=1, return the error as is for full debugability
+	if viper.GetBool("DEBUG") {
+		return errors.Errorf("failed to load %s: %w", path, err)
+	}
+	msg := err.Error()
+	switch {
+	case strings.HasPrefix(msg, "unexpected character"):
+		// Try to extract the character, fallback to generic
+		start := strings.Index(msg, "unexpected character \"")
+		if start != -1 {
+			start += len("unexpected character \"")
+			end := strings.Index(msg[start:], "\"")
+			if end != -1 {
+				char := msg[start : start+end]
+				return errors.Errorf("failed to parse environment file: %s (unexpected character '%s' in variable name)", path, char)
 			}
-			return errors.Errorf("failed to parse environment file: %s (unexpected character in variable name)", path)
-		case strings.HasPrefix(msg, "unterminated quoted value"):
-			return errors.Errorf("failed to parse environment file: %s (unterminated quoted value)", path)
-		// If the error message contains newlines, there is a high chance that the actual content of the
-		// dotenv file is being leaked. In such cases, we return a generic error to avoid unwanted leaks in the logs
-		case strings.Contains(msg, "\n"):
-			return errors.Errorf("failed to parse environment file: %s (syntax error)", path)
-		default:
-			return errors.Errorf("failed to load %s: %w", path, err)
+		}
+		return errors.Errorf("failed to parse environment file: %s (unexpected character in variable name)", path)
+	case strings.HasPrefix(msg, "unterminated quoted value"):
+		return errors.Errorf("failed to parse environment file: %s (unterminated quoted value)", path)
+	case strings.Contains(msg, "\n"):
+		return errors.Errorf("failed to parse environment file: %s (syntax error)", path)
+	default:
+		return errors.Errorf("failed to load %s: %w", path, err)
+	}
+}
+
+// loadEnvWithPrecedence loads environment variables from a dotenv file with forced precedence
+// over existing environment variables (except SUPABASE_* and DOTENV_* variables)
+func loadEnvWithPrecedence(path string) error {
+	// Check if file exists
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		if viper.GetBool("DEBUG") {
+			fmt.Fprintf(os.Stderr, "DEBUG: dotenv file does not exist: %s\n", path)
+		}
+		return nil // File doesn't exist, no error
+	} else if err != nil {
+		return errors.Errorf("failed to stat %s: %w", path, err)
+	}
+
+	if viper.GetBool("DEBUG") {
+		fmt.Fprintf(os.Stderr, "DEBUG: dotenv precedence enabled, loading %s with override behavior\n", path)
+	}
+
+	// Parse the dotenv file
+	envMap, err := godotenv.Read(path)
+	if err != nil {
+		return handleDotenvError(path, err)
+	}
+
+	if viper.GetBool("DEBUG") {
+		fmt.Fprintf(os.Stderr, "DEBUG: parsed %d variables from %s\n", len(envMap), path)
+	}
+
+	// Track what we're doing for debug output
+	var preserved []string
+	var overridden []string
+	var newVars []string
+
+	// Force override environment variables with dotenv values
+	// (except SUPABASE_* and DOTENV_* variables)
+	for key, value := range envMap {
+		existingValue := os.Getenv(key)
+
+		// Don't override SUPABASE_* or DOTENV_* variables
+		if strings.HasPrefix(key, "SUPABASE_") || strings.HasPrefix(key, "DOTENV_") {
+			// Only set if not already present in environment
+			if existingValue == "" {
+				if err := os.Setenv(key, value); err != nil {
+					return errors.Errorf("failed to set environment variable %s: %w", key, err)
+				}
+				newVars = append(newVars, key)
+			} else {
+				preserved = append(preserved, key)
+			}
+		} else {
+			// Force override all other variables
+			if err := os.Setenv(key, value); err != nil {
+				return errors.Errorf("failed to set environment variable %s: %w", key, err)
+			}
+			if existingValue != "" && existingValue != value {
+				overridden = append(overridden, key)
+			} else if existingValue == "" {
+				newVars = append(newVars, key)
+			}
 		}
 	}
+
+	// Debug output
+	if viper.GetBool("DEBUG") {
+		if len(preserved) > 0 {
+			fmt.Fprintf(os.Stderr, "DEBUG: preserved %d SUPABASE_*/DOTENV_* variables from environment: %v\n", len(preserved), preserved)
+		}
+		if len(overridden) > 0 {
+			fmt.Fprintf(os.Stderr, "DEBUG: overridden %d environment variables with dotenv values: %v\n", len(overridden), overridden)
+		}
+		if len(newVars) > 0 {
+			fmt.Fprintf(os.Stderr, "DEBUG: set %d new variables from dotenv: %v\n", len(newVars), newVars)
+		}
+		if len(preserved) == 0 && len(overridden) == 0 && len(newVars) == 0 {
+			fmt.Fprintf(os.Stderr, "DEBUG: no environment variables were modified\n")
+		}
+	}
+
 	return nil
 }
 
