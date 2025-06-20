@@ -74,7 +74,7 @@ func TestDeployCommand(t *testing.T) {
 		}
 		// Run test
 		noVerifyJWT := true
-		err = Run(context.Background(), functions, true, &noVerifyJWT, "", 1, fsys)
+		err = Run(context.Background(), functions, true, &noVerifyJWT, "", 1, false, false, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -129,7 +129,7 @@ import_map = "./import_map.json"
 		outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		// Run test
-		err = Run(context.Background(), nil, true, nil, "", 1, fsys)
+		err = Run(context.Background(), nil, true, nil, "", 1, false, false, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -182,7 +182,7 @@ import_map = "./import_map.json"
 		outputDir := filepath.Join(utils.TempDir, ".output_enabled-func")
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		// Run test
-		err = Run(context.Background(), nil, true, nil, "", 1, fsys)
+		err = Run(context.Background(), nil, true, nil, "", 1, false, false, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -193,7 +193,7 @@ import_map = "./import_map.json"
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Run test
-		err := Run(context.Background(), []string{"_invalid"}, true, nil, "", 1, fsys)
+		err := Run(context.Background(), []string{"_invalid"}, true, nil, "", 1, false, false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Invalid Function name.")
 	})
@@ -203,7 +203,7 @@ import_map = "./import_map.json"
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Run test
-		err := Run(context.Background(), nil, true, nil, "", 1, fsys)
+		err := Run(context.Background(), nil, true, nil, "", 1, false, false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "No Functions specified or found in supabase/functions")
 	})
@@ -249,7 +249,7 @@ verify_jwt = false
 		outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		// Run test
-		assert.NoError(t, Run(context.Background(), []string{slug}, true, nil, "", 1, fsys))
+		assert.NoError(t, Run(context.Background(), []string{slug}, true, nil, "", 1, false, false, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -295,8 +295,8 @@ verify_jwt = false
 		outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		// Run test
-		noVerifyJwt := false
-		assert.NoError(t, Run(context.Background(), []string{slug}, true, &noVerifyJwt, "", 1, fsys))
+		noVerifyJWT := false
+		assert.NoError(t, Run(context.Background(), []string{slug}, true, &noVerifyJWT, "", 1, false, false, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -370,5 +370,149 @@ func TestImportMapPath(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		assert.Equal(t, path, fc["test"].ImportMap)
+	})
+}
+
+func TestPruneFunctions(t *testing.T) {
+	flags.ProjectRef = apitest.RandomProjectRef()
+
+	t.Run("prunes functions not in local directory", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Setup function entrypoints
+		localFunctions := []string{"local-func-1", "local-func-2"}
+		for _, fn := range localFunctions {
+			entrypointPath := filepath.Join(utils.FunctionsDir, fn, "index.ts")
+			require.NoError(t, afero.WriteFile(fsys, entrypointPath, []byte{}, 0644))
+		}
+		// Setup mock api - remote functions include local ones plus orphaned ones
+		defer gock.OffAll()
+		remoteFunctions := []api.FunctionResponse{
+			{Slug: "local-func-1", Id: "1", Name: "local-func-1"},
+			{Slug: "local-func-2", Id: "2", Name: "local-func-2"},
+			{Slug: "orphaned-func-1", Id: "3", Name: "orphaned-func-1"},
+			{Slug: "orphaned-func-2", Id: "4", Name: "orphaned-func-2"},
+		}
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + flags.ProjectRef + "/functions").
+			Reply(http.StatusOK).
+			JSON(remoteFunctions)
+		// Mock deploy endpoint for local functions
+		for _, fn := range localFunctions {
+			gock.New(utils.DefaultApiHost).
+				Post("/v1/projects/"+flags.ProjectRef+"/functions").
+				MatchParam("slug", fn).
+				Reply(http.StatusCreated).
+				JSON(api.FunctionResponse{Id: fn})
+		}
+		gock.New(utils.DefaultApiHost).
+			Put("/v1/projects/" + flags.ProjectRef + "/functions").
+			Reply(http.StatusOK).
+			JSON(api.BulkUpdateFunctionResponse{})
+		// Mock delete endpoints for orphaned functions
+		gock.New(utils.DefaultApiHost).
+			Delete("/v1/projects/" + flags.ProjectRef + "/functions/orphaned-func-1").
+			Reply(http.StatusOK)
+		gock.New(utils.DefaultApiHost).
+			Delete("/v1/projects/" + flags.ProjectRef + "/functions/orphaned-func-2").
+			Reply(http.StatusOK)
+
+		// Run test with prune and force (to skip confirmation)
+		err := Run(context.Background(), nil, false, nil, "", 1, true, true, fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("skips pruning when no orphaned functions", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Setup function entrypoints
+		localFunctions := []string{"local-func-1", "local-func-2"}
+		for _, fn := range localFunctions {
+			entrypointPath := filepath.Join(utils.FunctionsDir, fn, "index.ts")
+			require.NoError(t, afero.WriteFile(fsys, entrypointPath, []byte{}, 0644))
+		}
+		// Setup mock api - remote functions match local ones exactly
+		defer gock.OffAll()
+		remoteFunctions := []api.FunctionResponse{
+			{Slug: "local-func-1", Id: "1", Name: "local-func-1"},
+			{Slug: "local-func-2", Id: "2", Name: "local-func-2"},
+		}
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + flags.ProjectRef + "/functions").
+			Reply(http.StatusOK).
+			JSON(remoteFunctions)
+		// Mock deploy endpoint for local functions
+		for _, fn := range localFunctions {
+			gock.New(utils.DefaultApiHost).
+				Post("/v1/projects/"+flags.ProjectRef+"/functions").
+				MatchParam("slug", fn).
+				Reply(http.StatusCreated).
+				JSON(api.FunctionResponse{Id: fn})
+		}
+		gock.New(utils.DefaultApiHost).
+			Put("/v1/projects/" + flags.ProjectRef + "/functions").
+			Reply(http.StatusOK).
+			JSON(api.BulkUpdateFunctionResponse{})
+
+		// Run test with prune and force
+		err := Run(context.Background(), nil, false, nil, "", 1, true, true, fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("handles 404 on delete gracefully", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Setup function entrypoints
+		localFunctions := []string{"local-func"}
+		for _, fn := range localFunctions {
+			entrypointPath := filepath.Join(utils.FunctionsDir, fn, "index.ts")
+			require.NoError(t, afero.WriteFile(fsys, entrypointPath, []byte{}, 0644))
+		}
+		// Setup mock api
+		defer gock.OffAll()
+		remoteFunctions := []api.FunctionResponse{
+			{Slug: "local-func", Id: "1", Name: "local-func"},
+			{Slug: "orphaned-func", Id: "2", Name: "orphaned-func"},
+		}
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + flags.ProjectRef + "/functions").
+			Reply(http.StatusOK).
+			JSON(remoteFunctions)
+		// Mock deploy endpoint
+		gock.New(utils.DefaultApiHost).
+			Post("/v1/projects/"+flags.ProjectRef+"/functions").
+			MatchParam("slug", "local-func").
+			Reply(http.StatusCreated).
+			JSON(api.FunctionResponse{Id: "local-func"})
+		gock.New(utils.DefaultApiHost).
+			Put("/v1/projects/" + flags.ProjectRef + "/functions").
+			Reply(http.StatusOK).
+			JSON(api.BulkUpdateFunctionResponse{})
+		// Mock delete endpoint with 404 (function already deleted)
+		gock.New(utils.DefaultApiHost).
+			Delete("/v1/projects/" + flags.ProjectRef + "/functions/orphaned-func").
+			Reply(http.StatusNotFound)
+
+		// Run test with prune and force
+		err := Run(context.Background(), nil, false, nil, "", 1, true, true, fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
