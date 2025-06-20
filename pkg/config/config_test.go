@@ -643,3 +643,223 @@ func TestVersionCompare(t *testing.T) {
 		})
 	}
 }
+
+func TestIsBranchingExecutionContext(t *testing.T) {
+	t.Run("returns true when SUPABASE_ENABLE_DOTENV_PRECEDENCE is true", func(t *testing.T) {
+		t.Setenv("SUPABASE_ENABLE_DOTENV_PRECEDENCE", "true")
+		assert.True(t, isBranchingExecutionContext())
+	})
+
+	t.Run("returns false when SUPABASE_ENABLE_DOTENV_PRECEDENCE is false", func(t *testing.T) {
+		t.Setenv("SUPABASE_ENABLE_DOTENV_PRECEDENCE", "false")
+		assert.False(t, isBranchingExecutionContext())
+	})
+
+	t.Run("returns false when SUPABASE_ENABLE_DOTENV_PRECEDENCE is unset", func(t *testing.T) {
+		os.Unsetenv("SUPABASE_ENABLE_DOTENV_PRECEDENCE")
+		assert.False(t, isBranchingExecutionContext())
+	})
+
+	t.Run("returns false when SUPABASE_ENABLE_DOTENV_PRECEDENCE is empty", func(t *testing.T) {
+		t.Setenv("SUPABASE_ENABLE_DOTENV_PRECEDENCE", "")
+		assert.False(t, isBranchingExecutionContext())
+	})
+}
+
+func TestLoadEnvWithPrecedence(t *testing.T) {
+	t.Run("returns nil when file does not exist", func(t *testing.T) {
+		err := loadEnvWithPrecedence("nonexistent.env")
+		assert.NoError(t, err)
+	})
+
+	t.Run("loads env file and overrides environment variables except SUPABASE_* and DOTENV_*", func(t *testing.T) {
+		// Create a temporary file with env content
+		tmpFile, err := os.CreateTemp("", "test-*.env")
+		require.NoError(t, err)
+		defer os.Remove(tmpFile.Name())
+
+		// Write env content
+		envContent := `SECRET_KEY=from_dotenv
+API_KEY=from_dotenv
+SUPABASE_URL=should_not_override
+DOTENV_PRIVATE_KEY=should_not_override
+NEW_VAR=only_in_dotenv`
+		_, err = tmpFile.WriteString(envContent)
+		require.NoError(t, err)
+		require.NoError(t, tmpFile.Close())
+
+		// Set some environment variables
+		t.Setenv("SECRET_KEY", "from_environment")
+		t.Setenv("API_KEY", "from_environment")
+		t.Setenv("SUPABASE_URL", "from_environment")
+		t.Setenv("DOTENV_PRIVATE_KEY", "from_environment")
+
+		// Test loading with precedence
+		err = loadEnvWithPrecedence(tmpFile.Name())
+		assert.NoError(t, err)
+
+		// Check that non-SUPABASE_*/DOTENV_* variables were overridden
+		assert.Equal(t, "from_dotenv", os.Getenv("SECRET_KEY"))
+		assert.Equal(t, "from_dotenv", os.Getenv("API_KEY"))
+		assert.Equal(t, "only_in_dotenv", os.Getenv("NEW_VAR"))
+
+		// Check that SUPABASE_*/DOTENV_* variables were preserved
+		assert.Equal(t, "from_environment", os.Getenv("SUPABASE_URL"))
+		assert.Equal(t, "from_environment", os.Getenv("DOTENV_PRIVATE_KEY"))
+
+		// Clean up
+		os.Unsetenv("SECRET_KEY")
+		os.Unsetenv("API_KEY")
+		os.Unsetenv("NEW_VAR")
+		os.Unsetenv("SUPABASE_URL")
+		os.Unsetenv("DOTENV_PRIVATE_KEY")
+	})
+
+	t.Run("sets SUPABASE_* and DOTENV_* variables when not present in environment", func(t *testing.T) {
+		// Create a temporary file with env content
+		tmpFile, err := os.CreateTemp("", "test-*.env")
+		require.NoError(t, err)
+		defer os.Remove(tmpFile.Name())
+
+		// Write env content with SUPABASE_* and DOTENV_* variables
+		envContent := `SUPABASE_NEW_VAR=new_supabase_value
+DOTENV_NEW_VAR=new_dotenv_value`
+		_, err = tmpFile.WriteString(envContent)
+		require.NoError(t, err)
+		require.NoError(t, tmpFile.Close())
+
+		// Ensure these variables are not set
+		os.Unsetenv("SUPABASE_NEW_VAR")
+		os.Unsetenv("DOTENV_NEW_VAR")
+
+		// Test loading with precedence
+		err = loadEnvWithPrecedence(tmpFile.Name())
+		assert.NoError(t, err)
+
+		// Check that SUPABASE_*/DOTENV_* variables were set
+		assert.Equal(t, "new_supabase_value", os.Getenv("SUPABASE_NEW_VAR"))
+		assert.Equal(t, "new_dotenv_value", os.Getenv("DOTENV_NEW_VAR"))
+
+		// Clean up
+		os.Unsetenv("SUPABASE_NEW_VAR")
+		os.Unsetenv("DOTENV_NEW_VAR")
+	})
+
+	t.Run("logs debug information when DEBUG is enabled", func(t *testing.T) {
+		t.Setenv("DEBUG", "1")
+		viper.AutomaticEnv()
+		defer viper.Reset()
+
+		// Create a temporary file with env content
+		tmpFile, err := os.CreateTemp("", "test-*.env")
+		require.NoError(t, err)
+		defer os.Remove(tmpFile.Name())
+
+		// Write env content
+		envContent := `SECRET_KEY=from_dotenv
+SUPABASE_URL=should_not_override
+NEW_VAR=only_in_dotenv`
+		_, err = tmpFile.WriteString(envContent)
+		require.NoError(t, err)
+		require.NoError(t, tmpFile.Close())
+
+		// Set environment variable
+		t.Setenv("SECRET_KEY", "from_environment")
+		t.Setenv("SUPABASE_URL", "from_environment")
+
+		// Capture stderr
+		oldStderr := os.Stderr
+		r, w, _ := os.Pipe()
+		os.Stderr = w
+
+		// Test loading with precedence
+		err = loadEnvWithPrecedence(tmpFile.Name())
+		assert.NoError(t, err)
+
+		// Restore stderr and read the output
+		w.Close()
+		os.Stderr = oldStderr
+		var buf bytes.Buffer
+		buf.ReadFrom(r)
+		output := buf.String()
+
+		// Check debug output
+		assert.Contains(t, output, "DEBUG: dotenv precedence enabled")
+		assert.Contains(t, output, "DEBUG: parsed 3 variables from")
+		assert.Contains(t, output, "DEBUG: preserved 1 SUPABASE_*/DOTENV_* variables")
+		assert.Contains(t, output, "DEBUG: overridden 1 environment variables")
+		assert.Contains(t, output, "DEBUG: set 1 new variables from dotenv")
+
+		// Clean up
+		os.Unsetenv("SECRET_KEY")
+		os.Unsetenv("NEW_VAR")
+		os.Unsetenv("SUPABASE_URL")
+	})
+}
+
+func TestLoadEnvIfExistsWithDotenvPrecedence(t *testing.T) {
+	t.Run("uses standard behavior when SUPABASE_ENABLE_DOTENV_PRECEDENCE is not set", func(t *testing.T) {
+		// Ensure the environment variable is not set
+		os.Unsetenv("SUPABASE_ENABLE_DOTENV_PRECEDENCE")
+
+		// Create a temporary file with env content
+		tmpFile, err := os.CreateTemp("", "test-*.env")
+		require.NoError(t, err)
+		defer os.Remove(tmpFile.Name())
+
+		// Write env content
+		envContent := `SECRET_KEY=from_dotenv`
+		_, err = tmpFile.WriteString(envContent)
+		require.NoError(t, err)
+		require.NoError(t, tmpFile.Close())
+
+		// Set environment variable (should take precedence in standard behavior)
+		t.Setenv("SECRET_KEY", "from_environment")
+
+		// Test loading without precedence
+		err = loadEnvIfExists(tmpFile.Name())
+		assert.NoError(t, err)
+
+		// In standard godotenv behavior, environment variables take precedence
+		// So the value should remain unchanged from environment
+		assert.Equal(t, "from_environment", os.Getenv("SECRET_KEY"))
+
+		// Clean up
+		os.Unsetenv("SECRET_KEY")
+	})
+
+	t.Run("uses dotenv precedence when SUPABASE_ENABLE_DOTENV_PRECEDENCE is true", func(t *testing.T) {
+		// Enable dotenv precedence
+		t.Setenv("SUPABASE_ENABLE_DOTENV_PRECEDENCE", "true")
+
+		// Create a temporary file with env content
+		tmpFile, err := os.CreateTemp("", "test-*.env")
+		require.NoError(t, err)
+		defer os.Remove(tmpFile.Name())
+
+		// Write env content
+		envContent := `SECRET_KEY=from_dotenv
+SUPABASE_URL=should_not_override`
+		_, err = tmpFile.WriteString(envContent)
+		require.NoError(t, err)
+		require.NoError(t, tmpFile.Close())
+
+		// Set environment variables
+		t.Setenv("SECRET_KEY", "from_environment")
+		t.Setenv("SUPABASE_URL", "from_environment")
+
+		// Test loading with precedence
+		err = loadEnvIfExists(tmpFile.Name())
+		assert.NoError(t, err)
+
+		// Check that non-SUPABASE_* variables were overridden
+		assert.Equal(t, "from_dotenv", os.Getenv("SECRET_KEY"))
+		// Check that SUPABASE_* variables were preserved
+		assert.Equal(t, "from_environment", os.Getenv("SUPABASE_URL"))
+
+		// Clean up
+		os.Unsetenv("SECRET_KEY")
+		os.Unsetenv("SUPABASE_URL")
+		os.Unsetenv("SUPABASE_ENABLE_DOTENV_PRECEDENCE")
+	})
+}
