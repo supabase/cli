@@ -132,6 +132,9 @@ func ConnectShadowDatabase(ctx context.Context, timeout time.Duration, options .
 	return backoff.RetryWithData(connect, policy)
 }
 
+// Required to bypass pg_cron check: https://github.com/citusdata/pg_cron/blob/main/pg_cron.sql#L3
+const CREATE_TEMPLATE = "CREATE DATABASE contrib_regression TEMPLATE postgres"
+
 func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	migrations, err := migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys))
 	if err != nil {
@@ -145,9 +148,8 @@ func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs,
 	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys); err != nil {
 		return err
 	}
-	// Required to bypass pg_cron check: https://github.com/citusdata/pg_cron/blob/main/pg_cron.sql#L3
-	if _, err := conn.Exec(ctx, "CREATE DATABASE contrib_regression TEMPLATE postgres"); err != nil {
-		return errors.Errorf("failed to create database: %w", err)
+	if _, err := conn.Exec(ctx, CREATE_TEMPLATE); err != nil {
+		return errors.Errorf("failed to create template database: %w", err)
 	}
 	return migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys))
 }
