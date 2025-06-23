@@ -31,22 +31,6 @@ import (
 type DiffFunc func(context.Context, string, string, []string) (string, error)
 
 func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
-	// Sanity checks.
-	if utils.IsLocalDatabase(config) {
-		if declared, err := loadDeclaredSchemas(fsys); err != nil {
-			return err
-		} else if container, err := createShadowIfNotExists(ctx, declared); err != nil {
-			return err
-		} else if len(container) > 0 {
-			defer utils.DockerRemove(container)
-			if err := start.WaitForHealthyService(ctx, start.HealthTimeout, container); err != nil {
-				return err
-			}
-			if err := migrateBaseDatabase(ctx, container, declared, fsys, options...); err != nil {
-				return err
-			}
-		}
-	}
 	// 1. Load all user defined schemas
 	if len(schema) == 0 {
 		schema, err = loadSchema(ctx, config, options...)
@@ -70,22 +54,6 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 		fmt.Fprintln(os.Stderr, utils.Yellow(strings.Join(drops, "\n")))
 	}
 	return nil
-}
-
-func createShadowIfNotExists(ctx context.Context, migrations []string) (string, error) {
-	if len(migrations) == 0 {
-		return "", nil
-	}
-	if err := utils.AssertSupabaseDbIsRunning(); !errors.Is(err, utils.ErrNotRunning) {
-		return "", err
-	}
-	fmt.Fprintln(os.Stderr, "Creating local database from declarative schemas:")
-	msg := make([]string, len(migrations))
-	for i, m := range migrations {
-		msg[i] = fmt.Sprintf(" • %s", utils.Bold(m))
-	}
-	fmt.Fprintln(os.Stderr, strings.Join(msg, "\n"))
-	return CreateShadowDatabase(ctx, utils.Config.Db.Port)
 }
 
 func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
@@ -140,7 +108,8 @@ func loadSchema(ctx context.Context, config pgconn.Config, options ...func(*pgx.
 }
 
 func CreateShadowDatabase(ctx context.Context, port uint16) (string, error) {
-	config := start.NewContainerConfig()
+	// Disable background workers in shadow database
+	config := start.NewContainerConfig("-c", "max_worker_processes=0")
 	hostPort := strconv.FormatUint(uint64(port), 10)
 	hostConfig := container.HostConfig{
 		PortBindings: nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
@@ -177,19 +146,11 @@ func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs,
 	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys); err != nil {
 		return err
 	}
+	// Required to bypass pg_cron check: https://github.com/citusdata/pg_cron/blob/main/pg_cron.sql#L3
+	if _, err := conn.Exec(ctx, "CREATE DATABASE contrib_regression TEMPLATE postgres"); err != nil {
+		return errors.Errorf("failed to create database: %w", err)
+	}
 	return migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys))
-}
-
-func migrateBaseDatabase(ctx context.Context, container string, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
-	if err != nil {
-		return err
-	}
-	defer conn.Close(context.Background())
-	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys); err != nil {
-		return err
-	}
-	return migration.SeedGlobals(ctx, migrations, conn, afero.NewIOFS(fsys))
 }
 
 func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ func(context.Context, string, string, []string) (string, error), options ...func(*pgx.ConnConfig)) (string, error) {
@@ -205,14 +166,41 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 	if err := MigrateShadowDatabase(ctx, shadow, fsys, options...); err != nil {
 		return "", err
 	}
-	fmt.Fprintln(w, "Diffing schemas:", strings.Join(schema, ","))
-	source := utils.ToPostgresURL(pgconn.Config{
+	shadowConfig := pgconn.Config{
 		Host:     utils.Config.Hostname,
 		Port:     utils.Config.Db.ShadowPort,
 		User:     "postgres",
 		Password: utils.Config.Db.Password,
 		Database: "postgres",
-	})
+	}
+	if utils.IsLocalDatabase(config) {
+		if declared, err := loadDeclaredSchemas(fsys); err != nil {
+			return "", err
+		} else if len(declared) > 0 {
+			config = shadowConfig
+			config.Database = "contrib_regression"
+			if err := migrateBaseDatabase(ctx, config, declared, fsys, options...); err != nil {
+				return "", err
+			}
+		}
+	}
+	fmt.Fprintln(w, "Diffing schemas:", strings.Join(schema, ","))
+	source := utils.ToPostgresURL(shadowConfig)
 	target := utils.ToPostgresURL(config)
 	return differ(ctx, source, target, schema)
+}
+
+func migrateBaseDatabase(ctx context.Context, config pgconn.Config, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	fmt.Fprintln(os.Stderr, "Creating local database from declarative schemas:")
+	msg := make([]string, len(migrations))
+	for i, m := range migrations {
+		msg[i] = fmt.Sprintf(" • %s", utils.Bold(m))
+	}
+	fmt.Fprintln(os.Stderr, strings.Join(msg, "\n"))
+	conn, err := utils.ConnectLocalPostgres(ctx, config, options...)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	return migration.SeedGlobals(ctx, migrations, conn, afero.NewIOFS(fsys))
 }

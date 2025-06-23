@@ -60,7 +60,11 @@ func Run(ctx context.Context, fromBackup string, fsys afero.Fs) error {
 	return err
 }
 
-func NewContainerConfig() container.Config {
+func NewContainerConfig(args ...string) container.Config {
+	if utils.Config.Db.MajorVersion >= 14 {
+		// Extensions schema does not exist on PG13 and below
+		args = append(args, "-c", "search_path='$user,public,extensions'")
+	}
 	env := []string{
 		"POSTGRES_PASSWORD=" + utils.Config.Db.Password,
 		"POSTGRES_HOST=/var/run/postgresql",
@@ -92,7 +96,7 @@ func NewContainerConfig() container.Config {
 cat <<'EOF' > /etc/postgresql.schema.sql && \
 cat <<'EOF' > /etc/postgresql-custom/pgsodium_root.key && \
 cat <<'EOF' >> /etc/postgresql/postgresql.conf && \
-docker-entrypoint.sh postgres -D /etc/postgresql
+docker-entrypoint.sh postgres -D /etc/postgresql ` + strings.Join(args, " ") + `
 ` + initialSchema + `
 ` + webhookSchema + `
 ` + _supabaseSchema + `
@@ -101,13 +105,6 @@ EOF
 EOF
 ` + utils.Config.Db.Settings.ToPostgresConfig() + `
 EOF`},
-	}
-	if utils.Config.Db.MajorVersion >= 14 {
-		config.Cmd = []string{"postgres",
-			"-c", "config_file=/etc/postgresql/postgresql.conf",
-			// Ref: https://postgrespro.com/list/thread-id/2448092
-			"-c", `search_path="$user",public,extensions`,
-		}
 	}
 	return config
 }
