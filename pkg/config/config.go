@@ -301,6 +301,10 @@ func (a *auth) Clone() auth {
 		hook := *a.Hook.SendEmail
 		copy.Hook.SendEmail = &hook
 	}
+	if a.Hook.BeforeUserCreated != nil {
+		hook := *a.Hook.BeforeUserCreated
+		copy.Hook.BeforeUserCreated = &hook
+	}
 	copy.Sms.TestOTP = maps.Clone(a.Sms.TestOTP)
 	return copy
 }
@@ -1158,6 +1162,11 @@ func (h *hook) validate() error {
 	}
 	if hook := h.SendEmail; hook != nil {
 		if err := h.SendEmail.validate("send_email"); err != nil {
+			return err
+		}
+	}
+	if hook := h.BeforeUserCreated; hook != nil {
+		if err := hook.validate("before_user_created"); err != nil {
 			return err
 		}
 	}

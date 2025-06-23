@@ -641,6 +641,14 @@ EOF
 				"GOTRUE_HOOK_SEND_EMAIL_SECRETS="+hook.Secrets.Value,
 			)
 		}
+		if hook := utils.Config.Auth.Hook.BeforeUserCreated; hook != nil && hook.Enabled {
+			env = append(
+				env,
+				"GOTRUE_HOOK_BEFORE_USER_CREATED_ENABLED=true",
+				"GOTRUE_HOOK_BEFORE_USER_CREATED_URI="+hook.URI,
+				"GOTRUE_HOOK_BEFORE_USER_CREATED_SECRETS="+hook.Secrets.Value,
+			)
+		}
 
 		if utils.Config.Auth.MFA.Phone.EnrollEnabled || utils.Config.Auth.MFA.Phone.VerifyEnabled {
 			env = append(

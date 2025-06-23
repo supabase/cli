@@ -201,6 +201,7 @@ type (
 		CustomAccessToken           *hookConfig `toml:"custom_access_token"`
 		SendSMS                     *hookConfig `toml:"send_sms"`
 		SendEmail                   *hookConfig `toml:"send_email"`
+		BeforeUserCreated           *hookConfig `toml:"before_user_created"`
 	}
 
 	factorTypeConfiguration struct {
@@ -381,6 +382,14 @@ func (c *captcha) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 
 func (h hook) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	// When local config is not set, we assume platform defaults should not change
+	if hook := h.BeforeUserCreated; hook != nil {
+		if body.HookBeforeUserCreatedEnabled = nullable.NewNullableWithValue(hook.Enabled); hook.Enabled {
+			body.HookBeforeUserCreatedUri = nullable.NewNullableWithValue(hook.URI)
+			if len(hook.Secrets.SHA256) > 0 {
+				body.HookBeforeUserCreatedSecrets = nullable.NewNullableWithValue(hook.Secrets.Value)
+			}
+		}
+	}
 	if hook := h.CustomAccessToken; hook != nil {
 		if body.HookCustomAccessTokenEnabled = nullable.NewNullableWithValue(hook.Enabled); hook.Enabled {
 			body.HookCustomAccessTokenUri = nullable.NewNullableWithValue(hook.URI)
@@ -425,6 +434,16 @@ func (h hook) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 }
 func (h *hook) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	// When local config is not set, we assume platform defaults should not change
+	if hook := h.BeforeUserCreated; hook != nil {
+		// Ignore disabled hooks because their envs are not loaded
+		if hook.Enabled {
+			hook.URI = ValOrDefault(remoteConfig.HookBeforeUserCreatedUri, "")
+			if len(hook.Secrets.SHA256) > 0 {
+				hook.Secrets.SHA256 = ValOrDefault(remoteConfig.HookBeforeUserCreatedSecrets, "")
+			}
+		}
+		hook.Enabled = ValOrDefault(remoteConfig.HookBeforeUserCreatedEnabled, false)
+	}
 	if hook := h.CustomAccessToken; hook != nil {
 		// Ignore disabled hooks because their envs are not loaded
 		if hook.Enabled {

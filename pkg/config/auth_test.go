@@ -215,6 +215,14 @@ func TestHookDiff(t *testing.T) {
 	t.Run("local and remote enabled", func(t *testing.T) {
 		c := newWithDefaults()
 		c.Hook = hook{
+			BeforeUserCreated: &hookConfig{
+				Enabled: true,
+				URI:     "http://example.com",
+				Secrets: Secret{
+					Value:  "test-secret",
+					SHA256: "ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252",
+				},
+			},
 			CustomAccessToken: &hookConfig{
 				Enabled: true,
 				URI:     "http://example.com",
@@ -254,6 +262,9 @@ func TestHookDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+			HookBeforeUserCreatedEnabled:           nullable.NewNullableWithValue(true),
+			HookBeforeUserCreatedUri:               nullable.NewNullableWithValue("http://example.com"),
+			HookBeforeUserCreatedSecrets:           nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
 			HookCustomAccessTokenEnabled:           nullable.NewNullableWithValue(true),
 			HookCustomAccessTokenUri:               nullable.NewNullableWithValue("http://example.com"),
 			HookCustomAccessTokenSecrets:           nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
@@ -277,6 +288,9 @@ func TestHookDiff(t *testing.T) {
 	t.Run("local disabled remote enabled", func(t *testing.T) {
 		c := newWithDefaults()
 		c.Hook = hook{
+			BeforeUserCreated: &hookConfig{
+				Enabled: false,
+			},
 			CustomAccessToken: &hookConfig{
 				Enabled: false,
 			},
@@ -296,6 +310,9 @@ func TestHookDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+			HookBeforeUserCreatedEnabled:           nullable.NewNullableWithValue(true),
+			HookBeforeUserCreatedUri:               nullable.NewNullableWithValue("http://example.com"),
+			HookBeforeUserCreatedSecrets:           nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
 			HookCustomAccessTokenEnabled:           nullable.NewNullableWithValue(true),
 			HookCustomAccessTokenUri:               nullable.NewNullableWithValue("http://example.com"),
 			HookCustomAccessTokenSecrets:           nullable.NewNullableWithValue("ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252"),
@@ -318,6 +335,14 @@ func TestHookDiff(t *testing.T) {
 	t.Run("local enabled remote disabled", func(t *testing.T) {
 		c := newWithDefaults()
 		c.Hook = hook{
+			BeforeUserCreated: &hookConfig{
+				Enabled: true,
+				URI:     "http://example.com",
+				Secrets: Secret{
+					Value:  "test-secret",
+					SHA256: "ce62bb9bcced294fd4afe668f8ab3b50a89cf433093c526fffa3d0e46bf55252",
+				},
+			},
 			CustomAccessToken: &hookConfig{
 				Enabled: true,
 				URI:     "http://example.com",
@@ -346,6 +371,8 @@ func TestHookDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+			HookBeforeUserCreatedEnabled:           nullable.NewNullableWithValue(false),
+			HookBeforeUserCreatedUri:               nullable.NewNullableWithValue("pg-functions://postgres/public/beforeUserCreated"),
 			HookCustomAccessTokenEnabled:           nullable.NewNullableWithValue(false),
 			HookCustomAccessTokenUri:               nullable.NewNullableWithValue("pg-functions://postgres/public/customToken"),
 			HookSendSmsEnabled:                     nullable.NewNullableWithValue(false),
@@ -366,6 +393,7 @@ func TestHookDiff(t *testing.T) {
 	t.Run("local and remote disabled", func(t *testing.T) {
 		c := newWithDefaults()
 		c.Hook = hook{
+			BeforeUserCreated:           &hookConfig{Enabled: false},
 			CustomAccessToken:           &hookConfig{Enabled: false},
 			SendSMS:                     &hookConfig{Enabled: false},
 			SendEmail:                   &hookConfig{Enabled: false},
@@ -374,6 +402,7 @@ func TestHookDiff(t *testing.T) {
 		}
 		// Run test
 		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+			HookBeforeUserCreatedEnabled:           nullable.NewNullableWithValue(false),
 			HookCustomAccessTokenEnabled:           nullable.NewNullableWithValue(false),
 			HookSendSmsEnabled:                     nullable.NewNullableWithValue(false),
 			HookSendEmailEnabled:                   nullable.NewNullableWithValue(false),
