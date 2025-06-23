@@ -117,7 +117,6 @@ func CreateShadowDatabase(ctx context.Context, port uint16) (string, error) {
 	}
 	networkingConfig := network.NetworkingConfig{}
 	if utils.Config.Db.MajorVersion <= 14 {
-		config.Entrypoint = nil
 		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
 	}
 	return utils.DockerStart(ctx, config, hostConfig, networkingConfig, "")

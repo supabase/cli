@@ -106,6 +106,16 @@ EOF
 ` + utils.Config.Db.Settings.ToPostgresConfig() + `
 EOF`},
 	}
+	if utils.Config.Db.MajorVersion <= 14 {
+		config.Entrypoint = []string{"sh", "-c", `
+cat <<'EOF' > /docker-entrypoint-initdb.d/supabase_schema.sql && \
+cat <<'EOF' >> /etc/postgresql/postgresql.conf && \
+docker-entrypoint.sh postgres -D /etc/postgresql ` + strings.Join(args, " ") + `
+` + _supabaseSchema + `
+EOF
+` + utils.Config.Db.Settings.ToPostgresConfig() + `
+EOF`}
+	}
 	return config
 }
 
@@ -119,6 +129,9 @@ func NewHostConfig() container.HostConfig {
 			utils.ConfigId + ":/etc/postgresql-custom",
 		},
 	}
+	if utils.Config.Db.MajorVersion <= 14 {
+		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
+	}
 	return hostConfig
 }
 
@@ -131,17 +144,6 @@ func StartDatabase(ctx context.Context, fromBackup string, fsys afero.Fs, w io.W
 				Aliases: utils.DbAliases,
 			},
 		},
-	}
-	if utils.Config.Db.MajorVersion <= 14 {
-		config.Entrypoint = []string{"sh", "-c", `
-cat <<'EOF' > /docker-entrypoint-initdb.d/supabase_schema.sql && \
-cat <<'EOF' >> /etc/postgresql/postgresql.conf && \
-docker-entrypoint.sh postgres -D /etc/postgresql
-` + _supabaseSchema + `
-EOF
-` + utils.Config.Db.Settings.ToPostgresConfig() + `
-EOF`}
-		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
 	}
 	if len(fromBackup) > 0 {
 		config.Entrypoint = []string{"sh", "-c", `
