@@ -5,7 +5,7 @@ go 1.24.4
 require (
 	github.com/BurntSushi/toml v1.5.0
 	github.com/Netflix/go-env v0.1.2
-	github.com/andybalholm/brotli v1.1.1
+	github.com/andybalholm/brotli v1.2.0
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/charmbracelet/bubbles v0.18.0
 	github.com/charmbracelet/bubbletea v0.25.0
