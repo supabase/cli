@@ -87,6 +87,10 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/config/database/pooler").
 			Reply(200).
 			JSON(api.V1PgbouncerConfigResponse{})
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/network-restrictions").
+			Reply(200).
+			JSON(api.NetworkRestrictionsResponse{})
 		// Link versions
 		auth := tenant.HealthResponse{Version: "v2.74.2"}
 		gock.New("https://" + utils.GetSupabaseHost(project)).
@@ -151,6 +155,10 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/config/database/pooler").
 			ReplyError(errors.New("network error"))
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/network-restrictions").
+			Reply(200).
+			JSON(api.NetworkRestrictionsResponse{})
 		// Link versions
 		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/auth/v1/health").
@@ -201,6 +209,10 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/config/database/pooler").
 			ReplyError(errors.New("network error"))
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/network-restrictions").
+			Reply(200).
+			JSON(api.NetworkRestrictionsResponse{})
 		// Link versions
 		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/auth/v1/health").

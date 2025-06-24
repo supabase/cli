@@ -97,6 +97,41 @@ func (u *ConfigUpdater) UpdateDbConfig(ctx context.Context, projectRef string, c
 	if err := u.UpdateDbSettingsConfig(ctx, projectRef, c.Settings, filter...); err != nil {
 		return err
 	}
+	// Only attempt to update if the [db.network_restrictions] section is declared in the config
+	if c.NetworkRestrictions != nil {
+		if err := u.UpdateDbNetworkRestrictionsConfig(ctx, projectRef, *c.NetworkRestrictions, filter...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (u *ConfigUpdater) UpdateDbNetworkRestrictionsConfig(ctx context.Context, projectRef string, n NetworkRestrictions, filter ...func(string) bool) error {
+	networkRestrictionsConfig, err := u.client.V1GetNetworkRestrictionsWithResponse(ctx, projectRef)
+	if err != nil {
+		return errors.Errorf("failed to read network restrictions config: %w", err)
+	} else if networkRestrictionsConfig.JSON200 == nil {
+		return errors.Errorf("unexpected status %d: %s", networkRestrictionsConfig.StatusCode(), string(networkRestrictionsConfig.Body))
+	}
+	networkRestrictionsDiff, err := n.DiffWithRemote(*networkRestrictionsConfig.JSON200)
+	if err != nil {
+		return err
+	} else if len(networkRestrictionsDiff) == 0 {
+		fmt.Fprintln(os.Stderr, "Remote network restrictions config is up to date.")
+		return nil
+	}
+	fmt.Fprintln(os.Stderr, "Updating network restrictions with config:", string(networkRestrictionsDiff))
+	for _, keep := range filter {
+		if !keep("db") {
+			return nil
+		}
+	}
+	updateBody := n.ToUpdateNetworkRestrictionsBody()
+	if resp, err := u.client.V1UpdateNetworkRestrictionsWithResponse(ctx, projectRef, updateBody); err != nil {
+		return errors.Errorf("failed to update network restrictions config: %w", err)
+	} else if resp.JSON201 == nil {
+		return errors.Errorf("unexpected status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
 	return nil
 }
 

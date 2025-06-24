@@ -76,10 +76,16 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 func LinkServices(ctx context.Context, projectRef, anonKey string, fsys afero.Fs) {
 	// Ignore non-fatal errors linking services
 	var wg sync.WaitGroup
-	wg.Add(7)
+	wg.Add(8)
 	go func() {
 		defer wg.Done()
 		if err := linkDatabaseSettings(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := linkNetworkRestrictions(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}()
@@ -190,6 +196,42 @@ func linkDatabaseSettings(ctx context.Context, projectRef string) error {
 		return errors.Errorf("unexpected DB config status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 	utils.Config.Db.Settings.FromRemotePostgresConfig(*resp.JSON200)
+	return nil
+}
+
+func linkNetworkRestrictions(ctx context.Context, projectRef string) error {
+	resp, err := utils.GetSupabase().V1GetNetworkRestrictionsWithResponse(ctx, projectRef)
+	if err != nil {
+		return errors.Errorf("failed to read network restrictions config: %w", err)
+	} else if resp.JSON200 == nil {
+		return errors.Errorf("unexpected network restrictions config status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+
+	// Check if remote has actual restrictions (not just "allow all")
+	hasRestrictions := false
+	if resp.JSON200.Config.DbAllowedCidrs != nil && len(*resp.JSON200.Config.DbAllowedCidrs) > 0 {
+		// Check if it's not just "allow all"
+		if len(*resp.JSON200.Config.DbAllowedCidrs) != 1 || (*resp.JSON200.Config.DbAllowedCidrs)[0] != "0.0.0.0/0" {
+			hasRestrictions = true
+		}
+	}
+	if resp.JSON200.Config.DbAllowedCidrsV6 != nil && len(*resp.JSON200.Config.DbAllowedCidrsV6) > 0 {
+		// Check if it's not just "allow all"
+		if len(*resp.JSON200.Config.DbAllowedCidrsV6) != 1 || (*resp.JSON200.Config.DbAllowedCidrsV6)[0] != "::/0" {
+			hasRestrictions = true
+		}
+	}
+
+	// Only create NetworkRestrictions if there are actual restrictions
+	if hasRestrictions {
+		if utils.Config.Db.NetworkRestrictions == nil {
+			utils.Config.Db.NetworkRestrictions = &cliConfig.NetworkRestrictions{}
+		}
+		utils.Config.Db.NetworkRestrictions.FromRemoteNetworkRestrictions(*resp.JSON200)
+	} else {
+		// No restrictions, set to nil so the section doesn't appear in TOML
+		utils.Config.Db.NetworkRestrictions = nil
+	}
 	return nil
 }
 
