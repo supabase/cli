@@ -232,6 +232,7 @@ func init() {
 	})
 
 	flags := rootCmd.PersistentFlags()
+	flags.Bool("yes", false, "answer yes to all prompts")
 	flags.Bool("debug", false, "output debug logs to stderr")
 	flags.String("workdir", "", "path to a Supabase project directory")
 	flags.Bool("experimental", false, "enable experimental features")
