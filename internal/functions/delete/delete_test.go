@@ -73,7 +73,7 @@ func TestDeleteCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), slug, project, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "Function test-func does not exist on the Supabase project.")
+		assert.ErrorIs(t, err, ErrNoDelete)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
@@ -88,7 +88,7 @@ func TestDeleteCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), slug, project, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "Failed to delete Function test-func on the Supabase project:")
+		assert.ErrorContains(t, err, "unexpected delete function status 503:")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }

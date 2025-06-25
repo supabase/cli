@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-errors/errors"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/pkg/cast"
 	"golang.org/x/term"
 )
@@ -66,6 +67,10 @@ func (c *Console) PromptYesNo(ctx context.Context, label string, def bool) (bool
 		choices = "y/N"
 	}
 	labelWithChoice := fmt.Sprintf("%s [%s] ", label, choices)
+	if viper.GetBool("YES") {
+		fmt.Fprintln(os.Stderr, labelWithChoice+"y")
+		return true, nil
+	}
 	// Any error will be handled as default value
 	input, err := c.PromptText(ctx, labelWithChoice)
 	if len(input) > 0 {

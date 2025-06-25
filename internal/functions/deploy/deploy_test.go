@@ -11,6 +11,7 @@ import (
 
 	"github.com/h2non/gock"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
@@ -74,7 +75,7 @@ func TestDeployCommand(t *testing.T) {
 		}
 		// Run test
 		noVerifyJWT := true
-		err = Run(context.Background(), functions, true, &noVerifyJWT, "", 1, false, false, fsys)
+		err = Run(context.Background(), functions, true, &noVerifyJWT, "", 1, false, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -129,7 +130,7 @@ import_map = "./import_map.json"
 		outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		// Run test
-		err = Run(context.Background(), nil, true, nil, "", 1, false, false, fsys)
+		err = Run(context.Background(), nil, true, nil, "", 1, false, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -182,7 +183,7 @@ import_map = "./import_map.json"
 		outputDir := filepath.Join(utils.TempDir, ".output_enabled-func")
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		// Run test
-		err = Run(context.Background(), nil, true, nil, "", 1, false, false, fsys)
+		err = Run(context.Background(), nil, true, nil, "", 1, false, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -193,7 +194,7 @@ import_map = "./import_map.json"
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Run test
-		err := Run(context.Background(), []string{"_invalid"}, true, nil, "", 1, false, false, fsys)
+		err := Run(context.Background(), []string{"_invalid"}, true, nil, "", 1, false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Invalid Function name.")
 	})
@@ -203,7 +204,7 @@ import_map = "./import_map.json"
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Run test
-		err := Run(context.Background(), nil, true, nil, "", 1, false, false, fsys)
+		err := Run(context.Background(), nil, true, nil, "", 1, false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "No Functions specified or found in supabase/functions")
 	})
@@ -249,7 +250,7 @@ verify_jwt = false
 		outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		// Run test
-		assert.NoError(t, Run(context.Background(), []string{slug}, true, nil, "", 1, false, false, fsys))
+		assert.NoError(t, Run(context.Background(), []string{slug}, true, nil, "", 1, false, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -296,7 +297,7 @@ verify_jwt = false
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		// Run test
 		noVerifyJWT := false
-		assert.NoError(t, Run(context.Background(), []string{slug}, true, &noVerifyJWT, "", 1, false, false, fsys))
+		assert.NoError(t, Run(context.Background(), []string{slug}, true, &noVerifyJWT, "", 1, false, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -375,6 +376,7 @@ func TestImportMapPath(t *testing.T) {
 
 func TestPruneFunctions(t *testing.T) {
 	flags.ProjectRef = apitest.RandomProjectRef()
+	viper.Set("YES", true)
 
 	t.Run("prunes functions not in local directory", func(t *testing.T) {
 		// Setup in-memory fs
@@ -422,7 +424,7 @@ func TestPruneFunctions(t *testing.T) {
 			Reply(http.StatusOK)
 
 		// Run test with prune and force (to skip confirmation)
-		err := Run(context.Background(), nil, false, nil, "", 1, true, true, fsys)
+		err := Run(context.Background(), nil, false, nil, "", 1, true, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -465,7 +467,7 @@ func TestPruneFunctions(t *testing.T) {
 			JSON(api.BulkUpdateFunctionResponse{})
 
 		// Run test with prune and force
-		err := Run(context.Background(), nil, false, nil, "", 1, true, true, fsys)
+		err := Run(context.Background(), nil, false, nil, "", 1, true, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -510,7 +512,7 @@ func TestPruneFunctions(t *testing.T) {
 			Reply(http.StatusNotFound)
 
 		// Run test with prune and force
-		err := Run(context.Background(), nil, false, nil, "", 1, true, true, fsys)
+		err := Run(context.Background(), nil, false, nil, "", 1, true, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
