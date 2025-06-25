@@ -211,6 +211,41 @@ const (
 	CreateSigningKeyBodyAlgorithmRS256 CreateSigningKeyBodyAlgorithm = "RS256"
 )
 
+// Defines values for CreateSigningKeyBodyPrivateJwk0E.
+const (
+	AQAB CreateSigningKeyBodyPrivateJwk0E = "AQAB"
+)
+
+// Defines values for CreateSigningKeyBodyPrivateJwk0Kty.
+const (
+	RSA CreateSigningKeyBodyPrivateJwk0Kty = "RSA"
+)
+
+// Defines values for CreateSigningKeyBodyPrivateJwk1Crv.
+const (
+	P256 CreateSigningKeyBodyPrivateJwk1Crv = "P-256"
+)
+
+// Defines values for CreateSigningKeyBodyPrivateJwk1Kty.
+const (
+	EC CreateSigningKeyBodyPrivateJwk1Kty = "EC"
+)
+
+// Defines values for CreateSigningKeyBodyPrivateJwk2Crv.
+const (
+	Ed25519 CreateSigningKeyBodyPrivateJwk2Crv = "Ed25519"
+)
+
+// Defines values for CreateSigningKeyBodyPrivateJwk2Kty.
+const (
+	OKP CreateSigningKeyBodyPrivateJwk2Kty = "OKP"
+)
+
+// Defines values for CreateSigningKeyBodyPrivateJwk3Kty.
+const (
+	Oct CreateSigningKeyBodyPrivateJwk3Kty = "oct"
+)
+
 // Defines values for CreateSigningKeyBodyStatus.
 const (
 	CreateSigningKeyBodyStatusInUse   CreateSigningKeyBodyStatus = "in_use"
@@ -1444,12 +1479,75 @@ type CreateSecretBody = []struct {
 
 // CreateSigningKeyBody defines model for CreateSigningKeyBody.
 type CreateSigningKeyBody struct {
-	Algorithm CreateSigningKeyBodyAlgorithm `json:"algorithm"`
-	Status    *CreateSigningKeyBodyStatus   `json:"status,omitempty"`
+	Algorithm  CreateSigningKeyBodyAlgorithm    `json:"algorithm"`
+	PrivateJwk *CreateSigningKeyBody_PrivateJwk `json:"private_jwk,omitempty"`
+	Status     *CreateSigningKeyBodyStatus      `json:"status,omitempty"`
 }
 
 // CreateSigningKeyBodyAlgorithm defines model for CreateSigningKeyBody.Algorithm.
 type CreateSigningKeyBodyAlgorithm string
+
+// CreateSigningKeyBodyPrivateJwk0 defines model for .
+type CreateSigningKeyBodyPrivateJwk0 struct {
+	D   string                             `json:"d"`
+	Dp  string                             `json:"dp"`
+	Dq  string                             `json:"dq"`
+	E   CreateSigningKeyBodyPrivateJwk0E   `json:"e"`
+	Kty CreateSigningKeyBodyPrivateJwk0Kty `json:"kty"`
+	N   string                             `json:"n"`
+	P   string                             `json:"p"`
+	Q   string                             `json:"q"`
+	Qi  string                             `json:"qi"`
+}
+
+// CreateSigningKeyBodyPrivateJwk0E defines model for CreateSigningKeyBody.PrivateJwk.0.E.
+type CreateSigningKeyBodyPrivateJwk0E string
+
+// CreateSigningKeyBodyPrivateJwk0Kty defines model for CreateSigningKeyBody.PrivateJwk.0.Kty.
+type CreateSigningKeyBodyPrivateJwk0Kty string
+
+// CreateSigningKeyBodyPrivateJwk1 defines model for .
+type CreateSigningKeyBodyPrivateJwk1 struct {
+	Crv CreateSigningKeyBodyPrivateJwk1Crv `json:"crv"`
+	D   string                             `json:"d"`
+	Kty CreateSigningKeyBodyPrivateJwk1Kty `json:"kty"`
+	X   string                             `json:"x"`
+	Y   string                             `json:"y"`
+}
+
+// CreateSigningKeyBodyPrivateJwk1Crv defines model for CreateSigningKeyBody.PrivateJwk.1.Crv.
+type CreateSigningKeyBodyPrivateJwk1Crv string
+
+// CreateSigningKeyBodyPrivateJwk1Kty defines model for CreateSigningKeyBody.PrivateJwk.1.Kty.
+type CreateSigningKeyBodyPrivateJwk1Kty string
+
+// CreateSigningKeyBodyPrivateJwk2 defines model for .
+type CreateSigningKeyBodyPrivateJwk2 struct {
+	Crv CreateSigningKeyBodyPrivateJwk2Crv `json:"crv"`
+	D   string                             `json:"d"`
+	Kty CreateSigningKeyBodyPrivateJwk2Kty `json:"kty"`
+	X   string                             `json:"x"`
+}
+
+// CreateSigningKeyBodyPrivateJwk2Crv defines model for CreateSigningKeyBody.PrivateJwk.2.Crv.
+type CreateSigningKeyBodyPrivateJwk2Crv string
+
+// CreateSigningKeyBodyPrivateJwk2Kty defines model for CreateSigningKeyBody.PrivateJwk.2.Kty.
+type CreateSigningKeyBodyPrivateJwk2Kty string
+
+// CreateSigningKeyBodyPrivateJwk3 defines model for .
+type CreateSigningKeyBodyPrivateJwk3 struct {
+	K   string                             `json:"k"`
+	Kty CreateSigningKeyBodyPrivateJwk3Kty `json:"kty"`
+}
+
+// CreateSigningKeyBodyPrivateJwk3Kty defines model for CreateSigningKeyBody.PrivateJwk.3.Kty.
+type CreateSigningKeyBodyPrivateJwk3Kty string
+
+// CreateSigningKeyBody_PrivateJwk defines model for CreateSigningKeyBody.PrivateJwk.
+type CreateSigningKeyBody_PrivateJwk struct {
+	union json.RawMessage
+}
 
 // CreateSigningKeyBodyStatus defines model for CreateSigningKeyBody.Status.
 type CreateSigningKeyBodyStatus string
@@ -1962,7 +2060,8 @@ type ProjectUpgradeEligibilityResponse struct {
 		PostgresVersion ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion `json:"postgres_version"`
 		ReleaseChannel  ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel  `json:"release_channel"`
 	} `json:"target_upgrade_versions"`
-	UnsupportedExtensions []string `json:"unsupported_extensions"`
+	UnsupportedExtensions               []string `json:"unsupported_extensions"`
+	UserDefinedObjectsInInternalSchemas []string `json:"user_defined_objects_in_internal_schemas"`
 }
 
 // ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel defines model for ProjectUpgradeEligibilityResponse.CurrentAppVersionReleaseChannel.
@@ -3548,6 +3647,120 @@ func (t ApplyProjectAddonBody_AddonVariant) MarshalJSON() ([]byte, error) {
 }
 
 func (t *ApplyProjectAddonBody_AddonVariant) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsCreateSigningKeyBodyPrivateJwk0 returns the union data inside the CreateSigningKeyBody_PrivateJwk as a CreateSigningKeyBodyPrivateJwk0
+func (t CreateSigningKeyBody_PrivateJwk) AsCreateSigningKeyBodyPrivateJwk0() (CreateSigningKeyBodyPrivateJwk0, error) {
+	var body CreateSigningKeyBodyPrivateJwk0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCreateSigningKeyBodyPrivateJwk0 overwrites any union data inside the CreateSigningKeyBody_PrivateJwk as the provided CreateSigningKeyBodyPrivateJwk0
+func (t *CreateSigningKeyBody_PrivateJwk) FromCreateSigningKeyBodyPrivateJwk0(v CreateSigningKeyBodyPrivateJwk0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCreateSigningKeyBodyPrivateJwk0 performs a merge with any union data inside the CreateSigningKeyBody_PrivateJwk, using the provided CreateSigningKeyBodyPrivateJwk0
+func (t *CreateSigningKeyBody_PrivateJwk) MergeCreateSigningKeyBodyPrivateJwk0(v CreateSigningKeyBodyPrivateJwk0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsCreateSigningKeyBodyPrivateJwk1 returns the union data inside the CreateSigningKeyBody_PrivateJwk as a CreateSigningKeyBodyPrivateJwk1
+func (t CreateSigningKeyBody_PrivateJwk) AsCreateSigningKeyBodyPrivateJwk1() (CreateSigningKeyBodyPrivateJwk1, error) {
+	var body CreateSigningKeyBodyPrivateJwk1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCreateSigningKeyBodyPrivateJwk1 overwrites any union data inside the CreateSigningKeyBody_PrivateJwk as the provided CreateSigningKeyBodyPrivateJwk1
+func (t *CreateSigningKeyBody_PrivateJwk) FromCreateSigningKeyBodyPrivateJwk1(v CreateSigningKeyBodyPrivateJwk1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCreateSigningKeyBodyPrivateJwk1 performs a merge with any union data inside the CreateSigningKeyBody_PrivateJwk, using the provided CreateSigningKeyBodyPrivateJwk1
+func (t *CreateSigningKeyBody_PrivateJwk) MergeCreateSigningKeyBodyPrivateJwk1(v CreateSigningKeyBodyPrivateJwk1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsCreateSigningKeyBodyPrivateJwk2 returns the union data inside the CreateSigningKeyBody_PrivateJwk as a CreateSigningKeyBodyPrivateJwk2
+func (t CreateSigningKeyBody_PrivateJwk) AsCreateSigningKeyBodyPrivateJwk2() (CreateSigningKeyBodyPrivateJwk2, error) {
+	var body CreateSigningKeyBodyPrivateJwk2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCreateSigningKeyBodyPrivateJwk2 overwrites any union data inside the CreateSigningKeyBody_PrivateJwk as the provided CreateSigningKeyBodyPrivateJwk2
+func (t *CreateSigningKeyBody_PrivateJwk) FromCreateSigningKeyBodyPrivateJwk2(v CreateSigningKeyBodyPrivateJwk2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCreateSigningKeyBodyPrivateJwk2 performs a merge with any union data inside the CreateSigningKeyBody_PrivateJwk, using the provided CreateSigningKeyBodyPrivateJwk2
+func (t *CreateSigningKeyBody_PrivateJwk) MergeCreateSigningKeyBodyPrivateJwk2(v CreateSigningKeyBodyPrivateJwk2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsCreateSigningKeyBodyPrivateJwk3 returns the union data inside the CreateSigningKeyBody_PrivateJwk as a CreateSigningKeyBodyPrivateJwk3
+func (t CreateSigningKeyBody_PrivateJwk) AsCreateSigningKeyBodyPrivateJwk3() (CreateSigningKeyBodyPrivateJwk3, error) {
+	var body CreateSigningKeyBodyPrivateJwk3
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCreateSigningKeyBodyPrivateJwk3 overwrites any union data inside the CreateSigningKeyBody_PrivateJwk as the provided CreateSigningKeyBodyPrivateJwk3
+func (t *CreateSigningKeyBody_PrivateJwk) FromCreateSigningKeyBodyPrivateJwk3(v CreateSigningKeyBodyPrivateJwk3) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCreateSigningKeyBodyPrivateJwk3 performs a merge with any union data inside the CreateSigningKeyBody_PrivateJwk, using the provided CreateSigningKeyBodyPrivateJwk3
+func (t *CreateSigningKeyBody_PrivateJwk) MergeCreateSigningKeyBodyPrivateJwk3(v CreateSigningKeyBodyPrivateJwk3) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t CreateSigningKeyBody_PrivateJwk) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *CreateSigningKeyBody_PrivateJwk) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }

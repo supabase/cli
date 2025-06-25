@@ -9,13 +9,15 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/functions/delete"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/function"
 )
 
-func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool, importMapPath string, maxJobs uint, fsys afero.Fs) error {
+func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool, importMapPath string, maxJobs uint, prune bool, fsys afero.Fs) error {
 	// Load function config and project id
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
@@ -49,6 +51,7 @@ func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool,
 	if err != nil {
 		return err
 	}
+	// Deploy new and updated functions
 	opt := function.WithMaxJobs(maxJobs)
 	if useDocker {
 		if utils.IsDockerRunning(ctx) {
@@ -67,7 +70,10 @@ func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool,
 	fmt.Printf("Deployed Functions on project %s: %s\n", utils.Aqua(flags.ProjectRef), strings.Join(slugs, ", "))
 	url := fmt.Sprintf("%s/project/%v/functions", utils.GetSupabaseDashboardURL(), flags.ProjectRef)
 	fmt.Println("You can inspect your deployment in the Dashboard: " + url)
-	return nil
+	if !prune {
+		return nil
+	}
+	return pruneFunctions(ctx, functionConfig)
 }
 
 func GetFunctionSlugs(fsys afero.Fs) (slugs []string, err error) {
@@ -154,4 +160,52 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 		)
 	}
 	return functionConfig, nil
+}
+
+// pruneFunctions deletes functions that exist remotely but not locally
+func pruneFunctions(ctx context.Context, functionConfig config.FunctionConfig) error {
+	resp, err := utils.GetSupabase().V1ListAllFunctionsWithResponse(ctx, flags.ProjectRef)
+	if err != nil {
+		return errors.Errorf("failed to list functions: %w", err)
+	} else if resp.JSON200 == nil {
+		return errors.Errorf("unexpected list functions status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+	// No need to delete disabled functions
+	var toDelete []string
+	for _, deployed := range *resp.JSON200 {
+		if deployed.Status == api.FunctionResponseStatusREMOVED {
+			continue
+		} else if _, exists := functionConfig[deployed.Slug]; exists {
+			continue
+		}
+		toDelete = append(toDelete, deployed.Slug)
+	}
+	if len(toDelete) == 0 {
+		fmt.Fprintln(os.Stderr, "No functions to prune.")
+		return nil
+	}
+	// Confirm before pruning functions
+	msg := fmt.Sprintln(confirmPruneAll(toDelete))
+	if shouldDelete, err := utils.NewConsole().PromptYesNo(ctx, msg, false); err != nil {
+		return err
+	} else if !shouldDelete {
+		return errors.New(context.Canceled)
+	}
+	for _, slug := range toDelete {
+		fmt.Fprintln(os.Stderr, "Deleting Function:", slug)
+		if err := delete.Undeploy(ctx, flags.ProjectRef, slug); errors.Is(err, delete.ErrNoDelete) {
+			fmt.Fprintln(utils.GetDebugLogger(), err)
+		} else if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func confirmPruneAll(pending []string) string {
+	msg := fmt.Sprintln("Do you want to delete the following functions?")
+	for _, slug := range pending {
+		msg += fmt.Sprintf(" • %s\n", utils.Bold(slug))
+	}
+	return msg
 }

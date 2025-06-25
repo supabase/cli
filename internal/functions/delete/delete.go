@@ -11,27 +11,29 @@ import (
 )
 
 func Run(ctx context.Context, slug string, projectRef string, fsys afero.Fs) error {
-	// 1. Sanity checks.
-	{
-		if err := utils.ValidateFunctionSlug(slug); err != nil {
-			return err
-		}
+	if err := utils.ValidateFunctionSlug(slug); err != nil {
+		return err
 	}
+	if err := Undeploy(ctx, projectRef, slug); err != nil {
+		return err
+	}
+	fmt.Printf("Deleted Function %s from project %s.\n", utils.Aqua(slug), utils.Aqua(projectRef))
+	return nil
+}
 
-	// 2. Delete Function.
+var ErrNoDelete = errors.New("nothing to delete")
+
+func Undeploy(ctx context.Context, projectRef string, slug string) error {
 	resp, err := utils.GetSupabase().V1DeleteAFunctionWithResponse(ctx, projectRef, slug)
 	if err != nil {
 		return errors.Errorf("failed to delete function: %w", err)
 	}
 	switch resp.StatusCode() {
 	case http.StatusNotFound:
-		return errors.New("Function " + utils.Aqua(slug) + " does not exist on the Supabase project.")
+		return errors.Errorf("Function %s does not exist on the Supabase project: %w", slug, ErrNoDelete)
 	case http.StatusOK:
-		break
+		return nil
 	default:
-		return errors.New("Failed to delete Function " + utils.Aqua(slug) + " on the Supabase project: " + string(resp.Body))
+		return errors.Errorf("unexpected delete function status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
-
-	fmt.Println("Deleted Function " + utils.Aqua(slug) + " from project " + utils.Aqua(projectRef) + ".")
-	return nil
 }
