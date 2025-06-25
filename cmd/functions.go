@@ -140,7 +140,7 @@ func init() {
 	cobra.CheckErr(deployFlags.MarkHidden("legacy-bundle"))
 	deployFlags.UintVarP(&maxJobs, "jobs", "j", 1, "Maximum number of parallel jobs.")
 	deployFlags.BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
-	deployFlags.BoolVar(&prune, "prune", false, "Delete Functions that exist in Supabase but not in local project.")
+	deployFlags.BoolVar(&prune, "prune", false, "Delete Functions that exist in Supabase project but not locally.")
 	deployFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	deployFlags.StringVar(&importMapPath, "import-map", "", "Path to import map file.")
 	functionsServeCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")

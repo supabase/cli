@@ -170,12 +170,12 @@ func pruneFunctions(ctx context.Context, functionConfig config.FunctionConfig) e
 	} else if resp.JSON200 == nil {
 		return errors.Errorf("unexpected list functions status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
+	// No need to delete disabled functions
 	var toDelete []string
 	for _, deployed := range *resp.JSON200 {
 		if deployed.Status == api.FunctionResponseStatusREMOVED {
 			continue
 		} else if _, exists := functionConfig[deployed.Slug]; exists {
-			// No need to delete disabled functions
 			continue
 		}
 		toDelete = append(toDelete, deployed.Slug)
@@ -184,6 +184,7 @@ func pruneFunctions(ctx context.Context, functionConfig config.FunctionConfig) e
 		fmt.Fprintln(os.Stderr, "No functions to prune.")
 		return nil
 	}
+	// Confirm before pruning functions
 	msg := fmt.Sprintln(confirmPruneAll(toDelete))
 	if shouldDelete, err := utils.NewConsole().PromptYesNo(ctx, msg, false); err != nil {
 		return err
