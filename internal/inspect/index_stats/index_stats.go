@@ -1,10 +1,9 @@
-package vacuum_stats
+package index_stats
 
 import (
 	"context"
 	_ "embed"
 	"fmt"
-	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
@@ -16,17 +15,16 @@ import (
 	"github.com/supabase/cli/pkg/pgxv5"
 )
 
-//go:embed vacuum_stats.sql
-var VacuumStatsQuery string
+//go:embed index_stats.sql
+var IndexStatsQuery string
 
 type Result struct {
-	Name                 string
-	Last_vacuum          string
-	Last_autovacuum      string
-	Rowcount             string
-	Dead_rowcount        string
-	Autovacuum_threshold string
-	Expect_autovacuum    string
+	Name         string
+	Size         string
+	Percent_used string
+	Index_scans  int64
+	Seq_scans    int64
+	Unused       bool
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -35,7 +33,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 	defer conn.Close(context.Background())
-	rows, err := conn.Query(ctx, VacuumStatsQuery, reset.LikeEscapeSchema(utils.InternalSchemas))
+	rows, err := conn.Query(ctx, IndexStatsQuery, reset.LikeEscapeSchema(utils.InternalSchemas))
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}
@@ -44,10 +42,9 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "|Table|Last Vacuum|Last Auto Vacuum|Row count|Dead row count|Expect autovacuum?\n|-|-|-|-|-|-|\n"
+	table := "|Name|Size|Percent used|Index scans|Seq scans|Unused|\n|-|-|-|-|-|-|\n"
 	for _, r := range result {
-		rowcount := strings.Replace(r.Rowcount, "-1", "No stats", 1)
-		table += fmt.Sprintf("|`%s`|%s|%s|`%s`|`%s`|`%s`|\n", r.Name, r.Last_vacuum, r.Last_autovacuum, rowcount, r.Dead_rowcount, r.Expect_autovacuum)
+		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%d`|`%d`|`%t`|\n", r.Name, r.Size, r.Percent_used, r.Index_scans, r.Seq_scans, r.Unused)
 	}
 	return list.RenderTable(table)
 }

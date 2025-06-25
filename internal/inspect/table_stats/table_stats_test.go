@@ -1,4 +1,4 @@
-package unused_indexes
+package table_stats
 
 import (
 	"context"
@@ -20,23 +20,24 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-func TestUnusedIndexesCommand(t *testing.T) {
-	t.Run("inspects unused indexes", func(t *testing.T) {
-		// Setup in-memory fs
+func TestTableStatsCommand(t *testing.T) {
+	t.Run("inspects table stats", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
-		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(UnusedIndexesQuery, reset.LikeEscapeSchema(utils.InternalSchemas)).
+
+		// Mock table sizes and index sizes
+		conn.Query(TableStatsQuery, reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
-				Name:        "public.test_table",
-				Index:       "test_table_idx",
-				Index_size:  "3GB",
-				Index_scans: 2,
+				Name:                "public.test_table",
+				Table_size:          "3GB",
+				Index_size:          "1GB",
+				Total_size:          "4GB",
+				Estimated_row_count: 100,
+				Seq_scans:           1,
 			})
-		// Run test
+
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
-		// Check error
 		assert.NoError(t, err)
 	})
 }

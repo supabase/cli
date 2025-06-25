@@ -3,7 +3,9 @@ package apitest
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/api/types/container"
@@ -84,9 +86,17 @@ func MockDockerStop(docker *client.Client) {
 
 // Ref: internal/utils/docker.go::DockerRunOnce
 func setupDockerLogs(docker *client.Client, containerID, stdout string, exitCode int) error {
+	err := MockDockerLogsStream(docker, containerID, exitCode, strings.NewReader(stdout))
+	gock.New(docker.DaemonHost()).
+		Delete("/v" + docker.ClientVersion() + "/containers/" + containerID).
+		Reply(http.StatusOK)
+	return err
+}
+
+func MockDockerLogsStream(docker *client.Client, containerID string, exitCode int, r io.Reader) error {
 	var body bytes.Buffer
 	writer := stdcopy.NewStdWriter(&body, stdcopy.Stdout)
-	_, err := writer.Write([]byte(stdout))
+	_, err := io.Copy(writer, r)
 	gock.New(docker.DaemonHost()).
 		Get("/v"+docker.ClientVersion()+"/containers/"+containerID+"/logs").
 		Reply(http.StatusOK).
@@ -99,9 +109,6 @@ func setupDockerLogs(docker *client.Client, containerID, stdout string, exitCode
 			State: &container.State{
 				ExitCode: exitCode,
 			}}})
-	gock.New(docker.DaemonHost()).
-		Delete("/v" + docker.ClientVersion() + "/containers/" + containerID).
-		Reply(http.StatusOK)
 	return err
 }
 

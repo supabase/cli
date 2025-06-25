@@ -1,0 +1,43 @@
+# Rules to validate CSV report files
+
+[[rules]]
+query = "SELECT LISTAGG(stmt, ',') AS match FROM `locks.csv` WHERE age > '00:02:00'"
+name = "No old locks"
+pass = "✔"
+fail = "There is at least one lock older than 2 minutes"
+
+[[rules]]
+query = "SELECT LISTAGG(stmt, ',') AS match FROM `locks.csv` WHERE granted = 'f'"
+name = "No ungranted locks"
+pass = "✔"
+fail = "There is at least one ungranted lock"
+
+[[rules]]
+query = "SELECT LISTAGG(index, ',') AS match FROM `unused_indexes.csv`"
+name = "No unused indexes"
+pass = "✔"
+fail = "There is at least one unused index"
+
+[[rules]]
+query = "SELECT LISTAGG(name, ',') AS match FROM `db_stats.csv` WHERE index_hit_rate < 0.94 OR table_hit_rate < 0.94"
+name = "Check cache hit is within acceptable bounds"
+pass = "✔"
+fail = "There is a cache hit ratio (table or index) below 94%"
+
+[[rules]]
+query = "SELECT LISTAGG(t.name, ',') AS match FROM `table_stats.csv` t WHERE t.seq_scans > t.estimated_row_count * 0.1 AND t.estimated_row_count > 1000;"
+name = "No large tables with sequential scans more than 10% of rows"
+pass = "✔"
+fail = "At least one table is showing sequential scans more than 10% of total row count"
+
+[[rules]]
+query = "SELECT LISTAGG(s.tbl, ',') AS match FROM `vacuum_stats.csv` s WHERE s.expect_autovacuum = 'yes' and s.rowcount > 1000;"
+name = "No large tables waiting on autovacuum"
+pass = "✔"
+fail = "At least one table is waiting on autovacuum"
+
+[[rules]]
+query = "SELECT LISTAGG(s.name, ',') AS match FROM `vacuum_stats.csv` s WHERE s.rowcount > 0 AND (s.last_autovacuum = '' OR s.last_vacuum = '');"
+name = "No tables yet to be vacuumed"
+pass = "✔"
+fail = "At least one table has never had autovacuum or vacuum run on it"

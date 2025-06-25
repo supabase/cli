@@ -1,4 +1,4 @@
-package locks
+package db_stats
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
+	"github.com/supabase/cli/internal/db/reset"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/pgtest"
 )
 
@@ -18,21 +20,23 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-func TestLocksCommand(t *testing.T) {
-	t.Run("inspects locks", func(t *testing.T) {
+func TestDBStatsCommand(t *testing.T) {
+	t.Run("inspects size of all indexes", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(LocksQuery).
+		conn.Query(DBStatsQuery, reset.LikeEscapeSchema(utils.InternalSchemas), dbConfig.Database).
 			Reply("SELECT 1", Result{
-				Pid:           1,
-				Relname:       "rel",
-				Transactionid: "9301",
-				Granted:       true,
-				Stmt:          "select 1",
-				Age:           "300ms",
+				Database_size:          "8GB",
+				Total_index_size:       "8GB",
+				Total_table_size:       "8GB",
+				Total_toast_size:       "8GB",
+				Time_since_stats_reset: "8GB",
+				Index_hit_rate:         "0.89",
+				Table_hit_rate:         "0.98",
+				WAL_size:               "8GB",
 			})
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)

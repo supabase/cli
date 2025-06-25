@@ -193,7 +193,8 @@ var (
 		},
 	}
 
-	noSeed bool
+	noSeed      bool
+	lastVersion uint
 
 	dbResetCmd = &cobra.Command{
 		Use:   "reset",
@@ -202,7 +203,7 @@ var (
 			if noSeed {
 				utils.Config.Db.Seed.Enabled = false
 			}
-			return reset.Run(cmd.Context(), migrationVersion, nLastVersion, flags.DbConfig, afero.NewOsFs())
+			return reset.Run(cmd.Context(), migrationVersion, lastVersion, flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -326,7 +327,7 @@ func init() {
 	resetFlags.BoolVar(&noSeed, "no-seed", false, "Skip running the seed script after reset.")
 	dbResetCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	resetFlags.StringVar(&migrationVersion, "version", "", "Reset up to the specified version.")
-	resetFlags.UintVar(&nLastVersion, "last", 0, "Reset up to the last n migration versions.")
+	resetFlags.UintVar(&lastVersion, "last", 0, "Reset up to the last n migration versions.")
 	dbResetCmd.MarkFlagsMutuallyExclusive("version", "last")
 	dbCmd.AddCommand(dbResetCmd)
 	// Build lint command

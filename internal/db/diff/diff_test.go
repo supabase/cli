@@ -69,6 +69,8 @@ func TestRun(t *testing.T) {
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-migra", diff))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
+		conn.Query(CREATE_TEMPLATE).
+			Reply("CREATE DATABASE")
 		defer conn.Close(t)
 		// Run test
 		err := Run(context.Background(), []string{"public"}, "file", dbConfig, DiffSchemaMigra, fsys, conn.Intercept)
@@ -134,7 +136,9 @@ func TestMigrateShadow(t *testing.T) {
 		conn.Query(utils.GlobalsSql).
 			Reply("CREATE SCHEMA").
 			Query(utils.InitialSchemaPg14Sql).
-			Reply("CREATE SCHEMA")
+			Reply("CREATE SCHEMA").
+			Query(CREATE_TEMPLATE).
+			Reply("CREATE DATABASE")
 		helper.MockMigrationHistory(conn).
 			Query(sql).
 			Reply("CREATE SCHEMA").
@@ -308,7 +312,9 @@ create schema public`)
 		conn.Query(utils.GlobalsSql).
 			Reply("CREATE SCHEMA").
 			Query(utils.InitialSchemaPg14Sql).
-			Reply("CREATE SCHEMA")
+			Reply("CREATE SCHEMA").
+			Query(CREATE_TEMPLATE).
+			Reply("CREATE DATABASE")
 		helper.MockMigrationHistory(conn).
 			Query(sql).
 			Reply("CREATE SCHEMA").

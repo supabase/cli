@@ -1,10 +1,9 @@
-package vacuum_stats
+package table_stats
 
 import (
 	"context"
 	_ "embed"
 	"fmt"
-	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
@@ -16,17 +15,16 @@ import (
 	"github.com/supabase/cli/pkg/pgxv5"
 )
 
-//go:embed vacuum_stats.sql
-var VacuumStatsQuery string
+//go:embed table_stats.sql
+var TableStatsQuery string
 
 type Result struct {
-	Name                 string
-	Last_vacuum          string
-	Last_autovacuum      string
-	Rowcount             string
-	Dead_rowcount        string
-	Autovacuum_threshold string
-	Expect_autovacuum    string
+	Name                string
+	Table_size          string
+	Index_size          string
+	Total_size          string
+	Estimated_row_count int64
+	Seq_scans           int64
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -35,7 +33,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 	defer conn.Close(context.Background())
-	rows, err := conn.Query(ctx, VacuumStatsQuery, reset.LikeEscapeSchema(utils.InternalSchemas))
+	rows, err := conn.Query(ctx, TableStatsQuery, reset.LikeEscapeSchema(utils.InternalSchemas))
 	if err != nil {
 		return errors.Errorf("failed to query rows: %w", err)
 	}
@@ -44,10 +42,9 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "|Table|Last Vacuum|Last Auto Vacuum|Row count|Dead row count|Expect autovacuum?\n|-|-|-|-|-|-|\n"
+	table := "|Name|Table size|Index size|Total size|Estimated row count|Seq scans|\n|-|-|-|-|-|-|\n"
 	for _, r := range result {
-		rowcount := strings.Replace(r.Rowcount, "-1", "No stats", 1)
-		table += fmt.Sprintf("|`%s`|%s|%s|`%s`|`%s`|`%s`|\n", r.Name, r.Last_vacuum, r.Last_autovacuum, rowcount, r.Dead_rowcount, r.Expect_autovacuum)
+		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%s`|`%d`|`%d`|\n", r.Name, r.Table_size, r.Index_size, r.Total_size, r.Estimated_row_count, r.Seq_scans)
 	}
 	return list.RenderTable(table)
 }

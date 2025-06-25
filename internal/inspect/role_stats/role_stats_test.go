@@ -1,4 +1,4 @@
-package locks
+package role_stats
 
 import (
 	"context"
@@ -18,21 +18,19 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-func TestLocksCommand(t *testing.T) {
-	t.Run("inspects locks", func(t *testing.T) {
+func TestRoleCommand(t *testing.T) {
+	t.Run("inspects role connections", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(LocksQuery).
+		conn.Query(RoleStatsQuery).
 			Reply("SELECT 1", Result{
-				Pid:           1,
-				Relname:       "rel",
-				Transactionid: "9301",
-				Granted:       true,
-				Stmt:          "select 1",
-				Age:           "300ms",
+				Role_name:          "postgres",
+				Custom_config:      "statement_timeout=3s",
+				Active_connections: 1,
+				Connection_limit:   10,
 			})
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
