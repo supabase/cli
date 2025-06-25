@@ -1954,15 +1954,15 @@ type ProjectUpgradeEligibilityResponse struct {
 	CurrentAppVersionReleaseChannel ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel `json:"current_app_version_release_channel"`
 	DurationEstimateHours           float32                                                          `json:"duration_estimate_hours"`
 	Eligible                        bool                                                             `json:"eligible"`
-	ExtensionDependentObjects       []string                                                         `json:"extension_dependent_objects"`
 	LatestAppVersion                string                                                           `json:"latest_app_version"`
 	LegacyAuthCustomRoles           []string                                                         `json:"legacy_auth_custom_roles"`
-	PotentialBreakingChanges        []string                                                         `json:"potential_breaking_changes"`
+	ObjectsToBeDropped              []string                                                         `json:"objects_to_be_dropped"`
 	TargetUpgradeVersions           []struct {
 		AppVersion      string                                                                `json:"app_version"`
 		PostgresVersion ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion `json:"postgres_version"`
 		ReleaseChannel  ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel  `json:"release_channel"`
 	} `json:"target_upgrade_versions"`
+	UnsupportedExtensions []string `json:"unsupported_extensions"`
 }
 
 // ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel defines model for ProjectUpgradeEligibilityResponse.CurrentAppVersionReleaseChannel.
