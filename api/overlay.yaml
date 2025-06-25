@@ -26,3 +26,6 @@ actions:
 - target: $.components.schemas.*.properties.connectionString
   description: Removes deprecated field that conflicts with naming convention
   remove: true
+- target: $.components.schemas.*.properties.private_jwk.discriminator
+  description: Replaces discriminated union with concrete type
+  remove: true
