@@ -12,7 +12,7 @@ FROM timberio/vector:0.28.1-alpine AS vector
 FROM supabase/supavisor:2.5.5 AS supavisor
 FROM supabase/gotrue:v2.176.1 AS gotrue
 FROM supabase/realtime:v2.37.9 AS realtime
-FROM supabase/storage-api:v1.24.6 AS storage
+FROM supabase/storage-api:v1.24.7 AS storage
 FROM supabase/logflare:1.14.2 AS logflare
 # Append to JobImages when adding new dependencies below
 FROM supabase/pgadmin-schema-diff:cli-0.0.5 AS differ
