@@ -20,6 +20,7 @@ type FunctionDeployMetadata struct {
 	Name           *string   `json:"name,omitempty"`
 	StaticPatterns *[]string `json:"static_patterns,omitempty"`
 	VerifyJwt      *bool     `json:"verify_jwt,omitempty"`
+	SHA256         string    `json:"sha256,omitempty"`
 }
 
 type EszipBundler interface {
