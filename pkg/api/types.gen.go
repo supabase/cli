@@ -1041,7 +1041,7 @@ type AnalyticsResponse_Error struct {
 
 // ApiKeyResponse defines model for ApiKeyResponse.
 type ApiKeyResponse struct {
-	ApiKey            string                       `json:"api_key"`
+	ApiKey            nullable.Nullable[string]    `json:"api_key,omitempty"`
 	Description       nullable.Nullable[string]    `json:"description,omitempty"`
 	Hash              nullable.Nullable[string]    `json:"hash,omitempty"`
 	Id                nullable.Nullable[string]    `json:"id,omitempty"`
