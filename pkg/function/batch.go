@@ -44,9 +44,9 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 		return err
 	}
 	policy.Reset()
-	exists := make(map[string]string, len(result))
+	checksum := make(map[string]string, len(result))
 	for _, f := range result {
-		exists[f.Slug] = cast.Val(f.EzbrSha256, "")
+		checksum[f.Slug] = cast.Val(f.EzbrSha256, "")
 	}
 	var toUpdate api.BulkUpdateFunctionBody
 OUTER:
@@ -69,13 +69,13 @@ OUTER:
 		bodyHash := sha256.Sum256(body.Bytes())
 		meta.SHA256 = hex.EncodeToString(bodyHash[:])
 		// Skip if function has not changed
-		if exists[slug] == meta.SHA256 {
+		if checksum[slug] == meta.SHA256 {
 			fmt.Fprintln(os.Stderr, "No change found in Function:", slug)
 			continue
 		}
 		// Update if function already exists
 		upsert := func() (api.BulkUpdateFunctionBody, error) {
-			if _, ok := exists[slug]; ok {
+			if _, ok := checksum[slug]; ok {
 				return s.updateFunction(ctx, slug, meta, bytes.NewReader(body.Bytes()))
 			}
 			return s.createFunction(ctx, slug, meta, bytes.NewReader(body.Bytes()))
@@ -84,7 +84,7 @@ OUTER:
 		fmt.Fprintf(os.Stderr, "Deploying Function: %s (script size: %s)\n", slug, functionSize)
 		result, err := backoff.RetryNotifyWithData(upsert, policy, func(err error, d time.Duration) {
 			if strings.Contains(err.Error(), "Duplicated function slug") {
-				exists[slug] = ""
+				checksum[slug] = ""
 			}
 		})
 		if err != nil {
