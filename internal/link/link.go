@@ -219,7 +219,7 @@ func linkNetworkRestrictions(ctx context.Context, projectRef string) error {
 		utils.Config.Db.NetworkRestrictions.FromRemoteNetworkRestrictions(*resp.JSON200)
 	} else {
 		// If the current config declare explicitly "false" for the restrictions, there is no diff
-		if original.Db.NetworkRestrictions != nil && original.Db.NetworkRestrictions.Enabled == false {
+		if original.Db.NetworkRestrictions != nil && !original.Db.NetworkRestrictions.Enabled {
 			utils.Config.Db.NetworkRestrictions = original.Db.NetworkRestrictions
 		} else {
 			// No restrictions, set to nil so the section doesn't appear in TOML
