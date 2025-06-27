@@ -212,38 +212,56 @@ func (n *NetworkRestrictions) ToUpdateNetworkRestrictionsBody() v1API.V1UpdateNe
 	return body
 }
 
-func (n *NetworkRestrictions) FromRemoteNetworkRestrictions(remoteConfig v1API.NetworkRestrictionsResponse) {
-	// Check if remote has restrictions (non-empty arrays that aren't "allow all")
+// validate ensures that when network restrictions are enabled, the CIDR arrays are properly initialized
+func (n *NetworkRestrictions) validate() {
+	if n.Enabled {
+		// Initialize empty arrays if nil to prevent API errors
+		if n.DbAllowedCidrs == nil {
+			n.DbAllowedCidrs = []string{}
+		}
+		if n.DbAllowedCidrsV6 == nil {
+			n.DbAllowedCidrsV6 = []string{}
+		}
+	}
+}
+
+// HasActualNetworkRestrictions checks if the provided CIDR arrays represent actual restrictions
+// (not just "allow all" configurations like "0.0.0.0/0" for IPv4 or "::/0" for IPv6)
+func HasActualNetworkRestrictions(dbAllowedCidrs, dbAllowedCidrsV6 *[]string) bool {
 	hasRestrictions := false
 
-	if len(*remoteConfig.Config.DbAllowedCidrs) > 0 {
+	// Check IPv4 CIDRs
+	if dbAllowedCidrs != nil && len(*dbAllowedCidrs) > 0 {
 		// Check if it's not just "allow all"
-		if len(*remoteConfig.Config.DbAllowedCidrs) != 1 || (*remoteConfig.Config.DbAllowedCidrs)[0] != "0.0.0.0/0" {
+		if len(*dbAllowedCidrs) != 1 || (*dbAllowedCidrs)[0] != "0.0.0.0/0" {
 			hasRestrictions = true
 		}
 	}
 
-	if len(*remoteConfig.Config.DbAllowedCidrsV6) > 0 {
+	// Check IPv6 CIDRs
+	if dbAllowedCidrsV6 != nil && len(*dbAllowedCidrsV6) > 0 {
 		// Check if it's not just "allow all"
-		if len(*remoteConfig.Config.DbAllowedCidrsV6) != 1 || (*remoteConfig.Config.DbAllowedCidrsV6)[0] != "::/0" {
+		if len(*dbAllowedCidrsV6) != 1 || (*dbAllowedCidrsV6)[0] != "::/0" {
 			hasRestrictions = true
 		}
 	}
+
+	return hasRestrictions
+}
+
+func (n *NetworkRestrictions) FromRemoteNetworkRestrictions(remoteConfig v1API.NetworkRestrictionsResponse) {
+	// Use the helper function to check if there are actual restrictions
+	hasRestrictions := HasActualNetworkRestrictions(remoteConfig.Config.DbAllowedCidrs, remoteConfig.Config.DbAllowedCidrsV6)
 
 	// Set enabled based on whether there are actual restrictions
 	n.Enabled = hasRestrictions
 
-	// Set the CIDR values
+	// Set the CIDR values regardless of restrictions status
 	if remoteConfig.Config.DbAllowedCidrs != nil {
 		n.DbAllowedCidrs = *remoteConfig.Config.DbAllowedCidrs
-	} else {
-		n.DbAllowedCidrs = []string{}
 	}
-
 	if remoteConfig.Config.DbAllowedCidrsV6 != nil {
 		n.DbAllowedCidrsV6 = *remoteConfig.Config.DbAllowedCidrsV6
-	} else {
-		n.DbAllowedCidrsV6 = []string{}
 	}
 }
 

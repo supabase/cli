@@ -117,7 +117,7 @@ func (u *ConfigUpdater) UpdateDbNetworkRestrictionsConfig(ctx context.Context, p
 	if err != nil {
 		return err
 	} else if len(networkRestrictionsDiff) == 0 {
-		fmt.Fprintln(os.Stderr, "Remote network restrictions config is up to date.")
+		fmt.Fprintln(os.Stderr, "Remote DB Network restrictions config is up to date.")
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, "Updating network restrictions with config:", string(networkRestrictionsDiff))

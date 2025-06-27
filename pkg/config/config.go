@@ -769,6 +769,10 @@ func (c *config) Validate(fsys fs.FS) error {
 	if c.Db.Port == 0 {
 		return errors.New("Missing required field in config: db.port")
 	}
+	// Validate network restrictions config
+	if c.Db.NetworkRestrictions != nil {
+		c.Db.NetworkRestrictions.validate()
+	}
 	switch c.Db.MajorVersion {
 	case 0:
 		return errors.New("Missing required field in config: db.major_version")

@@ -227,6 +227,53 @@ func TestNetworkRestrictionsToUpdateBody(t *testing.T) {
 		assert.Equal(t, []string{"192.168.1.0/24", "10.0.0.0/8"}, *body.DbAllowedCidrs)
 		assert.Equal(t, []string{"2001:db8::/32"}, *body.DbAllowedCidrsV6)
 	})
+
+	t.Run("converts enabled restrictions with nil cidrs", func(t *testing.T) {
+		nr := NetworkRestrictions{
+			Enabled: true,
+			// DbAllowedCidrs and DbAllowedCidrsV6 are nil (not initialized)
+		}
+		// Simulate config validation that would happen during parsing
+		nr.validate()
+		body := nr.ToUpdateNetworkRestrictionsBody()
+		assert.Equal(t, []string{}, *body.DbAllowedCidrs)
+		assert.Equal(t, []string{}, *body.DbAllowedCidrsV6)
+	})
+}
+
+func TestNetworkRestrictionsValidate(t *testing.T) {
+	t.Run("initializes empty arrays when enabled is true and arrays are nil", func(t *testing.T) {
+		nr := NetworkRestrictions{
+			Enabled: true,
+			// DbAllowedCidrs and DbAllowedCidrsV6 are nil
+		}
+		nr.validate()
+		assert.NotNil(t, nr.DbAllowedCidrs)
+		assert.NotNil(t, nr.DbAllowedCidrsV6)
+		assert.Equal(t, []string{}, nr.DbAllowedCidrs)
+		assert.Equal(t, []string{}, nr.DbAllowedCidrsV6)
+	})
+
+	t.Run("preserves existing arrays when enabled is true", func(t *testing.T) {
+		nr := NetworkRestrictions{
+			Enabled:          true,
+			DbAllowedCidrs:   []string{"192.168.1.0/24"},
+			DbAllowedCidrsV6: []string{"2001:db8::/32"},
+		}
+		nr.validate()
+		assert.Equal(t, []string{"192.168.1.0/24"}, nr.DbAllowedCidrs)
+		assert.Equal(t, []string{"2001:db8::/32"}, nr.DbAllowedCidrsV6)
+	})
+
+	t.Run("does not initialize arrays when enabled is false", func(t *testing.T) {
+		nr := NetworkRestrictions{
+			Enabled: false,
+			// DbAllowedCidrs and DbAllowedCidrsV6 are nil
+		}
+		nr.validate()
+		assert.Nil(t, nr.DbAllowedCidrs)
+		assert.Nil(t, nr.DbAllowedCidrsV6)
+	})
 }
 
 func TestNetworkRestrictionsFromRemote(t *testing.T) {

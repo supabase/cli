@@ -200,6 +200,7 @@ func linkDatabaseSettings(ctx context.Context, projectRef string) error {
 }
 
 func linkNetworkRestrictions(ctx context.Context, projectRef string) error {
+	original := utils.Config.Clone()
 	resp, err := utils.GetSupabase().V1GetNetworkRestrictionsWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to read network restrictions config: %w", err)
@@ -207,20 +208,8 @@ func linkNetworkRestrictions(ctx context.Context, projectRef string) error {
 		return errors.Errorf("unexpected network restrictions config status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 
-	// Check if remote has actual restrictions (not just "allow all")
-	hasRestrictions := false
-	if resp.JSON200.Config.DbAllowedCidrs != nil && len(*resp.JSON200.Config.DbAllowedCidrs) > 0 {
-		// Check if it's not just "allow all"
-		if len(*resp.JSON200.Config.DbAllowedCidrs) != 1 || (*resp.JSON200.Config.DbAllowedCidrs)[0] != "0.0.0.0/0" {
-			hasRestrictions = true
-		}
-	}
-	if resp.JSON200.Config.DbAllowedCidrsV6 != nil && len(*resp.JSON200.Config.DbAllowedCidrsV6) > 0 {
-		// Check if it's not just "allow all"
-		if len(*resp.JSON200.Config.DbAllowedCidrsV6) != 1 || (*resp.JSON200.Config.DbAllowedCidrsV6)[0] != "::/0" {
-			hasRestrictions = true
-		}
-	}
+	// Check if remote has actual restrictions using the helper function from config package
+	hasRestrictions := cliConfig.HasActualNetworkRestrictions(resp.JSON200.Config.DbAllowedCidrs, resp.JSON200.Config.DbAllowedCidrsV6)
 
 	// Only create NetworkRestrictions if there are actual restrictions
 	if hasRestrictions {
@@ -229,8 +218,13 @@ func linkNetworkRestrictions(ctx context.Context, projectRef string) error {
 		}
 		utils.Config.Db.NetworkRestrictions.FromRemoteNetworkRestrictions(*resp.JSON200)
 	} else {
-		// No restrictions, set to nil so the section doesn't appear in TOML
-		utils.Config.Db.NetworkRestrictions = nil
+		// If the current config declare explicitly "false" for the restrictions, there is no diff
+		if original.Db.NetworkRestrictions != nil && original.Db.NetworkRestrictions.Enabled == false {
+			utils.Config.Db.NetworkRestrictions = original.Db.NetworkRestrictions
+		} else {
+			// No restrictions, set to nil so the section doesn't appear in TOML
+			utils.Config.Db.NetworkRestrictions = nil
+		}
 	}
 	return nil
 }
