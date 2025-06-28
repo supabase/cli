@@ -32,7 +32,7 @@ func TestRun(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 
 		// Create project config file with project reference
-		projectRef := "test-project-ref"
+		projectRef := "abcdefghijklmnopqrst"
 		require.NoError(t, utils.InitConfig(utils.InitParams{
 			ProjectId: projectRef,
 		}, fsys))
@@ -72,7 +72,7 @@ func TestCheckVersions(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 
 		// Create project config file with project reference
-		projectRef := "test-project-ref"
+		projectRef := "abcdefghijklmnopqrst"
 		require.NoError(t, utils.InitConfig(utils.InitParams{
 			ProjectId: projectRef,
 		}, fsys))
@@ -98,7 +98,7 @@ func TestCheckVersions(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 
 		// Create project config file with project reference
-		projectRef := "test-project-ref"
+		projectRef := "abcdefghijklmnopqrst"
 		require.NoError(t, utils.InitConfig(utils.InitParams{
 			ProjectId: projectRef,
 		}, fsys))
@@ -121,7 +121,7 @@ func TestCheckVersions(t *testing.T) {
 	// Test case: Verify version comparison logic
 	t.Run("compares local and remote versions correctly", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
-		projectRef := "test-project-ref"
+		projectRef := "abcdefghijklmnopqrst"
 
 		// Setup: Create linked project with specific versions
 		require.NoError(t, utils.InitConfig(utils.InitParams{
@@ -162,7 +162,7 @@ func TestListRemoteImages(t *testing.T) {
 	t.Run("gets remote versions successfully", func(t *testing.T) {
 		// Setup: Create context and project reference
 		ctx := context.Background()
-		projectRef := "test-project-ref"
+		projectRef := "abcdefghijklmnopqrst"
 
 		// Setup: Create in-memory filesystem
 		fsys := afero.NewMemMapFs()
@@ -182,23 +182,33 @@ func TestListRemoteImages(t *testing.T) {
 				{"name": "anon", "api_key": "test-key"},
 			})
 
-		// Mock database version response
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/database/version").
+			Get("/v1/projects").
 			Reply(200).
-			JSON(map[string]string{"version": "1.0.0"})
+			JSON([]map[string]interface{}{
+				{
+					"id": projectRef,
+					"database": map[string]string{
+						"version": "1.0.0",
+					},
+				},
+			})
 
-		// Mock auth version response
-		gock.New(utils.DefaultApiHost).
-			Get("/auth/v1/version").
+		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+			Get("/auth/v1/health").
 			Reply(200).
 			JSON(map[string]string{"version": "2.0.0"})
 
-		// Mock postgrest version response
-		gock.New(utils.DefaultApiHost).
-			Get("/rest/v1/version").
+		// Mock postgrest version response (endpoint = /rest/v1/ sur le host du projet)
+		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+			Get("/rest/v1/").
 			Reply(200).
-			JSON(map[string]string{"version": "3.0.0"})
+			JSON(map[string]interface{}{
+				"swagger": "2.0",
+				"info": map[string]string{
+					"version": "3.0.0",
+				},
+			})
 
 		// Execute: Call listRemoteImages function
 		remoteVersions := listRemoteImages(ctx, projectRef)
@@ -243,7 +253,7 @@ func TestListRemoteImages(t *testing.T) {
 	t.Run("handles missing access token", func(t *testing.T) {
 		// Setup: Create context and project reference
 		ctx := context.Background()
-		projectRef := "test-project-ref"
+		projectRef := "abcdefghijklmnopqrst"
 
 		// Setup: Create in-memory filesystem without access token
 		afero.NewMemMapFs()
