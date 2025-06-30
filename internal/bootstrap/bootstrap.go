@@ -215,17 +215,11 @@ const (
 
 func writeDotEnv(keys []api.ApiKeyResponse, config pgconn.Config, fsys afero.Fs) error {
 	// Initialise default envs
+	initial := apiKeys.ToEnv(keys)
+	initial[SUPABASE_URL] = "https://" + utils.GetSupabaseHost(flags.ProjectRef)
 	transactionMode := *config.Copy()
 	transactionMode.Port = 6543
-	initial := map[string]string{
-		SUPABASE_URL: "https://" + utils.GetSupabaseHost(flags.ProjectRef),
-		POSTGRES_URL: utils.ToPostgresURL(transactionMode),
-	}
-	for _, entry := range keys {
-		name := strings.ToUpper(entry.Name)
-		key := fmt.Sprintf("SUPABASE_%s_KEY", name)
-		initial[key] = entry.ApiKey
-	}
+	initial[POSTGRES_URL] = utils.ToPostgresURL(transactionMode)
 	// Populate from .env.example if exists
 	envs, err := parseExampleEnv(fsys)
 	if err != nil {

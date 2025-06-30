@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgconn"
 	"github.com/joho/godotenv"
+	"github.com/oapi-codegen/nullable"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -46,11 +47,11 @@ func TestSuggestAppStart(t *testing.T) {
 
 func TestWriteEnv(t *testing.T) {
 	var apiKeys = []api.ApiKeyResponse{{
-		ApiKey: "anonkey",
 		Name:   "anon",
+		ApiKey: nullable.NewNullableWithValue("anonkey"),
 	}, {
-		ApiKey: "servicekey",
 		Name:   "service_role",
+		ApiKey: nullable.NewNullableWithValue("servicekey"),
 	}}
 
 	var dbConfig = pgconn.Config{

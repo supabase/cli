@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/h2non/gock"
+	"github.com/oapi-codegen/nullable"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/testing/apitest"
@@ -31,7 +32,10 @@ func TestProjectApiKeysCommand(t *testing.T) {
 			Reply(200).
 			JSON([]api.ApiKeyResponse{{
 				Name:   "Test ApiKey",
-				ApiKey: "dummy-api-key-value",
+				ApiKey: nullable.NewNullableWithValue("dummy-api-key-value"),
+			}, {
+				Name:   "Test NullKey",
+				ApiKey: nullable.NewNullNullable[string](),
 			}})
 		// Run test
 		err := Run(context.Background(), project, fsys)

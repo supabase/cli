@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/h2non/gock"
+	"github.com/oapi-codegen/nullable"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/storage/client"
@@ -45,6 +46,10 @@ func TestStorageLS(t *testing.T) {
 	// Setup valid access token
 	token := apitest.RandomAccessToken(t)
 	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+	apiKeys := []api.ApiKeyResponse{{
+		Name:   "service_role",
+		ApiKey: nullable.NewNullableWithValue("service-key"),
+	}}
 
 	t.Run("lists buckets", func(t *testing.T) {
 		// Setup in-memory fs
@@ -54,10 +59,7 @@ func TestStorageLS(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + flags.ProjectRef + "/api-keys").
 			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
+			JSON(apiKeys)
 		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
@@ -85,10 +87,7 @@ func TestStorageLS(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + flags.ProjectRef + "/api-keys").
 			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
+			JSON(apiKeys)
 		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
