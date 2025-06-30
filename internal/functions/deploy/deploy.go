@@ -181,7 +181,7 @@ func pruneFunctions(ctx context.Context, functionConfig config.FunctionConfig) e
 		toDelete = append(toDelete, deployed.Slug)
 	}
 	if len(toDelete) == 0 {
-		fmt.Fprintln(os.Stderr, "No functions to prune.")
+		fmt.Fprintln(os.Stderr, "No Functions to prune.")
 		return nil
 	}
 	// Confirm before pruning functions
@@ -203,7 +203,7 @@ func pruneFunctions(ctx context.Context, functionConfig config.FunctionConfig) e
 }
 
 func confirmPruneAll(pending []string) string {
-	msg := fmt.Sprintln("Do you want to delete the following functions?")
+	msg := fmt.Sprintln("Do you want to delete the following Functions from your project?")
 	for _, slug := range pending {
 		msg += fmt.Sprintf(" • %s\n", utils.Bold(slug))
 	}

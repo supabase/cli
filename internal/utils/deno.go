@@ -225,12 +225,7 @@ func BindHostModules(cwd, relEntrypointPath, relImportMapPath string, fsys afero
 	}
 	// Resolving all Import Graph
 	addModule := func(unixPath string, w io.Writer) error {
-		hostPath := filepath.FromSlash(unixPath)
-		if path.IsAbs(unixPath) {
-			hostPath = filepath.VolumeName(cwd) + hostPath
-		} else {
-			hostPath = filepath.Join(cwd, hostPath)
-		}
+		hostPath := toHostPath(cwd, unixPath)
 		f, err := fsys.Open(hostPath)
 		if err != nil {
 			return errors.Errorf("failed to read file: %w", err)
@@ -247,8 +242,27 @@ func BindHostModules(cwd, relEntrypointPath, relImportMapPath string, fsys afero
 	if err := importMap.WalkImportPaths(unixPath, addModule); err != nil {
 		return nil, err
 	}
-	// TODO: support scopes
+	// Also mount local directories declared in scopes
+	for _, scope := range importMap.Scopes {
+		for _, unixPath := range scope {
+			hostPath := toHostPath(cwd, unixPath)
+			// Ref: https://docs.deno.com/runtime/fundamentals/modules/#overriding-https-imports
+			if _, err := fsys.Stat(hostPath); err != nil {
+				return nil, errors.Errorf("failed to resolve scope: %w", err)
+			}
+			dockerPath := ToDockerPath(hostPath)
+			modules = append(modules, hostPath+":"+dockerPath+":ro")
+		}
+	}
 	return modules, nil
+}
+
+func toHostPath(cwd, unixPath string) string {
+	hostPath := filepath.FromSlash(unixPath)
+	if path.IsAbs(unixPath) {
+		return filepath.VolumeName(cwd) + hostPath
+	}
+	return filepath.Join(cwd, hostPath)
 }
 
 func ToDockerPath(absHostPath string) string {

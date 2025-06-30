@@ -1041,7 +1041,7 @@ type AnalyticsResponse_Error struct {
 
 // ApiKeyResponse defines model for ApiKeyResponse.
 type ApiKeyResponse struct {
-	ApiKey            string                       `json:"api_key"`
+	ApiKey            nullable.Nullable[string]    `json:"api_key,omitempty"`
 	Description       nullable.Nullable[string]    `json:"description,omitempty"`
 	Hash              nullable.Nullable[string]    `json:"hash,omitempty"`
 	Id                nullable.Nullable[string]    `json:"id,omitempty"`
@@ -1337,6 +1337,7 @@ type BranchUpdateResponseMessage string
 type BulkUpdateFunctionBody = []struct {
 	CreatedAt      *int64                       `json:"created_at,omitempty"`
 	EntrypointPath *string                      `json:"entrypoint_path,omitempty"`
+	EzbrSha256     *string                      `json:"ezbr_sha256,omitempty"`
 	Id             string                       `json:"id"`
 	ImportMap      *bool                        `json:"import_map,omitempty"`
 	ImportMapPath  *string                      `json:"import_map_path,omitempty"`
@@ -1355,6 +1356,7 @@ type BulkUpdateFunctionResponse struct {
 	Functions []struct {
 		CreatedAt      int64                                     `json:"created_at"`
 		EntrypointPath *string                                   `json:"entrypoint_path,omitempty"`
+		EzbrSha256     *string                                   `json:"ezbr_sha256,omitempty"`
 		Id             string                                    `json:"id"`
 		ImportMap      *bool                                     `json:"import_map,omitempty"`
 		ImportMapPath  *string                                   `json:"import_map_path,omitempty"`
@@ -1638,6 +1640,7 @@ type FunctionDeployBody struct {
 type FunctionResponse struct {
 	CreatedAt      int64                  `json:"created_at"`
 	EntrypointPath *string                `json:"entrypoint_path,omitempty"`
+	EzbrSha256     *string                `json:"ezbr_sha256,omitempty"`
 	Id             string                 `json:"id"`
 	ImportMap      *bool                  `json:"import_map,omitempty"`
 	ImportMapPath  *string                `json:"import_map_path,omitempty"`
@@ -1656,6 +1659,7 @@ type FunctionResponseStatus string
 type FunctionSlugResponse struct {
 	CreatedAt      int64                      `json:"created_at"`
 	EntrypointPath *string                    `json:"entrypoint_path,omitempty"`
+	EzbrSha256     *string                    `json:"ezbr_sha256,omitempty"`
 	Id             string                     `json:"id"`
 	ImportMap      *bool                      `json:"import_map,omitempty"`
 	ImportMapPath  *string                    `json:"import_map_path,omitempty"`
@@ -3136,6 +3140,7 @@ type V1CreateAFunctionParams struct {
 	ImportMap      *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
 	EntrypointPath *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
 	ImportMapPath  *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
+	EzbrSha256     *string `form:"ezbr_sha256,omitempty" json:"ezbr_sha256,omitempty"`
 }
 
 // V1DeployAFunctionParams defines parameters for V1DeployAFunction.
@@ -3158,6 +3163,7 @@ type V1UpdateAFunctionParams struct {
 	ImportMap      *bool   `form:"import_map,omitempty" json:"import_map,omitempty"`
 	EntrypointPath *string `form:"entrypoint_path,omitempty" json:"entrypoint_path,omitempty"`
 	ImportMapPath  *string `form:"import_map_path,omitempty" json:"import_map_path,omitempty"`
+	EzbrSha256     *string `form:"ezbr_sha256,omitempty" json:"ezbr_sha256,omitempty"`
 }
 
 // V1GetServicesHealthParams defines parameters for V1GetServicesHealth.

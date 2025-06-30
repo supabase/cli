@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/h2non/gock"
+	"github.com/oapi-codegen/nullable"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,6 +46,10 @@ func TestStorageCP(t *testing.T) {
 	// Setup valid access token
 	token := apitest.RandomAccessToken(t)
 	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+	apiKeys := []api.ApiKeyResponse{{
+		Name:   "service_role",
+		ApiKey: nullable.NewNullableWithValue("service-key"),
+	}}
 
 	t.Run("copy local to remote", func(t *testing.T) {
 		// Setup in-memory fs
@@ -55,10 +60,7 @@ func TestStorageCP(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + flags.ProjectRef + "/api-keys").
 			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
+			JSON(apiKeys)
 		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Post("/storage/v1/object/private/file").
 			Reply(http.StatusOK)
@@ -77,10 +79,7 @@ func TestStorageCP(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + flags.ProjectRef + "/api-keys").
 			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
+			JSON(apiKeys)
 		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
@@ -100,10 +99,7 @@ func TestStorageCP(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + flags.ProjectRef + "/api-keys").
 			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
+			JSON(apiKeys)
 		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Get("/storage/v1/object/private/file").
 			Reply(http.StatusOK)
@@ -125,10 +121,7 @@ func TestStorageCP(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + flags.ProjectRef + "/api-keys").
 			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
+			JSON(apiKeys)
 		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
@@ -166,10 +159,7 @@ func TestStorageCP(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + flags.ProjectRef + "/api-keys").
 			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
+			JSON(apiKeys)
 		// Run test
 		err := Run(context.Background(), ".", ".", false, 1, fsys)
 		// Check error
