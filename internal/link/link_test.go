@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
+	"github.com/oapi-codegen/nullable"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/testing/apitest"
@@ -65,7 +66,7 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
-			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: "anon-key"}})
+			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: nullable.NewNullableWithValue("anon-key")}})
 		// Link configs
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/config/database/postgres").
@@ -134,7 +135,7 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
-			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: "anon-key"}})
+			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: nullable.NewNullableWithValue("anon-key")}})
 		// Link configs
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/config/database/postgres").
@@ -184,7 +185,7 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
-			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: "anon-key"}})
+			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: nullable.NewNullableWithValue("anon-key")}})
 		// Link configs
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/config/database/postgres").

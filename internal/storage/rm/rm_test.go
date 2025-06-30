@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/h2non/gock"
+	"github.com/oapi-codegen/nullable"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/testing/apitest"
@@ -44,6 +45,10 @@ func TestStorageRM(t *testing.T) {
 	// Setup valid access token
 	token := apitest.RandomAccessToken(t)
 	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+	apiKeys := []api.ApiKeyResponse{{
+		Name:   "service_role",
+		ApiKey: nullable.NewNullableWithValue("service-key"),
+	}}
 
 	t.Run("throws error on invalid url", func(t *testing.T) {
 		// Setup in-memory fs
@@ -81,10 +86,7 @@ func TestStorageRM(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + flags.ProjectRef + "/api-keys").
 			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
+			JSON(apiKeys)
 		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Delete("/storage/v1/object/private").
 			JSON(storage.DeleteObjectsRequest{Prefixes: []string{
@@ -120,10 +122,7 @@ func TestStorageRM(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + flags.ProjectRef + "/api-keys").
 			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
+			JSON(apiKeys)
 		// Delete /test/ bucket
 		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Post("/storage/v1/object/list/test").
@@ -190,10 +189,7 @@ func TestStorageRM(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + flags.ProjectRef + "/api-keys").
 			Reply(http.StatusOK).
-			JSON([]api.ApiKeyResponse{{
-				Name:   "service_role",
-				ApiKey: "service-key",
-			}})
+			JSON(apiKeys)
 		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Delete("/storage/v1/object/private").
 			Reply(http.StatusServiceUnavailable)

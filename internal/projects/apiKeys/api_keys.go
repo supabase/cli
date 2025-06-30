@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/go-errors/errors"
+	"github.com/oapi-codegen/nullable"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
@@ -25,7 +26,9 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 |-|-|
 `
 		for _, entry := range keys {
-			table += fmt.Sprintf("|`%s`|`%s`|\n", strings.ReplaceAll(entry.Name, "|", "\\|"), entry.ApiKey)
+			k := strings.ReplaceAll(entry.Name, "|", "\\|")
+			v := toValue(entry.ApiKey)
+			table += fmt.Sprintf("|`%s`|`%s`|\n", k, v)
 		}
 
 		return list.RenderTable(table)
@@ -51,7 +54,14 @@ func ToEnv(keys []api.ApiKeyResponse) map[string]string {
 	for _, entry := range keys {
 		name := strings.ToUpper(entry.Name)
 		key := fmt.Sprintf("SUPABASE_%s_KEY", name)
-		envs[key] = entry.ApiKey
+		envs[key] = toValue(entry.ApiKey)
 	}
 	return envs
+}
+
+func toValue(v nullable.Nullable[string]) string {
+	if value, err := v.Get(); err == nil {
+		return value
+	}
+	return "******"
 }
