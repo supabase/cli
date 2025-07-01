@@ -1390,6 +1390,7 @@ type CreateBranchBody struct {
 	BranchName          string                               `json:"branch_name"`
 	DesiredInstanceSize *CreateBranchBodyDesiredInstanceSize `json:"desired_instance_size,omitempty"`
 	GitBranch           *string                              `json:"git_branch,omitempty"`
+	IsDefault           *bool                                `json:"is_default,omitempty"`
 	Persistent          *bool                                `json:"persistent,omitempty"`
 
 	// PostgresEngine Postgres engine version. If not provided, the latest version will be used.
