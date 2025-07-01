@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/oapi-codegen/nullable"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/stretchr/testify/assert"
 	v1API "github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
@@ -560,7 +561,7 @@ func TestEmailDiff(t *testing.T) {
 					Value:  "test-key",
 					SHA256: "ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e",
 				},
-				AdminEmail: "admin@email.com",
+				AdminEmail: openapi_types.Email("admin@email.com"),
 				SenderName: "Admin",
 			},
 			MaxFrequency: time.Second,
@@ -579,7 +580,7 @@ func TestEmailDiff(t *testing.T) {
 			SmtpPort:         nullable.NewNullableWithValue("587"),
 			SmtpUser:         nullable.NewNullableWithValue("apikey"),
 			SmtpPass:         nullable.NewNullableWithValue("ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e"),
-			SmtpAdminEmail:   nullable.NewNullableWithValue("admin@email.com"),
+			SmtpAdminEmail:   nullable.NewNullableWithValue(openapi_types.Email("admin@email.com")),
 			SmtpSenderName:   nullable.NewNullableWithValue("Admin"),
 			SmtpMaxFrequency: nullable.NewNullableWithValue(1),
 			// Custom templates
@@ -641,7 +642,7 @@ func TestEmailDiff(t *testing.T) {
 					Value:  "test-key",
 					SHA256: "ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e",
 				},
-				AdminEmail: "admin@email.com",
+				AdminEmail: openapi_types.Email("admin@email.com"),
 				SenderName: "Admin",
 			},
 			MaxFrequency: time.Second,
@@ -696,7 +697,7 @@ func TestEmailDiff(t *testing.T) {
 			SmtpPort:         nullable.NewNullableWithValue("587"),
 			SmtpUser:         nullable.NewNullableWithValue("apikey"),
 			SmtpPass:         nullable.NewNullableWithValue("ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e"),
-			SmtpAdminEmail:   nullable.NewNullableWithValue("admin@email.com"),
+			SmtpAdminEmail:   nullable.NewNullableWithValue(openapi_types.Email("admin@email.com")),
 			SmtpSenderName:   nullable.NewNullableWithValue("Admin"),
 			SmtpMaxFrequency: nullable.NewNullableWithValue(1),
 			// Custom templates
@@ -739,7 +740,7 @@ func TestEmailDiff(t *testing.T) {
 					Value:  "test-key",
 					SHA256: "ed64b7695a606bc6ab4fcb41fe815b5ddf1063ccbc87afe1fa89756635db520e",
 				},
-				AdminEmail: "admin@email.com",
+				AdminEmail: openapi_types.Email("admin@email.com"),
 				SenderName: "Admin",
 			},
 			MaxFrequency: time.Minute,
