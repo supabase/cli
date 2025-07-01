@@ -888,7 +888,7 @@ func (c *config) Validate(fsys fs.FS) error {
 				return errors.New("Missing required field in config: analytics.gcp_project_number")
 			}
 			if len(c.Analytics.GcpJwtPath) == 0 {
-				return errors.Errorf("Path to GCP Service Account Key must be provided in config, relative to config.toml: analytics.gcp_jwt_path")
+				return errors.New("Path to GCP Service Account Key must be provided in config, relative to config.toml: analytics.gcp_jwt_path")
 			}
 		}
 	}
