@@ -1253,7 +1253,7 @@ type AuthConfigResponse struct {
 	SmsVonageApiKey                               nullable.Nullable[string]                                       `json:"sms_vonage_api_key"`
 	SmsVonageApiSecret                            nullable.Nullable[string]                                       `json:"sms_vonage_api_secret"`
 	SmsVonageFrom                                 nullable.Nullable[string]                                       `json:"sms_vonage_from"`
-	SmtpAdminEmail                                nullable.Nullable[string]                                       `json:"smtp_admin_email"`
+	SmtpAdminEmail                                nullable.Nullable[openapi_types.Email]                          `json:"smtp_admin_email"`
 	SmtpHost                                      nullable.Nullable[string]                                       `json:"smtp_host"`
 	SmtpMaxFrequency                              nullable.Nullable[int]                                          `json:"smtp_max_frequency"`
 	SmtpPass                                      nullable.Nullable[string]                                       `json:"smtp_pass"`
@@ -2469,7 +2469,7 @@ type UpdateAuthConfigBody struct {
 	SmsVonageApiKey                               nullable.Nullable[string]                                         `json:"sms_vonage_api_key,omitempty"`
 	SmsVonageApiSecret                            nullable.Nullable[string]                                         `json:"sms_vonage_api_secret,omitempty"`
 	SmsVonageFrom                                 nullable.Nullable[string]                                         `json:"sms_vonage_from,omitempty"`
-	SmtpAdminEmail                                nullable.Nullable[string]                                         `json:"smtp_admin_email,omitempty"`
+	SmtpAdminEmail                                nullable.Nullable[openapi_types.Email]                            `json:"smtp_admin_email,omitempty"`
 	SmtpHost                                      nullable.Nullable[string]                                         `json:"smtp_host,omitempty"`
 	SmtpMaxFrequency                              nullable.Nullable[int]                                            `json:"smtp_max_frequency,omitempty"`
 	SmtpPass                                      nullable.Nullable[string]                                         `json:"smtp_pass,omitempty"`
