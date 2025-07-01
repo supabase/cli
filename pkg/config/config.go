@@ -114,9 +114,10 @@ func (g Glob) Files(fsys fs.FS) ([]string, error) {
 		sort.Strings(matches)
 		// Remove duplicates
 		for _, item := range matches {
-			if _, exists := set[item]; !exists {
-				set[item] = struct{}{}
-				result = append(result, item)
+			fp := filepath.ToSlash(item)
+			if _, exists := set[fp]; !exists {
+				set[fp] = struct{}{}
+				result = append(result, fp)
 			}
 		}
 	}

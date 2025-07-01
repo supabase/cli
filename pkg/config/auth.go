@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/oapi-codegen/nullable"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 	v1API "github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/diff"
@@ -160,13 +161,13 @@ type (
 	}
 
 	smtp struct {
-		Enabled    bool   `toml:"enabled"`
-		Host       string `toml:"host"`
-		Port       uint16 `toml:"port"`
-		User       string `toml:"user"`
-		Pass       Secret `toml:"pass"`
-		AdminEmail string `toml:"admin_email"`
-		SenderName string `toml:"sender_name"`
+		Enabled    bool                `toml:"enabled"`
+		Host       string              `toml:"host"`
+		Port       uint16              `toml:"port"`
+		User       string              `toml:"user"`
+		Pass       Secret              `toml:"pass"`
+		AdminEmail openapi_types.Email `toml:"admin_email"`
+		SenderName string              `toml:"sender_name"`
 	}
 
 	emailTemplate struct {
@@ -732,7 +733,7 @@ func (s *smtp) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 		if len(s.Pass.SHA256) > 0 {
 			s.Pass.SHA256 = ValOrDefault(remoteConfig.SmtpPass, "")
 		}
-		s.AdminEmail = ValOrDefault(remoteConfig.SmtpAdminEmail, "")
+		s.AdminEmail = ValOrDefault(remoteConfig.SmtpAdminEmail, openapi_types.Email(""))
 		s.SenderName = ValOrDefault(remoteConfig.SmtpSenderName, "")
 		portStr := ValOrDefault(remoteConfig.SmtpPort, "0")
 		if port, err := strconv.ParseUint(portStr, 10, 16); err == nil {
