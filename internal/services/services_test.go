@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/h2non/gock"
@@ -36,9 +37,42 @@ func TestRun(t *testing.T) {
 		require.NoError(t, utils.InitConfig(utils.InitParams{
 			ProjectId: projectRef,
 		}, fsys))
-
-		// Set project reference in flags
 		flags.ProjectRef = projectRef
+
+		// Mock all API requests
+		defer gock.OffAll()
+
+		// Mock API keys
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + projectRef + "/api-keys").
+			Reply(200).
+			JSON([]map[string]string{{"name": "anon", "api_key": "test-key"}})
+
+		// Mock database version
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects").
+			Reply(200).
+			JSON([]map[string]interface{}{
+				{
+					"id":       projectRef,
+					"database": map[string]string{"version": "1.0.0"},
+				},
+			})
+
+		// Mock auth version
+		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+			Get("/auth/v1/health").
+			Reply(200).
+			JSON(map[string]string{"version": "2.0.0"})
+
+		// Mock postgrest version
+		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+			Get("/rest/v1/").
+			Reply(200).
+			JSON(map[string]interface{}{
+				"swagger": "2.0",
+				"info":    map[string]string{"version": "3.0.0"},
+			})
 
 		// Execute: Call the Run function
 		err := Run(context.Background(), fsys)
@@ -130,7 +164,7 @@ func TestCheckVersions(t *testing.T) {
 		flags.ProjectRef = projectRef
 
 		// Mock remote versions
-		token := "sbp_0102030405060708091011121314151617181920"
+		token := "sbp_" + strings.Repeat("0", 36)
 		require.NoError(t, utils.SaveAccessToken(token, fsys))
 
 		defer gock.OffAll()
@@ -168,7 +202,7 @@ func TestListRemoteImages(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 
 		// Setup: Create access token file with valid format
-		token := "sbp_0102030405060708091011121314151617181920"
+		token := "sbp_" + strings.Repeat("0", 36)
 		require.NoError(t, utils.SaveAccessToken(token, fsys))
 
 		// Setup: Mock API responses
@@ -233,7 +267,7 @@ func TestListRemoteImages(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 
 		// Setup: Create access token file with valid format
-		token := "sbp_0102030405060708091011121314151617181920"
+		token := "sbp_" + strings.Repeat("0", 36)
 		require.NoError(t, utils.SaveAccessToken(token, fsys))
 
 		// Setup: Mock API error response
