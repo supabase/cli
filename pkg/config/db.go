@@ -67,25 +67,25 @@ type (
 		WorkMem                       *string                 `toml:"work_mem"`
 	}
 
-	NetworkRestrictions struct {
-		Enabled          bool     `toml:"enabled"`
-		DbAllowedCidrs   []string `toml:"db_allowed_cidrs"`
-		DbAllowedCidrsV6 []string `toml:"db_allowed_cidrs_v6"`
+	networkRestrictions struct {
+		Enabled        bool     `toml:"enabled"`
+		AllowedCidrs   []string `toml:"allowed_cidrs"`
+		AllowedCidrsV6 []string `toml:"allowed_cidrs_v6"`
 	}
 
 	db struct {
-		Image               string               `toml:"-"`
-		Port                uint16               `toml:"port"`
-		ShadowPort          uint16               `toml:"shadow_port"`
-		MajorVersion        uint                 `toml:"major_version"`
-		Password            string               `toml:"-"`
-		RootKey             Secret               `toml:"root_key"`
-		Pooler              pooler               `toml:"pooler"`
-		Migrations          migrations           `toml:"migrations"`
-		Seed                seed                 `toml:"seed"`
-		Settings            settings             `toml:"settings"`
-		NetworkRestrictions *NetworkRestrictions `toml:"network_restrictions,omitempty"`
-		Vault               map[string]Secret    `toml:"vault"`
+		Image               string              `toml:"-"`
+		Port                uint16              `toml:"port"`
+		ShadowPort          uint16              `toml:"shadow_port"`
+		MajorVersion        uint                `toml:"major_version"`
+		Password            string              `toml:"-"`
+		RootKey             Secret              `toml:"root_key"`
+		Pooler              pooler              `toml:"pooler"`
+		Migrations          migrations          `toml:"migrations"`
+		Seed                seed                `toml:"seed"`
+		Settings            settings            `toml:"settings"`
+		NetworkRestrictions networkRestrictions `toml:"network_restrictions"`
+		Vault               map[string]Secret   `toml:"vault"`
 	}
 
 	migrations struct {
@@ -196,86 +196,27 @@ func (a *settings) DiffWithRemote(remoteConfig v1API.PostgresConfigResponse) ([]
 	return diff.Diff("remote[db.settings]", remoteCompare, "local[db.settings]", currentValue), nil
 }
 
-func (n *NetworkRestrictions) ToUpdateNetworkRestrictionsBody() v1API.V1UpdateNetworkRestrictionsJSONRequestBody {
-	body := v1API.V1UpdateNetworkRestrictionsJSONRequestBody{}
-
-	// If network_restrictions explicitely disabled we allow-all
-	if !n.Enabled {
-		body.DbAllowedCidrs = &[]string{"0.0.0.0/0"}
-		body.DbAllowedCidrsV6 = &[]string{"::/0"}
-		return body
+func (n networkRestrictions) ToUpdateNetworkRestrictionsBody() v1API.V1UpdateNetworkRestrictionsJSONRequestBody {
+	body := v1API.V1UpdateNetworkRestrictionsJSONRequestBody{
+		DbAllowedCidrs:   &n.AllowedCidrs,
+		DbAllowedCidrsV6: &n.AllowedCidrsV6,
 	}
-
-	// If enabled, send the actual CIDR values (empty arrays will reject all ips)
-	body.DbAllowedCidrs = &n.DbAllowedCidrs
-	body.DbAllowedCidrsV6 = &n.DbAllowedCidrsV6
 	return body
 }
 
-// validate ensures that when network restrictions are enabled, the CIDR arrays are properly initialized
-func (n *NetworkRestrictions) validate() {
-	if n.Enabled {
-		// Initialize empty arrays if nil to prevent API errors
-		if n.DbAllowedCidrs == nil {
-			n.DbAllowedCidrs = []string{}
-		}
-		if n.DbAllowedCidrsV6 == nil {
-			n.DbAllowedCidrsV6 = []string{}
-		}
+func (n *networkRestrictions) FromRemoteNetworkRestrictions(remoteConfig v1API.NetworkRestrictionsResponse) {
+	if !n.Enabled {
+		return
 	}
-}
-
-// HasActualNetworkRestrictions checks if the provided CIDR arrays represent actual restrictions
-// (not just "allow all" configurations like "0.0.0.0/0" for IPv4 or "::/0" for IPv6)
-func HasActualNetworkRestrictions(dbAllowedCidrs, dbAllowedCidrsV6 *[]string) bool {
-	hasRestrictions := false
-
-	// Check IPv4 CIDRs
-	if dbAllowedCidrs != nil && len(*dbAllowedCidrs) > 0 {
-		// Check if it's not just "allow all"
-		if len(*dbAllowedCidrs) != 1 || (*dbAllowedCidrs)[0] != "0.0.0.0/0" {
-			hasRestrictions = true
-		}
-	}
-
-	// Check IPv6 CIDRs
-	if dbAllowedCidrsV6 != nil && len(*dbAllowedCidrsV6) > 0 {
-		// Check if it's not just "allow all"
-		if len(*dbAllowedCidrsV6) != 1 || (*dbAllowedCidrsV6)[0] != "::/0" {
-			hasRestrictions = true
-		}
-	}
-
-	return hasRestrictions
-}
-
-func (n *NetworkRestrictions) FromRemoteNetworkRestrictions(remoteConfig v1API.NetworkRestrictionsResponse) {
-	// Use the helper function to check if there are actual restrictions
-	hasRestrictions := HasActualNetworkRestrictions(remoteConfig.Config.DbAllowedCidrs, remoteConfig.Config.DbAllowedCidrsV6)
-
-	// Set enabled based on whether there are actual restrictions
-	n.Enabled = hasRestrictions
-
-	// Set the CIDR values regardless of restrictions status
 	if remoteConfig.Config.DbAllowedCidrs != nil {
-		n.DbAllowedCidrs = *remoteConfig.Config.DbAllowedCidrs
+		n.AllowedCidrs = *remoteConfig.Config.DbAllowedCidrs
 	}
 	if remoteConfig.Config.DbAllowedCidrsV6 != nil {
-		n.DbAllowedCidrsV6 = *remoteConfig.Config.DbAllowedCidrsV6
+		n.AllowedCidrsV6 = *remoteConfig.Config.DbAllowedCidrsV6
 	}
 }
 
-func (n *NetworkRestrictions) DiffWithRemote(remoteConfig v1API.NetworkRestrictionsResponse) ([]byte, error) {
-	if n == nil {
-		return nil, nil
-	}
-
-	// If enabled is explicitely false, we set the default allow_all values
-	if n.Enabled == false {
-		n.DbAllowedCidrs = []string{"0.0.0.0/0"}
-		n.DbAllowedCidrsV6 = []string{"::/0"}
-	}
-
+func (n *networkRestrictions) DiffWithRemote(remoteConfig v1API.NetworkRestrictionsResponse) ([]byte, error) {
 	copy := *n
 	// Convert the config values into easily comparable remoteConfig values
 	currentValue, err := ToTomlBytes(copy)

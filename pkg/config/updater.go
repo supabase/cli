@@ -97,16 +97,13 @@ func (u *ConfigUpdater) UpdateDbConfig(ctx context.Context, projectRef string, c
 	if err := u.UpdateDbSettingsConfig(ctx, projectRef, c.Settings, filter...); err != nil {
 		return err
 	}
-	// Only attempt to update if the [db.network_restrictions] section is declared in the config
-	if c.NetworkRestrictions != nil {
-		if err := u.UpdateDbNetworkRestrictionsConfig(ctx, projectRef, *c.NetworkRestrictions, filter...); err != nil {
-			return err
-		}
+	if err := u.UpdateDbNetworkRestrictionsConfig(ctx, projectRef, c.NetworkRestrictions, filter...); err != nil {
+		return err
 	}
 	return nil
 }
 
-func (u *ConfigUpdater) UpdateDbNetworkRestrictionsConfig(ctx context.Context, projectRef string, n NetworkRestrictions, filter ...func(string) bool) error {
+func (u *ConfigUpdater) UpdateDbNetworkRestrictionsConfig(ctx context.Context, projectRef string, n networkRestrictions, filter ...func(string) bool) error {
 	networkRestrictionsConfig, err := u.client.V1GetNetworkRestrictionsWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to read network restrictions config: %w", err)

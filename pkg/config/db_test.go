@@ -183,249 +183,99 @@ func TestSettingsToPostgresConfig(t *testing.T) {
 	})
 }
 
-func TestNetworkRestrictionsToUpdateBody(t *testing.T) {
-	t.Run("converts disabled restrictions into allow_all", func(t *testing.T) {
-		nr := NetworkRestrictions{
-			Enabled:          false,
-			DbAllowedCidrs:   []string{},
-			DbAllowedCidrsV6: []string{},
-		}
-		body := nr.ToUpdateNetworkRestrictionsBody()
-		assert.Equal(t, []string{"0.0.0.0/0"}, *body.DbAllowedCidrs)
-		assert.Equal(t, []string{"::/0"}, *body.DbAllowedCidrsV6)
-	})
-
-	t.Run("converts disabled restrictions", func(t *testing.T) {
-		nr := NetworkRestrictions{
-			Enabled:          false,
-			DbAllowedCidrs:   []string{"192.168.1.0/24", "10.0.0.0/8"},
-			DbAllowedCidrsV6: []string{"2001:db8::/32"},
-		}
-		body := nr.ToUpdateNetworkRestrictionsBody()
-		assert.Equal(t, []string{"0.0.0.0/0"}, *body.DbAllowedCidrs)
-		assert.Equal(t, []string{"::/0"}, *body.DbAllowedCidrsV6)
-	})
-
-	t.Run("converts enabled restrictions with defaults", func(t *testing.T) {
-		nr := NetworkRestrictions{
-			Enabled:          true,
-			DbAllowedCidrs:   []string{},
-			DbAllowedCidrsV6: []string{},
-		}
-		body := nr.ToUpdateNetworkRestrictionsBody()
-		assert.Equal(t, []string{}, *body.DbAllowedCidrs)
-		assert.Equal(t, []string{}, *body.DbAllowedCidrsV6)
-	})
-
-	t.Run("converts populated restrictions", func(t *testing.T) {
-		nr := NetworkRestrictions{
-			Enabled:          true,
-			DbAllowedCidrs:   []string{"192.168.1.0/24", "10.0.0.0/8"},
-			DbAllowedCidrsV6: []string{"2001:db8::/32"},
-		}
-		body := nr.ToUpdateNetworkRestrictionsBody()
-		assert.Equal(t, []string{"192.168.1.0/24", "10.0.0.0/8"}, *body.DbAllowedCidrs)
-		assert.Equal(t, []string{"2001:db8::/32"}, *body.DbAllowedCidrsV6)
-	})
-
-	t.Run("converts enabled restrictions with nil cidrs", func(t *testing.T) {
-		nr := NetworkRestrictions{
-			Enabled: true,
-			// DbAllowedCidrs and DbAllowedCidrsV6 are nil (not initialized)
-		}
-		// Simulate config validation that would happen during parsing
-		nr.validate()
-		body := nr.ToUpdateNetworkRestrictionsBody()
-		assert.Equal(t, []string{}, *body.DbAllowedCidrs)
-		assert.Equal(t, []string{}, *body.DbAllowedCidrsV6)
-	})
-}
-
-func TestNetworkRestrictionsValidate(t *testing.T) {
-	t.Run("initializes empty arrays when enabled is true and arrays are nil", func(t *testing.T) {
-		nr := NetworkRestrictions{
-			Enabled: true,
-			// DbAllowedCidrs and DbAllowedCidrsV6 are nil
-		}
-		nr.validate()
-		assert.NotNil(t, nr.DbAllowedCidrs)
-		assert.NotNil(t, nr.DbAllowedCidrsV6)
-		assert.Equal(t, []string{}, nr.DbAllowedCidrs)
-		assert.Equal(t, []string{}, nr.DbAllowedCidrsV6)
-	})
-
-	t.Run("preserves existing arrays when enabled is true", func(t *testing.T) {
-		nr := NetworkRestrictions{
-			Enabled:          true,
-			DbAllowedCidrs:   []string{"192.168.1.0/24"},
-			DbAllowedCidrsV6: []string{"2001:db8::/32"},
-		}
-		nr.validate()
-		assert.Equal(t, []string{"192.168.1.0/24"}, nr.DbAllowedCidrs)
-		assert.Equal(t, []string{"2001:db8::/32"}, nr.DbAllowedCidrsV6)
-	})
-
-	t.Run("does not initialize arrays when enabled is false", func(t *testing.T) {
-		nr := NetworkRestrictions{
-			Enabled: false,
-			// DbAllowedCidrs and DbAllowedCidrsV6 are nil
-		}
-		nr.validate()
-		assert.Nil(t, nr.DbAllowedCidrs)
-		assert.Nil(t, nr.DbAllowedCidrsV6)
-	})
-}
-
 func TestNetworkRestrictionsFromRemote(t *testing.T) {
 	t.Run("converts from remote config with restrictions", func(t *testing.T) {
 		ipv4Cidrs := []string{"192.168.1.0/24"}
 		ipv6Cidrs := []string{"2001:db8::/32"}
-		remoteConfig := v1API.NetworkRestrictionsResponse{
-			Config: struct {
-				DbAllowedCidrs   *[]string `json:"dbAllowedCidrs,omitempty"`
-				DbAllowedCidrsV6 *[]string `json:"dbAllowedCidrsV6,omitempty"`
-			}{
-				DbAllowedCidrs:   &ipv4Cidrs,
-				DbAllowedCidrsV6: &ipv6Cidrs,
-			},
-		}
-		nr := NetworkRestrictions{}
+		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig.Config.DbAllowedCidrs = &ipv4Cidrs
+		remoteConfig.Config.DbAllowedCidrsV6 = &ipv6Cidrs
+		nr := networkRestrictions{Enabled: true}
 		nr.FromRemoteNetworkRestrictions(remoteConfig)
-		assert.True(t, nr.Enabled)
-		assert.Equal(t, []string{"192.168.1.0/24"}, nr.DbAllowedCidrs)
-		assert.Equal(t, []string{"2001:db8::/32"}, nr.DbAllowedCidrsV6)
+		assert.ElementsMatch(t, ipv4Cidrs, nr.AllowedCidrs)
+		assert.ElementsMatch(t, ipv6Cidrs, nr.AllowedCidrsV6)
 	})
 
 	t.Run("converts from remote config with allow all", func(t *testing.T) {
 		ipv4Cidrs := []string{"0.0.0.0/0"}
 		ipv6Cidrs := []string{"::/0"}
-		remoteConfig := v1API.NetworkRestrictionsResponse{
-			Config: struct {
-				DbAllowedCidrs   *[]string `json:"dbAllowedCidrs,omitempty"`
-				DbAllowedCidrsV6 *[]string `json:"dbAllowedCidrsV6,omitempty"`
-			}{
-				DbAllowedCidrs:   &ipv4Cidrs,
-				DbAllowedCidrsV6: &ipv6Cidrs,
-			},
-		}
-		nr := NetworkRestrictions{}
+		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig.Config.DbAllowedCidrs = &ipv4Cidrs
+		remoteConfig.Config.DbAllowedCidrsV6 = &ipv6Cidrs
+		nr := networkRestrictions{Enabled: true}
+		nr.FromRemoteNetworkRestrictions(remoteConfig)
+		assert.ElementsMatch(t, ipv4Cidrs, nr.AllowedCidrs)
+		assert.ElementsMatch(t, ipv6Cidrs, nr.AllowedCidrsV6)
+	})
+
+	t.Run("ignores locally disabled network restrictions", func(t *testing.T) {
+		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig.Config.DbAllowedCidrs = &[]string{"192.168.1.0/24"}
+		remoteConfig.Config.DbAllowedCidrsV6 = &[]string{"2001:db8::/32"}
+		nr := networkRestrictions{}
 		nr.FromRemoteNetworkRestrictions(remoteConfig)
 		assert.False(t, nr.Enabled)
-		assert.Equal(t, []string{"0.0.0.0/0"}, nr.DbAllowedCidrs)
-		assert.Equal(t, []string{"::/0"}, nr.DbAllowedCidrsV6)
+		assert.Empty(t, nr.AllowedCidrs)
+		assert.Empty(t, nr.AllowedCidrsV6)
 	})
 }
 
 func TestNetworkRestrictionsDiff(t *testing.T) {
 	t.Run("detects differences", func(t *testing.T) {
-		local := NetworkRestrictions{
-			Enabled:          true,
-			DbAllowedCidrs:   []string{"192.168.1.0/24"},
-			DbAllowedCidrsV6: []string{"2001:db8::/32"},
+		local := networkRestrictions{
+			Enabled:        true,
+			AllowedCidrs:   []string{"192.168.1.0/24"},
+			AllowedCidrsV6: []string{"2001:db8::/32"},
 		}
-		ipv4Cidrs := []string{"10.0.0.0/8"}
-		ipv6Cidrs := []string{"2001:db8::/32"}
-		remoteConfig := v1API.NetworkRestrictionsResponse{
-			Config: struct {
-				DbAllowedCidrs   *[]string `json:"dbAllowedCidrs,omitempty"`
-				DbAllowedCidrsV6 *[]string `json:"dbAllowedCidrsV6,omitempty"`
-			}{
-				DbAllowedCidrs:   &ipv4Cidrs,
-				DbAllowedCidrsV6: &ipv6Cidrs,
-			},
-		}
+		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig.Config.DbAllowedCidrs = &[]string{"10.0.0.0/8"}
+		remoteConfig.Config.DbAllowedCidrsV6 = &[]string{"fd00::/8"}
 		diff, err := local.DiffWithRemote(remoteConfig)
 		assert.NoError(t, err)
 		assert.Contains(t, string(diff), "-db_allowed_cidrs = [\"10.0.0.0/8\"]")
 		assert.Contains(t, string(diff), "+db_allowed_cidrs = [\"192.168.1.0/24\"]")
-		assert.Contains(t, string(diff), " db_allowed_cidrs_v6 = [\"2001:db8::/32\"]")
+		assert.Contains(t, string(diff), "-db_allowed_cidrs_v6 = [\"2001:db8::/32\"]")
+		assert.Contains(t, string(diff), "+db_allowed_cidrs_v6 = [\"fd00::/8\"]")
 	})
 
 	t.Run("no differences", func(t *testing.T) {
-		local := NetworkRestrictions{
-			Enabled:          true,
-			DbAllowedCidrs:   []string{"192.168.1.0/24"},
-			DbAllowedCidrsV6: []string{"2001:db8::/32"},
+		local := networkRestrictions{
+			Enabled:        true,
+			AllowedCidrs:   []string{"192.168.1.0/24"},
+			AllowedCidrsV6: []string{"2001:db8::/32"},
 		}
-		ipv4Cidrs := []string{"192.168.1.0/24"}
-		ipv6Cidrs := []string{"2001:db8::/32"}
-		remoteConfig := v1API.NetworkRestrictionsResponse{
-			Config: struct {
-				DbAllowedCidrs   *[]string `json:"dbAllowedCidrs,omitempty"`
-				DbAllowedCidrsV6 *[]string `json:"dbAllowedCidrsV6,omitempty"`
-			}{
-				DbAllowedCidrs:   &ipv4Cidrs,
-				DbAllowedCidrsV6: &ipv6Cidrs,
-			},
-		}
+		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig.Config.DbAllowedCidrs = &local.AllowedCidrs
+		remoteConfig.Config.DbAllowedCidrsV6 = &local.AllowedCidrsV6
 		diff, err := local.DiffWithRemote(remoteConfig)
 		assert.NoError(t, err)
 		assert.Empty(t, diff)
 	})
 
 	t.Run("both have no restrictions - disabled vs allow all", func(t *testing.T) {
-		local := NetworkRestrictions{
-			Enabled:          false,
-			DbAllowedCidrs:   []string{},
-			DbAllowedCidrsV6: []string{},
-		}
-		ipv4Cidrs := []string{"0.0.0.0/0"}
-		ipv6Cidrs := []string{"::/0"}
-		remoteConfig := v1API.NetworkRestrictionsResponse{
-			Config: struct {
-				DbAllowedCidrs   *[]string `json:"dbAllowedCidrs,omitempty"`
-				DbAllowedCidrsV6 *[]string `json:"dbAllowedCidrsV6,omitempty"`
-			}{
-				DbAllowedCidrs:   &ipv4Cidrs,
-				DbAllowedCidrsV6: &ipv6Cidrs,
-			},
-		}
+		local := networkRestrictions{}
+		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig.Config.DbAllowedCidrs = &[]string{"0.0.0.0/0"}
+		remoteConfig.Config.DbAllowedCidrsV6 = &[]string{"::/0"}
 		diff, err := local.DiffWithRemote(remoteConfig)
 		assert.NoError(t, err)
 		assert.Empty(t, diff)
 	})
 
 	t.Run("local disallow all, remote allow all", func(t *testing.T) {
-		local := NetworkRestrictions{
-			Enabled:          true,
-			DbAllowedCidrs:   []string{},
-			DbAllowedCidrsV6: []string{},
+		local := networkRestrictions{
+			Enabled:        true,
+			AllowedCidrs:   []string{},
+			AllowedCidrsV6: []string{},
 		}
-		ipv4Cidrs := []string{"0.0.0.0/0"}
-		ipv6Cidrs := []string{"::/0"}
-		remoteConfig := v1API.NetworkRestrictionsResponse{
-			Config: struct {
-				DbAllowedCidrs   *[]string `json:"dbAllowedCidrs,omitempty"`
-				DbAllowedCidrsV6 *[]string `json:"dbAllowedCidrsV6,omitempty"`
-			}{
-				DbAllowedCidrs:   &ipv4Cidrs,
-				DbAllowedCidrsV6: &ipv6Cidrs,
-			},
-		}
+		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig.Config.DbAllowedCidrs = &[]string{"0.0.0.0/0"}
+		remoteConfig.Config.DbAllowedCidrsV6 = &[]string{"::/0"}
 		diff, err := local.DiffWithRemote(remoteConfig)
 		assert.NoError(t, err)
 		assert.Contains(t, string(diff), "-db_allowed_cidrs = [\"0.0.0.0/0\"]")
 		assert.Contains(t, string(diff), "+db_allowed_cidrs = []")
 		assert.Contains(t, string(diff), "-db_allowed_cidrs_v6 = [\"::/0\"]")
 		assert.Contains(t, string(diff), "+db_allowed_cidrs_v6 = []")
-	})
-
-	t.Run("local config is nil (not present at all)", func(t *testing.T) {
-		// Simulate remote has allow all (default)
-		ipv4Cidrs := []string{"0.0.0.0/0"}
-		ipv6Cidrs := []string{"::/0"}
-		remoteConfig := v1API.NetworkRestrictionsResponse{
-			Config: struct {
-				DbAllowedCidrs   *[]string `json:"dbAllowedCidrs,omitempty"`
-				DbAllowedCidrsV6 *[]string `json:"dbAllowedCidrsV6,omitempty"`
-			}{
-				DbAllowedCidrs:   &ipv4Cidrs,
-				DbAllowedCidrsV6: &ipv6Cidrs,
-			},
-		}
-		var local *NetworkRestrictions = nil
-		diff, err := local.DiffWithRemote(remoteConfig)
-		assert.NoError(t, err)
-		assert.Empty(t, diff)
 	})
 }

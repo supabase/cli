@@ -200,32 +200,13 @@ func linkDatabaseSettings(ctx context.Context, projectRef string) error {
 }
 
 func linkNetworkRestrictions(ctx context.Context, projectRef string) error {
-	original := utils.Config.Clone()
 	resp, err := utils.GetSupabase().V1GetNetworkRestrictionsWithResponse(ctx, projectRef)
 	if err != nil {
-		return errors.Errorf("failed to read network restrictions config: %w", err)
+		return errors.Errorf("failed to read network restrictions: %w", err)
 	} else if resp.JSON200 == nil {
-		return errors.Errorf("unexpected network restrictions config status %d: %s", resp.StatusCode(), string(resp.Body))
+		return errors.Errorf("unexpected network restrictions status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
-
-	// Check if remote has actual restrictions using the helper function from config package
-	hasRestrictions := cliConfig.HasActualNetworkRestrictions(resp.JSON200.Config.DbAllowedCidrs, resp.JSON200.Config.DbAllowedCidrsV6)
-
-	// Only create NetworkRestrictions if there are actual restrictions
-	if hasRestrictions {
-		if utils.Config.Db.NetworkRestrictions == nil {
-			utils.Config.Db.NetworkRestrictions = &cliConfig.NetworkRestrictions{}
-		}
-		utils.Config.Db.NetworkRestrictions.FromRemoteNetworkRestrictions(*resp.JSON200)
-	} else {
-		// If the current config declare explicitly "false" for the restrictions, there is no diff
-		if original.Db.NetworkRestrictions != nil && !original.Db.NetworkRestrictions.Enabled {
-			utils.Config.Db.NetworkRestrictions = original.Db.NetworkRestrictions
-		} else {
-			// No restrictions, set to nil so the section doesn't appear in TOML
-			utils.Config.Db.NetworkRestrictions = nil
-		}
-	}
+	utils.Config.Db.NetworkRestrictions.FromRemoteNetworkRestrictions(*resp.JSON200)
 	return nil
 }
 
