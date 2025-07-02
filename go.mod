@@ -33,7 +33,7 @@ require (
 	github.com/mithrandie/csvq-driver v1.7.0
 	github.com/muesli/reflow v0.3.0
 	github.com/oapi-codegen/nullable v1.1.0
-	github.com/slack-go/slack v0.17.1
+	github.com/slack-go/slack v0.17.2
 	github.com/spf13/afero v1.14.0
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/pflag v1.0.6
