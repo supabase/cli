@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/h2non/gock"
@@ -164,7 +163,8 @@ func TestCheckVersions(t *testing.T) {
 		flags.ProjectRef = projectRef
 
 		// Mock remote versions
-		token := "sbp_" + strings.Repeat("0", 36)
+		// #nosec G101 -- This is a fake token for testing purposes only
+		token := "sbp_0102030405060708091011121314151617181920"
 		require.NoError(t, utils.SaveAccessToken(token, fsys))
 
 		defer gock.OffAll()
@@ -202,7 +202,8 @@ func TestListRemoteImages(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 
 		// Setup: Create access token file with valid format
-		token := "sbp_" + strings.Repeat("0", 36)
+		// #nosec G101 -- This is a fake token for testing purposes only
+		token := "sbp_0102030405060708091011121314151617181920"
 		require.NoError(t, utils.SaveAccessToken(token, fsys))
 
 		// Setup: Mock API responses
@@ -267,7 +268,8 @@ func TestListRemoteImages(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 
 		// Setup: Create access token file with valid format
-		token := "sbp_" + strings.Repeat("0", 36)
+		// #nosec G101 -- This is a fake token for testing purposes only
+		token := "sbp_0102030405060708091011121314151617181920"
 		require.NoError(t, utils.SaveAccessToken(token, fsys))
 
 		// Setup: Mock API error response
