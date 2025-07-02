@@ -67,11 +67,15 @@ func CheckVersions(ctx context.Context, fsys afero.Fs) []imageVersion {
 func listRemoteImages(ctx context.Context, projectRef string) map[string]string {
 	linked := make(map[string]string, 4)
 	var wg sync.WaitGroup
+	var mu sync.Mutex
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		if version, err := tenant.GetDatabaseVersion(ctx, projectRef); err == nil {
+			mu.Lock()
 			linked[utils.Config.Db.Image] = version
+			mu.Unlock()
 		}
 	}()
 	keys, err := tenant.GetApiKeys(ctx, projectRef)
@@ -84,13 +88,17 @@ func listRemoteImages(ctx context.Context, projectRef string) map[string]string 
 	go func() {
 		defer wg.Done()
 		if version, err := api.GetGotrueVersion(ctx); err == nil {
+			mu.Lock()
 			linked[utils.Config.Auth.Image] = version
+			mu.Unlock()
 		}
 	}()
 	go func() {
 		defer wg.Done()
 		if version, err := api.GetPostgrestVersion(ctx); err == nil {
+			mu.Lock()
 			linked[utils.Config.Api.Image] = version
+			mu.Unlock()
 		}
 	}()
 	wg.Wait()
