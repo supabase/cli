@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/h2non/gock"
+	"github.com/oapi-codegen/nullable"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
@@ -15,8 +16,8 @@ import (
 func TestApiKey(t *testing.T) {
 	t.Run("creates api key from response", func(t *testing.T) {
 		resp := []api.ApiKeyResponse{
-			{Name: "anon", ApiKey: "anon-key"},
-			{Name: "service_role", ApiKey: "service-key"},
+			{Name: "anon", ApiKey: nullable.NewNullableWithValue("anon-key")},
+			{Name: "service_role", ApiKey: nullable.NewNullableWithValue("service-key")},
 		}
 
 		keys := NewApiKey(resp)
@@ -27,7 +28,9 @@ func TestApiKey(t *testing.T) {
 	})
 
 	t.Run("handles empty response", func(t *testing.T) {
-		resp := []api.ApiKeyResponse{}
+		resp := []api.ApiKeyResponse{
+			{Name: "service_role", ApiKey: nullable.NewNullNullable[string]()},
+		}
 
 		keys := NewApiKey(resp)
 
@@ -38,7 +41,7 @@ func TestApiKey(t *testing.T) {
 
 	t.Run("handles partial response", func(t *testing.T) {
 		resp := []api.ApiKeyResponse{
-			{Name: "anon", ApiKey: "anon-key"},
+			{Name: "anon", ApiKey: nullable.NewNullableWithValue("anon-key")},
 		}
 
 		keys := NewApiKey(resp)
@@ -60,8 +63,8 @@ func TestGetApiKeys(t *testing.T) {
 			Get("/v1/projects/" + projectRef + "/api-keys").
 			Reply(http.StatusOK).
 			JSON([]api.ApiKeyResponse{
-				{Name: "anon", ApiKey: "anon-key"},
-				{Name: "service_role", ApiKey: "service-key"},
+				{Name: "anon", ApiKey: nullable.NewNullableWithValue("anon-key")},
+				{Name: "service_role", ApiKey: nullable.NewNullableWithValue("service-key")},
 			})
 
 		keys, err := GetApiKeys(context.Background(), projectRef)

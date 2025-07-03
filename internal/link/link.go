@@ -76,10 +76,16 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 func LinkServices(ctx context.Context, projectRef, anonKey string, fsys afero.Fs) {
 	// Ignore non-fatal errors linking services
 	var wg sync.WaitGroup
-	wg.Add(7)
+	wg.Add(8)
 	go func() {
 		defer wg.Done()
 		if err := linkDatabaseSettings(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := linkNetworkRestrictions(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}()
@@ -193,6 +199,17 @@ func linkDatabaseSettings(ctx context.Context, projectRef string) error {
 	return nil
 }
 
+func linkNetworkRestrictions(ctx context.Context, projectRef string) error {
+	resp, err := utils.GetSupabase().V1GetNetworkRestrictionsWithResponse(ctx, projectRef)
+	if err != nil {
+		return errors.Errorf("failed to read network restrictions: %w", err)
+	} else if resp.JSON200 == nil {
+		return errors.Errorf("unexpected network restrictions status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+	utils.Config.Db.NetworkRestrictions.FromRemoteNetworkRestrictions(*resp.JSON200)
+	return nil
+}
+
 func linkDatabase(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
@@ -224,7 +241,7 @@ func updatePostgresConfig(conn *pgx.Conn) {
 }
 
 func linkPooler(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	resp, err := utils.GetSupabase().V1GetSupavisorConfigWithResponse(ctx, projectRef)
+	resp, err := utils.GetSupabase().V1GetPoolerConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to get pooler config: %w", err)
 	}
@@ -242,11 +259,11 @@ func linkPooler(ctx context.Context, projectRef string, fsys afero.Fs) error {
 func updatePoolerConfig(config api.SupavisorConfigResponse) {
 	utils.Config.Db.Pooler.ConnectionString = config.ConnectionString
 	utils.Config.Db.Pooler.PoolMode = cliConfig.PoolMode(config.PoolMode)
-	if config.DefaultPoolSize != nil {
-		utils.Config.Db.Pooler.DefaultPoolSize = cast.IntToUint(*config.DefaultPoolSize)
+	if value, err := config.DefaultPoolSize.Get(); err == nil {
+		utils.Config.Db.Pooler.DefaultPoolSize = cast.IntToUint(value)
 	}
-	if config.MaxClientConn != nil {
-		utils.Config.Db.Pooler.MaxClientConn = cast.IntToUint(*config.MaxClientConn)
+	if value, err := config.MaxClientConn.Get(); err == nil {
+		utils.Config.Db.Pooler.MaxClientConn = cast.IntToUint(value)
 	}
 }
 

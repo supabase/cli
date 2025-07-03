@@ -67,21 +67,29 @@ type (
 		WorkMem                       *string                 `toml:"work_mem"`
 	}
 
+	networkRestrictions struct {
+		Enabled        bool     `toml:"enabled"`
+		AllowedCidrs   []string `toml:"allowed_cidrs"`
+		AllowedCidrsV6 []string `toml:"allowed_cidrs_v6"`
+	}
+
 	db struct {
-		Image        string            `toml:"-"`
-		Port         uint16            `toml:"port"`
-		ShadowPort   uint16            `toml:"shadow_port"`
-		MajorVersion uint              `toml:"major_version"`
-		Password     string            `toml:"-"`
-		RootKey      Secret            `toml:"root_key"`
-		Pooler       pooler            `toml:"pooler"`
-		Migrations   migrations        `toml:"migrations"`
-		Seed         seed              `toml:"seed"`
-		Settings     settings          `toml:"settings"`
-		Vault        map[string]Secret `toml:"vault"`
+		Image               string              `toml:"-"`
+		Port                uint16              `toml:"port"`
+		ShadowPort          uint16              `toml:"shadow_port"`
+		MajorVersion        uint                `toml:"major_version"`
+		Password            string              `toml:"-"`
+		RootKey             Secret              `toml:"root_key"`
+		Pooler              pooler              `toml:"pooler"`
+		Migrations          migrations          `toml:"migrations"`
+		Seed                seed                `toml:"seed"`
+		Settings            settings            `toml:"settings"`
+		NetworkRestrictions networkRestrictions `toml:"network_restrictions"`
+		Vault               map[string]Secret   `toml:"vault"`
 	}
 
 	migrations struct {
+		Enabled     bool `toml:"enabled"`
 		SchemaPaths Glob `toml:"schema_paths"`
 	}
 
@@ -186,4 +194,39 @@ func (a *settings) DiffWithRemote(remoteConfig v1API.PostgresConfigResponse) ([]
 		return nil, err
 	}
 	return diff.Diff("remote[db.settings]", remoteCompare, "local[db.settings]", currentValue), nil
+}
+
+func (n networkRestrictions) ToUpdateNetworkRestrictionsBody() v1API.V1UpdateNetworkRestrictionsJSONRequestBody {
+	body := v1API.V1UpdateNetworkRestrictionsJSONRequestBody{
+		DbAllowedCidrs:   &n.AllowedCidrs,
+		DbAllowedCidrsV6: &n.AllowedCidrsV6,
+	}
+	return body
+}
+
+func (n *networkRestrictions) FromRemoteNetworkRestrictions(remoteConfig v1API.NetworkRestrictionsResponse) {
+	if !n.Enabled {
+		return
+	}
+	if remoteConfig.Config.DbAllowedCidrs != nil {
+		n.AllowedCidrs = *remoteConfig.Config.DbAllowedCidrs
+	}
+	if remoteConfig.Config.DbAllowedCidrsV6 != nil {
+		n.AllowedCidrsV6 = *remoteConfig.Config.DbAllowedCidrsV6
+	}
+}
+
+func (n *networkRestrictions) DiffWithRemote(remoteConfig v1API.NetworkRestrictionsResponse) ([]byte, error) {
+	copy := *n
+	// Convert the config values into easily comparable remoteConfig values
+	currentValue, err := ToTomlBytes(copy)
+	if err != nil {
+		return nil, err
+	}
+	copy.FromRemoteNetworkRestrictions(remoteConfig)
+	remoteCompare, err := ToTomlBytes(copy)
+	if err != nil {
+		return nil, err
+	}
+	return diff.Diff("remote[db.network_restrictions]", remoteCompare, "local[db.network_restrictions]", currentValue), nil
 }

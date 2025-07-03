@@ -14,8 +14,17 @@ type EdgeRuntimeAPI struct {
 	maxJobs uint
 }
 
+type FunctionDeployMetadata struct {
+	EntrypointPath string    `json:"entrypoint_path"`
+	ImportMapPath  *string   `json:"import_map_path,omitempty"`
+	Name           *string   `json:"name,omitempty"`
+	StaticPatterns *[]string `json:"static_patterns,omitempty"`
+	VerifyJwt      *bool     `json:"verify_jwt,omitempty"`
+	SHA256         string    `json:"sha256,omitempty"`
+}
+
 type EszipBundler interface {
-	Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) (api.FunctionDeployMetadata, error)
+	Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) (FunctionDeployMetadata, error)
 }
 
 func NewEdgeRuntimeAPI(project string, client api.ClientWithResponses, opts ...withOption) EdgeRuntimeAPI {

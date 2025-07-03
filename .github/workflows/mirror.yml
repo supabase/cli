@@ -19,6 +19,9 @@ on:
       - submitted
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   setup:
     runs-on: ubuntu-latest
@@ -46,6 +49,10 @@ jobs:
   publish:
     needs:
       - setup
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     if: ${{ needs.setup.outputs.tags != needs.setup.outputs.curr }}
     strategy:
       matrix:

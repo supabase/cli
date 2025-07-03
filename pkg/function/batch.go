@@ -3,6 +3,8 @@ package function
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +16,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/go-errors/errors"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/config"
 )
 
@@ -41,11 +44,11 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 		return err
 	}
 	policy.Reset()
-	exists := make(map[string]struct{}, len(result))
+	checksum := make(map[string]string, len(result))
 	for _, f := range result {
-		exists[f.Slug] = struct{}{}
+		checksum[f.Slug] = cast.Val(f.EzbrSha256, "")
 	}
-	var toUpdate []api.BulkUpdateFunctionBody
+	var toUpdate api.BulkUpdateFunctionBody
 OUTER:
 	for slug, function := range functionConfig {
 		if !function.Enabled {
@@ -63,9 +66,16 @@ OUTER:
 			return err
 		}
 		meta.VerifyJwt = &function.VerifyJWT
+		bodyHash := sha256.Sum256(body.Bytes())
+		meta.SHA256 = hex.EncodeToString(bodyHash[:])
+		// Skip if function has not changed
+		if checksum[slug] == meta.SHA256 {
+			fmt.Fprintln(os.Stderr, "No change found in Function:", slug)
+			continue
+		}
 		// Update if function already exists
 		upsert := func() (api.BulkUpdateFunctionBody, error) {
-			if _, ok := exists[slug]; ok {
+			if _, ok := checksum[slug]; ok {
 				return s.updateFunction(ctx, slug, meta, bytes.NewReader(body.Bytes()))
 			}
 			return s.createFunction(ctx, slug, meta, bytes.NewReader(body.Bytes()))
@@ -74,13 +84,13 @@ OUTER:
 		fmt.Fprintf(os.Stderr, "Deploying Function: %s (script size: %s)\n", slug, functionSize)
 		result, err := backoff.RetryNotifyWithData(upsert, policy, func(err error, d time.Duration) {
 			if strings.Contains(err.Error(), "Duplicated function slug") {
-				exists[slug] = struct{}{}
+				checksum[slug] = ""
 			}
 		})
 		if err != nil {
 			return err
 		}
-		toUpdate = append(toUpdate, result)
+		toUpdate = append(toUpdate, result...)
 		policy.Reset()
 	}
 	if len(toUpdate) > 1 {
@@ -98,18 +108,19 @@ OUTER:
 	return nil
 }
 
-func (s *EdgeRuntimeAPI) updateFunction(ctx context.Context, slug string, meta api.FunctionDeployMetadata, body io.Reader) (api.BulkUpdateFunctionBody, error) {
+func (s *EdgeRuntimeAPI) updateFunction(ctx context.Context, slug string, meta FunctionDeployMetadata, body io.Reader) (api.BulkUpdateFunctionBody, error) {
 	resp, err := s.client.V1UpdateAFunctionWithBodyWithResponse(ctx, s.project, slug, &api.V1UpdateAFunctionParams{
 		VerifyJwt:      meta.VerifyJwt,
 		ImportMapPath:  meta.ImportMapPath,
 		EntrypointPath: &meta.EntrypointPath,
+		EzbrSha256:     &meta.SHA256,
 	}, eszipContentType, body)
 	if err != nil {
 		return api.BulkUpdateFunctionBody{}, errors.Errorf("failed to update function: %w", err)
 	} else if resp.JSON200 == nil {
 		return api.BulkUpdateFunctionBody{}, errors.Errorf("unexpected update function status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
-	return api.BulkUpdateFunctionBody{
+	return api.BulkUpdateFunctionBody{{
 		Id:             resp.JSON200.Id,
 		Name:           resp.JSON200.Name,
 		Slug:           resp.JSON200.Slug,
@@ -120,23 +131,25 @@ func (s *EdgeRuntimeAPI) updateFunction(ctx context.Context, slug string, meta a
 		VerifyJwt:      resp.JSON200.VerifyJwt,
 		Status:         api.BulkUpdateFunctionBodyStatus(resp.JSON200.Status),
 		CreatedAt:      &resp.JSON200.CreatedAt,
-	}, nil
+		EzbrSha256:     resp.JSON200.EzbrSha256,
+	}}, nil
 }
 
-func (s *EdgeRuntimeAPI) createFunction(ctx context.Context, slug string, meta api.FunctionDeployMetadata, body io.Reader) (api.BulkUpdateFunctionBody, error) {
+func (s *EdgeRuntimeAPI) createFunction(ctx context.Context, slug string, meta FunctionDeployMetadata, body io.Reader) (api.BulkUpdateFunctionBody, error) {
 	resp, err := s.client.V1CreateAFunctionWithBodyWithResponse(ctx, s.project, &api.V1CreateAFunctionParams{
 		Slug:           &slug,
 		Name:           &slug,
 		VerifyJwt:      meta.VerifyJwt,
 		ImportMapPath:  meta.ImportMapPath,
 		EntrypointPath: &meta.EntrypointPath,
+		EzbrSha256:     &meta.SHA256,
 	}, eszipContentType, body)
 	if err != nil {
 		return api.BulkUpdateFunctionBody{}, errors.Errorf("failed to create function: %w", err)
 	} else if resp.JSON201 == nil {
 		return api.BulkUpdateFunctionBody{}, errors.Errorf("unexpected create function status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
-	return api.BulkUpdateFunctionBody{
+	return api.BulkUpdateFunctionBody{{
 		Id:             resp.JSON201.Id,
 		Name:           resp.JSON201.Name,
 		Slug:           resp.JSON201.Slug,
@@ -147,5 +160,6 @@ func (s *EdgeRuntimeAPI) createFunction(ctx context.Context, slug string, meta a
 		VerifyJwt:      resp.JSON201.VerifyJwt,
 		Status:         api.BulkUpdateFunctionBodyStatus(resp.JSON201.Status),
 		CreatedAt:      &resp.JSON201.CreatedAt,
-	}, nil
+		EzbrSha256:     resp.JSON201.EzbrSha256,
+	}}, nil
 }

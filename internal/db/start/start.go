@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
@@ -60,7 +60,11 @@ func Run(ctx context.Context, fromBackup string, fsys afero.Fs) error {
 	return err
 }
 
-func NewContainerConfig() container.Config {
+func NewContainerConfig(args ...string) container.Config {
+	if utils.Config.Db.MajorVersion >= 14 {
+		// Extensions schema does not exist on PG13 and below
+		args = append(args, "-c", "search_path='$user,public,extensions'")
+	}
 	env := []string{
 		"POSTGRES_PASSWORD=" + utils.Config.Db.Password,
 		"POSTGRES_HOST=/var/run/postgresql",
@@ -92,7 +96,7 @@ func NewContainerConfig() container.Config {
 cat <<'EOF' > /etc/postgresql.schema.sql && \
 cat <<'EOF' > /etc/postgresql-custom/pgsodium_root.key && \
 cat <<'EOF' >> /etc/postgresql/postgresql.conf && \
-docker-entrypoint.sh postgres -D /etc/postgresql
+docker-entrypoint.sh postgres -D /etc/postgresql ` + strings.Join(args, " ") + `
 ` + initialSchema + `
 ` + webhookSchema + `
 ` + _supabaseSchema + `
@@ -102,12 +106,15 @@ EOF
 ` + utils.Config.Db.Settings.ToPostgresConfig() + `
 EOF`},
 	}
-	if utils.Config.Db.MajorVersion >= 14 {
-		config.Cmd = []string{"postgres",
-			"-c", "config_file=/etc/postgresql/postgresql.conf",
-			// Ref: https://postgrespro.com/list/thread-id/2448092
-			"-c", `search_path="$user",public,extensions`,
-		}
+	if utils.Config.Db.MajorVersion <= 14 {
+		config.Entrypoint = []string{"sh", "-c", `
+cat <<'EOF' > /docker-entrypoint-initdb.d/supabase_schema.sql && \
+cat <<'EOF' >> /etc/postgresql/postgresql.conf && \
+docker-entrypoint.sh postgres -D /etc/postgresql ` + strings.Join(args, " ") + `
+` + _supabaseSchema + `
+EOF
+` + utils.Config.Db.Settings.ToPostgresConfig() + `
+EOF`}
 	}
 	return config
 }
@@ -122,6 +129,9 @@ func NewHostConfig() container.HostConfig {
 			utils.ConfigId + ":/etc/postgresql-custom",
 		},
 	}
+	if utils.Config.Db.MajorVersion <= 14 {
+		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
+	}
 	return hostConfig
 }
 
@@ -134,17 +144,6 @@ func StartDatabase(ctx context.Context, fromBackup string, fsys afero.Fs, w io.W
 				Aliases: utils.DbAliases,
 			},
 		},
-	}
-	if utils.Config.Db.MajorVersion <= 14 {
-		config.Entrypoint = []string{"sh", "-c", `
-cat <<'EOF' > /docker-entrypoint-initdb.d/supabase_schema.sql && \
-cat <<'EOF' >> /etc/postgresql/postgresql.conf && \
-docker-entrypoint.sh postgres -D /etc/postgresql
-` + _supabaseSchema + `
-EOF
-` + utils.Config.Db.Settings.ToPostgresConfig() + `
-EOF`}
-		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
 	}
 	if len(fromBackup) > 0 {
 		config.Entrypoint = []string{"sh", "-c", `
@@ -169,7 +168,7 @@ EOF`}
 	}
 	// Creating volume will not override existing volume, so we must inspect explicitly
 	_, err := utils.Docker.VolumeInspect(ctx, utils.DbId)
-	utils.NoBackupVolume = client.IsErrNotFound(err)
+	utils.NoBackupVolume = errdefs.IsNotFound(err)
 	if utils.NoBackupVolume {
 		fmt.Fprintln(w, "Starting database...")
 	} else if len(fromBackup) > 0 {

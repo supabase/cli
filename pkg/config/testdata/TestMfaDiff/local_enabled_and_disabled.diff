@@ -1,7 +1,7 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -24,16 +24,16 @@
+@@ -25,16 +25,16 @@
  [hook]
  
  [mfa]

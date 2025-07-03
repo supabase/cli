@@ -13,7 +13,6 @@ import (
 
 	"github.com/andybalholm/brotli"
 	"github.com/go-errors/errors"
-	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
 )
 
@@ -37,7 +36,7 @@ var (
 	}
 )
 
-func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) (api.FunctionDeployMetadata, error) {
+func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) (FunctionDeployMetadata, error) {
 	meta := NewMetadata(slug, entrypoint, importMap, staticFiles)
 	outputPath := filepath.Join(b.tempDir, slug+".eszip")
 	// TODO: make edge runtime write to stdout
@@ -79,8 +78,8 @@ func Compress(r io.Reader, w io.Writer) error {
 	return nil
 }
 
-func NewMetadata(slug, entrypoint, importMap string, staticFiles []string) api.FunctionDeployMetadata {
-	meta := api.FunctionDeployMetadata{
+func NewMetadata(slug, entrypoint, importMap string, staticFiles []string) FunctionDeployMetadata {
+	meta := FunctionDeployMetadata{
 		Name:           &slug,
 		EntrypointPath: toFileURL(entrypoint),
 	}

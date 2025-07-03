@@ -36,7 +36,7 @@ func TestWriteForm(t *testing.T) {
 		// Setup in-memory fs
 		fsys := testImports
 		// Run test
-		err := writeForm(form, api.FunctionDeployMetadata{
+		err := writeForm(form, FunctionDeployMetadata{
 			Name:           cast.Ptr("nested"),
 			VerifyJwt:      cast.Ptr(true),
 			EntrypointPath: "testdata/nested/index.ts",
@@ -55,7 +55,7 @@ func TestWriteForm(t *testing.T) {
 		// Setup in-memory fs
 		fsys := fs.MapFS{}
 		// Run test
-		err := writeForm(form, api.FunctionDeployMetadata{
+		err := writeForm(form, FunctionDeployMetadata{
 			ImportMapPath: cast.Ptr("testdata/import_map.json"),
 		}, fsys)
 		// Check error
@@ -69,7 +69,7 @@ func TestWriteForm(t *testing.T) {
 		// Setup in-memory fs
 		fsys := testImports
 		// Run test
-		err := writeForm(form, api.FunctionDeployMetadata{
+		err := writeForm(form, FunctionDeployMetadata{
 			StaticPatterns: cast.Ptr([]string{"testdata"}),
 		}, fsys)
 		// Check error

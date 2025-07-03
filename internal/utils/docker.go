@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/containerd/errdefs"
 	podman "github.com/containers/common/libnetwork/types"
 	"github.com/docker/cli/cli/command"
 	"github.com/docker/cli/cli/compose/loader"
@@ -28,7 +29,6 @@ import (
 	"github.com/docker/docker/api/types/versions"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/go-errors/errors"
@@ -241,7 +241,7 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 	imageUrl := GetRegistryImageUrl(imageName)
 	if _, err := Docker.ImageInspect(ctx, imageUrl); err == nil {
 		return nil
-	} else if !client.IsErrNotFound(err) {
+	} else if !errdefs.IsNotFound(err) {
 		return errors.Errorf("failed to inspect docker image: %w", err)
 	}
 	return DockerImagePullWithRetry(ctx, imageUrl, 2)
@@ -376,13 +376,19 @@ func DockerRunOnceWithConfig(ctx context.Context, config container.Config, hostC
 	return DockerStreamLogs(ctx, container, stdout, stderr)
 }
 
-func DockerStreamLogs(ctx context.Context, containerId string, stdout, stderr io.Writer) error {
-	// Stream logs
-	logs, err := Docker.ContainerLogs(ctx, containerId, container.LogsOptions{
+var ErrContainerKilled = errors.New("exit 137")
+
+func DockerStreamLogs(ctx context.Context, containerId string, stdout, stderr io.Writer, opts ...func(*container.LogsOptions)) error {
+	logsOptions := container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Follow:     true,
-	})
+	}
+	for _, apply := range opts {
+		apply(&logsOptions)
+	}
+	// Stream logs
+	logs, err := Docker.ContainerLogs(ctx, containerId, logsOptions)
 	if err != nil {
 		return errors.Errorf("failed to read docker logs: %w", err)
 	}
@@ -395,10 +401,15 @@ func DockerStreamLogs(ctx context.Context, containerId string, stdout, stderr io
 	if err != nil {
 		return errors.Errorf("failed to inspect docker container: %w", err)
 	}
-	if resp.State.ExitCode > 0 {
-		return errors.Errorf("error running container: exit %d", resp.State.ExitCode)
+	switch resp.State.ExitCode {
+	case 0:
+		return nil
+	case 137:
+		err = ErrContainerKilled
+	default:
+		err = errors.Errorf("exit %d", resp.State.ExitCode)
 	}
-	return nil
+	return errors.Errorf("error running container: %w", err)
 }
 
 func DockerStreamLogsOnce(ctx context.Context, containerId string, stdout, stderr io.Writer) error {
@@ -458,6 +469,11 @@ func DockerExecOnceWithStream(ctx context.Context, containerId, workdir string, 
 		err = errors.New("error executing command")
 	}
 	return err
+}
+
+func IsDockerRunning(ctx context.Context) bool {
+	_, err := Docker.Ping(ctx)
+	return !client.IsErrConnectionFailed(err)
 }
 
 var portErrorPattern = regexp.MustCompile("Bind for (.*) failed: port is already allocated")

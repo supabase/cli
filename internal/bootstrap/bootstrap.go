@@ -77,7 +77,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 		return err
 	}
 	// 2. Create project
-	params := api.V1CreateProjectBodyDto{
+	params := api.V1CreateProjectBody{
 		Name:        filepath.Base(workdir),
 		TemplateUrl: &starter.Url,
 	}
@@ -152,9 +152,7 @@ func suggestAppStart(cwd, command string) string {
 
 func checkProjectHealth(ctx context.Context) error {
 	params := api.V1GetServicesHealthParams{
-		Services: []api.V1GetServicesHealthParamsServices{
-			api.V1GetServicesHealthParamsServicesDb,
-		},
+		Services: []api.V1GetServicesHealthParamsServices{api.Db},
 	}
 	resp, err := utils.GetSupabase().V1GetServicesHealthWithResponse(ctx, flags.ProjectRef, &params)
 	if err != nil {
@@ -217,17 +215,11 @@ const (
 
 func writeDotEnv(keys []api.ApiKeyResponse, config pgconn.Config, fsys afero.Fs) error {
 	// Initialise default envs
+	initial := apiKeys.ToEnv(keys)
+	initial[SUPABASE_URL] = "https://" + utils.GetSupabaseHost(flags.ProjectRef)
 	transactionMode := *config.Copy()
 	transactionMode.Port = 6543
-	initial := map[string]string{
-		SUPABASE_URL: "https://" + utils.GetSupabaseHost(flags.ProjectRef),
-		POSTGRES_URL: utils.ToPostgresURL(transactionMode),
-	}
-	for _, entry := range keys {
-		name := strings.ToUpper(entry.Name)
-		key := fmt.Sprintf("SUPABASE_%s_KEY", name)
-		initial[key] = entry.ApiKey
-	}
+	initial[POSTGRES_URL] = utils.ToPostgresURL(transactionMode)
 	// Populate from .env.example if exists
 	envs, err := parseExampleEnv(fsys)
 	if err != nil {

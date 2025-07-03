@@ -1,7 +1,7 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -23,19 +23,19 @@
+@@ -24,23 +24,23 @@
  
  [hook]
  [hook.mfa_verification_attempt]
@@ -20,6 +20,11 @@ diff remote[auth] local[auth]
  uri = "https://example.com"
  secrets = ""
  [hook.send_email]
+-enabled = true
++enabled = false
+ uri = ""
+ secrets = ""
+ [hook.before_user_created]
 -enabled = true
 +enabled = false
  uri = ""

@@ -48,7 +48,7 @@ var (
 				body.Region = &branchRegion.Value
 			}
 			if cmdFlags.Changed("size") {
-				body.DesiredInstanceSize = (*api.DesiredInstanceSize)(&size.Value)
+				body.DesiredInstanceSize = (*api.CreateBranchBodyDesiredInstanceSize)(&size.Value)
 			}
 			if cmdFlags.Changed("persistent") {
 				body.Persistent = &persistent

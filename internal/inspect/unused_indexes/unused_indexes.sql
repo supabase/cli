@@ -1,5 +1,5 @@
 SELECT
-  schemaname || '.' || relname AS table,
+  FORMAT('%I.%I', schemaname, relname) AS name,
   indexrelname AS index,
   pg_size_pretty(pg_relation_size(i.indexrelid)) AS index_size,
   idx_scan as index_scans

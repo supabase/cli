@@ -28,11 +28,15 @@ func (a ApiKey) IsEmpty() bool {
 func NewApiKey(resp []api.ApiKeyResponse) ApiKey {
 	var result ApiKey
 	for _, key := range resp {
-		if key.Name == "anon" {
-			result.Anon = key.ApiKey
+		value, err := key.ApiKey.Get()
+		if err != nil {
+			continue
 		}
-		if key.Name == "service_role" {
-			result.ServiceRole = key.ApiKey
+		switch key.Name {
+		case "anon":
+			result.Anon = value
+		case "service_role":
+			result.ServiceRole = value
 		}
 	}
 	return result

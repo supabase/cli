@@ -7,13 +7,17 @@ import (
 	"os"
 
 	"github.com/go-errors/errors"
+	"github.com/google/uuid"
 	"github.com/supabase/cli/internal/sso/internal/render"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/api"
 )
 
 func Run(ctx context.Context, ref, providerId, format string) error {
-	resp, err := utils.GetSupabase().V1GetASsoProviderWithResponse(ctx, ref, providerId)
+	parsed, err := uuid.Parse(providerId)
+	if err != nil {
+		return errors.Errorf("failed to parse provider id: %w", err)
+	}
+	resp, err := utils.GetSupabase().V1GetASsoProviderWithResponse(ctx, ref, parsed)
 	if err != nil {
 		return err
 	}
@@ -31,13 +35,7 @@ func Run(ctx context.Context, ref, providerId, format string) error {
 		_, err := fmt.Println(*resp.JSON200.Saml.MetadataXml)
 		return err
 	case utils.OutputPretty:
-		return render.SingleMarkdown(api.Provider{
-			Id:        resp.JSON200.Id,
-			Saml:      resp.JSON200.Saml,
-			Domains:   resp.JSON200.Domains,
-			CreatedAt: resp.JSON200.CreatedAt,
-			UpdatedAt: resp.JSON200.UpdatedAt,
-		})
+		return render.SingleMarkdown(*resp.JSON200)
 	case utils.OutputEnv:
 		return errors.Errorf("--output env flag is not supported")
 	default:

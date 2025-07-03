@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/go-errors/errors"
+	"github.com/google/uuid"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/sso/internal/render"
 	"github.com/supabase/cli/internal/sso/internal/saml"
@@ -31,14 +32,18 @@ type RunParams struct {
 }
 
 func Run(ctx context.Context, params RunParams) error {
-	getResp, err := utils.GetSupabase().V1GetASsoProviderWithResponse(ctx, params.ProjectRef, params.ProviderID)
+	parsed, err := uuid.Parse(params.ProviderID)
+	if err != nil {
+		return errors.Errorf("failed to parse provider ID: %w", err)
+	}
+	getResp, err := utils.GetSupabase().V1GetASsoProviderWithResponse(ctx, params.ProjectRef, parsed)
 	if err != nil {
 		return errors.Errorf("failed to get sso provider: %w", err)
 	}
 
 	if getResp.JSON200 == nil {
 		if getResp.StatusCode() == http.StatusNotFound {
-			return errors.Errorf("An identity provider with ID %q could not be found.", params.ProviderID)
+			return errors.Errorf("An identity provider with ID %q could not be found.", parsed)
 		}
 
 		return errors.New("unexpected error fetching identity provider: " + string(getResp.Body))
@@ -64,12 +69,17 @@ func Run(ctx context.Context, params RunParams) error {
 	}
 
 	if params.AttributeMapping != "" {
-		data, err := saml.ReadAttributeMappingFile(Fs, params.AttributeMapping)
-		if err != nil {
+		body.AttributeMapping = &struct {
+			Keys map[string]struct {
+				Array   *bool        "json:\"array,omitempty\""
+				Default *interface{} "json:\"default,omitempty\""
+				Name    *string      "json:\"name,omitempty\""
+				Names   *[]string    "json:\"names,omitempty\""
+			} "json:\"keys\""
+		}{}
+		if err := saml.ReadAttributeMappingFile(Fs, params.AttributeMapping, body.AttributeMapping); err != nil {
 			return err
 		}
-
-		body.AttributeMapping = data
 	}
 
 	if len(params.Domains) != 0 {
@@ -101,7 +111,7 @@ func Run(ctx context.Context, params RunParams) error {
 		body.Domains = &domains
 	}
 
-	putResp, err := utils.GetSupabase().V1UpdateASsoProviderWithResponse(ctx, params.ProjectRef, params.ProviderID, body)
+	putResp, err := utils.GetSupabase().V1UpdateASsoProviderWithResponse(ctx, params.ProjectRef, parsed, body)
 	if err != nil {
 		return errors.Errorf("failed to update sso provider: %w", err)
 	}
@@ -112,13 +122,7 @@ func Run(ctx context.Context, params RunParams) error {
 
 	switch params.Format {
 	case utils.OutputPretty:
-		return render.SingleMarkdown(api.Provider{
-			Id:        putResp.JSON200.Id,
-			Saml:      putResp.JSON200.Saml,
-			Domains:   putResp.JSON200.Domains,
-			CreatedAt: putResp.JSON200.CreatedAt,
-			UpdatedAt: putResp.JSON200.UpdatedAt,
-		})
+		return render.SingleMarkdown(api.GetProviderResponse(*putResp.JSON200))
 	case utils.OutputEnv:
 		return nil
 	default:

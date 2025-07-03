@@ -10,7 +10,6 @@ import (
 	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/config"
 )
@@ -18,11 +17,11 @@ import (
 type MockBundler struct {
 }
 
-func (b *MockBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) (api.FunctionDeployMetadata, error) {
+func (b *MockBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) (FunctionDeployMetadata, error) {
 	if staticFiles == nil {
 		staticFiles = []string{}
 	}
-	return api.FunctionDeployMetadata{
+	return FunctionDeployMetadata{
 		Name:           &slug,
 		EntrypointPath: entrypoint,
 		ImportMapPath:  &importMap,
@@ -74,7 +73,8 @@ func TestUpsertFunctions(t *testing.T) {
 		})
 		// Check error
 		assert.NoError(t, err)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
+		assert.Empty(t, gock.Pending())
+		assert.Empty(t, gock.GetUnmatchedRequests())
 	})
 
 	t.Run("handles concurrent deploy", func(t *testing.T) {
@@ -98,7 +98,8 @@ func TestUpsertFunctions(t *testing.T) {
 		})
 		// Check error
 		assert.NoError(t, err)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
+		assert.Empty(t, gock.Pending())
+		assert.Empty(t, gock.GetUnmatchedRequests())
 	})
 
 	t.Run("retries on network failure", func(t *testing.T) {
@@ -117,7 +118,8 @@ func TestUpsertFunctions(t *testing.T) {
 		err := client.UpsertFunctions(context.Background(), nil)
 		// Check error
 		assert.ErrorContains(t, err, "unexpected list functions status 400:")
-		assert.Empty(t, apitest.ListUnmatchedRequests())
+		assert.Empty(t, gock.Pending())
+		assert.Empty(t, gock.GetUnmatchedRequests())
 	})
 
 	t.Run("retries on create failure", func(t *testing.T) {
@@ -143,7 +145,8 @@ func TestUpsertFunctions(t *testing.T) {
 		})
 		// Check error
 		assert.NoError(t, err)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
+		assert.Empty(t, gock.Pending())
+		assert.Empty(t, gock.GetUnmatchedRequests())
 	})
 
 	t.Run("retries on update failure", func(t *testing.T) {
@@ -169,6 +172,7 @@ func TestUpsertFunctions(t *testing.T) {
 		})
 		// Check error
 		assert.NoError(t, err)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
+		assert.Empty(t, gock.Pending())
+		assert.Empty(t, gock.GetUnmatchedRequests())
 	})
 }

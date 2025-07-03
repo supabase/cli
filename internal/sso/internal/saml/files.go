@@ -12,7 +12,6 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/fetcher"
 )
 
@@ -23,6 +22,7 @@ func ReadMetadataFile(fsys afero.Fs, path string) (string, error) {
 	if err != nil {
 		return "", errors.Errorf("failed to open metadata file: %w", err)
 	}
+	defer file.Close()
 
 	data, err := io.ReadAll(file)
 	if err != nil {
@@ -36,19 +36,19 @@ func ReadMetadataFile(fsys afero.Fs, path string) (string, error) {
 	return string(data), nil
 }
 
-func ReadAttributeMappingFile(fsys afero.Fs, path string) (*api.AttributeMapping, error) {
+func ReadAttributeMappingFile(fsys afero.Fs, path string, mapping any) error {
 	file, err := fsys.Open(path)
 	if err != nil {
-		return nil, errors.Errorf("failed to open attribute mapping: %w", err)
+		return errors.Errorf("failed to open attribute mapping: %w", err)
 	}
+	defer file.Close()
 
-	var mapping api.AttributeMapping
 	dec := json.NewDecoder(file)
-	if err := dec.Decode(&mapping); err != nil {
-		return nil, errors.Errorf("failed to parse attribute mapping: %w", err)
+	if err := dec.Decode(mapping); err != nil {
+		return errors.Errorf("failed to parse attribute mapping: %w", err)
 	}
 
-	return &mapping, nil
+	return nil
 }
 
 func ValidateMetadata(data []byte, source string) error {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/go-errors/errors"
@@ -89,7 +90,7 @@ func run(p utils.Program, ctx context.Context, schema []string, path string, con
 func dumpRemoteSchema(p utils.Program, ctx context.Context, path string, config pgconn.Config, fsys afero.Fs) error {
 	// Special case if this is the first migration
 	p.Send(utils.StatusMsg("Dumping schema from remote database..."))
-	if err := utils.MkdirIfNotExistFS(fsys, utils.MigrationsDir); err != nil {
+	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(path)); err != nil {
 		return err
 	}
 	f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
@@ -97,7 +98,7 @@ func dumpRemoteSchema(p utils.Program, ctx context.Context, path string, config 
 		return errors.Errorf("failed to open dump file: %w", err)
 	}
 	defer f.Close()
-	return dump.DumpSchema(ctx, config, nil, false, false, f)
+	return migration.DumpSchema(ctx, config, f, dump.DockerExec)
 }
 
 func diffRemoteSchema(p utils.Program, ctx context.Context, schema []string, path string, config pgconn.Config, fsys afero.Fs) error {

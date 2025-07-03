@@ -176,7 +176,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 			"LOGFLARE_MIN_CLUSTER_SIZE=1",
 			"LOGFLARE_SINGLE_TENANT=true",
 			"LOGFLARE_SUPABASE_MODE=true",
-			"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
+			"LOGFLARE_PRIVATE_ACCESS_TOKEN=" + utils.Config.Analytics.ApiKey,
 			"LOGFLARE_LOG_LEVEL=warn",
 			"LOGFLARE_NODE_HOST=127.0.0.1",
 			"LOGFLARE_FEATURE_FLAG_OVERRIDE='multibackend=true'",
@@ -280,7 +280,8 @@ EOF
 			}
 			env = append(env, "DOCKER_HOST="+dindHost.String())
 		case "npipe":
-			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires docker daemon exposed on tcp://localhost:2375")
+			const dockerDaemonNeededErr = "Analytics on Windows requires Docker daemon exposed on tcp://localhost:2375.\nSee https://supabase.com/docs/guides/local-development/cli/getting-started?queryGroups=platform&platform=windows#running-supabase-locally for more details."
+			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), dockerDaemonNeededErr)
 			env = append(env, "DOCKER_HOST="+dindHost.String())
 		case "unix":
 			if dindHost, err = client.ParseHostURL(client.DefaultDockerHost); err != nil {
@@ -328,7 +329,9 @@ EOF
 		); err != nil {
 			return err
 		}
-		started = append(started, utils.VectorId)
+		if parsed.Scheme != "npipe" {
+			started = append(started, utils.VectorId)
+		}
 	}
 
 	// Start Kong.
@@ -502,6 +505,7 @@ EOF
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_OTP=%v", utils.Config.Auth.RateLimit.SignInSignUps),
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_VERIFY=%v", utils.Config.Auth.RateLimit.TokenVerifications),
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_SMS_SENT=%v", utils.Config.Auth.RateLimit.SmsSent),
+			fmt.Sprintf("GOTRUE_RATE_LIMIT_WEB3=%v", utils.Config.Auth.RateLimit.Web3),
 		}
 
 		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.Enabled {
@@ -637,6 +641,14 @@ EOF
 				"GOTRUE_HOOK_SEND_EMAIL_SECRETS="+hook.Secrets.Value,
 			)
 		}
+		if hook := utils.Config.Auth.Hook.BeforeUserCreated; hook != nil && hook.Enabled {
+			env = append(
+				env,
+				"GOTRUE_HOOK_BEFORE_USER_CREATED_ENABLED=true",
+				"GOTRUE_HOOK_BEFORE_USER_CREATED_URI="+hook.URI,
+				"GOTRUE_HOOK_BEFORE_USER_CREATED_SECRETS="+hook.Secrets.Value,
+			)
+		}
 
 		if utils.Config.Auth.MFA.Phone.EnrollEnabled || utils.Config.Auth.MFA.Phone.VerifyEnabled {
 			env = append(
@@ -666,6 +678,7 @@ EOF
 				env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_%s_URL=%s", strings.ToUpper(name), config.Url))
 			}
 		}
+		env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED=%v", utils.Config.Auth.Web3.Solana.Enabled))
 
 		if _, err := utils.DockerStart(
 			ctx,
@@ -981,7 +994,7 @@ EOF
 					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
 					"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey.Value,
 					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
-					"LOGFLARE_API_KEY=" + utils.Config.Analytics.ApiKey,
+					"LOGFLARE_PRIVATE_ACCESS_TOKEN=" + utils.Config.Analytics.ApiKey,
 					"OPENAI_API_KEY=" + utils.Config.Studio.OpenaiApiKey.Value,
 					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
 					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),

@@ -91,24 +91,39 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 	// V1DeleteABranch request
-	V1DeleteABranch(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1DeleteABranch(ctx context.Context, branchId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1GetABranchConfig request
-	V1GetABranchConfig(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1GetABranchConfig(ctx context.Context, branchId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1UpdateABranchConfigWithBody request with any body
-	V1UpdateABranchConfigWithBody(ctx context.Context, branchId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1UpdateABranchConfigWithBody(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	V1UpdateABranchConfig(ctx context.Context, branchId string, body V1UpdateABranchConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1UpdateABranchConfig(ctx context.Context, branchId openapi_types.UUID, body V1UpdateABranchConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// V1PushABranch request
-	V1PushABranch(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1DiffABranch request
+	V1DiffABranch(ctx context.Context, branchId openapi_types.UUID, params *V1DiffABranchParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// V1ResetABranch request
-	V1ResetABranch(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1MergeABranchWithBody request with any body
+	V1MergeABranchWithBody(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1MergeABranch(ctx context.Context, branchId openapi_types.UUID, body V1MergeABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1PushABranchWithBody request with any body
+	V1PushABranchWithBody(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1PushABranch(ctx context.Context, branchId openapi_types.UUID, body V1PushABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1ResetABranchWithBody request with any body
+	V1ResetABranchWithBody(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1ResetABranch(ctx context.Context, branchId openapi_types.UUID, body V1ResetABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1AuthorizeUser request
 	V1AuthorizeUser(ctx context.Context, params *V1AuthorizeUserParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1OauthAuthorizeProjectClaim request
+	V1OauthAuthorizeProjectClaim(ctx context.Context, params *V1OauthAuthorizeProjectClaimParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1RevokeTokenWithBody request with any body
 	V1RevokeTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -134,6 +149,12 @@ type ClientInterface interface {
 	// V1ListOrganizationMembers request
 	V1ListOrganizationMembers(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1GetOrganizationProjectClaim request
+	V1GetOrganizationProjectClaim(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1ClaimProjectForOrganization request
+	V1ClaimProjectForOrganization(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1ListAllProjects request
 	V1ListAllProjects(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -148,27 +169,56 @@ type ClientInterface interface {
 	// V1GetProject request
 	V1GetProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetLogs request
-	GetLogs(ctx context.Context, ref string, params *GetLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1GetPerformanceAdvisors request
+	V1GetPerformanceAdvisors(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetSecurityAdvisors request
+	V1GetSecurityAdvisors(ctx context.Context, ref string, params *V1GetSecurityAdvisorsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetProjectLogs request
+	V1GetProjectLogs(ctx context.Context, ref string, params *V1GetProjectLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetProjectUsageApiCount request
+	V1GetProjectUsageApiCount(ctx context.Context, ref string, params *V1GetProjectUsageApiCountParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetProjectUsageRequestCount request
+	V1GetProjectUsageRequestCount(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1GetProjectApiKeys request
 	V1GetProjectApiKeys(ctx context.Context, ref string, params *V1GetProjectApiKeysParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateApiKeyWithBody request with any body
-	CreateApiKeyWithBody(ctx context.Context, ref string, params *CreateApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1CreateProjectApiKeyWithBody request with any body
+	V1CreateProjectApiKeyWithBody(ctx context.Context, ref string, params *V1CreateProjectApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	CreateApiKey(ctx context.Context, ref string, params *CreateApiKeyParams, body CreateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1CreateProjectApiKey(ctx context.Context, ref string, params *V1CreateProjectApiKeyParams, body V1CreateProjectApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeleteApiKey request
-	DeleteApiKey(ctx context.Context, ref string, id string, params *DeleteApiKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1GetProjectLegacyApiKeys request
+	V1GetProjectLegacyApiKeys(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetApiKey request
-	GetApiKey(ctx context.Context, ref string, id string, params *GetApiKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1UpdateProjectLegacyApiKeys request
+	V1UpdateProjectLegacyApiKeys(ctx context.Context, ref string, params *V1UpdateProjectLegacyApiKeysParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateApiKeyWithBody request with any body
-	UpdateApiKeyWithBody(ctx context.Context, ref string, id string, params *UpdateApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1DeleteProjectApiKey request
+	V1DeleteProjectApiKey(ctx context.Context, ref string, id openapi_types.UUID, params *V1DeleteProjectApiKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	UpdateApiKey(ctx context.Context, ref string, id string, params *UpdateApiKeyParams, body UpdateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1GetProjectApiKey request
+	V1GetProjectApiKey(ctx context.Context, ref string, id openapi_types.UUID, params *V1GetProjectApiKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1UpdateProjectApiKeyWithBody request with any body
+	V1UpdateProjectApiKeyWithBody(ctx context.Context, ref string, id openapi_types.UUID, params *V1UpdateProjectApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1UpdateProjectApiKey(ctx context.Context, ref string, id openapi_types.UUID, params *V1UpdateProjectApiKeyParams, body V1UpdateProjectApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1ListProjectAddons request
+	V1ListProjectAddons(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1ApplyProjectAddonWithBody request with any body
+	V1ApplyProjectAddonWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1ApplyProjectAddon(ctx context.Context, ref string, body V1ApplyProjectAddonJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1RemoveProjectAddon request
+	V1RemoveProjectAddon(ctx context.Context, ref string, addonVariant interface{}, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1DisablePreviewBranching request
 	V1DisablePreviewBranching(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -181,6 +231,15 @@ type ClientInterface interface {
 
 	V1CreateABranch(ctx context.Context, ref string, body V1CreateABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1DeleteProjectClaimToken request
+	V1DeleteProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetProjectClaimToken request
+	V1GetProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1CreateProjectClaimToken request
+	V1CreateProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1GetAuthServiceConfig request
 	V1GetAuthServiceConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -188,6 +247,31 @@ type ClientInterface interface {
 	V1UpdateAuthServiceConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	V1UpdateAuthServiceConfig(ctx context.Context, ref string, body V1UpdateAuthServiceConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetProjectSigningKeys request
+	V1GetProjectSigningKeys(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1CreateProjectSigningKeyWithBody request with any body
+	V1CreateProjectSigningKeyWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1CreateProjectSigningKey(ctx context.Context, ref string, body V1CreateProjectSigningKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetLegacySigningKey request
+	V1GetLegacySigningKey(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1CreateLegacySigningKey request
+	V1CreateLegacySigningKey(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1RemoveProjectSigningKey request
+	V1RemoveProjectSigningKey(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetProjectSigningKey request
+	V1GetProjectSigningKey(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1UpdateProjectSigningKeyWithBody request with any body
+	V1UpdateProjectSigningKeyWithBody(ctx context.Context, ref string, id openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1UpdateProjectSigningKey(ctx context.Context, ref string, id openapi_types.UUID, body V1UpdateProjectSigningKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1ListAllSsoProvider request
 	V1ListAllSsoProvider(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -198,40 +282,40 @@ type ClientInterface interface {
 	V1CreateASsoProvider(ctx context.Context, ref string, body V1CreateASsoProviderJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1DeleteASsoProvider request
-	V1DeleteASsoProvider(ctx context.Context, ref string, providerId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1DeleteASsoProvider(ctx context.Context, ref string, providerId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1GetASsoProvider request
-	V1GetASsoProvider(ctx context.Context, ref string, providerId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1GetASsoProvider(ctx context.Context, ref string, providerId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1UpdateASsoProviderWithBody request with any body
-	V1UpdateASsoProviderWithBody(ctx context.Context, ref string, providerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1UpdateASsoProviderWithBody(ctx context.Context, ref string, providerId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	V1UpdateASsoProvider(ctx context.Context, ref string, providerId string, body V1UpdateASsoProviderJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1UpdateASsoProvider(ctx context.Context, ref string, providerId openapi_types.UUID, body V1UpdateASsoProviderJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListTPAForProject request
-	ListTPAForProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1ListProjectTpaIntegrations request
+	V1ListProjectTpaIntegrations(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateTPAForProjectWithBody request with any body
-	CreateTPAForProjectWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1CreateProjectTpaIntegrationWithBody request with any body
+	V1CreateProjectTpaIntegrationWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	CreateTPAForProject(ctx context.Context, ref string, body CreateTPAForProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1CreateProjectTpaIntegration(ctx context.Context, ref string, body V1CreateProjectTpaIntegrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeleteTPAForProject request
-	DeleteTPAForProject(ctx context.Context, ref string, tpaId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1DeleteProjectTpaIntegration request
+	V1DeleteProjectTpaIntegration(ctx context.Context, ref string, tpaId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetTPAForProject request
-	GetTPAForProject(ctx context.Context, ref string, tpaId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1GetProjectTpaIntegration request
+	V1GetProjectTpaIntegration(ctx context.Context, ref string, tpaId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1GetProjectPgbouncerConfig request
 	V1GetProjectPgbouncerConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// V1GetSupavisorConfig request
-	V1GetSupavisorConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1GetPoolerConfig request
+	V1GetPoolerConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// V1UpdateSupavisorConfigWithBody request with any body
-	V1UpdateSupavisorConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1UpdatePoolerConfigWithBody request with any body
+	V1UpdatePoolerConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	V1UpdateSupavisorConfig(ctx context.Context, ref string, body V1UpdateSupavisorConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1UpdatePoolerConfig(ctx context.Context, ref string, body V1UpdatePoolerConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1GetPostgresConfig request
 	V1GetPostgresConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -274,8 +358,34 @@ type ClientInterface interface {
 
 	V1RestorePitrBackup(ctx context.Context, ref string, body V1RestorePitrBackupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetDatabaseMetadata request
-	GetDatabaseMetadata(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1GetRestorePoint request
+	V1GetRestorePoint(ctx context.Context, ref string, params *V1GetRestorePointParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1CreateRestorePointWithBody request with any body
+	V1CreateRestorePointWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1CreateRestorePoint(ctx context.Context, ref string, body V1CreateRestorePointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1UndoWithBody request with any body
+	V1UndoWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1Undo(ctx context.Context, ref string, body V1UndoJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetDatabaseMetadata request
+	V1GetDatabaseMetadata(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1ListMigrationHistory request
+	V1ListMigrationHistory(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1ApplyAMigrationWithBody request with any body
+	V1ApplyAMigrationWithBody(ctx context.Context, ref string, params *V1ApplyAMigrationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1ApplyAMigration(ctx context.Context, ref string, params *V1ApplyAMigrationParams, body V1ApplyAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1UpsertAMigrationWithBody request with any body
+	V1UpsertAMigrationWithBody(ctx context.Context, ref string, params *V1UpsertAMigrationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1UpsertAMigration(ctx context.Context, ref string, params *V1UpsertAMigrationParams, body V1UpsertAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1RunAQueryWithBody request with any body
 	V1RunAQueryWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -326,6 +436,9 @@ type ClientInterface interface {
 	// V1ListAllNetworkBans request
 	V1ListAllNetworkBans(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1ListAllNetworkBansEnriched request
+	V1ListAllNetworkBansEnriched(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1GetNetworkRestrictions request
 	V1GetNetworkRestrictions(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -372,10 +485,8 @@ type ClientInterface interface {
 	// V1ListAvailableRestoreVersions request
 	V1ListAvailableRestoreVersions(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// V1RestoreAProjectWithBody request with any body
-	V1RestoreAProjectWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	V1RestoreAProject(ctx context.Context, ref string, body V1RestoreAProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1RestoreAProject request
+	V1RestoreAProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1CancelAProjectRestoration request
 	V1CancelAProjectRestoration(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -441,7 +552,7 @@ type ClientInterface interface {
 	V1GetASnippet(ctx context.Context, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
-func (c *Client) V1DeleteABranch(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) V1DeleteABranch(ctx context.Context, branchId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1DeleteABranchRequest(c.Server, branchId)
 	if err != nil {
 		return nil, err
@@ -453,7 +564,7 @@ func (c *Client) V1DeleteABranch(ctx context.Context, branchId string, reqEditor
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1GetABranchConfig(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) V1GetABranchConfig(ctx context.Context, branchId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1GetABranchConfigRequest(c.Server, branchId)
 	if err != nil {
 		return nil, err
@@ -465,7 +576,7 @@ func (c *Client) V1GetABranchConfig(ctx context.Context, branchId string, reqEdi
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1UpdateABranchConfigWithBody(ctx context.Context, branchId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) V1UpdateABranchConfigWithBody(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1UpdateABranchConfigRequestWithBody(c.Server, branchId, contentType, body)
 	if err != nil {
 		return nil, err
@@ -477,7 +588,7 @@ func (c *Client) V1UpdateABranchConfigWithBody(ctx context.Context, branchId str
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1UpdateABranchConfig(ctx context.Context, branchId string, body V1UpdateABranchConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) V1UpdateABranchConfig(ctx context.Context, branchId openapi_types.UUID, body V1UpdateABranchConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1UpdateABranchConfigRequest(c.Server, branchId, body)
 	if err != nil {
 		return nil, err
@@ -489,8 +600,8 @@ func (c *Client) V1UpdateABranchConfig(ctx context.Context, branchId string, bod
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1PushABranch(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1PushABranchRequest(c.Server, branchId)
+func (c *Client) V1DiffABranch(ctx context.Context, branchId openapi_types.UUID, params *V1DiffABranchParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1DiffABranchRequest(c.Server, branchId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -501,8 +612,68 @@ func (c *Client) V1PushABranch(ctx context.Context, branchId string, reqEditors 
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1ResetABranch(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1ResetABranchRequest(c.Server, branchId)
+func (c *Client) V1MergeABranchWithBody(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1MergeABranchRequestWithBody(c.Server, branchId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1MergeABranch(ctx context.Context, branchId openapi_types.UUID, body V1MergeABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1MergeABranchRequest(c.Server, branchId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1PushABranchWithBody(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1PushABranchRequestWithBody(c.Server, branchId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1PushABranch(ctx context.Context, branchId openapi_types.UUID, body V1PushABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1PushABranchRequest(c.Server, branchId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ResetABranchWithBody(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ResetABranchRequestWithBody(c.Server, branchId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ResetABranch(ctx context.Context, branchId openapi_types.UUID, body V1ResetABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ResetABranchRequest(c.Server, branchId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -515,6 +686,18 @@ func (c *Client) V1ResetABranch(ctx context.Context, branchId string, reqEditors
 
 func (c *Client) V1AuthorizeUser(ctx context.Context, params *V1AuthorizeUserParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1AuthorizeUserRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1OauthAuthorizeProjectClaim(ctx context.Context, params *V1OauthAuthorizeProjectClaimParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1OauthAuthorizeProjectClaimRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -633,6 +816,30 @@ func (c *Client) V1ListOrganizationMembers(ctx context.Context, slug string, req
 	return c.Client.Do(req)
 }
 
+func (c *Client) V1GetOrganizationProjectClaim(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetOrganizationProjectClaimRequest(c.Server, slug, token)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ClaimProjectForOrganization(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ClaimProjectForOrganizationRequest(c.Server, slug, token)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) V1ListAllProjects(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1ListAllProjectsRequest(c.Server)
 	if err != nil {
@@ -693,8 +900,56 @@ func (c *Client) V1GetProject(ctx context.Context, ref string, reqEditors ...Req
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetLogs(ctx context.Context, ref string, params *GetLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetLogsRequest(c.Server, ref, params)
+func (c *Client) V1GetPerformanceAdvisors(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetPerformanceAdvisorsRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetSecurityAdvisors(ctx context.Context, ref string, params *V1GetSecurityAdvisorsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetSecurityAdvisorsRequest(c.Server, ref, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetProjectLogs(ctx context.Context, ref string, params *V1GetProjectLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetProjectLogsRequest(c.Server, ref, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetProjectUsageApiCount(ctx context.Context, ref string, params *V1GetProjectUsageApiCountParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetProjectUsageApiCountRequest(c.Server, ref, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetProjectUsageRequestCount(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetProjectUsageRequestCountRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -717,8 +972,8 @@ func (c *Client) V1GetProjectApiKeys(ctx context.Context, ref string, params *V1
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateApiKeyWithBody(ctx context.Context, ref string, params *CreateApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateApiKeyRequestWithBody(c.Server, ref, params, contentType, body)
+func (c *Client) V1CreateProjectApiKeyWithBody(ctx context.Context, ref string, params *V1CreateProjectApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1CreateProjectApiKeyRequestWithBody(c.Server, ref, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -729,8 +984,8 @@ func (c *Client) CreateApiKeyWithBody(ctx context.Context, ref string, params *C
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateApiKey(ctx context.Context, ref string, params *CreateApiKeyParams, body CreateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateApiKeyRequest(c.Server, ref, params, body)
+func (c *Client) V1CreateProjectApiKey(ctx context.Context, ref string, params *V1CreateProjectApiKeyParams, body V1CreateProjectApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1CreateProjectApiKeyRequest(c.Server, ref, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -741,8 +996,8 @@ func (c *Client) CreateApiKey(ctx context.Context, ref string, params *CreateApi
 	return c.Client.Do(req)
 }
 
-func (c *Client) DeleteApiKey(ctx context.Context, ref string, id string, params *DeleteApiKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteApiKeyRequest(c.Server, ref, id, params)
+func (c *Client) V1GetProjectLegacyApiKeys(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetProjectLegacyApiKeysRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -753,8 +1008,8 @@ func (c *Client) DeleteApiKey(ctx context.Context, ref string, id string, params
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetApiKey(ctx context.Context, ref string, id string, params *GetApiKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetApiKeyRequest(c.Server, ref, id, params)
+func (c *Client) V1UpdateProjectLegacyApiKeys(ctx context.Context, ref string, params *V1UpdateProjectLegacyApiKeysParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateProjectLegacyApiKeysRequest(c.Server, ref, params)
 	if err != nil {
 		return nil, err
 	}
@@ -765,8 +1020,8 @@ func (c *Client) GetApiKey(ctx context.Context, ref string, id string, params *G
 	return c.Client.Do(req)
 }
 
-func (c *Client) UpdateApiKeyWithBody(ctx context.Context, ref string, id string, params *UpdateApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdateApiKeyRequestWithBody(c.Server, ref, id, params, contentType, body)
+func (c *Client) V1DeleteProjectApiKey(ctx context.Context, ref string, id openapi_types.UUID, params *V1DeleteProjectApiKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1DeleteProjectApiKeyRequest(c.Server, ref, id, params)
 	if err != nil {
 		return nil, err
 	}
@@ -777,8 +1032,80 @@ func (c *Client) UpdateApiKeyWithBody(ctx context.Context, ref string, id string
 	return c.Client.Do(req)
 }
 
-func (c *Client) UpdateApiKey(ctx context.Context, ref string, id string, params *UpdateApiKeyParams, body UpdateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdateApiKeyRequest(c.Server, ref, id, params, body)
+func (c *Client) V1GetProjectApiKey(ctx context.Context, ref string, id openapi_types.UUID, params *V1GetProjectApiKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetProjectApiKeyRequest(c.Server, ref, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateProjectApiKeyWithBody(ctx context.Context, ref string, id openapi_types.UUID, params *V1UpdateProjectApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateProjectApiKeyRequestWithBody(c.Server, ref, id, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateProjectApiKey(ctx context.Context, ref string, id openapi_types.UUID, params *V1UpdateProjectApiKeyParams, body V1UpdateProjectApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateProjectApiKeyRequest(c.Server, ref, id, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ListProjectAddons(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ListProjectAddonsRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ApplyProjectAddonWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ApplyProjectAddonRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ApplyProjectAddon(ctx context.Context, ref string, body V1ApplyProjectAddonJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ApplyProjectAddonRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1RemoveProjectAddon(ctx context.Context, ref string, addonVariant interface{}, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1RemoveProjectAddonRequest(c.Server, ref, addonVariant)
 	if err != nil {
 		return nil, err
 	}
@@ -837,6 +1164,42 @@ func (c *Client) V1CreateABranch(ctx context.Context, ref string, body V1CreateA
 	return c.Client.Do(req)
 }
 
+func (c *Client) V1DeleteProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1DeleteProjectClaimTokenRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetProjectClaimTokenRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1CreateProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1CreateProjectClaimTokenRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) V1GetAuthServiceConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1GetAuthServiceConfigRequest(c.Server, ref)
 	if err != nil {
@@ -863,6 +1226,114 @@ func (c *Client) V1UpdateAuthServiceConfigWithBody(ctx context.Context, ref stri
 
 func (c *Client) V1UpdateAuthServiceConfig(ctx context.Context, ref string, body V1UpdateAuthServiceConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1UpdateAuthServiceConfigRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetProjectSigningKeys(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetProjectSigningKeysRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1CreateProjectSigningKeyWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1CreateProjectSigningKeyRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1CreateProjectSigningKey(ctx context.Context, ref string, body V1CreateProjectSigningKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1CreateProjectSigningKeyRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetLegacySigningKey(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetLegacySigningKeyRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1CreateLegacySigningKey(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1CreateLegacySigningKeyRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1RemoveProjectSigningKey(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1RemoveProjectSigningKeyRequest(c.Server, ref, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetProjectSigningKey(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetProjectSigningKeyRequest(c.Server, ref, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateProjectSigningKeyWithBody(ctx context.Context, ref string, id openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateProjectSigningKeyRequestWithBody(c.Server, ref, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateProjectSigningKey(ctx context.Context, ref string, id openapi_types.UUID, body V1UpdateProjectSigningKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateProjectSigningKeyRequest(c.Server, ref, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -909,7 +1380,7 @@ func (c *Client) V1CreateASsoProvider(ctx context.Context, ref string, body V1Cr
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1DeleteASsoProvider(ctx context.Context, ref string, providerId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) V1DeleteASsoProvider(ctx context.Context, ref string, providerId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1DeleteASsoProviderRequest(c.Server, ref, providerId)
 	if err != nil {
 		return nil, err
@@ -921,7 +1392,7 @@ func (c *Client) V1DeleteASsoProvider(ctx context.Context, ref string, providerI
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1GetASsoProvider(ctx context.Context, ref string, providerId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) V1GetASsoProvider(ctx context.Context, ref string, providerId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1GetASsoProviderRequest(c.Server, ref, providerId)
 	if err != nil {
 		return nil, err
@@ -933,7 +1404,7 @@ func (c *Client) V1GetASsoProvider(ctx context.Context, ref string, providerId s
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1UpdateASsoProviderWithBody(ctx context.Context, ref string, providerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) V1UpdateASsoProviderWithBody(ctx context.Context, ref string, providerId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1UpdateASsoProviderRequestWithBody(c.Server, ref, providerId, contentType, body)
 	if err != nil {
 		return nil, err
@@ -945,7 +1416,7 @@ func (c *Client) V1UpdateASsoProviderWithBody(ctx context.Context, ref string, p
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1UpdateASsoProvider(ctx context.Context, ref string, providerId string, body V1UpdateASsoProviderJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) V1UpdateASsoProvider(ctx context.Context, ref string, providerId openapi_types.UUID, body V1UpdateASsoProviderJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1UpdateASsoProviderRequest(c.Server, ref, providerId, body)
 	if err != nil {
 		return nil, err
@@ -957,8 +1428,8 @@ func (c *Client) V1UpdateASsoProvider(ctx context.Context, ref string, providerI
 	return c.Client.Do(req)
 }
 
-func (c *Client) ListTPAForProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListTPAForProjectRequest(c.Server, ref)
+func (c *Client) V1ListProjectTpaIntegrations(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ListProjectTpaIntegrationsRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -969,8 +1440,8 @@ func (c *Client) ListTPAForProject(ctx context.Context, ref string, reqEditors .
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateTPAForProjectWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateTPAForProjectRequestWithBody(c.Server, ref, contentType, body)
+func (c *Client) V1CreateProjectTpaIntegrationWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1CreateProjectTpaIntegrationRequestWithBody(c.Server, ref, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -981,8 +1452,8 @@ func (c *Client) CreateTPAForProjectWithBody(ctx context.Context, ref string, co
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateTPAForProject(ctx context.Context, ref string, body CreateTPAForProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateTPAForProjectRequest(c.Server, ref, body)
+func (c *Client) V1CreateProjectTpaIntegration(ctx context.Context, ref string, body V1CreateProjectTpaIntegrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1CreateProjectTpaIntegrationRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -993,8 +1464,8 @@ func (c *Client) CreateTPAForProject(ctx context.Context, ref string, body Creat
 	return c.Client.Do(req)
 }
 
-func (c *Client) DeleteTPAForProject(ctx context.Context, ref string, tpaId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteTPAForProjectRequest(c.Server, ref, tpaId)
+func (c *Client) V1DeleteProjectTpaIntegration(ctx context.Context, ref string, tpaId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1DeleteProjectTpaIntegrationRequest(c.Server, ref, tpaId)
 	if err != nil {
 		return nil, err
 	}
@@ -1005,8 +1476,8 @@ func (c *Client) DeleteTPAForProject(ctx context.Context, ref string, tpaId stri
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetTPAForProject(ctx context.Context, ref string, tpaId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetTPAForProjectRequest(c.Server, ref, tpaId)
+func (c *Client) V1GetProjectTpaIntegration(ctx context.Context, ref string, tpaId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetProjectTpaIntegrationRequest(c.Server, ref, tpaId)
 	if err != nil {
 		return nil, err
 	}
@@ -1029,8 +1500,8 @@ func (c *Client) V1GetProjectPgbouncerConfig(ctx context.Context, ref string, re
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1GetSupavisorConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1GetSupavisorConfigRequest(c.Server, ref)
+func (c *Client) V1GetPoolerConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetPoolerConfigRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -1041,8 +1512,8 @@ func (c *Client) V1GetSupavisorConfig(ctx context.Context, ref string, reqEditor
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1UpdateSupavisorConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1UpdateSupavisorConfigRequestWithBody(c.Server, ref, contentType, body)
+func (c *Client) V1UpdatePoolerConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdatePoolerConfigRequestWithBody(c.Server, ref, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1053,8 +1524,8 @@ func (c *Client) V1UpdateSupavisorConfigWithBody(ctx context.Context, ref string
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1UpdateSupavisorConfig(ctx context.Context, ref string, body V1UpdateSupavisorConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1UpdateSupavisorConfigRequest(c.Server, ref, body)
+func (c *Client) V1UpdatePoolerConfig(ctx context.Context, ref string, body V1UpdatePoolerConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdatePoolerConfigRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1245,8 +1716,128 @@ func (c *Client) V1RestorePitrBackup(ctx context.Context, ref string, body V1Res
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetDatabaseMetadata(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetDatabaseMetadataRequest(c.Server, ref)
+func (c *Client) V1GetRestorePoint(ctx context.Context, ref string, params *V1GetRestorePointParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetRestorePointRequest(c.Server, ref, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1CreateRestorePointWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1CreateRestorePointRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1CreateRestorePoint(ctx context.Context, ref string, body V1CreateRestorePointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1CreateRestorePointRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UndoWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UndoRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1Undo(ctx context.Context, ref string, body V1UndoJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UndoRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetDatabaseMetadata(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetDatabaseMetadataRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ListMigrationHistory(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ListMigrationHistoryRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ApplyAMigrationWithBody(ctx context.Context, ref string, params *V1ApplyAMigrationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ApplyAMigrationRequestWithBody(c.Server, ref, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ApplyAMigration(ctx context.Context, ref string, params *V1ApplyAMigrationParams, body V1ApplyAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ApplyAMigrationRequest(c.Server, ref, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpsertAMigrationWithBody(ctx context.Context, ref string, params *V1UpsertAMigrationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpsertAMigrationRequestWithBody(c.Server, ref, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpsertAMigration(ctx context.Context, ref string, params *V1UpsertAMigrationParams, body V1UpsertAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpsertAMigrationRequest(c.Server, ref, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1473,6 +2064,18 @@ func (c *Client) V1ListAllNetworkBans(ctx context.Context, ref string, reqEditor
 	return c.Client.Do(req)
 }
 
+func (c *Client) V1ListAllNetworkBansEnriched(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ListAllNetworkBansEnrichedRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) V1GetNetworkRestrictions(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1GetNetworkRestrictionsRequest(c.Server, ref)
 	if err != nil {
@@ -1677,20 +2280,8 @@ func (c *Client) V1ListAvailableRestoreVersions(ctx context.Context, ref string,
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1RestoreAProjectWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1RestoreAProjectRequestWithBody(c.Server, ref, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) V1RestoreAProject(ctx context.Context, ref string, body V1RestoreAProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1RestoreAProjectRequest(c.Server, ref, body)
+func (c *Client) V1RestoreAProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1RestoreAProjectRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -1978,7 +2569,7 @@ func (c *Client) V1GetASnippet(ctx context.Context, id openapi_types.UUID, reqEd
 }
 
 // NewV1DeleteABranchRequest generates requests for V1DeleteABranch
-func NewV1DeleteABranchRequest(server string, branchId string) (*http.Request, error) {
+func NewV1DeleteABranchRequest(server string, branchId openapi_types.UUID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -2012,7 +2603,7 @@ func NewV1DeleteABranchRequest(server string, branchId string) (*http.Request, e
 }
 
 // NewV1GetABranchConfigRequest generates requests for V1GetABranchConfig
-func NewV1GetABranchConfigRequest(server string, branchId string) (*http.Request, error) {
+func NewV1GetABranchConfigRequest(server string, branchId openapi_types.UUID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -2046,7 +2637,7 @@ func NewV1GetABranchConfigRequest(server string, branchId string) (*http.Request
 }
 
 // NewV1UpdateABranchConfigRequest calls the generic V1UpdateABranchConfig builder with application/json body
-func NewV1UpdateABranchConfigRequest(server string, branchId string, body V1UpdateABranchConfigJSONRequestBody) (*http.Request, error) {
+func NewV1UpdateABranchConfigRequest(server string, branchId openapi_types.UUID, body V1UpdateABranchConfigJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -2057,7 +2648,7 @@ func NewV1UpdateABranchConfigRequest(server string, branchId string, body V1Upda
 }
 
 // NewV1UpdateABranchConfigRequestWithBody generates requests for V1UpdateABranchConfig with any type of body
-func NewV1UpdateABranchConfigRequestWithBody(server string, branchId string, contentType string, body io.Reader) (*http.Request, error) {
+func NewV1UpdateABranchConfigRequestWithBody(server string, branchId openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -2092,8 +2683,122 @@ func NewV1UpdateABranchConfigRequestWithBody(server string, branchId string, con
 	return req, nil
 }
 
-// NewV1PushABranchRequest generates requests for V1PushABranch
-func NewV1PushABranchRequest(server string, branchId string) (*http.Request, error) {
+// NewV1DiffABranchRequest generates requests for V1DiffABranch
+func NewV1DiffABranchRequest(server string, branchId openapi_types.UUID, params *V1DiffABranchParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id", runtime.ParamLocationPath, branchId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/branches/%s/diff", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.IncludedSchemas != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "included_schemas", runtime.ParamLocationQuery, *params.IncludedSchemas); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1MergeABranchRequest calls the generic V1MergeABranch builder with application/json body
+func NewV1MergeABranchRequest(server string, branchId openapi_types.UUID, body V1MergeABranchJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1MergeABranchRequestWithBody(server, branchId, "application/json", bodyReader)
+}
+
+// NewV1MergeABranchRequestWithBody generates requests for V1MergeABranch with any type of body
+func NewV1MergeABranchRequestWithBody(server string, branchId openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id", runtime.ParamLocationPath, branchId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/branches/%s/merge", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1PushABranchRequest calls the generic V1PushABranch builder with application/json body
+func NewV1PushABranchRequest(server string, branchId openapi_types.UUID, body V1PushABranchJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1PushABranchRequestWithBody(server, branchId, "application/json", bodyReader)
+}
+
+// NewV1PushABranchRequestWithBody generates requests for V1PushABranch with any type of body
+func NewV1PushABranchRequestWithBody(server string, branchId openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -2118,16 +2823,29 @@ func NewV1PushABranchRequest(server string, branchId string) (*http.Request, err
 		return nil, err
 	}
 
-	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	req, err := http.NewRequest("POST", queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
 
+	req.Header.Add("Content-Type", contentType)
+
 	return req, nil
 }
 
-// NewV1ResetABranchRequest generates requests for V1ResetABranch
-func NewV1ResetABranchRequest(server string, branchId string) (*http.Request, error) {
+// NewV1ResetABranchRequest calls the generic V1ResetABranch builder with application/json body
+func NewV1ResetABranchRequest(server string, branchId openapi_types.UUID, body V1ResetABranchJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1ResetABranchRequestWithBody(server, branchId, "application/json", bodyReader)
+}
+
+// NewV1ResetABranchRequestWithBody generates requests for V1ResetABranch with any type of body
+func NewV1ResetABranchRequestWithBody(server string, branchId openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -2152,10 +2870,12 @@ func NewV1ResetABranchRequest(server string, branchId string) (*http.Request, er
 		return nil, err
 	}
 
-	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	req, err := http.NewRequest("POST", queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -2232,6 +2952,151 @@ func NewV1AuthorizeUserRequest(server string, params *V1AuthorizeUserParams) (*h
 				}
 			}
 
+		}
+
+		if params.State != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "state", runtime.ParamLocationQuery, *params.State); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.ResponseMode != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "response_mode", runtime.ParamLocationQuery, *params.ResponseMode); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.CodeChallenge != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "code_challenge", runtime.ParamLocationQuery, *params.CodeChallenge); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.CodeChallengeMethod != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "code_challenge_method", runtime.ParamLocationQuery, *params.CodeChallengeMethod); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1OauthAuthorizeProjectClaimRequest generates requests for V1OauthAuthorizeProjectClaim
+func NewV1OauthAuthorizeProjectClaimRequest(server string, params *V1OauthAuthorizeProjectClaimParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/oauth/authorize/project-claim")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "project_ref", runtime.ParamLocationQuery, params.ProjectRef); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "client_id", runtime.ParamLocationQuery, params.ClientId); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "response_type", runtime.ParamLocationQuery, params.ResponseType); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "redirect_uri", runtime.ParamLocationQuery, params.RedirectUri); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
 		}
 
 		if params.State != nil {
@@ -2524,6 +3389,88 @@ func NewV1ListOrganizationMembersRequest(server string, slug string) (*http.Requ
 	return req, nil
 }
 
+// NewV1GetOrganizationProjectClaimRequest generates requests for V1GetOrganizationProjectClaim
+func NewV1GetOrganizationProjectClaimRequest(server string, slug string, token string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "slug", runtime.ParamLocationPath, slug)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "token", runtime.ParamLocationPath, token)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/organizations/%s/project-claim/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1ClaimProjectForOrganizationRequest generates requests for V1ClaimProjectForOrganization
+func NewV1ClaimProjectForOrganizationRequest(server string, slug string, token string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "slug", runtime.ParamLocationPath, slug)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "token", runtime.ParamLocationPath, token)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/organizations/%s/project-claim/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewV1ListAllProjectsRequest generates requests for V1ListAllProjects
 func NewV1ListAllProjectsRequest(server string) (*http.Request, error) {
 	var err error
@@ -2659,8 +3606,98 @@ func NewV1GetProjectRequest(server string, ref string) (*http.Request, error) {
 	return req, nil
 }
 
-// NewGetLogsRequest generates requests for GetLogs
-func NewGetLogsRequest(server string, ref string, params *GetLogsParams) (*http.Request, error) {
+// NewV1GetPerformanceAdvisorsRequest generates requests for V1GetPerformanceAdvisors
+func NewV1GetPerformanceAdvisorsRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/advisors/performance", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1GetSecurityAdvisorsRequest generates requests for V1GetSecurityAdvisors
+func NewV1GetSecurityAdvisorsRequest(server string, ref string, params *V1GetSecurityAdvisorsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/advisors/security", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.LintType != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "lint_type", runtime.ParamLocationQuery, *params.LintType); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1GetProjectLogsRequest generates requests for V1GetProjectLogs
+func NewV1GetProjectLogsRequest(server string, ref string, params *V1GetProjectLogsParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -2688,9 +3725,9 @@ func NewGetLogsRequest(server string, ref string, params *GetLogsParams) (*http.
 	if params != nil {
 		queryValues := queryURL.Query()
 
-		if params.IsoTimestampEnd != nil {
+		if params.Sql != nil {
 
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "iso_timestamp_end", runtime.ParamLocationQuery, *params.IsoTimestampEnd); err != nil {
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "sql", runtime.ParamLocationQuery, *params.Sql); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -2720,9 +3757,9 @@ func NewGetLogsRequest(server string, ref string, params *GetLogsParams) (*http.
 
 		}
 
-		if params.Sql != nil {
+		if params.IsoTimestampEnd != nil {
 
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "sql", runtime.ParamLocationQuery, *params.Sql); err != nil {
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "iso_timestamp_end", runtime.ParamLocationQuery, *params.IsoTimestampEnd); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -2737,6 +3774,96 @@ func NewGetLogsRequest(server string, ref string, params *GetLogsParams) (*http.
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1GetProjectUsageApiCountRequest generates requests for V1GetProjectUsageApiCount
+func NewV1GetProjectUsageApiCountRequest(server string, ref string, params *V1GetProjectUsageApiCountParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/analytics/endpoints/usage.api-counts", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Interval != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "interval", runtime.ParamLocationQuery, *params.Interval); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1GetProjectUsageRequestCountRequest generates requests for V1GetProjectUsageRequestCount
+func NewV1GetProjectUsageRequestCountRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/analytics/endpoints/usage.api-requests-count", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -2776,16 +3903,20 @@ func NewV1GetProjectApiKeysRequest(server string, ref string, params *V1GetProje
 	if params != nil {
 		queryValues := queryURL.Query()
 
-		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "reveal", runtime.ParamLocationQuery, params.Reveal); err != nil {
-			return nil, err
-		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-			return nil, err
-		} else {
-			for k, v := range parsed {
-				for _, v2 := range v {
-					queryValues.Add(k, v2)
+		if params.Reveal != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "reveal", runtime.ParamLocationQuery, *params.Reveal); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
 				}
 			}
+
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
@@ -2799,19 +3930,19 @@ func NewV1GetProjectApiKeysRequest(server string, ref string, params *V1GetProje
 	return req, nil
 }
 
-// NewCreateApiKeyRequest calls the generic CreateApiKey builder with application/json body
-func NewCreateApiKeyRequest(server string, ref string, params *CreateApiKeyParams, body CreateApiKeyJSONRequestBody) (*http.Request, error) {
+// NewV1CreateProjectApiKeyRequest calls the generic V1CreateProjectApiKey builder with application/json body
+func NewV1CreateProjectApiKeyRequest(server string, ref string, params *V1CreateProjectApiKeyParams, body V1CreateProjectApiKeyJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewCreateApiKeyRequestWithBody(server, ref, params, "application/json", bodyReader)
+	return NewV1CreateProjectApiKeyRequestWithBody(server, ref, params, "application/json", bodyReader)
 }
 
-// NewCreateApiKeyRequestWithBody generates requests for CreateApiKey with any type of body
-func NewCreateApiKeyRequestWithBody(server string, ref string, params *CreateApiKeyParams, contentType string, body io.Reader) (*http.Request, error) {
+// NewV1CreateProjectApiKeyRequestWithBody generates requests for V1CreateProjectApiKey with any type of body
+func NewV1CreateProjectApiKeyRequestWithBody(server string, ref string, params *V1CreateProjectApiKeyParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -2839,16 +3970,20 @@ func NewCreateApiKeyRequestWithBody(server string, ref string, params *CreateApi
 	if params != nil {
 		queryValues := queryURL.Query()
 
-		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "reveal", runtime.ParamLocationQuery, params.Reveal); err != nil {
-			return nil, err
-		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-			return nil, err
-		} else {
-			for k, v := range parsed {
-				for _, v2 := range v {
-					queryValues.Add(k, v2)
+		if params.Reveal != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "reveal", runtime.ParamLocationQuery, *params.Reveal); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
 				}
 			}
+
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
@@ -2864,8 +3999,94 @@ func NewCreateApiKeyRequestWithBody(server string, ref string, params *CreateApi
 	return req, nil
 }
 
-// NewDeleteApiKeyRequest generates requests for DeleteApiKey
-func NewDeleteApiKeyRequest(server string, ref string, id string, params *DeleteApiKeyParams) (*http.Request, error) {
+// NewV1GetProjectLegacyApiKeysRequest generates requests for V1GetProjectLegacyApiKeys
+func NewV1GetProjectLegacyApiKeysRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/api-keys/legacy", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1UpdateProjectLegacyApiKeysRequest generates requests for V1UpdateProjectLegacyApiKeys
+func NewV1UpdateProjectLegacyApiKeysRequest(server string, ref string, params *V1UpdateProjectLegacyApiKeysParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/api-keys/legacy", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "enabled", runtime.ParamLocationQuery, params.Enabled); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1DeleteProjectApiKeyRequest generates requests for V1DeleteProjectApiKey
+func NewV1DeleteProjectApiKeyRequest(server string, ref string, id openapi_types.UUID, params *V1DeleteProjectApiKeyParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -2900,16 +4121,52 @@ func NewDeleteApiKeyRequest(server string, ref string, id string, params *Delete
 	if params != nil {
 		queryValues := queryURL.Query()
 
-		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "reveal", runtime.ParamLocationQuery, params.Reveal); err != nil {
-			return nil, err
-		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-			return nil, err
-		} else {
-			for k, v := range parsed {
-				for _, v2 := range v {
-					queryValues.Add(k, v2)
+		if params.Reveal != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "reveal", runtime.ParamLocationQuery, *params.Reveal); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
 				}
 			}
+
+		}
+
+		if params.WasCompromised != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "was_compromised", runtime.ParamLocationQuery, *params.WasCompromised); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Reason != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "reason", runtime.ParamLocationQuery, *params.Reason); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
@@ -2923,8 +4180,8 @@ func NewDeleteApiKeyRequest(server string, ref string, id string, params *Delete
 	return req, nil
 }
 
-// NewGetApiKeyRequest generates requests for GetApiKey
-func NewGetApiKeyRequest(server string, ref string, id string, params *GetApiKeyParams) (*http.Request, error) {
+// NewV1GetProjectApiKeyRequest generates requests for V1GetProjectApiKey
+func NewV1GetProjectApiKeyRequest(server string, ref string, id openapi_types.UUID, params *V1GetProjectApiKeyParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -2959,16 +4216,20 @@ func NewGetApiKeyRequest(server string, ref string, id string, params *GetApiKey
 	if params != nil {
 		queryValues := queryURL.Query()
 
-		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "reveal", runtime.ParamLocationQuery, params.Reveal); err != nil {
-			return nil, err
-		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-			return nil, err
-		} else {
-			for k, v := range parsed {
-				for _, v2 := range v {
-					queryValues.Add(k, v2)
+		if params.Reveal != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "reveal", runtime.ParamLocationQuery, *params.Reveal); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
 				}
 			}
+
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
@@ -2982,19 +4243,19 @@ func NewGetApiKeyRequest(server string, ref string, id string, params *GetApiKey
 	return req, nil
 }
 
-// NewUpdateApiKeyRequest calls the generic UpdateApiKey builder with application/json body
-func NewUpdateApiKeyRequest(server string, ref string, id string, params *UpdateApiKeyParams, body UpdateApiKeyJSONRequestBody) (*http.Request, error) {
+// NewV1UpdateProjectApiKeyRequest calls the generic V1UpdateProjectApiKey builder with application/json body
+func NewV1UpdateProjectApiKeyRequest(server string, ref string, id openapi_types.UUID, params *V1UpdateProjectApiKeyParams, body V1UpdateProjectApiKeyJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewUpdateApiKeyRequestWithBody(server, ref, id, params, "application/json", bodyReader)
+	return NewV1UpdateProjectApiKeyRequestWithBody(server, ref, id, params, "application/json", bodyReader)
 }
 
-// NewUpdateApiKeyRequestWithBody generates requests for UpdateApiKey with any type of body
-func NewUpdateApiKeyRequestWithBody(server string, ref string, id string, params *UpdateApiKeyParams, contentType string, body io.Reader) (*http.Request, error) {
+// NewV1UpdateProjectApiKeyRequestWithBody generates requests for V1UpdateProjectApiKey with any type of body
+func NewV1UpdateProjectApiKeyRequestWithBody(server string, ref string, id openapi_types.UUID, params *V1UpdateProjectApiKeyParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -3029,16 +4290,20 @@ func NewUpdateApiKeyRequestWithBody(server string, ref string, id string, params
 	if params != nil {
 		queryValues := queryURL.Query()
 
-		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "reveal", runtime.ParamLocationQuery, params.Reveal); err != nil {
-			return nil, err
-		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-			return nil, err
-		} else {
-			for k, v := range parsed {
-				for _, v2 := range v {
-					queryValues.Add(k, v2)
+		if params.Reveal != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "reveal", runtime.ParamLocationQuery, *params.Reveal); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
 				}
 			}
+
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
@@ -3050,6 +4315,128 @@ func NewUpdateApiKeyRequestWithBody(server string, ref string, id string, params
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1ListProjectAddonsRequest generates requests for V1ListProjectAddons
+func NewV1ListProjectAddonsRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/billing/addons", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1ApplyProjectAddonRequest calls the generic V1ApplyProjectAddon builder with application/json body
+func NewV1ApplyProjectAddonRequest(server string, ref string, body V1ApplyProjectAddonJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1ApplyProjectAddonRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1ApplyProjectAddonRequestWithBody generates requests for V1ApplyProjectAddon with any type of body
+func NewV1ApplyProjectAddonRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/billing/addons", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1RemoveProjectAddonRequest generates requests for V1RemoveProjectAddon
+func NewV1RemoveProjectAddonRequest(server string, ref string, addonVariant interface{}) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "addon_variant", runtime.ParamLocationPath, addonVariant)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/billing/addons/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -3169,6 +4556,108 @@ func NewV1CreateABranchRequestWithBody(server string, ref string, contentType st
 	return req, nil
 }
 
+// NewV1DeleteProjectClaimTokenRequest generates requests for V1DeleteProjectClaimToken
+func NewV1DeleteProjectClaimTokenRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/claim-token", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1GetProjectClaimTokenRequest generates requests for V1GetProjectClaimToken
+func NewV1GetProjectClaimTokenRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/claim-token", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1CreateProjectClaimTokenRequest generates requests for V1CreateProjectClaimToken
+func NewV1CreateProjectClaimTokenRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/claim-token", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewV1GetAuthServiceConfigRequest generates requests for V1GetAuthServiceConfig
 func NewV1GetAuthServiceConfigRequest(server string, ref string) (*http.Request, error) {
 	var err error
@@ -3231,6 +4720,291 @@ func NewV1UpdateAuthServiceConfigRequestWithBody(server string, ref string, cont
 	}
 
 	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1GetProjectSigningKeysRequest generates requests for V1GetProjectSigningKeys
+func NewV1GetProjectSigningKeysRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth/signing-keys", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1CreateProjectSigningKeyRequest calls the generic V1CreateProjectSigningKey builder with application/json body
+func NewV1CreateProjectSigningKeyRequest(server string, ref string, body V1CreateProjectSigningKeyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1CreateProjectSigningKeyRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1CreateProjectSigningKeyRequestWithBody generates requests for V1CreateProjectSigningKey with any type of body
+func NewV1CreateProjectSigningKeyRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth/signing-keys", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1GetLegacySigningKeyRequest generates requests for V1GetLegacySigningKey
+func NewV1GetLegacySigningKeyRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth/signing-keys/legacy", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1CreateLegacySigningKeyRequest generates requests for V1CreateLegacySigningKey
+func NewV1CreateLegacySigningKeyRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth/signing-keys/legacy", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1RemoveProjectSigningKeyRequest generates requests for V1RemoveProjectSigningKey
+func NewV1RemoveProjectSigningKeyRequest(server string, ref string, id openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth/signing-keys/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1GetProjectSigningKeyRequest generates requests for V1GetProjectSigningKey
+func NewV1GetProjectSigningKeyRequest(server string, ref string, id openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth/signing-keys/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1UpdateProjectSigningKeyRequest calls the generic V1UpdateProjectSigningKey builder with application/json body
+func NewV1UpdateProjectSigningKeyRequest(server string, ref string, id openapi_types.UUID, body V1UpdateProjectSigningKeyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1UpdateProjectSigningKeyRequestWithBody(server, ref, id, "application/json", bodyReader)
+}
+
+// NewV1UpdateProjectSigningKeyRequestWithBody generates requests for V1UpdateProjectSigningKey with any type of body
+func NewV1UpdateProjectSigningKeyRequestWithBody(server string, ref string, id openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/auth/signing-keys/%s", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -3332,7 +5106,7 @@ func NewV1CreateASsoProviderRequestWithBody(server string, ref string, contentTy
 }
 
 // NewV1DeleteASsoProviderRequest generates requests for V1DeleteASsoProvider
-func NewV1DeleteASsoProviderRequest(server string, ref string, providerId string) (*http.Request, error) {
+func NewV1DeleteASsoProviderRequest(server string, ref string, providerId openapi_types.UUID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -3373,7 +5147,7 @@ func NewV1DeleteASsoProviderRequest(server string, ref string, providerId string
 }
 
 // NewV1GetASsoProviderRequest generates requests for V1GetASsoProvider
-func NewV1GetASsoProviderRequest(server string, ref string, providerId string) (*http.Request, error) {
+func NewV1GetASsoProviderRequest(server string, ref string, providerId openapi_types.UUID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -3414,7 +5188,7 @@ func NewV1GetASsoProviderRequest(server string, ref string, providerId string) (
 }
 
 // NewV1UpdateASsoProviderRequest calls the generic V1UpdateASsoProvider builder with application/json body
-func NewV1UpdateASsoProviderRequest(server string, ref string, providerId string, body V1UpdateASsoProviderJSONRequestBody) (*http.Request, error) {
+func NewV1UpdateASsoProviderRequest(server string, ref string, providerId openapi_types.UUID, body V1UpdateASsoProviderJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -3425,7 +5199,7 @@ func NewV1UpdateASsoProviderRequest(server string, ref string, providerId string
 }
 
 // NewV1UpdateASsoProviderRequestWithBody generates requests for V1UpdateASsoProvider with any type of body
-func NewV1UpdateASsoProviderRequestWithBody(server string, ref string, providerId string, contentType string, body io.Reader) (*http.Request, error) {
+func NewV1UpdateASsoProviderRequestWithBody(server string, ref string, providerId openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -3467,8 +5241,8 @@ func NewV1UpdateASsoProviderRequestWithBody(server string, ref string, providerI
 	return req, nil
 }
 
-// NewListTPAForProjectRequest generates requests for ListTPAForProject
-func NewListTPAForProjectRequest(server string, ref string) (*http.Request, error) {
+// NewV1ListProjectTpaIntegrationsRequest generates requests for V1ListProjectTpaIntegrations
+func NewV1ListProjectTpaIntegrationsRequest(server string, ref string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -3501,19 +5275,19 @@ func NewListTPAForProjectRequest(server string, ref string) (*http.Request, erro
 	return req, nil
 }
 
-// NewCreateTPAForProjectRequest calls the generic CreateTPAForProject builder with application/json body
-func NewCreateTPAForProjectRequest(server string, ref string, body CreateTPAForProjectJSONRequestBody) (*http.Request, error) {
+// NewV1CreateProjectTpaIntegrationRequest calls the generic V1CreateProjectTpaIntegration builder with application/json body
+func NewV1CreateProjectTpaIntegrationRequest(server string, ref string, body V1CreateProjectTpaIntegrationJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewCreateTPAForProjectRequestWithBody(server, ref, "application/json", bodyReader)
+	return NewV1CreateProjectTpaIntegrationRequestWithBody(server, ref, "application/json", bodyReader)
 }
 
-// NewCreateTPAForProjectRequestWithBody generates requests for CreateTPAForProject with any type of body
-func NewCreateTPAForProjectRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+// NewV1CreateProjectTpaIntegrationRequestWithBody generates requests for V1CreateProjectTpaIntegration with any type of body
+func NewV1CreateProjectTpaIntegrationRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -3548,8 +5322,8 @@ func NewCreateTPAForProjectRequestWithBody(server string, ref string, contentTyp
 	return req, nil
 }
 
-// NewDeleteTPAForProjectRequest generates requests for DeleteTPAForProject
-func NewDeleteTPAForProjectRequest(server string, ref string, tpaId string) (*http.Request, error) {
+// NewV1DeleteProjectTpaIntegrationRequest generates requests for V1DeleteProjectTpaIntegration
+func NewV1DeleteProjectTpaIntegrationRequest(server string, ref string, tpaId openapi_types.UUID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -3589,8 +5363,8 @@ func NewDeleteTPAForProjectRequest(server string, ref string, tpaId string) (*ht
 	return req, nil
 }
 
-// NewGetTPAForProjectRequest generates requests for GetTPAForProject
-func NewGetTPAForProjectRequest(server string, ref string, tpaId string) (*http.Request, error) {
+// NewV1GetProjectTpaIntegrationRequest generates requests for V1GetProjectTpaIntegration
+func NewV1GetProjectTpaIntegrationRequest(server string, ref string, tpaId openapi_types.UUID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -3664,8 +5438,8 @@ func NewV1GetProjectPgbouncerConfigRequest(server string, ref string) (*http.Req
 	return req, nil
 }
 
-// NewV1GetSupavisorConfigRequest generates requests for V1GetSupavisorConfig
-func NewV1GetSupavisorConfigRequest(server string, ref string) (*http.Request, error) {
+// NewV1GetPoolerConfigRequest generates requests for V1GetPoolerConfig
+func NewV1GetPoolerConfigRequest(server string, ref string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -3698,19 +5472,19 @@ func NewV1GetSupavisorConfigRequest(server string, ref string) (*http.Request, e
 	return req, nil
 }
 
-// NewV1UpdateSupavisorConfigRequest calls the generic V1UpdateSupavisorConfig builder with application/json body
-func NewV1UpdateSupavisorConfigRequest(server string, ref string, body V1UpdateSupavisorConfigJSONRequestBody) (*http.Request, error) {
+// NewV1UpdatePoolerConfigRequest calls the generic V1UpdatePoolerConfig builder with application/json body
+func NewV1UpdatePoolerConfigRequest(server string, ref string, body V1UpdatePoolerConfigJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewV1UpdateSupavisorConfigRequestWithBody(server, ref, "application/json", bodyReader)
+	return NewV1UpdatePoolerConfigRequestWithBody(server, ref, "application/json", bodyReader)
 }
 
-// NewV1UpdateSupavisorConfigRequestWithBody generates requests for V1UpdateSupavisorConfig with any type of body
-func NewV1UpdateSupavisorConfigRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+// NewV1UpdatePoolerConfigRequestWithBody generates requests for V1UpdatePoolerConfig with any type of body
+func NewV1UpdatePoolerConfigRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4171,8 +5945,158 @@ func NewV1RestorePitrBackupRequestWithBody(server string, ref string, contentTyp
 	return req, nil
 }
 
-// NewGetDatabaseMetadataRequest generates requests for GetDatabaseMetadata
-func NewGetDatabaseMetadataRequest(server string, ref string) (*http.Request, error) {
+// NewV1GetRestorePointRequest generates requests for V1GetRestorePoint
+func NewV1GetRestorePointRequest(server string, ref string, params *V1GetRestorePointParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/backups/restore-point", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Name != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "name", runtime.ParamLocationQuery, *params.Name); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1CreateRestorePointRequest calls the generic V1CreateRestorePoint builder with application/json body
+func NewV1CreateRestorePointRequest(server string, ref string, body V1CreateRestorePointJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1CreateRestorePointRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1CreateRestorePointRequestWithBody generates requests for V1CreateRestorePoint with any type of body
+func NewV1CreateRestorePointRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/backups/restore-point", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1UndoRequest calls the generic V1Undo builder with application/json body
+func NewV1UndoRequest(server string, ref string, body V1UndoJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1UndoRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1UndoRequestWithBody generates requests for V1Undo with any type of body
+func NewV1UndoRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/backups/undo", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1GetDatabaseMetadataRequest generates requests for V1GetDatabaseMetadata
+func NewV1GetDatabaseMetadataRequest(server string, ref string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -4200,6 +6124,164 @@ func NewGetDatabaseMetadataRequest(server string, ref string) (*http.Request, er
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1ListMigrationHistoryRequest generates requests for V1ListMigrationHistory
+func NewV1ListMigrationHistoryRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/migrations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1ApplyAMigrationRequest calls the generic V1ApplyAMigration builder with application/json body
+func NewV1ApplyAMigrationRequest(server string, ref string, params *V1ApplyAMigrationParams, body V1ApplyAMigrationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1ApplyAMigrationRequestWithBody(server, ref, params, "application/json", bodyReader)
+}
+
+// NewV1ApplyAMigrationRequestWithBody generates requests for V1ApplyAMigration with any type of body
+func NewV1ApplyAMigrationRequestWithBody(server string, ref string, params *V1ApplyAMigrationParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/migrations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.IdempotencyKey != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "Idempotency-Key", runtime.ParamLocationHeader, *params.IdempotencyKey)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewV1UpsertAMigrationRequest calls the generic V1UpsertAMigration builder with application/json body
+func NewV1UpsertAMigrationRequest(server string, ref string, params *V1UpsertAMigrationParams, body V1UpsertAMigrationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1UpsertAMigrationRequestWithBody(server, ref, params, "application/json", bodyReader)
+}
+
+// NewV1UpsertAMigrationRequestWithBody generates requests for V1UpsertAMigration with any type of body
+func NewV1UpsertAMigrationRequestWithBody(server string, ref string, params *V1UpsertAMigrationParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/migrations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.IdempotencyKey != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "Idempotency-Key", runtime.ParamLocationHeader, *params.IdempotencyKey)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Idempotency-Key", headerParam0)
+		}
+
 	}
 
 	return req, nil
@@ -4456,9 +6538,9 @@ func NewV1CreateAFunctionRequestWithBody(server string, ref string, params *V1Cr
 
 		}
 
-		if params.ComputeMultiplier != nil {
+		if params.EzbrSha256 != nil {
 
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "compute_multiplier", runtime.ParamLocationQuery, *params.ComputeMultiplier); err != nil {
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "ezbr_sha256", runtime.ParamLocationQuery, *params.EzbrSha256); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -4831,9 +6913,9 @@ func NewV1UpdateAFunctionRequestWithBody(server string, ref string, functionSlug
 
 		}
 
-		if params.ComputeMultiplier != nil {
+		if params.EzbrSha256 != nil {
 
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "compute_multiplier", runtime.ParamLocationQuery, *params.ComputeMultiplier); err != nil {
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "ezbr_sha256", runtime.ParamLocationQuery, *params.EzbrSha256); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -4930,6 +7012,18 @@ func NewV1GetServicesHealthRequest(server string, ref string, params *V1GetServi
 	if params != nil {
 		queryValues := queryURL.Query()
 
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "services", runtime.ParamLocationQuery, params.Services); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
 		if params.TimeoutMs != nil {
 
 			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "timeout_ms", runtime.ParamLocationQuery, *params.TimeoutMs); err != nil {
@@ -4944,18 +7038,6 @@ func NewV1GetServicesHealthRequest(server string, ref string, params *V1GetServi
 				}
 			}
 
-		}
-
-		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "services", runtime.ParamLocationQuery, params.Services); err != nil {
-			return nil, err
-		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-			return nil, err
-		} else {
-			for k, v := range parsed {
-				for _, v2 := range v {
-					queryValues.Add(k, v2)
-				}
-			}
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
@@ -5033,6 +7115,40 @@ func NewV1ListAllNetworkBansRequest(server string, ref string) (*http.Request, e
 	}
 
 	operationPath := fmt.Sprintf("/v1/projects/%s/network-bans/retrieve", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1ListAllNetworkBansEnrichedRequest generates requests for V1ListAllNetworkBansEnriched
+func NewV1ListAllNetworkBansEnrichedRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/network-bans/retrieve/enriched", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -5523,19 +7639,8 @@ func NewV1ListAvailableRestoreVersionsRequest(server string, ref string) (*http.
 	return req, nil
 }
 
-// NewV1RestoreAProjectRequest calls the generic V1RestoreAProject builder with application/json body
-func NewV1RestoreAProjectRequest(server string, ref string, body V1RestoreAProjectJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewV1RestoreAProjectRequestWithBody(server, ref, "application/json", bodyReader)
-}
-
-// NewV1RestoreAProjectRequestWithBody generates requests for V1RestoreAProject with any type of body
-func NewV1RestoreAProjectRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+// NewV1RestoreAProjectRequest generates requests for V1RestoreAProject
+func NewV1RestoreAProjectRequest(server string, ref string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -5560,12 +7665,10 @@ func NewV1RestoreAProjectRequestWithBody(server string, ref string, contentType 
 		return nil, err
 	}
 
-	req, err := http.NewRequest("POST", queryURL.String(), body)
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -6224,6 +8327,22 @@ func NewV1ListAllSnippetsRequest(server string, params *V1ListAllSnippetsParams)
 	if params != nil {
 		queryValues := queryURL.Query()
 
+		if params.ProjectRef != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "project_ref", runtime.ParamLocationQuery, *params.ProjectRef); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
 		if params.Cursor != nil {
 
 			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "cursor", runtime.ParamLocationQuery, *params.Cursor); err != nil {
@@ -6275,22 +8394,6 @@ func NewV1ListAllSnippetsRequest(server string, params *V1ListAllSnippetsParams)
 		if params.SortOrder != nil {
 
 			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "sort_order", runtime.ParamLocationQuery, *params.SortOrder); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.ProjectRef != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "project_ref", runtime.ParamLocationQuery, *params.ProjectRef); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -6393,24 +8496,39 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 	// V1DeleteABranchWithResponse request
-	V1DeleteABranchWithResponse(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*V1DeleteABranchResponse, error)
+	V1DeleteABranchWithResponse(ctx context.Context, branchId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1DeleteABranchResponse, error)
 
 	// V1GetABranchConfigWithResponse request
-	V1GetABranchConfigWithResponse(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*V1GetABranchConfigResponse, error)
+	V1GetABranchConfigWithResponse(ctx context.Context, branchId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1GetABranchConfigResponse, error)
 
 	// V1UpdateABranchConfigWithBodyWithResponse request with any body
-	V1UpdateABranchConfigWithBodyWithResponse(ctx context.Context, branchId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateABranchConfigResponse, error)
+	V1UpdateABranchConfigWithBodyWithResponse(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateABranchConfigResponse, error)
 
-	V1UpdateABranchConfigWithResponse(ctx context.Context, branchId string, body V1UpdateABranchConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateABranchConfigResponse, error)
+	V1UpdateABranchConfigWithResponse(ctx context.Context, branchId openapi_types.UUID, body V1UpdateABranchConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateABranchConfigResponse, error)
 
-	// V1PushABranchWithResponse request
-	V1PushABranchWithResponse(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*V1PushABranchResponse, error)
+	// V1DiffABranchWithResponse request
+	V1DiffABranchWithResponse(ctx context.Context, branchId openapi_types.UUID, params *V1DiffABranchParams, reqEditors ...RequestEditorFn) (*V1DiffABranchResponse, error)
 
-	// V1ResetABranchWithResponse request
-	V1ResetABranchWithResponse(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*V1ResetABranchResponse, error)
+	// V1MergeABranchWithBodyWithResponse request with any body
+	V1MergeABranchWithBodyWithResponse(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1MergeABranchResponse, error)
+
+	V1MergeABranchWithResponse(ctx context.Context, branchId openapi_types.UUID, body V1MergeABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1MergeABranchResponse, error)
+
+	// V1PushABranchWithBodyWithResponse request with any body
+	V1PushABranchWithBodyWithResponse(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1PushABranchResponse, error)
+
+	V1PushABranchWithResponse(ctx context.Context, branchId openapi_types.UUID, body V1PushABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1PushABranchResponse, error)
+
+	// V1ResetABranchWithBodyWithResponse request with any body
+	V1ResetABranchWithBodyWithResponse(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ResetABranchResponse, error)
+
+	V1ResetABranchWithResponse(ctx context.Context, branchId openapi_types.UUID, body V1ResetABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ResetABranchResponse, error)
 
 	// V1AuthorizeUserWithResponse request
 	V1AuthorizeUserWithResponse(ctx context.Context, params *V1AuthorizeUserParams, reqEditors ...RequestEditorFn) (*V1AuthorizeUserResponse, error)
+
+	// V1OauthAuthorizeProjectClaimWithResponse request
+	V1OauthAuthorizeProjectClaimWithResponse(ctx context.Context, params *V1OauthAuthorizeProjectClaimParams, reqEditors ...RequestEditorFn) (*V1OauthAuthorizeProjectClaimResponse, error)
 
 	// V1RevokeTokenWithBodyWithResponse request with any body
 	V1RevokeTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RevokeTokenResponse, error)
@@ -6436,6 +8554,12 @@ type ClientWithResponsesInterface interface {
 	// V1ListOrganizationMembersWithResponse request
 	V1ListOrganizationMembersWithResponse(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*V1ListOrganizationMembersResponse, error)
 
+	// V1GetOrganizationProjectClaimWithResponse request
+	V1GetOrganizationProjectClaimWithResponse(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*V1GetOrganizationProjectClaimResponse, error)
+
+	// V1ClaimProjectForOrganizationWithResponse request
+	V1ClaimProjectForOrganizationWithResponse(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*V1ClaimProjectForOrganizationResponse, error)
+
 	// V1ListAllProjectsWithResponse request
 	V1ListAllProjectsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*V1ListAllProjectsResponse, error)
 
@@ -6450,27 +8574,56 @@ type ClientWithResponsesInterface interface {
 	// V1GetProjectWithResponse request
 	V1GetProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectResponse, error)
 
-	// GetLogsWithResponse request
-	GetLogsWithResponse(ctx context.Context, ref string, params *GetLogsParams, reqEditors ...RequestEditorFn) (*GetLogsResponse, error)
+	// V1GetPerformanceAdvisorsWithResponse request
+	V1GetPerformanceAdvisorsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPerformanceAdvisorsResponse, error)
+
+	// V1GetSecurityAdvisorsWithResponse request
+	V1GetSecurityAdvisorsWithResponse(ctx context.Context, ref string, params *V1GetSecurityAdvisorsParams, reqEditors ...RequestEditorFn) (*V1GetSecurityAdvisorsResponse, error)
+
+	// V1GetProjectLogsWithResponse request
+	V1GetProjectLogsWithResponse(ctx context.Context, ref string, params *V1GetProjectLogsParams, reqEditors ...RequestEditorFn) (*V1GetProjectLogsResponse, error)
+
+	// V1GetProjectUsageApiCountWithResponse request
+	V1GetProjectUsageApiCountWithResponse(ctx context.Context, ref string, params *V1GetProjectUsageApiCountParams, reqEditors ...RequestEditorFn) (*V1GetProjectUsageApiCountResponse, error)
+
+	// V1GetProjectUsageRequestCountWithResponse request
+	V1GetProjectUsageRequestCountWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectUsageRequestCountResponse, error)
 
 	// V1GetProjectApiKeysWithResponse request
 	V1GetProjectApiKeysWithResponse(ctx context.Context, ref string, params *V1GetProjectApiKeysParams, reqEditors ...RequestEditorFn) (*V1GetProjectApiKeysResponse, error)
 
-	// CreateApiKeyWithBodyWithResponse request with any body
-	CreateApiKeyWithBodyWithResponse(ctx context.Context, ref string, params *CreateApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateApiKeyResponse, error)
+	// V1CreateProjectApiKeyWithBodyWithResponse request with any body
+	V1CreateProjectApiKeyWithBodyWithResponse(ctx context.Context, ref string, params *V1CreateProjectApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1CreateProjectApiKeyResponse, error)
 
-	CreateApiKeyWithResponse(ctx context.Context, ref string, params *CreateApiKeyParams, body CreateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateApiKeyResponse, error)
+	V1CreateProjectApiKeyWithResponse(ctx context.Context, ref string, params *V1CreateProjectApiKeyParams, body V1CreateProjectApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateProjectApiKeyResponse, error)
 
-	// DeleteApiKeyWithResponse request
-	DeleteApiKeyWithResponse(ctx context.Context, ref string, id string, params *DeleteApiKeyParams, reqEditors ...RequestEditorFn) (*DeleteApiKeyResponse, error)
+	// V1GetProjectLegacyApiKeysWithResponse request
+	V1GetProjectLegacyApiKeysWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectLegacyApiKeysResponse, error)
 
-	// GetApiKeyWithResponse request
-	GetApiKeyWithResponse(ctx context.Context, ref string, id string, params *GetApiKeyParams, reqEditors ...RequestEditorFn) (*GetApiKeyResponse, error)
+	// V1UpdateProjectLegacyApiKeysWithResponse request
+	V1UpdateProjectLegacyApiKeysWithResponse(ctx context.Context, ref string, params *V1UpdateProjectLegacyApiKeysParams, reqEditors ...RequestEditorFn) (*V1UpdateProjectLegacyApiKeysResponse, error)
 
-	// UpdateApiKeyWithBodyWithResponse request with any body
-	UpdateApiKeyWithBodyWithResponse(ctx context.Context, ref string, id string, params *UpdateApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateApiKeyResponse, error)
+	// V1DeleteProjectApiKeyWithResponse request
+	V1DeleteProjectApiKeyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, params *V1DeleteProjectApiKeyParams, reqEditors ...RequestEditorFn) (*V1DeleteProjectApiKeyResponse, error)
 
-	UpdateApiKeyWithResponse(ctx context.Context, ref string, id string, params *UpdateApiKeyParams, body UpdateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateApiKeyResponse, error)
+	// V1GetProjectApiKeyWithResponse request
+	V1GetProjectApiKeyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, params *V1GetProjectApiKeyParams, reqEditors ...RequestEditorFn) (*V1GetProjectApiKeyResponse, error)
+
+	// V1UpdateProjectApiKeyWithBodyWithResponse request with any body
+	V1UpdateProjectApiKeyWithBodyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, params *V1UpdateProjectApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateProjectApiKeyResponse, error)
+
+	V1UpdateProjectApiKeyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, params *V1UpdateProjectApiKeyParams, body V1UpdateProjectApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateProjectApiKeyResponse, error)
+
+	// V1ListProjectAddonsWithResponse request
+	V1ListProjectAddonsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListProjectAddonsResponse, error)
+
+	// V1ApplyProjectAddonWithBodyWithResponse request with any body
+	V1ApplyProjectAddonWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ApplyProjectAddonResponse, error)
+
+	V1ApplyProjectAddonWithResponse(ctx context.Context, ref string, body V1ApplyProjectAddonJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ApplyProjectAddonResponse, error)
+
+	// V1RemoveProjectAddonWithResponse request
+	V1RemoveProjectAddonWithResponse(ctx context.Context, ref string, addonVariant interface{}, reqEditors ...RequestEditorFn) (*V1RemoveProjectAddonResponse, error)
 
 	// V1DisablePreviewBranchingWithResponse request
 	V1DisablePreviewBranchingWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DisablePreviewBranchingResponse, error)
@@ -6483,6 +8636,15 @@ type ClientWithResponsesInterface interface {
 
 	V1CreateABranchWithResponse(ctx context.Context, ref string, body V1CreateABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateABranchResponse, error)
 
+	// V1DeleteProjectClaimTokenWithResponse request
+	V1DeleteProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteProjectClaimTokenResponse, error)
+
+	// V1GetProjectClaimTokenWithResponse request
+	V1GetProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectClaimTokenResponse, error)
+
+	// V1CreateProjectClaimTokenWithResponse request
+	V1CreateProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1CreateProjectClaimTokenResponse, error)
+
 	// V1GetAuthServiceConfigWithResponse request
 	V1GetAuthServiceConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetAuthServiceConfigResponse, error)
 
@@ -6490,6 +8652,31 @@ type ClientWithResponsesInterface interface {
 	V1UpdateAuthServiceConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateAuthServiceConfigResponse, error)
 
 	V1UpdateAuthServiceConfigWithResponse(ctx context.Context, ref string, body V1UpdateAuthServiceConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateAuthServiceConfigResponse, error)
+
+	// V1GetProjectSigningKeysWithResponse request
+	V1GetProjectSigningKeysWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectSigningKeysResponse, error)
+
+	// V1CreateProjectSigningKeyWithBodyWithResponse request with any body
+	V1CreateProjectSigningKeyWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1CreateProjectSigningKeyResponse, error)
+
+	V1CreateProjectSigningKeyWithResponse(ctx context.Context, ref string, body V1CreateProjectSigningKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateProjectSigningKeyResponse, error)
+
+	// V1GetLegacySigningKeyWithResponse request
+	V1GetLegacySigningKeyWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetLegacySigningKeyResponse, error)
+
+	// V1CreateLegacySigningKeyWithResponse request
+	V1CreateLegacySigningKeyWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1CreateLegacySigningKeyResponse, error)
+
+	// V1RemoveProjectSigningKeyWithResponse request
+	V1RemoveProjectSigningKeyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1RemoveProjectSigningKeyResponse, error)
+
+	// V1GetProjectSigningKeyWithResponse request
+	V1GetProjectSigningKeyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1GetProjectSigningKeyResponse, error)
+
+	// V1UpdateProjectSigningKeyWithBodyWithResponse request with any body
+	V1UpdateProjectSigningKeyWithBodyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateProjectSigningKeyResponse, error)
+
+	V1UpdateProjectSigningKeyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, body V1UpdateProjectSigningKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateProjectSigningKeyResponse, error)
 
 	// V1ListAllSsoProviderWithResponse request
 	V1ListAllSsoProviderWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListAllSsoProviderResponse, error)
@@ -6500,40 +8687,40 @@ type ClientWithResponsesInterface interface {
 	V1CreateASsoProviderWithResponse(ctx context.Context, ref string, body V1CreateASsoProviderJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateASsoProviderResponse, error)
 
 	// V1DeleteASsoProviderWithResponse request
-	V1DeleteASsoProviderWithResponse(ctx context.Context, ref string, providerId string, reqEditors ...RequestEditorFn) (*V1DeleteASsoProviderResponse, error)
+	V1DeleteASsoProviderWithResponse(ctx context.Context, ref string, providerId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1DeleteASsoProviderResponse, error)
 
 	// V1GetASsoProviderWithResponse request
-	V1GetASsoProviderWithResponse(ctx context.Context, ref string, providerId string, reqEditors ...RequestEditorFn) (*V1GetASsoProviderResponse, error)
+	V1GetASsoProviderWithResponse(ctx context.Context, ref string, providerId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1GetASsoProviderResponse, error)
 
 	// V1UpdateASsoProviderWithBodyWithResponse request with any body
-	V1UpdateASsoProviderWithBodyWithResponse(ctx context.Context, ref string, providerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateASsoProviderResponse, error)
+	V1UpdateASsoProviderWithBodyWithResponse(ctx context.Context, ref string, providerId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateASsoProviderResponse, error)
 
-	V1UpdateASsoProviderWithResponse(ctx context.Context, ref string, providerId string, body V1UpdateASsoProviderJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateASsoProviderResponse, error)
+	V1UpdateASsoProviderWithResponse(ctx context.Context, ref string, providerId openapi_types.UUID, body V1UpdateASsoProviderJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateASsoProviderResponse, error)
 
-	// ListTPAForProjectWithResponse request
-	ListTPAForProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*ListTPAForProjectResponse, error)
+	// V1ListProjectTpaIntegrationsWithResponse request
+	V1ListProjectTpaIntegrationsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListProjectTpaIntegrationsResponse, error)
 
-	// CreateTPAForProjectWithBodyWithResponse request with any body
-	CreateTPAForProjectWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTPAForProjectResponse, error)
+	// V1CreateProjectTpaIntegrationWithBodyWithResponse request with any body
+	V1CreateProjectTpaIntegrationWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1CreateProjectTpaIntegrationResponse, error)
 
-	CreateTPAForProjectWithResponse(ctx context.Context, ref string, body CreateTPAForProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTPAForProjectResponse, error)
+	V1CreateProjectTpaIntegrationWithResponse(ctx context.Context, ref string, body V1CreateProjectTpaIntegrationJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateProjectTpaIntegrationResponse, error)
 
-	// DeleteTPAForProjectWithResponse request
-	DeleteTPAForProjectWithResponse(ctx context.Context, ref string, tpaId string, reqEditors ...RequestEditorFn) (*DeleteTPAForProjectResponse, error)
+	// V1DeleteProjectTpaIntegrationWithResponse request
+	V1DeleteProjectTpaIntegrationWithResponse(ctx context.Context, ref string, tpaId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1DeleteProjectTpaIntegrationResponse, error)
 
-	// GetTPAForProjectWithResponse request
-	GetTPAForProjectWithResponse(ctx context.Context, ref string, tpaId string, reqEditors ...RequestEditorFn) (*GetTPAForProjectResponse, error)
+	// V1GetProjectTpaIntegrationWithResponse request
+	V1GetProjectTpaIntegrationWithResponse(ctx context.Context, ref string, tpaId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1GetProjectTpaIntegrationResponse, error)
 
 	// V1GetProjectPgbouncerConfigWithResponse request
 	V1GetProjectPgbouncerConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectPgbouncerConfigResponse, error)
 
-	// V1GetSupavisorConfigWithResponse request
-	V1GetSupavisorConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetSupavisorConfigResponse, error)
+	// V1GetPoolerConfigWithResponse request
+	V1GetPoolerConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPoolerConfigResponse, error)
 
-	// V1UpdateSupavisorConfigWithBodyWithResponse request with any body
-	V1UpdateSupavisorConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateSupavisorConfigResponse, error)
+	// V1UpdatePoolerConfigWithBodyWithResponse request with any body
+	V1UpdatePoolerConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdatePoolerConfigResponse, error)
 
-	V1UpdateSupavisorConfigWithResponse(ctx context.Context, ref string, body V1UpdateSupavisorConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateSupavisorConfigResponse, error)
+	V1UpdatePoolerConfigWithResponse(ctx context.Context, ref string, body V1UpdatePoolerConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdatePoolerConfigResponse, error)
 
 	// V1GetPostgresConfigWithResponse request
 	V1GetPostgresConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPostgresConfigResponse, error)
@@ -6576,8 +8763,34 @@ type ClientWithResponsesInterface interface {
 
 	V1RestorePitrBackupWithResponse(ctx context.Context, ref string, body V1RestorePitrBackupJSONRequestBody, reqEditors ...RequestEditorFn) (*V1RestorePitrBackupResponse, error)
 
-	// GetDatabaseMetadataWithResponse request
-	GetDatabaseMetadataWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetDatabaseMetadataResponse, error)
+	// V1GetRestorePointWithResponse request
+	V1GetRestorePointWithResponse(ctx context.Context, ref string, params *V1GetRestorePointParams, reqEditors ...RequestEditorFn) (*V1GetRestorePointResponse, error)
+
+	// V1CreateRestorePointWithBodyWithResponse request with any body
+	V1CreateRestorePointWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1CreateRestorePointResponse, error)
+
+	V1CreateRestorePointWithResponse(ctx context.Context, ref string, body V1CreateRestorePointJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateRestorePointResponse, error)
+
+	// V1UndoWithBodyWithResponse request with any body
+	V1UndoWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UndoResponse, error)
+
+	V1UndoWithResponse(ctx context.Context, ref string, body V1UndoJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UndoResponse, error)
+
+	// V1GetDatabaseMetadataWithResponse request
+	V1GetDatabaseMetadataWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetDatabaseMetadataResponse, error)
+
+	// V1ListMigrationHistoryWithResponse request
+	V1ListMigrationHistoryWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListMigrationHistoryResponse, error)
+
+	// V1ApplyAMigrationWithBodyWithResponse request with any body
+	V1ApplyAMigrationWithBodyWithResponse(ctx context.Context, ref string, params *V1ApplyAMigrationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ApplyAMigrationResponse, error)
+
+	V1ApplyAMigrationWithResponse(ctx context.Context, ref string, params *V1ApplyAMigrationParams, body V1ApplyAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ApplyAMigrationResponse, error)
+
+	// V1UpsertAMigrationWithBodyWithResponse request with any body
+	V1UpsertAMigrationWithBodyWithResponse(ctx context.Context, ref string, params *V1UpsertAMigrationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpsertAMigrationResponse, error)
+
+	V1UpsertAMigrationWithResponse(ctx context.Context, ref string, params *V1UpsertAMigrationParams, body V1UpsertAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpsertAMigrationResponse, error)
 
 	// V1RunAQueryWithBodyWithResponse request with any body
 	V1RunAQueryWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RunAQueryResponse, error)
@@ -6628,6 +8841,9 @@ type ClientWithResponsesInterface interface {
 	// V1ListAllNetworkBansWithResponse request
 	V1ListAllNetworkBansWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListAllNetworkBansResponse, error)
 
+	// V1ListAllNetworkBansEnrichedWithResponse request
+	V1ListAllNetworkBansEnrichedWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListAllNetworkBansEnrichedResponse, error)
+
 	// V1GetNetworkRestrictionsWithResponse request
 	V1GetNetworkRestrictionsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetNetworkRestrictionsResponse, error)
 
@@ -6674,10 +8890,8 @@ type ClientWithResponsesInterface interface {
 	// V1ListAvailableRestoreVersionsWithResponse request
 	V1ListAvailableRestoreVersionsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListAvailableRestoreVersionsResponse, error)
 
-	// V1RestoreAProjectWithBodyWithResponse request with any body
-	V1RestoreAProjectWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RestoreAProjectResponse, error)
-
-	V1RestoreAProjectWithResponse(ctx context.Context, ref string, body V1RestoreAProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*V1RestoreAProjectResponse, error)
+	// V1RestoreAProjectWithResponse request
+	V1RestoreAProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1RestoreAProjectResponse, error)
 
 	// V1CancelAProjectRestorationWithResponse request
 	V1CancelAProjectRestorationWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1CancelAProjectRestorationResponse, error)
@@ -6809,6 +9023,49 @@ func (r V1UpdateABranchConfigResponse) StatusCode() int {
 	return 0
 }
 
+type V1DiffABranchResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1DiffABranchResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1DiffABranchResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1MergeABranchResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *BranchUpdateResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1MergeABranchResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1MergeABranchResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1PushABranchResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6868,6 +9125,27 @@ func (r V1AuthorizeUserResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1AuthorizeUserResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1OauthAuthorizeProjectClaimResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1OauthAuthorizeProjectClaimResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1OauthAuthorizeProjectClaimResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -7005,6 +9283,49 @@ func (r V1ListOrganizationMembersResponse) StatusCode() int {
 	return 0
 }
 
+type V1GetOrganizationProjectClaimResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *OrganizationProjectClaimResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetOrganizationProjectClaimResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetOrganizationProjectClaimResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1ClaimProjectForOrganizationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1ClaimProjectForOrganizationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1ClaimProjectForOrganizationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1ListAllProjectsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -7093,14 +9414,14 @@ func (r V1GetProjectResponse) StatusCode() int {
 	return 0
 }
 
-type GetLogsResponse struct {
+type V1GetPerformanceAdvisorsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *V1AnalyticsResponse
+	JSON200      *V1ProjectAdvisorsResponse
 }
 
 // Status returns HTTPResponse.Status
-func (r GetLogsResponse) Status() string {
+func (r V1GetPerformanceAdvisorsResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -7108,7 +9429,95 @@ func (r GetLogsResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r GetLogsResponse) StatusCode() int {
+func (r V1GetPerformanceAdvisorsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetSecurityAdvisorsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *V1ProjectAdvisorsResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetSecurityAdvisorsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetSecurityAdvisorsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetProjectLogsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *AnalyticsResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetProjectLogsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetProjectLogsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetProjectUsageApiCountResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *AnalyticsResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetProjectUsageApiCountResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetProjectUsageApiCountResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetProjectUsageRequestCountResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *AnalyticsResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetProjectUsageRequestCountResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetProjectUsageRequestCountResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -7137,14 +9546,14 @@ func (r V1GetProjectApiKeysResponse) StatusCode() int {
 	return 0
 }
 
-type CreateApiKeyResponse struct {
+type V1CreateProjectApiKeyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON201      *ApiKeyResponse
 }
 
 // Status returns HTTPResponse.Status
-func (r CreateApiKeyResponse) Status() string {
+func (r V1CreateProjectApiKeyResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -7152,21 +9561,21 @@ func (r CreateApiKeyResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r CreateApiKeyResponse) StatusCode() int {
+func (r V1CreateProjectApiKeyResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
 	return 0
 }
 
-type DeleteApiKeyResponse struct {
+type V1GetProjectLegacyApiKeysResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *ApiKeyResponse
+	JSON200      *LegacyApiKeysResponse
 }
 
 // Status returns HTTPResponse.Status
-func (r DeleteApiKeyResponse) Status() string {
+func (r V1GetProjectLegacyApiKeysResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -7174,21 +9583,21 @@ func (r DeleteApiKeyResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r DeleteApiKeyResponse) StatusCode() int {
+func (r V1GetProjectLegacyApiKeysResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
 	return 0
 }
 
-type GetApiKeyResponse struct {
+type V1UpdateProjectLegacyApiKeysResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *ApiKeyResponse
+	JSON200      *LegacyApiKeysResponse
 }
 
 // Status returns HTTPResponse.Status
-func (r GetApiKeyResponse) Status() string {
+func (r V1UpdateProjectLegacyApiKeysResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -7196,21 +9605,21 @@ func (r GetApiKeyResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r GetApiKeyResponse) StatusCode() int {
+func (r V1UpdateProjectLegacyApiKeysResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
 	return 0
 }
 
-type UpdateApiKeyResponse struct {
+type V1DeleteProjectApiKeyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *ApiKeyResponse
 }
 
 // Status returns HTTPResponse.Status
-func (r UpdateApiKeyResponse) Status() string {
+func (r V1DeleteProjectApiKeyResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -7218,7 +9627,115 @@ func (r UpdateApiKeyResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r UpdateApiKeyResponse) StatusCode() int {
+func (r V1DeleteProjectApiKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetProjectApiKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ApiKeyResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetProjectApiKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetProjectApiKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1UpdateProjectApiKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ApiKeyResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1UpdateProjectApiKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1UpdateProjectApiKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1ListProjectAddonsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ListProjectAddonsResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1ListProjectAddonsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1ListProjectAddonsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1ApplyProjectAddonResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1ApplyProjectAddonResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1ApplyProjectAddonResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1RemoveProjectAddonResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1RemoveProjectAddonResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1RemoveProjectAddonResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -7290,6 +9807,71 @@ func (r V1CreateABranchResponse) StatusCode() int {
 	return 0
 }
 
+type V1DeleteProjectClaimTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1DeleteProjectClaimTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1DeleteProjectClaimTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetProjectClaimTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ProjectClaimTokenResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetProjectClaimTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetProjectClaimTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1CreateProjectClaimTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *CreateProjectClaimTokenResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1CreateProjectClaimTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1CreateProjectClaimTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1GetAuthServiceConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -7328,6 +9910,160 @@ func (r V1UpdateAuthServiceConfigResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1UpdateAuthServiceConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetProjectSigningKeysResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *SigningKeysResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetProjectSigningKeysResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetProjectSigningKeysResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1CreateProjectSigningKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *SigningKeyResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1CreateProjectSigningKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1CreateProjectSigningKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetLegacySigningKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *SigningKeyResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetLegacySigningKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetLegacySigningKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1CreateLegacySigningKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *SigningKeyResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1CreateLegacySigningKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1CreateLegacySigningKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1RemoveProjectSigningKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *SigningKeyResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1RemoveProjectSigningKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1RemoveProjectSigningKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetProjectSigningKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *SigningKeyResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetProjectSigningKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetProjectSigningKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1UpdateProjectSigningKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *SigningKeyResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1UpdateProjectSigningKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1UpdateProjectSigningKeyResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -7444,14 +10180,14 @@ func (r V1UpdateASsoProviderResponse) StatusCode() int {
 	return 0
 }
 
-type ListTPAForProjectResponse struct {
+type V1ListProjectTpaIntegrationsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *[]ThirdPartyAuth
 }
 
 // Status returns HTTPResponse.Status
-func (r ListTPAForProjectResponse) Status() string {
+func (r V1ListProjectTpaIntegrationsResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -7459,21 +10195,21 @@ func (r ListTPAForProjectResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r ListTPAForProjectResponse) StatusCode() int {
+func (r V1ListProjectTpaIntegrationsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
 	return 0
 }
 
-type CreateTPAForProjectResponse struct {
+type V1CreateProjectTpaIntegrationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON201      *ThirdPartyAuth
 }
 
 // Status returns HTTPResponse.Status
-func (r CreateTPAForProjectResponse) Status() string {
+func (r V1CreateProjectTpaIntegrationResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -7481,21 +10217,21 @@ func (r CreateTPAForProjectResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r CreateTPAForProjectResponse) StatusCode() int {
+func (r V1CreateProjectTpaIntegrationResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
 	return 0
 }
 
-type DeleteTPAForProjectResponse struct {
+type V1DeleteProjectTpaIntegrationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *ThirdPartyAuth
 }
 
 // Status returns HTTPResponse.Status
-func (r DeleteTPAForProjectResponse) Status() string {
+func (r V1DeleteProjectTpaIntegrationResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -7503,21 +10239,21 @@ func (r DeleteTPAForProjectResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r DeleteTPAForProjectResponse) StatusCode() int {
+func (r V1DeleteProjectTpaIntegrationResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
 	return 0
 }
 
-type GetTPAForProjectResponse struct {
+type V1GetProjectTpaIntegrationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *ThirdPartyAuth
 }
 
 // Status returns HTTPResponse.Status
-func (r GetTPAForProjectResponse) Status() string {
+func (r V1GetProjectTpaIntegrationResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -7525,7 +10261,7 @@ func (r GetTPAForProjectResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r GetTPAForProjectResponse) StatusCode() int {
+func (r V1GetProjectTpaIntegrationResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -7554,14 +10290,14 @@ func (r V1GetProjectPgbouncerConfigResponse) StatusCode() int {
 	return 0
 }
 
-type V1GetSupavisorConfigResponse struct {
+type V1GetPoolerConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *[]SupavisorConfigResponse
 }
 
 // Status returns HTTPResponse.Status
-func (r V1GetSupavisorConfigResponse) Status() string {
+func (r V1GetPoolerConfigResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -7569,21 +10305,21 @@ func (r V1GetSupavisorConfigResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r V1GetSupavisorConfigResponse) StatusCode() int {
+func (r V1GetPoolerConfigResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
 	return 0
 }
 
-type V1UpdateSupavisorConfigResponse struct {
+type V1UpdatePoolerConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *UpdateSupavisorConfigResponse
 }
 
 // Status returns HTTPResponse.Status
-func (r V1UpdateSupavisorConfigResponse) Status() string {
+func (r V1UpdatePoolerConfigResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -7591,7 +10327,7 @@ func (r V1UpdateSupavisorConfigResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r V1UpdateSupavisorConfigResponse) StatusCode() int {
+func (r V1UpdatePoolerConfigResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -7837,14 +10573,14 @@ func (r V1RestorePitrBackupResponse) StatusCode() int {
 	return 0
 }
 
-type GetDatabaseMetadataResponse struct {
+type V1GetRestorePointResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *GetProjectDbMetadataResponseDto
+	JSON200      *V1RestorePointResponse
 }
 
 // Status returns HTTPResponse.Status
-func (r GetDatabaseMetadataResponse) Status() string {
+func (r V1GetRestorePointResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -7852,7 +10588,136 @@ func (r GetDatabaseMetadataResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r GetDatabaseMetadataResponse) StatusCode() int {
+func (r V1GetRestorePointResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1CreateRestorePointResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *V1RestorePointResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1CreateRestorePointResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1CreateRestorePointResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1UndoResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1UndoResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1UndoResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetDatabaseMetadataResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *GetProjectDbMetadataResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetDatabaseMetadataResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetDatabaseMetadataResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1ListMigrationHistoryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *V1ListMigrationsResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1ListMigrationHistoryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1ListMigrationHistoryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1ApplyAMigrationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1ApplyAMigrationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1ApplyAMigrationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1UpsertAMigrationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1UpsertAMigrationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1UpsertAMigrationResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -7862,7 +10727,6 @@ func (r GetDatabaseMetadataResponse) StatusCode() int {
 type V1RunAQueryResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *map[string]interface{}
 }
 
 // Status returns HTTPResponse.Status
@@ -8058,6 +10922,7 @@ func (r V1UpdateAFunctionResponse) StatusCode() int {
 type V1GetAFunctionBodyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON200      *StreamableFile
 }
 
 // Status returns HTTPResponse.Status
@@ -8135,6 +11000,28 @@ func (r V1ListAllNetworkBansResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1ListAllNetworkBansResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1ListAllNetworkBansEnrichedResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *NetworkBanResponseEnriched
+}
+
+// Status returns HTTPResponse.Status
+func (r V1ListAllNetworkBansEnrichedResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1ListAllNetworkBansEnrichedResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -8446,7 +11333,6 @@ func (r V1CancelAProjectRestorationResponse) StatusCode() int {
 type V1BulkDeleteSecretsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *map[string]interface{}
 }
 
 // Status returns HTTPResponse.Status
@@ -8794,7 +11680,7 @@ func (r V1GetASnippetResponse) StatusCode() int {
 }
 
 // V1DeleteABranchWithResponse request returning *V1DeleteABranchResponse
-func (c *ClientWithResponses) V1DeleteABranchWithResponse(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*V1DeleteABranchResponse, error) {
+func (c *ClientWithResponses) V1DeleteABranchWithResponse(ctx context.Context, branchId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1DeleteABranchResponse, error) {
 	rsp, err := c.V1DeleteABranch(ctx, branchId, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -8803,7 +11689,7 @@ func (c *ClientWithResponses) V1DeleteABranchWithResponse(ctx context.Context, b
 }
 
 // V1GetABranchConfigWithResponse request returning *V1GetABranchConfigResponse
-func (c *ClientWithResponses) V1GetABranchConfigWithResponse(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*V1GetABranchConfigResponse, error) {
+func (c *ClientWithResponses) V1GetABranchConfigWithResponse(ctx context.Context, branchId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1GetABranchConfigResponse, error) {
 	rsp, err := c.V1GetABranchConfig(ctx, branchId, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -8812,7 +11698,7 @@ func (c *ClientWithResponses) V1GetABranchConfigWithResponse(ctx context.Context
 }
 
 // V1UpdateABranchConfigWithBodyWithResponse request with arbitrary body returning *V1UpdateABranchConfigResponse
-func (c *ClientWithResponses) V1UpdateABranchConfigWithBodyWithResponse(ctx context.Context, branchId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateABranchConfigResponse, error) {
+func (c *ClientWithResponses) V1UpdateABranchConfigWithBodyWithResponse(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateABranchConfigResponse, error) {
 	rsp, err := c.V1UpdateABranchConfigWithBody(ctx, branchId, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -8820,7 +11706,7 @@ func (c *ClientWithResponses) V1UpdateABranchConfigWithBodyWithResponse(ctx cont
 	return ParseV1UpdateABranchConfigResponse(rsp)
 }
 
-func (c *ClientWithResponses) V1UpdateABranchConfigWithResponse(ctx context.Context, branchId string, body V1UpdateABranchConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateABranchConfigResponse, error) {
+func (c *ClientWithResponses) V1UpdateABranchConfigWithResponse(ctx context.Context, branchId openapi_types.UUID, body V1UpdateABranchConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateABranchConfigResponse, error) {
 	rsp, err := c.V1UpdateABranchConfig(ctx, branchId, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -8828,18 +11714,60 @@ func (c *ClientWithResponses) V1UpdateABranchConfigWithResponse(ctx context.Cont
 	return ParseV1UpdateABranchConfigResponse(rsp)
 }
 
-// V1PushABranchWithResponse request returning *V1PushABranchResponse
-func (c *ClientWithResponses) V1PushABranchWithResponse(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*V1PushABranchResponse, error) {
-	rsp, err := c.V1PushABranch(ctx, branchId, reqEditors...)
+// V1DiffABranchWithResponse request returning *V1DiffABranchResponse
+func (c *ClientWithResponses) V1DiffABranchWithResponse(ctx context.Context, branchId openapi_types.UUID, params *V1DiffABranchParams, reqEditors ...RequestEditorFn) (*V1DiffABranchResponse, error) {
+	rsp, err := c.V1DiffABranch(ctx, branchId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1DiffABranchResponse(rsp)
+}
+
+// V1MergeABranchWithBodyWithResponse request with arbitrary body returning *V1MergeABranchResponse
+func (c *ClientWithResponses) V1MergeABranchWithBodyWithResponse(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1MergeABranchResponse, error) {
+	rsp, err := c.V1MergeABranchWithBody(ctx, branchId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1MergeABranchResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1MergeABranchWithResponse(ctx context.Context, branchId openapi_types.UUID, body V1MergeABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1MergeABranchResponse, error) {
+	rsp, err := c.V1MergeABranch(ctx, branchId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1MergeABranchResponse(rsp)
+}
+
+// V1PushABranchWithBodyWithResponse request with arbitrary body returning *V1PushABranchResponse
+func (c *ClientWithResponses) V1PushABranchWithBodyWithResponse(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1PushABranchResponse, error) {
+	rsp, err := c.V1PushABranchWithBody(ctx, branchId, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseV1PushABranchResponse(rsp)
 }
 
-// V1ResetABranchWithResponse request returning *V1ResetABranchResponse
-func (c *ClientWithResponses) V1ResetABranchWithResponse(ctx context.Context, branchId string, reqEditors ...RequestEditorFn) (*V1ResetABranchResponse, error) {
-	rsp, err := c.V1ResetABranch(ctx, branchId, reqEditors...)
+func (c *ClientWithResponses) V1PushABranchWithResponse(ctx context.Context, branchId openapi_types.UUID, body V1PushABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1PushABranchResponse, error) {
+	rsp, err := c.V1PushABranch(ctx, branchId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1PushABranchResponse(rsp)
+}
+
+// V1ResetABranchWithBodyWithResponse request with arbitrary body returning *V1ResetABranchResponse
+func (c *ClientWithResponses) V1ResetABranchWithBodyWithResponse(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ResetABranchResponse, error) {
+	rsp, err := c.V1ResetABranchWithBody(ctx, branchId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ResetABranchResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1ResetABranchWithResponse(ctx context.Context, branchId openapi_types.UUID, body V1ResetABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ResetABranchResponse, error) {
+	rsp, err := c.V1ResetABranch(ctx, branchId, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -8853,6 +11781,15 @@ func (c *ClientWithResponses) V1AuthorizeUserWithResponse(ctx context.Context, p
 		return nil, err
 	}
 	return ParseV1AuthorizeUserResponse(rsp)
+}
+
+// V1OauthAuthorizeProjectClaimWithResponse request returning *V1OauthAuthorizeProjectClaimResponse
+func (c *ClientWithResponses) V1OauthAuthorizeProjectClaimWithResponse(ctx context.Context, params *V1OauthAuthorizeProjectClaimParams, reqEditors ...RequestEditorFn) (*V1OauthAuthorizeProjectClaimResponse, error) {
+	rsp, err := c.V1OauthAuthorizeProjectClaim(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1OauthAuthorizeProjectClaimResponse(rsp)
 }
 
 // V1RevokeTokenWithBodyWithResponse request with arbitrary body returning *V1RevokeTokenResponse
@@ -8933,6 +11870,24 @@ func (c *ClientWithResponses) V1ListOrganizationMembersWithResponse(ctx context.
 	return ParseV1ListOrganizationMembersResponse(rsp)
 }
 
+// V1GetOrganizationProjectClaimWithResponse request returning *V1GetOrganizationProjectClaimResponse
+func (c *ClientWithResponses) V1GetOrganizationProjectClaimWithResponse(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*V1GetOrganizationProjectClaimResponse, error) {
+	rsp, err := c.V1GetOrganizationProjectClaim(ctx, slug, token, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetOrganizationProjectClaimResponse(rsp)
+}
+
+// V1ClaimProjectForOrganizationWithResponse request returning *V1ClaimProjectForOrganizationResponse
+func (c *ClientWithResponses) V1ClaimProjectForOrganizationWithResponse(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*V1ClaimProjectForOrganizationResponse, error) {
+	rsp, err := c.V1ClaimProjectForOrganization(ctx, slug, token, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ClaimProjectForOrganizationResponse(rsp)
+}
+
 // V1ListAllProjectsWithResponse request returning *V1ListAllProjectsResponse
 func (c *ClientWithResponses) V1ListAllProjectsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*V1ListAllProjectsResponse, error) {
 	rsp, err := c.V1ListAllProjects(ctx, reqEditors...)
@@ -8977,13 +11932,49 @@ func (c *ClientWithResponses) V1GetProjectWithResponse(ctx context.Context, ref 
 	return ParseV1GetProjectResponse(rsp)
 }
 
-// GetLogsWithResponse request returning *GetLogsResponse
-func (c *ClientWithResponses) GetLogsWithResponse(ctx context.Context, ref string, params *GetLogsParams, reqEditors ...RequestEditorFn) (*GetLogsResponse, error) {
-	rsp, err := c.GetLogs(ctx, ref, params, reqEditors...)
+// V1GetPerformanceAdvisorsWithResponse request returning *V1GetPerformanceAdvisorsResponse
+func (c *ClientWithResponses) V1GetPerformanceAdvisorsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPerformanceAdvisorsResponse, error) {
+	rsp, err := c.V1GetPerformanceAdvisors(ctx, ref, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseGetLogsResponse(rsp)
+	return ParseV1GetPerformanceAdvisorsResponse(rsp)
+}
+
+// V1GetSecurityAdvisorsWithResponse request returning *V1GetSecurityAdvisorsResponse
+func (c *ClientWithResponses) V1GetSecurityAdvisorsWithResponse(ctx context.Context, ref string, params *V1GetSecurityAdvisorsParams, reqEditors ...RequestEditorFn) (*V1GetSecurityAdvisorsResponse, error) {
+	rsp, err := c.V1GetSecurityAdvisors(ctx, ref, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetSecurityAdvisorsResponse(rsp)
+}
+
+// V1GetProjectLogsWithResponse request returning *V1GetProjectLogsResponse
+func (c *ClientWithResponses) V1GetProjectLogsWithResponse(ctx context.Context, ref string, params *V1GetProjectLogsParams, reqEditors ...RequestEditorFn) (*V1GetProjectLogsResponse, error) {
+	rsp, err := c.V1GetProjectLogs(ctx, ref, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetProjectLogsResponse(rsp)
+}
+
+// V1GetProjectUsageApiCountWithResponse request returning *V1GetProjectUsageApiCountResponse
+func (c *ClientWithResponses) V1GetProjectUsageApiCountWithResponse(ctx context.Context, ref string, params *V1GetProjectUsageApiCountParams, reqEditors ...RequestEditorFn) (*V1GetProjectUsageApiCountResponse, error) {
+	rsp, err := c.V1GetProjectUsageApiCount(ctx, ref, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetProjectUsageApiCountResponse(rsp)
+}
+
+// V1GetProjectUsageRequestCountWithResponse request returning *V1GetProjectUsageRequestCountResponse
+func (c *ClientWithResponses) V1GetProjectUsageRequestCountWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectUsageRequestCountResponse, error) {
+	rsp, err := c.V1GetProjectUsageRequestCount(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetProjectUsageRequestCountResponse(rsp)
 }
 
 // V1GetProjectApiKeysWithResponse request returning *V1GetProjectApiKeysResponse
@@ -8995,56 +11986,109 @@ func (c *ClientWithResponses) V1GetProjectApiKeysWithResponse(ctx context.Contex
 	return ParseV1GetProjectApiKeysResponse(rsp)
 }
 
-// CreateApiKeyWithBodyWithResponse request with arbitrary body returning *CreateApiKeyResponse
-func (c *ClientWithResponses) CreateApiKeyWithBodyWithResponse(ctx context.Context, ref string, params *CreateApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateApiKeyResponse, error) {
-	rsp, err := c.CreateApiKeyWithBody(ctx, ref, params, contentType, body, reqEditors...)
+// V1CreateProjectApiKeyWithBodyWithResponse request with arbitrary body returning *V1CreateProjectApiKeyResponse
+func (c *ClientWithResponses) V1CreateProjectApiKeyWithBodyWithResponse(ctx context.Context, ref string, params *V1CreateProjectApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1CreateProjectApiKeyResponse, error) {
+	rsp, err := c.V1CreateProjectApiKeyWithBody(ctx, ref, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseCreateApiKeyResponse(rsp)
+	return ParseV1CreateProjectApiKeyResponse(rsp)
 }
 
-func (c *ClientWithResponses) CreateApiKeyWithResponse(ctx context.Context, ref string, params *CreateApiKeyParams, body CreateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateApiKeyResponse, error) {
-	rsp, err := c.CreateApiKey(ctx, ref, params, body, reqEditors...)
+func (c *ClientWithResponses) V1CreateProjectApiKeyWithResponse(ctx context.Context, ref string, params *V1CreateProjectApiKeyParams, body V1CreateProjectApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateProjectApiKeyResponse, error) {
+	rsp, err := c.V1CreateProjectApiKey(ctx, ref, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseCreateApiKeyResponse(rsp)
+	return ParseV1CreateProjectApiKeyResponse(rsp)
 }
 
-// DeleteApiKeyWithResponse request returning *DeleteApiKeyResponse
-func (c *ClientWithResponses) DeleteApiKeyWithResponse(ctx context.Context, ref string, id string, params *DeleteApiKeyParams, reqEditors ...RequestEditorFn) (*DeleteApiKeyResponse, error) {
-	rsp, err := c.DeleteApiKey(ctx, ref, id, params, reqEditors...)
+// V1GetProjectLegacyApiKeysWithResponse request returning *V1GetProjectLegacyApiKeysResponse
+func (c *ClientWithResponses) V1GetProjectLegacyApiKeysWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectLegacyApiKeysResponse, error) {
+	rsp, err := c.V1GetProjectLegacyApiKeys(ctx, ref, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseDeleteApiKeyResponse(rsp)
+	return ParseV1GetProjectLegacyApiKeysResponse(rsp)
 }
 
-// GetApiKeyWithResponse request returning *GetApiKeyResponse
-func (c *ClientWithResponses) GetApiKeyWithResponse(ctx context.Context, ref string, id string, params *GetApiKeyParams, reqEditors ...RequestEditorFn) (*GetApiKeyResponse, error) {
-	rsp, err := c.GetApiKey(ctx, ref, id, params, reqEditors...)
+// V1UpdateProjectLegacyApiKeysWithResponse request returning *V1UpdateProjectLegacyApiKeysResponse
+func (c *ClientWithResponses) V1UpdateProjectLegacyApiKeysWithResponse(ctx context.Context, ref string, params *V1UpdateProjectLegacyApiKeysParams, reqEditors ...RequestEditorFn) (*V1UpdateProjectLegacyApiKeysResponse, error) {
+	rsp, err := c.V1UpdateProjectLegacyApiKeys(ctx, ref, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseGetApiKeyResponse(rsp)
+	return ParseV1UpdateProjectLegacyApiKeysResponse(rsp)
 }
 
-// UpdateApiKeyWithBodyWithResponse request with arbitrary body returning *UpdateApiKeyResponse
-func (c *ClientWithResponses) UpdateApiKeyWithBodyWithResponse(ctx context.Context, ref string, id string, params *UpdateApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateApiKeyResponse, error) {
-	rsp, err := c.UpdateApiKeyWithBody(ctx, ref, id, params, contentType, body, reqEditors...)
+// V1DeleteProjectApiKeyWithResponse request returning *V1DeleteProjectApiKeyResponse
+func (c *ClientWithResponses) V1DeleteProjectApiKeyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, params *V1DeleteProjectApiKeyParams, reqEditors ...RequestEditorFn) (*V1DeleteProjectApiKeyResponse, error) {
+	rsp, err := c.V1DeleteProjectApiKey(ctx, ref, id, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseUpdateApiKeyResponse(rsp)
+	return ParseV1DeleteProjectApiKeyResponse(rsp)
 }
 
-func (c *ClientWithResponses) UpdateApiKeyWithResponse(ctx context.Context, ref string, id string, params *UpdateApiKeyParams, body UpdateApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateApiKeyResponse, error) {
-	rsp, err := c.UpdateApiKey(ctx, ref, id, params, body, reqEditors...)
+// V1GetProjectApiKeyWithResponse request returning *V1GetProjectApiKeyResponse
+func (c *ClientWithResponses) V1GetProjectApiKeyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, params *V1GetProjectApiKeyParams, reqEditors ...RequestEditorFn) (*V1GetProjectApiKeyResponse, error) {
+	rsp, err := c.V1GetProjectApiKey(ctx, ref, id, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseUpdateApiKeyResponse(rsp)
+	return ParseV1GetProjectApiKeyResponse(rsp)
+}
+
+// V1UpdateProjectApiKeyWithBodyWithResponse request with arbitrary body returning *V1UpdateProjectApiKeyResponse
+func (c *ClientWithResponses) V1UpdateProjectApiKeyWithBodyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, params *V1UpdateProjectApiKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateProjectApiKeyResponse, error) {
+	rsp, err := c.V1UpdateProjectApiKeyWithBody(ctx, ref, id, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateProjectApiKeyResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1UpdateProjectApiKeyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, params *V1UpdateProjectApiKeyParams, body V1UpdateProjectApiKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateProjectApiKeyResponse, error) {
+	rsp, err := c.V1UpdateProjectApiKey(ctx, ref, id, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateProjectApiKeyResponse(rsp)
+}
+
+// V1ListProjectAddonsWithResponse request returning *V1ListProjectAddonsResponse
+func (c *ClientWithResponses) V1ListProjectAddonsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListProjectAddonsResponse, error) {
+	rsp, err := c.V1ListProjectAddons(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ListProjectAddonsResponse(rsp)
+}
+
+// V1ApplyProjectAddonWithBodyWithResponse request with arbitrary body returning *V1ApplyProjectAddonResponse
+func (c *ClientWithResponses) V1ApplyProjectAddonWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ApplyProjectAddonResponse, error) {
+	rsp, err := c.V1ApplyProjectAddonWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ApplyProjectAddonResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1ApplyProjectAddonWithResponse(ctx context.Context, ref string, body V1ApplyProjectAddonJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ApplyProjectAddonResponse, error) {
+	rsp, err := c.V1ApplyProjectAddon(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ApplyProjectAddonResponse(rsp)
+}
+
+// V1RemoveProjectAddonWithResponse request returning *V1RemoveProjectAddonResponse
+func (c *ClientWithResponses) V1RemoveProjectAddonWithResponse(ctx context.Context, ref string, addonVariant interface{}, reqEditors ...RequestEditorFn) (*V1RemoveProjectAddonResponse, error) {
+	rsp, err := c.V1RemoveProjectAddon(ctx, ref, addonVariant, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1RemoveProjectAddonResponse(rsp)
 }
 
 // V1DisablePreviewBranchingWithResponse request returning *V1DisablePreviewBranchingResponse
@@ -9082,6 +12126,33 @@ func (c *ClientWithResponses) V1CreateABranchWithResponse(ctx context.Context, r
 	return ParseV1CreateABranchResponse(rsp)
 }
 
+// V1DeleteProjectClaimTokenWithResponse request returning *V1DeleteProjectClaimTokenResponse
+func (c *ClientWithResponses) V1DeleteProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteProjectClaimTokenResponse, error) {
+	rsp, err := c.V1DeleteProjectClaimToken(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1DeleteProjectClaimTokenResponse(rsp)
+}
+
+// V1GetProjectClaimTokenWithResponse request returning *V1GetProjectClaimTokenResponse
+func (c *ClientWithResponses) V1GetProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectClaimTokenResponse, error) {
+	rsp, err := c.V1GetProjectClaimToken(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetProjectClaimTokenResponse(rsp)
+}
+
+// V1CreateProjectClaimTokenWithResponse request returning *V1CreateProjectClaimTokenResponse
+func (c *ClientWithResponses) V1CreateProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1CreateProjectClaimTokenResponse, error) {
+	rsp, err := c.V1CreateProjectClaimToken(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1CreateProjectClaimTokenResponse(rsp)
+}
+
 // V1GetAuthServiceConfigWithResponse request returning *V1GetAuthServiceConfigResponse
 func (c *ClientWithResponses) V1GetAuthServiceConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetAuthServiceConfigResponse, error) {
 	rsp, err := c.V1GetAuthServiceConfig(ctx, ref, reqEditors...)
@@ -9106,6 +12177,85 @@ func (c *ClientWithResponses) V1UpdateAuthServiceConfigWithResponse(ctx context.
 		return nil, err
 	}
 	return ParseV1UpdateAuthServiceConfigResponse(rsp)
+}
+
+// V1GetProjectSigningKeysWithResponse request returning *V1GetProjectSigningKeysResponse
+func (c *ClientWithResponses) V1GetProjectSigningKeysWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectSigningKeysResponse, error) {
+	rsp, err := c.V1GetProjectSigningKeys(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetProjectSigningKeysResponse(rsp)
+}
+
+// V1CreateProjectSigningKeyWithBodyWithResponse request with arbitrary body returning *V1CreateProjectSigningKeyResponse
+func (c *ClientWithResponses) V1CreateProjectSigningKeyWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1CreateProjectSigningKeyResponse, error) {
+	rsp, err := c.V1CreateProjectSigningKeyWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1CreateProjectSigningKeyResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1CreateProjectSigningKeyWithResponse(ctx context.Context, ref string, body V1CreateProjectSigningKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateProjectSigningKeyResponse, error) {
+	rsp, err := c.V1CreateProjectSigningKey(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1CreateProjectSigningKeyResponse(rsp)
+}
+
+// V1GetLegacySigningKeyWithResponse request returning *V1GetLegacySigningKeyResponse
+func (c *ClientWithResponses) V1GetLegacySigningKeyWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetLegacySigningKeyResponse, error) {
+	rsp, err := c.V1GetLegacySigningKey(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetLegacySigningKeyResponse(rsp)
+}
+
+// V1CreateLegacySigningKeyWithResponse request returning *V1CreateLegacySigningKeyResponse
+func (c *ClientWithResponses) V1CreateLegacySigningKeyWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1CreateLegacySigningKeyResponse, error) {
+	rsp, err := c.V1CreateLegacySigningKey(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1CreateLegacySigningKeyResponse(rsp)
+}
+
+// V1RemoveProjectSigningKeyWithResponse request returning *V1RemoveProjectSigningKeyResponse
+func (c *ClientWithResponses) V1RemoveProjectSigningKeyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1RemoveProjectSigningKeyResponse, error) {
+	rsp, err := c.V1RemoveProjectSigningKey(ctx, ref, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1RemoveProjectSigningKeyResponse(rsp)
+}
+
+// V1GetProjectSigningKeyWithResponse request returning *V1GetProjectSigningKeyResponse
+func (c *ClientWithResponses) V1GetProjectSigningKeyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1GetProjectSigningKeyResponse, error) {
+	rsp, err := c.V1GetProjectSigningKey(ctx, ref, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetProjectSigningKeyResponse(rsp)
+}
+
+// V1UpdateProjectSigningKeyWithBodyWithResponse request with arbitrary body returning *V1UpdateProjectSigningKeyResponse
+func (c *ClientWithResponses) V1UpdateProjectSigningKeyWithBodyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateProjectSigningKeyResponse, error) {
+	rsp, err := c.V1UpdateProjectSigningKeyWithBody(ctx, ref, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateProjectSigningKeyResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1UpdateProjectSigningKeyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, body V1UpdateProjectSigningKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateProjectSigningKeyResponse, error) {
+	rsp, err := c.V1UpdateProjectSigningKey(ctx, ref, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateProjectSigningKeyResponse(rsp)
 }
 
 // V1ListAllSsoProviderWithResponse request returning *V1ListAllSsoProviderResponse
@@ -9135,7 +12285,7 @@ func (c *ClientWithResponses) V1CreateASsoProviderWithResponse(ctx context.Conte
 }
 
 // V1DeleteASsoProviderWithResponse request returning *V1DeleteASsoProviderResponse
-func (c *ClientWithResponses) V1DeleteASsoProviderWithResponse(ctx context.Context, ref string, providerId string, reqEditors ...RequestEditorFn) (*V1DeleteASsoProviderResponse, error) {
+func (c *ClientWithResponses) V1DeleteASsoProviderWithResponse(ctx context.Context, ref string, providerId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1DeleteASsoProviderResponse, error) {
 	rsp, err := c.V1DeleteASsoProvider(ctx, ref, providerId, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -9144,7 +12294,7 @@ func (c *ClientWithResponses) V1DeleteASsoProviderWithResponse(ctx context.Conte
 }
 
 // V1GetASsoProviderWithResponse request returning *V1GetASsoProviderResponse
-func (c *ClientWithResponses) V1GetASsoProviderWithResponse(ctx context.Context, ref string, providerId string, reqEditors ...RequestEditorFn) (*V1GetASsoProviderResponse, error) {
+func (c *ClientWithResponses) V1GetASsoProviderWithResponse(ctx context.Context, ref string, providerId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1GetASsoProviderResponse, error) {
 	rsp, err := c.V1GetASsoProvider(ctx, ref, providerId, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -9153,7 +12303,7 @@ func (c *ClientWithResponses) V1GetASsoProviderWithResponse(ctx context.Context,
 }
 
 // V1UpdateASsoProviderWithBodyWithResponse request with arbitrary body returning *V1UpdateASsoProviderResponse
-func (c *ClientWithResponses) V1UpdateASsoProviderWithBodyWithResponse(ctx context.Context, ref string, providerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateASsoProviderResponse, error) {
+func (c *ClientWithResponses) V1UpdateASsoProviderWithBodyWithResponse(ctx context.Context, ref string, providerId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateASsoProviderResponse, error) {
 	rsp, err := c.V1UpdateASsoProviderWithBody(ctx, ref, providerId, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -9161,7 +12311,7 @@ func (c *ClientWithResponses) V1UpdateASsoProviderWithBodyWithResponse(ctx conte
 	return ParseV1UpdateASsoProviderResponse(rsp)
 }
 
-func (c *ClientWithResponses) V1UpdateASsoProviderWithResponse(ctx context.Context, ref string, providerId string, body V1UpdateASsoProviderJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateASsoProviderResponse, error) {
+func (c *ClientWithResponses) V1UpdateASsoProviderWithResponse(ctx context.Context, ref string, providerId openapi_types.UUID, body V1UpdateASsoProviderJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateASsoProviderResponse, error) {
 	rsp, err := c.V1UpdateASsoProvider(ctx, ref, providerId, body, reqEditors...)
 	if err != nil {
 		return nil, err
@@ -9169,48 +12319,48 @@ func (c *ClientWithResponses) V1UpdateASsoProviderWithResponse(ctx context.Conte
 	return ParseV1UpdateASsoProviderResponse(rsp)
 }
 
-// ListTPAForProjectWithResponse request returning *ListTPAForProjectResponse
-func (c *ClientWithResponses) ListTPAForProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*ListTPAForProjectResponse, error) {
-	rsp, err := c.ListTPAForProject(ctx, ref, reqEditors...)
+// V1ListProjectTpaIntegrationsWithResponse request returning *V1ListProjectTpaIntegrationsResponse
+func (c *ClientWithResponses) V1ListProjectTpaIntegrationsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListProjectTpaIntegrationsResponse, error) {
+	rsp, err := c.V1ListProjectTpaIntegrations(ctx, ref, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseListTPAForProjectResponse(rsp)
+	return ParseV1ListProjectTpaIntegrationsResponse(rsp)
 }
 
-// CreateTPAForProjectWithBodyWithResponse request with arbitrary body returning *CreateTPAForProjectResponse
-func (c *ClientWithResponses) CreateTPAForProjectWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTPAForProjectResponse, error) {
-	rsp, err := c.CreateTPAForProjectWithBody(ctx, ref, contentType, body, reqEditors...)
+// V1CreateProjectTpaIntegrationWithBodyWithResponse request with arbitrary body returning *V1CreateProjectTpaIntegrationResponse
+func (c *ClientWithResponses) V1CreateProjectTpaIntegrationWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1CreateProjectTpaIntegrationResponse, error) {
+	rsp, err := c.V1CreateProjectTpaIntegrationWithBody(ctx, ref, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseCreateTPAForProjectResponse(rsp)
+	return ParseV1CreateProjectTpaIntegrationResponse(rsp)
 }
 
-func (c *ClientWithResponses) CreateTPAForProjectWithResponse(ctx context.Context, ref string, body CreateTPAForProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTPAForProjectResponse, error) {
-	rsp, err := c.CreateTPAForProject(ctx, ref, body, reqEditors...)
+func (c *ClientWithResponses) V1CreateProjectTpaIntegrationWithResponse(ctx context.Context, ref string, body V1CreateProjectTpaIntegrationJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateProjectTpaIntegrationResponse, error) {
+	rsp, err := c.V1CreateProjectTpaIntegration(ctx, ref, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseCreateTPAForProjectResponse(rsp)
+	return ParseV1CreateProjectTpaIntegrationResponse(rsp)
 }
 
-// DeleteTPAForProjectWithResponse request returning *DeleteTPAForProjectResponse
-func (c *ClientWithResponses) DeleteTPAForProjectWithResponse(ctx context.Context, ref string, tpaId string, reqEditors ...RequestEditorFn) (*DeleteTPAForProjectResponse, error) {
-	rsp, err := c.DeleteTPAForProject(ctx, ref, tpaId, reqEditors...)
+// V1DeleteProjectTpaIntegrationWithResponse request returning *V1DeleteProjectTpaIntegrationResponse
+func (c *ClientWithResponses) V1DeleteProjectTpaIntegrationWithResponse(ctx context.Context, ref string, tpaId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1DeleteProjectTpaIntegrationResponse, error) {
+	rsp, err := c.V1DeleteProjectTpaIntegration(ctx, ref, tpaId, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseDeleteTPAForProjectResponse(rsp)
+	return ParseV1DeleteProjectTpaIntegrationResponse(rsp)
 }
 
-// GetTPAForProjectWithResponse request returning *GetTPAForProjectResponse
-func (c *ClientWithResponses) GetTPAForProjectWithResponse(ctx context.Context, ref string, tpaId string, reqEditors ...RequestEditorFn) (*GetTPAForProjectResponse, error) {
-	rsp, err := c.GetTPAForProject(ctx, ref, tpaId, reqEditors...)
+// V1GetProjectTpaIntegrationWithResponse request returning *V1GetProjectTpaIntegrationResponse
+func (c *ClientWithResponses) V1GetProjectTpaIntegrationWithResponse(ctx context.Context, ref string, tpaId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1GetProjectTpaIntegrationResponse, error) {
+	rsp, err := c.V1GetProjectTpaIntegration(ctx, ref, tpaId, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseGetTPAForProjectResponse(rsp)
+	return ParseV1GetProjectTpaIntegrationResponse(rsp)
 }
 
 // V1GetProjectPgbouncerConfigWithResponse request returning *V1GetProjectPgbouncerConfigResponse
@@ -9222,30 +12372,30 @@ func (c *ClientWithResponses) V1GetProjectPgbouncerConfigWithResponse(ctx contex
 	return ParseV1GetProjectPgbouncerConfigResponse(rsp)
 }
 
-// V1GetSupavisorConfigWithResponse request returning *V1GetSupavisorConfigResponse
-func (c *ClientWithResponses) V1GetSupavisorConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetSupavisorConfigResponse, error) {
-	rsp, err := c.V1GetSupavisorConfig(ctx, ref, reqEditors...)
+// V1GetPoolerConfigWithResponse request returning *V1GetPoolerConfigResponse
+func (c *ClientWithResponses) V1GetPoolerConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPoolerConfigResponse, error) {
+	rsp, err := c.V1GetPoolerConfig(ctx, ref, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseV1GetSupavisorConfigResponse(rsp)
+	return ParseV1GetPoolerConfigResponse(rsp)
 }
 
-// V1UpdateSupavisorConfigWithBodyWithResponse request with arbitrary body returning *V1UpdateSupavisorConfigResponse
-func (c *ClientWithResponses) V1UpdateSupavisorConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateSupavisorConfigResponse, error) {
-	rsp, err := c.V1UpdateSupavisorConfigWithBody(ctx, ref, contentType, body, reqEditors...)
+// V1UpdatePoolerConfigWithBodyWithResponse request with arbitrary body returning *V1UpdatePoolerConfigResponse
+func (c *ClientWithResponses) V1UpdatePoolerConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdatePoolerConfigResponse, error) {
+	rsp, err := c.V1UpdatePoolerConfigWithBody(ctx, ref, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseV1UpdateSupavisorConfigResponse(rsp)
+	return ParseV1UpdatePoolerConfigResponse(rsp)
 }
 
-func (c *ClientWithResponses) V1UpdateSupavisorConfigWithResponse(ctx context.Context, ref string, body V1UpdateSupavisorConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateSupavisorConfigResponse, error) {
-	rsp, err := c.V1UpdateSupavisorConfig(ctx, ref, body, reqEditors...)
+func (c *ClientWithResponses) V1UpdatePoolerConfigWithResponse(ctx context.Context, ref string, body V1UpdatePoolerConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdatePoolerConfigResponse, error) {
+	rsp, err := c.V1UpdatePoolerConfig(ctx, ref, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseV1UpdateSupavisorConfigResponse(rsp)
+	return ParseV1UpdatePoolerConfigResponse(rsp)
 }
 
 // V1GetPostgresConfigWithResponse request returning *V1GetPostgresConfigResponse
@@ -9379,13 +12529,99 @@ func (c *ClientWithResponses) V1RestorePitrBackupWithResponse(ctx context.Contex
 	return ParseV1RestorePitrBackupResponse(rsp)
 }
 
-// GetDatabaseMetadataWithResponse request returning *GetDatabaseMetadataResponse
-func (c *ClientWithResponses) GetDatabaseMetadataWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*GetDatabaseMetadataResponse, error) {
-	rsp, err := c.GetDatabaseMetadata(ctx, ref, reqEditors...)
+// V1GetRestorePointWithResponse request returning *V1GetRestorePointResponse
+func (c *ClientWithResponses) V1GetRestorePointWithResponse(ctx context.Context, ref string, params *V1GetRestorePointParams, reqEditors ...RequestEditorFn) (*V1GetRestorePointResponse, error) {
+	rsp, err := c.V1GetRestorePoint(ctx, ref, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseGetDatabaseMetadataResponse(rsp)
+	return ParseV1GetRestorePointResponse(rsp)
+}
+
+// V1CreateRestorePointWithBodyWithResponse request with arbitrary body returning *V1CreateRestorePointResponse
+func (c *ClientWithResponses) V1CreateRestorePointWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1CreateRestorePointResponse, error) {
+	rsp, err := c.V1CreateRestorePointWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1CreateRestorePointResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1CreateRestorePointWithResponse(ctx context.Context, ref string, body V1CreateRestorePointJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateRestorePointResponse, error) {
+	rsp, err := c.V1CreateRestorePoint(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1CreateRestorePointResponse(rsp)
+}
+
+// V1UndoWithBodyWithResponse request with arbitrary body returning *V1UndoResponse
+func (c *ClientWithResponses) V1UndoWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UndoResponse, error) {
+	rsp, err := c.V1UndoWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UndoResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1UndoWithResponse(ctx context.Context, ref string, body V1UndoJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UndoResponse, error) {
+	rsp, err := c.V1Undo(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UndoResponse(rsp)
+}
+
+// V1GetDatabaseMetadataWithResponse request returning *V1GetDatabaseMetadataResponse
+func (c *ClientWithResponses) V1GetDatabaseMetadataWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetDatabaseMetadataResponse, error) {
+	rsp, err := c.V1GetDatabaseMetadata(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetDatabaseMetadataResponse(rsp)
+}
+
+// V1ListMigrationHistoryWithResponse request returning *V1ListMigrationHistoryResponse
+func (c *ClientWithResponses) V1ListMigrationHistoryWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListMigrationHistoryResponse, error) {
+	rsp, err := c.V1ListMigrationHistory(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ListMigrationHistoryResponse(rsp)
+}
+
+// V1ApplyAMigrationWithBodyWithResponse request with arbitrary body returning *V1ApplyAMigrationResponse
+func (c *ClientWithResponses) V1ApplyAMigrationWithBodyWithResponse(ctx context.Context, ref string, params *V1ApplyAMigrationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ApplyAMigrationResponse, error) {
+	rsp, err := c.V1ApplyAMigrationWithBody(ctx, ref, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ApplyAMigrationResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1ApplyAMigrationWithResponse(ctx context.Context, ref string, params *V1ApplyAMigrationParams, body V1ApplyAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ApplyAMigrationResponse, error) {
+	rsp, err := c.V1ApplyAMigration(ctx, ref, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ApplyAMigrationResponse(rsp)
+}
+
+// V1UpsertAMigrationWithBodyWithResponse request with arbitrary body returning *V1UpsertAMigrationResponse
+func (c *ClientWithResponses) V1UpsertAMigrationWithBodyWithResponse(ctx context.Context, ref string, params *V1UpsertAMigrationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpsertAMigrationResponse, error) {
+	rsp, err := c.V1UpsertAMigrationWithBody(ctx, ref, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpsertAMigrationResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1UpsertAMigrationWithResponse(ctx context.Context, ref string, params *V1UpsertAMigrationParams, body V1UpsertAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpsertAMigrationResponse, error) {
+	rsp, err := c.V1UpsertAMigration(ctx, ref, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpsertAMigrationResponse(rsp)
 }
 
 // V1RunAQueryWithBodyWithResponse request with arbitrary body returning *V1RunAQueryResponse
@@ -9545,6 +12781,15 @@ func (c *ClientWithResponses) V1ListAllNetworkBansWithResponse(ctx context.Conte
 	return ParseV1ListAllNetworkBansResponse(rsp)
 }
 
+// V1ListAllNetworkBansEnrichedWithResponse request returning *V1ListAllNetworkBansEnrichedResponse
+func (c *ClientWithResponses) V1ListAllNetworkBansEnrichedWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListAllNetworkBansEnrichedResponse, error) {
+	rsp, err := c.V1ListAllNetworkBansEnriched(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ListAllNetworkBansEnrichedResponse(rsp)
+}
+
 // V1GetNetworkRestrictionsWithResponse request returning *V1GetNetworkRestrictionsResponse
 func (c *ClientWithResponses) V1GetNetworkRestrictionsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetNetworkRestrictionsResponse, error) {
 	rsp, err := c.V1GetNetworkRestrictions(ctx, ref, reqEditors...)
@@ -9693,17 +12938,9 @@ func (c *ClientWithResponses) V1ListAvailableRestoreVersionsWithResponse(ctx con
 	return ParseV1ListAvailableRestoreVersionsResponse(rsp)
 }
 
-// V1RestoreAProjectWithBodyWithResponse request with arbitrary body returning *V1RestoreAProjectResponse
-func (c *ClientWithResponses) V1RestoreAProjectWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RestoreAProjectResponse, error) {
-	rsp, err := c.V1RestoreAProjectWithBody(ctx, ref, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseV1RestoreAProjectResponse(rsp)
-}
-
-func (c *ClientWithResponses) V1RestoreAProjectWithResponse(ctx context.Context, ref string, body V1RestoreAProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*V1RestoreAProjectResponse, error) {
-	rsp, err := c.V1RestoreAProject(ctx, ref, body, reqEditors...)
+// V1RestoreAProjectWithResponse request returning *V1RestoreAProjectResponse
+func (c *ClientWithResponses) V1RestoreAProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1RestoreAProjectResponse, error) {
+	rsp, err := c.V1RestoreAProject(ctx, ref, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -9989,6 +13226,48 @@ func ParseV1UpdateABranchConfigResponse(rsp *http.Response) (*V1UpdateABranchCon
 	return response, nil
 }
 
+// ParseV1DiffABranchResponse parses an HTTP response from a V1DiffABranchWithResponse call
+func ParseV1DiffABranchResponse(rsp *http.Response) (*V1DiffABranchResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1DiffABranchResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1MergeABranchResponse parses an HTTP response from a V1MergeABranchWithResponse call
+func ParseV1MergeABranchResponse(rsp *http.Response) (*V1MergeABranchResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1MergeABranchResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest BranchUpdateResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseV1PushABranchResponse parses an HTTP response from a V1PushABranchWithResponse call
 func ParseV1PushABranchResponse(rsp *http.Response) (*V1PushABranchResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -10050,6 +13329,22 @@ func ParseV1AuthorizeUserResponse(rsp *http.Response) (*V1AuthorizeUserResponse,
 	}
 
 	response := &V1AuthorizeUserResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1OauthAuthorizeProjectClaimResponse parses an HTTP response from a V1OauthAuthorizeProjectClaimWithResponse call
+func ParseV1OauthAuthorizeProjectClaimResponse(rsp *http.Response) (*V1OauthAuthorizeProjectClaimResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1OauthAuthorizeProjectClaimResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -10203,6 +13498,48 @@ func ParseV1ListOrganizationMembersResponse(rsp *http.Response) (*V1ListOrganiza
 	return response, nil
 }
 
+// ParseV1GetOrganizationProjectClaimResponse parses an HTTP response from a V1GetOrganizationProjectClaimWithResponse call
+func ParseV1GetOrganizationProjectClaimResponse(rsp *http.Response) (*V1GetOrganizationProjectClaimResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetOrganizationProjectClaimResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OrganizationProjectClaimResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1ClaimProjectForOrganizationResponse parses an HTTP response from a V1ClaimProjectForOrganizationWithResponse call
+func ParseV1ClaimProjectForOrganizationResponse(rsp *http.Response) (*V1ClaimProjectForOrganizationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1ClaimProjectForOrganizationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
 // ParseV1ListAllProjectsResponse parses an HTTP response from a V1ListAllProjectsWithResponse call
 func ParseV1ListAllProjectsResponse(rsp *http.Response) (*V1ListAllProjectsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -10307,22 +13644,126 @@ func ParseV1GetProjectResponse(rsp *http.Response) (*V1GetProjectResponse, error
 	return response, nil
 }
 
-// ParseGetLogsResponse parses an HTTP response from a GetLogsWithResponse call
-func ParseGetLogsResponse(rsp *http.Response) (*GetLogsResponse, error) {
+// ParseV1GetPerformanceAdvisorsResponse parses an HTTP response from a V1GetPerformanceAdvisorsWithResponse call
+func ParseV1GetPerformanceAdvisorsResponse(rsp *http.Response) (*V1GetPerformanceAdvisorsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &GetLogsResponse{
+	response := &V1GetPerformanceAdvisorsResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest V1AnalyticsResponse
+		var dest V1ProjectAdvisorsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetSecurityAdvisorsResponse parses an HTTP response from a V1GetSecurityAdvisorsWithResponse call
+func ParseV1GetSecurityAdvisorsResponse(rsp *http.Response) (*V1GetSecurityAdvisorsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetSecurityAdvisorsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest V1ProjectAdvisorsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetProjectLogsResponse parses an HTTP response from a V1GetProjectLogsWithResponse call
+func ParseV1GetProjectLogsResponse(rsp *http.Response) (*V1GetProjectLogsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetProjectLogsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AnalyticsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetProjectUsageApiCountResponse parses an HTTP response from a V1GetProjectUsageApiCountWithResponse call
+func ParseV1GetProjectUsageApiCountResponse(rsp *http.Response) (*V1GetProjectUsageApiCountResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetProjectUsageApiCountResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AnalyticsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetProjectUsageRequestCountResponse parses an HTTP response from a V1GetProjectUsageRequestCountWithResponse call
+func ParseV1GetProjectUsageRequestCountResponse(rsp *http.Response) (*V1GetProjectUsageRequestCountResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetProjectUsageRequestCountResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AnalyticsResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -10359,15 +13800,15 @@ func ParseV1GetProjectApiKeysResponse(rsp *http.Response) (*V1GetProjectApiKeysR
 	return response, nil
 }
 
-// ParseCreateApiKeyResponse parses an HTTP response from a CreateApiKeyWithResponse call
-func ParseCreateApiKeyResponse(rsp *http.Response) (*CreateApiKeyResponse, error) {
+// ParseV1CreateProjectApiKeyResponse parses an HTTP response from a V1CreateProjectApiKeyWithResponse call
+func ParseV1CreateProjectApiKeyResponse(rsp *http.Response) (*V1CreateProjectApiKeyResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &CreateApiKeyResponse{
+	response := &V1CreateProjectApiKeyResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -10385,15 +13826,67 @@ func ParseCreateApiKeyResponse(rsp *http.Response) (*CreateApiKeyResponse, error
 	return response, nil
 }
 
-// ParseDeleteApiKeyResponse parses an HTTP response from a DeleteApiKeyWithResponse call
-func ParseDeleteApiKeyResponse(rsp *http.Response) (*DeleteApiKeyResponse, error) {
+// ParseV1GetProjectLegacyApiKeysResponse parses an HTTP response from a V1GetProjectLegacyApiKeysWithResponse call
+func ParseV1GetProjectLegacyApiKeysResponse(rsp *http.Response) (*V1GetProjectLegacyApiKeysResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &DeleteApiKeyResponse{
+	response := &V1GetProjectLegacyApiKeysResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest LegacyApiKeysResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1UpdateProjectLegacyApiKeysResponse parses an HTTP response from a V1UpdateProjectLegacyApiKeysWithResponse call
+func ParseV1UpdateProjectLegacyApiKeysResponse(rsp *http.Response) (*V1UpdateProjectLegacyApiKeysResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1UpdateProjectLegacyApiKeysResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest LegacyApiKeysResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1DeleteProjectApiKeyResponse parses an HTTP response from a V1DeleteProjectApiKeyWithResponse call
+func ParseV1DeleteProjectApiKeyResponse(rsp *http.Response) (*V1DeleteProjectApiKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1DeleteProjectApiKeyResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -10411,15 +13904,15 @@ func ParseDeleteApiKeyResponse(rsp *http.Response) (*DeleteApiKeyResponse, error
 	return response, nil
 }
 
-// ParseGetApiKeyResponse parses an HTTP response from a GetApiKeyWithResponse call
-func ParseGetApiKeyResponse(rsp *http.Response) (*GetApiKeyResponse, error) {
+// ParseV1GetProjectApiKeyResponse parses an HTTP response from a V1GetProjectApiKeyWithResponse call
+func ParseV1GetProjectApiKeyResponse(rsp *http.Response) (*V1GetProjectApiKeyResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &GetApiKeyResponse{
+	response := &V1GetProjectApiKeyResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -10437,15 +13930,15 @@ func ParseGetApiKeyResponse(rsp *http.Response) (*GetApiKeyResponse, error) {
 	return response, nil
 }
 
-// ParseUpdateApiKeyResponse parses an HTTP response from a UpdateApiKeyWithResponse call
-func ParseUpdateApiKeyResponse(rsp *http.Response) (*UpdateApiKeyResponse, error) {
+// ParseV1UpdateProjectApiKeyResponse parses an HTTP response from a V1UpdateProjectApiKeyWithResponse call
+func ParseV1UpdateProjectApiKeyResponse(rsp *http.Response) (*V1UpdateProjectApiKeyResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &UpdateApiKeyResponse{
+	response := &V1UpdateProjectApiKeyResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -10458,6 +13951,64 @@ func ParseUpdateApiKeyResponse(rsp *http.Response) (*UpdateApiKeyResponse, error
 		}
 		response.JSON200 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseV1ListProjectAddonsResponse parses an HTTP response from a V1ListProjectAddonsWithResponse call
+func ParseV1ListProjectAddonsResponse(rsp *http.Response) (*V1ListProjectAddonsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1ListProjectAddonsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ListProjectAddonsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1ApplyProjectAddonResponse parses an HTTP response from a V1ApplyProjectAddonWithResponse call
+func ParseV1ApplyProjectAddonResponse(rsp *http.Response) (*V1ApplyProjectAddonResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1ApplyProjectAddonResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1RemoveProjectAddonResponse parses an HTTP response from a V1RemoveProjectAddonWithResponse call
+func ParseV1RemoveProjectAddonResponse(rsp *http.Response) (*V1RemoveProjectAddonResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1RemoveProjectAddonResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
 	}
 
 	return response, nil
@@ -10531,6 +14082,74 @@ func ParseV1CreateABranchResponse(rsp *http.Response) (*V1CreateABranchResponse,
 	return response, nil
 }
 
+// ParseV1DeleteProjectClaimTokenResponse parses an HTTP response from a V1DeleteProjectClaimTokenWithResponse call
+func ParseV1DeleteProjectClaimTokenResponse(rsp *http.Response) (*V1DeleteProjectClaimTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1DeleteProjectClaimTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1GetProjectClaimTokenResponse parses an HTTP response from a V1GetProjectClaimTokenWithResponse call
+func ParseV1GetProjectClaimTokenResponse(rsp *http.Response) (*V1GetProjectClaimTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetProjectClaimTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ProjectClaimTokenResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1CreateProjectClaimTokenResponse parses an HTTP response from a V1CreateProjectClaimTokenWithResponse call
+func ParseV1CreateProjectClaimTokenResponse(rsp *http.Response) (*V1CreateProjectClaimTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1CreateProjectClaimTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CreateProjectClaimTokenResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseV1GetAuthServiceConfigResponse parses an HTTP response from a V1GetAuthServiceConfigWithResponse call
 func ParseV1GetAuthServiceConfigResponse(rsp *http.Response) (*V1GetAuthServiceConfigResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -10573,6 +14192,188 @@ func ParseV1UpdateAuthServiceConfigResponse(rsp *http.Response) (*V1UpdateAuthSe
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest AuthConfigResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetProjectSigningKeysResponse parses an HTTP response from a V1GetProjectSigningKeysWithResponse call
+func ParseV1GetProjectSigningKeysResponse(rsp *http.Response) (*V1GetProjectSigningKeysResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetProjectSigningKeysResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SigningKeysResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1CreateProjectSigningKeyResponse parses an HTTP response from a V1CreateProjectSigningKeyWithResponse call
+func ParseV1CreateProjectSigningKeyResponse(rsp *http.Response) (*V1CreateProjectSigningKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1CreateProjectSigningKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest SigningKeyResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetLegacySigningKeyResponse parses an HTTP response from a V1GetLegacySigningKeyWithResponse call
+func ParseV1GetLegacySigningKeyResponse(rsp *http.Response) (*V1GetLegacySigningKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetLegacySigningKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SigningKeyResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1CreateLegacySigningKeyResponse parses an HTTP response from a V1CreateLegacySigningKeyWithResponse call
+func ParseV1CreateLegacySigningKeyResponse(rsp *http.Response) (*V1CreateLegacySigningKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1CreateLegacySigningKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest SigningKeyResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1RemoveProjectSigningKeyResponse parses an HTTP response from a V1RemoveProjectSigningKeyWithResponse call
+func ParseV1RemoveProjectSigningKeyResponse(rsp *http.Response) (*V1RemoveProjectSigningKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1RemoveProjectSigningKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SigningKeyResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetProjectSigningKeyResponse parses an HTTP response from a V1GetProjectSigningKeyWithResponse call
+func ParseV1GetProjectSigningKeyResponse(rsp *http.Response) (*V1GetProjectSigningKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetProjectSigningKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SigningKeyResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1UpdateProjectSigningKeyResponse parses an HTTP response from a V1UpdateProjectSigningKeyWithResponse call
+func ParseV1UpdateProjectSigningKeyResponse(rsp *http.Response) (*V1UpdateProjectSigningKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1UpdateProjectSigningKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SigningKeyResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -10713,15 +14514,15 @@ func ParseV1UpdateASsoProviderResponse(rsp *http.Response) (*V1UpdateASsoProvide
 	return response, nil
 }
 
-// ParseListTPAForProjectResponse parses an HTTP response from a ListTPAForProjectWithResponse call
-func ParseListTPAForProjectResponse(rsp *http.Response) (*ListTPAForProjectResponse, error) {
+// ParseV1ListProjectTpaIntegrationsResponse parses an HTTP response from a V1ListProjectTpaIntegrationsWithResponse call
+func ParseV1ListProjectTpaIntegrationsResponse(rsp *http.Response) (*V1ListProjectTpaIntegrationsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &ListTPAForProjectResponse{
+	response := &V1ListProjectTpaIntegrationsResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -10739,15 +14540,15 @@ func ParseListTPAForProjectResponse(rsp *http.Response) (*ListTPAForProjectRespo
 	return response, nil
 }
 
-// ParseCreateTPAForProjectResponse parses an HTTP response from a CreateTPAForProjectWithResponse call
-func ParseCreateTPAForProjectResponse(rsp *http.Response) (*CreateTPAForProjectResponse, error) {
+// ParseV1CreateProjectTpaIntegrationResponse parses an HTTP response from a V1CreateProjectTpaIntegrationWithResponse call
+func ParseV1CreateProjectTpaIntegrationResponse(rsp *http.Response) (*V1CreateProjectTpaIntegrationResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &CreateTPAForProjectResponse{
+	response := &V1CreateProjectTpaIntegrationResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -10765,15 +14566,15 @@ func ParseCreateTPAForProjectResponse(rsp *http.Response) (*CreateTPAForProjectR
 	return response, nil
 }
 
-// ParseDeleteTPAForProjectResponse parses an HTTP response from a DeleteTPAForProjectWithResponse call
-func ParseDeleteTPAForProjectResponse(rsp *http.Response) (*DeleteTPAForProjectResponse, error) {
+// ParseV1DeleteProjectTpaIntegrationResponse parses an HTTP response from a V1DeleteProjectTpaIntegrationWithResponse call
+func ParseV1DeleteProjectTpaIntegrationResponse(rsp *http.Response) (*V1DeleteProjectTpaIntegrationResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &DeleteTPAForProjectResponse{
+	response := &V1DeleteProjectTpaIntegrationResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -10791,15 +14592,15 @@ func ParseDeleteTPAForProjectResponse(rsp *http.Response) (*DeleteTPAForProjectR
 	return response, nil
 }
 
-// ParseGetTPAForProjectResponse parses an HTTP response from a GetTPAForProjectWithResponse call
-func ParseGetTPAForProjectResponse(rsp *http.Response) (*GetTPAForProjectResponse, error) {
+// ParseV1GetProjectTpaIntegrationResponse parses an HTTP response from a V1GetProjectTpaIntegrationWithResponse call
+func ParseV1GetProjectTpaIntegrationResponse(rsp *http.Response) (*V1GetProjectTpaIntegrationResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &GetTPAForProjectResponse{
+	response := &V1GetProjectTpaIntegrationResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -10843,15 +14644,15 @@ func ParseV1GetProjectPgbouncerConfigResponse(rsp *http.Response) (*V1GetProject
 	return response, nil
 }
 
-// ParseV1GetSupavisorConfigResponse parses an HTTP response from a V1GetSupavisorConfigWithResponse call
-func ParseV1GetSupavisorConfigResponse(rsp *http.Response) (*V1GetSupavisorConfigResponse, error) {
+// ParseV1GetPoolerConfigResponse parses an HTTP response from a V1GetPoolerConfigWithResponse call
+func ParseV1GetPoolerConfigResponse(rsp *http.Response) (*V1GetPoolerConfigResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &V1GetSupavisorConfigResponse{
+	response := &V1GetPoolerConfigResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -10869,15 +14670,15 @@ func ParseV1GetSupavisorConfigResponse(rsp *http.Response) (*V1GetSupavisorConfi
 	return response, nil
 }
 
-// ParseV1UpdateSupavisorConfigResponse parses an HTTP response from a V1UpdateSupavisorConfigWithResponse call
-func ParseV1UpdateSupavisorConfigResponse(rsp *http.Response) (*V1UpdateSupavisorConfigResponse, error) {
+// ParseV1UpdatePoolerConfigResponse parses an HTTP response from a V1UpdatePoolerConfigWithResponse call
+func ParseV1UpdatePoolerConfigResponse(rsp *http.Response) (*V1UpdatePoolerConfigResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &V1UpdateSupavisorConfigResponse{
+	response := &V1UpdatePoolerConfigResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -11151,27 +14952,153 @@ func ParseV1RestorePitrBackupResponse(rsp *http.Response) (*V1RestorePitrBackupR
 	return response, nil
 }
 
-// ParseGetDatabaseMetadataResponse parses an HTTP response from a GetDatabaseMetadataWithResponse call
-func ParseGetDatabaseMetadataResponse(rsp *http.Response) (*GetDatabaseMetadataResponse, error) {
+// ParseV1GetRestorePointResponse parses an HTTP response from a V1GetRestorePointWithResponse call
+func ParseV1GetRestorePointResponse(rsp *http.Response) (*V1GetRestorePointResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &GetDatabaseMetadataResponse{
+	response := &V1GetRestorePointResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest GetProjectDbMetadataResponseDto
+		var dest V1RestorePointResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON200 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseV1CreateRestorePointResponse parses an HTTP response from a V1CreateRestorePointWithResponse call
+func ParseV1CreateRestorePointResponse(rsp *http.Response) (*V1CreateRestorePointResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1CreateRestorePointResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest V1RestorePointResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1UndoResponse parses an HTTP response from a V1UndoWithResponse call
+func ParseV1UndoResponse(rsp *http.Response) (*V1UndoResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1UndoResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1GetDatabaseMetadataResponse parses an HTTP response from a V1GetDatabaseMetadataWithResponse call
+func ParseV1GetDatabaseMetadataResponse(rsp *http.Response) (*V1GetDatabaseMetadataResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetDatabaseMetadataResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GetProjectDbMetadataResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1ListMigrationHistoryResponse parses an HTTP response from a V1ListMigrationHistoryWithResponse call
+func ParseV1ListMigrationHistoryResponse(rsp *http.Response) (*V1ListMigrationHistoryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1ListMigrationHistoryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest V1ListMigrationsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1ApplyAMigrationResponse parses an HTTP response from a V1ApplyAMigrationWithResponse call
+func ParseV1ApplyAMigrationResponse(rsp *http.Response) (*V1ApplyAMigrationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1ApplyAMigrationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1UpsertAMigrationResponse parses an HTTP response from a V1UpsertAMigrationWithResponse call
+func ParseV1UpsertAMigrationResponse(rsp *http.Response) (*V1UpsertAMigrationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1UpsertAMigrationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
 	}
 
 	return response, nil
@@ -11188,16 +15115,6 @@ func ParseV1RunAQueryResponse(rsp *http.Response) (*V1RunAQueryResponse, error) 
 	response := &V1RunAQueryResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest map[string]interface{}
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
 	}
 
 	return response, nil
@@ -11404,6 +15321,16 @@ func ParseV1GetAFunctionBodyResponse(rsp *http.Response) (*V1GetAFunctionBodyRes
 		HTTPResponse: rsp,
 	}
 
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest StreamableFile
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
 	return response, nil
 }
 
@@ -11465,6 +15392,32 @@ func ParseV1ListAllNetworkBansResponse(rsp *http.Response) (*V1ListAllNetworkBan
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
 		var dest NetworkBanResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1ListAllNetworkBansEnrichedResponse parses an HTTP response from a V1ListAllNetworkBansEnrichedWithResponse call
+func ParseV1ListAllNetworkBansEnrichedResponse(rsp *http.Response) (*V1ListAllNetworkBansEnrichedResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1ListAllNetworkBansEnrichedResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest NetworkBanResponseEnriched
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -11790,16 +15743,6 @@ func ParseV1BulkDeleteSecretsResponse(rsp *http.Response) (*V1BulkDeleteSecretsR
 	response := &V1BulkDeleteSecretsResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]interface{}
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
 	}
 
 	return response, nil

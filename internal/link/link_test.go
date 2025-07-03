@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
+	"github.com/oapi-codegen/nullable"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/testing/apitest"
@@ -53,21 +54,19 @@ func TestLinkCommand(t *testing.T) {
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		// Mock project status
-		postgres := api.V1DatabaseResponse{
-			Host:    utils.GetSupabaseDbHost(project),
-			Version: "15.1.0.117",
+		mockPostgres := api.V1ProjectWithDatabaseResponse{
+			Status: api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
 		}
+		mockPostgres.Database.Host = utils.GetSupabaseDbHost(project)
+		mockPostgres.Database.Version = "15.1.0.117"
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project).
 			Reply(200).
-			JSON(api.V1ProjectWithDatabaseResponse{
-				Status:   api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
-				Database: postgres,
-			})
+			JSON(mockPostgres)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
-			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: "anon-key"}})
+			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: nullable.NewNullableWithValue("anon-key")}})
 		// Link configs
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/config/database/postgres").
@@ -89,6 +88,10 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/config/database/pooler").
 			Reply(200).
 			JSON(api.V1PgbouncerConfigResponse{})
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/network-restrictions").
+			Reply(200).
+			JSON(api.NetworkRestrictionsResponse{})
 		// Link versions
 		auth := tenant.HealthResponse{Version: "v2.74.2"}
 		gock.New("https://" + utils.GetSupabaseHost(project)).
@@ -117,7 +120,7 @@ func TestLinkCommand(t *testing.T) {
 		assert.Equal(t, []byte(auth.Version), authVersion)
 		postgresVersion, err := afero.ReadFile(fsys, utils.PostgresVersionPath)
 		assert.NoError(t, err)
-		assert.Equal(t, []byte(postgres.Version), postgresVersion)
+		assert.Equal(t, []byte(mockPostgres.Database.Version), postgresVersion)
 	})
 
 	t.Run("ignores error linking services", func(t *testing.T) {
@@ -131,13 +134,12 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects/" + project).
 			Reply(200).
 			JSON(api.V1ProjectWithDatabaseResponse{
-				Status:   api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
-				Database: api.V1DatabaseResponse{},
+				Status: api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
 			})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
-			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: "anon-key"}})
+			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: nullable.NewNullableWithValue("anon-key")}})
 		// Link configs
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/config/database/postgres").
@@ -154,6 +156,10 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/config/database/pooler").
 			ReplyError(errors.New("network error"))
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/network-restrictions").
+			Reply(200).
+			JSON(api.NetworkRestrictionsResponse{})
 		// Link versions
 		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/auth/v1/health").
@@ -182,13 +188,12 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects/" + project).
 			Reply(200).
 			JSON(api.V1ProjectWithDatabaseResponse{
-				Status:   api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
-				Database: api.V1DatabaseResponse{},
+				Status: api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
 			})
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/api-keys").
 			Reply(200).
-			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: "anon-key"}})
+			JSON([]api.ApiKeyResponse{{Name: "anon", ApiKey: nullable.NewNullableWithValue("anon-key")}})
 		// Link configs
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/config/database/postgres").
@@ -205,6 +210,10 @@ func TestLinkCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/config/database/pooler").
 			ReplyError(errors.New("network error"))
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/network-restrictions").
+			Reply(200).
+			JSON(api.NetworkRestrictionsResponse{})
 		// Link versions
 		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/auth/v1/health").
@@ -237,14 +246,15 @@ func TestStatusCheck(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
+		postgres := api.V1ProjectWithDatabaseResponse{
+			Status: api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
+		}
+		postgres.Database.Version = "15.6.1.139"
 		// Mock project status
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project).
 			Reply(http.StatusOK).
-			JSON(api.V1ProjectWithDatabaseResponse{
-				Status:   api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
-				Database: api.V1DatabaseResponse{Version: "15.6.1.139"},
-			})
+			JSON(postgres)
 		// Run test
 		err := checkRemoteProjectStatus(context.Background(), project, fsys)
 		// Check error

@@ -182,3 +182,100 @@ func TestSettingsToPostgresConfig(t *testing.T) {
 		assert.NotContains(t, got, "=")
 	})
 }
+
+func TestNetworkRestrictionsFromRemote(t *testing.T) {
+	t.Run("converts from remote config with restrictions", func(t *testing.T) {
+		ipv4Cidrs := []string{"192.168.1.0/24"}
+		ipv6Cidrs := []string{"2001:db8::/32"}
+		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig.Config.DbAllowedCidrs = &ipv4Cidrs
+		remoteConfig.Config.DbAllowedCidrsV6 = &ipv6Cidrs
+		nr := networkRestrictions{Enabled: true}
+		nr.FromRemoteNetworkRestrictions(remoteConfig)
+		assert.ElementsMatch(t, ipv4Cidrs, nr.AllowedCidrs)
+		assert.ElementsMatch(t, ipv6Cidrs, nr.AllowedCidrsV6)
+	})
+
+	t.Run("converts from remote config with allow all", func(t *testing.T) {
+		ipv4Cidrs := []string{"0.0.0.0/0"}
+		ipv6Cidrs := []string{"::/0"}
+		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig.Config.DbAllowedCidrs = &ipv4Cidrs
+		remoteConfig.Config.DbAllowedCidrsV6 = &ipv6Cidrs
+		nr := networkRestrictions{Enabled: true}
+		nr.FromRemoteNetworkRestrictions(remoteConfig)
+		assert.ElementsMatch(t, ipv4Cidrs, nr.AllowedCidrs)
+		assert.ElementsMatch(t, ipv6Cidrs, nr.AllowedCidrsV6)
+	})
+
+	t.Run("ignores locally disabled network restrictions", func(t *testing.T) {
+		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig.Config.DbAllowedCidrs = &[]string{"192.168.1.0/24"}
+		remoteConfig.Config.DbAllowedCidrsV6 = &[]string{"2001:db8::/32"}
+		nr := networkRestrictions{}
+		nr.FromRemoteNetworkRestrictions(remoteConfig)
+		assert.False(t, nr.Enabled)
+		assert.Empty(t, nr.AllowedCidrs)
+		assert.Empty(t, nr.AllowedCidrsV6)
+	})
+}
+
+func TestNetworkRestrictionsDiff(t *testing.T) {
+	t.Run("detects differences", func(t *testing.T) {
+		local := networkRestrictions{
+			Enabled:        true,
+			AllowedCidrs:   []string{"192.168.1.0/24"},
+			AllowedCidrsV6: []string{"2001:db8::/32"},
+		}
+		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig.Config.DbAllowedCidrs = &[]string{"10.0.0.0/8"}
+		remoteConfig.Config.DbAllowedCidrsV6 = &[]string{"fd00::/8"}
+		diff, err := local.DiffWithRemote(remoteConfig)
+		assert.NoError(t, err)
+		assert.Contains(t, string(diff), "-db_allowed_cidrs = [\"10.0.0.0/8\"]")
+		assert.Contains(t, string(diff), "+db_allowed_cidrs = [\"192.168.1.0/24\"]")
+		assert.Contains(t, string(diff), "-db_allowed_cidrs_v6 = [\"2001:db8::/32\"]")
+		assert.Contains(t, string(diff), "+db_allowed_cidrs_v6 = [\"fd00::/8\"]")
+	})
+
+	t.Run("no differences", func(t *testing.T) {
+		local := networkRestrictions{
+			Enabled:        true,
+			AllowedCidrs:   []string{"192.168.1.0/24"},
+			AllowedCidrsV6: []string{"2001:db8::/32"},
+		}
+		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig.Config.DbAllowedCidrs = &local.AllowedCidrs
+		remoteConfig.Config.DbAllowedCidrsV6 = &local.AllowedCidrsV6
+		diff, err := local.DiffWithRemote(remoteConfig)
+		assert.NoError(t, err)
+		assert.Empty(t, diff)
+	})
+
+	t.Run("both have no restrictions - disabled vs allow all", func(t *testing.T) {
+		local := networkRestrictions{}
+		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig.Config.DbAllowedCidrs = &[]string{"0.0.0.0/0"}
+		remoteConfig.Config.DbAllowedCidrsV6 = &[]string{"::/0"}
+		diff, err := local.DiffWithRemote(remoteConfig)
+		assert.NoError(t, err)
+		assert.Empty(t, diff)
+	})
+
+	t.Run("local disallow all, remote allow all", func(t *testing.T) {
+		local := networkRestrictions{
+			Enabled:        true,
+			AllowedCidrs:   []string{},
+			AllowedCidrsV6: []string{},
+		}
+		remoteConfig := v1API.NetworkRestrictionsResponse{}
+		remoteConfig.Config.DbAllowedCidrs = &[]string{"0.0.0.0/0"}
+		remoteConfig.Config.DbAllowedCidrsV6 = &[]string{"::/0"}
+		diff, err := local.DiffWithRemote(remoteConfig)
+		assert.NoError(t, err)
+		assert.Contains(t, string(diff), "-db_allowed_cidrs = [\"0.0.0.0/0\"]")
+		assert.Contains(t, string(diff), "+db_allowed_cidrs = []")
+		assert.Contains(t, string(diff), "-db_allowed_cidrs_v6 = [\"::/0\"]")
+		assert.Contains(t, string(diff), "+db_allowed_cidrs_v6 = []")
+	})
+}

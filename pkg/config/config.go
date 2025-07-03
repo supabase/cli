@@ -114,9 +114,10 @@ func (g Glob) Files(fsys fs.FS) ([]string, error) {
 		sort.Strings(matches)
 		// Remove duplicates
 		for _, item := range matches {
-			if _, exists := set[item]; !exists {
-				set[item] = struct{}{}
-				result = append(result, item)
+			fp := filepath.ToSlash(item)
+			if _, exists := set[fp]; !exists {
+				set[fp] = struct{}{}
+				result = append(result, fp)
 			}
 		}
 	}
@@ -247,6 +248,17 @@ type (
 		Enabled bool `toml:"enabled"`
 	}
 
+	inspect struct {
+		Rules []rule `toml:"rules"`
+	}
+
+	rule struct {
+		Query string `toml:"query"`
+		Name  string `toml:"name"`
+		Pass  string `toml:"pass"`
+		Fail  string `toml:"fail"`
+	}
+
 	experimental struct {
 		OrioleDBVersion string    `toml:"orioledb_version"`
 		S3Host          string    `toml:"s3_host"`
@@ -254,6 +266,7 @@ type (
 		S3AccessKey     string    `toml:"s3_access_key"`
 		S3SecretKey     string    `toml:"s3_secret_key"`
 		Webhooks        *webhooks `toml:"webhooks"`
+		Inspect         inspect   `toml:"inspect"`
 	}
 )
 
@@ -289,6 +302,10 @@ func (a *auth) Clone() auth {
 		hook := *a.Hook.SendEmail
 		copy.Hook.SendEmail = &hook
 	}
+	if a.Hook.BeforeUserCreated != nil {
+		hook := *a.Hook.BeforeUserCreated
+		copy.Hook.BeforeUserCreated = &hook
+	}
 	copy.Sms.TestOTP = maps.Clone(a.Sms.TestOTP)
 	return copy
 }
@@ -317,10 +334,12 @@ func (c *baseConfig) Clone() baseConfig {
 	return copy
 }
 
-type ConfigEditor func(*config)
+type Config *config
+
+type ConfigEditor func(Config)
 
 func WithHostname(hostname string) ConfigEditor {
-	return func(c *config) {
+	return func(c Config) {
 		c.Hostname = hostname
 	}
 }
@@ -343,6 +362,9 @@ func NewConfig(editors ...ConfigEditor) config {
 				TenantId:      "pooler-dev",
 				EncryptionKey: "12345678901234567890123456789032",
 				SecretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
+			},
+			Migrations: migrations{
+				Enabled: true,
 			},
 			Seed: seed{
 				Enabled:  true,
@@ -1141,6 +1163,11 @@ func (h *hook) validate() error {
 	}
 	if hook := h.SendEmail; hook != nil {
 		if err := h.SendEmail.validate("send_email"); err != nil {
+			return err
+		}
+	}
+	if hook := h.BeforeUserCreated; hook != nil {
+		if err := hook.validate("before_user_created"); err != nil {
 			return err
 		}
 	}

@@ -1,0 +1,61 @@
+name: API Sync
+
+on:
+  repository_dispatch:
+    types: [api-sync]
+  workflow_dispatch: # allow manual triggering
+
+# Add explicit permissions
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    name: Sync API Types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run codegen
+        run: go generate
+
+      - name: Check for changes
+        id: check
+        run: |
+          if git diff --ignore-space-at-eol --exit-code --quiet pkg; then
+            echo "No changes detected"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "Changes detected"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Pull Request
+        if: steps.check.outputs.has_changes == 'true'
+        id: cpr
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GH_PAT }}
+          commit-message: "chore: sync API types from infrastructure"
+          title: "chore: sync API types from infrastructure"
+          body: |
+            This PR was automatically created to sync API types from the infrastructure repository.
+
+            Changes were detected in the generated API code after syncing with the latest spec from infrastructure.
+          branch: sync/api-types
+          base: develop
+          labels: |
+            automated pr
+            api-sync
+
+      - name: Enable Pull Request Automerge
+        if: steps.check.outputs.has_changes == 'true'
+        run: gh pr merge --auto --squash "${{ steps.cpr.outputs.pull-request-number }}"
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}

@@ -200,6 +200,9 @@ func recoverAndExit() {
 			!viper.GetBool("DEBUG") {
 			utils.CmdSuggestion = utils.SuggestDebugFlag
 		}
+		if e, ok := err.(*errors.Error); ok && len(utils.Version) == 0 {
+			fmt.Fprintln(os.Stderr, string(e.Stack()))
+		}
 		msg = err.Error()
 	default:
 		msg = fmt.Sprintf("%#v", err)
@@ -229,6 +232,7 @@ func init() {
 	})
 
 	flags := rootCmd.PersistentFlags()
+	flags.Bool("yes", false, "answer yes to all prompts")
 	flags.Bool("debug", false, "output debug logs to stderr")
 	flags.String("workdir", "", "path to a Supabase project directory")
 	flags.Bool("experimental", false, "enable experimental features")

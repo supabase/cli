@@ -1,0 +1,31 @@
+overlay: 1.0.0
+info:
+  title: Overlay
+  version: 0.0.0
+actions:
+- target: $.components.schemas.*.properties.password_required_characters.enum
+  description: Converts enum with special characters to a string
+  remove: true
+- target: $.components.schemas.*.properties.password_required_characters
+  description: Optionally adds back the enum with escaped backslash and quotes
+  update:
+    enum:
+      - abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789
+      - abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789
+      - abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~
+      - ''
+- target: $.components.schemas.*.properties.attribute_mapping.properties.keys.additionalProperties.properties.default.oneOf
+  description: Replaces request union type with interface for easier casting
+  remove: true
+- target: $.components.schemas.*.properties.saml.properties.attribute_mapping.properties.keys.additionalProperties.properties.default.oneOf
+  description: Replaces response union type with interface for easier casting
+  remove: true
+- target: $.components.schemas.*.properties.items.items.properties.saml.properties.attribute_mapping.properties.keys.additionalProperties.properties.default.oneOf
+  description: Replaces list union type with interface for easier casting
+  remove: true
+- target: $.components.schemas.*.properties.connectionString
+  description: Removes deprecated field that conflicts with naming convention
+  remove: true
+- target: $.components.schemas.*.properties.private_jwk.discriminator
+  description: Replaces discriminated union with concrete type
+  remove: true

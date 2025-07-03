@@ -1,7 +1,7 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -52,7 +52,7 @@
+@@ -53,7 +53,7 @@
  otp_expiry = 0
  
  [sms]

@@ -23,6 +23,7 @@ import (
 	"github.com/supabase/cli/internal/db/test"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/migration"
 )
 
 var (
@@ -120,7 +121,13 @@ var (
 			}
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return dump.Run(cmd.Context(), file, flags.DbConfig, schema, excludeTable, dataOnly, roleOnly, keepComments, useCopy, dryRun, afero.NewOsFs())
+			opts := []migration.DumpOptionFunc{
+				migration.WithSchema(schema...),
+				migration.WithoutTable(excludeTable...),
+				migration.WithComments(keepComments),
+				migration.WithColumnInsert(!useCopy),
+			}
+			return dump.Run(cmd.Context(), file, flags.DbConfig, dataOnly, roleOnly, dryRun, afero.NewOsFs(), opts...)
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			if len(file) > 0 {
@@ -186,7 +193,8 @@ var (
 		},
 	}
 
-	noSeed bool
+	noSeed      bool
+	lastVersion uint
 
 	dbResetCmd = &cobra.Command{
 		Use:   "reset",
@@ -195,7 +203,7 @@ var (
 			if noSeed {
 				utils.Config.Db.Seed.Enabled = false
 			}
-			return reset.Run(cmd.Context(), migrationVersion, flags.DbConfig, afero.NewOsFs())
+			return reset.Run(cmd.Context(), migrationVersion, lastVersion, flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -319,6 +327,8 @@ func init() {
 	resetFlags.BoolVar(&noSeed, "no-seed", false, "Skip running the seed script after reset.")
 	dbResetCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	resetFlags.StringVar(&migrationVersion, "version", "", "Reset up to the specified version.")
+	resetFlags.UintVar(&lastVersion, "last", 0, "Reset up to the last n migration versions.")
+	dbResetCmd.MarkFlagsMutuallyExclusive("version", "last")
 	dbCmd.AddCommand(dbResetCmd)
 	// Build lint command
 	lintFlags := dbLintCmd.Flags()
