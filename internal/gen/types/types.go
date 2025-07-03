@@ -61,7 +61,7 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang str
 		}
 
 		// Extract version from image tag and trim 'v' prefix
-		postgrestVersion = strings.TrimPrefix(utils.Config.Api.Image, "v")
+		postgrestVersion = strings.TrimPrefix(utils.Config.Api.Image, "postgrest/postgrest:v")
 
 		if strings.Contains(utils.Config.Api.Image, "v9") {
 			postgrestV9Compat = true
