@@ -110,7 +110,7 @@ func init() {
 	typeFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	typeFlags.Var(&swiftAccessControl, "swift-access-control", "Access control for Swift generated types.")
 	typeFlags.BoolVar(&postgrestV9Compat, "postgrest-v9-compat", false, "Generate types compatible with PostgREST v9 and below. Only use together with --db-url.")
-	typeFlags.StringVar(&postgrestVersion, "postgrest-version", "", "Generate types with __internal_supabase schema using the right version of postgrest. Only use together with --db-url.")
+	typeFlags.StringVar(&postgrestVersion, "postgrest-version", "", "Generate types with __InternalSupabase schema using the right version of postgrest. Only use together with --db-url.")
 	genCmd.AddCommand(genTypesCmd)
 	keyFlags := genKeysCmd.Flags()
 	keyFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
