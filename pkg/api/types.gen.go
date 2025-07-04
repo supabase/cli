@@ -1611,6 +1611,7 @@ type DeleteProviderResponse struct {
 type DeployFunctionResponse struct {
 	CreatedAt      *int64                       `json:"created_at,omitempty"`
 	EntrypointPath *string                      `json:"entrypoint_path,omitempty"`
+	EzbrSha256     *string                      `json:"ezbr_sha256,omitempty"`
 	Id             string                       `json:"id"`
 	ImportMap      *bool                        `json:"import_map,omitempty"`
 	ImportMapPath  *string                      `json:"import_map_path,omitempty"`
