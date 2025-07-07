@@ -1304,21 +1304,22 @@ type BranchDetailResponseStatus string
 
 // BranchResponse defines model for BranchResponse.
 type BranchResponse struct {
-	CreatedAt string  `json:"created_at"`
-	GitBranch *string `json:"git_branch,omitempty"`
-	Id        string  `json:"id"`
-	IsDefault bool    `json:"is_default"`
+	CreatedAt time.Time          `json:"created_at"`
+	GitBranch *string            `json:"git_branch,omitempty"`
+	Id        openapi_types.UUID `json:"id"`
+	IsDefault bool               `json:"is_default"`
 
 	// LatestCheckRunId This field is deprecated and will not be populated.
 	// Deprecated:
-	LatestCheckRunId *float32             `json:"latest_check_run_id,omitempty"`
-	Name             string               `json:"name"`
-	ParentProjectRef string               `json:"parent_project_ref"`
-	Persistent       bool                 `json:"persistent"`
-	PrNumber         *int32               `json:"pr_number,omitempty"`
-	ProjectRef       string               `json:"project_ref"`
-	Status           BranchResponseStatus `json:"status"`
-	UpdatedAt        string               `json:"updated_at"`
+	LatestCheckRunId  *float32             `json:"latest_check_run_id,omitempty"`
+	Name              string               `json:"name"`
+	ParentProjectRef  string               `json:"parent_project_ref"`
+	Persistent        bool                 `json:"persistent"`
+	PrNumber          *int32               `json:"pr_number,omitempty"`
+	ProjectRef        string               `json:"project_ref"`
+	ReviewRequestedAt *time.Time           `json:"review_requested_at,omitempty"`
+	Status            BranchResponseStatus `json:"status"`
+	UpdatedAt         time.Time            `json:"updated_at"`
 }
 
 // BranchResponseStatus defines model for BranchResponse.Status.
@@ -2491,9 +2492,10 @@ type UpdateAuthConfigBodySmsProvider string
 
 // UpdateBranchBody defines model for UpdateBranchBody.
 type UpdateBranchBody struct {
-	BranchName *string `json:"branch_name,omitempty"`
-	GitBranch  *string `json:"git_branch,omitempty"`
-	Persistent *bool   `json:"persistent,omitempty"`
+	BranchName    *string `json:"branch_name,omitempty"`
+	GitBranch     *string `json:"git_branch,omitempty"`
+	Persistent    *bool   `json:"persistent,omitempty"`
+	RequestReview *bool   `json:"request_review,omitempty"`
 
 	// ResetOnPush This field is deprecated and will be ignored. Use v1-reset-a-branch endpoint directly instead.
 	// Deprecated:

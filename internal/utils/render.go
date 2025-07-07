@@ -10,6 +10,10 @@ const (
 	layoutHuman   = "2006-01-02 15:04:05"
 )
 
+func FormatTime(t time.Time) string {
+	return t.UTC().Format(layoutHuman)
+}
+
 func FormatTimestamp(timestamp string) string {
 	return parse(time.RFC3339, timestamp)
 }
@@ -24,7 +28,7 @@ func parse(layout, value string) string {
 		fmt.Fprintln(GetDebugLogger(), err)
 		return value
 	}
-	return t.UTC().Format(layoutHuman)
+	return FormatTime(t)
 }
 
 func FormatRegion(region string) string {

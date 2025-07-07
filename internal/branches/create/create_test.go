@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -33,7 +34,7 @@ func TestCreateCommand(t *testing.T) {
 			Post("/v1/projects/" + flags.ProjectRef + "/branches").
 			Reply(http.StatusCreated).
 			JSON(api.BranchResponse{
-				Id: "test-uuid",
+				Id: uuid.New(),
 			})
 		// Run test
 		err := Run(context.Background(), api.CreateBranchBody{
