@@ -37,8 +37,8 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 				branch.IsDefault,
 				strings.ReplaceAll(gitBranch, "|", "\\|"),
 				branch.Status,
-				utils.FormatTimestamp(branch.CreatedAt),
-				utils.FormatTimestamp(branch.UpdatedAt),
+				utils.FormatTime(branch.CreatedAt),
+				utils.FormatTime(branch.UpdatedAt),
 			)
 		}
 		return list.RenderTable(table)
