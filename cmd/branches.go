@@ -202,7 +202,7 @@ func promptBranchId(ctx context.Context, args []string, fsys afero.Fs) error {
 	} else if len(branches) == 0 {
 		return errors.Errorf("branch not found: %s", branchId)
 	} else if len(branches) == 1 {
-		branchId = branches[0].Id
+		branchId = branches[0].Id.String()
 		return nil
 	}
 	// Let user choose from a list of branches
@@ -210,7 +210,7 @@ func promptBranchId(ctx context.Context, args []string, fsys afero.Fs) error {
 	for i, branch := range branches {
 		items[i] = utils.PromptItem{
 			Summary: branch.Name,
-			Details: branch.Id,
+			Details: branch.Id.String(),
 		}
 	}
 	title := "Select a branch:"
