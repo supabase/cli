@@ -21,7 +21,7 @@ export PGDATABASE="$PGDATABASE"
 #   - do not include event triggers
 #   - do not create pgtle schema and extension comments
 #   - do not create publication "supabase_realtime"
-#   - do not set transaction_timeout which is unsupported in pg15
+#   - do not set transaction_timeout which requires pg17
 pg_dump \
     --schema-only \
     --quote-all-identifier \
