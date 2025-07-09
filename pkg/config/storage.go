@@ -45,12 +45,15 @@ func (s *storage) ToUpdateStorageConfigBody() v1API.UpdateStorageConfigBody {
 	// When local config is not set, we assume platform defaults should not change
 	if s.ImageTransformation != nil {
 		body.Features = &struct {
+			IcebergCatalog *struct {
+				Enabled bool `json:"enabled"`
+			} `json:"icebergCatalog,omitempty"`
 			ImageTransformation struct {
-				Enabled bool "json:\"enabled\""
-			} "json:\"imageTransformation\""
+				Enabled bool `json:"enabled"`
+			} `json:"imageTransformation"`
 			S3Protocol struct {
-				Enabled bool "json:\"enabled\""
-			} "json:\"s3Protocol\""
+				Enabled bool `json:"enabled"`
+			} `json:"s3Protocol"`
 		}{}
 		body.Features.ImageTransformation.Enabled = s.ImageTransformation.Enabled
 	}
