@@ -31,14 +31,6 @@ import (
 type DiffFunc func(context.Context, string, string, []string) (string, error)
 
 func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
-	// 1. Load all user defined schemas
-	if len(schema) == 0 {
-		schema, err = loadSchema(ctx, config, options...)
-		if err != nil {
-			return err
-		}
-	}
-	// 3. Run migra to diff schema
 	out, err := DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, options...)
 	if err != nil {
 		return err
@@ -183,6 +175,12 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 			if err := migrateBaseDatabase(ctx, config, declared, fsys, options...); err != nil {
 				return "", err
 			}
+		}
+	}
+	// Load all user defined schemas
+	if len(schema) == 0 {
+		if schema, err = loadSchema(ctx, config, options...); err != nil {
+			return "", err
 		}
 	}
 	fmt.Fprintln(w, "Diffing schemas:", strings.Join(schema, ","))
