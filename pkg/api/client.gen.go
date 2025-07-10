@@ -231,6 +231,9 @@ type ClientInterface interface {
 
 	V1CreateABranch(ctx context.Context, ref string, body V1CreateABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1GetABranch request
+	V1GetABranch(ctx context.Context, ref string, name string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1DeleteProjectClaimToken request
 	V1DeleteProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1154,6 +1157,18 @@ func (c *Client) V1CreateABranchWithBody(ctx context.Context, ref string, conten
 
 func (c *Client) V1CreateABranch(ctx context.Context, ref string, body V1CreateABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1CreateABranchRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetABranch(ctx context.Context, ref string, name string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetABranchRequest(c.Server, ref, name)
 	if err != nil {
 		return nil, err
 	}
@@ -4552,6 +4567,47 @@ func NewV1CreateABranchRequestWithBody(server string, ref string, contentType st
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1GetABranchRequest generates requests for V1GetABranch
+func NewV1GetABranchRequest(server string, ref string, name string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/branches/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -8636,6 +8692,9 @@ type ClientWithResponsesInterface interface {
 
 	V1CreateABranchWithResponse(ctx context.Context, ref string, body V1CreateABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateABranchResponse, error)
 
+	// V1GetABranchWithResponse request
+	V1GetABranchWithResponse(ctx context.Context, ref string, name string, reqEditors ...RequestEditorFn) (*V1GetABranchResponse, error)
+
 	// V1DeleteProjectClaimTokenWithResponse request
 	V1DeleteProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteProjectClaimTokenResponse, error)
 
@@ -9801,6 +9860,28 @@ func (r V1CreateABranchResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1CreateABranchResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetABranchResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *BranchResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetABranchResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetABranchResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -12126,6 +12207,15 @@ func (c *ClientWithResponses) V1CreateABranchWithResponse(ctx context.Context, r
 	return ParseV1CreateABranchResponse(rsp)
 }
 
+// V1GetABranchWithResponse request returning *V1GetABranchResponse
+func (c *ClientWithResponses) V1GetABranchWithResponse(ctx context.Context, ref string, name string, reqEditors ...RequestEditorFn) (*V1GetABranchResponse, error) {
+	rsp, err := c.V1GetABranch(ctx, ref, name, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetABranchResponse(rsp)
+}
+
 // V1DeleteProjectClaimTokenWithResponse request returning *V1DeleteProjectClaimTokenResponse
 func (c *ClientWithResponses) V1DeleteProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteProjectClaimTokenResponse, error) {
 	rsp, err := c.V1DeleteProjectClaimToken(ctx, ref, reqEditors...)
@@ -14076,6 +14166,32 @@ func ParseV1CreateABranchResponse(rsp *http.Response) (*V1CreateABranchResponse,
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetABranchResponse parses an HTTP response from a V1GetABranchWithResponse call
+func ParseV1GetABranchResponse(rsp *http.Response) (*V1GetABranchResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetABranchResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BranchResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	}
 
