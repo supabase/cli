@@ -8,6 +8,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/supabase/cli/internal/gen/jwkkeys"
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/gen/types"
 	"github.com/supabase/cli/internal/utils"
@@ -93,6 +94,32 @@ var (
   supabase gen types --project-id abc-def-123 --schema public --schema private
   supabase gen types --db-url 'postgresql://...' --schema public --schema auth`,
 	}
+
+	keyOutputFormat = utils.EnumFlag{
+		Allowed: []string{"env", "json", "jwks"},
+		Value:   "env",
+	}
+
+	genGenerateKeyCmd = &cobra.Command{
+		Use:   "generate-key <algorithm>",
+		Short: "Generate JWT signing keys",
+		Long: `Generate JWT signing keys for use with GOTRUE_JWT_KEYS.
+
+Supported algorithms:
+	ES256 - ECDSA with P-256 curve and SHA-256 (recommended)
+	RS256 - RSA with SHA-256
+
+Output the JWKS to GOTRUE_JWT_KEYS environment variable.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			algorithm := args[0]
+			return jwkkeys.Run(cmd.Context(), algorithm, keyOutputFormat.Value)
+		},
+		ValidArgs: jwkkeys.GetSupportedAlgorithms(),
+		Example: `  supabase gen generate-key RS256
+  supabase gen generate-key ES256 --format=jwks
+  supabase gen generate-key RS256 --format=json`,
+	}
 )
 
 func init() {
@@ -111,5 +138,8 @@ func init() {
 	keyFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	keyFlags.StringSliceVar(&override, "override-name", []string{}, "Override specific variable names.")
 	genCmd.AddCommand(genKeysCmd)
+	generateKeyFlags := genGenerateKeyCmd.Flags()
+	generateKeyFlags.Var(&keyOutputFormat, "format", "Output format for the generated keys.")
+	genCmd.AddCommand(genGenerateKeyCmd)
 	rootCmd.AddCommand(genCmd)
 }
