@@ -223,12 +223,15 @@ func TestUpdateStorageConfig(t *testing.T) {
 		mockStorage := v1API.StorageConfigResponse{
 			FileSizeLimit: 100,
 			Features: struct {
+				IcebergCatalog *struct {
+					Enabled bool `json:"enabled"`
+				} `json:"icebergCatalog,omitempty"`
 				ImageTransformation struct {
-					Enabled bool "json:\"enabled\""
-				} "json:\"imageTransformation\""
+					Enabled bool `json:"enabled"`
+				} `json:"imageTransformation"`
 				S3Protocol struct {
-					Enabled bool "json:\"enabled\""
-				} "json:\"s3Protocol\""
+					Enabled bool `json:"enabled"`
+				} `json:"s3Protocol"`
 			}{},
 		}
 		mockStorage.Features.ImageTransformation.Enabled = true

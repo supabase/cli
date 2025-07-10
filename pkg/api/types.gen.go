@@ -2237,6 +2237,9 @@ type SslEnforcementResponse struct {
 // StorageConfigResponse defines model for StorageConfigResponse.
 type StorageConfigResponse struct {
 	Features struct {
+		IcebergCatalog *struct {
+			Enabled bool `json:"enabled"`
+		} `json:"icebergCatalog,omitempty"`
 		ImageTransformation struct {
 			Enabled bool `json:"enabled"`
 		} `json:"imageTransformation"`
@@ -2636,6 +2639,9 @@ type UpdateSigningKeyBodyStatus string
 // UpdateStorageConfigBody defines model for UpdateStorageConfigBody.
 type UpdateStorageConfigBody struct {
 	Features *struct {
+		IcebergCatalog *struct {
+			Enabled bool `json:"enabled"`
+		} `json:"icebergCatalog,omitempty"`
 		ImageTransformation struct {
 			Enabled bool `json:"enabled"`
 		} `json:"imageTransformation"`

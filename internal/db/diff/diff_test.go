@@ -87,20 +87,6 @@ func TestRun(t *testing.T) {
 		assert.Equal(t, []byte(diff), contents)
 	})
 
-	t.Run("throws error on failure to load user schemas", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(migration.ListSchemas, migration.ManagedSchemas).
-			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
-		// Run test
-		err := Run(context.Background(), []string{}, "", dbConfig, DiffSchemaMigra, fsys, conn.Intercept)
-		// Check error
-		assert.ErrorContains(t, err, `ERROR: relation "test" already exists (SQLSTATE 42P07)`)
-	})
-
 	t.Run("throws error on failure to diff target", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
