@@ -460,7 +460,14 @@ EOF
 			fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
 			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
 			"GOTRUE_JWT_ISSUER=" + utils.GetApiUrl("/auth/v1"),
+		}
 
+		// Add JWT_KEYS if configured
+		if len(utils.Config.Auth.JwtKeys.Value) > 0 {
+			env = append(env, "GOTRUE_JWT_KEYS="+utils.Config.Auth.JwtKeys.Value)
+		}
+
+		env = append(env, []string{
 			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", utils.Config.Auth.Email.EnableSignup),
 			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", utils.Config.Auth.Email.DoubleConfirmChanges),
 			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !utils.Config.Auth.Email.EnableConfirmations),
@@ -506,7 +513,7 @@ EOF
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_VERIFY=%v", utils.Config.Auth.RateLimit.TokenVerifications),
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_SMS_SENT=%v", utils.Config.Auth.RateLimit.SmsSent),
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_WEB3=%v", utils.Config.Auth.RateLimit.Web3),
-		}
+		}...)
 
 		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.Enabled {
 			env = append(env,

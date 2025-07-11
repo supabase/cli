@@ -97,6 +97,7 @@ type (
 
 		// Custom secrets can be injected from .env file
 		JwtSecret      Secret `toml:"jwt_secret"`
+		JwtKeys        Secret `toml:"jwt_keys"`
 		AnonKey        Secret `toml:"anon_key"`
 		ServiceRoleKey Secret `toml:"service_role_key"`
 

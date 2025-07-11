@@ -1437,20 +1437,30 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 		jwks.Keys = rJWKS.Keys
 	}
 
-	var secretJWK struct {
-		KeyType      string `json:"kty"`
-		KeyBase64URL string `json:"k"`
+	// If JWT_KEYS is provided, use it instead of JWT_SECRET
+	if len(a.JwtKeys.Value) > 0 {
+		var jwtKeysArray []json.RawMessage
+		if err := json.Unmarshal([]byte(a.JwtKeys.Value), &jwtKeysArray); err != nil {
+			return "", errors.Errorf("failed to parse jwt_keys: %w", err)
+		}
+		jwks.Keys = append(jwks.Keys, jwtKeysArray...)
+	} else {
+		// Fallback to JWT_SECRET for backward compatibility
+		var secretJWK struct {
+			KeyType      string `json:"kty"`
+			KeyBase64URL string `json:"k"`
+		}
+
+		secretJWK.KeyType = "oct"
+		secretJWK.KeyBase64URL = base64.RawURLEncoding.EncodeToString([]byte(a.JwtSecret.Value))
+
+		secretJWKEncoded, err := json.Marshal(&secretJWK)
+		if err != nil {
+			return "", errors.Errorf("failed to marshal secret jwk: %w", err)
+		}
+
+		jwks.Keys = append(jwks.Keys, json.RawMessage(secretJWKEncoded))
 	}
-
-	secretJWK.KeyType = "oct"
-	secretJWK.KeyBase64URL = base64.RawURLEncoding.EncodeToString([]byte(a.JwtSecret.Value))
-
-	secretJWKEncoded, err := json.Marshal(&secretJWK)
-	if err != nil {
-		return "", errors.Errorf("failed to marshal secret jwk: %w", err)
-	}
-
-	jwks.Keys = append(jwks.Keys, json.RawMessage(secretJWKEncoded))
 
 	jwksEncoded, err := json.Marshal(jwks)
 	if err != nil {
