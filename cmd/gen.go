@@ -97,7 +97,7 @@ var (
 
 	keyOutputFormat = utils.EnumFlag{
 		Allowed: []string{"env", "json", "jwks"},
-		Value:   "env",
+		Value:   "json",
 	}
 
 	genGenerateKeyCmd = &cobra.Command{
@@ -109,7 +109,7 @@ Supported algorithms:
 	ES256 - ECDSA with P-256 curve and SHA-256 (recommended)
 	RS256 - RSA with SHA-256
 
-Output the JWKS to GOTRUE_JWT_KEYS environment variable.`,
+Outputs the private key in JWK format by default. Use --format=env for GOTRUE_JWT_KEYS environment variable format.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			algorithm := args[0]
@@ -117,8 +117,8 @@ Output the JWKS to GOTRUE_JWT_KEYS environment variable.`,
 		},
 		ValidArgs: jwkkeys.GetSupportedAlgorithms(),
 		Example: `  supabase gen generate-key RS256
-  supabase gen generate-key ES256 --format=jwks
-  supabase gen generate-key RS256 --format=json`,
+  supabase gen generate-key ES256 --format=env
+  supabase gen generate-key RS256 --format=jwks`,
 	}
 )
 
