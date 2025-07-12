@@ -33,7 +33,7 @@ func TestUpdateDockerIds(t *testing.T) {
 		assert.Equal(t, "supabase_db_test-project", DbId)
 		assert.Equal(t, "supabase_kong_test-project", KongId)
 		assert.Equal(t, "supabase_auth_test-project", GotrueId)
-		assert.Equal(t, "supabase_inbucket_test-project", InbucketId)
+		assert.Equal(t, "supabase_mailpit_test-project", MailpitId)
 		assert.Equal(t, "supabase_realtime_test-project", RealtimeId)
 		assert.Equal(t, "supabase_rest_test-project", RestId)
 		assert.Equal(t, "supabase_storage_test-project", StorageId)
