@@ -49,9 +49,22 @@ func Run(ctx context.Context, paths []string, recursive bool, fsys afero.Fs) err
 	if err != nil {
 		return err
 	}
+	if len(groups) == 0 {
+		if !recursive {
+			return errors.New(errMissingFlag)
+		}
+		buckets, err := api.ListBuckets(ctx)
+		if err != nil {
+			return err
+		}
+		for _, b := range buckets {
+			groups[b.Name] = []string{""}
+		}
+	}
+	console := utils.NewConsole()
 	for bucket, prefixes := range groups {
 		confirm := fmt.Sprintf("Confirm deleting files in bucket %v?", utils.Bold(bucket))
-		if shouldDelete, err := utils.NewConsole().PromptYesNo(ctx, confirm, false); err != nil {
+		if shouldDelete, err := console.PromptYesNo(ctx, confirm, false); err != nil {
 			return err
 		} else if !shouldDelete {
 			continue

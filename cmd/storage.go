@@ -70,7 +70,6 @@ cp -r ss:///bucket/docs .
 		Example: `rm -r ss:///bucket/docs
 rm ss:///bucket/docs/example.md ss:///bucket/readme.md
 `,
-		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return rm.Run(cmd.Context(), args, recursive, afero.NewOsFs())
 		},
