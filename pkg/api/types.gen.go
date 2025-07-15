@@ -2783,14 +2783,14 @@ type V1OrganizationSlugResponsePlan string
 // V1PgbouncerConfigResponse defines model for V1PgbouncerConfigResponse.
 type V1PgbouncerConfigResponse struct {
 	ConnectionString        *string                            `json:"connection_string,omitempty"`
-	DefaultPoolSize         *float32                           `json:"default_pool_size,omitempty"`
+	DefaultPoolSize         *int                               `json:"default_pool_size,omitempty"`
 	IgnoreStartupParameters *string                            `json:"ignore_startup_parameters,omitempty"`
-	MaxClientConn           *float32                           `json:"max_client_conn,omitempty"`
+	MaxClientConn           *int                               `json:"max_client_conn,omitempty"`
 	PoolMode                *V1PgbouncerConfigResponsePoolMode `json:"pool_mode,omitempty"`
-	QueryWaitTimeout        *float32                           `json:"query_wait_timeout,omitempty"`
-	ReservePoolSize         *float32                           `json:"reserve_pool_size,omitempty"`
-	ServerIdleTimeout       *float32                           `json:"server_idle_timeout,omitempty"`
-	ServerLifetime          *float32                           `json:"server_lifetime,omitempty"`
+	QueryWaitTimeout        *int                               `json:"query_wait_timeout,omitempty"`
+	ReservePoolSize         *int                               `json:"reserve_pool_size,omitempty"`
+	ServerIdleTimeout       *int                               `json:"server_idle_timeout,omitempty"`
+	ServerLifetime          *int                               `json:"server_lifetime,omitempty"`
 }
 
 // V1PgbouncerConfigResponsePoolMode defines model for V1PgbouncerConfigResponse.PoolMode.
