@@ -35,9 +35,9 @@ type JWK struct {
 	Modulus  string `json:"n,omitempty"`
 	Exponent string `json:"e,omitempty"`
 	// RSA private key fields
-	PrivateExponent string `json:"d,omitempty"`
-	FirstPrimeFactor  string `json:"p,omitempty"`
-	SecondPrimeFactor string `json:"q,omitempty"`
+	PrivateExponent         string `json:"d,omitempty"`
+	FirstPrimeFactor        string `json:"p,omitempty"`
+	SecondPrimeFactor       string `json:"q,omitempty"`
 	FirstFactorCRTExponent  string `json:"dp,omitempty"`
 	SecondFactorCRTExponent string `json:"dq,omitempty"`
 	FirstCRTCoefficient     string `json:"qi,omitempty"`
@@ -80,17 +80,17 @@ func generateRSAKeyPair(keyID string) (*KeyPair, error) {
 
 	// Convert to JWK format
 	privateJWK := JWK{
-		KeyType:         "RSA",
-		KeyID:           keyID,
-		Use:             "sig",
-		KeyOps:          []string{"sign", "verify"},
-		Algorithm:       "RS256",
-		Extractable:     boolPtr(true),
-		Modulus:         base64.RawURLEncoding.EncodeToString(publicKey.N.Bytes()),
-		Exponent:        base64.RawURLEncoding.EncodeToString(bigIntToBytes(publicKey.E)),
-		PrivateExponent: base64.RawURLEncoding.EncodeToString(privateKey.D.Bytes()),
-		FirstPrimeFactor:  base64.RawURLEncoding.EncodeToString(privateKey.Primes[0].Bytes()),
-		SecondPrimeFactor: base64.RawURLEncoding.EncodeToString(privateKey.Primes[1].Bytes()),
+		KeyType:                 "RSA",
+		KeyID:                   keyID,
+		Use:                     "sig",
+		KeyOps:                  []string{"sign", "verify"},
+		Algorithm:               "RS256",
+		Extractable:             boolPtr(true),
+		Modulus:                 base64.RawURLEncoding.EncodeToString(publicKey.N.Bytes()),
+		Exponent:                base64.RawURLEncoding.EncodeToString(bigIntToBytes(publicKey.E)),
+		PrivateExponent:         base64.RawURLEncoding.EncodeToString(privateKey.D.Bytes()),
+		FirstPrimeFactor:        base64.RawURLEncoding.EncodeToString(privateKey.Primes[0].Bytes()),
+		SecondPrimeFactor:       base64.RawURLEncoding.EncodeToString(privateKey.Primes[1].Bytes()),
 		FirstFactorCRTExponent:  base64.RawURLEncoding.EncodeToString(privateKey.Precomputed.Dp.Bytes()),
 		SecondFactorCRTExponent: base64.RawURLEncoding.EncodeToString(privateKey.Precomputed.Dq.Bytes()),
 		FirstCRTCoefficient:     base64.RawURLEncoding.EncodeToString(privateKey.Precomputed.Qinv.Bytes()),
