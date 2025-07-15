@@ -34,12 +34,17 @@ type JWK struct {
 	// RSA specific fields
 	Modulus  string `json:"n,omitempty"`
 	Exponent string `json:"e,omitempty"`
+	// RSA private key fields
+	PrivateExponent string `json:"d,omitempty"`
+	FirstPrimeFactor  string `json:"p,omitempty"`
+	SecondPrimeFactor string `json:"q,omitempty"`
+	FirstFactorCRTExponent  string `json:"dp,omitempty"`
+	SecondFactorCRTExponent string `json:"dq,omitempty"`
+	FirstCRTCoefficient     string `json:"qi,omitempty"`
 	// EC specific fields
 	Curve string `json:"crv,omitempty"`
 	X     string `json:"x,omitempty"`
 	Y     string `json:"y,omitempty"`
-	// Private key fields (optional)
-	PrivateExponent string `json:"d,omitempty"`
 }
 
 type KeyPair struct {
@@ -70,6 +75,9 @@ func generateRSAKeyPair(keyID string) (*KeyPair, error) {
 
 	publicKey := &privateKey.PublicKey
 
+	// Precompute CRT values for completeness
+	privateKey.Precompute()
+
 	// Convert to JWK format
 	privateJWK := JWK{
 		KeyType:         "RSA",
@@ -81,6 +89,11 @@ func generateRSAKeyPair(keyID string) (*KeyPair, error) {
 		Modulus:         base64.RawURLEncoding.EncodeToString(publicKey.N.Bytes()),
 		Exponent:        base64.RawURLEncoding.EncodeToString(bigIntToBytes(publicKey.E)),
 		PrivateExponent: base64.RawURLEncoding.EncodeToString(privateKey.D.Bytes()),
+		FirstPrimeFactor:  base64.RawURLEncoding.EncodeToString(privateKey.Primes[0].Bytes()),
+		SecondPrimeFactor: base64.RawURLEncoding.EncodeToString(privateKey.Primes[1].Bytes()),
+		FirstFactorCRTExponent:  base64.RawURLEncoding.EncodeToString(privateKey.Precomputed.Dp.Bytes()),
+		SecondFactorCRTExponent: base64.RawURLEncoding.EncodeToString(privateKey.Precomputed.Dq.Bytes()),
+		FirstCRTCoefficient:     base64.RawURLEncoding.EncodeToString(privateKey.Precomputed.Qinv.Bytes()),
 	}
 
 	publicJWK := JWK{
