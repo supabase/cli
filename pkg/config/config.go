@@ -585,6 +585,9 @@ func (c *config) Load(path string, fsys fs.FS) error {
 		return err
 	}
 	// Generate JWT tokens
+	if len(c.Auth.JwtSecret.Value) < 16 {
+		return errors.Errorf("Invalid config for auth.jwt_secret. Must be at least 16 characters")
+	}
 	if len(c.Auth.AnonKey.Value) == 0 {
 		anonToken := CustomClaims{Role: "anon"}.NewToken()
 		if signed, err := anonToken.SignedString([]byte(c.Auth.JwtSecret.Value)); err != nil {
