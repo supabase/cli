@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -54,7 +55,7 @@ func (m *ImportMap) Load(imPath string, fsys fs.FS, opts ...func(string, io.Read
 	if err := m.Parse(data); err != nil {
 		return err
 	}
-	if err := m.Resolve(imPath, fsys); err != nil {
+	if err := m.Resolve(imPath); err != nil {
 		return err
 	}
 	for _, apply := range opts {
@@ -74,29 +75,29 @@ func (m *ImportMap) Parse(data []byte) error {
 	return nil
 }
 
-func (m *ImportMap) Resolve(imPath string, fsys fs.FS) error {
+func (m *ImportMap) Resolve(imPath string) error {
 	// Resolve all paths relative to current file
 	for k, v := range m.Imports {
-		m.Imports[k] = resolveHostPath(imPath, v, fsys)
+		m.Imports[k] = resolveHostPath(imPath, v)
 	}
 	for module, mapping := range m.Scopes {
 		for k, v := range mapping {
-			m.Scopes[module][k] = resolveHostPath(imPath, v, fsys)
+			m.Scopes[module][k] = resolveHostPath(imPath, v)
 		}
 	}
 	return nil
 }
 
-func resolveHostPath(jsonPath, hostPath string, fsys fs.FS) string {
+func resolveHostPath(jsonPath, hostPath string) string {
 	// Leave absolute paths unchanged
 	if path.IsAbs(hostPath) {
 		return hostPath
 	}
-	resolved := path.Join(path.Dir(jsonPath), hostPath)
-	if _, err := fs.Stat(fsys, filepath.FromSlash(resolved)); err != nil {
-		// Leave URLs unchanged
+	// Leave URLs unchanged
+	if parsed, err := url.Parse(hostPath); err == nil && len(parsed.Scheme) > 0 {
 		return hostPath
 	}
+	resolved := path.Join(path.Dir(jsonPath), hostPath)
 	// Directory imports need to be suffixed with /
 	// Ref: https://deno.com/manual@v1.33.0/basics/import_maps
 	if strings.HasSuffix(hostPath, "/") {
