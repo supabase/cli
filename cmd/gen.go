@@ -100,8 +100,8 @@ var (
 		Value:   "json",
 	}
 
-	genGenerateKeyCmd = &cobra.Command{
-		Use:   "generate-key <algorithm>",
+	genSigningKeyCmd = &cobra.Command{
+		Use:   "signing-key <algorithm>",
 		Short: "Generate JWT signing keys",
 		Long: `Generate JWT signing keys for use with GOTRUE_JWT_KEYS.
 
@@ -116,9 +116,9 @@ Outputs the private key in JWK format by default. Use --format=env for GOTRUE_JW
 			return jwkkeys.Run(cmd.Context(), algorithm, keyOutputFormat.Value)
 		},
 		ValidArgs: jwkkeys.GetSupportedAlgorithms(),
-		Example: `  supabase gen generate-key RS256
-  supabase gen generate-key ES256 --format=env
-  supabase gen generate-key RS256 --format=jwks`,
+		Example: `  supabase gen signing-key RS256
+  supabase gen signing-key ES256 --format=env
+  supabase gen signing-key RS256 --format=jwks`,
 	}
 )
 
@@ -138,8 +138,8 @@ func init() {
 	keyFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	keyFlags.StringSliceVar(&override, "override-name", []string{}, "Override specific variable names.")
 	genCmd.AddCommand(genKeysCmd)
-	generateKeyFlags := genGenerateKeyCmd.Flags()
-	generateKeyFlags.Var(&keyOutputFormat, "format", "Output format for the generated keys.")
-	genCmd.AddCommand(genGenerateKeyCmd)
+	signingKeyFlags := genSigningKeyCmd.Flags()
+	signingKeyFlags.Var(&keyOutputFormat, "format", "Output format for the generated keys.")
+	genCmd.AddCommand(genSigningKeyCmd)
 	rootCmd.AddCommand(genCmd)
 }
