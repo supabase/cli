@@ -58,7 +58,7 @@ func TestImportPaths(t *testing.T) {
 		im := ImportMap{Imports: map[string]string{
 			"module-name/": "../shared/",
 		}}
-		assert.NoError(t, im.Resolve("testdata/modules/deno.json", testImports))
+		assert.NoError(t, im.Resolve("testdata/modules/deno.json"))
 		// Run test
 		err := im.WalkImportPaths("testdata/modules/imports.ts", fsys.ReadFile)
 		// Check error
@@ -79,7 +79,7 @@ func TestImportPaths(t *testing.T) {
 		im := ImportMap{Imports: map[string]string{
 			"module-name/": "./shared/",
 		}}
-		assert.NoError(t, im.Resolve("testdata/import_map.json", testImports))
+		assert.NoError(t, im.Resolve("testdata/import_map.json"))
 		// Run test
 		err := im.WalkImportPaths("testdata/modules/imports.ts", fsys.ReadFile)
 		// Check error
@@ -116,7 +116,7 @@ func TestResolveImports(t *testing.T) {
 		assert.Equal(t, "./common", resolved.Imports["root"])
 		assert.Equal(t, "./supabase/tests", resolved.Imports["parent"])
 		assert.Equal(t, "./supabase/functions/child/", resolved.Imports["child"])
-		assert.Equal(t, "../missing", resolved.Imports["missing"])
+		assert.Equal(t, "./supabase/missing", resolved.Imports["missing"])
 	})
 
 	t.Run("resolves parent scopes", func(t *testing.T) {
