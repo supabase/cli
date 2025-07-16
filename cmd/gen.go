@@ -8,8 +8,8 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
-	"github.com/supabase/cli/internal/gen/jwkkeys"
 	"github.com/supabase/cli/internal/gen/keys"
+	"github.com/supabase/cli/internal/gen/signingkeys"
 	"github.com/supabase/cli/internal/gen/types"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
@@ -95,30 +95,31 @@ var (
   supabase gen types --db-url 'postgresql://...' --schema public --schema auth`,
 	}
 
-	keyOutputFormat = utils.EnumFlag{
-		Allowed: []string{"env", "json", "jwks"},
-		Value:   "json",
-	}
-
 	genSigningKeyCmd = &cobra.Command{
 		Use:   "signing-key <algorithm>",
 		Short: "Generate JWT signing keys",
-		Long: `Generate JWT signing keys for use with GOTRUE_JWT_KEYS.
+		Long: `Securely generate a private JWT signing key for use in the CLI or to import in the dashboard.
 
 Supported algorithms:
 	ES256 - ECDSA with P-256 curve and SHA-256 (recommended)
 	RS256 - RSA with SHA-256
 
-Outputs the private key in JWK format by default. Use --format=env for GOTRUE_JWT_KEYS environment variable format.`,
+Keys are saved to ./supabase/signing_keys.json by default.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			algorithm := args[0]
-			return jwkkeys.Run(cmd.Context(), algorithm, keyOutputFormat.Value)
+
+			// Use configured path or default
+			outputPath := utils.Config.Auth.SigningKeysPath
+			if len(outputPath) == 0 {
+				outputPath = "./supabase/signing_keys.json"
+			}
+
+			return signingkeys.Run(cmd.Context(), algorithm, outputPath)
 		},
-		ValidArgs: jwkkeys.GetSupportedAlgorithms(),
+		ValidArgs: signingkeys.GetSupportedAlgorithms(),
 		Example: `  supabase gen signing-key RS256
-  supabase gen signing-key ES256 --format=env
-  supabase gen signing-key RS256 --format=jwks`,
+  supabase gen signing-key ES256`,
 	}
 )
 
@@ -138,8 +139,6 @@ func init() {
 	keyFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	keyFlags.StringSliceVar(&override, "override-name", []string{}, "Override specific variable names.")
 	genCmd.AddCommand(genKeysCmd)
-	signingKeyFlags := genSigningKeyCmd.Flags()
-	signingKeyFlags.Var(&keyOutputFormat, "format", "Output format for the generated keys.")
 	genCmd.AddCommand(genSigningKeyCmd)
 	rootCmd.AddCommand(genCmd)
 }

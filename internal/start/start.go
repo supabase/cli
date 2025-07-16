@@ -510,8 +510,12 @@ EOF
 			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
 			"GOTRUE_JWT_ISSUER=" + utils.GetApiUrl("/auth/v1"),
 		}...)
-		if len(utils.Config.Auth.JwtKeys.Value) > 0 {
-			env = append(env, "GOTRUE_JWT_KEYS="+utils.Config.Auth.JwtKeys.Value)
+
+		// Add JWT keys from file if configured
+		if len(utils.Config.Auth.SigningKeysPath) > 0 {
+			if keysData, err := os.ReadFile(utils.Config.Auth.SigningKeysPath); err == nil {
+				env = append(env, "GOTRUE_JWT_KEYS="+string(keysData))
+			}
 		}
 
 		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.Enabled {

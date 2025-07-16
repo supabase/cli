@@ -1,4 +1,4 @@
-package jwkkeys
+package signingkeys
 
 import (
 	"context"
@@ -10,11 +10,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/google/uuid"
-	"github.com/supabase/cli/internal/utils"
 )
 
 type Algorithm string
@@ -172,15 +172,8 @@ func bigIntToBytes(n int) []byte {
 	return bytes
 }
 
-type OutputFormat string
-
-const (
-	FormatJWKS OutputFormat = "jwks"
-	FormatEnv  OutputFormat = "env"
-)
-
-// Run generates a key pair and outputs it in the specified format
-func Run(ctx context.Context, algorithm string, format string) error {
+// Run generates a key pair and writes it to the specified file path
+func Run(ctx context.Context, algorithm string, outputPath string) error {
 	// Validate algorithm
 	alg := Algorithm(strings.ToUpper(algorithm))
 	if alg != AlgRS256 && alg != AlgES256 {
@@ -193,54 +186,44 @@ func Run(ctx context.Context, algorithm string, format string) error {
 		return err
 	}
 
-	// Handle custom formats directly, use utils.EncodeOutput for standard formats
-	outputFormat := OutputFormat(format)
-	switch outputFormat {
-	case FormatJWKS:
-		// Handle JWKS format directly
-		output := formatOutput(keyPair, outputFormat)
-		data, err := json.MarshalIndent(output, "", "  ")
-		if err != nil {
-			return errors.Errorf("failed to marshal output: %w", err)
-		}
-		_, err = os.Stdout.Write(data)
-		if err != nil {
-			return errors.Errorf("failed to write output: %w", err)
-		}
-		fmt.Fprintln(os.Stdout) // Add newline
-		return nil
-	case FormatEnv:
-		// For env format, use utils.EncodeOutput for proper env variable formatting
-		return utils.EncodeOutput("env", os.Stdout, formatOutput(keyPair, outputFormat))
-	default:
-		// For json and other standard formats, use utils.EncodeOutput
-		return utils.EncodeOutput(format, os.Stdout, formatOutput(keyPair, outputFormat))
-	}
-}
-
-func formatOutput(keyPair *KeyPair, format OutputFormat) interface{} {
-	switch format {
-	case FormatJWKS:
-		// Return JWKS format with the private key
-		return map[string]interface{}{
-			"keys": []JWK{keyPair.PrivateKey},
-		}
-	case FormatEnv:
-		// Return environment variable format - GoTrue expects array of JWKs, not JWKS object
-		jwkArray := []JWK{keyPair.PrivateKey}
-		jwkArrayBytes, _ := json.Marshal(jwkArray)
-		return map[string]string{
-			"GOTRUE_JWT_KEYS": string(jwkArrayBytes),
-		}
-	default:
-		// Default to single private key JWK (for json format)
-		return keyPair.PrivateKey
-	}
+	// Write to file
+	return writeToFile(keyPair, outputPath)
 }
 
 // GetSupportedAlgorithms returns a list of supported algorithms
 func GetSupportedAlgorithms() []string {
 	return []string{string(AlgRS256), string(AlgES256)}
+}
+
+// writeToFile writes the key pair to a JSON file
+func writeToFile(keyPair *KeyPair, outputPath string) error {
+	// Create directory if it doesn't exist
+	dir := filepath.Dir(outputPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return errors.Errorf("failed to create directory %s: %w", dir, err)
+	}
+
+	// Create JSON array with the private key (format expected by GoTrue)
+	jwkArray := []JWK{keyPair.PrivateKey}
+	data, err := json.MarshalIndent(jwkArray, "", "  ")
+	if err != nil {
+		return errors.Errorf("failed to marshal JWT keys: %w", err)
+	}
+
+	// Write to file
+	if err := os.WriteFile(outputPath, data, 0600); err != nil {
+		return errors.Errorf("failed to write JWT keys to %s: %w", outputPath, err)
+	}
+
+	fmt.Printf("JWT signing keys saved to: %s\n", outputPath)
+	fmt.Println("⚠️  IMPORTANT: Add this file to your .gitignore to prevent committing signing keys to version control")
+	fmt.Println()
+	fmt.Println("To enable JWT signing keys in your project:")
+	fmt.Println("1. Add the following to your config.toml file:")
+	fmt.Printf("   signing_keys_path = \"%s\"\n", outputPath)
+	fmt.Println("2. Restart your local development server:")
+	fmt.Println("   supabase start")
+	return nil
 }
 
 // boolPtr returns a pointer to a boolean value

@@ -1440,11 +1440,15 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 		jwks.Keys = rJWKS.Keys
 	}
 
-	// If JWT_KEYS is provided, use it instead of JWT_SECRET
-	if len(a.JwtKeys.Value) > 0 {
+	// If SIGNING_KEYS_PATH is provided, read from file
+	if len(a.SigningKeysPath) > 0 {
+		keysData, err := os.ReadFile(a.SigningKeysPath)
+		if err != nil {
+			return "", errors.Errorf("failed to read JWT keys from %s: %w", a.SigningKeysPath, err)
+		}
 		var jwtKeysArray []json.RawMessage
-		if err := json.Unmarshal([]byte(a.JwtKeys.Value), &jwtKeysArray); err != nil {
-			return "", errors.Errorf("failed to parse jwt_keys: %w", err)
+		if err := json.Unmarshal(keysData, &jwtKeysArray); err != nil {
+			return "", errors.Errorf("failed to parse JWT keys from %s: %w", a.SigningKeysPath, err)
 		}
 		jwks.Keys = append(jwks.Keys, jwtKeysArray...)
 	} else {

@@ -96,10 +96,10 @@ type (
 		Web3      web3      `toml:"web3"`
 
 		// Custom secrets can be injected from .env file
-		JwtSecret      Secret `toml:"jwt_secret"`
-		JwtKeys        Secret `toml:"jwt_keys"`
-		AnonKey        Secret `toml:"anon_key"`
-		ServiceRoleKey Secret `toml:"service_role_key"`
+		JwtSecret       Secret `toml:"jwt_secret"`
+		SigningKeysPath string `toml:"signing_keys_path"`
+		AnonKey         Secret `toml:"anon_key"`
+		ServiceRoleKey  Secret `toml:"service_role_key"`
 
 		ThirdParty thirdParty `toml:"third_party"`
 	}
