@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 
 	env "github.com/Netflix/go-env"
 	"github.com/go-errors/errors"
@@ -95,31 +97,40 @@ var (
   supabase gen types --db-url 'postgresql://...' --schema public --schema auth`,
 	}
 
+	algorithm = utils.EnumFlag{
+		Allowed: signingkeys.GetSupportedAlgorithms(),
+		Value:   string(signingkeys.AlgES256),
+	}
+	appendKeys bool
+
 	genSigningKeyCmd = &cobra.Command{
-		Use:   "signing-key <algorithm>",
+		Use:   "signing-key",
 		Short: "Generate JWT signing keys",
 		Long: `Securely generate a private JWT signing key for use in the CLI or to import in the dashboard.
 
 Supported algorithms:
 	ES256 - ECDSA with P-256 curve and SHA-256 (recommended)
 	RS256 - RSA with SHA-256
-
-Keys are saved to ./supabase/signing_keys.json by default.`,
-		Args: cobra.ExactArgs(1),
+`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			algorithm := args[0]
-
 			// Use configured path or default
 			outputPath := utils.Config.Auth.SigningKeysPath
 			if len(outputPath) == 0 {
-				outputPath = "./supabase/signing_keys.json"
+				outputPath = "signing_keys.json"
 			}
 
-			return signingkeys.Run(cmd.Context(), algorithm, outputPath)
+			// Resolve path for cross-platform compatibility
+			resolvedPath, err := filepath.Abs(outputPath)
+			fmt.Println(resolvedPath)
+			if err != nil {
+				return errors.Errorf("failed to resolve signing keys path: %w", err)
+			}
+
+			return signingkeys.Run(cmd.Context(), algorithm.Value, resolvedPath, appendKeys, afero.NewOsFs())
 		},
-		ValidArgs: signingkeys.GetSupportedAlgorithms(),
-		Example: `  supabase gen signing-key RS256
-  supabase gen signing-key ES256`,
+		Example: `  supabase gen signing-key --algorithm RS256
+  supabase gen signing-key --algorithm ES256
+  supabase gen signing-key --algorithm RS256 --append`,
 	}
 )
 
@@ -139,6 +150,9 @@ func init() {
 	keyFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	keyFlags.StringSliceVar(&override, "override-name", []string{}, "Override specific variable names.")
 	genCmd.AddCommand(genKeysCmd)
+	signingKeyFlags := genSigningKeyCmd.Flags()
+	signingKeyFlags.Var(&algorithm, "algorithm", "Algorithm for signing key generation.")
+	signingKeyFlags.BoolVar(&appendKeys, "append", false, "Append new key to existing keys file instead of overwriting.")
 	genCmd.AddCommand(genSigningKeyCmd)
 	rootCmd.AddCommand(genCmd)
 }

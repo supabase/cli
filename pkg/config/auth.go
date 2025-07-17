@@ -84,6 +84,7 @@ type (
 		EnableAnonymousSignIns     bool                 `toml:"enable_anonymous_sign_ins"`
 		MinimumPasswordLength      uint                 `toml:"minimum_password_length"`
 		PasswordRequirements       PasswordRequirements `toml:"password_requirements"`
+		SigningKeysPath            string               `toml:"signing_keys_path"`
 
 		RateLimit rateLimit `toml:"rate_limit"`
 		Captcha   *captcha  `toml:"captcha"`
@@ -96,10 +97,9 @@ type (
 		Web3      web3      `toml:"web3"`
 
 		// Custom secrets can be injected from .env file
-		JwtSecret       Secret `toml:"jwt_secret"`
-		SigningKeysPath string `toml:"signing_keys_path"`
-		AnonKey         Secret `toml:"anon_key"`
-		ServiceRoleKey  Secret `toml:"service_role_key"`
+		JwtSecret      Secret `toml:"jwt_secret"`
+		AnonKey        Secret `toml:"anon_key"`
+		ServiceRoleKey Secret `toml:"service_role_key"`
 
 		ThirdParty thirdParty `toml:"third_party"`
 	}

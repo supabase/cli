@@ -145,7 +145,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 		excluded[name] = true
 	}
 
-	jwks, err := utils.Config.Auth.ResolveJWKS(ctx)
+	jwks, err := utils.Config.Auth.ResolveJWKS(ctx, fsys)
 	if err != nil {
 		return err
 	}
@@ -512,10 +512,8 @@ EOF
 		}...)
 
 		// Add JWT keys from file if configured
-		if len(utils.Config.Auth.SigningKeysPath) > 0 {
-			if keysData, err := os.ReadFile(utils.Config.Auth.SigningKeysPath); err == nil {
-				env = append(env, "GOTRUE_JWT_KEYS="+string(keysData))
-			}
+		if keysData, err := utils.Config.Auth.GetSigningKeysData(fsys); err == nil && keysData != "" {
+			env = append(env, "GOTRUE_JWT_KEYS="+keysData)
 		}
 
 		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.Enabled {

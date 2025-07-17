@@ -9,12 +9,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
+	"math/big"
 	"path/filepath"
 	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/google/uuid"
+	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/cast"
 )
 
 type Algorithm string
@@ -85,9 +88,9 @@ func generateRSAKeyPair(keyID string) (*KeyPair, error) {
 		Use:                     "sig",
 		KeyOps:                  []string{"sign", "verify"},
 		Algorithm:               "RS256",
-		Extractable:             boolPtr(true),
+		Extractable:             cast.Ptr(true),
 		Modulus:                 base64.RawURLEncoding.EncodeToString(publicKey.N.Bytes()),
-		Exponent:                base64.RawURLEncoding.EncodeToString(bigIntToBytes(publicKey.E)),
+		Exponent:                base64.RawURLEncoding.EncodeToString(big.NewInt(int64(publicKey.E)).Bytes()),
 		PrivateExponent:         base64.RawURLEncoding.EncodeToString(privateKey.D.Bytes()),
 		FirstPrimeFactor:        base64.RawURLEncoding.EncodeToString(privateKey.Primes[0].Bytes()),
 		SecondPrimeFactor:       base64.RawURLEncoding.EncodeToString(privateKey.Primes[1].Bytes()),
@@ -102,7 +105,7 @@ func generateRSAKeyPair(keyID string) (*KeyPair, error) {
 		Use:         "sig",
 		KeyOps:      []string{"verify"},
 		Algorithm:   "RS256",
-		Extractable: boolPtr(true),
+		Extractable: cast.Ptr(true),
 		Modulus:     privateJWK.Modulus,
 		Exponent:    privateJWK.Exponent,
 	}
@@ -129,7 +132,7 @@ func generateECDSAKeyPair(keyID string) (*KeyPair, error) {
 		Use:             "sig",
 		KeyOps:          []string{"sign", "verify"},
 		Algorithm:       "ES256",
-		Extractable:     boolPtr(true),
+		Extractable:     cast.Ptr(true),
 		Curve:           "P-256",
 		X:               base64.RawURLEncoding.EncodeToString(publicKey.X.Bytes()),
 		Y:               base64.RawURLEncoding.EncodeToString(publicKey.Y.Bytes()),
@@ -142,7 +145,7 @@ func generateECDSAKeyPair(keyID string) (*KeyPair, error) {
 		Use:         "sig",
 		KeyOps:      []string{"verify"},
 		Algorithm:   "ES256",
-		Extractable: boolPtr(true),
+		Extractable: cast.Ptr(true),
 		Curve:       "P-256",
 		X:           privateJWK.X,
 		Y:           privateJWK.Y,
@@ -154,26 +157,8 @@ func generateECDSAKeyPair(keyID string) (*KeyPair, error) {
 	}, nil
 }
 
-// bigIntToBytes converts an integer to bytes, handling the special case of small exponents
-func bigIntToBytes(n int) []byte {
-	if n < 256 {
-		return []byte{byte(n)}
-	}
-	// For larger numbers, use the standard conversion
-	bytes := make([]byte, 4)
-	bytes[0] = byte(n >> 24)
-	bytes[1] = byte(n >> 16)
-	bytes[2] = byte(n >> 8)
-	bytes[3] = byte(n)
-	// Remove leading zeros
-	for len(bytes) > 1 && bytes[0] == 0 {
-		bytes = bytes[1:]
-	}
-	return bytes
-}
-
 // Run generates a key pair and writes it to the specified file path
-func Run(ctx context.Context, algorithm string, outputPath string) error {
+func Run(ctx context.Context, algorithm string, outputPath string, appendMode bool, fsys afero.Fs) error {
 	// Validate algorithm
 	alg := Algorithm(strings.ToUpper(algorithm))
 	if alg != AlgRS256 && alg != AlgES256 {
@@ -187,7 +172,7 @@ func Run(ctx context.Context, algorithm string, outputPath string) error {
 	}
 
 	// Write to file
-	return writeToFile(keyPair, outputPath)
+	return writeToFile(keyPair, outputPath, appendMode, fsys)
 }
 
 // GetSupportedAlgorithms returns a list of supported algorithms
@@ -196,27 +181,53 @@ func GetSupportedAlgorithms() []string {
 }
 
 // writeToFile writes the key pair to a JSON file
-func writeToFile(keyPair *KeyPair, outputPath string) error {
+func writeToFile(keyPair *KeyPair, outputPath string, appendMode bool, fsys afero.Fs) error {
 	// Create directory if it doesn't exist
 	dir := filepath.Dir(outputPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return errors.Errorf("failed to create directory %s: %w", dir, err)
+	if err := utils.MkdirIfNotExistFS(fsys, dir); err != nil {
+		return err
 	}
 
-	// Create JSON array with the private key (format expected by GoTrue)
-	jwkArray := []JWK{keyPair.PrivateKey}
+	var jwkArray []JWK
+
+	// If append mode is enabled, try to read existing keys
+	if appendMode {
+		if exists, err := afero.Exists(fsys, outputPath); err != nil {
+			return errors.Errorf("failed to check if file exists: %w", err)
+		} else if exists {
+			existingData, err := afero.ReadFile(fsys, outputPath)
+			if err != nil {
+				return errors.Errorf("failed to read existing keys file: %w", err)
+			}
+
+			if err := json.Unmarshal(existingData, &jwkArray); err != nil {
+				return errors.Errorf("failed to parse existing keys file: %w", err)
+			}
+		}
+	}
+
+	// Add the new key to the array
+	jwkArray = append(jwkArray, keyPair.PrivateKey)
+
+	// Marshal the array to JSON
 	data, err := json.MarshalIndent(jwkArray, "", "  ")
 	if err != nil {
 		return errors.Errorf("failed to marshal JWT keys: %w", err)
 	}
 
 	// Write to file
-	if err := os.WriteFile(outputPath, data, 0600); err != nil {
+	if err := afero.WriteFile(fsys, outputPath, data, 0600); err != nil {
 		return errors.Errorf("failed to write JWT keys to %s: %w", outputPath, err)
 	}
 
-	fmt.Printf("JWT signing keys saved to: %s\n", outputPath)
+	if appendMode && len(jwkArray) > 1 {
+		fmt.Printf("JWT signing key appended to: %s (now contains %d keys)\n", outputPath, len(jwkArray))
+	} else {
+		fmt.Printf("JWT signing keys saved to: %s\n", outputPath)
+	}
+
 	fmt.Println("⚠️  IMPORTANT: Add this file to your .gitignore to prevent committing signing keys to version control")
+
 	fmt.Println()
 	fmt.Println("To enable JWT signing keys in your project:")
 	fmt.Println("1. Add the following to your config.toml file:")
@@ -224,9 +235,4 @@ func writeToFile(keyPair *KeyPair, outputPath string) error {
 	fmt.Println("2. Restart your local development server:")
 	fmt.Println("   supabase start")
 	return nil
-}
-
-// boolPtr returns a pointer to a boolean value
-func boolPtr(b bool) *bool {
-	return &b
 }

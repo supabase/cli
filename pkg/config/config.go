@@ -29,6 +29,7 @@ import (
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
+	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/fetcher"
@@ -707,6 +708,11 @@ func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 		}
 		c.Storage.Buckets[name] = bucket
 	}
+	// Resolve signing keys path for cross-platform compatibility
+	if len(c.Auth.SigningKeysPath) > 0 && !filepath.IsAbs(c.Auth.SigningKeysPath) {
+		cwd := filepath.Dir(builder.SupabaseDirPath)
+		c.Auth.SigningKeysPath = filepath.Join(cwd, c.Auth.SigningKeysPath)
+	}
 	// Resolve functions config
 	for slug, function := range c.Functions {
 		if len(function.Entrypoint) == 0 {
@@ -1379,7 +1385,7 @@ func (tpa *thirdParty) IssuerURL() string {
 // ResolveJWKS creates the JWKS from the JWT secret and Third-Party Auth
 // configs by resolving the JWKS via the OIDC discovery URL.
 // It always returns a JWKS string, except when there's an error fetching.
-func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
+func (a *auth) ResolveJWKS(ctx context.Context, fsys afero.Fs) (string, error) {
 	var jwks struct {
 		Keys []json.RawMessage `json:"keys"`
 	}
@@ -1442,13 +1448,9 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 
 	// If SIGNING_KEYS_PATH is provided, read from file
 	if len(a.SigningKeysPath) > 0 {
-		keysData, err := os.ReadFile(a.SigningKeysPath)
+		jwtKeysArray, err := a.loadSigningKeysFromFile(fsys)
 		if err != nil {
-			return "", errors.Errorf("failed to read JWT keys from %s: %w", a.SigningKeysPath, err)
-		}
-		var jwtKeysArray []json.RawMessage
-		if err := json.Unmarshal(keysData, &jwtKeysArray); err != nil {
-			return "", errors.Errorf("failed to parse JWT keys from %s: %w", a.SigningKeysPath, err)
+			return "", err
 		}
 		jwks.Keys = append(jwks.Keys, jwtKeysArray...)
 	} else {
@@ -1475,6 +1477,51 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 	}
 
 	return string(jwksEncoded), nil
+}
+
+// readSigningKeysFile reads the signing keys file and returns raw data
+func (a *auth) readSigningKeysFile(fsys afero.Fs) ([]byte, error) {
+	if len(a.SigningKeysPath) == 0 {
+		return nil, nil
+	}
+
+	keysData, err := afero.ReadFile(fsys, a.SigningKeysPath)
+	if err != nil {
+		return nil, errors.Errorf("failed to read JWT keys from %s: %w", a.SigningKeysPath, err)
+	}
+
+	return keysData, nil
+}
+
+// loadSigningKeysFromFile loads and parses JWT signing keys from the configured file path
+func (a *auth) loadSigningKeysFromFile(fsys afero.Fs) ([]json.RawMessage, error) {
+	keysData, err := a.readSigningKeysFile(fsys)
+	if err != nil {
+		return nil, err
+	}
+	if keysData == nil {
+		return nil, nil
+	}
+
+	var jwtKeysArray []json.RawMessage
+	if err := json.Unmarshal(keysData, &jwtKeysArray); err != nil {
+		return nil, errors.Errorf("failed to parse JWT keys from %s: %w", a.SigningKeysPath, err)
+	}
+
+	return jwtKeysArray, nil
+}
+
+// GetSigningKeysData returns the raw JWT signing keys data as a string for environment variable
+func (a *auth) GetSigningKeysData(fsys afero.Fs) (string, error) {
+	keysData, err := a.readSigningKeysFile(fsys)
+	if err != nil {
+		return "", err
+	}
+	if keysData == nil {
+		return "", nil
+	}
+
+	return string(keysData), nil
 }
 
 func (c *baseConfig) GetServiceImages() []string {
