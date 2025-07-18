@@ -11,7 +11,10 @@ import (
 	"github.com/jackc/pgx/v4"
 )
 
-const CLI_LOGIN_ROLE = "cli_login_postgres"
+const (
+	CLI_LOGIN_ROLE   = "cli_login_postgres"
+	SET_SESSION_ROLE = "SET SESSION ROLE postgres"
+)
 
 // Extends pgx.Connect with support for programmatically overriding parsed config
 func Connect(ctx context.Context, connString string, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
@@ -25,7 +28,7 @@ func Connect(ctx context.Context, connString string, options ...func(*pgx.ConnCo
 	}
 	if strings.HasPrefix(config.User, CLI_LOGIN_ROLE) {
 		config.AfterConnect = func(ctx context.Context, pgconn *pgconn.PgConn) error {
-			return pgconn.Exec(ctx, "SET SESSION ROLE postgres").Close()
+			return pgconn.Exec(ctx, SET_SESSION_ROLE).Close()
 		}
 	}
 	// Apply config overrides

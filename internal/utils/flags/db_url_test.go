@@ -14,6 +14,10 @@ import (
 )
 
 func TestParseDatabaseConfig(t *testing.T) {
+	// Setup valid access token
+	token := apitest.RandomAccessToken(t)
+	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
 	t.Run("parses direct connection from db-url flag", func(t *testing.T) {
 		flagSet := pflag.NewFlagSet("test", pflag.ContinueOnError)
 		flagSet.String("db-url", "postgres://postgres:password@localhost:5432/postgres", "")
