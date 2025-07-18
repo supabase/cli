@@ -27,13 +27,18 @@ const (
 	SwiftInternalAccessControl = "internal"
 )
 
-func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang string, schemas []string, postgrestV9Compat bool, swiftAccessControl string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang string, schemas []string, setDefault bool, postgrestV9Compat bool, swiftAccessControl string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	originalURL := utils.ToPostgresURL(dbConfig)
 	// Add default schemas if --schema flag is not specified
 	if len(schemas) == 0 {
 		schemas = utils.RemoveDuplicates(append([]string{"public"}, utils.Config.Api.Schemas...))
 	}
 	included := strings.Join(schemas, ",")
+
+	var defaultSchemaEnv string
+	if setDefault && len(schemas) == 1 && schemas[0] != "public" {
+		defaultSchemaEnv = schemas[0]
+	}
 
 	if projectId != "" {
 		if lang != LangTypescript {
@@ -84,18 +89,24 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang str
 		escaped += "&sslmode=require"
 	}
 
+	envVars := []string{
+		"PG_META_DB_URL=" + escaped,
+		"PG_META_GENERATE_TYPES=" + lang,
+		"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=" + included,
+		"PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL=" + swiftAccessControl,
+		fmt.Sprintf("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=%v", !postgrestV9Compat),
+	}
+
+	if defaultSchemaEnv != "" {
+		envVars = append(envVars, "PG_META_GENERATE_TYPES_DEFAULT_SCHEMA="+defaultSchemaEnv)
+	}
+
 	return utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
 			Image: utils.Config.Studio.PgmetaImage,
-			Env: []string{
-				"PG_META_DB_URL=" + escaped,
-				"PG_META_GENERATE_TYPES=" + lang,
-				"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=" + included,
-				"PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL=" + swiftAccessControl,
-				fmt.Sprintf("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=%v", !postgrestV9Compat),
-			},
-			Cmd: []string{"node", "dist/server/server.js"},
+			Env:   envVars,
+			Cmd:   []string{"node", "dist/server/server.js"},
 		},
 		hostConfig,
 		network.NetworkingConfig{},

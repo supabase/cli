@@ -86,13 +86,15 @@ var (
 					return err
 				}
 			}
-			return types.Run(ctx, flags.ProjectRef, flags.DbConfig, lang.Value, schema, postgrestV9Compat, swiftAccessControl.Value, afero.NewOsFs())
+			return types.Run(ctx, flags.ProjectRef, flags.DbConfig, lang.Value, schema, setDefault, postgrestV9Compat, swiftAccessControl.Value, afero.NewOsFs())
 		},
 		Example: `  supabase gen types --local
   supabase gen types --linked --lang=go
   supabase gen types --project-id abc-def-123 --schema public --schema private
   supabase gen types --db-url 'postgresql://...' --schema public --schema auth`,
 	}
+
+	setDefault bool
 )
 
 func init() {
@@ -106,6 +108,7 @@ func init() {
 	typeFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	typeFlags.Var(&swiftAccessControl, "swift-access-control", "Access control for Swift generated types.")
 	typeFlags.BoolVar(&postgrestV9Compat, "postgrest-v9-compat", false, "Generate types compatible with PostgREST v9 and below. Only use together with --db-url.")
+	typeFlags.BoolVar(&setDefault, "set-default", false, "Set the specified schema as the default for helper types when using a single non-public schema")
 	genCmd.AddCommand(genTypesCmd)
 	keyFlags := genKeysCmd.Flags()
 	keyFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")

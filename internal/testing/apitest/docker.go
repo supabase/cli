@@ -2,6 +2,7 @@ package apitest
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -118,6 +119,41 @@ func MockDockerLogs(docker *client.Client, containerID, stdout string) error {
 
 func MockDockerLogsExitCode(docker *client.Client, containerID string, exitCode int) error {
 	return setupDockerLogs(docker, containerID, "", exitCode)
+}
+
+// MockDockerStartWithEnvCapture extends MockDockerStart to capture environment variables
+// passed to container creation. This is useful for testing environment variable logic.
+func MockDockerStartWithEnvCapture(docker *client.Client, imageID, containerID string, capturedEnv *[]string) {
+	gock.New(docker.DaemonHost()).
+		Get("/v" + docker.ClientVersion() + "/images/" + imageID + "/json").
+		Reply(http.StatusOK).
+		JSON(image.InspectResponse{})
+	gock.New(docker.DaemonHost()).
+		Post("/v" + docker.ClientVersion() + "/networks/create").
+		Reply(http.StatusCreated).
+		JSON(network.CreateResponse{})
+	gock.New(docker.DaemonHost()).
+		Post("/v" + docker.ClientVersion() + "/volumes/create").
+		Persist().
+		Reply(http.StatusCreated).
+		JSON(volume.Volume{})
+	gock.New(docker.DaemonHost()).
+		Post("/v" + docker.ClientVersion() + "/containers/create").
+		AddMatcher(func(req *http.Request, ereq *gock.Request) (bool, error) {
+			var config struct {
+				Env []string `json:"Env"`
+			}
+			if err := json.NewDecoder(req.Body).Decode(&config); err != nil {
+				return false, err
+			}
+			*capturedEnv = config.Env
+			return true, nil
+		}).
+		Reply(http.StatusOK).
+		JSON(container.CreateResponse{ID: containerID})
+	gock.New(docker.DaemonHost()).
+		Post("/v" + docker.ClientVersion() + "/containers/" + containerID + "/start").
+		Reply(http.StatusAccepted)
 }
 
 func ListUnmatchedRequests() []string {

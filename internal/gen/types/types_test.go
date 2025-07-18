@@ -48,7 +48,7 @@ func TestGenLocalCommand(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		assert.NoError(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{}, true, "", fsys, conn.Intercept))
+		assert.NoError(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{}, false, true, "", fsys, conn.Intercept))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -63,7 +63,7 @@ func TestGenLocalCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{}, true, "", fsys))
+		assert.Error(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{}, false, true, "", fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -83,7 +83,7 @@ func TestGenLocalCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{}, true, "", fsys))
+		assert.Error(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{}, false, true, "", fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -106,7 +106,7 @@ func TestGenLocalCommand(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		assert.NoError(t, Run(context.Background(), "", dbConfig, LangSwift, []string{}, true, SwiftInternalAccessControl, fsys, conn.Intercept))
+		assert.NoError(t, Run(context.Background(), "", dbConfig, LangSwift, []string{}, false, true, SwiftInternalAccessControl, fsys, conn.Intercept))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -129,7 +129,7 @@ func TestGenLinkedCommand(t *testing.T) {
 			Reply(200).
 			JSON(api.TypescriptResponse{Types: ""})
 		// Run test
-		assert.NoError(t, Run(context.Background(), projectId, pgconn.Config{}, LangTypescript, []string{}, true, "", fsys))
+		assert.NoError(t, Run(context.Background(), projectId, pgconn.Config{}, LangTypescript, []string{}, false, true, "", fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -144,7 +144,7 @@ func TestGenLinkedCommand(t *testing.T) {
 			Get("/v1/projects/" + projectId + "/types/typescript").
 			ReplyError(errNetwork)
 		// Run test
-		err := Run(context.Background(), projectId, pgconn.Config{}, LangTypescript, []string{}, true, "", fsys)
+		err := Run(context.Background(), projectId, pgconn.Config{}, LangTypescript, []string{}, false, true, "", fsys)
 		// Validate api
 		assert.ErrorIs(t, err, errNetwork)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -159,7 +159,7 @@ func TestGenLinkedCommand(t *testing.T) {
 			Get("/v1/projects/" + projectId + "/types/typescript").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, Run(context.Background(), projectId, pgconn.Config{}, LangTypescript, []string{}, true, "", fsys))
+		assert.Error(t, Run(context.Background(), projectId, pgconn.Config{}, LangTypescript, []string{}, false, true, "", fsys))
 	})
 }
 
@@ -184,8 +184,142 @@ func TestGenRemoteCommand(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		assert.NoError(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{"public"}, true, "", afero.NewMemMapFs(), conn.Intercept))
+		assert.NoError(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{"public"}, false, true, "", afero.NewMemMapFs(), conn.Intercept))
 		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+}
+
+func TestGenWithSetDefault(t *testing.T) {
+	utils.DbId = "test-db"
+	utils.Config.Hostname = "localhost"
+	utils.Config.Db.Port = 5432
+
+	dbConfig := pgconn.Config{
+		Host:     utils.Config.Hostname,
+		Port:     utils.Config.Db.Port,
+		User:     "admin",
+		Password: "password",
+	}
+
+	t.Run("sets default schema env var with single non-public schema", func(t *testing.T) {
+		const containerId = "test-pgmeta"
+		imageUrl := utils.GetRegistryImageUrl(utils.Config.Studio.PgmetaImage)
+		fsys := afero.NewMemMapFs()
+
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{})
+
+		var capturedEnv []string
+		apitest.MockDockerStartWithEnvCapture(utils.Docker, imageUrl, containerId, &capturedEnv)
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
+
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+
+		err := Run(context.Background(), "", dbConfig, LangTypescript, []string{"private"}, true, true, "", fsys, conn.Intercept)
+		assert.NoError(t, err)
+
+		found := false
+		for _, env := range capturedEnv {
+			if env == "PG_META_GENERATE_TYPES_DEFAULT_SCHEMA=private" {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "Expected PG_META_GENERATE_TYPES_DEFAULT_SCHEMA=private to be set in environment variables")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("does not set default schema env var without flag", func(t *testing.T) {
+		const containerId = "test-pgmeta"
+		imageUrl := utils.GetRegistryImageUrl(utils.Config.Studio.PgmetaImage)
+		fsys := afero.NewMemMapFs()
+
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{})
+
+		var capturedEnv []string
+		apitest.MockDockerStartWithEnvCapture(utils.Docker, imageUrl, containerId, &capturedEnv)
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
+
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+
+		err := Run(context.Background(), "", dbConfig, LangTypescript, []string{"private"}, false, true, "", fsys, conn.Intercept)
+		assert.NoError(t, err)
+
+		for _, env := range capturedEnv {
+			assert.NotContains(t, env, "PG_META_GENERATE_TYPES_DEFAULT_SCHEMA", "Should not set default schema env var when flag is false")
+		}
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("does not set default schema env var with multiple schemas", func(t *testing.T) {
+		const containerId = "test-pgmeta"
+		imageUrl := utils.GetRegistryImageUrl(utils.Config.Studio.PgmetaImage)
+		fsys := afero.NewMemMapFs()
+
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{})
+
+		var capturedEnv []string
+		apitest.MockDockerStartWithEnvCapture(utils.Docker, imageUrl, containerId, &capturedEnv)
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
+
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+
+		err := Run(context.Background(), "", dbConfig, LangTypescript, []string{"public", "private"}, true, true, "", fsys, conn.Intercept)
+		assert.NoError(t, err)
+
+		for _, env := range capturedEnv {
+			assert.NotContains(t, env, "PG_META_GENERATE_TYPES_DEFAULT_SCHEMA", "Should not set default schema env var with multiple schemas")
+		}
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("does not set default schema env var with public schema", func(t *testing.T) {
+		const containerId = "test-pgmeta"
+		imageUrl := utils.GetRegistryImageUrl(utils.Config.Studio.PgmetaImage)
+		fsys := afero.NewMemMapFs()
+
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{})
+
+		var capturedEnv []string
+		apitest.MockDockerStartWithEnvCapture(utils.Docker, imageUrl, containerId, &capturedEnv)
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
+
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+
+		err := Run(context.Background(), "", dbConfig, LangTypescript, []string{"public"}, true, true, "", fsys, conn.Intercept)
+		assert.NoError(t, err)
+
+		for _, env := range capturedEnv {
+			assert.NotContains(t, env, "PG_META_GENERATE_TYPES_DEFAULT_SCHEMA", "Should not set default schema env var with public schema")
+		}
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
