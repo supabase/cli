@@ -43,7 +43,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 	LinkServices(ctx, projectRef, keys.Anon, fsys)
 
 	// 2. Check database connection
-	config := flags.GetDbConfigOptionalPassword(projectRef)
+	config := flags.NewDbConfigWithPassword(ctx, projectRef)
 	if len(config.Password) > 0 {
 		if err := linkDatabase(ctx, config, fsys, options...); err != nil {
 			return err

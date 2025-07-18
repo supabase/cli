@@ -1,11 +1,16 @@
 package flags
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
+	_ "embed"
 	"fmt"
 	"math/big"
+	"net/http"
 	"os"
 	"strings"
+	"text/template"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
@@ -14,7 +19,9 @@ import (
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
+	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/config"
+	"github.com/supabase/cli/pkg/pgxv5"
 )
 
 type connection int
@@ -29,7 +36,7 @@ const (
 
 var DbConfig pgconn.Config
 
-func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
+func ParseDatabaseConfig(ctx context.Context, flagSet *pflag.FlagSet, fsys afero.Fs) error {
 	// Changed flags take precedence over default values
 	var connType connection
 	if flag := flagSet.Lookup("db-url"); flag != nil && flag.Changed {
@@ -77,7 +84,7 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 		if err := LoadConfig(fsys); err != nil {
 			return err
 		}
-		DbConfig = NewDbConfigWithPassword(ProjectRef)
+		DbConfig = NewDbConfigWithPassword(ctx, ProjectRef)
 	case proxy:
 		token, err := utils.LoadAccessTokenFS(fsys)
 		if err != nil {
@@ -95,23 +102,71 @@ func ParseDatabaseConfig(flagSet *pflag.FlagSet, fsys afero.Fs) error {
 	return nil
 }
 
-func NewDbConfigWithPassword(projectRef string) pgconn.Config {
-	config := getDbConfig(projectRef)
-	config.Password = getPassword(projectRef)
-	return config
+const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+func RandomString(size int) (string, error) {
+	data := make([]byte, size)
+	_, err := rand.Read(data)
+	if err != nil {
+		return "", errors.Errorf("failed to read random: %w", err)
+	}
+	for i := range data {
+		n := int(data[i]) % len(letters)
+		data[i] = letters[n]
+	}
+	return string(data), nil
 }
 
-func getPassword(projectRef string) string {
-	if password := viper.GetString("DB_PASSWORD"); len(password) > 0 {
-		return password
+func NewDbConfigWithPassword(ctx context.Context, projectRef string) pgconn.Config {
+	config := getDbConfig(projectRef)
+	config.Password = viper.GetString("DB_PASSWORD")
+	if len(config.Password) > 0 {
+		return config
 	}
-	if password, err := credentials.StoreProvider.Get(projectRef); err == nil {
-		return password
+	var err error
+	if config.Password, err = RandomString(32); err == nil {
+		newRole := pgconn.Config{
+			User:     pgxv5.CLI_LOGIN_ROLE,
+			Password: config.Password,
+		}
+		if err := initLoginRole(ctx, projectRef, newRole); err == nil {
+			// Special handling for pooler username
+			if suffix := "." + projectRef; strings.HasSuffix(config.User, suffix) {
+				newRole.User += suffix
+			}
+			config.User = newRole.User
+			return config
+		}
+	}
+	if config.Password, err = credentials.StoreProvider.Get(projectRef); err == nil {
+		return config
 	}
 	resetUrl := fmt.Sprintf("%s/project/%s/settings/database", utils.GetSupabaseDashboardURL(), projectRef)
 	fmt.Fprintln(os.Stderr, "Forgot your password? Reset it from the Dashboard:", utils.Bold(resetUrl))
 	fmt.Fprint(os.Stderr, "Enter your database password: ")
-	return credentials.PromptMasked(os.Stdin)
+	config.Password = credentials.PromptMasked(os.Stdin)
+	return config
+}
+
+var (
+	//go:embed queries/role.sql
+	initRoleEmbed    string
+	initRoleTemplate = template.Must(template.New("initRole").Parse(initRoleEmbed))
+)
+
+func initLoginRole(ctx context.Context, projectRef string, config pgconn.Config) error {
+	fmt.Fprintf(os.Stderr, "Initialising %s role...\n", config.User)
+	var initRoleBuf bytes.Buffer
+	if err := initRoleTemplate.Option("missingkey=error").Execute(&initRoleBuf, config); err != nil {
+		return errors.Errorf("failed to exec template: %w", err)
+	}
+	body := api.V1RunQueryBody{Query: initRoleBuf.String()}
+	if resp, err := utils.GetSupabase().V1RunAQueryWithResponse(ctx, projectRef, body); err != nil {
+		return errors.Errorf("failed to initialise login role: %w", err)
+	} else if resp.StatusCode() != http.StatusCreated {
+		return errors.Errorf("unexpected query status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+	return nil
 }
 
 const PASSWORD_LENGTH = 16
@@ -147,14 +202,4 @@ func getDbConfig(projectRef string) pgconn.Config {
 		User:     "postgres",
 		Database: "postgres",
 	}
-}
-
-func GetDbConfigOptionalPassword(projectRef string) pgconn.Config {
-	config := getDbConfig(projectRef)
-	config.Password = viper.GetString("DB_PASSWORD")
-	if config.Password == "" {
-		fmt.Fprint(os.Stderr, "Enter your database password (or leave blank to skip): ")
-		config.Password = credentials.PromptMasked(os.Stdin)
-	}
-	return config
 }

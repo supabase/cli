@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 )
+
+const CLI_LOGIN_ROLE = "cli_login_postgres"
 
 // Extends pgx.Connect with support for programmatically overriding parsed config
 func Connect(ctx context.Context, connString string, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
@@ -19,6 +22,11 @@ func Connect(ctx context.Context, connString string, options ...func(*pgx.ConnCo
 	}
 	config.OnNotice = func(pc *pgconn.PgConn, n *pgconn.Notice) {
 		fmt.Fprintf(os.Stderr, "%s (%s): %s\n", n.Severity, n.Code, n.Message)
+	}
+	if strings.HasPrefix(config.User, CLI_LOGIN_ROLE) {
+		config.AfterConnect = func(ctx context.Context, pgconn *pgconn.PgConn) error {
+			return pgconn.Exec(ctx, "SET SESSION ROLE postgres").Close()
+		}
 	}
 	// Apply config overrides
 	for _, op := range options {
