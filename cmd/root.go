@@ -111,7 +111,7 @@ var (
 					}
 				}
 			}
-			if err := flags.ParseDatabaseConfig(cmd.Flags(), fsys); err != nil {
+			if err := flags.ParseDatabaseConfig(ctx, cmd.Flags(), fsys); err != nil {
 				return err
 			}
 			// Prepare context
