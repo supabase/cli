@@ -103,7 +103,7 @@ var (
 
 	genSigningKeyCmd = &cobra.Command{
 		Use:   "signing-key",
-		Short: "Generate JWT signing keys",
+		Short: "Generate a JWT signing key",
 		Long: `Securely generate a private JWT signing key for use in the CLI or to import in the dashboard.
 
 Supported algorithms:
