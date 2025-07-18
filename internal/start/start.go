@@ -145,7 +145,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 		excluded[name] = true
 	}
 
-	jwks, err := utils.Config.Auth.ResolveJWKS(ctx)
+	jwks, err := utils.Config.Auth.ResolveJWKS(ctx, fsys)
 	if err != nil {
 		return err
 	}
@@ -454,13 +454,6 @@ EOF
 			"GOTRUE_URI_ALLOW_LIST=" + strings.Join(utils.Config.Auth.AdditionalRedirectUrls, ","),
 			fmt.Sprintf("GOTRUE_DISABLE_SIGNUP=%v", !utils.Config.Auth.EnableSignup),
 
-			"GOTRUE_JWT_ADMIN_ROLES=service_role",
-			"GOTRUE_JWT_AUD=authenticated",
-			"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
-			fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
-			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
-			"GOTRUE_JWT_ISSUER=" + utils.GetApiUrl("/auth/v1"),
-
 			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", utils.Config.Auth.Email.EnableSignup),
 			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", utils.Config.Auth.Email.DoubleConfirmChanges),
 			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !utils.Config.Auth.Email.EnableConfirmations),
@@ -506,6 +499,21 @@ EOF
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_VERIFY=%v", utils.Config.Auth.RateLimit.TokenVerifications),
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_SMS_SENT=%v", utils.Config.Auth.RateLimit.SmsSent),
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_WEB3=%v", utils.Config.Auth.RateLimit.Web3),
+		}
+
+		// JWT configuration
+		env = append(env, []string{
+			"GOTRUE_JWT_ADMIN_ROLES=service_role",
+			"GOTRUE_JWT_AUD=authenticated",
+			"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
+			fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
+			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
+			"GOTRUE_JWT_ISSUER=" + utils.GetApiUrl("/auth/v1"),
+		}...)
+
+		// Add JWT keys from file if configured
+		if keysData, err := utils.Config.Auth.GetSigningKeysData(fsys); err == nil && keysData != "" {
+			env = append(env, "GOTRUE_JWT_KEYS="+keysData)
 		}
 
 		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.Enabled {
