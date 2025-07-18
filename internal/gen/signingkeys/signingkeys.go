@@ -9,14 +9,16 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
+	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/google/uuid"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/cast"
 )
 
@@ -158,81 +160,68 @@ func generateECDSAKeyPair(keyID string) (*KeyPair, error) {
 }
 
 // Run generates a key pair and writes it to the specified file path
-func Run(ctx context.Context, algorithm string, outputPath string, appendMode bool, fsys afero.Fs) error {
-	// Validate algorithm
-	alg := Algorithm(strings.ToUpper(algorithm))
-	if alg != AlgRS256 && alg != AlgES256 {
-		return errors.Errorf("unsupported algorithm: %s. Supported algorithms: RS256, ES256", algorithm)
+func Run(ctx context.Context, algorithm string, appendMode bool, fsys afero.Fs) error {
+	err := flags.LoadConfig(fsys)
+	if err != nil {
+		return err
 	}
+	outputPath := utils.Config.Auth.SigningKeysPath
 
 	// Generate key pair
-	keyPair, err := GenerateKeyPair(alg)
+	keyPair, err := GenerateKeyPair(Algorithm(algorithm))
 	if err != nil {
 		return err
 	}
 
+	out := io.Writer(os.Stdout)
+	var jwkArray []JWK
+	if len(outputPath) > 0 {
+		if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(outputPath)); err != nil {
+			return err
+		}
+		f, err := fsys.OpenFile(outputPath, os.O_RDWR|os.O_CREATE, 0600)
+		if err != nil {
+			return errors.Errorf("failed to open signing key: %w", err)
+		}
+		defer f.Close()
+		if appendMode {
+			// Load existing key and reset file
+			dec := json.NewDecoder(f)
+			if err := dec.Decode(&jwkArray); err != nil {
+				return errors.Errorf("failed to decode signing key: %w", err)
+			}
+			if _, err = f.Seek(0, io.SeekStart); err != nil {
+				return errors.Errorf("failed to seek signing key: %w", err)
+			}
+		}
+		out = f
+	}
+	jwkArray = append(jwkArray, keyPair.PrivateKey)
+
 	// Write to file
-	return writeToFile(keyPair, outputPath, appendMode, fsys)
+	enc := json.NewEncoder(out)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(jwkArray); err != nil {
+		return errors.Errorf("failed to encode signing key: %w", err)
+	}
+
+	if len(outputPath) > 0 {
+		fmt.Fprintf(os.Stderr, "JWT signing key appended to: %s (now contains %d keys)\n", outputPath, len(jwkArray))
+	}
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "⚠️  IMPORTANT: Add this file to your .gitignore to prevent committing signing keys to version control")
+	fmt.Fprintln(os.Stderr)
+
+	fmt.Fprintln(os.Stderr, "To enable JWT signing keys in your project:")
+	fmt.Fprintln(os.Stderr, "1. Add the following to your config.toml file:")
+	fmt.Fprintf(os.Stderr, "   signing_keys_path = \"%s\"\n", outputPath)
+	fmt.Fprintln(os.Stderr, "2. Restart your local development server:")
+	fmt.Fprintln(os.Stderr, "   supabase start")
+	return nil
 }
 
 // GetSupportedAlgorithms returns a list of supported algorithms
 func GetSupportedAlgorithms() []string {
 	return []string{string(AlgRS256), string(AlgES256)}
-}
-
-// writeToFile writes the key pair to a JSON file
-func writeToFile(keyPair *KeyPair, outputPath string, appendMode bool, fsys afero.Fs) error {
-	// Create directory if it doesn't exist
-	dir := filepath.Dir(outputPath)
-	if err := utils.MkdirIfNotExistFS(fsys, dir); err != nil {
-		return err
-	}
-
-	var jwkArray []JWK
-
-	// If append mode is enabled, try to read existing keys
-	if appendMode {
-		if exists, err := afero.Exists(fsys, outputPath); err != nil {
-			return errors.Errorf("failed to check if file exists: %w", err)
-		} else if exists {
-			existingData, err := afero.ReadFile(fsys, outputPath)
-			if err != nil {
-				return errors.Errorf("failed to read existing keys file: %w", err)
-			}
-
-			if err := json.Unmarshal(existingData, &jwkArray); err != nil {
-				return errors.Errorf("failed to parse existing keys file: %w", err)
-			}
-		}
-	}
-
-	// Add the new key to the array
-	jwkArray = append(jwkArray, keyPair.PrivateKey)
-
-	// Marshal the array to JSON
-	data, err := json.MarshalIndent(jwkArray, "", "  ")
-	if err != nil {
-		return errors.Errorf("failed to marshal JWT keys: %w", err)
-	}
-
-	// Write to file
-	if err := afero.WriteFile(fsys, outputPath, data, 0600); err != nil {
-		return errors.Errorf("failed to write JWT keys to %s: %w", outputPath, err)
-	}
-
-	if appendMode && len(jwkArray) > 1 {
-		fmt.Printf("JWT signing key appended to: %s (now contains %d keys)\n", outputPath, len(jwkArray))
-	} else {
-		fmt.Printf("JWT signing keys saved to: %s\n", outputPath)
-	}
-
-	fmt.Println("⚠️  IMPORTANT: Add this file to your .gitignore to prevent committing signing keys to version control")
-
-	fmt.Println()
-	fmt.Println("To enable JWT signing keys in your project:")
-	fmt.Println("1. Add the following to your config.toml file:")
-	fmt.Printf("   signing_keys_path = \"%s\"\n", outputPath)
-	fmt.Println("2. Restart your local development server:")
-	fmt.Println("   supabase start")
-	return nil
 }

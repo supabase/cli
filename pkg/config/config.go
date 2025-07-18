@@ -710,8 +710,7 @@ func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 	}
 	// Resolve signing keys path for cross-platform compatibility
 	if len(c.Auth.SigningKeysPath) > 0 && !filepath.IsAbs(c.Auth.SigningKeysPath) {
-		cwd := filepath.Dir(builder.SupabaseDirPath)
-		c.Auth.SigningKeysPath = filepath.Join(cwd, c.Auth.SigningKeysPath)
+		c.Auth.SigningKeysPath = filepath.Join(builder.SupabaseDirPath, c.Auth.SigningKeysPath)
 	}
 	// Resolve functions config
 	for slug, function := range c.Functions {

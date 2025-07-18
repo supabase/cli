@@ -1,10 +1,8 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 
 	env "github.com/Netflix/go-env"
 	"github.com/go-errors/errors"
@@ -113,24 +111,8 @@ Supported algorithms:
 	RS256 - RSA with SHA-256
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Use configured path or default
-			outputPath := utils.Config.Auth.SigningKeysPath
-			if len(outputPath) == 0 {
-				outputPath = "signing_keys.json"
-			}
-
-			// Resolve path for cross-platform compatibility
-			resolvedPath, err := filepath.Abs(outputPath)
-			fmt.Println(resolvedPath)
-			if err != nil {
-				return errors.Errorf("failed to resolve signing keys path: %w", err)
-			}
-
-			return signingkeys.Run(cmd.Context(), algorithm.Value, resolvedPath, appendKeys, afero.NewOsFs())
+			return signingkeys.Run(cmd.Context(), algorithm.Value, appendKeys, afero.NewOsFs())
 		},
-		Example: `  supabase gen signing-key --algorithm RS256
-  supabase gen signing-key --algorithm ES256
-  supabase gen signing-key --algorithm RS256 --append`,
 	}
 )
 
