@@ -219,8 +219,16 @@ func Run(ctx context.Context, algorithm string, appendMode bool, fsys afero.Fs) 
 		return errors.Errorf("failed to encode signing key: %w", err)
 	}
 
-	if len(outputPath) > 0 {
-		fmt.Fprintf(os.Stderr, "JWT signing key appended to: %s (now contains %d keys)\n", outputPath, len(jwkArray))
+	if len(outputPath) == 0 {
+		utils.CmdSuggestion = fmt.Sprintf(`
+To enable JWT signing keys in your local project:
+1. Save the generated key to %s
+2. Update your %s with the new keys path
+
+[auth]
+signing_keys_path = "./signing_key.json"
+`, utils.Bold(filepath.Join(utils.SupabaseDirPath, "signing_key.json")), utils.Bold(utils.ConfigPath))
+		return nil
 	}
 
 	fmt.Fprintln(os.Stderr)
