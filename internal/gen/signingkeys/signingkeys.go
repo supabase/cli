@@ -194,6 +194,19 @@ func Run(ctx context.Context, algorithm string, appendMode bool, fsys afero.Fs) 
 			if _, err = f.Seek(0, io.SeekStart); err != nil {
 				return errors.Errorf("failed to seek signing key: %w", err)
 			}
+		} else if fi, err := f.Stat(); fi.Size() > 0 {
+			if err != nil {
+				fmt.Fprintln(utils.GetDebugLogger(), err)
+			}
+			label := fmt.Sprintf("Do you want to overwrite the existing %s file?", utils.Bold(outputPath))
+			if shouldOverwrite, err := utils.NewConsole().PromptYesNo(ctx, label, true); err != nil {
+				return err
+			} else if !shouldOverwrite {
+				return errors.New(context.Canceled)
+			}
+			if err := f.Truncate(0); err != nil {
+				return errors.Errorf("failed to truncate signing key: %w", err)
+			}
 		}
 		out = f
 	}
