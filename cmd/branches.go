@@ -32,6 +32,7 @@ var (
 		Allowed: awsRegions(),
 	}
 	persistent bool
+	withData   bool
 
 	branchCreateCmd = &cobra.Command{
 		Use:   "create [name]",
@@ -52,6 +53,9 @@ var (
 			}
 			if cmdFlags.Changed("persistent") {
 				body.Persistent = &persistent
+			}
+			if cmdFlags.Changed("with-data") {
+				body.WithData = &withData
 			}
 			return create.Run(cmd.Context(), body, afero.NewOsFs())
 		},
@@ -157,6 +161,7 @@ func init() {
 	createFlags.Var(&branchRegion, "region", "Select a region to deploy the branch database.")
 	createFlags.Var(&size, "size", "Select a desired instance size for the branch database.")
 	createFlags.BoolVar(&persistent, "persistent", false, "Whether to create a persistent branch.")
+	createFlags.BoolVar(&withData, "with-data", false, "Whether to clone production data to the branch database.")
 	branchesCmd.AddCommand(branchCreateCmd)
 	branchesCmd.AddCommand(branchListCmd)
 	branchesCmd.AddCommand(branchGetCmd)
