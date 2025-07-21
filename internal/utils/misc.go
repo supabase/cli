@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/go-errors/errors"
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/pkg/migration"
@@ -123,6 +124,24 @@ func IsGitRepo() bool {
 	opts := &git.PlainOpenOptions{DetectDotGit: true}
 	_, err := git.PlainOpenWithOptions(".", opts)
 	return err == nil
+}
+
+func IsGitIgnored(fp ...string) (bool, error) {
+	opts := &git.PlainOpenOptions{DetectDotGit: true}
+	repo, err := git.PlainOpenWithOptions(".", opts)
+	if err != nil {
+		return false, err
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		return false, err
+	}
+	ps, err := gitignore.ReadPatterns(wt.Filesystem, nil)
+	if err != nil {
+		return false, err
+	}
+	m := gitignore.NewMatcher(ps)
+	return m.Match(fp, false), nil
 }
 
 // If the `os.Getwd()` is within a supabase project, this will return

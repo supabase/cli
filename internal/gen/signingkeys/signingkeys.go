@@ -231,15 +231,15 @@ signing_keys_path = "./signing_key.json"
 		return nil
 	}
 
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "⚠️  IMPORTANT: Add this file to your .gitignore to prevent committing signing keys to version control")
-	fmt.Fprintln(os.Stderr)
-
-	fmt.Fprintln(os.Stderr, "To enable JWT signing keys in your project:")
-	fmt.Fprintln(os.Stderr, "1. Add the following to your config.toml file:")
-	fmt.Fprintf(os.Stderr, "   signing_keys_path = \"%s\"\n", outputPath)
-	fmt.Fprintln(os.Stderr, "2. Restart your local development server:")
-	fmt.Fprintln(os.Stderr, "   supabase start")
+	fmt.Fprintf(os.Stderr, "JWT signing key appended to: %s (now contains %d keys)\n", utils.Bold(outputPath), len(jwkArray))
+	if len(jwkArray) == 1 {
+		if ignored, err := utils.IsGitIgnored(outputPath); err != nil {
+			fmt.Fprintln(utils.GetDebugLogger(), err)
+		} else if !ignored {
+			// Since the output path is user defined, we can't update the managed .gitignore file.
+			fmt.Fprintln(os.Stderr, utils.Yellow("IMPORTANT:"), "Add your signing key path to .gitignore to prevent committing to version control.")
+		}
+	}
 	return nil
 }
 
