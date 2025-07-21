@@ -84,6 +84,7 @@ type (
 		EnableAnonymousSignIns     bool                 `toml:"enable_anonymous_sign_ins"`
 		MinimumPasswordLength      uint                 `toml:"minimum_password_length"`
 		PasswordRequirements       PasswordRequirements `toml:"password_requirements"`
+		SigningKeysPath            string               `toml:"signing_keys_path"`
 
 		RateLimit rateLimit `toml:"rate_limit"`
 		Captcha   *captcha  `toml:"captcha"`

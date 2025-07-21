@@ -29,6 +29,7 @@ import (
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
+	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/fetcher"
@@ -707,6 +708,10 @@ func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 		}
 		c.Storage.Buckets[name] = bucket
 	}
+	// Resolve signing keys path for cross-platform compatibility
+	if len(c.Auth.SigningKeysPath) > 0 && !filepath.IsAbs(c.Auth.SigningKeysPath) {
+		c.Auth.SigningKeysPath = filepath.Join(builder.SupabaseDirPath, c.Auth.SigningKeysPath)
+	}
 	// Resolve functions config
 	for slug, function := range c.Functions {
 		if len(function.Entrypoint) == 0 {
@@ -1376,16 +1381,28 @@ func (tpa *thirdParty) IssuerURL() string {
 	return ""
 }
 
-// ResolveJWKS creates the JWKS from the JWT secret and Third-Party Auth
-// configs by resolving the JWKS via the OIDC discovery URL.
-// It always returns a JWKS string, except when there's an error fetching.
-func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
-	var jwks struct {
+type (
+	remoteJWKS struct {
 		Keys []json.RawMessage `json:"keys"`
 	}
 
-	issuerURL := a.ThirdParty.IssuerURL()
-	if issuerURL != "" {
+	oidcConfiguration struct {
+		JWKSURI string `json:"jwks_uri"`
+	}
+
+	secretJWK struct {
+		KeyType      string `json:"kty"`
+		KeyBase64URL string `json:"k"`
+	}
+)
+
+// ResolveJWKS creates the JWKS from the JWT secret and Third-Party Auth
+// configs by resolving the JWKS via the OIDC discovery URL.
+// It always returns a JWKS string, except when there's an error fetching.
+func (a *auth) ResolveJWKS(ctx context.Context, fsys afero.Fs) (string, error) {
+	var jwks remoteJWKS
+
+	if issuerURL := a.ThirdParty.IssuerURL(); issuerURL != "" {
 		discoveryURL := issuerURL + "/.well-known/openid-configuration"
 
 		t := &http.Client{Timeout: 10 * time.Second}
@@ -1398,10 +1415,6 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 		resp, err := client.Send(ctx, http.MethodGet, "", nil)
 		if err != nil {
 			return "", err
-		}
-
-		type oidcConfiguration struct {
-			JWKSURI string `json:"jwks_uri"`
 		}
 
 		oidcConfig, err := fetcher.ParseJSON[oidcConfiguration](resp.Body)
@@ -1424,10 +1437,6 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 			return "", err
 		}
 
-		type remoteJWKS struct {
-			Keys []json.RawMessage `json:"keys"`
-		}
-
 		rJWKS, err := fetcher.ParseJSON[remoteJWKS](resp.Body)
 		if err != nil {
 			return "", err
@@ -1437,23 +1446,34 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 			return "", fmt.Errorf("auth.third_party: JWKS at URL %q as discovered from %q does not contain any JWK keys", oidcConfig.JWKSURI, discoveryURL)
 		}
 
-		jwks.Keys = rJWKS.Keys
+		jwks.Keys = append(jwks.Keys, rJWKS.Keys...)
 	}
 
-	var secretJWK struct {
-		KeyType      string `json:"kty"`
-		KeyBase64URL string `json:"k"`
+	// If SIGNING_KEYS_PATH is provided, read from file
+	if len(a.SigningKeysPath) > 0 {
+		f, err := fsys.Open(a.SigningKeysPath)
+		if err != nil {
+			return "", errors.Errorf("failed to read signing key: %w", err)
+		}
+		jwtKeysArray, err := fetcher.ParseJSON[[]json.RawMessage](f)
+		if err != nil {
+			return "", err
+		}
+		jwks.Keys = append(jwks.Keys, jwtKeysArray...)
+	} else {
+		// Fallback to JWT_SECRET for backward compatibility
+		jwtSecret := secretJWK{
+			KeyType:      "oct",
+			KeyBase64URL: base64.RawURLEncoding.EncodeToString([]byte(a.JwtSecret.Value)),
+		}
+
+		secretJWKEncoded, err := json.Marshal(&jwtSecret)
+		if err != nil {
+			return "", errors.Errorf("failed to marshal secret jwk: %w", err)
+		}
+
+		jwks.Keys = append(jwks.Keys, json.RawMessage(secretJWKEncoded))
 	}
-
-	secretJWK.KeyType = "oct"
-	secretJWK.KeyBase64URL = base64.RawURLEncoding.EncodeToString([]byte(a.JwtSecret.Value))
-
-	secretJWKEncoded, err := json.Marshal(&secretJWK)
-	if err != nil {
-		return "", errors.Errorf("failed to marshal secret jwk: %w", err)
-	}
-
-	jwks.Keys = append(jwks.Keys, json.RawMessage(secretJWKEncoded))
 
 	jwksEncoded, err := json.Marshal(jwks)
 	if err != nil {

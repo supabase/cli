@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/gen/keys"
+	"github.com/supabase/cli/internal/gen/signingkeys"
 	"github.com/supabase/cli/internal/gen/types"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
@@ -93,6 +94,26 @@ var (
   supabase gen types --project-id abc-def-123 --schema public --schema private
   supabase gen types --db-url 'postgresql://...' --schema public --schema auth`,
 	}
+
+	algorithm = utils.EnumFlag{
+		Allowed: signingkeys.GetSupportedAlgorithms(),
+		Value:   string(signingkeys.AlgES256),
+	}
+	appendKeys bool
+
+	genSigningKeyCmd = &cobra.Command{
+		Use:   "signing-key",
+		Short: "Generate a JWT signing key",
+		Long: `Securely generate a private JWT signing key for use in the CLI or to import in the dashboard.
+
+Supported algorithms:
+	ES256 - ECDSA with P-256 curve and SHA-256 (recommended)
+	RS256 - RSA with SHA-256
+`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return signingkeys.Run(cmd.Context(), algorithm.Value, appendKeys, afero.NewOsFs())
+		},
+	}
 )
 
 func init() {
@@ -111,5 +132,9 @@ func init() {
 	keyFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	keyFlags.StringSliceVar(&override, "override-name", []string{}, "Override specific variable names.")
 	genCmd.AddCommand(genKeysCmd)
+	signingKeyFlags := genSigningKeyCmd.Flags()
+	signingKeyFlags.Var(&algorithm, "algorithm", "Algorithm for signing key generation.")
+	signingKeyFlags.BoolVar(&appendKeys, "append", false, "Append new key to existing keys file instead of overwriting.")
+	genCmd.AddCommand(genSigningKeyCmd)
 	rootCmd.AddCommand(genCmd)
 }

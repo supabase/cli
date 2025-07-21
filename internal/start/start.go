@@ -145,7 +145,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 		excluded[name] = true
 	}
 
-	jwks, err := utils.Config.Auth.ResolveJWKS(ctx)
+	jwks, err := utils.Config.Auth.ResolveJWKS(ctx, fsys)
 	if err != nil {
 		return err
 	}
@@ -506,6 +506,11 @@ EOF
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_VERIFY=%v", utils.Config.Auth.RateLimit.TokenVerifications),
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_SMS_SENT=%v", utils.Config.Auth.RateLimit.SmsSent),
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_WEB3=%v", utils.Config.Auth.RateLimit.Web3),
+		}
+
+		// Since signing key is validated by ResolveJWKS, simply read the key file.
+		if keys, err := afero.ReadFile(fsys, utils.Config.Auth.SigningKeysPath); err == nil && len(keys) > 0 {
+			env = append(env, "GOTRUE_JWT_KEYS="+string(keys))
 		}
 
 		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.Enabled {
