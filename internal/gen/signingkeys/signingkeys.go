@@ -187,7 +187,8 @@ func Run(ctx context.Context, algorithm string, appendMode bool, fsys afero.Fs) 
 		if appendMode {
 			// Load existing key and reset file
 			dec := json.NewDecoder(f)
-			if err := dec.Decode(&jwkArray); err != nil {
+			// Since a new file is empty, we must ignore EOF error
+			if err := dec.Decode(&jwkArray); err != nil && !errors.Is(err, io.EOF) {
 				return errors.Errorf("failed to decode signing key: %w", err)
 			}
 			if _, err = f.Seek(0, io.SeekStart); err != nil {
