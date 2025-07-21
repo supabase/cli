@@ -3,7 +3,6 @@ package migration
 import (
 	"context"
 	_ "embed"
-	"fmt"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgx/v4"
@@ -33,24 +32,7 @@ var (
 )
 
 func DropUserSchemas(ctx context.Context, conn *pgx.Conn) error {
-	// Only drop objects in extensions and public schema
-	excludes := append(ManagedSchemas,
-		"extensions",
-		"public",
-	)
-	userSchemas, err := ListUserSchemas(ctx, conn, excludes...)
-	if err != nil {
-		return err
-	}
-	// Drop all user defined schemas
 	migration := MigrationFile{}
-	for _, schema := range userSchemas {
-		sql := fmt.Sprintf("DROP SCHEMA IF EXISTS %s CASCADE", schema)
-		migration.Statements = append(migration.Statements, sql)
-	}
-	// If an extension uses a schema it doesn't create, dropping the schema will cascade to also
-	// drop the extension. But if an extension creates its own schema, dropping the schema will
-	// throw an error. Hence, we drop the extension instead so it cascades to its own schema.
 	migration.Statements = append(migration.Statements, DropObjects)
 	return migration.ExecBatch(ctx, conn)
 }

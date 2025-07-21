@@ -1,6 +1,21 @@
 do $$ declare
   rec record;
 begin
+  -- schemas
+  for rec in
+    select pn.*
+    from pg_namespace pn
+    left join pg_depend pd on pd.objid = pn.oid
+    where pd.deptype is null
+      and not pn.nspname like any(array['information\_schema', 'pg\_%', '\_analytics', '\_realtime', '\_supavisor', 'pgbouncer', 'pgmq', 'pgsodium', 'pgtle', 'supabase\_migrations', 'vault', 'extensions', 'public'])
+      and pn.nspowner::regrole::text != 'supabase_admin'
+  loop
+    -- If an extension uses a schema it doesn't create, dropping the schema will cascade to also
+    -- drop the extension. But if an extension creates its own schema, dropping the schema will
+    -- throw an error. Hence, we drop schemas first while excluding those created by extensions.
+    execute format('drop schema if exists %I cascade', rec.nspname);
+  end loop;
+
   -- extensions
   for rec in
     select *

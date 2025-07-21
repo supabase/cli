@@ -76,8 +76,6 @@ func TestMigrationsDown(t *testing.T) {
 	})
 }
 
-var escapedSchemas = append(migration.ManagedSchemas, "extensions", "public")
-
 func TestResetRemote(t *testing.T) {
 	t.Run("resets remote database", func(t *testing.T) {
 		// Setup in-memory fs
@@ -87,11 +85,7 @@ func TestResetRemote(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(migration.ListSchemas, escapedSchemas).
-			Reply("SELECT 1", []interface{}{"private"}).
-			Query("DROP SCHEMA IF EXISTS private CASCADE").
-			Reply("DROP SCHEMA").
-			Query(migration.DropObjects).
+		conn.Query(migration.DropObjects).
 			Reply("INSERT 0")
 		helper.MockMigrationHistory(conn).
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "schema", nil).
@@ -113,11 +107,7 @@ func TestResetRemote(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(migration.ListSchemas, escapedSchemas).
-			Reply("SELECT 1", []interface{}{"private"}).
-			Query("DROP SCHEMA IF EXISTS private CASCADE").
-			Reply("DROP SCHEMA").
-			Query(migration.DropObjects).
+		conn.Query(migration.DropObjects).
 			Reply("INSERT 0")
 		helper.MockMigrationHistory(conn).
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "schema", nil).
@@ -135,9 +125,7 @@ func TestResetRemote(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(migration.ListSchemas, escapedSchemas).
-			Reply("SELECT 0").
-			Query(migration.DropObjects).
+		conn.Query(migration.DropObjects).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations")
 		// Run test
 		err := ResetAll(context.Background(), "", conn.MockClient(t), fsys)

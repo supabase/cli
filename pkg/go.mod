@@ -9,8 +9,8 @@ require (
 	github.com/docker/go-units v0.5.0
 	github.com/ecies/go/v2 v2.0.11
 	github.com/go-errors/errors v1.5.1
-	github.com/go-viper/mapstructure/v2 v2.3.0
-	github.com/golang-jwt/jwt/v5 v5.2.2
+	github.com/go-viper/mapstructure/v2 v2.4.0
+	github.com/golang-jwt/jwt/v5 v5.2.3
 	github.com/h2non/gock v1.2.0
 	github.com/jackc/pgconn v1.14.3
 	github.com/jackc/pgerrcode v0.0.0-20240316143900-6e2875d9b438
@@ -20,13 +20,13 @@ require (
 	github.com/jackc/pgx/v4 v4.18.3
 	github.com/joho/godotenv v1.5.1
 	github.com/oapi-codegen/nullable v1.1.0
-	github.com/oapi-codegen/runtime v1.1.1
+	github.com/oapi-codegen/runtime v1.1.2
 	github.com/spf13/afero v1.14.0
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.10.0
 	github.com/tidwall/jsonc v0.3.2
 	golang.org/x/mod v0.26.0
-	google.golang.org/grpc v1.73.0
+	google.golang.org/grpc v1.74.0
 )
 
 require (
@@ -53,8 +53,8 @@ require (
 	github.com/subosito/gotenv v1.6.0 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.9.0 // indirect
-	golang.org/x/crypto v0.37.0 // indirect
+	golang.org/x/crypto v0.38.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
-	golang.org/x/text v0.24.0 // indirect
+	golang.org/x/text v0.25.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
