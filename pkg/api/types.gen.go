@@ -1401,6 +1401,7 @@ type CreateBranchBody struct {
 	// ReleaseChannel Release channel. If not provided, GA will be used.
 	ReleaseChannel *CreateBranchBodyReleaseChannel `json:"release_channel,omitempty"`
 	Secrets        *map[string]string              `json:"secrets,omitempty"`
+	WithData       *bool                           `json:"with_data,omitempty"`
 }
 
 // CreateBranchBodyDesiredInstanceSize defines model for CreateBranchBody.DesiredInstanceSize.
