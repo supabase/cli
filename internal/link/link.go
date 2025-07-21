@@ -14,7 +14,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
@@ -43,15 +42,9 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 	LinkServices(ctx, projectRef, keys.Anon, fsys)
 
 	// 2. Check database connection
-	config := flags.GetDbConfigOptionalPassword(projectRef)
-	if len(config.Password) > 0 {
-		if err := linkDatabase(ctx, config, fsys, options...); err != nil {
-			return err
-		}
-		// Save database password
-		if err := credentials.StoreProvider.Set(projectRef, config.Password); err != nil {
-			fmt.Fprintln(os.Stderr, "Failed to save database password:", err)
-		}
+	config := flags.NewDbConfigWithPassword(ctx, projectRef)
+	if err := linkDatabase(ctx, config, fsys, options...); err != nil {
+		return err
 	}
 
 	// 3. Save project ref

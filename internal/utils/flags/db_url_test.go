@@ -1,12 +1,12 @@
 package flags
 
 import (
+	"context"
 	"os"
 	"testing"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/pflag"
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
@@ -14,6 +14,10 @@ import (
 )
 
 func TestParseDatabaseConfig(t *testing.T) {
+	// Setup valid access token
+	token := apitest.RandomAccessToken(t)
+	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
 	t.Run("parses direct connection from db-url flag", func(t *testing.T) {
 		flagSet := pflag.NewFlagSet("test", pflag.ContinueOnError)
 		flagSet.String("db-url", "postgres://postgres:password@localhost:5432/postgres", "")
@@ -22,7 +26,7 @@ func TestParseDatabaseConfig(t *testing.T) {
 
 		fsys := afero.NewMemMapFs()
 
-		err = ParseDatabaseConfig(flagSet, fsys)
+		err = ParseDatabaseConfig(context.Background(), flagSet, fsys)
 
 		assert.NoError(t, err)
 		assert.Equal(t, "db.example.com", DbConfig.Host)
@@ -44,7 +48,7 @@ func TestParseDatabaseConfig(t *testing.T) {
 		utils.Config.Db.Port = 54322
 		utils.Config.Db.Password = "local-password"
 
-		err = ParseDatabaseConfig(flagSet, fsys)
+		err = ParseDatabaseConfig(context.Background(), flagSet, fsys)
 
 		assert.NoError(t, err)
 		assert.Equal(t, "localhost", DbConfig.Host)
@@ -66,7 +70,7 @@ func TestParseDatabaseConfig(t *testing.T) {
 		err = afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644)
 		require.NoError(t, err)
 
-		err = ParseDatabaseConfig(flagSet, fsys)
+		err = ParseDatabaseConfig(context.Background(), flagSet, fsys)
 
 		assert.NoError(t, err)
 		assert.Equal(t, utils.GetSupabaseDbHost(project), DbConfig.Host)
@@ -103,16 +107,5 @@ func TestPromptPassword(t *testing.T) {
 
 		assert.Len(t, password, PASSWORD_LENGTH)
 		assert.NotEqual(t, "", password)
-	})
-}
-
-func TestGetDbConfigOptionalPassword(t *testing.T) {
-	t.Run("uses environment variable when available", func(t *testing.T) {
-		viper.Set("DB_PASSWORD", "env-password")
-		projectRef := apitest.RandomProjectRef()
-
-		config := GetDbConfigOptionalPassword(projectRef)
-
-		assert.Equal(t, "env-password", config.Password)
 	})
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/pgtest"
+	"github.com/supabase/cli/pkg/pgxv5"
 	"github.com/zalando/go-keyring"
 )
 
@@ -47,7 +48,9 @@ func TestLinkCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(GET_LATEST_STORAGE_MIGRATION).
+		conn.Query(pgxv5.SET_SESSION_ROLE).
+			Reply("SET ROLE").
+			Query(GET_LATEST_STORAGE_MIGRATION).
 			Reply("SELECT 1", []interface{}{"custom-metadata"})
 		helper.MockMigrationHistory(conn)
 		helper.MockSeedHistory(conn)
@@ -92,6 +95,9 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/network-restrictions").
 			Reply(200).
 			JSON(api.NetworkRestrictionsResponse{})
+		gock.New(utils.DefaultApiHost).
+			Post("/v1/projects/" + project + "/database/query").
+			Reply(http.StatusCreated)
 		// Link versions
 		auth := tenant.HealthResponse{Version: "v2.74.2"}
 		gock.New("https://" + utils.GetSupabaseHost(project)).
@@ -158,8 +164,11 @@ func TestLinkCommand(t *testing.T) {
 			ReplyError(errors.New("network error"))
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/network-restrictions").
-			Reply(200).
+			Reply(http.StatusOK).
 			JSON(api.NetworkRestrictionsResponse{})
+		gock.New(utils.DefaultApiHost).
+			Post("/v1/projects/" + project + "/database/query").
+			Reply(http.StatusServiceUnavailable)
 		// Link versions
 		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/auth/v1/health").
@@ -181,6 +190,15 @@ func TestLinkCommand(t *testing.T) {
 	t.Run("throws error on write failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(pgxv5.SET_SESSION_ROLE).
+			Reply("SET ROLE").
+			Query(GET_LATEST_STORAGE_MIGRATION).
+			Reply("SELECT 1", []interface{}{"custom-metadata"})
+		helper.MockMigrationHistory(conn)
+		helper.MockSeedHistory(conn)
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		// Mock project status
@@ -212,8 +230,11 @@ func TestLinkCommand(t *testing.T) {
 			ReplyError(errors.New("network error"))
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/network-restrictions").
-			Reply(200).
+			Reply(http.StatusOK).
 			JSON(api.NetworkRestrictionsResponse{})
+		gock.New(utils.DefaultApiHost).
+			Post("/v1/projects/" + project + "/database/query").
+			Reply(http.StatusCreated)
 		// Link versions
 		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/auth/v1/health").
@@ -225,7 +246,7 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), project, fsys)
+		err := Run(context.Background(), project, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
