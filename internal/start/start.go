@@ -911,6 +911,8 @@ EOF
 					"IMGPROXY_MAX_SRC_FILE_SIZE=25000000",
 					"IMGPROXY_MAX_ANIMATION_FRAMES=60",
 					"IMGPROXY_ENABLE_WEBP_DETECTION=true",
+					"IMGPROXY_PRESETS=default=width:3000/height:8192",
+					"IMGPROXY_FORMAT_QUALITY=jpeg=80,avif=62,webp=80",
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "imgproxy", "health"},
