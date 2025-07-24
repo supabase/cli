@@ -3036,6 +3036,9 @@ type V1AuthorizeUserParams struct {
 	ResponseMode        *string                                   `form:"response_mode,omitempty" json:"response_mode,omitempty"`
 	CodeChallenge       *string                                   `form:"code_challenge,omitempty" json:"code_challenge,omitempty"`
 	CodeChallengeMethod *V1AuthorizeUserParamsCodeChallengeMethod `form:"code_challenge_method,omitempty" json:"code_challenge_method,omitempty"`
+
+	// OrganizationSlug Organization slug
+	OrganizationSlug *string `form:"organization_slug,omitempty" json:"organization_slug,omitempty"`
 }
 
 // V1AuthorizeUserParamsResponseType defines parameters for V1AuthorizeUser.
