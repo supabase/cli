@@ -37,13 +37,16 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 	}
 	branch := keys.GetGitBranch(fsys)
 	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db diff")+" on branch "+utils.Aqua(branch)+".\n")
-	if err := SaveDiff(out, file, fsys); err != nil {
-		return err
-	}
+	
 	drops := findDropStatements(out)
 	if len(drops) > 0 {
-		fmt.Fprintln(os.Stderr, "Found drop statements in schema diff. Please double check if these are expected:")
-		fmt.Fprintln(os.Stderr, utils.Yellow(strings.Join(drops, "\n")))
+		if err := showDropWarningAndConfirm(ctx, drops); err != nil {
+			return err
+		}
+	}
+	
+	if err := SaveDiff(out, file, fsys); err != nil {
+		return err
 	}
 	return nil
 }
@@ -87,6 +90,39 @@ func findDropStatements(out string) []string {
 		}
 	}
 	return drops
+}
+
+func showDropWarningAndConfirm(ctx context.Context, drops []string) error {
+	fmt.Fprintln(os.Stderr, utils.Red("⚠️  DANGEROUS OPERATION DETECTED"))
+	fmt.Fprintln(os.Stderr, utils.Red("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"))
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, utils.Bold("The following DROP statements were found in your schema diff:"))
+	fmt.Fprintln(os.Stderr, "")
+	for _, drop := range drops {
+		fmt.Fprintln(os.Stderr, "  "+utils.Red("▶ "+drop))
+	}
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, utils.Yellow("❗ These operations may cause DATA LOSS:"))
+	fmt.Fprintln(os.Stderr, "  • Column renames are detected as DROP + ADD, which will lose existing data")
+	fmt.Fprintln(os.Stderr, "  • Table or schema deletions will permanently remove all data")
+	fmt.Fprintln(os.Stderr, "  • Consider using RENAME operations instead of DROP + ADD for columns")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, utils.Bold("Please review the generated migration file carefully before proceeding."))
+	fmt.Fprintln(os.Stderr, "")
+	
+	console := utils.NewConsole()
+	confirmed, err := console.PromptYesNo(ctx, "Do you want to continue with this potentially destructive operation?", false)
+	if err != nil {
+		return errors.Errorf("failed to get user confirmation: %w", err)
+	}
+	if !confirmed {
+		return errors.New("operation cancelled by user")
+	}
+	
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, utils.Yellow("⚠️  Proceeding with potentially destructive operation as requested."))
+	fmt.Fprintln(os.Stderr, "")
+	return nil
 }
 
 func loadSchema(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) ([]string, error) {
