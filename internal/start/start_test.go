@@ -139,8 +139,8 @@ func TestDatabaseStart(t *testing.T) {
 		utils.Config.Auth.Email.DoubleConfirmChanges = true
 		utils.Config.Auth.Email.EnableConfirmations = true
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Auth.Image), utils.GotrueId)
-		utils.InbucketId = "test-inbucket"
-		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Inbucket.Image), utils.InbucketId)
+		utils.MailpitId = "test-mailpit"
+		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Mailpit.Image), utils.MailpitId)
 		utils.RealtimeId = "test-realtime"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Realtime.Image), utils.RealtimeId)
 		utils.RestId = "test-rest"
@@ -164,7 +164,7 @@ func TestDatabaseStart(t *testing.T) {
 		defer conn.Close(t)
 		// Setup health probes
 		started := []string{
-			utils.DbId, utils.KongId, utils.GotrueId, utils.InbucketId, utils.RealtimeId,
+			utils.DbId, utils.KongId, utils.GotrueId, utils.MailpitId, utils.RealtimeId,
 			utils.StorageId, utils.ImgProxyId, utils.EdgeRuntimeId, utils.PgmetaId, utils.StudioId,
 			utils.LogflareId, utils.RestId, utils.VectorId,
 		}

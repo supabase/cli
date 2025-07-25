@@ -141,7 +141,7 @@ func TestPrintStatus(t *testing.T) {
 	utils.Config.Realtime.Enabled = false
 	utils.Config.Studio.Enabled = false
 	utils.Config.Analytics.Enabled = false
-	utils.Config.Inbucket.Enabled = false
+	utils.Config.Mailpit.Enabled = false
 
 	t.Run("outputs env var", func(t *testing.T) {
 		utils.Config.Hostname = "127.0.0.1"
