@@ -324,21 +324,21 @@ func TestShowDropWarningAndConfirm(t *testing.T) {
 	t.Run("user confirms destructive operation", func(t *testing.T) {
 		ctx := context.Background()
 		drops := []string{"drop table users", "alter table posts drop column content"}
-		
+
 		// Create a mock console that simulates user choosing "yes"
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, "/tmp/input", []byte("y\n"), 0644))
-		
+
 		// This test would need to mock the console input, but for now we'll test the function structure
 		err := showDropWarningAndConfirm(ctx, drops)
 		// In a real test environment with mocked input, this would be NoError when user confirms
 		assert.Error(t, err) // Currently fails because there's no TTY input in test
 	})
-	
+
 	t.Run("handles empty drops list", func(t *testing.T) {
 		ctx := context.Background()
 		drops := []string{}
-		
+
 		// Should not be called with empty drops, but if it is, should handle gracefully
 		err := showDropWarningAndConfirm(ctx, drops)
 		assert.Error(t, err) // Currently fails because there's no TTY input in test

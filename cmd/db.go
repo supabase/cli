@@ -84,12 +84,12 @@ var (
 		},
 	}
 
-	useMigra    bool
-	usePgAdmin  bool
-	usePgSchema bool
+	useMigra     bool
+	usePgAdmin   bool
+	usePgSchema  bool
 	confirmDrops bool
-	schema      []string
-	file        string
+	schema       []string
+	file         string
 
 	dbDiffCmd = &cobra.Command{
 		Use:   "diff",

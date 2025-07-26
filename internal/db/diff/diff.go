@@ -37,7 +37,7 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 	}
 	branch := keys.GetGitBranch(fsys)
 	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db diff")+" on branch "+utils.Aqua(branch)+".\n")
-	
+
 	drops := findDropStatements(out)
 	if len(drops) > 0 {
 		if confirmDrops {
@@ -49,7 +49,7 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 			fmt.Fprintln(os.Stderr, utils.Yellow(strings.Join(drops, "\n")))
 		}
 	}
-	
+
 	if err := SaveDiff(out, file, fsys); err != nil {
 		return err
 	}
@@ -114,7 +114,7 @@ func showDropWarningAndConfirm(ctx context.Context, drops []string) error {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, utils.Bold("Please review the generated migration file carefully before proceeding."))
 	fmt.Fprintln(os.Stderr, "")
-	
+
 	console := utils.NewConsole()
 	confirmed, err := console.PromptYesNo(ctx, "Do you want to continue with this potentially destructive operation?", false)
 	if err != nil {
@@ -123,7 +123,7 @@ func showDropWarningAndConfirm(ctx context.Context, drops []string) error {
 	if !confirmed {
 		return errors.New("operation cancelled by user")
 	}
-	
+
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, utils.Yellow("⚠️  Proceeding with potentially destructive operation as requested."))
 	fmt.Fprintln(os.Stderr, "")
