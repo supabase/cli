@@ -8,22 +8,7 @@ Runs [djrobstep/migra](https://github.com/djrobstep/migra) in a container to com
 
 By default, all schemas in the target database are diffed. Use the `--schema public,extensions` flag to restrict diffing to a subset of schemas.
 
-## Drop Statement Warnings
-
-When DROP statements are detected in the schema diff, the command will show a warning by default. This is particularly important because column renames are often detected as DROP COLUMN + ADD COLUMN operations, which can cause data loss.
-
-- **Default behavior**: Shows a simple warning message listing the detected DROP statements
-- **With `--confirm-drops`**: Shows a detailed warning with potential risks and requires interactive confirmation before proceeding
-
-Example usage:
-
-```bash
-# Show simple warning for DROP statements
-supabase db diff
-
-# Require confirmation for DROP statements  
-supabase db diff --confirm-drops
-```
+When DROP statements are detected in the schema diff, a warning message is shown by default. Use the `--confirm-drops` flag to require interactive confirmation before proceeding with potentially destructive operations.
 
 While the diff command is able to capture most schema changes, there are cases where it is known to fail. Currently, this could happen if you schema contains:
 
