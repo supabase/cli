@@ -30,7 +30,7 @@ import (
 
 type DiffFunc func(context.Context, string, string, []string) (string, error)
 
-func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
+func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, fsys afero.Fs, confirmDrops bool, options ...func(*pgx.ConnConfig)) (err error) {
 	out, err := DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, options...)
 	if err != nil {
 		return err
@@ -40,8 +40,13 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 	
 	drops := findDropStatements(out)
 	if len(drops) > 0 {
-		if err := showDropWarningAndConfirm(ctx, drops); err != nil {
-			return err
+		if confirmDrops {
+			if err := showDropWarningAndConfirm(ctx, drops); err != nil {
+				return err
+			}
+		} else {
+			fmt.Fprintln(os.Stderr, "Found drop statements in schema diff. Please double check if these are expected:")
+			fmt.Fprintln(os.Stderr, utils.Yellow(strings.Join(drops, "\n")))
 		}
 	}
 	

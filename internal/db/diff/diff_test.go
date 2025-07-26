@@ -73,7 +73,7 @@ func TestRun(t *testing.T) {
 			Reply("CREATE DATABASE")
 		defer conn.Close(t)
 		// Run test
-		err := Run(context.Background(), []string{"public"}, "file", dbConfig, DiffSchemaMigra, fsys, conn.Intercept)
+		err := Run(context.Background(), []string{"public"}, "file", dbConfig, DiffSchemaMigra, fsys, false, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -97,7 +97,7 @@ func TestRun(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Config.Db.Image) + "/json").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), []string{"public"}, "file", dbConfig, DiffSchemaMigra, fsys)
+		err := Run(context.Background(), []string{"public"}, "file", dbConfig, DiffSchemaMigra, fsys, false)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())

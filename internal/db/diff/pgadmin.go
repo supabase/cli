@@ -32,7 +32,7 @@ func SaveDiff(out, file string, fsys afero.Fs) error {
 	return nil
 }
 
-func RunPgAdmin(ctx context.Context, schema []string, file string, config pgconn.Config, fsys afero.Fs) error {
+func RunPgAdmin(ctx context.Context, schema []string, file string, config pgconn.Config, fsys afero.Fs, confirmDrops bool) error {
 	// Sanity checks.
 	if err := utils.AssertSupabaseDbIsRunning(); err != nil {
 		return err
@@ -42,6 +42,21 @@ func RunPgAdmin(ctx context.Context, schema []string, file string, config pgconn
 		return run(p, ctx, schema, config, fsys)
 	}); err != nil {
 		return err
+	}
+
+	drops := findDropStatements(output)
+	if len(drops) > 0 {
+		if confirmDrops {
+			if err := showDropWarningAndConfirm(ctx, drops); err != nil {
+				return err
+			}
+		} else {
+			fmt.Fprintln(os.Stderr, "Found drop statements in schema diff. Please double check if these are expected:")
+			for _, drop := range drops {
+				fmt.Fprintln(os.Stderr, "  "+drop)
+			}
+			fmt.Fprintln(os.Stderr, "")
+		}
 	}
 
 	return SaveDiff(output, file, fsys)

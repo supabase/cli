@@ -87,6 +87,7 @@ var (
 	useMigra    bool
 	usePgAdmin  bool
 	usePgSchema bool
+	confirmDrops bool
 	schema      []string
 	file        string
 
@@ -95,14 +96,14 @@ var (
 		Short: "Diffs the local database for schema changes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if usePgAdmin {
-				return diff.RunPgAdmin(cmd.Context(), schema, file, flags.DbConfig, afero.NewOsFs())
+				return diff.RunPgAdmin(cmd.Context(), schema, file, flags.DbConfig, afero.NewOsFs(), confirmDrops)
 			}
 			differ := diff.DiffSchemaMigra
 			if usePgSchema {
 				differ = diff.DiffPgSchema
 				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "--use-pg-schema flag is experimental and may not include all entities, such as RLS policies, enums, and grants.")
 			}
-			return diff.Run(cmd.Context(), schema, file, flags.DbConfig, differ, afero.NewOsFs())
+			return diff.Run(cmd.Context(), schema, file, flags.DbConfig, differ, afero.NewOsFs(), confirmDrops)
 		},
 	}
 
@@ -180,7 +181,7 @@ var (
 		Short:      "Show changes on the remote database",
 		Long:       "Show changes on the remote database since last migration.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return diff.Run(cmd.Context(), schema, file, flags.DbConfig, diff.DiffSchemaMigra, afero.NewOsFs())
+			return diff.Run(cmd.Context(), schema, file, flags.DbConfig, diff.DiffSchemaMigra, afero.NewOsFs(), false)
 		},
 	}
 
@@ -257,6 +258,7 @@ func init() {
 	diffFlags.BoolVar(&useMigra, "use-migra", true, "Use migra to generate schema diff.")
 	diffFlags.BoolVar(&usePgAdmin, "use-pgadmin", false, "Use pgAdmin to generate schema diff.")
 	diffFlags.BoolVar(&usePgSchema, "use-pg-schema", false, "Use pg-schema-diff to generate schema diff.")
+	diffFlags.BoolVar(&confirmDrops, "confirm-drops", false, "Prompt for confirmation when drop statements are detected.")
 	dbDiffCmd.MarkFlagsMutuallyExclusive("use-migra", "use-pgadmin")
 	diffFlags.String("db-url", "", "Diffs against the database specified by the connection string (must be percent-encoded).")
 	diffFlags.Bool("linked", false, "Diffs local migration files against the linked project.")
