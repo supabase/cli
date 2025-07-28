@@ -22,7 +22,7 @@ func TestDNSQuery(t *testing.T) {
 			JSON(DNSResponse{
 				Answer: []DNSAnswer{
 					{
-						Name: "example.com",
+						"name": "example.com",
 						Type: TypeA,
 						Ttl:  300,
 						Data: "93.184.216.34",
@@ -31,7 +31,7 @@ func TestDNSQuery(t *testing.T) {
 			})
 
 		resp, err := api.DNSQuery(context.Background(), DNSParams{
-			Name: "example.com",
+			"name": "example.com",
 		})
 
 		assert.NoError(t, err)
@@ -54,7 +54,7 @@ func TestDNSQuery(t *testing.T) {
 			JSON(DNSResponse{
 				Answer: []DNSAnswer{
 					{
-						Name: "www.example.com",
+						"name": "www.example.com",
 						Type: TypeCNAME,
 						Ttl:  3600,
 						Data: "example.com",
@@ -63,7 +63,7 @@ func TestDNSQuery(t *testing.T) {
 			})
 
 		resp, err := api.DNSQuery(context.Background(), DNSParams{
-			Name: "www.example.com",
+			"name": "www.example.com",
 			Type: &dnsType,
 		})
 
@@ -83,7 +83,7 @@ func TestDNSQuery(t *testing.T) {
 			ReplyError(gock.ErrCannotMatch)
 
 		resp, err := api.DNSQuery(context.Background(), DNSParams{
-			Name: "example.com",
+			"name": "example.com",
 		})
 
 		assert.Error(t, err)
@@ -100,7 +100,7 @@ func TestDNSQuery(t *testing.T) {
 			Reply(http.StatusServiceUnavailable)
 
 		resp, err := api.DNSQuery(context.Background(), DNSParams{
-			Name: "example.com",
+			"name": "example.com",
 		})
 
 		assert.ErrorContains(t, err, "status 503")
@@ -118,7 +118,7 @@ func TestDNSQuery(t *testing.T) {
 			JSON("invalid json")
 
 		resp, err := api.DNSQuery(context.Background(), DNSParams{
-			Name: "example.com",
+			"name": "example.com",
 		})
 
 		assert.ErrorContains(t, err, "failed to parse")

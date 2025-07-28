@@ -198,6 +198,22 @@ const (
 	CreateBranchBodyReleaseChannelWithdrawn CreateBranchBodyReleaseChannel = "withdrawn"
 )
 
+// Defines values for CreateContentBodyType.
+const (
+	CreateContentBodyTypeLogSql CreateContentBodyType = "log_sql"
+	CreateContentBodyTypeReport CreateContentBodyType = "report"
+	CreateContentBodyTypeSql    CreateContentBodyType = "sql"
+	CreateContentBodyTypeTest   CreateContentBodyType = "test"
+)
+
+// Defines values for CreateContentBodyVisibility.
+const (
+	CreateContentBodyVisibilityOrg     CreateContentBodyVisibility = "org"
+	CreateContentBodyVisibilityProject CreateContentBodyVisibility = "project"
+	CreateContentBodyVisibilityPublic  CreateContentBodyVisibility = "public"
+	CreateContentBodyVisibilityUser    CreateContentBodyVisibility = "user"
+)
+
 // Defines values for CreateProviderBodyType.
 const (
 	Saml CreateProviderBodyType = "saml"
@@ -494,7 +510,7 @@ const (
 
 // Defines values for OAuthTokenBodyResource.
 const (
-	OAuthTokenBodyResourceHttpsapiSupabaseGreenmcp OAuthTokenBodyResource = "https://api.supabase.green/mcp"
+	OAuthTokenBodyResourceHttplocalhost8080mcp OAuthTokenBodyResource = "http://localhost:8080/mcp"
 )
 
 // Defines values for OAuthTokenResponseTokenType.
@@ -608,7 +624,8 @@ const (
 
 // Defines values for SnippetListDataType.
 const (
-	SnippetListDataTypeSql SnippetListDataType = "sql"
+	SnippetListDataTypeSql  SnippetListDataType = "sql"
+	SnippetListDataTypeTest SnippetListDataType = "test"
 )
 
 // Defines values for SnippetListDataVisibility.
@@ -621,7 +638,8 @@ const (
 
 // Defines values for SnippetResponseType.
 const (
-	SnippetResponseTypeSql SnippetResponseType = "sql"
+	SnippetResponseTypeSql  SnippetResponseType = "sql"
+	SnippetResponseTypeTest SnippetResponseType = "test"
 )
 
 // Defines values for SnippetResponseVisibility.
@@ -715,6 +733,22 @@ const (
 	UpgradeDatabaseBodyReleaseChannelInternal  UpgradeDatabaseBodyReleaseChannel = "internal"
 	UpgradeDatabaseBodyReleaseChannelPreview   UpgradeDatabaseBodyReleaseChannel = "preview"
 	UpgradeDatabaseBodyReleaseChannelWithdrawn UpgradeDatabaseBodyReleaseChannel = "withdrawn"
+)
+
+// Defines values for UpsertContentBodyType.
+const (
+	UpsertContentBodyTypeLogSql UpsertContentBodyType = "log_sql"
+	UpsertContentBodyTypeReport UpsertContentBodyType = "report"
+	UpsertContentBodyTypeSql    UpsertContentBodyType = "sql"
+	UpsertContentBodyTypeTest   UpsertContentBodyType = "test"
+)
+
+// Defines values for UpsertContentBodyVisibility.
+const (
+	UpsertContentBodyVisibilityOrg     UpsertContentBodyVisibility = "org"
+	UpsertContentBodyVisibilityProject UpsertContentBodyVisibility = "project"
+	UpsertContentBodyVisibilityPublic  UpsertContentBodyVisibility = "public"
+	UpsertContentBodyVisibilityUser    UpsertContentBodyVisibility = "user"
 )
 
 // Defines values for V1BackupsResponseBackupsStatus.
@@ -961,7 +995,7 @@ const (
 
 // Defines values for V1AuthorizeUserParamsResource.
 const (
-	V1AuthorizeUserParamsResourceHttpsapiSupabaseGreenmcp V1AuthorizeUserParamsResource = "https://api.supabase.green/mcp"
+	V1AuthorizeUserParamsResourceHttplocalhost8080mcp V1AuthorizeUserParamsResource = "http://localhost:8080/mcp"
 )
 
 // Defines values for V1OauthAuthorizeProjectClaimParamsResponseType.
@@ -980,7 +1014,7 @@ const (
 
 // Defines values for V1GetSecurityAdvisorsParamsLintType.
 const (
-	Sql V1GetSecurityAdvisorsParamsLintType = "sql"
+	V1GetSecurityAdvisorsParamsLintTypeSql V1GetSecurityAdvisorsParamsLintType = "sql"
 )
 
 // Defines values for V1GetProjectUsageApiCountParamsInterval.
@@ -1004,16 +1038,40 @@ const (
 	Storage  V1GetServicesHealthParamsServices = "storage"
 )
 
+// Defines values for V1ProjectListSnippetsParamsType.
+const (
+	V1ProjectListSnippetsParamsTypeSql  V1ProjectListSnippetsParamsType = "sql"
+	V1ProjectListSnippetsParamsTypeTest V1ProjectListSnippetsParamsType = "test"
+)
+
+// Defines values for V1ProjectListSnippetsParamsSortBy.
+const (
+	V1ProjectListSnippetsParamsSortByInsertedAt V1ProjectListSnippetsParamsSortBy = "inserted_at"
+	V1ProjectListSnippetsParamsSortByName       V1ProjectListSnippetsParamsSortBy = "name"
+)
+
+// Defines values for V1ProjectListSnippetsParamsSortOrder.
+const (
+	V1ProjectListSnippetsParamsSortOrderAsc  V1ProjectListSnippetsParamsSortOrder = "asc"
+	V1ProjectListSnippetsParamsSortOrderDesc V1ProjectListSnippetsParamsSortOrder = "desc"
+)
+
+// Defines values for V1ListAllSnippetsParamsType.
+const (
+	Sql  V1ListAllSnippetsParamsType = "sql"
+	Test V1ListAllSnippetsParamsType = "test"
+)
+
 // Defines values for V1ListAllSnippetsParamsSortBy.
 const (
-	InsertedAt V1ListAllSnippetsParamsSortBy = "inserted_at"
-	Name       V1ListAllSnippetsParamsSortBy = "name"
+	V1ListAllSnippetsParamsSortByInsertedAt V1ListAllSnippetsParamsSortBy = "inserted_at"
+	V1ListAllSnippetsParamsSortByName       V1ListAllSnippetsParamsSortBy = "name"
 )
 
 // Defines values for V1ListAllSnippetsParamsSortOrder.
 const (
-	Asc  V1ListAllSnippetsParamsSortOrder = "asc"
-	Desc V1ListAllSnippetsParamsSortOrder = "desc"
+	V1ListAllSnippetsParamsSortOrderAsc  V1ListAllSnippetsParamsSortOrder = "asc"
+	V1ListAllSnippetsParamsSortOrderDesc V1ListAllSnippetsParamsSortOrder = "desc"
 )
 
 // ActivateVanitySubdomainResponse defines model for ActivateVanitySubdomainResponse.
@@ -1422,6 +1480,24 @@ type CreateBranchBodyPostgresEngine string
 
 // CreateBranchBodyReleaseChannel Release channel. If not provided, GA will be used.
 type CreateBranchBodyReleaseChannel string
+
+// CreateContentBody defines model for CreateContentBody.
+type CreateContentBody struct {
+	Content     *map[string]interface{}               `json:"content,omitempty"`
+	Description *string                               `json:"description,omitempty"`
+	FolderId    nullable.Nullable[openapi_types.UUID] `json:"folder_id,omitempty"`
+	Id          *string                               `json:"id,omitempty"`
+	Name        string                                `json:"name"`
+	OwnerId     *float32                              `json:"owner_id,omitempty"`
+	Type        CreateContentBodyType                 `json:"type"`
+	Visibility  CreateContentBodyVisibility           `json:"visibility"`
+}
+
+// CreateContentBodyType defines model for CreateContentBody.Type.
+type CreateContentBodyType string
+
+// CreateContentBodyVisibility defines model for CreateContentBody.Visibility.
+type CreateContentBodyVisibility string
 
 // CreateOrganizationV1 defines model for CreateOrganizationV1.
 type CreateOrganizationV1 struct {
@@ -2205,9 +2281,9 @@ type SnippetListDataVisibility string
 // SnippetResponse defines model for SnippetResponse.
 type SnippetResponse struct {
 	Content struct {
-		Favorite      bool   `json:"favorite"`
-		SchemaVersion string `json:"schema_version"`
-		Sql           string `json:"sql"`
+		Favorite      *bool   `json:"favorite,omitempty"`
+		SchemaVersion *string `json:"schema_version,omitempty"`
+		Sql           *string `json:"sql,omitempty"`
 	} `json:"content"`
 	Description nullable.Nullable[string] `json:"description"`
 	Id          string                    `json:"id"`
@@ -2694,6 +2770,25 @@ type UpgradeDatabaseBody struct {
 
 // UpgradeDatabaseBodyReleaseChannel defines model for UpgradeDatabaseBody.ReleaseChannel.
 type UpgradeDatabaseBodyReleaseChannel string
+
+// UpsertContentBody defines model for UpsertContentBody.
+type UpsertContentBody struct {
+	Content     *map[string]interface{}               `json:"content,omitempty"`
+	Description *string                               `json:"description,omitempty"`
+	FolderId    nullable.Nullable[openapi_types.UUID] `json:"folder_id,omitempty"`
+	Id          string                                `json:"id"`
+	Name        string                                `json:"name"`
+	OwnerId     float32                               `json:"owner_id"`
+	ProjectId   *float32                              `json:"project_id,omitempty"`
+	Type        UpsertContentBodyType                 `json:"type"`
+	Visibility  UpsertContentBodyVisibility           `json:"visibility"`
+}
+
+// UpsertContentBodyType defines model for UpsertContentBody.Type.
+type UpsertContentBodyType string
+
+// UpsertContentBodyVisibility defines model for UpsertContentBody.Visibility.
+type UpsertContentBodyVisibility string
 
 // V1BackupsResponse defines model for V1BackupsResponse.
 type V1BackupsResponse struct {
@@ -3218,6 +3313,26 @@ type V1GetServicesHealthParamsServices string
 // V1BulkDeleteSecretsJSONBody defines parameters for V1BulkDeleteSecrets.
 type V1BulkDeleteSecretsJSONBody = []string
 
+// V1ProjectListSnippetsParams defines parameters for V1ProjectListSnippets.
+type V1ProjectListSnippetsParams struct {
+	// ProjectRef Project ref
+	ProjectRef *string                               `form:"project_ref,omitempty" json:"project_ref,omitempty"`
+	Type       *V1ProjectListSnippetsParamsType      `form:"type,omitempty" json:"type,omitempty"`
+	Cursor     *string                               `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit      *string                               `form:"limit,omitempty" json:"limit,omitempty"`
+	SortBy     *V1ProjectListSnippetsParamsSortBy    `form:"sort_by,omitempty" json:"sort_by,omitempty"`
+	SortOrder  *V1ProjectListSnippetsParamsSortOrder `form:"sort_order,omitempty" json:"sort_order,omitempty"`
+}
+
+// V1ProjectListSnippetsParamsType defines parameters for V1ProjectListSnippets.
+type V1ProjectListSnippetsParamsType string
+
+// V1ProjectListSnippetsParamsSortBy defines parameters for V1ProjectListSnippets.
+type V1ProjectListSnippetsParamsSortBy string
+
+// V1ProjectListSnippetsParamsSortOrder defines parameters for V1ProjectListSnippets.
+type V1ProjectListSnippetsParamsSortOrder string
+
 // V1GenerateTypescriptTypesParams defines parameters for V1GenerateTypescriptTypes.
 type V1GenerateTypescriptTypesParams struct {
 	IncludedSchemas *string `form:"included_schemas,omitempty" json:"included_schemas,omitempty"`
@@ -3232,11 +3347,15 @@ type V1GetPostgresUpgradeStatusParams struct {
 type V1ListAllSnippetsParams struct {
 	// ProjectRef Project ref
 	ProjectRef *string                           `form:"project_ref,omitempty" json:"project_ref,omitempty"`
+	Type       *V1ListAllSnippetsParamsType      `form:"type,omitempty" json:"type,omitempty"`
 	Cursor     *string                           `form:"cursor,omitempty" json:"cursor,omitempty"`
 	Limit      *string                           `form:"limit,omitempty" json:"limit,omitempty"`
 	SortBy     *V1ListAllSnippetsParamsSortBy    `form:"sort_by,omitempty" json:"sort_by,omitempty"`
 	SortOrder  *V1ListAllSnippetsParamsSortOrder `form:"sort_order,omitempty" json:"sort_order,omitempty"`
 }
+
+// V1ListAllSnippetsParamsType defines parameters for V1ListAllSnippets.
+type V1ListAllSnippetsParamsType string
 
 // V1ListAllSnippetsParamsSortBy defines parameters for V1ListAllSnippets.
 type V1ListAllSnippetsParamsSortBy string
@@ -3363,6 +3482,12 @@ type V1BulkDeleteSecretsJSONRequestBody = V1BulkDeleteSecretsJSONBody
 
 // V1BulkCreateSecretsJSONRequestBody defines body for V1BulkCreateSecrets for application/json ContentType.
 type V1BulkCreateSecretsJSONRequestBody = CreateSecretBody
+
+// V1ProjectCreateSnippetJSONRequestBody defines body for V1ProjectCreateSnippet for application/json ContentType.
+type V1ProjectCreateSnippetJSONRequestBody = CreateContentBody
+
+// V1ProjectUpsertSnippetJSONRequestBody defines body for V1ProjectUpsertSnippet for application/json ContentType.
+type V1ProjectUpsertSnippetJSONRequestBody = UpsertContentBody
 
 // V1UpdateSslEnforcementConfigJSONRequestBody defines body for V1UpdateSslEnforcementConfig for application/json ContentType.
 type V1UpdateSslEnforcementConfigJSONRequestBody = SslEnforcementRequest
