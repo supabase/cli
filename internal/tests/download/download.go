@@ -111,7 +111,7 @@ func downloadAll(ctx context.Context, fsys afero.Fs) error {
                 for i, file := range localOnlyFiles {
                     testNames[i] = strings.TrimSuffix(file, ".sql")
                 }
-                msg := fmt.Sprintf("Your local tests directory has %d test(s) that don't exist in the remote project:\n  %s\nDo you want to delete them locally?", 
+                msg := fmt.Sprintf("Your local tests directory has %d test(s) that don't exist remotely:\n  %s\nDo you want to delete them locally?", 
                     len(localOnlyFiles), strings.Join(testNames, "\n  "))
                 shouldDelete, err := console.PromptYesNo(ctx, msg, false)
                 if err != nil {

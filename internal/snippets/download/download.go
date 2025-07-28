@@ -136,7 +136,7 @@ func downloadAll(ctx context.Context, fsys afero.Fs) error {
 				for i, file := range localOnlyFiles {
 					snippetNames[i] = strings.TrimSuffix(file, ".sql")
 				}
-				msg := fmt.Sprintf("Your local snippets directory has %d snippet(s) that don't exist in the remote project:\n  %s\nDo you want to delete them locally?", 
+				msg := fmt.Sprintf("Your local snippets directory has %d snippet(s) that don't exist remotely:\n  %s\nDo you want to delete them locally?", 
 					len(localOnlyFiles), strings.Join(snippetNames, "\n  "))
 				shouldDelete, err := console.PromptYesNo(ctx, msg, false)
 				if err != nil {
