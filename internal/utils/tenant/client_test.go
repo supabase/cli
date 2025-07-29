@@ -131,24 +131,21 @@ func TestGetApiKeys(t *testing.T) {
 }
 
 func TestNewTenantAPI(t *testing.T) {
-	t.Run("creates tenant api client", func(t *testing.T) {
-		projectRef := apitest.RandomProjectRef()
-		anonKey := "test-key"
+	projectRef := apitest.RandomProjectRef()
+	anonKey := "test-key"
 
-		api := NewTenantAPI(context.Background(), projectRef, anonKey)
+	api := NewTenantAPI(context.Background(), projectRef, anonKey)
+	assert.NotNil(t, api.Fetcher)
 
-		assert.NotNil(t, api.Fetcher)
+	defer gock.OffAll()
+	gock.New("https://"+utils.GetSupabaseHost(projectRef)).
+		Get("/test").
+		MatchHeader("Authorization", "Bearer "+anonKey).
+		MatchHeader("User-Agent", "SupabaseCLI/"+utils.Version).
+		Reply(http.StatusOK)
 
-		defer gock.OffAll()
-		gock.New("https://"+utils.GetSupabaseHost(projectRef)).
-			Get("/test").
-			MatchHeader("apikey", anonKey).
-			MatchHeader("User-Agent", "SupabaseCLI/"+utils.Version).
-			Reply(http.StatusOK)
+	_, err := api.Send(context.Background(), http.MethodGet, "/test", nil)
 
-		_, err := api.Send(context.Background(), http.MethodGet, "/test", nil)
-
-		assert.NoError(t, err)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
+	assert.NoError(t, err)
+	assert.Empty(t, apitest.ListUnmatchedRequests())
 }

@@ -2,8 +2,7 @@ package tenant
 
 import (
 	"context"
-	"net/http"
-	"time"
+	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/supabase/cli/internal/utils"
@@ -32,14 +31,39 @@ func NewApiKey(resp []api.ApiKeyResponse) ApiKey {
 		if err != nil {
 			continue
 		}
+		if t, err := key.Type.Get(); err == nil {
+			switch t {
+			case api.ApiKeyResponseTypePublishable:
+				result.Anon = value
+				continue
+			case api.ApiKeyResponseTypeSecret:
+				if isServiceRole(key) {
+					result.ServiceRole = value
+				}
+				continue
+			}
+		}
 		switch key.Name {
 		case "anon":
-			result.Anon = value
+			if len(result.Anon) == 0 {
+				result.Anon = value
+			}
 		case "service_role":
-			result.ServiceRole = value
+			if len(result.ServiceRole) == 0 {
+				result.ServiceRole = value
+			}
 		}
 	}
 	return result
+}
+
+func isServiceRole(key api.ApiKeyResponse) bool {
+	if tmpl, err := key.SecretJwtTemplate.Get(); err == nil {
+		if role, ok := tmpl["role"].(string); ok {
+			return strings.EqualFold(role, "service_role")
+		}
+	}
+	return false
 }
 
 func GetApiKeys(ctx context.Context, projectRef string) (ApiKey, error) {
@@ -62,19 +86,9 @@ type TenantAPI struct {
 }
 
 func NewTenantAPI(ctx context.Context, projectRef, anonKey string) TenantAPI {
-	server := "https://" + utils.GetSupabaseHost(projectRef)
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
-	header := func(req *http.Request) {
-		req.Header.Add("apikey", anonKey)
-	}
-	api := TenantAPI{Fetcher: fetcher.NewFetcher(
-		server,
-		fetcher.WithHTTPClient(client),
-		fetcher.WithRequestEditor(header),
+	return TenantAPI{Fetcher: fetcher.NewServiceGateway(
+		"https://"+utils.GetSupabaseHost(projectRef),
+		anonKey,
 		fetcher.WithUserAgent("SupabaseCLI/"+utils.Version),
-		fetcher.WithExpectedStatus(http.StatusOK),
 	)}
-	return api
 }
