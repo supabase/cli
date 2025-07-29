@@ -7,6 +7,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/fetcher"
 )
 
@@ -67,7 +68,9 @@ func isServiceRole(key api.ApiKeyResponse) bool {
 }
 
 func GetApiKeys(ctx context.Context, projectRef string) (ApiKey, error) {
-	resp, err := utils.GetSupabase().V1GetProjectApiKeysWithResponse(ctx, projectRef, &api.V1GetProjectApiKeysParams{})
+	resp, err := utils.GetSupabase().V1GetProjectApiKeysWithResponse(ctx, projectRef, &api.V1GetProjectApiKeysParams{
+		Reveal: cast.Ptr(true),
+	})
 	if err != nil {
 		return ApiKey{}, errors.Errorf("failed to get api keys: %w", err)
 	}
