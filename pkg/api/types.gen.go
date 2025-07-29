@@ -1051,18 +1051,16 @@ type AnalyticsResponse_Error struct {
 
 // ApiKeyResponse defines model for ApiKeyResponse.
 type ApiKeyResponse struct {
-	ApiKey            nullable.Nullable[string]    `json:"api_key,omitempty"`
-	Description       nullable.Nullable[string]    `json:"description,omitempty"`
-	Hash              nullable.Nullable[string]    `json:"hash,omitempty"`
-	Id                nullable.Nullable[string]    `json:"id,omitempty"`
-	InsertedAt        nullable.Nullable[time.Time] `json:"inserted_at,omitempty"`
-	Name              string                       `json:"name"`
-	Prefix            nullable.Nullable[string]    `json:"prefix,omitempty"`
-	SecretJwtTemplate nullable.Nullable[struct {
-		Role string `json:"role"`
-	}] `json:"secret_jwt_template,omitempty"`
-	Type      nullable.Nullable[ApiKeyResponseType] `json:"type,omitempty"`
-	UpdatedAt nullable.Nullable[time.Time]          `json:"updated_at,omitempty"`
+	ApiKey            nullable.Nullable[string]                 `json:"api_key,omitempty"`
+	Description       nullable.Nullable[string]                 `json:"description,omitempty"`
+	Hash              nullable.Nullable[string]                 `json:"hash,omitempty"`
+	Id                nullable.Nullable[string]                 `json:"id,omitempty"`
+	InsertedAt        nullable.Nullable[time.Time]              `json:"inserted_at,omitempty"`
+	Name              string                                    `json:"name"`
+	Prefix            nullable.Nullable[string]                 `json:"prefix,omitempty"`
+	SecretJwtTemplate nullable.Nullable[map[string]interface{}] `json:"secret_jwt_template,omitempty"`
+	Type              nullable.Nullable[ApiKeyResponseType]     `json:"type,omitempty"`
+	UpdatedAt         nullable.Nullable[time.Time]              `json:"updated_at,omitempty"`
 }
 
 // ApiKeyResponseType defines model for ApiKeyResponse.Type.
@@ -1385,12 +1383,10 @@ type BulkUpdateFunctionResponseFunctionsStatus string
 
 // CreateApiKeyBody defines model for CreateApiKeyBody.
 type CreateApiKeyBody struct {
-	Description       nullable.Nullable[string] `json:"description,omitempty"`
-	Name              string                    `json:"name"`
-	SecretJwtTemplate nullable.Nullable[struct {
-		Role string `json:"role"`
-	}] `json:"secret_jwt_template,omitempty"`
-	Type CreateApiKeyBodyType `json:"type"`
+	Description       nullable.Nullable[string]                 `json:"description,omitempty"`
+	Name              string                                    `json:"name"`
+	SecretJwtTemplate nullable.Nullable[map[string]interface{}] `json:"secret_jwt_template,omitempty"`
+	Type              CreateApiKeyBodyType                      `json:"type"`
 }
 
 // CreateApiKeyBodyType defines model for CreateApiKeyBody.Type.
@@ -2316,11 +2312,9 @@ type TypescriptResponse struct {
 
 // UpdateApiKeyBody defines model for UpdateApiKeyBody.
 type UpdateApiKeyBody struct {
-	Description       nullable.Nullable[string] `json:"description,omitempty"`
-	Name              *string                   `json:"name,omitempty"`
-	SecretJwtTemplate nullable.Nullable[struct {
-		Role string `json:"role"`
-	}] `json:"secret_jwt_template,omitempty"`
+	Description       nullable.Nullable[string]                 `json:"description,omitempty"`
+	Name              *string                                   `json:"name,omitempty"`
+	SecretJwtTemplate nullable.Nullable[map[string]interface{}] `json:"secret_jwt_template,omitempty"`
 }
 
 // UpdateAuthConfigBody defines model for UpdateAuthConfigBody.
