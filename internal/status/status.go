@@ -176,16 +176,11 @@ var (
 
 func checkHTTPHead(ctx context.Context, path string) error {
 	healthOnce.Do(func() {
-		server := utils.Config.Api.ExternalUrl
-		header := func(req *http.Request) {
-			req.Header.Add("apikey", utils.Config.Auth.AnonKey.Value)
-		}
-		client := NewKongClient()
-		healthClient = fetcher.NewFetcher(
-			server,
-			fetcher.WithHTTPClient(client),
-			fetcher.WithRequestEditor(header),
-			fetcher.WithExpectedStatus(http.StatusOK),
+		healthClient = fetcher.NewServiceGateway(
+			utils.Config.Api.ExternalUrl,
+			utils.Config.Auth.AnonKey.Value,
+			fetcher.WithHTTPClient(NewKongClient()),
+			fetcher.WithUserAgent("SupabaseCLI/"+utils.Version),
 		)
 	})
 	// HEAD method does not return response body
