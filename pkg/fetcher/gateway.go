@@ -24,5 +24,9 @@ func withAuthToken(token string) FetcherOption {
 		}
 		return WithRequestEditor(header)
 	}
-	return WithBearerToken(token)
+	header := func(req *http.Request) {
+		req.Header.Add("apikey", token)
+		req.Header.Add("Authorization", "Bearer "+token)
+	}
+	return WithRequestEditor(header)
 }
