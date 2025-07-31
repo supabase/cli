@@ -25,6 +25,7 @@ export PGDATABASE="$PGDATABASE"
 pg_dump \
     --schema-only \
     --quote-all-identifier \
+    --role "postgres" \
     --exclude-schema "${EXCLUDED_SCHEMAS:-}" \
     ${EXTRA_FLAGS:-} \
 | sed -E 's/^CREATE SCHEMA "/CREATE SCHEMA IF NOT EXISTS "/' \
