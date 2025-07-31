@@ -88,10 +88,10 @@ type TenantAPI struct {
 	*fetcher.Fetcher
 }
 
-func NewTenantAPI(ctx context.Context, projectRef, anonKey string) TenantAPI {
+func NewTenantAPI(ctx context.Context, projectRef, serviceKey string) TenantAPI {
 	return TenantAPI{Fetcher: fetcher.NewServiceGateway(
 		"https://"+utils.GetSupabaseHost(projectRef),
-		anonKey,
+		serviceKey,
 		fetcher.WithUserAgent("SupabaseCLI/"+utils.Version),
 	)}
 }

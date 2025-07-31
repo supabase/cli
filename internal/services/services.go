@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
@@ -79,18 +80,22 @@ func listRemoteImages(ctx context.Context, projectRef string) map[string]string 
 		wg.Wait()
 		return linked
 	}
-	api := tenant.NewTenantAPI(ctx, projectRef, keys.Anon)
+	api := tenant.NewTenantAPI(ctx, projectRef, keys.ServiceRole)
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		if version, err := api.GetGotrueVersion(ctx); err == nil {
 			linked[utils.Config.Auth.Image] = version
+		} else if viper.GetBool("DEBUG") {
+			fmt.Fprintln(os.Stderr, err)
 		}
 	}()
 	go func() {
 		defer wg.Done()
 		if version, err := api.GetPostgrestVersion(ctx); err == nil {
 			linked[utils.Config.Api.Image] = version
+		} else if viper.GetBool("DEBUG") {
+			fmt.Fprintln(os.Stderr, err)
 		}
 	}()
 	wg.Wait()
