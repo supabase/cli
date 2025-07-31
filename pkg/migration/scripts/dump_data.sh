@@ -22,6 +22,7 @@ echo "SET session_replication_role = replica;
 pg_dump \
     --data-only \
     --quote-all-identifier \
+    --role "postgres" \
     --exclude-schema "${EXCLUDED_SCHEMAS:-}" \
     --exclude-table "auth.schema_migrations" \
     --exclude-table "storage.migrations" \

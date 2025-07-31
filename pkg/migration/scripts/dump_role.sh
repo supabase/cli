@@ -19,6 +19,7 @@ export PGDATABASE="$PGDATABASE"
 #   - do not alter membership grants by supabase_admin role
 pg_dumpall \
     --roles-only \
+    --role "postgres" \
     --quote-all-identifier \
     --no-role-passwords \
     --no-comments \
