@@ -377,6 +377,20 @@ type ClientInterface interface {
 	// V1GetDatabaseMetadata request
 	V1GetDatabaseMetadata(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1GetJitAccess request
+	V1GetJitAccess(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1UpdateJitAccessWithBody request with any body
+	V1UpdateJitAccessWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1UpdateJitAccess(ctx context.Context, ref string, body V1UpdateJitAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1ListJitAccess request
+	V1ListJitAccess(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1DeleteJitAccess request
+	V1DeleteJitAccess(ctx context.Context, ref string, userId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1ListMigrationHistory request
 	V1ListMigrationHistory(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1793,6 +1807,66 @@ func (c *Client) V1Undo(ctx context.Context, ref string, body V1UndoJSONRequestB
 
 func (c *Client) V1GetDatabaseMetadata(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1GetDatabaseMetadataRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetJitAccess(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetJitAccessRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateJitAccessWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateJitAccessRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateJitAccess(ctx context.Context, ref string, body V1UpdateJitAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateJitAccessRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ListJitAccess(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ListJitAccessRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1DeleteJitAccess(ctx context.Context, ref string, userId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1DeleteJitAccessRequest(c.Server, ref, userId)
 	if err != nil {
 		return nil, err
 	}
@@ -6217,6 +6291,162 @@ func NewV1GetDatabaseMetadataRequest(server string, ref string) (*http.Request, 
 	return req, nil
 }
 
+// NewV1GetJitAccessRequest generates requests for V1GetJitAccess
+func NewV1GetJitAccessRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/jit", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1UpdateJitAccessRequest calls the generic V1UpdateJitAccess builder with application/json body
+func NewV1UpdateJitAccessRequest(server string, ref string, body V1UpdateJitAccessJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1UpdateJitAccessRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1UpdateJitAccessRequestWithBody generates requests for V1UpdateJitAccess with any type of body
+func NewV1UpdateJitAccessRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/jit", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1ListJitAccessRequest generates requests for V1ListJitAccess
+func NewV1ListJitAccessRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/jit/list", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1DeleteJitAccessRequest generates requests for V1DeleteJitAccess
+func NewV1DeleteJitAccessRequest(server string, ref string, userId openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "user_id", runtime.ParamLocationPath, userId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/jit/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewV1ListMigrationHistoryRequest generates requests for V1ListMigrationHistory
 func NewV1ListMigrationHistoryRequest(server string, ref string) (*http.Request, error) {
 	var err error
@@ -8870,6 +9100,20 @@ type ClientWithResponsesInterface interface {
 	// V1GetDatabaseMetadataWithResponse request
 	V1GetDatabaseMetadataWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetDatabaseMetadataResponse, error)
 
+	// V1GetJitAccessWithResponse request
+	V1GetJitAccessWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetJitAccessResponse, error)
+
+	// V1UpdateJitAccessWithBodyWithResponse request with any body
+	V1UpdateJitAccessWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateJitAccessResponse, error)
+
+	V1UpdateJitAccessWithResponse(ctx context.Context, ref string, body V1UpdateJitAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateJitAccessResponse, error)
+
+	// V1ListJitAccessWithResponse request
+	V1ListJitAccessWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListJitAccessResponse, error)
+
+	// V1DeleteJitAccessWithResponse request
+	V1DeleteJitAccessWithResponse(ctx context.Context, ref string, userId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1DeleteJitAccessResponse, error)
+
 	// V1ListMigrationHistoryWithResponse request
 	V1ListMigrationHistoryWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListMigrationHistoryResponse, error)
 
@@ -10767,6 +11011,93 @@ func (r V1GetDatabaseMetadataResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1GetDatabaseMetadataResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetJitAccessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *JitAccessResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetJitAccessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetJitAccessResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1UpdateJitAccessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *JitAccessResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1UpdateJitAccessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1UpdateJitAccessResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1ListJitAccessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *JitListAccessResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1ListJitAccessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1ListJitAccessResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1DeleteJitAccessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1DeleteJitAccessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1DeleteJitAccessResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -12701,6 +13032,50 @@ func (c *ClientWithResponses) V1GetDatabaseMetadataWithResponse(ctx context.Cont
 		return nil, err
 	}
 	return ParseV1GetDatabaseMetadataResponse(rsp)
+}
+
+// V1GetJitAccessWithResponse request returning *V1GetJitAccessResponse
+func (c *ClientWithResponses) V1GetJitAccessWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetJitAccessResponse, error) {
+	rsp, err := c.V1GetJitAccess(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetJitAccessResponse(rsp)
+}
+
+// V1UpdateJitAccessWithBodyWithResponse request with arbitrary body returning *V1UpdateJitAccessResponse
+func (c *ClientWithResponses) V1UpdateJitAccessWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateJitAccessResponse, error) {
+	rsp, err := c.V1UpdateJitAccessWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateJitAccessResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1UpdateJitAccessWithResponse(ctx context.Context, ref string, body V1UpdateJitAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateJitAccessResponse, error) {
+	rsp, err := c.V1UpdateJitAccess(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateJitAccessResponse(rsp)
+}
+
+// V1ListJitAccessWithResponse request returning *V1ListJitAccessResponse
+func (c *ClientWithResponses) V1ListJitAccessWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListJitAccessResponse, error) {
+	rsp, err := c.V1ListJitAccess(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ListJitAccessResponse(rsp)
+}
+
+// V1DeleteJitAccessWithResponse request returning *V1DeleteJitAccessResponse
+func (c *ClientWithResponses) V1DeleteJitAccessWithResponse(ctx context.Context, ref string, userId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1DeleteJitAccessResponse, error) {
+	rsp, err := c.V1DeleteJitAccess(ctx, ref, userId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1DeleteJitAccessResponse(rsp)
 }
 
 // V1ListMigrationHistoryWithResponse request returning *V1ListMigrationHistoryResponse
@@ -15189,6 +15564,100 @@ func ParseV1GetDatabaseMetadataResponse(rsp *http.Response) (*V1GetDatabaseMetad
 		}
 		response.JSON200 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseV1GetJitAccessResponse parses an HTTP response from a V1GetJitAccessWithResponse call
+func ParseV1GetJitAccessResponse(rsp *http.Response) (*V1GetJitAccessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetJitAccessResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest JitAccessResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1UpdateJitAccessResponse parses an HTTP response from a V1UpdateJitAccessWithResponse call
+func ParseV1UpdateJitAccessResponse(rsp *http.Response) (*V1UpdateJitAccessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1UpdateJitAccessResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest JitAccessResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1ListJitAccessResponse parses an HTTP response from a V1ListJitAccessWithResponse call
+func ParseV1ListJitAccessResponse(rsp *http.Response) (*V1ListJitAccessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1ListJitAccessResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest JitListAccessResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1DeleteJitAccessResponse parses an HTTP response from a V1DeleteJitAccessWithResponse call
+func ParseV1DeleteJitAccessResponse(rsp *http.Response) (*V1DeleteJitAccessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1DeleteJitAccessResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
 	}
 
 	return response, nil
