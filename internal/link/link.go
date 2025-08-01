@@ -39,7 +39,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 	if err != nil {
 		return err
 	}
-	LinkServices(ctx, projectRef, keys.Anon, fsys)
+	LinkServices(ctx, projectRef, keys.ServiceRole, fsys)
 
 	// 2. Check database connection
 	config := flags.NewDbConfigWithPassword(ctx, projectRef)
@@ -66,7 +66,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 	return nil
 }
 
-func LinkServices(ctx context.Context, projectRef, anonKey string, fsys afero.Fs) {
+func LinkServices(ctx context.Context, projectRef, serviceKey string, fsys afero.Fs) {
 	// Ignore non-fatal errors linking services
 	var wg sync.WaitGroup
 	wg.Add(8)
@@ -106,7 +106,7 @@ func LinkServices(ctx context.Context, projectRef, anonKey string, fsys afero.Fs
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}()
-	api := tenant.NewTenantAPI(ctx, projectRef, anonKey)
+	api := tenant.NewTenantAPI(ctx, projectRef, serviceKey)
 	go func() {
 		defer wg.Done()
 		if err := linkPostgrestVersion(ctx, api, fsys); err != nil && viper.GetBool("DEBUG") {
