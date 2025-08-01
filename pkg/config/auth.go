@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/go-errors/errors"
+	"github.com/google/uuid"
 	"github.com/oapi-codegen/nullable"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	v1API "github.com/supabase/cli/pkg/api"
@@ -69,6 +70,44 @@ func (p *CaptchaProvider) UnmarshalText(text []byte) error {
 	return nil
 }
 
+type Algorithm string
+
+const (
+	AlgRS256 Algorithm = "RS256"
+	AlgES256 Algorithm = "ES256"
+)
+
+func (p *Algorithm) UnmarshalText(text []byte) error {
+	allowed := []Algorithm{AlgRS256, AlgES256}
+	if *p = Algorithm(text); !sliceContains(allowed, *p) {
+		return errors.Errorf("must be one of %v", allowed)
+	}
+	return nil
+}
+
+type JWK struct {
+	KeyType     string    `json:"kty"`
+	KeyID       uuid.UUID `json:"kid,omitempty"`
+	Use         string    `json:"use,omitempty"`
+	KeyOps      []string  `json:"key_ops,omitempty"`
+	Algorithm   Algorithm `json:"alg,omitempty"`
+	Extractable *bool     `json:"ext,omitempty"`
+	// RSA specific fields
+	Modulus  string `json:"n,omitempty"`
+	Exponent string `json:"e,omitempty"`
+	// RSA private key fields
+	PrivateExponent         string `json:"d,omitempty"`
+	FirstPrimeFactor        string `json:"p,omitempty"`
+	SecondPrimeFactor       string `json:"q,omitempty"`
+	FirstFactorCRTExponent  string `json:"dp,omitempty"`
+	SecondFactorCRTExponent string `json:"dq,omitempty"`
+	FirstCRTCoefficient     string `json:"qi,omitempty"`
+	// EC specific fields
+	Curve string `json:"crv,omitempty"`
+	X     string `json:"x,omitempty"`
+	Y     string `json:"y,omitempty"`
+}
+
 type (
 	auth struct {
 		Enabled bool   `toml:"enabled"`
@@ -85,6 +124,7 @@ type (
 		MinimumPasswordLength      uint                 `toml:"minimum_password_length"`
 		PasswordRequirements       PasswordRequirements `toml:"password_requirements"`
 		SigningKeysPath            string               `toml:"signing_keys_path"`
+		SigningKeys                []JWK                `toml:"-"`
 
 		RateLimit rateLimit `toml:"rate_limit"`
 		Captcha   *captcha  `toml:"captcha"`
