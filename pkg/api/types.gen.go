@@ -634,6 +634,12 @@ const (
 	SnippetResponseVisibilityUser    SnippetResponseVisibility = "user"
 )
 
+// Defines values for StorageConfigResponseExternalUpstreamTarget.
+const (
+	StorageConfigResponseExternalUpstreamTargetCanary StorageConfigResponseExternalUpstreamTarget = "canary"
+	StorageConfigResponseExternalUpstreamTargetMain   StorageConfigResponseExternalUpstreamTarget = "main"
+)
+
 // Defines values for SupavisorConfigResponseDatabaseType.
 const (
 	PRIMARY     SupavisorConfigResponseDatabaseType = "PRIMARY"
@@ -701,6 +707,12 @@ const (
 	UpdateSigningKeyBodyStatusPreviouslyUsed UpdateSigningKeyBodyStatus = "previously_used"
 	UpdateSigningKeyBodyStatusRevoked        UpdateSigningKeyBodyStatus = "revoked"
 	UpdateSigningKeyBodyStatusStandby        UpdateSigningKeyBodyStatus = "standby"
+)
+
+// Defines values for UpdateStorageConfigBodyExternalUpstreamTarget.
+const (
+	UpdateStorageConfigBodyExternalUpstreamTargetCanary UpdateStorageConfigBodyExternalUpstreamTarget = "canary"
+	UpdateStorageConfigBodyExternalUpstreamTargetMain   UpdateStorageConfigBodyExternalUpstreamTarget = "main"
 )
 
 // Defines values for UpdateSupavisorConfigBodyPoolMode.
@@ -1746,6 +1758,26 @@ type GetProviderResponse struct {
 	UpdatedAt *string `json:"updated_at,omitempty"`
 }
 
+// JitAccessResponse defines model for JitAccessResponse.
+type JitAccessResponse struct {
+	UserId    openapi_types.UUID `json:"user_id"`
+	UserRoles []struct {
+		ExpiresAt *string `json:"expires_at,omitempty"`
+		Role      string  `json:"role"`
+	} `json:"user_roles"`
+}
+
+// JitListAccessResponse defines model for JitListAccessResponse.
+type JitListAccessResponse struct {
+	Items []struct {
+		UserId    openapi_types.UUID `json:"user_id"`
+		UserRoles []struct {
+			ExpiresAt *string `json:"expires_at,omitempty"`
+			Role      string  `json:"role"`
+		} `json:"user_roles"`
+	} `json:"items"`
+}
+
 // LegacyApiKeysResponse defines model for LegacyApiKeysResponse.
 type LegacyApiKeysResponse struct {
 	Enabled bool `json:"enabled"`
@@ -2251,6 +2283,13 @@ type SslEnforcementResponse struct {
 
 // StorageConfigResponse defines model for StorageConfigResponse.
 type StorageConfigResponse struct {
+	Capabilities struct {
+		IcebergCatalog bool `json:"iceberg_catalog"`
+		ListV2         bool `json:"list_v2"`
+	} `json:"capabilities"`
+	External struct {
+		UpstreamTarget StorageConfigResponseExternalUpstreamTarget `json:"upstreamTarget"`
+	} `json:"external"`
 	Features struct {
 		IcebergCatalog *struct {
 			Enabled bool `json:"enabled"`
@@ -2264,6 +2303,9 @@ type StorageConfigResponse struct {
 	} `json:"features"`
 	FileSizeLimit int64 `json:"fileSizeLimit"`
 }
+
+// StorageConfigResponseExternalUpstreamTarget defines model for StorageConfigResponse.External.UpstreamTarget.
+type StorageConfigResponseExternalUpstreamTarget string
 
 // StreamableFile defines model for StreamableFile.
 type StreamableFile = map[string]interface{}
@@ -2563,6 +2605,15 @@ type UpdateCustomHostnameResponse struct {
 // UpdateCustomHostnameResponseStatus defines model for UpdateCustomHostnameResponse.Status.
 type UpdateCustomHostnameResponseStatus string
 
+// UpdateJitAccessBody defines model for UpdateJitAccessBody.
+type UpdateJitAccessBody struct {
+	Roles []struct {
+		ExpiresAt *string `json:"expires_at,omitempty"`
+		Role      string  `json:"role"`
+	} `json:"roles"`
+	UserId openapi_types.UUID `json:"user_id"`
+}
+
 // UpdatePgsodiumConfigBody defines model for UpdatePgsodiumConfigBody.
 type UpdatePgsodiumConfigBody struct {
 	RootKey string `json:"root_key"`
@@ -2651,6 +2702,9 @@ type UpdateSigningKeyBodyStatus string
 
 // UpdateStorageConfigBody defines model for UpdateStorageConfigBody.
 type UpdateStorageConfigBody struct {
+	External *struct {
+		UpstreamTarget UpdateStorageConfigBodyExternalUpstreamTarget `json:"upstreamTarget"`
+	} `json:"external,omitempty"`
 	Features *struct {
 		IcebergCatalog *struct {
 			Enabled bool `json:"enabled"`
@@ -2664,6 +2718,9 @@ type UpdateStorageConfigBody struct {
 	} `json:"features,omitempty"`
 	FileSizeLimit *int64 `json:"fileSizeLimit,omitempty"`
 }
+
+// UpdateStorageConfigBodyExternalUpstreamTarget defines model for UpdateStorageConfigBody.External.UpstreamTarget.
+type UpdateStorageConfigBodyExternalUpstreamTarget string
 
 // UpdateSupavisorConfigBody defines model for UpdateSupavisorConfigBody.
 type UpdateSupavisorConfigBody struct {
@@ -3314,6 +3371,9 @@ type V1CreateRestorePointJSONRequestBody = V1RestorePointPostBody
 
 // V1UndoJSONRequestBody defines body for V1Undo for application/json ContentType.
 type V1UndoJSONRequestBody = V1UndoBody
+
+// V1UpdateJitAccessJSONRequestBody defines body for V1UpdateJitAccess for application/json ContentType.
+type V1UpdateJitAccessJSONRequestBody = UpdateJitAccessBody
 
 // V1ApplyAMigrationJSONRequestBody defines body for V1ApplyAMigration for application/json ContentType.
 type V1ApplyAMigrationJSONRequestBody = V1CreateMigrationBody
