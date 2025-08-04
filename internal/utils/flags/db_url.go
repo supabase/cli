@@ -31,7 +31,6 @@ const (
 	direct
 	local
 	linked
-	proxy
 )
 
 var DbConfig pgconn.Config
@@ -45,14 +44,10 @@ func ParseDatabaseConfig(ctx context.Context, flagSet *pflag.FlagSet, fsys afero
 		connType = local
 	} else if flag := flagSet.Lookup("linked"); flag != nil && flag.Changed {
 		connType = linked
-	} else if flag := flagSet.Lookup("proxy"); flag != nil && flag.Changed {
-		connType = proxy
 	} else if value, err := flagSet.GetBool("local"); err == nil && value {
 		connType = local
 	} else if value, err := flagSet.GetBool("linked"); err == nil && value {
 		connType = linked
-	} else if value, err := flagSet.GetBool("proxy"); err == nil && value {
-		connType = proxy
 	}
 	// Update connection config
 	switch connType {
@@ -85,19 +80,6 @@ func ParseDatabaseConfig(ctx context.Context, flagSet *pflag.FlagSet, fsys afero
 			return err
 		}
 		DbConfig = NewDbConfigWithPassword(ctx, ProjectRef)
-	case proxy:
-		token, err := utils.LoadAccessTokenFS(fsys)
-		if err != nil {
-			return err
-		}
-		if err := LoadProjectRef(fsys); err != nil {
-			return err
-		}
-		DbConfig.Host = utils.GetSupabaseAPIHost()
-		DbConfig.Port = 443
-		DbConfig.User = "postgres"
-		DbConfig.Password = token
-		DbConfig.Database = ProjectRef
 	}
 	return nil
 }
