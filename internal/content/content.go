@@ -77,7 +77,8 @@ func Push(ctx context.Context, fsys afero.Fs, contentType ContentType) error {
 	}
 
 	if len(locals) == 0 {
-		return errors.New("no sql files found")
+		fmt.Printf("No %s files found to push\n", config.DisplayName)
+		return nil
 	}
 
 	remote, err := listRemote(ctx, contentType)
