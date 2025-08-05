@@ -20,6 +20,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
 )
 
 var (
@@ -41,7 +42,7 @@ var (
 		Long:  "Create a preview branch for the linked project.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var body api.CreateBranchBody
+			body := api.CreateBranchBody{IsDefault: cast.Ptr(false)}
 			if len(args) > 0 {
 				body.BranchName = args[0]
 			}
@@ -219,7 +220,6 @@ func init() {
 }
 
 func promptBranchId(ctx context.Context, fsys afero.Fs) error {
-	var filter []list.BranchFilter
 	if console := utils.NewConsole(); !console.IsTTY {
 		// Only read from stdin if the terminal is non-interactive
 		title := "Enter the name of your branch"
@@ -235,16 +235,14 @@ func promptBranchId(ctx context.Context, fsys afero.Fs) error {
 		if len(branchId) == 0 {
 			return errors.New("branch name cannot be empty")
 		}
-		filter = append(filter, list.FilterByName(branchId))
+		return nil
 	}
-	branches, err := list.ListBranch(ctx, flags.ProjectRef, filter...)
+	branches, err := list.ListBranch(ctx, flags.ProjectRef)
 	if err != nil {
 		return err
 	} else if len(branches) == 0 {
-		return errors.Errorf("branch not found: %s", branchId)
-	} else if len(branches) == 1 {
-		branchId = branches[0].Id.String()
-		return nil
+		utils.CmdSuggestion = fmt.Sprintf("Create your first branch with: %s", utils.Aqua("supabase branches create"))
+		return errors.Errorf("branching is disabled")
 	}
 	// Let user choose from a list of branches
 	items := make([]utils.PromptItem, len(branches))
