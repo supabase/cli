@@ -113,6 +113,7 @@ func toStandardEnvs(detail api.BranchDetailResponse, pooler api.SupavisorConfigR
 		Port:     cast.UIntToUInt16(cast.IntToUint(detail.DbPort)),
 		User:     *detail.DbUser,
 		Password: *detail.DbPass,
+		Database: "postgres",
 	}
 	config, err := utils.ParsePoolerURL(pooler.ConnectionString)
 	if err != nil {
