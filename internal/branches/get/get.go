@@ -12,6 +12,7 @@ import (
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/projects/apiKeys"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
 )
@@ -53,9 +54,9 @@ func Run(ctx context.Context, branchId string, fsys afero.Fs) error {
 
 func getBranchDetail(ctx context.Context, branchId string) (api.BranchDetailResponse, error) {
 	var result api.BranchDetailResponse
-	parsed, err := uuid.Parse(branchId)
+	parsed, err := GetBranchID(ctx, branchId)
 	if err != nil {
-		return result, errors.Errorf("failed to parse branch ID: %w", err)
+		return result, err
 	}
 	resp, err := utils.GetSupabase().V1GetABranchConfigWithResponse(ctx, parsed)
 	if err != nil {
@@ -74,6 +75,20 @@ func getBranchDetail(ctx context.Context, branchId string) (api.BranchDetailResp
 		resp.JSON200.JwtSecret = &masked
 	}
 	return *resp.JSON200, nil
+}
+
+func GetBranchID(ctx context.Context, branchId string) (uuid.UUID, error) {
+	parsed, err := uuid.Parse(branchId)
+	if err == nil {
+		return parsed, nil
+	}
+	resp, err := utils.GetSupabase().V1GetABranchWithResponse(ctx, flags.ProjectRef, branchId)
+	if err != nil {
+		return parsed, errors.Errorf("failed to get branch: %w", err)
+	} else if resp.JSON200 == nil {
+		return parsed, errors.Errorf("unexpected get branch status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+	return resp.JSON200.Id, nil
 }
 
 func getPoolerConfig(ctx context.Context, ref string) (api.SupavisorConfigResponse, error) {
@@ -98,6 +113,7 @@ func toStandardEnvs(detail api.BranchDetailResponse, pooler api.SupavisorConfigR
 		Port:     cast.UIntToUInt16(cast.IntToUint(detail.DbPort)),
 		User:     *detail.DbUser,
 		Password: *detail.DbPass,
+		Database: "postgres",
 	}
 	config, err := utils.ParsePoolerURL(pooler.ConnectionString)
 	if err != nil {

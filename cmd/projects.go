@@ -105,7 +105,7 @@ var (
 	}
 
 	projectsDeleteCmd = &cobra.Command{
-		Use:   "delete <ref>",
+		Use:   "delete [ref]",
 		Short: "Delete a Supabase project",
 		Args:  cobra.MaximumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, args []string) error {
