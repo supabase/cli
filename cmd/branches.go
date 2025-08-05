@@ -14,6 +14,8 @@ import (
 	"github.com/supabase/cli/internal/branches/disable"
 	"github.com/supabase/cli/internal/branches/get"
 	"github.com/supabase/cli/internal/branches/list"
+	"github.com/supabase/cli/internal/branches/pause"
+	"github.com/supabase/cli/internal/branches/unpause"
 	"github.com/supabase/cli/internal/branches/update"
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/utils"
@@ -129,6 +131,34 @@ var (
 		},
 	}
 
+	branchPauseCmd = &cobra.Command{
+		Use:   "pause [branch-id]",
+		Short: "Pause a preview branch",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			fsys := afero.NewOsFs()
+			if err := promptBranchId(ctx, args, fsys); err != nil {
+				return err
+			}
+			return pause.Run(ctx, branchId)
+		},
+	}
+
+	branchUnpauseCmd = &cobra.Command{
+		Use:   "unpause [branch-id]",
+		Short: "Unpause a preview branch",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			fsys := afero.NewOsFs()
+			if err := promptBranchId(ctx, args, fsys); err != nil {
+				return err
+			}
+			return unpause.Run(ctx, branchId)
+		},
+	}
+
 	branchDeleteCmd = &cobra.Command{
 		Use:   "delete [branch-id]",
 		Short: "Delete a preview branch",
@@ -173,6 +203,8 @@ func init() {
 	branchesCmd.AddCommand(branchUpdateCmd)
 	branchesCmd.AddCommand(branchDeleteCmd)
 	branchesCmd.AddCommand(branchDisableCmd)
+	branchesCmd.AddCommand(branchPauseCmd)
+	branchesCmd.AddCommand(branchUnpauseCmd)
 	rootCmd.AddCommand(branchesCmd)
 }
 
