@@ -218,7 +218,8 @@ func init() {
 	rootCmd.AddCommand(branchesCmd)
 }
 
-func promptBranchId(ctx context.Context, fsys afero.Fs, filter ...list.BranchFilter) error {
+func promptBranchId(ctx context.Context, fsys afero.Fs) error {
+	var filter []list.BranchFilter
 	if console := utils.NewConsole(); !console.IsTTY {
 		// Only read from stdin if the terminal is non-interactive
 		title := "Enter the name of your branch"
