@@ -175,9 +175,10 @@ var (
 	}
 
 	branchDisableCmd = &cobra.Command{
-		Use:   "disable",
-		Short: "Disable preview branching",
-		Long:  "Disable preview branching for the linked project.",
+		Hidden: true,
+		Use:    "disable",
+		Short:  "Disable preview branching",
+		Long:   "Disable preview branching for the linked project.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return disable.Run(cmd.Context(), afero.NewOsFs())
 		},
@@ -208,8 +209,7 @@ func init() {
 	rootCmd.AddCommand(branchesCmd)
 }
 
-func promptBranchId(ctx context.Context, args []string, fsys afero.Fs) error {
-	var filter []list.BranchFilter
+func promptBranchId(ctx context.Context, args []string, fsys afero.Fs, filter ...list.BranchFilter) error {
 	if len(args) > 0 {
 		if branchId = args[0]; uuid.Validate(branchId) == nil {
 			return nil
