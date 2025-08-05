@@ -9818,7 +9818,7 @@ func (r V1GetProjectLogsResponse) StatusCode() int {
 type V1GetProjectUsageApiCountResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *AnalyticsResponse
+	JSON200      *V1GetUsageApiCountResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -9840,7 +9840,7 @@ func (r V1GetProjectUsageApiCountResponse) StatusCode() int {
 type V1GetProjectUsageRequestCountResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *AnalyticsResponse
+	JSON200      *V1GetUsageApiRequestsCountResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -14234,7 +14234,7 @@ func ParseV1GetProjectUsageApiCountResponse(rsp *http.Response) (*V1GetProjectUs
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AnalyticsResponse
+		var dest V1GetUsageApiCountResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -14260,7 +14260,7 @@ func ParseV1GetProjectUsageRequestCountResponse(rsp *http.Response) (*V1GetProje
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AnalyticsResponse
+		var dest V1GetUsageApiRequestsCountResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
