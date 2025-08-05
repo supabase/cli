@@ -6,7 +6,6 @@ import (
 	"os"
 
 	"github.com/go-errors/errors"
-	"github.com/google/uuid"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/branches/create"
@@ -76,14 +75,16 @@ var (
 	branchId string
 
 	branchGetCmd = &cobra.Command{
-		Use:   "get [branch-id]",
+		Use:   "get [name]",
 		Short: "Retrieve details of a preview branch",
 		Long:  "Retrieve details of the specified preview branch.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			fsys := afero.NewOsFs()
-			if err := promptBranchId(ctx, args, fsys); err != nil {
+			if len(args) > 0 {
+				branchId = args[0]
+			} else if err := promptBranchId(ctx, fsys); err != nil {
 				return err
 			}
 			return get.Run(ctx, branchId, fsys)
@@ -103,7 +104,7 @@ var (
 	gitBranch  string
 
 	branchUpdateCmd = &cobra.Command{
-		Use:   "update [branch-id]",
+		Use:   "update [name]",
 		Short: "Update a preview branch",
 		Long:  "Update a preview branch by its name or ID.",
 		Args:  cobra.MaximumNArgs(1),
@@ -124,7 +125,9 @@ var (
 			}
 			ctx := cmd.Context()
 			fsys := afero.NewOsFs()
-			if err := promptBranchId(ctx, args, fsys); err != nil {
+			if len(args) > 0 {
+				branchId = args[0]
+			} else if err := promptBranchId(ctx, fsys); err != nil {
 				return err
 			}
 			return update.Run(cmd.Context(), branchId, body, fsys)
@@ -132,13 +135,15 @@ var (
 	}
 
 	branchPauseCmd = &cobra.Command{
-		Use:   "pause [branch-id]",
+		Use:   "pause [name]",
 		Short: "Pause a preview branch",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			fsys := afero.NewOsFs()
-			if err := promptBranchId(ctx, args, fsys); err != nil {
+			if len(args) > 0 {
+				branchId = args[0]
+			} else if err := promptBranchId(ctx, fsys); err != nil {
 				return err
 			}
 			return pause.Run(ctx, branchId)
@@ -146,13 +151,15 @@ var (
 	}
 
 	branchUnpauseCmd = &cobra.Command{
-		Use:   "unpause [branch-id]",
+		Use:   "unpause [name]",
 		Short: "Unpause a preview branch",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			fsys := afero.NewOsFs()
-			if err := promptBranchId(ctx, args, fsys); err != nil {
+			if len(args) > 0 {
+				branchId = args[0]
+			} else if err := promptBranchId(ctx, fsys); err != nil {
 				return err
 			}
 			return unpause.Run(ctx, branchId)
@@ -160,14 +167,16 @@ var (
 	}
 
 	branchDeleteCmd = &cobra.Command{
-		Use:   "delete [branch-id]",
+		Use:   "delete [name]",
 		Short: "Delete a preview branch",
 		Long:  "Delete a preview branch by its name or ID.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			fsys := afero.NewOsFs()
-			if err := promptBranchId(ctx, args, fsys); err != nil {
+			if len(args) > 0 {
+				branchId = args[0]
+			} else if err := promptBranchId(ctx, fsys); err != nil {
 				return err
 			}
 			return delete.Run(ctx, branchId)
@@ -209,14 +218,8 @@ func init() {
 	rootCmd.AddCommand(branchesCmd)
 }
 
-func promptBranchId(ctx context.Context, args []string, fsys afero.Fs, filter ...list.BranchFilter) error {
-	if len(args) > 0 {
-		if branchId = args[0]; uuid.Validate(branchId) == nil {
-			return nil
-		}
-		// Try resolving as branch name
-		filter = append(filter, list.FilterByName(branchId))
-	} else if console := utils.NewConsole(); !console.IsTTY {
+func promptBranchId(ctx context.Context, fsys afero.Fs, filter ...list.BranchFilter) error {
+	if console := utils.NewConsole(); !console.IsTTY {
 		// Only read from stdin if the terminal is non-interactive
 		title := "Enter the name of your branch"
 		if branchId = keys.GetGitBranch(fsys); len(branchId) > 0 {
