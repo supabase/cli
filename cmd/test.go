@@ -7,12 +7,15 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/test/new"
+	testsDownload "github.com/supabase/cli/internal/tests/download"
+	testsPush "github.com/supabase/cli/internal/tests/push"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 var (
 	testCmd = &cobra.Command{
-		GroupID: groupLocalDev,
+		GroupID: groupManagementAPI,
 		Use:     "test",
 		Short:   "Run tests on local Supabase containers",
 	}
@@ -37,6 +40,25 @@ var (
 			return new.Run(ctx, args[0], template.Value, afero.NewOsFs())
 		},
 	}
+
+	testDownloadCmd = &cobra.Command{
+		Use:   "download [test-id]",
+		Short: "Download one or all SQL tests",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var id string
+			if len(args) > 0 { id = args[0] }
+			return testsDownload.Run(cmd.Context(), id, afero.NewOsFs())
+		},
+	}
+
+	testPushCmd = &cobra.Command{
+		Use:   "push",
+		Short: "Push local SQL tests to Supabase",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return testsPush.Run(cmd.Context(), afero.NewOsFs())
+		},
+	}
 )
 
 func init() {
@@ -51,6 +73,10 @@ func init() {
 	newFlags := testNewCmd.Flags()
 	newFlags.VarP(&template, "template", "t", "Template framework to generate.")
 	testCmd.AddCommand(testNewCmd)
+	// Build download and push commands  
+	testCmd.PersistentFlags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
+	testCmd.AddCommand(testDownloadCmd)
+	testCmd.AddCommand(testPushCmd)
 	// Build test command
 	rootCmd.AddCommand(testCmd)
 }

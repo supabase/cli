@@ -17,11 +17,11 @@ import (
 
 const schemaVersion = "1"
 
-type ContentType string
+type ContentType api.UpsertContentBodyType
 
 const (
-	ContentTypeTest    ContentType = "test"
-	ContentTypeSnippet ContentType = "snippet"
+	ContentTypeTest    ContentType = ContentType(api.UpsertContentBodyTypeTest)
+	ContentTypeSnippet ContentType = ContentType(api.UpsertContentBodyTypeSql)
 )
 
 type Config struct {
@@ -131,92 +131,130 @@ func Push(ctx context.Context, fsys afero.Fs, contentType ContentType) error {
 	return nil
 }
 
-func DownloadAll(ctx context.Context, fsys afero.Fs, contentType ContentType) error {
-	if err := flags.LoadConfig(fsys); err != nil {
-		return err
+func ListSnippets(ctx context.Context, contentType ContentType) ([]uuid.UUID, error) {
+	if err := flags.LoadConfig(afero.NewOsFs()); err != nil {
+		return nil, err
 	}
 
 	config := GetConfig(contentType)
-	
-	if err := utils.MkdirIfNotExistFS(fsys, config.Directory); err != nil {
-		return err
-	}
-
 	listType := getListParamsType(contentType)
 	opts := api.V1ProjectListSnippetsParams{Type: &listType}
 	resp, err := utils.GetSupabase().V1ProjectListSnippetsWithResponse(ctx, flags.ProjectRef, &opts)
 	if err != nil {
-		return errors.Errorf("failed to list %ss: %w", config.DisplayName, err)
+		return nil, errors.Errorf("failed to list %ss: %w", config.DisplayName, err)
 	}
 	if resp.JSON200 == nil {
-		return errors.New("unexpected error listing SQL " + config.DisplayName + "s: " + string(resp.Body))
+		return nil, errors.New("unexpected error listing SQL " + config.DisplayName + "s: " + string(resp.Body))
 	}
 
-	remoteItems := make(map[string]bool)
-
+	var snippetIds []uuid.UUID
 	for _, s := range resp.JSON200.Data {
 		if s.Visibility != api.SnippetListDataVisibilityProject || !isCorrectType(s.Type, contentType) {
 			continue
 		}
-		fmt.Println("Downloading " + utils.Bold(s.Name))
-		uid, err := uuid.Parse(s.Id)
+		uid := uuid.UUID(s.Id)
+		snippetIds = append(snippetIds, uid)
+	}
+	return snippetIds, nil
+}
+
+func DownloadSnippets(ctx context.Context, snippetIds []uuid.UUID, fsys afero.Fs) error {
+	if err := flags.LoadConfig(fsys); err != nil {
+		return err
+	}
+
+	// If no specific snippets provided, download all
+	if len(snippetIds) == 0 {
+		allSnippets, err := ListSnippets(ctx, ContentTypeSnippet)
 		if err != nil {
-			continue
+			return err
 		}
+		testSnippets, err := ListSnippets(ctx, ContentTypeTest)
+		if err != nil {
+			return err
+		}
+		snippetIds = append(allSnippets, testSnippets...)
+	}
+
+	remoteItems := make(map[string]bool)
+	contentTypesUsed := make(map[ContentType]bool)
+
+	for _, uid := range snippetIds {
 		bodyResp, err := utils.GetSupabase().V1ProjectGetSnippetWithResponse(ctx, flags.ProjectRef, uid)
 		if err != nil || bodyResp.JSON200 == nil {
 			continue
 		}
-		safeName := sanitizeFilename(s.Name)
+
+		contentType := ContentTypeSnippet
+		if bodyResp.JSON200.Type == api.SnippetResponseTypeTest {
+			contentType = ContentTypeTest
+		}
+		contentTypesUsed[contentType] = true
+		config := GetConfig(contentType)
+
+		if err := utils.MkdirIfNotExistFS(fsys, config.Directory); err != nil {
+			return err
+		}
+
+		if bodyResp.JSON200.Visibility != api.SnippetResponseVisibilityProject {
+			continue
+		}
+
+		fmt.Println("Downloading " + utils.Bold(bodyResp.JSON200.Name))
+		safeName := sanitizeFilename(bodyResp.JSON200.Name)
 		filePath := filepath.Join(config.Directory, safeName+".sql")
 		remoteItems[safeName+".sql"] = true
 
 		if bodyResp.JSON200.Content.Sql == nil {
-			fmt.Fprintf(os.Stderr, "missing sql content for %s %s: %v\n", config.DisplayName, s.Name, err)
+			fmt.Fprintf(os.Stderr, "missing sql content for %s %s\n", config.DisplayName, bodyResp.JSON200.Name)
 			continue
 		}
 		if err := afero.WriteFile(fsys, filePath, []byte(*bodyResp.JSON200.Content.Sql), 0644); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to write %s %s: %v\n", config.DisplayName, s.Name, err)
+			fmt.Fprintf(os.Stderr, "failed to write %s %s: %v\n", config.DisplayName, bodyResp.JSON200.Name, err)
 		} else {
-			fmt.Printf("Downloaded %s %s to %s\n", config.DisplayName, utils.Aqua(s.Name), filePath)
+			fmt.Printf("Downloaded %s %s to %s\n", config.DisplayName, utils.Aqua(bodyResp.JSON200.Name), filePath)
 		}
 	}
 
-	if exists, err := afero.DirExists(fsys, config.Directory); err == nil && exists {
-		entries, err := afero.ReadDir(fsys, config.Directory)
-		if err == nil {
-			var localOnlyFiles []string
-			for _, entry := range entries {
-				if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
-					if !remoteItems[entry.Name()] {
-						localOnlyFiles = append(localOnlyFiles, entry.Name())
-					}
-				}
-			}
-
-			if len(localOnlyFiles) > 0 {
-				console := utils.NewConsole()
-				itemNames := make([]string, len(localOnlyFiles))
-				for i, file := range localOnlyFiles {
-					itemNames[i] = strings.TrimSuffix(file, ".sql")
-				}
-				msg := fmt.Sprintf("Your local %ss directory has %d %s(s) that don't exist remotely:\n  %s\nDo you want to delete them locally?",
-					config.DisplayName, len(localOnlyFiles), config.DisplayName, strings.Join(itemNames, "\n  "))
-				shouldDelete, err := console.PromptYesNo(ctx, msg, false)
-				if err != nil {
-					return err
-				}
-				if shouldDelete {
-					for _, file := range localOnlyFiles {
-						filePath := filepath.Join(config.Directory, file)
-						if err := fsys.Remove(filePath); err != nil {
-							fmt.Fprintf(os.Stderr, "failed to delete %s: %v\n", filePath, err)
-						} else {
-							fmt.Printf("Deleted local %s %s\n", config.DisplayName, strings.TrimSuffix(file, ".sql"))
+	// Handle local-only file cleanup - only for content types that were actually processed
+	for ct := range contentTypesUsed {
+		config := GetConfig(ct)
+		if exists, err := afero.DirExists(fsys, config.Directory); err == nil && exists {
+			entries, err := afero.ReadDir(fsys, config.Directory)
+			if err == nil {
+				var localOnlyFiles []string
+				for _, entry := range entries {
+					if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
+						if !remoteItems[entry.Name()] {
+							localOnlyFiles = append(localOnlyFiles, entry.Name())
 						}
 					}
-				} else {
-					fmt.Printf("Skipped deletion of %d local %ss\n", len(localOnlyFiles), config.DisplayName)
+				}
+
+				if len(localOnlyFiles) > 0 {
+					console := utils.NewConsole()
+					itemNames := make([]string, len(localOnlyFiles))
+					for i, file := range localOnlyFiles {
+						itemNames[i] = strings.TrimSuffix(file, ".sql")
+					}
+					msg := fmt.Sprintf("Your local %ss directory has %d %s(s) that don't exist remotely:\n  %s\nDo you want to delete them locally?",
+						config.DisplayName, len(localOnlyFiles), config.DisplayName, strings.Join(itemNames, "\n  "))
+					shouldDelete, err := console.PromptYesNo(ctx, msg, false)
+					if err != nil {
+						return err
+					}
+					if shouldDelete {
+						for _, file := range localOnlyFiles {
+							filePath := filepath.Join(config.Directory, file)
+							if err := fsys.Remove(filePath); err != nil {
+								fmt.Fprintf(os.Stderr, "failed to delete %s: %v\n", filePath, err)
+							} else {
+								fmt.Printf("Deleted local %s %s\n", config.DisplayName, strings.TrimSuffix(file, ".sql"))
+							}
+						}
+					} else {
+						fmt.Printf("Skipped deletion of %d local %ss\n", len(localOnlyFiles), config.DisplayName)
+					}
 				}
 			}
 		}
@@ -225,31 +263,20 @@ func DownloadAll(ctx context.Context, fsys afero.Fs, contentType ContentType) er
 	return nil
 }
 
-func DownloadOne(ctx context.Context, fsys afero.Fs, itemId string, contentType ContentType) error {
-	if err := flags.LoadConfig(fsys); err != nil {
+func DownloadAll(ctx context.Context, fsys afero.Fs, contentType ContentType) error {
+	snippetIds, err := ListSnippets(ctx, contentType)
+	if err != nil {
 		return err
 	}
+	return DownloadSnippets(ctx, snippetIds, fsys)
+}
 
+func DownloadOne(ctx context.Context, fsys afero.Fs, itemId string, contentType ContentType) error {
 	id, err := uuid.Parse(itemId)
 	if err != nil {
 		return fmt.Errorf("invalid %s ID: %w", GetConfig(contentType).DisplayName, err)
 	}
-	resp, err := utils.GetSupabase().V1ProjectGetSnippetWithResponse(ctx, flags.ProjectRef, id)
-	if err != nil {
-		return errors.Errorf("failed to download %s: %w", GetConfig(contentType).DisplayName, err)
-	}
-	if resp.JSON200 == nil {
-		return errors.New("unexpected error downloading SQL " + GetConfig(contentType).DisplayName + ": " + string(resp.Body))
-	}
-
-	if !isCorrectResponseType(resp.JSON200.Type, contentType) || resp.JSON200.Visibility != api.SnippetResponseVisibilityProject {
-		return errors.New("requested item is not a project SQL " + GetConfig(contentType).DisplayName)
-	}
-
-	if resp.JSON200.Content.Sql != nil {
-		fmt.Println(*resp.JSON200.Content.Sql)
-	}
-	return nil
+	return DownloadSnippets(ctx, []uuid.UUID{id}, fsys)
 }
 
 func listRemote(ctx context.Context, contentType ContentType) (map[string]uuid.UUID, error) {
@@ -267,10 +294,8 @@ func listRemote(ctx context.Context, contentType ContentType) (map[string]uuid.U
 		if !isCorrectType(s.Type, contentType) || s.Visibility != api.SnippetListDataVisibilityProject {
 			continue
 		}
-		id, err := uuid.Parse(s.Id)
-		if err == nil {
-			m[s.Name] = id
-		}
+		id := uuid.UUID(s.Id)
+		m[s.Name] = id
 	}
 	return m, nil
 }
@@ -289,7 +314,7 @@ func upsert(ctx context.Context, contentType ContentType, id uuid.UUID, name, sq
 		Visibility: api.UpsertContentBodyVisibilityProject,
 		Content:    &content,
 	}
-	resp, err := utils.GetSupabase().V1ProjectUpsertSnippetWithResponse(ctx, flags.ProjectRef, id, body)
+	resp, err := utils.GetSupabase().V1ProjectUpdateSnippetWithResponse(ctx, flags.ProjectRef, id, body)
 	if err != nil {
 		return errors.Errorf("failed to upsert: %w", err)
 	}
@@ -338,14 +363,7 @@ func getListParamsType(contentType ContentType) api.V1ProjectListSnippetsParamsT
 }
 
 func getUpsertBodyType(contentType ContentType) api.UpsertContentBodyType {
-	switch contentType {
-	case ContentTypeTest:
-		return api.UpsertContentBodyTypeTest
-	case ContentTypeSnippet:
-		return api.UpsertContentBodyTypeSql
-	default:
-		panic("unsupported content type")
-	}
+	return api.UpsertContentBodyType(contentType)
 }
 
 func getCreateBodyType(contentType ContentType) api.CreateContentBodyType {

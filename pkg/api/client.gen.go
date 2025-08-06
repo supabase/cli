@@ -521,10 +521,10 @@ type ClientInterface interface {
 	// V1ProjectGetSnippet request
 	V1ProjectGetSnippet(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// V1ProjectUpsertSnippetWithBody request with any body
-	V1ProjectUpsertSnippetWithBody(ctx context.Context, ref string, id openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// V1ProjectUpdateSnippetWithBody request with any body
+	V1ProjectUpdateSnippetWithBody(ctx context.Context, ref string, id openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	V1ProjectUpsertSnippet(ctx context.Context, ref string, id openapi_types.UUID, body V1ProjectUpsertSnippetJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1ProjectUpdateSnippet(ctx context.Context, ref string, id openapi_types.UUID, body V1ProjectUpdateSnippetJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1GetSslEnforcementConfig request
 	V1GetSslEnforcementConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2458,8 +2458,8 @@ func (c *Client) V1ProjectGetSnippet(ctx context.Context, ref string, id openapi
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1ProjectUpsertSnippetWithBody(ctx context.Context, ref string, id openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1ProjectUpsertSnippetRequestWithBody(c.Server, ref, id, contentType, body)
+func (c *Client) V1ProjectUpdateSnippetWithBody(ctx context.Context, ref string, id openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ProjectUpdateSnippetRequestWithBody(c.Server, ref, id, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2470,8 +2470,8 @@ func (c *Client) V1ProjectUpsertSnippetWithBody(ctx context.Context, ref string,
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1ProjectUpsertSnippet(ctx context.Context, ref string, id openapi_types.UUID, body V1ProjectUpsertSnippetJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1ProjectUpsertSnippetRequest(c.Server, ref, id, body)
+func (c *Client) V1ProjectUpdateSnippet(ctx context.Context, ref string, id openapi_types.UUID, body V1ProjectUpdateSnippetJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ProjectUpdateSnippetRequest(c.Server, ref, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8291,19 +8291,19 @@ func NewV1ProjectGetSnippetRequest(server string, ref string, id openapi_types.U
 	return req, nil
 }
 
-// NewV1ProjectUpsertSnippetRequest calls the generic V1ProjectUpsertSnippet builder with application/json body
-func NewV1ProjectUpsertSnippetRequest(server string, ref string, id openapi_types.UUID, body V1ProjectUpsertSnippetJSONRequestBody) (*http.Request, error) {
+// NewV1ProjectUpdateSnippetRequest calls the generic V1ProjectUpdateSnippet builder with application/json body
+func NewV1ProjectUpdateSnippetRequest(server string, ref string, id openapi_types.UUID, body V1ProjectUpdateSnippetJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewV1ProjectUpsertSnippetRequestWithBody(server, ref, id, "application/json", bodyReader)
+	return NewV1ProjectUpdateSnippetRequestWithBody(server, ref, id, "application/json", bodyReader)
 }
 
-// NewV1ProjectUpsertSnippetRequestWithBody generates requests for V1ProjectUpsertSnippet with any type of body
-func NewV1ProjectUpsertSnippetRequestWithBody(server string, ref string, id openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+// NewV1ProjectUpdateSnippetRequestWithBody generates requests for V1ProjectUpdateSnippet with any type of body
+func NewV1ProjectUpdateSnippetRequestWithBody(server string, ref string, id openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -9452,10 +9452,10 @@ type ClientWithResponsesInterface interface {
 	// V1ProjectGetSnippetWithResponse request
 	V1ProjectGetSnippetWithResponse(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1ProjectGetSnippetResponse, error)
 
-	// V1ProjectUpsertSnippetWithBodyWithResponse request with any body
-	V1ProjectUpsertSnippetWithBodyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ProjectUpsertSnippetResponse, error)
+	// V1ProjectUpdateSnippetWithBodyWithResponse request with any body
+	V1ProjectUpdateSnippetWithBodyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ProjectUpdateSnippetResponse, error)
 
-	V1ProjectUpsertSnippetWithResponse(ctx context.Context, ref string, id openapi_types.UUID, body V1ProjectUpsertSnippetJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ProjectUpsertSnippetResponse, error)
+	V1ProjectUpdateSnippetWithResponse(ctx context.Context, ref string, id openapi_types.UUID, body V1ProjectUpdateSnippetJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ProjectUpdateSnippetResponse, error)
 
 	// V1GetSslEnforcementConfigWithResponse request
 	V1GetSslEnforcementConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetSslEnforcementConfigResponse, error)
@@ -12051,13 +12051,13 @@ func (r V1ProjectGetSnippetResponse) StatusCode() int {
 	return 0
 }
 
-type V1ProjectUpsertSnippetResponse struct {
+type V1ProjectUpdateSnippetResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 }
 
 // Status returns HTTPResponse.Status
-func (r V1ProjectUpsertSnippetResponse) Status() string {
+func (r V1ProjectUpdateSnippetResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -12065,7 +12065,7 @@ func (r V1ProjectUpsertSnippetResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r V1ProjectUpsertSnippetResponse) StatusCode() int {
+func (r V1ProjectUpdateSnippetResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -13730,21 +13730,21 @@ func (c *ClientWithResponses) V1ProjectGetSnippetWithResponse(ctx context.Contex
 	return ParseV1ProjectGetSnippetResponse(rsp)
 }
 
-// V1ProjectUpsertSnippetWithBodyWithResponse request with arbitrary body returning *V1ProjectUpsertSnippetResponse
-func (c *ClientWithResponses) V1ProjectUpsertSnippetWithBodyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ProjectUpsertSnippetResponse, error) {
-	rsp, err := c.V1ProjectUpsertSnippetWithBody(ctx, ref, id, contentType, body, reqEditors...)
+// V1ProjectUpdateSnippetWithBodyWithResponse request with arbitrary body returning *V1ProjectUpdateSnippetResponse
+func (c *ClientWithResponses) V1ProjectUpdateSnippetWithBodyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ProjectUpdateSnippetResponse, error) {
+	rsp, err := c.V1ProjectUpdateSnippetWithBody(ctx, ref, id, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseV1ProjectUpsertSnippetResponse(rsp)
+	return ParseV1ProjectUpdateSnippetResponse(rsp)
 }
 
-func (c *ClientWithResponses) V1ProjectUpsertSnippetWithResponse(ctx context.Context, ref string, id openapi_types.UUID, body V1ProjectUpsertSnippetJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ProjectUpsertSnippetResponse, error) {
-	rsp, err := c.V1ProjectUpsertSnippet(ctx, ref, id, body, reqEditors...)
+func (c *ClientWithResponses) V1ProjectUpdateSnippetWithResponse(ctx context.Context, ref string, id openapi_types.UUID, body V1ProjectUpdateSnippetJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ProjectUpdateSnippetResponse, error) {
+	rsp, err := c.V1ProjectUpdateSnippet(ctx, ref, id, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseV1ProjectUpsertSnippetResponse(rsp)
+	return ParseV1ProjectUpdateSnippetResponse(rsp)
 }
 
 // V1GetSslEnforcementConfigWithResponse request returning *V1GetSslEnforcementConfigResponse
@@ -16658,15 +16658,15 @@ func ParseV1ProjectGetSnippetResponse(rsp *http.Response) (*V1ProjectGetSnippetR
 	return response, nil
 }
 
-// ParseV1ProjectUpsertSnippetResponse parses an HTTP response from a V1ProjectUpsertSnippetWithResponse call
-func ParseV1ProjectUpsertSnippetResponse(rsp *http.Response) (*V1ProjectUpsertSnippetResponse, error) {
+// ParseV1ProjectUpdateSnippetResponse parses an HTTP response from a V1ProjectUpdateSnippetWithResponse call
+func ParseV1ProjectUpdateSnippetResponse(rsp *http.Response) (*V1ProjectUpdateSnippetResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &V1ProjectUpsertSnippetResponse{
+	response := &V1ProjectUpdateSnippetResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
