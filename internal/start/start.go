@@ -523,12 +523,12 @@ EOF
 				fmt.Sprintf("GOTRUE_SMTP_ADMIN_EMAIL=%s", utils.Config.Auth.Email.Smtp.AdminEmail),
 				fmt.Sprintf("GOTRUE_SMTP_SENDER_NAME=%s", utils.Config.Auth.Email.Smtp.SenderName),
 			)
-		} else if utils.Config.Inbucket.Enabled {
+		} else if utils.Config.Mailpit.Enabled {
 			env = append(env,
-				"GOTRUE_SMTP_HOST="+utils.InbucketId,
+				"GOTRUE_SMTP_HOST="+utils.MailpitId,
 				"GOTRUE_SMTP_PORT=1025",
-				fmt.Sprintf("GOTRUE_SMTP_ADMIN_EMAIL=%s", utils.Config.Inbucket.AdminEmail),
-				fmt.Sprintf("GOTRUE_SMTP_SENDER_NAME=%s", utils.Config.Inbucket.SenderName),
+				fmt.Sprintf("GOTRUE_SMTP_ADMIN_EMAIL=%s", utils.Config.Mailpit.AdminEmail),
+				fmt.Sprintf("GOTRUE_SMTP_SENDER_NAME=%s", utils.Config.Mailpit.SenderName),
 			)
 		}
 
@@ -718,35 +718,35 @@ EOF
 	}
 
 	// Start Mailpit
-	if utils.Config.Inbucket.Enabled && !isContainerExcluded(utils.Config.Inbucket.Image, excluded) {
-		inbucketPortBindings := nat.PortMap{"8025/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}}
-		if utils.Config.Inbucket.SmtpPort != 0 {
-			inbucketPortBindings["1025/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10)}}
+	if utils.Config.Mailpit.Enabled && !isContainerExcluded(utils.Config.Mailpit.Image, excluded) {
+		mailpitPortBindings := nat.PortMap{"8025/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Mailpit.Port), 10)}}}
+		if utils.Config.Mailpit.SmtpPort != 0 {
+			mailpitPortBindings["1025/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Mailpit.SmtpPort), 10)}}
 		}
-		if utils.Config.Inbucket.Pop3Port != 0 {
-			inbucketPortBindings["1110/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Pop3Port), 10)}}
+		if utils.Config.Mailpit.Pop3Port != 0 {
+			mailpitPortBindings["1110/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Mailpit.Pop3Port), 10)}}
 		}
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
-				Image: utils.Config.Inbucket.Image,
+				Image: utils.Config.Mailpit.Image,
 			},
 			container.HostConfig{
-				PortBindings:  inbucketPortBindings,
+				PortBindings:  mailpitPortBindings,
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
 					utils.NetId: {
-						Aliases: utils.InbucketAliases,
+						Aliases: utils.MailpitAliases,
 					},
 				},
 			},
-			utils.InbucketId,
+			utils.MailpitId,
 		); err != nil {
 			return err
 		}
-		started = append(started, utils.InbucketId)
+		started = append(started, utils.MailpitId)
 	}
 
 	// Start Realtime.

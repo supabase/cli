@@ -20,7 +20,7 @@ var (
 	ConfigId      string
 	KongId        string
 	GotrueId      string
-	InbucketId    string
+	MailpitId     string
 	RealtimeId    string
 	RestId        string
 	StorageId     string
@@ -36,7 +36,7 @@ var (
 	DbAliases          = []string{"db", "db.supabase.internal"}
 	KongAliases        = []string{"kong", "api.supabase.internal"}
 	GotrueAliases      = []string{"auth"}
-	InbucketAliases    = []string{"inbucket"}
+	MailpitAliases    = []string{"mailpit"}
 	RealtimeAliases    = []string{"realtime", Config.Realtime.TenantId}
 	RestAliases        = []string{"rest"}
 	StorageAliases     = []string{"storage"}
@@ -66,7 +66,7 @@ func UpdateDockerIds() {
 	ConfigId = GetId("config")
 	KongId = GetId(KongAliases[0])
 	GotrueId = GetId(GotrueAliases[0])
-	InbucketId = GetId(InbucketAliases[0])
+	MailpitId = GetId(MailpitAliases[0])
 	RealtimeId = GetId(RealtimeAliases[0])
 	RestId = GetId(RestAliases[0])
 	StorageId = GetId(StorageAliases[0])
@@ -84,7 +84,7 @@ func GetDockerIds() []string {
 	return []string{
 		KongId,
 		GotrueId,
-		InbucketId,
+		MailpitId,
 		RealtimeId,
 		RestId,
 		StorageId,

@@ -79,7 +79,7 @@ supabase-status:
            GraphQL URL: http://127.0.0.1:54321/graphql/v1
                 DB URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
             Studio URL: http://127.0.0.1:54323
-          Inbucket URL: http://127.0.0.1:54324
+          Mailpit URL: http://127.0.0.1:54324
             JWT secret: super-secret-jwt-token-with-at-least-32-characters-long
               anon key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0
       service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU
@@ -91,7 +91,7 @@ supabase-status:
       API_URL="http://127.0.0.1:54321"
       DB_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
       GRAPHQL_URL="http://127.0.0.1:54321/graphql/v1"
-      INBUCKET_URL="http://127.0.0.1:54324"
+      Mailpit_URL="http://127.0.0.1:54324"
       JWT_SECRET="super-secret-jwt-token-with-at-least-32-characters-long"
       SERVICE_ROLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
       STUDIO_URL="http://127.0.0.1:54323"
@@ -99,7 +99,7 @@ supabase-status:
     name: Customize the names of exported variables
     code: supabase status -o env --override-name auth.anon_key=SUPABASE_ANON_KEY --override-name auth.service_role_key=SUPABASE_SERVICE_KEY
     response: |
-      Stopped services: [supabase_inbucket_cli supabase_rest_cli supabase_studio_cli]
+      Stopped services: [supabase_Mailpit_cli supabase_rest_cli supabase_studio_cli]
       SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
       DB_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
       GRAPHQL_URL="http://127.0.0.1:54321/graphql/v1"
