@@ -3,7 +3,8 @@ import { Migration } from "npm:@pgkit/migra";
 
 const clientBase = createClient(Deno.env.get("SOURCE"));
 const clientHead = createClient(Deno.env.get("TARGET"));
-const includedSchemas = Deno.env.get("INCLUDED_SCHEMAS");
+const includedSchemas = Deno.env.get("INCLUDED_SCHEMAS")?.split(",") ?? [];
+const excludedSchemas = Deno.env.get("EXCLUDED_SCHEMAS")?.split(",") ?? [];
 
 const managedSchemas = ["auth", "realtime", "storage"];
 const extensionSchemas = [
@@ -13,50 +14,19 @@ const extensionSchemas = [
   "tiger",
   "topology",
 ];
-const excludedSchemas = [
-  ...(Deno.env.get("EXCLUDED_SCHEMAS") ?? "").split(","),
-  ...extensionSchemas,
-  ...managedSchemas,
-  // Owned by extensions
-  "cron",
-  "graphql",
-  "graphql_public",
-  "net",
-  "pgroonga",
-  "pgtle",
-  "repack",
-  "tiger_data",
-  "vault",
-  // Deprecated extensions
-  "pgsodium",
-  "pgsodium_masks",
-  "timescaledb_experimental",
-  "timescaledb_information",
-  "_timescaledb_cache",
-  "_timescaledb_catalog",
-  "_timescaledb_config",
-  "_timescaledb_debug",
-  "_timescaledb_functions",
-  "_timescaledb_internal",
-  // Managed by Supabase
-  "pgbouncer",
-  "supabase_functions",
-  "supabase_migrations",
-];
 
 try {
   let sql = "";
-  if (includedSchemas) {
-    for (const schema of includedSchemas.split(",")) {
-      const m = await Migration.create(clientBase, clientHead, {
-        schema,
-        ignore_extension_versions: true,
-      });
-      m.set_safety(false);
-      m.add_all_changes(true);
-      sql += m.sql;
-    }
-  } else {
+  for (const schema of includedSchemas) {
+    const m = await Migration.create(clientBase, clientHead, {
+      schema,
+      ignore_extension_versions: true,
+    });
+    m.set_safety(false);
+    m.add_all_changes(true);
+    sql += m.sql;
+  }
+  if (includedSchemas.length === 0) {
     // Migra does not ignore custom types and triggers created by extensions, so we diff
     // them separately. This workaround only applies to a known list of managed schemas.
     for (const schema of extensionSchemas) {
@@ -71,7 +41,11 @@ try {
     }
     // Diff user defined entities in non-managed schemas, including extensions.
     const m = await Migration.create(clientBase, clientHead, {
-      exclude_schema: excludedSchemas,
+      exclude_schema: [
+        ...managedSchemas,
+        ...extensionSchemas,
+        ...excludedSchemas,
+      ],
       ignore_extension_versions: true,
     });
     m.set_safety(false);

@@ -10,42 +10,6 @@ import (
 	pgschema "github.com/stripe/pg-schema-diff/pkg/diff"
 )
 
-var managedSchemas = append([]string{
-	"pg_catalog",
-	// Owned by extensions
-	"cron",
-	"graphql",
-	"graphql_public",
-	"net",
-	"pgmq",
-	"pgroonga",
-	"pgtle",
-	"repack",
-	"tiger",
-	"tiger_data",
-	"topology",
-	"vault",
-	// Deprecated extensions
-	"pgsodium",
-	"pgsodium_masks",
-	"timescaledb_experimental",
-	"timescaledb_information",
-	"_timescaledb_cache",
-	"_timescaledb_catalog",
-	"_timescaledb_config",
-	"_timescaledb_debug",
-	"_timescaledb_functions",
-	"_timescaledb_internal",
-	// Managed by Supabase
-	"auth",
-	"extensions",
-	"pgbouncer",
-	"realtime",
-	"storage",
-	"supabase_functions",
-	"supabase_migrations",
-}, localSchemas...)
-
 func DiffPgSchema(ctx context.Context, source, target string, schema []string) (string, error) {
 	dbSrc, err := sql.Open("pgx", source)
 	if err != nil {
@@ -62,7 +26,14 @@ func DiffPgSchema(ctx context.Context, source, target string, schema []string) (
 	if len(schema) > 0 {
 		opts = append(opts, pgschema.WithIncludeSchemas(schema...))
 	} else {
-		opts = append(opts, pgschema.WithExcludeSchemas(managedSchemas...))
+		opts = append(opts,
+			pgschema.WithExcludeSchemas(managedSchemas...),
+			pgschema.WithExcludeSchemas(
+				"topology", // unsupported due to views
+				"realtime", // unsupported due to partitioned table
+				"storage",  // unsupported due to unique index
+			),
+		)
 	}
 	plan, err := pgschema.Generate(
 		ctx,

@@ -20,10 +20,36 @@ var (
 	//go:embed templates/migra.ts
 	diffSchemaTypeScript string
 
-	localSchemas = []string{
+	managedSchemas = []string{
+		// Local development
 		"_analytics",
 		"_realtime",
 		"_supavisor",
+		// Owned by extensions
+		"cron",
+		"graphql",
+		"graphql_public",
+		"net",
+		"pgroonga",
+		"pgtle",
+		"repack",
+		"tiger_data",
+		"vault",
+		// Deprecated extensions
+		"pgsodium",
+		"pgsodium_masks",
+		"timescaledb_experimental",
+		"timescaledb_information",
+		"_timescaledb_cache",
+		"_timescaledb_catalog",
+		"_timescaledb_config",
+		"_timescaledb_debug",
+		"_timescaledb_functions",
+		"_timescaledb_internal",
+		// Managed by Supabase
+		"pgbouncer",
+		"supabase_functions",
+		"supabase_migrations",
 	}
 )
 
@@ -59,7 +85,7 @@ func DiffSchemaMigra(ctx context.Context, source, target string, schema []string
 	if len(schema) > 0 {
 		env = append(env, "INCLUDED_SCHEMAS="+strings.Join(schema, ","))
 	} else {
-		env = append(env, "EXCLUDED_SCHEMAS="+strings.Join(localSchemas, ","))
+		env = append(env, "EXCLUDED_SCHEMAS="+strings.Join(managedSchemas, ","))
 	}
 	cmd := []string{"edge-runtime", "start", "--main-service=."}
 	if viper.GetBool("DEBUG") {
