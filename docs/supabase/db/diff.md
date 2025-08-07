@@ -8,6 +8,8 @@ Runs [djrobstep/migra](https://github.com/djrobstep/migra) in a container to com
 
 By default, all schemas in the target database are diffed. Use the `--schema public,extensions` flag to restrict diffing to a subset of schemas.
 
+When DROP statements are detected in the schema diff, a warning message is shown by default. Use the `--confirm-drops` flag to require interactive confirmation before proceeding with potentially destructive operations.
+
 While the diff command is able to capture most schema changes, there are cases where it is known to fail. Currently, this could happen if you schema contains:
 
 - Changes to publication
