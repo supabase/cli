@@ -52,8 +52,7 @@ func TestDeployCommand(t *testing.T) {
         gock.New(utils.DefaultApiHost).
             Get("/v1/projects/" + flags.ProjectRef + "/functions").
             Reply(http.StatusOK).
-            JSON([]api.FunctionResponse{}).
-            Persist()
+            JSON([]api.FunctionResponse{})
         for i := range functions {
             // Do not match slug to avoid flakey tests
             gock.New(utils.DefaultApiHost).
@@ -116,8 +115,7 @@ import_map = "./import_map.json"
         gock.New(utils.DefaultApiHost).
             Get("/v1/projects/" + flags.ProjectRef + "/functions").
             Reply(http.StatusOK).
-            JSON([]api.FunctionResponse{}).
-            Persist()
+            JSON([]api.FunctionResponse{})
         gock.New(utils.DefaultApiHost).
             Post("/v1/projects/"+flags.ProjectRef+"/functions").
             MatchParam("slug", slug).
@@ -172,8 +170,7 @@ import_map = "./import_map.json"
         gock.New(utils.DefaultApiHost).
             Get("/v1/projects/" + flags.ProjectRef + "/functions").
             Reply(http.StatusOK).
-            JSON([]api.FunctionResponse{}).
-            Persist()
+            JSON([]api.FunctionResponse{})
         gock.New(utils.DefaultApiHost).
             Post("/v1/projects/"+flags.ProjectRef+"/functions").
             MatchParam("slug", "enabled-func").
@@ -239,8 +236,7 @@ verify_jwt = false
         gock.New(utils.DefaultApiHost).
             Get("/v1/projects/" + flags.ProjectRef + "/functions").
             Reply(http.StatusOK).
-            JSON([]api.FunctionResponse{}).
-            Persist()
+            JSON([]api.FunctionResponse{})
         gock.New(utils.DefaultApiHost).
             Post("/v1/projects/"+flags.ProjectRef+"/functions").
             MatchParam("verify_jwt", "false").
@@ -286,8 +282,7 @@ verify_jwt = false
         gock.New(utils.DefaultApiHost).
             Get("/v1/projects/" + flags.ProjectRef + "/functions").
             Reply(http.StatusOK).
-            JSON([]api.FunctionResponse{}).
-            Persist()
+            JSON([]api.FunctionResponse{})
         gock.New(utils.DefaultApiHost).
             Post("/v1/projects/"+flags.ProjectRef+"/functions").
             MatchParam("verify_jwt", "true").
@@ -402,8 +397,7 @@ func TestPruneFunctions(t *testing.T) {
         gock.New(utils.DefaultApiHost).
             Get("/v1/projects/" + flags.ProjectRef + "/functions").
             Reply(http.StatusOK).
-            JSON(remoteFunctions).
-            Persist()
+            JSON(remoteFunctions)
         gock.New(utils.DefaultApiHost).
             Delete("/v1/projects/" + flags.ProjectRef + "/functions/orphaned-func-1").
             Reply(http.StatusOK)
@@ -434,8 +428,7 @@ func TestPruneFunctions(t *testing.T) {
         gock.New(utils.DefaultApiHost).
             Get("/v1/projects/" + flags.ProjectRef + "/functions").
             Reply(http.StatusOK).
-            JSON(remoteFunctions).
-            Persist()
+            JSON(remoteFunctions)
         // Run test with prune and force
         err := pruneFunctions(context.Background(), localFunctions)
         // Check error
@@ -455,8 +448,7 @@ func TestPruneFunctions(t *testing.T) {
         gock.New(utils.DefaultApiHost).
             Get("/v1/projects/" + flags.ProjectRef + "/functions").
             Reply(http.StatusOK).
-            JSON(remoteFunctions).
-            Persist()
+            JSON(remoteFunctions)
         // Mock delete endpoint with 404 (function already deleted)
         gock.New(utils.DefaultApiHost).
             Delete("/v1/projects/" + flags.ProjectRef + "/functions/orphaned-func").
