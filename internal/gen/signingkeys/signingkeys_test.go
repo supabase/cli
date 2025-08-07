@@ -2,22 +2,24 @@ package signingkeys
 
 import (
 	"testing"
+
+	"github.com/supabase/cli/pkg/config"
 )
 
 func TestGenerateKeyPair(t *testing.T) {
 	tests := []struct {
 		name      string
-		algorithm Algorithm
+		algorithm config.Algorithm
 		wantErr   bool
 	}{
 		{
 			name:      "RSA key generation",
-			algorithm: AlgRS256,
+			algorithm: config.AlgRS256,
 			wantErr:   false,
 		},
 		{
 			name:      "ECDSA key generation",
-			algorithm: AlgES256,
+			algorithm: config.AlgES256,
 			wantErr:   false,
 		},
 		{
@@ -55,7 +57,7 @@ func TestGenerateKeyPair(t *testing.T) {
 
 				// Algorithm-specific checks
 				switch tt.algorithm {
-				case AlgRS256:
+				case config.AlgRS256:
 					if keyPair.PublicKey.KeyType != "RSA" {
 						t.Errorf("Expected RSA key type, got %s", keyPair.PublicKey.KeyType)
 					}
@@ -69,7 +71,7 @@ func TestGenerateKeyPair(t *testing.T) {
 					if keyPair.PrivateKey.PrivateExponent == "" {
 						t.Error("RSA private key missing private exponent")
 					}
-				case AlgES256:
+				case config.AlgES256:
 					if keyPair.PublicKey.KeyType != "EC" {
 						t.Errorf("Expected EC key type, got %s", keyPair.PublicKey.KeyType)
 					}

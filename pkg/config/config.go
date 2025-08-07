@@ -851,6 +851,15 @@ func (c *config) Validate(fsys fs.FS) error {
 				return err
 			}
 		}
+		if len(c.Auth.SigningKeysPath) > 0 {
+			if f, err := fsys.Open(c.Auth.SigningKeysPath); errors.Is(err, os.ErrNotExist) {
+				// Ignore missing signing key path on CI
+			} else if err != nil {
+				return errors.Errorf("failed to read signing keys: %w", err)
+			} else if c.Auth.SigningKeys, err = fetcher.ParseJSON[[]JWK](f); err != nil {
+				return errors.Errorf("failed to decode signign keys: %w", err)
+			}
+		}
 		if err := c.Auth.Hook.validate(); err != nil {
 			return err
 		}
