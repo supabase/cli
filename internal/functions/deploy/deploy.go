@@ -58,12 +58,11 @@ func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool,
         for name, local := range functionConfig {
             for _, remote := range *remoteResp.JSON200 {
                 if remote.Slug == name {
-                    if remote.VerifyJwt != local.VerifyJWT {
-                        fmt.Fprintf(os.Stderr, "%s JWT verification setting changed for %s, redeploying...\n", utils.Yellow("INFO:"), name)
-                        // Optionally, mark this function for forced redeploy if your deploy logic supports it
-                        // For now, just proceed to deploy as normal
-                    }
-                }
+    if (remote.VerifyJwt != nil && *remote.VerifyJwt != local.VerifyJWT) ||
+       (remote.VerifyJwt == nil && local.VerifyJWT) {
+        fmt.Fprintf(os.Stderr, "%s JWT verification setting changed for %s, redeploying...\n", utils.Yellow("INFO:"), name)
+    }
+}
             }
         }
     }
