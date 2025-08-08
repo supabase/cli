@@ -89,16 +89,6 @@ func findDropStatements(out string) []string {
 	return drops
 }
 
-func loadSchema(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) ([]string, error) {
-	conn, err := utils.ConnectByConfig(ctx, config, options...)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close(context.Background())
-	// RLS policies in auth and storage schemas can be included with -s flag
-	return migration.ListUserSchemas(ctx, conn)
-}
-
 func CreateShadowDatabase(ctx context.Context, port uint16) (string, error) {
 	// Disable background workers in shadow database
 	config := start.NewContainerConfig("-c", "max_worker_processes=0")
@@ -178,12 +168,11 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 		}
 	}
 	// Load all user defined schemas
-	if len(schema) == 0 {
-		if schema, err = loadSchema(ctx, config, options...); err != nil {
-			return "", err
-		}
+	if len(schema) > 0 {
+		fmt.Fprintln(w, "Diffing schemas:", strings.Join(schema, ","))
+	} else {
+		fmt.Fprintln(w, "Diffing schemas...")
 	}
-	fmt.Fprintln(w, "Diffing schemas:", strings.Join(schema, ","))
 	source := utils.ToPostgresURL(shadowConfig)
 	target := utils.ToPostgresURL(config)
 	return differ(ctx, source, target, schema)

@@ -58,7 +58,6 @@ var experimental = []*cobra.Command{
 	sslEnforcementCmd,
 	genKeysCmd,
 	postgresCmd,
-	branchesCmd,
 	storageCmd,
 }
 

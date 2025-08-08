@@ -6,14 +6,14 @@ import (
 	"net/http"
 
 	"github.com/go-errors/errors"
-	"github.com/google/uuid"
+	"github.com/supabase/cli/internal/branches/get"
 	"github.com/supabase/cli/internal/utils"
 )
 
 func Run(ctx context.Context, branchId string) error {
-	parsed, err := uuid.Parse(branchId)
+	parsed, err := get.GetBranchID(ctx, branchId)
 	if err != nil {
-		return errors.Errorf("failed to parse branch ID: %w", err)
+		return err
 	}
 	resp, err := utils.GetSupabase().V1DeleteABranchWithResponse(ctx, parsed)
 	if err != nil {

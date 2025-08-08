@@ -2817,6 +2817,70 @@ type V1CreateProjectBodyPlan string
 // V1CreateProjectBodyRegion Region you want your server to reside in
 type V1CreateProjectBodyRegion string
 
+// V1GetUsageApiCountResponse defines model for V1GetUsageApiCountResponse.
+type V1GetUsageApiCountResponse struct {
+	Error  *V1GetUsageApiCountResponse_Error `json:"error,omitempty"`
+	Result *[]struct {
+		Timestamp             time.Time `json:"timestamp"`
+		TotalAuthRequests     float32   `json:"total_auth_requests"`
+		TotalRealtimeRequests float32   `json:"total_realtime_requests"`
+		TotalRestRequests     float32   `json:"total_rest_requests"`
+		TotalStorageRequests  float32   `json:"total_storage_requests"`
+	} `json:"result,omitempty"`
+}
+
+// V1GetUsageApiCountResponseError0 defines model for .
+type V1GetUsageApiCountResponseError0 = string
+
+// V1GetUsageApiCountResponseError1 defines model for .
+type V1GetUsageApiCountResponseError1 struct {
+	Code   float32 `json:"code"`
+	Errors []struct {
+		Domain       string `json:"domain"`
+		Location     string `json:"location"`
+		LocationType string `json:"locationType"`
+		Message      string `json:"message"`
+		Reason       string `json:"reason"`
+	} `json:"errors"`
+	Message string `json:"message"`
+	Status  string `json:"status"`
+}
+
+// V1GetUsageApiCountResponse_Error defines model for V1GetUsageApiCountResponse.Error.
+type V1GetUsageApiCountResponse_Error struct {
+	union json.RawMessage
+}
+
+// V1GetUsageApiRequestsCountResponse defines model for V1GetUsageApiRequestsCountResponse.
+type V1GetUsageApiRequestsCountResponse struct {
+	Error  *V1GetUsageApiRequestsCountResponse_Error `json:"error,omitempty"`
+	Result *[]struct {
+		Count float32 `json:"count"`
+	} `json:"result,omitempty"`
+}
+
+// V1GetUsageApiRequestsCountResponseError0 defines model for .
+type V1GetUsageApiRequestsCountResponseError0 = string
+
+// V1GetUsageApiRequestsCountResponseError1 defines model for .
+type V1GetUsageApiRequestsCountResponseError1 struct {
+	Code   float32 `json:"code"`
+	Errors []struct {
+		Domain       string `json:"domain"`
+		Location     string `json:"location"`
+		LocationType string `json:"locationType"`
+		Message      string `json:"message"`
+		Reason       string `json:"reason"`
+	} `json:"errors"`
+	Message string `json:"message"`
+	Status  string `json:"status"`
+}
+
+// V1GetUsageApiRequestsCountResponse_Error defines model for V1GetUsageApiRequestsCountResponse.Error.
+type V1GetUsageApiRequestsCountResponse_Error struct {
+	union json.RawMessage
+}
+
 // V1ListMigrationsResponse defines model for V1ListMigrationsResponse.
 type V1ListMigrationsResponse = []struct {
 	Name    *string `json:"name,omitempty"`
@@ -4247,6 +4311,130 @@ func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) MarshalJSON() ([]by
 }
 
 func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsV1GetUsageApiCountResponseError0 returns the union data inside the V1GetUsageApiCountResponse_Error as a V1GetUsageApiCountResponseError0
+func (t V1GetUsageApiCountResponse_Error) AsV1GetUsageApiCountResponseError0() (V1GetUsageApiCountResponseError0, error) {
+	var body V1GetUsageApiCountResponseError0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromV1GetUsageApiCountResponseError0 overwrites any union data inside the V1GetUsageApiCountResponse_Error as the provided V1GetUsageApiCountResponseError0
+func (t *V1GetUsageApiCountResponse_Error) FromV1GetUsageApiCountResponseError0(v V1GetUsageApiCountResponseError0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeV1GetUsageApiCountResponseError0 performs a merge with any union data inside the V1GetUsageApiCountResponse_Error, using the provided V1GetUsageApiCountResponseError0
+func (t *V1GetUsageApiCountResponse_Error) MergeV1GetUsageApiCountResponseError0(v V1GetUsageApiCountResponseError0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsV1GetUsageApiCountResponseError1 returns the union data inside the V1GetUsageApiCountResponse_Error as a V1GetUsageApiCountResponseError1
+func (t V1GetUsageApiCountResponse_Error) AsV1GetUsageApiCountResponseError1() (V1GetUsageApiCountResponseError1, error) {
+	var body V1GetUsageApiCountResponseError1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromV1GetUsageApiCountResponseError1 overwrites any union data inside the V1GetUsageApiCountResponse_Error as the provided V1GetUsageApiCountResponseError1
+func (t *V1GetUsageApiCountResponse_Error) FromV1GetUsageApiCountResponseError1(v V1GetUsageApiCountResponseError1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeV1GetUsageApiCountResponseError1 performs a merge with any union data inside the V1GetUsageApiCountResponse_Error, using the provided V1GetUsageApiCountResponseError1
+func (t *V1GetUsageApiCountResponse_Error) MergeV1GetUsageApiCountResponseError1(v V1GetUsageApiCountResponseError1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t V1GetUsageApiCountResponse_Error) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *V1GetUsageApiCountResponse_Error) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsV1GetUsageApiRequestsCountResponseError0 returns the union data inside the V1GetUsageApiRequestsCountResponse_Error as a V1GetUsageApiRequestsCountResponseError0
+func (t V1GetUsageApiRequestsCountResponse_Error) AsV1GetUsageApiRequestsCountResponseError0() (V1GetUsageApiRequestsCountResponseError0, error) {
+	var body V1GetUsageApiRequestsCountResponseError0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromV1GetUsageApiRequestsCountResponseError0 overwrites any union data inside the V1GetUsageApiRequestsCountResponse_Error as the provided V1GetUsageApiRequestsCountResponseError0
+func (t *V1GetUsageApiRequestsCountResponse_Error) FromV1GetUsageApiRequestsCountResponseError0(v V1GetUsageApiRequestsCountResponseError0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeV1GetUsageApiRequestsCountResponseError0 performs a merge with any union data inside the V1GetUsageApiRequestsCountResponse_Error, using the provided V1GetUsageApiRequestsCountResponseError0
+func (t *V1GetUsageApiRequestsCountResponse_Error) MergeV1GetUsageApiRequestsCountResponseError0(v V1GetUsageApiRequestsCountResponseError0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsV1GetUsageApiRequestsCountResponseError1 returns the union data inside the V1GetUsageApiRequestsCountResponse_Error as a V1GetUsageApiRequestsCountResponseError1
+func (t V1GetUsageApiRequestsCountResponse_Error) AsV1GetUsageApiRequestsCountResponseError1() (V1GetUsageApiRequestsCountResponseError1, error) {
+	var body V1GetUsageApiRequestsCountResponseError1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromV1GetUsageApiRequestsCountResponseError1 overwrites any union data inside the V1GetUsageApiRequestsCountResponse_Error as the provided V1GetUsageApiRequestsCountResponseError1
+func (t *V1GetUsageApiRequestsCountResponse_Error) FromV1GetUsageApiRequestsCountResponseError1(v V1GetUsageApiRequestsCountResponseError1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeV1GetUsageApiRequestsCountResponseError1 performs a merge with any union data inside the V1GetUsageApiRequestsCountResponse_Error, using the provided V1GetUsageApiRequestsCountResponseError1
+func (t *V1GetUsageApiRequestsCountResponse_Error) MergeV1GetUsageApiRequestsCountResponseError1(v V1GetUsageApiRequestsCountResponseError1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t V1GetUsageApiRequestsCountResponse_Error) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *V1GetUsageApiRequestsCountResponse_Error) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
