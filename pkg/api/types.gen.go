@@ -1174,6 +1174,7 @@ type AuthConfigResponse struct {
 	ExternalTwitterClientId                       nullable.Nullable[string]                                       `json:"external_twitter_client_id"`
 	ExternalTwitterEnabled                        nullable.Nullable[bool]                                         `json:"external_twitter_enabled"`
 	ExternalTwitterSecret                         nullable.Nullable[string]                                       `json:"external_twitter_secret"`
+	ExternalWeb3EthereumEnabled                   nullable.Nullable[bool]                                         `json:"external_web3_ethereum_enabled"`
 	ExternalWeb3SolanaEnabled                     nullable.Nullable[bool]                                         `json:"external_web3_solana_enabled"`
 	ExternalWorkosClientId                        nullable.Nullable[string]                                       `json:"external_workos_client_id"`
 	ExternalWorkosEnabled                         nullable.Nullable[bool]                                         `json:"external_workos_enabled"`
@@ -2429,6 +2430,7 @@ type UpdateAuthConfigBody struct {
 	ExternalTwitterClientId                       nullable.Nullable[string]                                         `json:"external_twitter_client_id,omitempty"`
 	ExternalTwitterEnabled                        nullable.Nullable[bool]                                           `json:"external_twitter_enabled,omitempty"`
 	ExternalTwitterSecret                         nullable.Nullable[string]                                         `json:"external_twitter_secret,omitempty"`
+	ExternalWeb3EthereumEnabled                   nullable.Nullable[bool]                                           `json:"external_web3_ethereum_enabled,omitempty"`
 	ExternalWeb3SolanaEnabled                     nullable.Nullable[bool]                                           `json:"external_web3_solana_enabled,omitempty"`
 	ExternalWorkosClientId                        nullable.Nullable[string]                                         `json:"external_workos_client_id,omitempty"`
 	ExternalWorkosEnabled                         nullable.Nullable[bool]                                           `json:"external_workos_enabled,omitempty"`
