@@ -194,7 +194,7 @@ func TestStopServices(t *testing.T) {
 		utils.ConfigId = "test-config"
 		utils.StorageId = "test-storage"
 		utils.EdgeRuntimeId = "test-functions"
-		utils.InbucketId = "test-inbucket"
+		utils.MailpitId = "test-mailpit"
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -211,7 +211,7 @@ func TestStopServices(t *testing.T) {
 		utils.ConfigId = "test-config"
 		utils.StorageId = "test-storage"
 		utils.EdgeRuntimeId = "test-functions"
-		utils.InbucketId = "test-inbucket"
+		utils.MailpitId = "test-mailpit"
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		require.NoError(t, client.WithVersion("1.41")(utils.Docker))

@@ -19,7 +19,7 @@ type images struct {
 	Pg string `mapstructure:"pg"`
 	// Append to Services when adding new dependencies below
 	Kong        string `mapstructure:"kong"`
-	Inbucket    string `mapstructure:"mailpit"`
+	Mailpit    string `mapstructure:"mailpit"`
 	Postgrest   string `mapstructure:"postgrest"`
 	Pgmeta      string `mapstructure:"pgmeta"`
 	Studio      string `mapstructure:"studio"`
@@ -64,7 +64,7 @@ func (s images) Services() []string {
 		s.Storage,
 		s.ImgProxy,
 		s.Kong,
-		s.Inbucket,
+		s.Mailpit,
 		s.Postgrest,
 		s.Pgmeta,
 		s.Studio,

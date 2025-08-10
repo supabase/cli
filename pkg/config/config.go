@@ -168,7 +168,7 @@ type (
 		Db           db             `toml:"db"`
 		Realtime     realtime       `toml:"realtime"`
 		Studio       studio         `toml:"studio"`
-		Inbucket     inbucket       `toml:"inbucket"`
+		Mailpit      mailpit        `toml:"mailpit"`
 		Storage      storage        `toml:"storage"`
 		Auth         auth           `toml:"auth"`
 		EdgeRuntime  edgeRuntime    `toml:"edge_runtime"`
@@ -201,7 +201,7 @@ type (
 		PgmetaImage  string `toml:"-"`
 	}
 
-	inbucket struct {
+	mailpit struct {
 		Enabled    bool   `toml:"enabled"`
 		Image      string `toml:"-"`
 		Port       uint16 `toml:"port"`
@@ -402,8 +402,8 @@ func NewConfig(editors ...ConfigEditor) config {
 				Value: defaultJwtSecret,
 			},
 		},
-		Inbucket: inbucket{
-			Image:      Images.Inbucket,
+		Mailpit: mailpit{
+			Image:      Images.Mailpit,
 			AdminEmail: "admin@email.com",
 			SenderName: "Admin",
 		},
@@ -822,9 +822,9 @@ func (c *config) Validate(fsys fs.FS) error {
 		}
 	}
 	// Validate smtp config
-	if c.Inbucket.Enabled {
-		if c.Inbucket.Port == 0 {
-			return errors.New("Missing required field in config: inbucket.port")
+	if c.Mailpit.Enabled {
+		if c.Mailpit.Port == 0 {
+			return errors.New("Missing required field in config: mailpit.port")
 		}
 	}
 	// Validate auth config
