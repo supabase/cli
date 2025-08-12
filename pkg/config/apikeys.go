@@ -6,108 +6,63 @@ import (
 	"crypto/elliptic"
 	"crypto/rsa"
 	"encoding/base64"
-	"fmt"
 	"io/fs"
 	"math/big"
-	"os"
 	"time"
 
 	"github.com/go-errors/errors"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/supabase/cli/pkg/fetcher"
 )
 
 // generateAPIKeys generates JWT tokens using the appropriate signing method
-func (c *config) generateAPIKeys(fsys fs.FS) error {
-	// Load signing keys if path is provided
-	var signingKeys []JWK
-	if len(c.Auth.SigningKeysPath) > 0 {
-		f, err := fsys.Open(c.Auth.SigningKeysPath)
-		if err != nil {
-			// Ignore missing signing key path - will fall back to symmetric signing
-			fmt.Fprintf(os.Stderr, "Warning: Failed to generate asymmetric keys, falling back to symmetric: %v\n", err)
-		} else {
-			parsedKeys, _ := fetcher.ParseJSON[[]JWK](f)
-			signingKeys = parsedKeys
-			c.Auth.SigningKeys = signingKeys // Store for later use
-		}
-	}
-
+func (a *auth) generateAPIKeys(fsys fs.FS) error {
 	// Generate anon key if not provided
-	if len(c.Auth.AnonKey.Value) == 0 {
-		if len(signingKeys) > 0 {
-			if signed, err := generateAsymmetricJWT(signingKeys[0], "anon"); err != nil {
-				// Fall back to symmetric signing if asymmetric fails
-				fmt.Fprintf(os.Stderr, "Warning: Failed to generate asymmetric anon key, falling back to symmetric: %v\n", err)
-				c.Auth.AnonKey.Value = generateSymmetricJWT(c.Auth.JwtSecret.Value, "anon")
-			} else {
-				c.Auth.AnonKey.Value = signed
-			}
+	if len(a.AnonKey.Value) == 0 {
+		if signed, err := a.generateJWT("anon"); err != nil {
+			return err
 		} else {
-			c.Auth.AnonKey.Value = generateSymmetricJWT(c.Auth.JwtSecret.Value, "anon")
+			a.AnonKey.Value = signed
 		}
 	}
-
 	// Generate service_role key if not provided
-	if len(c.Auth.ServiceRoleKey.Value) == 0 {
-		if len(signingKeys) > 0 {
-			if signed, err := generateAsymmetricJWT(signingKeys[0], "service_role"); err != nil {
-				// Fall back to symmetric signing if asymmetric fails
-				fmt.Fprintf(os.Stderr, "Warning: Failed to generate asymmetric service_role key, falling back to symmetric: %v\n", err)
-				c.Auth.ServiceRoleKey.Value = generateSymmetricJWT(c.Auth.JwtSecret.Value, "service_role")
-			} else {
-				c.Auth.ServiceRoleKey.Value = signed
-			}
+	if len(a.ServiceRoleKey.Value) == 0 {
+		if signed, err := a.generateJWT("service_role"); err != nil {
+			return err
 		} else {
-			c.Auth.ServiceRoleKey.Value = generateSymmetricJWT(c.Auth.JwtSecret.Value, "service_role")
+			a.ServiceRoleKey.Value = signed
 		}
 	}
-
 	return nil
 }
 
-// createJWTClaims creates standardized JWT claims for API keys
-func createJWTClaims(role string) CustomClaims {
-	now := time.Now()
-	return CustomClaims{
-		Issuer: "supabase-demo",
-		Role:   role,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour * 24 * 365 * 10)), // 10 years
-		},
+func (a auth) generateJWT(role string) (string, error) {
+	claims := CustomClaims{Issuer: "supabase-demo", Role: role}
+	if len(a.SigningKeys) > 0 {
+		claims.ExpiresAt = jwt.NewNumericDate(time.Now().Add(time.Hour * 24 * 365 * 10)) // 10 years
+		return generateAsymmetricJWT(a.SigningKeys[0], claims)
 	}
-}
-
-// generateSymmetricJWT generates a JWT using symmetric signing with jwt_secret
-func generateSymmetricJWT(jwtSecret, role string) string {
-	claims := createJWTClaims(role)
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-
-	signed, err := token.SignedString([]byte(jwtSecret))
+	// Fallback to generating symmetric keys
+	signed, err := claims.NewToken().SignedString([]byte(a.JwtSecret.Value))
 	if err != nil {
-		// This should not happen if JWT secret is valid, but return empty string as fallback
-		fmt.Fprintf(os.Stderr, "Error: Failed to generate %s key: %v\n", role, err)
-		return ""
+		return "", errors.Errorf("failed to generate JWT: %w", err)
 	}
-	return signed
+	return signed, nil
 }
 
 // generateAsymmetricJWT generates a JWT token signed with the provided JWK private key
-func generateAsymmetricJWT(jwk JWK, role string) (string, error) {
+func generateAsymmetricJWT(jwk JWK, claims CustomClaims) (string, error) {
 	privateKey, err := jwkToPrivateKey(jwk)
 	if err != nil {
 		return "", errors.Errorf("failed to convert JWK to private key: %w", err)
 	}
 
-	claims := createJWTClaims(role)
-
 	// Determine signing method based on algorithm
 	var token *jwt.Token
 	switch jwk.Algorithm {
-	case "RS256":
+	case AlgRS256:
 		token = jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	case "ES256":
+	case AlgES256:
 		token = jwt.NewWithClaims(jwt.SigningMethodES256, claims)
 	default:
 		return "", errors.Errorf("unsupported algorithm: %s", jwk.Algorithm)

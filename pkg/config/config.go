@@ -653,19 +653,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if err := c.resolve(builder, fsys); err != nil {
 		return err
 	}
-
-	validateErr := c.Validate(fsys)
-	if validateErr != nil {
-		return validateErr
-	}
-
-	// Generate API keys (anon/service role keys) after paths are resolved & validated
-	// as we might need to use user-provided signing keys
-	if err := c.generateAPIKeys(fsys); err != nil {
-		return err
-	}
-
-	return nil
+	return c.Validate(fsys)
 }
 
 func VersionCompare(a, b string) int {
@@ -853,8 +841,11 @@ func (c *config) Validate(fsys fs.FS) error {
 			} else if err != nil {
 				return errors.Errorf("failed to read signing keys: %w", err)
 			} else if c.Auth.SigningKeys, err = fetcher.ParseJSON[[]JWK](f); err != nil {
-				return errors.Errorf("failed to decode signign keys: %w", err)
+				return errors.Errorf("failed to decode signing keys: %w", err)
 			}
+		}
+		if err := c.Auth.generateAPIKeys(fsys); err != nil {
+			return err
 		}
 		if err := c.Auth.Hook.validate(); err != nil {
 			return err
