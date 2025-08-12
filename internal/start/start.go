@@ -730,6 +730,14 @@ EOF
 			ctx,
 			container.Config{
 				Image: utils.Config.Inbucket.Image,
+				Healthcheck: &container.HealthConfig{
+					Test:     []string{"CMD", "/mailpit", "readyz"},
+					Interval: 10 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  3,
+					// StartPeriod taken from upstream Dockerfile
+					StartPeriod: 10 * time.Second,
+				},
 			},
 			container.HostConfig{
 				PortBindings:  inbucketPortBindings,

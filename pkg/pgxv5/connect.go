@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
-	"github.com/cenkalti/backoff/v4"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
@@ -28,14 +26,9 @@ func Connect(ctx context.Context, connString string, options ...func(*pgx.ConnCo
 	config.OnNotice = func(pc *pgconn.PgConn, n *pgconn.Notice) {
 		fmt.Fprintf(os.Stderr, "%s (%s): %s\n", n.Severity, n.Code, n.Message)
 	}
-	maxRetries := uint64(0)
 	if strings.HasPrefix(config.User, CLI_LOGIN_ROLE) {
 		config.AfterConnect = func(ctx context.Context, pgconn *pgconn.PgConn) error {
 			return pgconn.Exec(ctx, SET_SESSION_ROLE).Close()
-		}
-		// Add retry to allow enough time for password change to propagate to pooler
-		if len(config.User) > len(CLI_LOGIN_ROLE) {
-			maxRetries = 3
 		}
 	}
 	// Apply config overrides
@@ -43,16 +36,9 @@ func Connect(ctx context.Context, connString string, options ...func(*pgx.ConnCo
 		op(config)
 	}
 	// Connect to database
-	connect := func() (*pgx.Conn, error) {
-		conn, err := pgx.ConnectConfig(ctx, config)
-		if err != nil {
-			return nil, errors.Errorf("failed to connect to postgres: %w", err)
-		}
-		return conn, nil
+	conn, err := pgx.ConnectConfig(ctx, config)
+	if err != nil {
+		return nil, errors.Errorf("failed to connect to postgres: %w", err)
 	}
-	policy := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(
-		backoff.WithInitialInterval(3*time.Second)),
-		maxRetries),
-		ctx)
-	return backoff.RetryWithData(connect, policy)
+	return conn, nil
 }
