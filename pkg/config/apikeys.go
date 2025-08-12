@@ -6,7 +6,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rsa"
 	"encoding/base64"
-	"io/fs"
 	"math/big"
 	"time"
 
@@ -16,22 +15,22 @@ import (
 )
 
 // generateAPIKeys generates JWT tokens using the appropriate signing method
-func (a *auth) generateAPIKeys(fsys fs.FS) error {
+func (a *auth) generateAPIKeys() error {
 	// Generate anon key if not provided
 	if len(a.AnonKey.Value) == 0 {
-		if signed, err := a.generateJWT("anon"); err != nil {
+		signed, err := a.generateJWT("anon")
+		if err != nil {
 			return err
-		} else {
-			a.AnonKey.Value = signed
 		}
+		a.AnonKey.Value = signed
 	}
 	// Generate service_role key if not provided
 	if len(a.ServiceRoleKey.Value) == 0 {
-		if signed, err := a.generateJWT("service_role"); err != nil {
+		signed, err := a.generateJWT("service_role")
+		if err != nil {
 			return err
-		} else {
-			a.ServiceRoleKey.Value = signed
 		}
+		a.ServiceRoleKey.Value = signed
 	}
 	return nil
 }
@@ -43,6 +42,9 @@ func (a auth) generateJWT(role string) (string, error) {
 		return generateAsymmetricJWT(a.SigningKeys[0], claims)
 	}
 	// Fallback to generating symmetric keys
+	if len(a.JwtSecret.Value) < 16 {
+		return "", errors.Errorf("Invalid config for auth.jwt_secret. Must be at least 16 characters")
+	}
 	signed, err := claims.NewToken().SignedString([]byte(a.JwtSecret.Value))
 	if err != nil {
 		return "", errors.Errorf("failed to generate JWT: %w", err)

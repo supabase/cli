@@ -585,10 +585,6 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if err := c.loadFromFile(builder.ConfigPath, fsys); err != nil {
 		return err
 	}
-	// Generate JWT tokens
-	if len(c.Auth.JwtSecret.Value) < 16 {
-		return errors.Errorf("Invalid config for auth.jwt_secret. Must be at least 16 characters")
-	}
 	// TODO: move linked pooler connection string elsewhere
 	if connString, err := fs.ReadFile(fsys, builder.PoolerUrlPath); err == nil && len(connString) > 0 {
 		c.Db.Pooler.ConnectionString = string(connString)
@@ -844,7 +840,7 @@ func (c *config) Validate(fsys fs.FS) error {
 				return errors.Errorf("failed to decode signing keys: %w", err)
 			}
 		}
-		if err := c.Auth.generateAPIKeys(fsys); err != nil {
+		if err := c.Auth.generateAPIKeys(); err != nil {
 			return err
 		}
 		if err := c.Auth.Hook.validate(); err != nil {
