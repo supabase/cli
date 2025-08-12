@@ -12,6 +12,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
@@ -133,6 +134,7 @@ func NewDbConfigWithPassword(ctx context.Context, projectRef string) pgconn.Conf
 			// Special handling for pooler username
 			if suffix := "." + projectRef; strings.HasSuffix(config.User, suffix) {
 				newRole.User += suffix
+				defer tryPooler(ctx, &config)
 			}
 			config.User = newRole.User
 			return config
@@ -146,6 +148,18 @@ func NewDbConfigWithPassword(ctx context.Context, projectRef string) pgconn.Conf
 	fmt.Fprint(os.Stderr, "Enter your database password: ")
 	config.Password = credentials.PromptMasked(os.Stdin)
 	return config
+}
+
+func tryPooler(ctx context.Context, config *pgconn.Config) {
+	if err := backoff.RetryNotify(func() error {
+		conn, err := pgconn.ConnectConfig(ctx, config)
+		if err != nil {
+			return errors.Errorf("failed to connect as temp role: %w", err)
+		}
+		return conn.Close(ctx)
+	}, utils.NewBackoffPolicy(ctx), utils.NewErrorCallback()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
 }
 
 var (
