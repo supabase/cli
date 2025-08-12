@@ -28,9 +28,6 @@ func (u *ConfigUpdater) UpdateRemoteConfig(ctx context.Context, remote baseConfi
 	if err := u.UpdateAuthConfig(ctx, remote.ProjectId, remote.Auth, filter...); err != nil {
 		return err
 	}
-	if err := u.UpdateSigningKeys(ctx, remote.ProjectId, remote.Auth.SigningKeys, filter...); err != nil {
-		return err
-	}
 	if err := u.UpdateStorageConfig(ctx, remote.ProjectId, remote.Storage, filter...); err != nil {
 		return err
 	}
