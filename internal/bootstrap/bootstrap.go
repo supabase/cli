@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/go-errors/errors"
@@ -88,12 +87,12 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 	}
 	// 3. Get api keys
 	var keys []api.ApiKeyResponse
-	policy := newBackoffPolicy(ctx)
+	policy := utils.NewBackoffPolicy(ctx)
 	if err := backoff.RetryNotify(func() error {
 		fmt.Fprintln(os.Stderr, "Linking project...")
 		keys, err = apiKeys.RunGetApiKeys(ctx, flags.ProjectRef)
 		return err
-	}, policy, newErrorCallback()); err != nil {
+	}, policy, utils.NewErrorCallback()); err != nil {
 		return err
 	}
 	// 4. Link project
@@ -109,7 +108,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 	if err := backoff.RetryNotify(func() error {
 		fmt.Fprintln(os.Stderr, "Checking project health...")
 		return checkProjectHealth(ctx)
-	}, policy, newErrorCallback()); err != nil {
+	}, policy, utils.NewErrorCallback()); err != nil {
 		return err
 	}
 	// 6. Push migrations
@@ -120,7 +119,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 	policy.Reset()
 	if err := backoff.RetryNotify(func() error {
 		return push.Run(ctx, false, false, true, true, config, fsys)
-	}, policy, newErrorCallback()); err != nil {
+	}, policy, utils.NewErrorCallback()); err != nil {
 		return err
 	}
 	// 7. TODO: deploy functions
@@ -169,32 +168,6 @@ func checkProjectHealth(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-const maxRetries = 8
-
-func newBackoffPolicy(ctx context.Context) backoff.BackOffContext {
-	b := backoff.ExponentialBackOff{
-		InitialInterval:     3 * time.Second,
-		RandomizationFactor: backoff.DefaultRandomizationFactor,
-		Multiplier:          backoff.DefaultMultiplier,
-		MaxInterval:         backoff.DefaultMaxInterval,
-		MaxElapsedTime:      backoff.DefaultMaxElapsedTime,
-		Stop:                backoff.Stop,
-		Clock:               backoff.SystemClock,
-	}
-	b.Reset()
-	return backoff.WithContext(backoff.WithMaxRetries(&b, maxRetries), ctx)
-}
-
-func newErrorCallback() backoff.Notify {
-	failureCount := 0
-	logger := utils.GetDebugLogger()
-	return func(err error, d time.Duration) {
-		failureCount += 1
-		fmt.Fprintln(logger, err)
-		fmt.Fprintf(os.Stderr, "Retry (%d/%d): ", failureCount, maxRetries)
-	}
 }
 
 const (
