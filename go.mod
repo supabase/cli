@@ -15,7 +15,7 @@ require (
 	github.com/containers/common v0.64.1
 	github.com/docker/cli v28.3.3+incompatible
 	github.com/docker/docker v28.3.3+incompatible
-	github.com/docker/go-connections v0.5.0
+	github.com/docker/go-connections v0.6.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/getsentry/sentry-go v0.35.0
 	github.com/go-errors/errors v1.5.1
