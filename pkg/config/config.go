@@ -589,22 +589,6 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if len(c.Auth.JwtSecret.Value) < 16 {
 		return errors.Errorf("Invalid config for auth.jwt_secret. Must be at least 16 characters")
 	}
-	if len(c.Auth.AnonKey.Value) == 0 {
-		anonToken := CustomClaims{Role: "anon"}.NewToken()
-		if signed, err := anonToken.SignedString([]byte(c.Auth.JwtSecret.Value)); err != nil {
-			return errors.Errorf("failed to generate anon key: %w", err)
-		} else {
-			c.Auth.AnonKey.Value = signed
-		}
-	}
-	if len(c.Auth.ServiceRoleKey.Value) == 0 {
-		anonToken := CustomClaims{Role: "service_role"}.NewToken()
-		if signed, err := anonToken.SignedString([]byte(c.Auth.JwtSecret.Value)); err != nil {
-			return errors.Errorf("failed to generate service_role key: %w", err)
-		} else {
-			c.Auth.ServiceRoleKey.Value = signed
-		}
-	}
 	// TODO: move linked pooler connection string elsewhere
 	if connString, err := fs.ReadFile(fsys, builder.PoolerUrlPath); err == nil && len(connString) > 0 {
 		c.Db.Pooler.ConnectionString = string(connString)
@@ -669,7 +653,19 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if err := c.resolve(builder, fsys); err != nil {
 		return err
 	}
-	return c.Validate(fsys)
+
+	validateErr := c.Validate(fsys)
+	if validateErr != nil {
+		return validateErr
+	}
+
+	// Generate API keys (anon/service role keys) after paths are resolved & validated
+	// as we might need to use user-provided signing keys
+	if err := c.generateAPIKeys(fsys); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func VersionCompare(a, b string) int {
