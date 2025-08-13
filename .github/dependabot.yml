@@ -4,22 +4,40 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
+    groups:
+      action-minor:
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: "gomod"
-    directory: "/"
+    directories:
+      - "/"
+      - "pkg"
     schedule:
       interval: "daily"
-  - package-ecosystem: "gomod"
-    directory: "pkg"
-    schedule:
-      interval: "daily"
+    groups:
+      go-minor:
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "daily"
+    groups:
+      npm-minor:
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: "docker"
     directory: "pkg/config/templates"
     schedule:
       interval: "daily"
+    groups:
+      docker-minor:
+        update-types:
+          - minor
+          - patch
     ignore:
       - dependency-name: "library/kong"
       - dependency-name: "axllent/mailpit"
