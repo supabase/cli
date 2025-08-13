@@ -24,7 +24,9 @@ func Connect(ctx context.Context, connString string, options ...func(*pgx.ConnCo
 		return nil, errors.Errorf("failed to parse connection string: %w", err)
 	}
 	config.OnNotice = func(pc *pgconn.PgConn, n *pgconn.Notice) {
-		fmt.Fprintf(os.Stderr, "%s (%s): %s\n", n.Severity, n.Code, n.Message)
+		if !shouldIgnore(n.Message) {
+			fmt.Fprintf(os.Stderr, "%s (%s): %s\n", n.Severity, n.Code, n.Message)
+		}
 	}
 	if strings.HasPrefix(config.User, CLI_LOGIN_ROLE) {
 		config.AfterConnect = func(ctx context.Context, pgconn *pgconn.PgConn) error {
@@ -41,4 +43,10 @@ func Connect(ctx context.Context, connString string, options ...func(*pgx.ConnCo
 		return nil, errors.Errorf("failed to connect to postgres: %w", err)
 	}
 	return conn, nil
+}
+
+func shouldIgnore(msg string) bool {
+	return strings.Contains(msg, `schema "supabase_migrations" already exists`) ||
+		strings.Contains(msg, `relation "schema_migrations" already exists`) ||
+		strings.Contains(msg, `relation "seed_files" already exists`)
 }
