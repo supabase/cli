@@ -70,9 +70,7 @@ func TestPullSchema(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
-			return run(p, ctx, nil, "0_test.sql", conn.MockClient(t), fsys)
-		})
+		err := run(context.Background(), nil, "0_test.sql", conn.MockClient(t), fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -94,9 +92,7 @@ func TestPullSchema(t *testing.T) {
 			Query(migration.ListSchemas, migration.ManagedSchemas).
 			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
 		// Run test
-		err := utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
-			return run(p, ctx, nil, "", conn.MockClient(t), fsys)
-		})
+		err := run(context.Background(), nil, "", conn.MockClient(t), fsys)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: relation "test" already exists (SQLSTATE 42P07)`)
 	})
@@ -118,9 +114,7 @@ func TestPullSchema(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", []interface{}{"0"})
 		// Run test
-		err := utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
-			return run(p, ctx, []string{"public"}, "", conn.MockClient(t), fsys)
-		})
+		err := run(context.Background(), []string{"public"}, "", conn.MockClient(t), fsys)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
