@@ -7,10 +7,16 @@ name: Mirror Dependencies
 # ghcr.io, and AWS ECR.
 
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/mirror.yml"
-      - "pkg/config/templates/Dockerfile"
+  # We can't trigger the mirror job on PR merge because certain tests would fail
+  # until we mirror some images. E.g. a PR to update the imgproxy image version
+  # would fail, because there is a test that creates a container from the
+  # updated image version, which would fail because the image hasn't been
+  # mirrored yet. It's a catch-22!
+  #
+  # TODO: Make the cli start test run *after* we mirror images (if needed).
+  pull_request_review:
+    types:
+      - submitted
   workflow_dispatch:
 
 permissions:
@@ -19,7 +25,7 @@ permissions:
 jobs:
   setup:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || github.actor == 'dependabot[bot]' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.review.state == 'approved' }}
     outputs:
       tags: ${{ steps.list.outputs.tags }}
       curr: ${{ steps.curr.outputs.tags }}
