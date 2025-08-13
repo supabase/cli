@@ -51,16 +51,14 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		}
 	}
 
-	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
-		dbConfig := pgconn.Config{
-			Host:     utils.DbId,
-			Port:     5432,
-			User:     "postgres",
-			Password: utils.Config.Db.Password,
-			Database: "postgres",
-		}
-		return run(p, ctx, fsys, excludedContainers, dbConfig)
-	}); err != nil {
+	dbConfig := pgconn.Config{
+		Host:     utils.DbId,
+		Port:     5432,
+		User:     "postgres",
+		Password: utils.Config.Db.Password,
+		Database: "postgres",
+	}
+	if err := run(ctx, fsys, excludedContainers, dbConfig); err != nil {
 		if ignoreHealthCheck && start.IsUnhealthyError(err) {
 			fmt.Fprintln(os.Stderr, err)
 		} else {
@@ -139,7 +137,7 @@ var (
 
 var serviceTimeout = 30 * time.Second
 
-func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, options ...func(*pgx.ConnConfig)) error {
+func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, options ...func(*pgx.ConnConfig)) error {
 	excluded := make(map[string]bool)
 	for _, name := range excludedContainers {
 		excluded[name] = true
@@ -151,9 +149,8 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	}
 
 	// Start Postgres.
-	w := utils.StatusWriter{Program: p}
 	if dbConfig.Host == utils.DbId {
-		if err := start.StartDatabase(ctx, "", fsys, w, options...); err != nil {
+		if err := start.StartDatabase(ctx, "", fsys, os.Stderr, options...); err != nil {
 			return err
 		}
 	}
@@ -162,7 +159,7 @@ func run(p utils.Program, ctx context.Context, fsys afero.Fs, excludedContainers
 	var isStorageEnabled = utils.Config.Storage.Enabled && !isContainerExcluded(utils.Config.Storage.Image, excluded)
 	var isImgProxyEnabled = utils.Config.Storage.ImageTransformation != nil &&
 		utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImgProxyImage, excluded)
-	p.Send(utils.StatusMsg("Starting containers..."))
+	fmt.Fprintln(os.Stderr, "Starting containers...")
 
 	// Start Logflare
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.Image, excluded) {
@@ -1110,7 +1107,7 @@ EOF
 		started = append(started, utils.PoolerId)
 	}
 
-	p.Send(utils.StatusMsg("Waiting for health checks..."))
+	fmt.Fprintln(os.Stderr, "Waiting for health checks...")
 	if utils.NoBackupVolume && utils.SliceContains(started, utils.StorageId) {
 		if err := start.WaitForHealthyService(ctx, serviceTimeout, utils.StorageId); err != nil {
 			return err

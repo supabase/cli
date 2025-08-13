@@ -200,9 +200,7 @@ func TestDatabaseStart(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON([]storage.BucketResponse{})
 		// Run test
-		err := utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
-			return run(p, context.Background(), fsys, []string{}, pgconn.Config{Host: utils.DbId}, conn.Intercept)
-		})
+		err := run(context.Background(), fsys, []string{}, pgconn.Config{Host: utils.DbId}, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -246,9 +244,7 @@ func TestDatabaseStart(t *testing.T) {
 		// Run test
 		exclude := ExcludableContainers()
 		exclude = append(exclude, "invalid", exclude[0])
-		err := utils.RunProgram(context.Background(), func(p utils.Program, ctx context.Context) error {
-			return run(p, context.Background(), fsys, exclude, pgconn.Config{Host: utils.DbId})
-		})
+		err := run(context.Background(), fsys, exclude, pgconn.Config{Host: utils.DbId})
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
