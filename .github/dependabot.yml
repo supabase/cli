@@ -33,6 +33,11 @@ updates:
     directory: "pkg/config/templates"
     schedule:
       interval: "daily"
+    groups:
+      docker-minor:
+        update-types:
+          - minor
+          - patch
     ignore:
       - dependency-name: "library/kong"
       - dependency-name: "axllent/mailpit"
