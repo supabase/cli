@@ -1441,17 +1441,25 @@ func (a *auth) ResolveJWKS(ctx context.Context, fsys afero.Fs) (string, error) {
 		jwks.Keys = append(jwks.Keys, rJWKS.Keys...)
 	}
 
-	// If SIGNING_KEYS_PATH is provided, read from file
+	// If SIGNING_KEYS_PATH is provided, read from file and convert to public keys
 	if len(a.SigningKeysPath) > 0 {
 		f, err := fsys.Open(a.SigningKeysPath)
 		if err != nil {
 			return "", errors.Errorf("failed to read signing key: %w", err)
 		}
-		jwtKeysArray, err := fetcher.ParseJSON[[]json.RawMessage](f)
+		jwtKeysArray, err := fetcher.ParseJSON[[]JWK](f)
 		if err != nil {
 			return "", err
 		}
-		jwks.Keys = append(jwks.Keys, jwtKeysArray...)
+		// Convert each signing key to public-only version
+		for _, key := range jwtKeysArray {
+			publicKey := key.ToPublicJWK()
+			publicKeyEncoded, err := json.Marshal(publicKey)
+			if err != nil {
+				return "", errors.Errorf("failed to marshal public key: %w", err)
+			}
+			jwks.Keys = append(jwks.Keys, json.RawMessage(publicKeyEncoded))
+		}
 	} else {
 		// Fallback to JWT_SECRET for backward compatibility
 		jwtSecret := secretJWK{

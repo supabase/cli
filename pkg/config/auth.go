@@ -108,6 +108,44 @@ type JWK struct {
 	Y     string `json:"y,omitempty"`
 }
 
+// ToPublicJWK converts a JWK to a public-only version by removing private key components
+func (j JWK) ToPublicJWK() JWK {
+	publicJWK := JWK{
+		KeyType:     j.KeyType,
+		KeyID:       j.KeyID,
+		Use:         j.Use,
+		Algorithm:   j.Algorithm,
+		Extractable: j.Extractable,
+	}
+	
+	// Only include key_ops for verification (not signing) for public keys
+	if len(j.KeyOps) > 0 {
+		var publicOps []string
+		for _, op := range j.KeyOps {
+			if op == "verify" {
+				publicOps = append(publicOps, op)
+			}
+		}
+		if len(publicOps) > 0 {
+			publicJWK.KeyOps = publicOps
+		}
+	}
+	
+	switch j.KeyType {
+	case "RSA":
+		// Include only public key components for RSA
+		publicJWK.Modulus = j.Modulus
+		publicJWK.Exponent = j.Exponent
+	case "EC":
+		// Include only public key components for ECDSA
+		publicJWK.Curve = j.Curve
+		publicJWK.X = j.X
+		publicJWK.Y = j.Y
+	}
+	
+	return publicJWK
+}
+
 type (
 	auth struct {
 		Enabled bool   `toml:"enabled"`
