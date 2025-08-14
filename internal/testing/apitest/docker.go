@@ -84,6 +84,14 @@ func MockDockerStop(docker *client.Client) {
 		JSON(network.PruneReport{})
 }
 
+// Ref: internal/utils/docker.go::DockerRestartAll
+func MockDockerRestart(docker *client.Client) {
+	gock.New(docker.DaemonHost()).
+		Get("/v" + docker.ClientVersion() + "/containers/json").
+		Reply(http.StatusOK).
+		JSON([]container.Summary{})
+}
+
 // Ref: internal/utils/docker.go::DockerRunOnce
 func setupDockerLogs(docker *client.Client, containerID, stdout string, exitCode int) error {
 	err := MockDockerLogsStream(docker, containerID, exitCode, strings.NewReader(stdout))
