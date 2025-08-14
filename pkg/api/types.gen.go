@@ -937,12 +937,14 @@ const (
 
 // Defines values for V1ServiceHealthResponseName.
 const (
-	V1ServiceHealthResponseNameAuth     V1ServiceHealthResponseName = "auth"
-	V1ServiceHealthResponseNameDb       V1ServiceHealthResponseName = "db"
-	V1ServiceHealthResponseNamePooler   V1ServiceHealthResponseName = "pooler"
-	V1ServiceHealthResponseNameRealtime V1ServiceHealthResponseName = "realtime"
-	V1ServiceHealthResponseNameRest     V1ServiceHealthResponseName = "rest"
-	V1ServiceHealthResponseNameStorage  V1ServiceHealthResponseName = "storage"
+	V1ServiceHealthResponseNameAuth           V1ServiceHealthResponseName = "auth"
+	V1ServiceHealthResponseNameDb             V1ServiceHealthResponseName = "db"
+	V1ServiceHealthResponseNameDbPostgresUser V1ServiceHealthResponseName = "db_postgres_user"
+	V1ServiceHealthResponseNamePgBouncer      V1ServiceHealthResponseName = "pg_bouncer"
+	V1ServiceHealthResponseNamePooler         V1ServiceHealthResponseName = "pooler"
+	V1ServiceHealthResponseNameRealtime       V1ServiceHealthResponseName = "realtime"
+	V1ServiceHealthResponseNameRest           V1ServiceHealthResponseName = "rest"
+	V1ServiceHealthResponseNameStorage        V1ServiceHealthResponseName = "storage"
 )
 
 // Defines values for V1ServiceHealthResponseStatus.
@@ -1010,12 +1012,14 @@ const (
 
 // Defines values for V1GetServicesHealthParamsServices.
 const (
-	Auth     V1GetServicesHealthParamsServices = "auth"
-	Db       V1GetServicesHealthParamsServices = "db"
-	Pooler   V1GetServicesHealthParamsServices = "pooler"
-	Realtime V1GetServicesHealthParamsServices = "realtime"
-	Rest     V1GetServicesHealthParamsServices = "rest"
-	Storage  V1GetServicesHealthParamsServices = "storage"
+	Auth           V1GetServicesHealthParamsServices = "auth"
+	Db             V1GetServicesHealthParamsServices = "db"
+	DbPostgresUser V1GetServicesHealthParamsServices = "db_postgres_user"
+	PgBouncer      V1GetServicesHealthParamsServices = "pg_bouncer"
+	Pooler         V1GetServicesHealthParamsServices = "pooler"
+	Realtime       V1GetServicesHealthParamsServices = "realtime"
+	Rest           V1GetServicesHealthParamsServices = "rest"
+	Storage        V1GetServicesHealthParamsServices = "storage"
 )
 
 // Defines values for V1ListAllSnippetsParamsSortBy.

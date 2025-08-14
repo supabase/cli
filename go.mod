@@ -7,17 +7,17 @@ require (
 	github.com/Netflix/go-env v0.1.2
 	github.com/andybalholm/brotli v1.2.0
 	github.com/cenkalti/backoff/v4 v4.3.0
-	github.com/charmbracelet/bubbles v0.18.0
-	github.com/charmbracelet/bubbletea v0.25.0
-	github.com/charmbracelet/glamour v0.9.1
-	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/charmbracelet/bubbles v0.21.0
+	github.com/charmbracelet/bubbletea v1.3.6
+	github.com/charmbracelet/glamour v0.10.0
+	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/containerd/errdefs v1.0.0
 	github.com/containers/common v0.64.1
 	github.com/docker/cli v28.3.3+incompatible
 	github.com/docker/docker v28.3.3+incompatible
 	github.com/docker/go-connections v0.6.0
 	github.com/fsnotify/fsnotify v1.9.0
-	github.com/getsentry/sentry-go v0.35.0
+	github.com/getsentry/sentry-go v0.35.1
 	github.com/go-errors/errors v1.5.1
 	github.com/go-git/go-git/v5 v5.16.2
 	github.com/go-xmlfmt/xmlfmt v1.1.3
@@ -39,7 +39,7 @@ require (
 	github.com/spf13/pflag v1.0.7
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.10.0
-	github.com/stripe/pg-schema-diff v0.9.1
+	github.com/stripe/pg-schema-diff v0.9.2
 	github.com/supabase/cli/pkg v1.0.0
 	github.com/tidwall/jsonc v0.3.2
 	github.com/withfig/autocomplete-tools/packages/cobra v1.2.0
@@ -96,13 +96,13 @@ require (
 	github.com/charithe/durationcheck v0.0.10 // indirect
 	github.com/charmbracelet/colorprofile v0.2.3-0.20250311203215-f60798e515dc // indirect
 	github.com/charmbracelet/harmonica v0.2.0 // indirect
-	github.com/charmbracelet/x/ansi v0.8.0 // indirect
-	github.com/charmbracelet/x/cellbuf v0.0.13-0.20250311204145-2c3ea96c31dd // indirect
+	github.com/charmbracelet/x/ansi v0.9.3 // indirect
+	github.com/charmbracelet/x/cellbuf v0.0.13 // indirect
+	github.com/charmbracelet/x/exp/slice v0.0.0-20250327172914-2fdc97757edf // indirect
 	github.com/charmbracelet/x/term v0.2.1 // indirect
 	github.com/chavacava/garif v0.1.0 // indirect
 	github.com/ckaznocha/intrange v0.3.1 // indirect
 	github.com/cloudflare/circl v1.6.1 // indirect
-	github.com/containerd/console v1.0.4-0.20230313162750-1ae8d489ac81 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/containers/storage v1.59.1 // indirect
 	github.com/curioswitch/go-reassign v0.3.0 // indirect
@@ -122,6 +122,7 @@ require (
 	github.com/dprotaso/go-yit v0.0.0-20220510233725-9ba8df137936 // indirect
 	github.com/ecies/go/v2 v2.0.11 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
+	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/ethereum/go-ethereum v1.15.8 // indirect
 	github.com/ettle/strcase v0.2.0 // indirect
 	github.com/fatih/color v1.18.0 // indirect
@@ -234,7 +235,7 @@ require (
 	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826 // indirect
 	github.com/moricho/tparallel v0.3.2 // indirect
 	github.com/morikuni/aec v1.0.0 // indirect
-	github.com/muesli/ansi v0.0.0-20211018074035-2e021307bc4b // indirect
+	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/nakabonne/nestif v0.3.1 // indirect
@@ -269,7 +270,7 @@ require (
 	github.com/ryancurrah/gomodguard v1.4.1 // indirect
 	github.com/ryanrolds/sqlclosecheck v0.5.1 // indirect
 	github.com/sagikazarmark/locafero v0.7.0 // indirect
-	github.com/sahilm/fuzzy v0.1.1-0.20230530133925-c48e322e2a8f // indirect
+	github.com/sahilm/fuzzy v0.1.1 // indirect
 	github.com/sanposhiho/wastedassign/v2 v2.1.0 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.1 // indirect
 	github.com/sashamelentyev/interfacebloat v1.1.0 // indirect

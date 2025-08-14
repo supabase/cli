@@ -44,9 +44,7 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 	// 2. Pull schema
 	timestamp := utils.GetCurrentTimestamp()
 	path := new.GetMigrationPath(timestamp, name)
-	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
-		return run(p, ctx, schema, path, conn, fsys)
-	}); err != nil {
+	if err := run(ctx, schema, path, conn, fsys); err != nil {
 		return err
 	}
 	// 3. Insert a row to `schema_migrations`
@@ -59,12 +57,12 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 	return nil
 }
 
-func run(p utils.Program, ctx context.Context, schema []string, path string, conn *pgx.Conn, fsys afero.Fs) error {
+func run(ctx context.Context, schema []string, path string, conn *pgx.Conn, fsys afero.Fs) error {
 	config := conn.Config().Config
 	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
 	if err := assertRemoteInSync(ctx, conn, fsys); errors.Is(err, errMissing) {
 		// Not passing down schemas to avoid pulling in managed schemas
-		if err = dumpRemoteSchema(p, ctx, path, config, fsys); err == nil {
+		if err = dumpRemoteSchema(ctx, path, config, fsys); err == nil {
 			utils.CmdSuggestion = suggestExtraPull
 		}
 		return err
@@ -80,16 +78,16 @@ func run(p utils.Program, ctx context.Context, schema []string, path string, con
 			return err
 		}
 	}
-	err := diffRemoteSchema(p, ctx, schema, path, config, fsys)
+	err := diffRemoteSchema(ctx, schema, path, config, fsys)
 	if defaultSchema && (err == nil || errors.Is(err, errInSync)) {
 		utils.CmdSuggestion = suggestExtraPull
 	}
 	return err
 }
 
-func dumpRemoteSchema(p utils.Program, ctx context.Context, path string, config pgconn.Config, fsys afero.Fs) error {
+func dumpRemoteSchema(ctx context.Context, path string, config pgconn.Config, fsys afero.Fs) error {
 	// Special case if this is the first migration
-	p.Send(utils.StatusMsg("Dumping schema from remote database..."))
+	fmt.Fprintln(os.Stderr, "Dumping schema from remote database...")
 	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(path)); err != nil {
 		return err
 	}
@@ -101,10 +99,9 @@ func dumpRemoteSchema(p utils.Program, ctx context.Context, path string, config 
 	return migration.DumpSchema(ctx, config, f, dump.DockerExec)
 }
 
-func diffRemoteSchema(p utils.Program, ctx context.Context, schema []string, path string, config pgconn.Config, fsys afero.Fs) error {
-	w := utils.StatusWriter{Program: p}
+func diffRemoteSchema(ctx context.Context, schema []string, path string, config pgconn.Config, fsys afero.Fs) error {
 	// Diff remote db (source) & shadow db (target) and write it as a new migration.
-	output, err := diff.DiffDatabase(ctx, schema, config, w, fsys, diff.DiffSchemaMigra)
+	output, err := diff.DiffDatabase(ctx, schema, config, os.Stderr, fsys, diff.DiffSchemaMigra)
 	if err != nil {
 		return err
 	}
