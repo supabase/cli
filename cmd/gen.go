@@ -13,6 +13,7 @@ import (
 	"github.com/supabase/cli/internal/gen/types"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/config"
 )
 
 var (
@@ -97,7 +98,7 @@ var (
 
 	algorithm = utils.EnumFlag{
 		Allowed: signingkeys.GetSupportedAlgorithms(),
-		Value:   string(signingkeys.AlgES256),
+		Value:   string(config.AlgES256),
 	}
 	appendKeys bool
 

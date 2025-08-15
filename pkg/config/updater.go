@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/go-errors/errors"
+	"github.com/google/uuid"
 	v1API "github.com/supabase/cli/pkg/api"
 )
 
@@ -159,6 +160,77 @@ func (u *ConfigUpdater) UpdateAuthConfig(ctx context.Context, projectRef string,
 		return errors.Errorf("failed to update Auth config: %w", err)
 	} else if status := resp.StatusCode(); status < 200 || status >= 300 {
 		return errors.Errorf("unexpected status %d: %s", status, string(resp.Body))
+	}
+	return nil
+}
+
+func (u *ConfigUpdater) UpdateSigningKeys(ctx context.Context, projectRef string, signingKeys []JWK, filter ...func(string) bool) error {
+	if len(signingKeys) == 0 {
+		return nil
+	}
+	resp, err := u.client.V1GetProjectSigningKeysWithResponse(ctx, projectRef)
+	if err != nil {
+		return errors.Errorf("failed to fetch signing keys: %w", err)
+	} else if resp.JSON200 == nil {
+		return errors.Errorf("unexpected status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+	exists := map[uuid.UUID]struct{}{}
+	for _, k := range resp.JSON200.Keys {
+		if k.PublicJwk != nil {
+			exists[k.Id] = struct{}{}
+		}
+	}
+	var toInsert []JWK
+	for _, k := range signingKeys {
+		if _, ok := exists[k.KeyID]; !ok {
+			toInsert = append(toInsert, k)
+		}
+	}
+	if len(toInsert) == 0 {
+		fmt.Fprintln(os.Stderr, "Remote JWT signing keys are up to date.")
+		return nil
+	}
+	fmt.Fprintln(os.Stderr, "JWT signing keys to insert:")
+	for _, k := range toInsert {
+		fmt.Fprintln(os.Stderr, " -", k.KeyID)
+	}
+	for _, keep := range filter {
+		if !keep("signing keys") {
+			return nil
+		}
+	}
+	for _, k := range toInsert {
+		body := v1API.CreateSigningKeyBody{
+			Algorithm:  v1API.CreateSigningKeyBodyAlgorithm(k.Algorithm),
+			PrivateJwk: &v1API.CreateSigningKeyBody_PrivateJwk{},
+		}
+		switch k.Algorithm {
+		case AlgRS256:
+			body.PrivateJwk.FromCreateSigningKeyBodyPrivateJwk0(v1API.CreateSigningKeyBodyPrivateJwk0{
+				D:   k.PrivateExponent,
+				Dp:  k.FirstFactorCRTExponent,
+				Dq:  k.SecondFactorCRTExponent,
+				E:   v1API.CreateSigningKeyBodyPrivateJwk0E(k.Exponent),
+				Kty: v1API.CreateSigningKeyBodyPrivateJwk0Kty(k.KeyType),
+				N:   k.Modulus,
+				P:   k.FirstPrimeFactor,
+				Q:   k.SecondPrimeFactor,
+				Qi:  k.FirstCRTCoefficient,
+			})
+		case AlgES256:
+			body.PrivateJwk.FromCreateSigningKeyBodyPrivateJwk1(v1API.CreateSigningKeyBodyPrivateJwk1{
+				Crv: v1API.CreateSigningKeyBodyPrivateJwk1Crv(k.Curve),
+				D:   k.PrivateExponent,
+				Kty: v1API.CreateSigningKeyBodyPrivateJwk1Kty(k.KeyType),
+				X:   k.X,
+				Y:   k.Y,
+			})
+		}
+		if resp, err := u.client.V1CreateProjectSigningKeyWithResponse(ctx, projectRef, body); err != nil {
+			return errors.Errorf("failed to add signing key: %w", err)
+		} else if status := resp.StatusCode(); status < 200 || status >= 300 {
+			return errors.Errorf("unexpected status %d: %s", status, string(resp.Body))
+		}
 	}
 	return nil
 }
