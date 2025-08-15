@@ -23,13 +23,8 @@ import (
 	"github.com/supabase/cli/pkg/config"
 )
 
-type KeyPair struct {
-	PublicKey  config.JWK
-	PrivateKey config.JWK
-}
-
-// GenerateKeyPair generates a new key pair for the specified algorithm
-func GenerateKeyPair(alg config.Algorithm) (*KeyPair, error) {
+// GeneratePrivateKey generates a new private key for the specified algorithm
+func GeneratePrivateKey(alg config.Algorithm) (*config.JWK, error) {
 	keyID := uuid.New()
 
 	switch alg {
@@ -42,7 +37,7 @@ func GenerateKeyPair(alg config.Algorithm) (*KeyPair, error) {
 	}
 }
 
-func generateRSAKeyPair(keyID uuid.UUID) (*KeyPair, error) {
+func generateRSAKeyPair(keyID uuid.UUID) (*config.JWK, error) {
 	// Generate RSA key pair (2048 bits for RS256)
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -72,24 +67,10 @@ func generateRSAKeyPair(keyID uuid.UUID) (*KeyPair, error) {
 		FirstCRTCoefficient:     base64.RawURLEncoding.EncodeToString(privateKey.Precomputed.Qinv.Bytes()),
 	}
 
-	publicJWK := config.JWK{
-		KeyType:     "RSA",
-		KeyID:       keyID,
-		Use:         "sig",
-		KeyOps:      []string{"verify"},
-		Algorithm:   "RS256",
-		Extractable: cast.Ptr(true),
-		Modulus:     privateJWK.Modulus,
-		Exponent:    privateJWK.Exponent,
-	}
-
-	return &KeyPair{
-		PublicKey:  publicJWK,
-		PrivateKey: privateJWK,
-	}, nil
+	return &privateJWK, nil
 }
 
-func generateECDSAKeyPair(keyID uuid.UUID) (*KeyPair, error) {
+func generateECDSAKeyPair(keyID uuid.UUID) (*config.JWK, error) {
 	// Generate ECDSA key pair (P-256 curve for ES256)
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -112,22 +93,7 @@ func generateECDSAKeyPair(keyID uuid.UUID) (*KeyPair, error) {
 		PrivateExponent: base64.RawURLEncoding.EncodeToString(privateKey.D.Bytes()),
 	}
 
-	publicJWK := config.JWK{
-		KeyType:     "EC",
-		KeyID:       keyID,
-		Use:         "sig",
-		KeyOps:      []string{"verify"},
-		Algorithm:   "ES256",
-		Extractable: cast.Ptr(true),
-		Curve:       "P-256",
-		X:           privateJWK.X,
-		Y:           privateJWK.Y,
-	}
-
-	return &KeyPair{
-		PublicKey:  publicJWK,
-		PrivateKey: privateJWK,
-	}, nil
+	return &privateJWK, nil
 }
 
 // Run generates a key pair and writes it to the specified file path
@@ -139,7 +105,7 @@ func Run(ctx context.Context, algorithm string, appendMode bool, fsys afero.Fs) 
 	outputPath := utils.Config.Auth.SigningKeysPath
 
 	// Generate key pair
-	keyPair, err := GenerateKeyPair(config.Algorithm(algorithm))
+	privateJWK, err := GeneratePrivateKey(config.Algorithm(algorithm))
 	if err != nil {
 		return err
 	}
@@ -181,7 +147,7 @@ func Run(ctx context.Context, algorithm string, appendMode bool, fsys afero.Fs) 
 		}
 		out = f
 	}
-	jwkArray = append(jwkArray, keyPair.PrivateKey)
+	jwkArray = append(jwkArray, *privateJWK)
 
 	// Write to file
 	enc := json.NewEncoder(out)
