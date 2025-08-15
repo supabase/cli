@@ -111,26 +111,24 @@ type JWK struct {
 // ToPublicJWK converts a JWK to a public-only version by removing private key components
 func (j JWK) ToPublicJWK() JWK {
 	publicJWK := JWK{
-		KeyType:     j.KeyType,
-		KeyID:       j.KeyID,
-		Use:         j.Use,
-		Algorithm:   j.Algorithm,
-		Extractable: j.Extractable,
+		KeyType:   j.KeyType,
+		KeyID:     j.KeyID,
+		Use:       j.Use,
+		Algorithm: j.Algorithm,
 	}
-	
+
+	// Copy the underlying type instead of the pointer
+	if j.Extractable != nil {
+		publicJWK.Extractable = cast.Ptr(*j.Extractable)
+	}
+
 	// Only include key_ops for verification (not signing) for public keys
-	if len(j.KeyOps) > 0 {
-		var publicOps []string
-		for _, op := range j.KeyOps {
-			if op == "verify" {
-				publicOps = append(publicOps, op)
-			}
-		}
-		if len(publicOps) > 0 {
-			publicJWK.KeyOps = publicOps
+	for _, op := range j.KeyOps {
+		if op == "verify" {
+			publicJWK.KeyOps = append(publicJWK.KeyOps, op)
 		}
 	}
-	
+
 	switch j.KeyType {
 	case "RSA":
 		// Include only public key components for RSA
@@ -142,7 +140,7 @@ func (j JWK) ToPublicJWK() JWK {
 		publicJWK.X = j.X
 		publicJWK.Y = j.Y
 	}
-	
+
 	return publicJWK
 }
 

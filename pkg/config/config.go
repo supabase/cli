@@ -1441,27 +1441,16 @@ func (a *auth) ResolveJWKS(ctx context.Context, fsys afero.Fs) (string, error) {
 		jwks.Keys = append(jwks.Keys, rJWKS.Keys...)
 	}
 
-	// If SIGNING_KEYS_PATH is provided, read from file and convert to public keys
-	if len(a.SigningKeysPath) > 0 {
-		f, err := fsys.Open(a.SigningKeysPath)
+	// Convert each signing key to public-only version
+	for _, key := range a.SigningKeys {
+		publicKeyEncoded, err := json.Marshal(key.ToPublicJWK())
 		if err != nil {
-			return "", errors.Errorf("failed to read signing key: %w", err)
+			return "", errors.Errorf("failed to marshal public key: %w", err)
 		}
-		jwtKeysArray, err := fetcher.ParseJSON[[]JWK](f)
-		if err != nil {
-			return "", err
-		}
-		// Convert each signing key to public-only version
-		for _, key := range jwtKeysArray {
-			publicKey := key.ToPublicJWK()
-			publicKeyEncoded, err := json.Marshal(publicKey)
-			if err != nil {
-				return "", errors.Errorf("failed to marshal public key: %w", err)
-			}
-			jwks.Keys = append(jwks.Keys, json.RawMessage(publicKeyEncoded))
-		}
-	} else {
-		// Fallback to JWT_SECRET for backward compatibility
+		jwks.Keys = append(jwks.Keys, json.RawMessage(publicKeyEncoded))
+	}
+	// Fallback to JWT_SECRET for backward compatibility
+	if len(a.SigningKeys) == 0 {
 		jwtSecret := secretJWK{
 			KeyType:      "oct",
 			KeyBase64URL: base64.RawURLEncoding.EncodeToString([]byte(a.JwtSecret.Value)),
