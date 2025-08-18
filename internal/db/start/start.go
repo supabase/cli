@@ -73,7 +73,7 @@ func NewContainerConfig(args ...string) container.Config {
 	}
 	if len(utils.Config.Experimental.OrioleDBVersion) > 0 {
 		env = append(env,
-			"POSTGRES_INITDB_ARGS=--lc-collate=C",
+			"POSTGRES_INITDB_ARGS=--lc-collate=C --lc-ctype=C",
 			fmt.Sprintf("S3_ENABLED=%t", true),
 			"S3_HOST="+utils.Config.Experimental.S3Host,
 			"S3_REGION="+utils.Config.Experimental.S3Region,
