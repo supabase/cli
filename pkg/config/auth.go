@@ -187,6 +187,7 @@ type (
 		Auth0    tpaAuth0    `toml:"auth0"`
 		Cognito  tpaCognito  `toml:"aws_cognito"`
 		Clerk    tpaClerk    `toml:"clerk"`
+		WorkOs   tpaWorkOs   `toml:"workos"`
 	}
 
 	rateLimit struct {
@@ -223,6 +224,12 @@ type (
 		Enabled bool `toml:"enabled"`
 
 		Domain string `toml:"domain"`
+	}
+
+	tpaWorkOs struct {
+		Enabled bool `toml:"enabled"`
+
+		IssuerUrl string `toml:"issuer_url"`
 	}
 
 	email struct {
