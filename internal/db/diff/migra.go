@@ -10,6 +10,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/go-errors/errors"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/gen/types"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/config"
 )
@@ -19,6 +20,11 @@ var (
 	diffSchemaScript string
 	//go:embed templates/migra.ts
 	diffSchemaTypeScript string
+
+	//go:embed templates/staging-ca-2021.crt
+	caStaging string
+	//go:embed templates/prod-ca-2021.crt
+	caProd string
 
 	managedSchemas = []string{
 		// Local development
@@ -82,6 +88,13 @@ func DiffSchemaMigraBash(ctx context.Context, source, target string, schema []st
 
 func DiffSchemaMigra(ctx context.Context, source, target string, schema []string) (string, error) {
 	env := []string{"SOURCE=" + source, "TARGET=" + target}
+	// node-postgres does not support sslmode=prefer
+	if require, err := types.IsRequireSSL(ctx, target); err != nil {
+		return "", err
+	} else if require {
+		rootCA := caStaging + caProd
+		env = append(env, "SSL_CA="+rootCA)
+	}
 	if len(schema) > 0 {
 		env = append(env, "INCLUDED_SCHEMAS="+strings.Join(schema, ","))
 	} else {
