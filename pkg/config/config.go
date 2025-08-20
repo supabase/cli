@@ -1314,6 +1314,17 @@ func (c *tpaClerk) validate() (err error) {
 	return nil
 }
 
+func (w *tpaWorkOs) validate() error {
+	if w.IssuerUrl == "" {
+		return errors.New("Invalid config: auth.third_party.workos is enabled but without a issuer_url.")
+	}
+	return nil
+}
+
+func (w *tpaWorkOs) issuerURL() string {
+	return w.IssuerUrl
+}
+
 func (tpa *thirdParty) validate() error {
 	enabled := 0
 
@@ -1349,6 +1360,14 @@ func (tpa *thirdParty) validate() error {
 		}
 	}
 
+	if tpa.WorkOs.Enabled {
+		enabled += 1
+
+		if err := tpa.WorkOs.validate(); err != nil {
+			return err
+		}
+	}
+
 	if enabled > 1 {
 		return errors.New("Invalid config: Only one third_party provider allowed to be enabled at a time.")
 	}
@@ -1371,6 +1390,10 @@ func (tpa *thirdParty) IssuerURL() string {
 
 	if tpa.Clerk.Enabled {
 		return tpa.Clerk.issuerURL()
+	}
+
+	if tpa.WorkOs.Enabled {
+		return tpa.WorkOs.issuerURL()
 	}
 
 	return ""
