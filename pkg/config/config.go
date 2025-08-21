@@ -875,9 +875,10 @@ func (c *config) Validate(fsys fs.FS) error {
 	case 0:
 		return errors.New("Missing required field in config: edge_runtime.deno_version")
 	case 1:
+		c.EdgeRuntime.Image = deno1
 		break
 	case 2:
-		c.EdgeRuntime.Image = deno2
+		break
 	default:
 		return errors.Errorf("Failed reading config: Invalid %s: %v.", "edge_runtime.deno_version", c.EdgeRuntime.DenoVersion)
 	}
