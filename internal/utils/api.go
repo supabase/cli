@@ -138,7 +138,8 @@ func GetSupabase() *supabase.ClientWithResponses {
 	return apiClient
 }
 
-const DefaultApiHost = "https://api.supabase.com"
+// Used by unit tests
+var DefaultApiHost = CurrentProfile.APIURL
 
 var RegionMap = map[string]string{
 	"ap-northeast-1": "Northeast Asia (Tokyo)",

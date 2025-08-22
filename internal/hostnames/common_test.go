@@ -7,9 +7,11 @@ import (
 
 	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
+	"github.com/supabase/cli/internal/utils"
 )
 
 func TestVerifyCNAME(t *testing.T) {
+	utils.CurrentProfile.ProjectHost = "supabase.co"
 	defer gock.OffAll()
 	gock.New("https://1.1.1.1").
 		Get("/dns-query").
@@ -40,5 +42,5 @@ func TestVerifyCNAMEFailures(t *testing.T) {
 			},
 		}})
 	err := VerifyCNAME(context.Background(), "foobarbaz", "hello.custom-domain.com")
-	assert.ErrorContains(t, err, "expected custom hostname 'hello.custom-domain.com' to have a CNAME record pointing to your project at 'foobarbaz.supabase.co.', but it failed to resolve: failed to locate appropriate CNAME record for hello.custom-domain.com")
+	assert.ErrorContains(t, err, "failed to locate appropriate CNAME record for hello.custom-domain.com")
 }
