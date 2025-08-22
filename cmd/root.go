@@ -92,13 +92,16 @@ var (
 				return errors.New("must set the --experimental flag to run this command")
 			}
 			cmd.SilenceUsage = true
-			// Change workdir
+			// Load profile before changing workdir
+			ctx := cmd.Context()
 			fsys := afero.NewOsFs()
+			if err := utils.LoadProfile(ctx, fsys); err != nil {
+				return err
+			}
 			if err := utils.ChangeWorkDir(fsys); err != nil {
 				return err
 			}
 			// Add common flags
-			ctx := cmd.Context()
 			if IsManagementAPI(cmd) {
 				if err := promptLogin(fsys); err != nil {
 					return err
@@ -236,6 +239,7 @@ func init() {
 	flags.String("workdir", "", "path to a Supabase project directory")
 	flags.Bool("experimental", false, "enable experimental features")
 	flags.String("network-id", "", "use the specified docker network instead of a generated one")
+	flags.String("profile", "supabase", "use a specific profile for connecting to Supabase API")
 	flags.VarP(&utils.OutputFormat, "output", "o", "output format of status variables")
 	flags.Var(&utils.DNSResolver, "dns-resolver", "lookup domain names using the specified resolver")
 	flags.BoolVar(&createTicket, "create-ticket", false, "create a support ticket for any CLI error")
