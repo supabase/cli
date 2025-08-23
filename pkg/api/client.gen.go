@@ -218,7 +218,9 @@ type ClientInterface interface {
 	V1ApplyProjectAddon(ctx context.Context, ref string, body V1ApplyProjectAddonJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1RemoveProjectAddon request
-	V1RemoveProjectAddon(ctx context.Context, ref string, addonVariant interface{}, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1RemoveProjectAddon(ctx context.Context, ref string, addonVariant struct {
+		union json.RawMessage
+	}, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1DisablePreviewBranching request
 	V1DisablePreviewBranching(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1121,7 +1123,9 @@ func (c *Client) V1ApplyProjectAddon(ctx context.Context, ref string, body V1App
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1RemoveProjectAddon(ctx context.Context, ref string, addonVariant interface{}, reqEditors ...RequestEditorFn) (*http.Response, error) {
+func (c *Client) V1RemoveProjectAddon(ctx context.Context, ref string, addonVariant struct {
+	union json.RawMessage
+}, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1RemoveProjectAddonRequest(c.Server, ref, addonVariant)
 	if err != nil {
 		return nil, err
@@ -4522,7 +4526,9 @@ func NewV1ApplyProjectAddonRequestWithBody(server string, ref string, contentTyp
 }
 
 // NewV1RemoveProjectAddonRequest generates requests for V1RemoveProjectAddon
-func NewV1RemoveProjectAddonRequest(server string, ref string, addonVariant interface{}) (*http.Request, error) {
+func NewV1RemoveProjectAddonRequest(server string, ref string, addonVariant struct {
+	union json.RawMessage
+}) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -8941,7 +8947,9 @@ type ClientWithResponsesInterface interface {
 	V1ApplyProjectAddonWithResponse(ctx context.Context, ref string, body V1ApplyProjectAddonJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ApplyProjectAddonResponse, error)
 
 	// V1RemoveProjectAddonWithResponse request
-	V1RemoveProjectAddonWithResponse(ctx context.Context, ref string, addonVariant interface{}, reqEditors ...RequestEditorFn) (*V1RemoveProjectAddonResponse, error)
+	V1RemoveProjectAddonWithResponse(ctx context.Context, ref string, addonVariant struct {
+		union json.RawMessage
+	}, reqEditors ...RequestEditorFn) (*V1RemoveProjectAddonResponse, error)
 
 	// V1DisablePreviewBranchingWithResponse request
 	V1DisablePreviewBranchingWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DisablePreviewBranchingResponse, error)
@@ -12527,7 +12535,9 @@ func (c *ClientWithResponses) V1ApplyProjectAddonWithResponse(ctx context.Contex
 }
 
 // V1RemoveProjectAddonWithResponse request returning *V1RemoveProjectAddonResponse
-func (c *ClientWithResponses) V1RemoveProjectAddonWithResponse(ctx context.Context, ref string, addonVariant interface{}, reqEditors ...RequestEditorFn) (*V1RemoveProjectAddonResponse, error) {
+func (c *ClientWithResponses) V1RemoveProjectAddonWithResponse(ctx context.Context, ref string, addonVariant struct {
+	union json.RawMessage
+}, reqEditors ...RequestEditorFn) (*V1RemoveProjectAddonResponse, error) {
 	rsp, err := c.V1RemoveProjectAddon(ctx, ref, addonVariant, reqEditors...)
 	if err != nil {
 		return nil, err

@@ -1,0 +1,6 @@
+{
+  "name": "supabase",
+  "api_url": "https://api.supabase.com",
+  "dashboard_url": "https://supabase.com/dashboard",
+  "project_host": "supabase.co"
+}

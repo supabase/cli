@@ -40,7 +40,7 @@ func TestLoginCommand(t *testing.T) {
 			Token: token,
 			Fsys:  afero.NewMemMapFs(),
 		}))
-		saved, err := credentials.StoreProvider.Get(utils.AccessTokenKey)
+		saved, err := credentials.StoreProvider.Get(utils.CurrentProfile.Name)
 		assert.NoError(t, err)
 		assert.Equal(t, token, saved)
 	})
@@ -83,7 +83,7 @@ func TestLoginCommand(t *testing.T) {
 		expectedBrowserUrl := fmt.Sprintf("%s/cli/login?session_id=%s&token_name=%s&public_key=%s", utils.GetSupabaseDashboardURL(), sessionId, tokenName, publicKey)
 		assert.Contains(t, out.String(), expectedBrowserUrl)
 
-		saved, err := credentials.StoreProvider.Get(utils.AccessTokenKey)
+		saved, err := credentials.StoreProvider.Get(utils.CurrentProfile.Name)
 		assert.NoError(t, err)
 		assert.Equal(t, token, saved)
 		assert.Empty(t, apitest.ListUnmatchedRequests())

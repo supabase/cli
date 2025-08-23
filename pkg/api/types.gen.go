@@ -410,41 +410,41 @@ const (
 
 // Defines values for ListProjectAddonsResponseSelectedAddonsVariantId0.
 const (
-	Ci12xlarge                ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_12xlarge"
-	Ci16xlarge                ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_16xlarge"
-	Ci24xlarge                ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_24xlarge"
-	Ci24xlargeHighMemory      ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_24xlarge_high_memory"
-	Ci24xlargeOptimizedCpu    ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_24xlarge_optimized_cpu"
-	Ci24xlargeOptimizedMemory ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_24xlarge_optimized_memory"
-	Ci2xlarge                 ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_2xlarge"
-	Ci48xlarge                ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_48xlarge"
-	Ci48xlargeHighMemory      ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_48xlarge_high_memory"
-	Ci48xlargeOptimizedCpu    ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_48xlarge_optimized_cpu"
-	Ci48xlargeOptimizedMemory ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_48xlarge_optimized_memory"
-	Ci4xlarge                 ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_4xlarge"
-	Ci8xlarge                 ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_8xlarge"
-	CiLarge                   ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_large"
-	CiMedium                  ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_medium"
-	CiMicro                   ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_micro"
-	CiSmall                   ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_small"
-	CiXlarge                  ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_xlarge"
+	ListProjectAddonsResponseSelectedAddonsVariantId0Ci12xlarge                ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_12xlarge"
+	ListProjectAddonsResponseSelectedAddonsVariantId0Ci16xlarge                ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_16xlarge"
+	ListProjectAddonsResponseSelectedAddonsVariantId0Ci24xlarge                ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_24xlarge"
+	ListProjectAddonsResponseSelectedAddonsVariantId0Ci24xlargeHighMemory      ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_24xlarge_high_memory"
+	ListProjectAddonsResponseSelectedAddonsVariantId0Ci24xlargeOptimizedCpu    ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_24xlarge_optimized_cpu"
+	ListProjectAddonsResponseSelectedAddonsVariantId0Ci24xlargeOptimizedMemory ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_24xlarge_optimized_memory"
+	ListProjectAddonsResponseSelectedAddonsVariantId0Ci2xlarge                 ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_2xlarge"
+	ListProjectAddonsResponseSelectedAddonsVariantId0Ci48xlarge                ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_48xlarge"
+	ListProjectAddonsResponseSelectedAddonsVariantId0Ci48xlargeHighMemory      ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_48xlarge_high_memory"
+	ListProjectAddonsResponseSelectedAddonsVariantId0Ci48xlargeOptimizedCpu    ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_48xlarge_optimized_cpu"
+	ListProjectAddonsResponseSelectedAddonsVariantId0Ci48xlargeOptimizedMemory ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_48xlarge_optimized_memory"
+	ListProjectAddonsResponseSelectedAddonsVariantId0Ci4xlarge                 ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_4xlarge"
+	ListProjectAddonsResponseSelectedAddonsVariantId0Ci8xlarge                 ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_8xlarge"
+	ListProjectAddonsResponseSelectedAddonsVariantId0CiLarge                   ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_large"
+	ListProjectAddonsResponseSelectedAddonsVariantId0CiMedium                  ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_medium"
+	ListProjectAddonsResponseSelectedAddonsVariantId0CiMicro                   ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_micro"
+	ListProjectAddonsResponseSelectedAddonsVariantId0CiSmall                   ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_small"
+	ListProjectAddonsResponseSelectedAddonsVariantId0CiXlarge                  ListProjectAddonsResponseSelectedAddonsVariantId0 = "ci_xlarge"
 )
 
 // Defines values for ListProjectAddonsResponseSelectedAddonsVariantId1.
 const (
-	CdDefault ListProjectAddonsResponseSelectedAddonsVariantId1 = "cd_default"
+	ListProjectAddonsResponseSelectedAddonsVariantId1CdDefault ListProjectAddonsResponseSelectedAddonsVariantId1 = "cd_default"
 )
 
 // Defines values for ListProjectAddonsResponseSelectedAddonsVariantId2.
 const (
-	Pitr14 ListProjectAddonsResponseSelectedAddonsVariantId2 = "pitr_14"
-	Pitr28 ListProjectAddonsResponseSelectedAddonsVariantId2 = "pitr_28"
-	Pitr7  ListProjectAddonsResponseSelectedAddonsVariantId2 = "pitr_7"
+	ListProjectAddonsResponseSelectedAddonsVariantId2Pitr14 ListProjectAddonsResponseSelectedAddonsVariantId2 = "pitr_14"
+	ListProjectAddonsResponseSelectedAddonsVariantId2Pitr28 ListProjectAddonsResponseSelectedAddonsVariantId2 = "pitr_28"
+	ListProjectAddonsResponseSelectedAddonsVariantId2Pitr7  ListProjectAddonsResponseSelectedAddonsVariantId2 = "pitr_7"
 )
 
 // Defines values for ListProjectAddonsResponseSelectedAddonsVariantId3.
 const (
-	Ipv4Default ListProjectAddonsResponseSelectedAddonsVariantId3 = "ipv4_default"
+	ListProjectAddonsResponseSelectedAddonsVariantId3Ipv4Default ListProjectAddonsResponseSelectedAddonsVariantId3 = "ipv4_default"
 )
 
 // Defines values for ListProjectAddonsResponseSelectedAddonsVariantId4.
@@ -1010,6 +1010,45 @@ const (
 	N7day  V1GetProjectUsageApiCountParamsInterval = "7day"
 )
 
+// Defines values for V1RemoveProjectAddonParamsAddonVariant0.
+const (
+	V1RemoveProjectAddonParamsAddonVariant0Ci12xlarge                V1RemoveProjectAddonParamsAddonVariant0 = "ci_12xlarge"
+	V1RemoveProjectAddonParamsAddonVariant0Ci16xlarge                V1RemoveProjectAddonParamsAddonVariant0 = "ci_16xlarge"
+	V1RemoveProjectAddonParamsAddonVariant0Ci24xlarge                V1RemoveProjectAddonParamsAddonVariant0 = "ci_24xlarge"
+	V1RemoveProjectAddonParamsAddonVariant0Ci24xlargeHighMemory      V1RemoveProjectAddonParamsAddonVariant0 = "ci_24xlarge_high_memory"
+	V1RemoveProjectAddonParamsAddonVariant0Ci24xlargeOptimizedCpu    V1RemoveProjectAddonParamsAddonVariant0 = "ci_24xlarge_optimized_cpu"
+	V1RemoveProjectAddonParamsAddonVariant0Ci24xlargeOptimizedMemory V1RemoveProjectAddonParamsAddonVariant0 = "ci_24xlarge_optimized_memory"
+	V1RemoveProjectAddonParamsAddonVariant0Ci2xlarge                 V1RemoveProjectAddonParamsAddonVariant0 = "ci_2xlarge"
+	V1RemoveProjectAddonParamsAddonVariant0Ci48xlarge                V1RemoveProjectAddonParamsAddonVariant0 = "ci_48xlarge"
+	V1RemoveProjectAddonParamsAddonVariant0Ci48xlargeHighMemory      V1RemoveProjectAddonParamsAddonVariant0 = "ci_48xlarge_high_memory"
+	V1RemoveProjectAddonParamsAddonVariant0Ci48xlargeOptimizedCpu    V1RemoveProjectAddonParamsAddonVariant0 = "ci_48xlarge_optimized_cpu"
+	V1RemoveProjectAddonParamsAddonVariant0Ci48xlargeOptimizedMemory V1RemoveProjectAddonParamsAddonVariant0 = "ci_48xlarge_optimized_memory"
+	V1RemoveProjectAddonParamsAddonVariant0Ci4xlarge                 V1RemoveProjectAddonParamsAddonVariant0 = "ci_4xlarge"
+	V1RemoveProjectAddonParamsAddonVariant0Ci8xlarge                 V1RemoveProjectAddonParamsAddonVariant0 = "ci_8xlarge"
+	V1RemoveProjectAddonParamsAddonVariant0CiLarge                   V1RemoveProjectAddonParamsAddonVariant0 = "ci_large"
+	V1RemoveProjectAddonParamsAddonVariant0CiMedium                  V1RemoveProjectAddonParamsAddonVariant0 = "ci_medium"
+	V1RemoveProjectAddonParamsAddonVariant0CiMicro                   V1RemoveProjectAddonParamsAddonVariant0 = "ci_micro"
+	V1RemoveProjectAddonParamsAddonVariant0CiSmall                   V1RemoveProjectAddonParamsAddonVariant0 = "ci_small"
+	V1RemoveProjectAddonParamsAddonVariant0CiXlarge                  V1RemoveProjectAddonParamsAddonVariant0 = "ci_xlarge"
+)
+
+// Defines values for V1RemoveProjectAddonParamsAddonVariant1.
+const (
+	V1RemoveProjectAddonParamsAddonVariant1CdDefault V1RemoveProjectAddonParamsAddonVariant1 = "cd_default"
+)
+
+// Defines values for V1RemoveProjectAddonParamsAddonVariant2.
+const (
+	V1RemoveProjectAddonParamsAddonVariant2Pitr14 V1RemoveProjectAddonParamsAddonVariant2 = "pitr_14"
+	V1RemoveProjectAddonParamsAddonVariant2Pitr28 V1RemoveProjectAddonParamsAddonVariant2 = "pitr_28"
+	V1RemoveProjectAddonParamsAddonVariant2Pitr7  V1RemoveProjectAddonParamsAddonVariant2 = "pitr_7"
+)
+
+// Defines values for V1RemoveProjectAddonParamsAddonVariant3.
+const (
+	V1RemoveProjectAddonParamsAddonVariant3Ipv4Default V1RemoveProjectAddonParamsAddonVariant3 = "ipv4_default"
+)
+
 // Defines values for V1GetServicesHealthParamsServices.
 const (
 	Auth           V1GetServicesHealthParamsServices = "auth"
@@ -1347,6 +1386,7 @@ type BranchResponse struct {
 	ReviewRequestedAt *time.Time           `json:"review_requested_at,omitempty"`
 	Status            BranchResponseStatus `json:"status"`
 	UpdatedAt         time.Time            `json:"updated_at"`
+	WithData          bool                 `json:"with_data"`
 }
 
 // BranchResponseStatus defines model for BranchResponse.Status.
@@ -3273,6 +3313,18 @@ type V1UpdateProjectApiKeyParams struct {
 	// Reveal Boolean string, true or false
 	Reveal *bool `form:"reveal,omitempty" json:"reveal,omitempty"`
 }
+
+// V1RemoveProjectAddonParamsAddonVariant0 defines parameters for V1RemoveProjectAddon.
+type V1RemoveProjectAddonParamsAddonVariant0 string
+
+// V1RemoveProjectAddonParamsAddonVariant1 defines parameters for V1RemoveProjectAddon.
+type V1RemoveProjectAddonParamsAddonVariant1 string
+
+// V1RemoveProjectAddonParamsAddonVariant2 defines parameters for V1RemoveProjectAddon.
+type V1RemoveProjectAddonParamsAddonVariant2 string
+
+// V1RemoveProjectAddonParamsAddonVariant3 defines parameters for V1RemoveProjectAddon.
+type V1RemoveProjectAddonParamsAddonVariant3 string
 
 // V1GetRestorePointParams defines parameters for V1GetRestorePoint.
 type V1GetRestorePointParams struct {

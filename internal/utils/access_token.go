@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -32,12 +33,20 @@ func LoadAccessTokenFS(fsys afero.Fs) (string, error) {
 }
 
 func loadAccessToken(fsys afero.Fs) (string, error) {
+	logger := GetDebugLogger()
 	// Env takes precedence
 	if accessToken := os.Getenv("SUPABASE_ACCESS_TOKEN"); accessToken != "" {
+		fmt.Fprintln(logger, "Using access token from env var...")
 		return accessToken, nil
 	}
-	// Load from native credentials store
+	// Load from current profile
+	if accessToken, err := credentials.StoreProvider.Get(CurrentProfile.Name); err == nil {
+		fmt.Fprintln(logger, "Using access token for profile:", CurrentProfile.Name)
+		return accessToken, nil
+	}
+	// Load from legacy key for backwards compatibility
 	if accessToken, err := credentials.StoreProvider.Get(AccessTokenKey); err == nil {
+		fmt.Fprintln(logger, "Using access token from credentials store...")
 		return accessToken, nil
 	}
 	// Fallback to token file
@@ -55,6 +64,7 @@ func fallbackLoadToken(fsys afero.Fs) (string, error) {
 	} else if err != nil {
 		return "", errors.Errorf("failed to read access token file: %w", err)
 	}
+	fmt.Fprintln(GetDebugLogger(), "Using access token from file:", path)
 	return string(accessToken), nil
 }
 
@@ -63,8 +73,10 @@ func SaveAccessToken(accessToken string, fsys afero.Fs) error {
 	if !AccessTokenPattern.MatchString(accessToken) {
 		return errors.New(ErrInvalidToken)
 	}
-	// Save to native credentials store
-	if err := credentials.StoreProvider.Set(AccessTokenKey, accessToken); err == nil {
+	// Save to current profile
+	if err := credentials.StoreProvider.Set(CurrentProfile.Name, accessToken); err != nil {
+		fmt.Fprintln(GetDebugLogger(), err)
+	} else {
 		return nil
 	}
 	// Fallback to token file
@@ -87,19 +99,20 @@ func fallbackSaveToken(accessToken string, fsys afero.Fs) error {
 
 func DeleteAccessToken(fsys afero.Fs) error {
 	// Always delete the fallback token file to handle legacy CLI
-	if err := fallbackDeleteToken(fsys); err == nil {
-		// Typically user system should only have either token file or keyring.
-		// But we delete from both just in case.
-		_ = credentials.StoreProvider.Delete(AccessTokenKey)
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if err := fallbackDeleteToken(fsys); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	// Fallback not found, delete from native credentials store
-	err := credentials.StoreProvider.Delete(AccessTokenKey)
-	if errors.Is(err, credentials.ErrNotSupported) || errors.Is(err, keyring.ErrNotFound) {
-		return errors.New(ErrNotLoggedIn)
-	} else if err != nil {
+	// Always delete from legacy keyring
+	if err := credentials.StoreProvider.Delete(AccessTokenKey); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+		fmt.Fprintln(GetDebugLogger(), err)
+	}
+	// Delete profile from native credentials store
+	if err := credentials.StoreProvider.Delete(CurrentProfile.Name); err != nil {
+		if errors.Is(err, credentials.ErrNotSupported) ||
+			errors.Is(err, keyring.ErrUnsupportedPlatform) ||
+			errors.Is(err, keyring.ErrNotFound) {
+			return errors.New(ErrNotLoggedIn)
+		}
 		return errors.Errorf("failed to delete access token from keyring: %w", err)
 	}
 	return nil
