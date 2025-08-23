@@ -16,7 +16,6 @@ import (
 	"github.com/docker/go-units"
 	"github.com/go-errors/errors"
 	"github.com/supabase/cli/pkg/api"
-	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/config"
 )
 
@@ -44,9 +43,9 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 		return err
 	}
 	policy.Reset()
-	checksum := make(map[string]string, len(result))
-	for _, f := range result {
-		checksum[f.Slug] = cast.Val(f.EzbrSha256, "")
+	slugToIndex := make(map[string]int, len(result))
+	for i, f := range result {
+		slugToIndex[f.Slug] = i
 	}
 	var toUpdate api.BulkUpdateFunctionBody
 OUTER:
@@ -69,13 +68,15 @@ OUTER:
 		bodyHash := sha256.Sum256(body.Bytes())
 		meta.SHA256 = hex.EncodeToString(bodyHash[:])
 		// Skip if function has not changed
-		if checksum[slug] == meta.SHA256 {
+		if i, exists := slugToIndex[slug]; exists && i >= 0 &&
+			result[i].EzbrSha256 != nil && *result[i].EzbrSha256 == meta.SHA256 &&
+			result[i].VerifyJwt != nil && *result[i].VerifyJwt == function.VerifyJWT {
 			fmt.Fprintln(os.Stderr, "No change found in Function:", slug)
 			continue
 		}
 		// Update if function already exists
 		upsert := func() (api.BulkUpdateFunctionBody, error) {
-			if _, ok := checksum[slug]; ok {
+			if _, exists := slugToIndex[slug]; exists {
 				return s.updateFunction(ctx, slug, meta, bytes.NewReader(body.Bytes()))
 			}
 			return s.createFunction(ctx, slug, meta, bytes.NewReader(body.Bytes()))
@@ -84,7 +85,7 @@ OUTER:
 		fmt.Fprintf(os.Stderr, "Deploying Function: %s (script size: %s)\n", slug, functionSize)
 		result, err := backoff.RetryNotifyWithData(upsert, policy, func(err error, d time.Duration) {
 			if strings.Contains(err.Error(), "Duplicated function slug") {
-				checksum[slug] = ""
+				slugToIndex[slug] = -1
 			}
 		})
 		if err != nil {
