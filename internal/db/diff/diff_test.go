@@ -317,7 +317,17 @@ create schema public`)
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", []string{sql}).
 			Reply("INSERT 0 1")
 		// Run test
-		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, conn.Intercept)
+		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, func(cc *pgx.ConnConfig) {
+			if cc.Host == dbConfig.Host {
+				// Fake a SSL error when connecting to target database
+				cc.LookupFunc = func(ctx context.Context, host string) (addrs []string, err error) {
+					return nil, errors.New("server refused TLS connection")
+				}
+			} else {
+				// Hijack connection to shadow database
+				conn.Intercept(cc)
+			}
+		})
 		// Check error
 		assert.Empty(t, diff)
 		assert.ErrorContains(t, err, "error diffing schema")
