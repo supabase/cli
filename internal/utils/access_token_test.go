@@ -166,6 +166,7 @@ func TestDeleteToken(t *testing.T) {
 	t.Run("deletes both keyring and fallback", func(t *testing.T) {
 		token := string(apitest.RandomAccessToken(t))
 		require.NoError(t, credentials.StoreProvider.Set(AccessTokenKey, token))
+		require.NoError(t, credentials.StoreProvider.Set(CurrentProfile.Name, token))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, fallbackSaveToken(token, fsys))
@@ -173,6 +174,8 @@ func TestDeleteToken(t *testing.T) {
 		err := DeleteAccessToken(fsys)
 		// Check error
 		assert.NoError(t, err)
+		_, err = credentials.StoreProvider.Get(CurrentProfile.Name)
+		assert.ErrorIs(t, err, keyring.ErrNotFound)
 		_, err = credentials.StoreProvider.Get(AccessTokenKey)
 		assert.ErrorIs(t, err, keyring.ErrNotFound)
 		path, err := getAccessTokenPath()
