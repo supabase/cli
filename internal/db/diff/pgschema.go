@@ -7,10 +7,11 @@ import (
 	"strings"
 
 	"github.com/go-errors/errors"
+	"github.com/jackc/pgx/v4"
 	pgschema "github.com/stripe/pg-schema-diff/pkg/diff"
 )
 
-func DiffPgSchema(ctx context.Context, source, target string, schema []string) (string, error) {
+func DiffPgSchema(ctx context.Context, source, target string, schema []string, _ ...func(*pgx.ConnConfig)) (string, error) {
 	dbSrc, err := sql.Open("pgx", source)
 	if err != nil {
 		return "", errors.Errorf("failed to open source database: %w", err)

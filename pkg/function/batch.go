@@ -52,7 +52,7 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 OUTER:
 	for slug, function := range functionConfig {
 		if !function.Enabled {
-			fmt.Fprintln(os.Stderr, "Skipped deploying Function:", slug)
+			fmt.Fprintln(os.Stderr, "Skipping disabled Function:", slug)
 			continue
 		}
 		for _, keep := range filter {

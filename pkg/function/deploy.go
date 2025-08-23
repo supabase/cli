@@ -27,7 +27,7 @@ func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.Funct
 	var toDeploy []FunctionDeployMetadata
 	for slug, fc := range functionConfig {
 		if !fc.Enabled {
-			fmt.Fprintln(os.Stderr, "Skipped deploying Function:", slug)
+			fmt.Fprintln(os.Stderr, "Skipping disabled Function:", slug)
 			continue
 		}
 		meta := FunctionDeployMetadata{

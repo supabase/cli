@@ -78,7 +78,7 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang str
 
 	fmt.Fprintln(os.Stderr, "Connecting to", dbConfig.Host, dbConfig.Port)
 	escaped := utils.ToPostgresURL(dbConfig)
-	if require, err := isRequireSSL(ctx, originalURL, options...); err != nil {
+	if require, err := IsRequireSSL(ctx, originalURL, options...); err != nil {
 		return err
 	} else if require {
 		// node-postgres does not support sslmode=prefer
@@ -106,7 +106,7 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang str
 	)
 }
 
-func isRequireSSL(ctx context.Context, dbUrl string, options ...func(*pgx.ConnConfig)) (bool, error) {
+func IsRequireSSL(ctx context.Context, dbUrl string, options ...func(*pgx.ConnConfig)) (bool, error) {
 	conn, err := utils.ConnectByUrl(ctx, dbUrl+"&sslmode=require", options...)
 	if err != nil {
 		if strings.HasSuffix(err.Error(), "(server refused TLS connection)") {
