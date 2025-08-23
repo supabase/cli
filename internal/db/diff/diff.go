@@ -28,7 +28,7 @@ import (
 	"github.com/supabase/cli/pkg/parser"
 )
 
-type DiffFunc func(context.Context, string, string, []string) (string, error)
+type DiffFunc func(context.Context, string, string, []string, ...func(*pgx.ConnConfig)) (string, error)
 
 func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
 	out, err := DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, options...)
@@ -136,7 +136,7 @@ func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs,
 	return migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys))
 }
 
-func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ func(context.Context, string, string, []string) (string, error), options ...func(*pgx.ConnConfig)) (string, error) {
+func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ DiffFunc, options ...func(*pgx.ConnConfig)) (string, error) {
 	fmt.Fprintln(w, "Creating shadow database...")
 	shadow, err := CreateShadowDatabase(ctx, utils.Config.Db.ShadowPort)
 	if err != nil {
@@ -175,7 +175,7 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 	}
 	source := utils.ToPostgresURL(shadowConfig)
 	target := utils.ToPostgresURL(config)
-	return differ(ctx, source, target, schema)
+	return differ(ctx, source, target, schema, options...)
 }
 
 func migrateBaseDatabase(ctx context.Context, config pgconn.Config, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {

@@ -15,6 +15,7 @@ import (
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -72,7 +73,17 @@ func TestRun(t *testing.T) {
 			Reply("CREATE DATABASE")
 		defer conn.Close(t)
 		// Run test
-		err := Run(context.Background(), []string{"public"}, "file", dbConfig, DiffSchemaMigra, fsys, conn.Intercept)
+		err := Run(context.Background(), []string{"public"}, "file", dbConfig, DiffSchemaMigra, fsys, func(cc *pgx.ConnConfig) {
+			if cc.Host == dbConfig.Host {
+				// Fake a SSL error when connecting to target database
+				cc.LookupFunc = func(ctx context.Context, host string) (addrs []string, err error) {
+					return nil, errors.New("server refused TLS connection")
+				}
+			} else {
+				// Hijack connection to shadow database
+				conn.Intercept(cc)
+			}
+		})
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
