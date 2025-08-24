@@ -523,6 +523,25 @@ type ClientInterface interface {
 
 	V1BulkCreateSecrets(ctx context.Context, ref string, body V1BulkCreateSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1ProjectListSnippets request
+	V1ProjectListSnippets(ctx context.Context, ref string, params *V1ProjectListSnippetsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1ProjectCreateSnippetWithBody request with any body
+	V1ProjectCreateSnippetWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1ProjectCreateSnippet(ctx context.Context, ref string, body V1ProjectCreateSnippetJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1ProjectDeleteSnippet request
+	V1ProjectDeleteSnippet(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1ProjectGetSnippet request
+	V1ProjectGetSnippet(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1ProjectUpdateSnippetWithBody request with any body
+	V1ProjectUpdateSnippetWithBody(ctx context.Context, ref string, id openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1ProjectUpdateSnippet(ctx context.Context, ref string, id openapi_types.UUID, body V1ProjectUpdateSnippetJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1GetSslEnforcementConfig request
 	V1GetSslEnforcementConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2447,6 +2466,90 @@ func (c *Client) V1BulkCreateSecretsWithBody(ctx context.Context, ref string, co
 
 func (c *Client) V1BulkCreateSecrets(ctx context.Context, ref string, body V1BulkCreateSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1BulkCreateSecretsRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ProjectListSnippets(ctx context.Context, ref string, params *V1ProjectListSnippetsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ProjectListSnippetsRequest(c.Server, ref, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ProjectCreateSnippetWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ProjectCreateSnippetRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ProjectCreateSnippet(ctx context.Context, ref string, body V1ProjectCreateSnippetJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ProjectCreateSnippetRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ProjectDeleteSnippet(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ProjectDeleteSnippetRequest(c.Server, ref, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ProjectGetSnippet(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ProjectGetSnippetRequest(c.Server, ref, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ProjectUpdateSnippetWithBody(ctx context.Context, ref string, id openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ProjectUpdateSnippetRequestWithBody(c.Server, ref, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ProjectUpdateSnippet(ctx context.Context, ref string, id openapi_types.UUID, body V1ProjectUpdateSnippetJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ProjectUpdateSnippetRequest(c.Server, ref, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8159,6 +8262,325 @@ func NewV1BulkCreateSecretsRequestWithBody(server string, ref string, contentTyp
 	return req, nil
 }
 
+// NewV1ProjectListSnippetsRequest generates requests for V1ProjectListSnippets
+func NewV1ProjectListSnippetsRequest(server string, ref string, params *V1ProjectListSnippetsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/snippets", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.ProjectRef != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "project_ref", runtime.ParamLocationQuery, *params.ProjectRef); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Type != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "type", runtime.ParamLocationQuery, *params.Type); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "cursor", runtime.ParamLocationQuery, *params.Cursor); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.SortBy != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "sort_by", runtime.ParamLocationQuery, *params.SortBy); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.SortOrder != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "sort_order", runtime.ParamLocationQuery, *params.SortOrder); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1ProjectCreateSnippetRequest calls the generic V1ProjectCreateSnippet builder with application/json body
+func NewV1ProjectCreateSnippetRequest(server string, ref string, body V1ProjectCreateSnippetJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1ProjectCreateSnippetRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1ProjectCreateSnippetRequestWithBody generates requests for V1ProjectCreateSnippet with any type of body
+func NewV1ProjectCreateSnippetRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/snippets", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1ProjectDeleteSnippetRequest generates requests for V1ProjectDeleteSnippet
+func NewV1ProjectDeleteSnippetRequest(server string, ref string, id openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/snippets/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1ProjectGetSnippetRequest generates requests for V1ProjectGetSnippet
+func NewV1ProjectGetSnippetRequest(server string, ref string, id openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/snippets/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1ProjectUpdateSnippetRequest calls the generic V1ProjectUpdateSnippet builder with application/json body
+func NewV1ProjectUpdateSnippetRequest(server string, ref string, id openapi_types.UUID, body V1ProjectUpdateSnippetJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1ProjectUpdateSnippetRequestWithBody(server, ref, id, "application/json", bodyReader)
+}
+
+// NewV1ProjectUpdateSnippetRequestWithBody generates requests for V1ProjectUpdateSnippet with any type of body
+func NewV1ProjectUpdateSnippetRequestWithBody(server string, ref string, id openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/snippets/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewV1GetSslEnforcementConfigRequest generates requests for V1GetSslEnforcementConfig
 func NewV1GetSslEnforcementConfigRequest(server string, ref string) (*http.Request, error) {
 	var err error
@@ -8654,6 +9076,22 @@ func NewV1ListAllSnippetsRequest(server string, params *V1ListAllSnippetsParams)
 		if params.ProjectRef != nil {
 
 			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "project_ref", runtime.ParamLocationQuery, *params.ProjectRef); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Type != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "type", runtime.ParamLocationQuery, *params.Type); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -9251,6 +9689,25 @@ type ClientWithResponsesInterface interface {
 	V1BulkCreateSecretsWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1BulkCreateSecretsResponse, error)
 
 	V1BulkCreateSecretsWithResponse(ctx context.Context, ref string, body V1BulkCreateSecretsJSONRequestBody, reqEditors ...RequestEditorFn) (*V1BulkCreateSecretsResponse, error)
+
+	// V1ProjectListSnippetsWithResponse request
+	V1ProjectListSnippetsWithResponse(ctx context.Context, ref string, params *V1ProjectListSnippetsParams, reqEditors ...RequestEditorFn) (*V1ProjectListSnippetsResponse, error)
+
+	// V1ProjectCreateSnippetWithBodyWithResponse request with any body
+	V1ProjectCreateSnippetWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ProjectCreateSnippetResponse, error)
+
+	V1ProjectCreateSnippetWithResponse(ctx context.Context, ref string, body V1ProjectCreateSnippetJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ProjectCreateSnippetResponse, error)
+
+	// V1ProjectDeleteSnippetWithResponse request
+	V1ProjectDeleteSnippetWithResponse(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1ProjectDeleteSnippetResponse, error)
+
+	// V1ProjectGetSnippetWithResponse request
+	V1ProjectGetSnippetWithResponse(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1ProjectGetSnippetResponse, error)
+
+	// V1ProjectUpdateSnippetWithBodyWithResponse request with any body
+	V1ProjectUpdateSnippetWithBodyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ProjectUpdateSnippetResponse, error)
+
+	V1ProjectUpdateSnippetWithResponse(ctx context.Context, ref string, id openapi_types.UUID, body V1ProjectUpdateSnippetJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ProjectUpdateSnippetResponse, error)
 
 	// V1GetSslEnforcementConfigWithResponse request
 	V1GetSslEnforcementConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetSslEnforcementConfigResponse, error)
@@ -11846,6 +12303,114 @@ func (r V1BulkCreateSecretsResponse) StatusCode() int {
 	return 0
 }
 
+type V1ProjectListSnippetsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *SnippetList
+}
+
+// Status returns HTTPResponse.Status
+func (r V1ProjectListSnippetsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1ProjectListSnippetsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1ProjectCreateSnippetResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *SnippetResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1ProjectCreateSnippetResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1ProjectCreateSnippetResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1ProjectDeleteSnippetResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1ProjectDeleteSnippetResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1ProjectDeleteSnippetResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1ProjectGetSnippetResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *SnippetResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1ProjectGetSnippetResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1ProjectGetSnippetResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1ProjectUpdateSnippetResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1ProjectUpdateSnippetResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1ProjectUpdateSnippetResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1GetSslEnforcementConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -13504,6 +14069,67 @@ func (c *ClientWithResponses) V1BulkCreateSecretsWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseV1BulkCreateSecretsResponse(rsp)
+}
+
+// V1ProjectListSnippetsWithResponse request returning *V1ProjectListSnippetsResponse
+func (c *ClientWithResponses) V1ProjectListSnippetsWithResponse(ctx context.Context, ref string, params *V1ProjectListSnippetsParams, reqEditors ...RequestEditorFn) (*V1ProjectListSnippetsResponse, error) {
+	rsp, err := c.V1ProjectListSnippets(ctx, ref, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ProjectListSnippetsResponse(rsp)
+}
+
+// V1ProjectCreateSnippetWithBodyWithResponse request with arbitrary body returning *V1ProjectCreateSnippetResponse
+func (c *ClientWithResponses) V1ProjectCreateSnippetWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ProjectCreateSnippetResponse, error) {
+	rsp, err := c.V1ProjectCreateSnippetWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ProjectCreateSnippetResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1ProjectCreateSnippetWithResponse(ctx context.Context, ref string, body V1ProjectCreateSnippetJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ProjectCreateSnippetResponse, error) {
+	rsp, err := c.V1ProjectCreateSnippet(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ProjectCreateSnippetResponse(rsp)
+}
+
+// V1ProjectDeleteSnippetWithResponse request returning *V1ProjectDeleteSnippetResponse
+func (c *ClientWithResponses) V1ProjectDeleteSnippetWithResponse(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1ProjectDeleteSnippetResponse, error) {
+	rsp, err := c.V1ProjectDeleteSnippet(ctx, ref, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ProjectDeleteSnippetResponse(rsp)
+}
+
+// V1ProjectGetSnippetWithResponse request returning *V1ProjectGetSnippetResponse
+func (c *ClientWithResponses) V1ProjectGetSnippetWithResponse(ctx context.Context, ref string, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1ProjectGetSnippetResponse, error) {
+	rsp, err := c.V1ProjectGetSnippet(ctx, ref, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ProjectGetSnippetResponse(rsp)
+}
+
+// V1ProjectUpdateSnippetWithBodyWithResponse request with arbitrary body returning *V1ProjectUpdateSnippetResponse
+func (c *ClientWithResponses) V1ProjectUpdateSnippetWithBodyWithResponse(ctx context.Context, ref string, id openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ProjectUpdateSnippetResponse, error) {
+	rsp, err := c.V1ProjectUpdateSnippetWithBody(ctx, ref, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ProjectUpdateSnippetResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1ProjectUpdateSnippetWithResponse(ctx context.Context, ref string, id openapi_types.UUID, body V1ProjectUpdateSnippetJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ProjectUpdateSnippetResponse, error) {
+	rsp, err := c.V1ProjectUpdateSnippet(ctx, ref, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ProjectUpdateSnippetResponse(rsp)
 }
 
 // V1GetSslEnforcementConfigWithResponse request returning *V1GetSslEnforcementConfigResponse
@@ -16410,6 +17036,116 @@ func ParseV1BulkCreateSecretsResponse(rsp *http.Response) (*V1BulkCreateSecretsR
 	}
 
 	response := &V1BulkCreateSecretsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1ProjectListSnippetsResponse parses an HTTP response from a V1ProjectListSnippetsWithResponse call
+func ParseV1ProjectListSnippetsResponse(rsp *http.Response) (*V1ProjectListSnippetsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1ProjectListSnippetsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SnippetList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1ProjectCreateSnippetResponse parses an HTTP response from a V1ProjectCreateSnippetWithResponse call
+func ParseV1ProjectCreateSnippetResponse(rsp *http.Response) (*V1ProjectCreateSnippetResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1ProjectCreateSnippetResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest SnippetResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1ProjectDeleteSnippetResponse parses an HTTP response from a V1ProjectDeleteSnippetWithResponse call
+func ParseV1ProjectDeleteSnippetResponse(rsp *http.Response) (*V1ProjectDeleteSnippetResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1ProjectDeleteSnippetResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1ProjectGetSnippetResponse parses an HTTP response from a V1ProjectGetSnippetWithResponse call
+func ParseV1ProjectGetSnippetResponse(rsp *http.Response) (*V1ProjectGetSnippetResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1ProjectGetSnippetResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SnippetResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1ProjectUpdateSnippetResponse parses an HTTP response from a V1ProjectUpdateSnippetWithResponse call
+func ParseV1ProjectUpdateSnippetResponse(rsp *http.Response) (*V1ProjectUpdateSnippetResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1ProjectUpdateSnippetResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
