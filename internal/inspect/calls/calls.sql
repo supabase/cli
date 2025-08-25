@@ -3,7 +3,24 @@ SELECT
   (interval '1 millisecond' * total_exec_time)::text AS total_exec_time,
   to_char((total_exec_time/sum(total_exec_time) OVER()) * 100, 'FM90D0') || '%'  AS prop_exec_time,
   to_char(calls, 'FM999G999G990') AS ncalls,
-  (interval '1 millisecond' * (blk_read_time + blk_write_time))::text AS sync_io_time
-FROM pg_stat_statements
+  /*
+    Handle column names for 15 and 17
+  */
+  (
+    interval '1 millisecond' * (
+      COALESCE(
+        (to_jsonb(s) ->> 'shared_blk_read_time')::double precision,
+        (to_jsonb(s) ->> 'blk_read_time')::double precision,
+        0
+      )
+      +
+      COALESCE(
+        (to_jsonb(s) ->> 'shared_blk_write_time')::double precision,
+        (to_jsonb(s) ->> 'blk_write_time')::double precision,
+        0
+      )
+    )
+  )::text AS sync_io_time
+FROM pg_stat_statements s
 ORDER BY calls DESC
 LIMIT 10

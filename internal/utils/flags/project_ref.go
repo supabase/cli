@@ -52,16 +52,20 @@ func PromptProjectRef(ctx context.Context, title string, opts ...tea.ProgramOpti
 }
 
 func LoadProjectRef(fsys afero.Fs) error {
+	debuglogger := utils.GetDebugLogger()
 	// Flag takes highest precedence
 	if len(ProjectRef) > 0 {
+		fmt.Fprintf(debuglogger, "Loading project ref from flag: %s\n", ProjectRef)
 		return utils.AssertProjectRefIsValid(ProjectRef)
 	}
 	// Env var takes precedence over ref file
 	if ProjectRef = viper.GetString("PROJECT_ID"); len(ProjectRef) > 0 {
+		fmt.Fprintf(debuglogger, "Loading project ref from env var: %s\n", ProjectRef)
 		return utils.AssertProjectRefIsValid(ProjectRef)
 	}
 	// Load from local file last
 	projectRefBytes, err := afero.ReadFile(fsys, utils.ProjectRefPath)
+	fmt.Fprintf(debuglogger, "Loading project ref from file: %s\n", utils.ProjectRefPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return errors.New(utils.ErrNotLinked)
 	} else if err != nil {

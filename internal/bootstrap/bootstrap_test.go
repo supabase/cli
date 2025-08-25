@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -64,6 +65,7 @@ func TestWriteEnv(t *testing.T) {
 
 	t.Run("writes .env", func(t *testing.T) {
 		flags.ProjectRef = "testing"
+		utils.CurrentProfile.ProjectHost = "supabase.co"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
@@ -80,6 +82,7 @@ SUPABASE_URL="https://testing.supabase.co"`, string(env))
 
 	t.Run("merges with .env.example", func(t *testing.T) {
 		flags.ProjectRef = "testing"
+		utils.CurrentProfile.ProjectHost = "supabase.co"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		example, err := godotenv.Marshal(map[string]string{

@@ -11,7 +11,6 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils/cloudflare"
 	supabase "github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
@@ -139,11 +138,8 @@ func GetSupabase() *supabase.ClientWithResponses {
 	return apiClient
 }
 
-const (
-	DefaultApiHost = "https://api.supabase.com"
-	// DEPRECATED
-	DeprecatedApiHost = "https://api.supabase.io"
-)
+// Used by unit tests
+var DefaultApiHost = CurrentProfile.APIURL
 
 var RegionMap = map[string]string{
 	"ap-northeast-1": "Northeast Asia (Tokyo)",
@@ -163,43 +159,17 @@ var RegionMap = map[string]string{
 }
 
 func GetSupabaseAPIHost() string {
-	apiHost := viper.GetString("INTERNAL_API_HOST")
-	if apiHost == "" {
-		apiHost = DefaultApiHost
-	}
-	return apiHost
+	return CurrentProfile.APIURL
 }
 
 func GetSupabaseDashboardURL() string {
-	switch GetSupabaseAPIHost() {
-	case DefaultApiHost, DeprecatedApiHost:
-		return "https://supabase.com/dashboard"
-	case "https://api.supabase.green":
-		return "https://supabase.green/dashboard"
-	default:
-		return "http://127.0.0.1:8082"
-	}
-}
-
-func GetSupabaseDbHost(projectRef string) string {
-	// TODO: query projects api for db_host
-	switch GetSupabaseAPIHost() {
-	case DefaultApiHost, DeprecatedApiHost:
-		return fmt.Sprintf("db.%s.supabase.co", projectRef)
-	case "https://api.supabase.green":
-		return fmt.Sprintf("db.%s.supabase.red", projectRef)
-	default:
-		return fmt.Sprintf("db.%s.supabase.red", projectRef)
-	}
+	return CurrentProfile.DashboardURL
 }
 
 func GetSupabaseHost(projectRef string) string {
-	switch GetSupabaseAPIHost() {
-	case DefaultApiHost, DeprecatedApiHost:
-		return fmt.Sprintf("%s.supabase.co", projectRef)
-	case "https://api.supabase.green":
-		return fmt.Sprintf("%s.supabase.red", projectRef)
-	default:
-		return fmt.Sprintf("%s.supabase.red", projectRef)
-	}
+	return fmt.Sprintf("%s.%s", projectRef, CurrentProfile.ProjectHost)
+}
+
+func GetSupabaseDbHost(projectRef string) string {
+	return "db." + GetSupabaseHost(projectRef)
 }

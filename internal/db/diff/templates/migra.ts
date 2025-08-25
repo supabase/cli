@@ -1,8 +1,12 @@
 import { createClient } from "npm:@pgkit/client";
 import { Migration } from "npm:@pgkit/migra";
 
+// Avoids error on self-signed certificate
+const ca = Deno.env.get("SSL_CA");
 const clientBase = createClient(Deno.env.get("SOURCE"));
-const clientHead = createClient(Deno.env.get("TARGET"));
+const clientHead = createClient(Deno.env.get("TARGET"), {
+  pgpOptions: { connect: { ssl: ca && { ca } } },
+});
 const includedSchemas = Deno.env.get("INCLUDED_SCHEMAS")?.split(",") ?? [];
 const excludedSchemas = Deno.env.get("EXCLUDED_SCHEMAS")?.split(",") ?? [];
 

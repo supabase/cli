@@ -93,6 +93,7 @@ var (
 		"service_role",
 		"supabase_admin",
 		"supabase_auth_admin",
+		"supabase_etl_admin",
 		"supabase_functions_admin",
 		"supabase_read_only_user",
 		"supabase_realtime_admin",

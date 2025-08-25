@@ -585,26 +585,6 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if err := c.loadFromFile(builder.ConfigPath, fsys); err != nil {
 		return err
 	}
-	// Generate JWT tokens
-	if len(c.Auth.JwtSecret.Value) < 16 {
-		return errors.Errorf("Invalid config for auth.jwt_secret. Must be at least 16 characters")
-	}
-	if len(c.Auth.AnonKey.Value) == 0 {
-		anonToken := CustomClaims{Role: "anon"}.NewToken()
-		if signed, err := anonToken.SignedString([]byte(c.Auth.JwtSecret.Value)); err != nil {
-			return errors.Errorf("failed to generate anon key: %w", err)
-		} else {
-			c.Auth.AnonKey.Value = signed
-		}
-	}
-	if len(c.Auth.ServiceRoleKey.Value) == 0 {
-		anonToken := CustomClaims{Role: "service_role"}.NewToken()
-		if signed, err := anonToken.SignedString([]byte(c.Auth.JwtSecret.Value)); err != nil {
-			return errors.Errorf("failed to generate service_role key: %w", err)
-		} else {
-			c.Auth.ServiceRoleKey.Value = signed
-		}
-	}
 	// TODO: move linked pooler connection string elsewhere
 	if connString, err := fs.ReadFile(fsys, builder.PoolerUrlPath); err == nil && len(connString) > 0 {
 		c.Db.Pooler.ConnectionString = string(connString)
@@ -783,11 +763,14 @@ func (c *config) Validate(fsys fs.FS) error {
 		return errors.New("Missing required field in config: db.major_version")
 	case 12:
 		return errors.New("Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.")
-	case 13, 14, 17:
-		// TODO: support oriole db 17 eventually
-	case 15:
+	case 13, 14:
+	case 15, 17:
 		if len(c.Experimental.OrioleDBVersion) > 0 {
-			c.Db.Image = "supabase/postgres:orioledb-" + c.Experimental.OrioleDBVersion
+			if VersionCompare(c.Experimental.OrioleDBVersion, "15.1.1.13") > 0 {
+				c.Db.Image = fmt.Sprintf("supabase/postgres:%s-orioledb", c.Experimental.OrioleDBVersion)
+			} else {
+				c.Db.Image = "supabase/postgres:orioledb-" + c.Experimental.OrioleDBVersion
+			}
 			if err := assertEnvLoaded(c.Experimental.S3Host); err != nil {
 				return err
 			}
@@ -851,6 +834,18 @@ func (c *config) Validate(fsys fs.FS) error {
 				return err
 			}
 		}
+		if len(c.Auth.SigningKeysPath) > 0 {
+			if f, err := fsys.Open(c.Auth.SigningKeysPath); errors.Is(err, os.ErrNotExist) {
+				// Ignore missing signing key path on CI
+			} else if err != nil {
+				return errors.Errorf("failed to read signing keys: %w", err)
+			} else if c.Auth.SigningKeys, err = fetcher.ParseJSON[[]JWK](f); err != nil {
+				return errors.Errorf("failed to decode signing keys: %w", err)
+			}
+		}
+		if err := c.Auth.generateAPIKeys(); err != nil {
+			return err
+		}
 		if err := c.Auth.Hook.validate(); err != nil {
 			return err
 		}
@@ -880,9 +875,10 @@ func (c *config) Validate(fsys fs.FS) error {
 	case 0:
 		return errors.New("Missing required field in config: edge_runtime.deno_version")
 	case 1:
+		c.EdgeRuntime.Image = deno1
 		break
 	case 2:
-		c.EdgeRuntime.Image = deno2
+		break
 	default:
 		return errors.Errorf("Failed reading config: Invalid %s: %v.", "edge_runtime.deno_version", c.EdgeRuntime.DenoVersion)
 	}
@@ -1319,6 +1315,17 @@ func (c *tpaClerk) validate() (err error) {
 	return nil
 }
 
+func (w *tpaWorkOs) validate() error {
+	if w.IssuerUrl == "" {
+		return errors.New("Invalid config: auth.third_party.workos is enabled but without a issuer_url.")
+	}
+	return nil
+}
+
+func (w *tpaWorkOs) issuerURL() string {
+	return w.IssuerUrl
+}
+
 func (tpa *thirdParty) validate() error {
 	enabled := 0
 
@@ -1354,6 +1361,14 @@ func (tpa *thirdParty) validate() error {
 		}
 	}
 
+	if tpa.WorkOs.Enabled {
+		enabled += 1
+
+		if err := tpa.WorkOs.validate(); err != nil {
+			return err
+		}
+	}
+
 	if enabled > 1 {
 		return errors.New("Invalid config: Only one third_party provider allowed to be enabled at a time.")
 	}
@@ -1376,6 +1391,10 @@ func (tpa *thirdParty) IssuerURL() string {
 
 	if tpa.Clerk.Enabled {
 		return tpa.Clerk.issuerURL()
+	}
+
+	if tpa.WorkOs.Enabled {
+		return tpa.WorkOs.issuerURL()
 	}
 
 	return ""
@@ -1449,19 +1468,16 @@ func (a *auth) ResolveJWKS(ctx context.Context, fsys afero.Fs) (string, error) {
 		jwks.Keys = append(jwks.Keys, rJWKS.Keys...)
 	}
 
-	// If SIGNING_KEYS_PATH is provided, read from file
-	if len(a.SigningKeysPath) > 0 {
-		f, err := fsys.Open(a.SigningKeysPath)
+	// Convert each signing key to public-only version
+	for _, key := range a.SigningKeys {
+		publicKeyEncoded, err := json.Marshal(key.ToPublicJWK())
 		if err != nil {
-			return "", errors.Errorf("failed to read signing key: %w", err)
+			return "", errors.Errorf("failed to marshal public key: %w", err)
 		}
-		jwtKeysArray, err := fetcher.ParseJSON[[]json.RawMessage](f)
-		if err != nil {
-			return "", err
-		}
-		jwks.Keys = append(jwks.Keys, jwtKeysArray...)
-	} else {
-		// Fallback to JWT_SECRET for backward compatibility
+		jwks.Keys = append(jwks.Keys, json.RawMessage(publicKeyEncoded))
+	}
+	// Fallback to JWT_SECRET for backward compatibility
+	if len(a.SigningKeys) == 0 {
 		jwtSecret := secretJWK{
 			KeyType:      "oct",
 			KeyBase64URL: base64.RawURLEncoding.EncodeToString([]byte(a.JwtSecret.Value)),

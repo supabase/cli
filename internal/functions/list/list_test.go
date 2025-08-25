@@ -3,6 +3,7 @@ package list
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 
 	"github.com/h2non/gock"
@@ -14,14 +15,15 @@ import (
 )
 
 func TestFunctionsListCommand(t *testing.T) {
+	// Setup valid project ref
+	project := apitest.RandomProjectRef()
+	// Setup valid access token
+	token := apitest.RandomAccessToken(t)
+	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
 	t.Run("lists all functions", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
-		// Setup valid access token
-		token := apitest.RandomAccessToken(t)
-		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 
@@ -53,11 +55,16 @@ func TestFunctionsListCommand(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("throws error on missing access token", func(t *testing.T) {
+	t.Run("throws error on service unavailable", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		// Flush pending mocks after test execution
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions").
+			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := Run(context.Background(), "", fsys)
+		err := Run(context.Background(), project, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Unexpected error retrieving functions")
 	})
@@ -65,11 +72,6 @@ func TestFunctionsListCommand(t *testing.T) {
 	t.Run("throws error on network error", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
-		// Setup valid access token
-		token := apitest.RandomAccessToken(t)
-		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).

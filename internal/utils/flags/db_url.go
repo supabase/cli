@@ -138,6 +138,8 @@ func NewDbConfigWithPassword(ctx context.Context, projectRef string) pgconn.Conf
 			}
 			config.User = newRole.User
 			return config
+		} else {
+			fmt.Fprintln(utils.GetDebugLogger(), err)
 		}
 	}
 	if config.Password, err = credentials.StoreProvider.Get(projectRef); err == nil {

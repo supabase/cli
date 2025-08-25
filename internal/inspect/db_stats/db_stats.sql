@@ -12,16 +12,47 @@ WITH total_objects AS (
     UNION
   SELECT
     't' AS relkind,
-    ROUND(SUM(heap_blks_hit)::numeric / nullif(SUM(heap_blks_hit + heap_blks_read), 0), 2) AS ratio
-  FROM pg_statio_user_tables
+    /*
+      Handle column names for both PG15 and 17
+    */
+    ROUND(
+      (
+        SUM(
+          COALESCE(
+            (to_jsonb(s) ->> 'rel_blks_hit')::bigint,
+            (to_jsonb(s) ->> 'heap_blks_hit')::bigint,
+            0
+          )
+        )::numeric
+        /
+        nullif(
+          SUM(
+            COALESCE(
+              (to_jsonb(s) ->> 'rel_blks_hit')::bigint,
+              (to_jsonb(s) ->> 'heap_blks_hit')::bigint,
+              0
+            )
+            +
+            COALESCE(
+              (to_jsonb(s) ->> 'rel_blks_read')::bigint,
+              (to_jsonb(s) ->> 'heap_blks_read')::bigint,
+              0
+            )
+          ),
+          0
+        )
+      ),
+      2
+    ) AS ratio
+  FROM pg_statio_user_tables s
   WHERE NOT schemaname LIKE ANY($1)
 )
 SELECT
   pg_size_pretty(pg_database_size($2)) AS database_size,
-  (SELECT size FROM total_objects WHERE relkind = 'i') AS total_index_size,
-  (SELECT size FROM total_objects WHERE relkind = 'r') AS total_table_size,
-  (SELECT size FROM total_objects WHERE relkind = 't') AS total_toast_size,
-  (SELECT (now() - stats_reset)::text FROM pg_stat_statements_info) AS time_since_stats_reset,
+  COALESCE((SELECT size FROM total_objects WHERE relkind = 'i'), '0 bytes') AS total_index_size,
+  COALESCE((SELECT size FROM total_objects WHERE relkind = 'r'), '0 bytes') AS total_table_size,
+  COALESCE((SELECT size FROM total_objects WHERE relkind = 't'), '0 bytes') AS total_toast_size,
+  COALESCE((SELECT (now() - stats_reset)::text FROM pg_stat_statements_info), 'N/A') AS time_since_stats_reset,
   (SELECT COALESCE(ratio::text, 'N/A') FROM cache_hit WHERE relkind = 'i') AS index_hit_rate,
   (SELECT COALESCE(ratio::text, 'N/A') FROM cache_hit WHERE relkind = 't') AS table_hit_rate,
-  (SELECT pg_size_pretty(SUM(size)) FROM pg_ls_waldir()) AS wal_size
+  COALESCE((SELECT pg_size_pretty(SUM(size)) FROM pg_ls_waldir()), '0 bytes') AS wal_size
