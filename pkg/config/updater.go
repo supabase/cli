@@ -143,7 +143,7 @@ func (u *ConfigUpdater) UpdateAuthConfig(ctx context.Context, projectRef string,
 	} else if authConfig.JSON200 == nil {
 		return errors.Errorf("unexpected status %d: %s", authConfig.StatusCode(), string(authConfig.Body))
 	}
-	authDiff, err := c.DiffWithRemote(*authConfig.JSON200)
+	authDiff, err := c.DiffWithRemote(*authConfig.JSON200, filter...)
 	if err != nil {
 		return err
 	} else if len(authDiff) == 0 {

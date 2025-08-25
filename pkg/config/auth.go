@@ -1326,14 +1326,31 @@ func (w *web3) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	}
 }
 
-func (a *auth) DiffWithRemote(remoteConfig v1API.AuthConfigResponse) ([]byte, error) {
+func (a *auth) DiffWithRemote(remoteConfig v1API.AuthConfigResponse, filter ...func(string) bool) ([]byte, error) {
 	copy := a.Clone()
+	copy.FromRemoteAuthConfig(remoteConfig)
+	// Confirm cost before enabling addons
+	for _, keep := range filter {
+		if a.MFA.Phone.VerifyEnabled && !copy.MFA.Phone.VerifyEnabled {
+			if !keep(string(v1API.ListProjectAddonsResponseAvailableAddonsTypeAuthMfaPhone)) {
+				a.MFA.Phone.VerifyEnabled = false
+				// Enroll cannot be enabled on its own
+				a.MFA.Phone.EnrollEnabled = false
+			}
+		}
+		if a.MFA.WebAuthn.VerifyEnabled && !copy.MFA.WebAuthn.VerifyEnabled {
+			if !keep(string(v1API.ListProjectAddonsResponseAvailableAddonsTypeAuthMfaWebAuthn)) {
+				a.MFA.WebAuthn.VerifyEnabled = false
+				// Enroll cannot be enabled on its own
+				a.MFA.WebAuthn.EnrollEnabled = false
+			}
+		}
+	}
 	// Convert the config values into easily comparable remoteConfig values
-	currentValue, err := ToTomlBytes(copy)
+	currentValue, err := ToTomlBytes(a)
 	if err != nil {
 		return nil, err
 	}
-	copy.FromRemoteAuthConfig(remoteConfig)
 	remoteCompare, err := ToTomlBytes(copy)
 	if err != nil {
 		return nil, err
