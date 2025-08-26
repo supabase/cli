@@ -175,6 +175,9 @@ type ClientInterface interface {
 	// V1GetSecurityAdvisors request
 	V1GetSecurityAdvisors(ctx context.Context, ref string, params *V1GetSecurityAdvisorsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1GetProjectFunctionCombinedStats request
+	V1GetProjectFunctionCombinedStats(ctx context.Context, ref string, params *V1GetProjectFunctionCombinedStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1GetProjectLogs request
 	V1GetProjectLogs(ctx context.Context, ref string, params *V1GetProjectLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -933,6 +936,18 @@ func (c *Client) V1GetPerformanceAdvisors(ctx context.Context, ref string, reqEd
 
 func (c *Client) V1GetSecurityAdvisors(ctx context.Context, ref string, params *V1GetSecurityAdvisorsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1GetSecurityAdvisorsRequest(c.Server, ref, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetProjectFunctionCombinedStats(ctx context.Context, ref string, params *V1GetProjectFunctionCombinedStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetProjectFunctionCombinedStatsRequest(c.Server, ref, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3808,6 +3823,70 @@ func NewV1GetSecurityAdvisorsRequest(server string, ref string, params *V1GetSec
 				}
 			}
 
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1GetProjectFunctionCombinedStatsRequest generates requests for V1GetProjectFunctionCombinedStats
+func NewV1GetProjectFunctionCombinedStatsRequest(server string, ref string, params *V1GetProjectFunctionCombinedStatsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/analytics/endpoints/functions.combined-stats", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "interval", runtime.ParamLocationQuery, params.Interval); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "function_id", runtime.ParamLocationQuery, params.FunctionId); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
@@ -8904,6 +8983,9 @@ type ClientWithResponsesInterface interface {
 	// V1GetSecurityAdvisorsWithResponse request
 	V1GetSecurityAdvisorsWithResponse(ctx context.Context, ref string, params *V1GetSecurityAdvisorsParams, reqEditors ...RequestEditorFn) (*V1GetSecurityAdvisorsResponse, error)
 
+	// V1GetProjectFunctionCombinedStatsWithResponse request
+	V1GetProjectFunctionCombinedStatsWithResponse(ctx context.Context, ref string, params *V1GetProjectFunctionCombinedStatsParams, reqEditors ...RequestEditorFn) (*V1GetProjectFunctionCombinedStatsResponse, error)
+
 	// V1GetProjectLogsWithResponse request
 	V1GetProjectLogsWithResponse(ctx context.Context, ref string, params *V1GetProjectLogsParams, reqEditors ...RequestEditorFn) (*V1GetProjectLogsResponse, error)
 
@@ -9795,6 +9877,28 @@ func (r V1GetSecurityAdvisorsResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1GetSecurityAdvisorsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetProjectFunctionCombinedStatsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *AnalyticsResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetProjectFunctionCombinedStatsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetProjectFunctionCombinedStatsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -12402,6 +12506,15 @@ func (c *ClientWithResponses) V1GetSecurityAdvisorsWithResponse(ctx context.Cont
 	return ParseV1GetSecurityAdvisorsResponse(rsp)
 }
 
+// V1GetProjectFunctionCombinedStatsWithResponse request returning *V1GetProjectFunctionCombinedStatsResponse
+func (c *ClientWithResponses) V1GetProjectFunctionCombinedStatsWithResponse(ctx context.Context, ref string, params *V1GetProjectFunctionCombinedStatsParams, reqEditors ...RequestEditorFn) (*V1GetProjectFunctionCombinedStatsResponse, error) {
+	rsp, err := c.V1GetProjectFunctionCombinedStats(ctx, ref, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetProjectFunctionCombinedStatsResponse(rsp)
+}
+
 // V1GetProjectLogsWithResponse request returning *V1GetProjectLogsResponse
 func (c *ClientWithResponses) V1GetProjectLogsWithResponse(ctx context.Context, ref string, params *V1GetProjectLogsParams, reqEditors ...RequestEditorFn) (*V1GetProjectLogsResponse, error) {
 	rsp, err := c.V1GetProjectLogs(ctx, ref, params, reqEditors...)
@@ -14193,6 +14306,32 @@ func ParseV1GetSecurityAdvisorsResponse(rsp *http.Response) (*V1GetSecurityAdvis
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest V1ProjectAdvisorsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetProjectFunctionCombinedStatsResponse parses an HTTP response from a V1GetProjectFunctionCombinedStatsWithResponse call
+func ParseV1GetProjectFunctionCombinedStatsResponse(rsp *http.Response) (*V1GetProjectFunctionCombinedStatsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetProjectFunctionCombinedStatsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AnalyticsResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
