@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"os"
 	"strings"
@@ -78,28 +79,27 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang str
 	}
 
 	fmt.Fprintln(os.Stderr, "Connecting to", dbConfig.Host, dbConfig.Port)
-	escaped := utils.ToPostgresURL(dbConfig)
-	if require, err := IsRequireSSL(ctx, originalURL, options...); err != nil {
+	env := []string{
+		"PG_META_DB_URL=" + utils.ToPostgresURL(dbConfig),
+		fmt.Sprintf("PG_CONN_TIMEOUT_SECS=%.0f", queryTimeout.Seconds()),
+		fmt.Sprintf("PG_QUERY_TIMEOUT_SECS=%.0f", queryTimeout.Seconds()),
+		"PG_META_GENERATE_TYPES=" + lang,
+		"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=" + included,
+		"PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL=" + swiftAccessControl,
+		fmt.Sprintf("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=%v", !postgrestV9Compat),
+	}
+	if ca, err := GetRootCA(ctx, originalURL, options...); err != nil {
 		return err
-	} else if require {
-		// node-postgres does not support sslmode=prefer
-		escaped += "&sslmode=require"
+	} else if len(ca) > 0 {
+		env = append(env, "PG_META_DB_SSL_ROOT_CERT="+ca)
 	}
 
 	return utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
 			Image: utils.Config.Studio.PgmetaImage,
-			Env: []string{
-				"PG_META_DB_URL=" + escaped,
-				fmt.Sprintf("PG_CONN_TIMEOUT_SECS=%.0f", queryTimeout.Seconds()),
-				fmt.Sprintf("PG_QUERY_TIMEOUT_SECS=%.0f", queryTimeout.Seconds()),
-				"PG_META_GENERATE_TYPES=" + lang,
-				"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=" + included,
-				"PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL=" + swiftAccessControl,
-				fmt.Sprintf("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=%v", !postgrestV9Compat),
-			},
-			Cmd: []string{"node", "dist/server/server.js"},
+			Env:   env,
+			Cmd:   []string{"node", "dist/server/server.js"},
 		},
 		hostConfig,
 		network.NetworkingConfig{},
@@ -109,7 +109,22 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang str
 	)
 }
 
-func IsRequireSSL(ctx context.Context, dbUrl string, options ...func(*pgx.ConnConfig)) (bool, error) {
+var (
+	//go:embed templates/staging-ca-2021.crt
+	caStaging string
+	//go:embed templates/prod-ca-2021.crt
+	caProd string
+)
+
+func GetRootCA(ctx context.Context, dbURL string, options ...func(*pgx.ConnConfig)) (string, error) {
+	// node-postgres does not support sslmode=prefer
+	if require, err := isRequireSSL(ctx, dbURL, options...); !require {
+		return "", err
+	}
+	return caStaging + caProd, nil
+}
+
+func isRequireSSL(ctx context.Context, dbUrl string, options ...func(*pgx.ConnConfig)) (bool, error) {
 	conn, err := utils.ConnectByUrl(ctx, dbUrl+"&sslmode=require", options...)
 	if err != nil {
 		if strings.HasSuffix(err.Error(), "(server refused TLS connection)") {
