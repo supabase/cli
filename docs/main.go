@@ -4,82 +4,149 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
+	"github.com/go-errors/errors"
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 	cli "github.com/supabase/cli/cmd"
 	"github.com/supabase/cli/internal/utils"
 	"gopkg.in/yaml.v3"
 )
 
-const tagOthers = "other-commands"
-
-var (
-	examples map[string][]ExampleDoc
-	//go:embed templates/examples.yaml
-	exampleSpec string
-	//go:embed supabase/*
-	docsDir embed.FS
+const (
+	srcCommand = "command"
+	srcConfig  = "config"
 )
 
 func main() {
+	target := utils.EnumFlag{
+		Allowed: []string{
+			srcCommand,
+			srcConfig,
+		},
+		Value: srcCommand,
+	}
+	pflag.VarP(&target, "target", "t", "target document to generate")
+	pflag.Parse()
+	// Parse cli args
 	semver := "latest"
-	if len(os.Args) > 1 {
-		semver = os.Args[1]
+	if arg := pflag.Arg(0); len(arg) > 0 {
+		semver = strings.TrimPrefix(arg, "v")
 	}
-	// Trim version tag
-	if semver[0] == 'v' {
-		semver = semver[1:]
-	}
-
-	if err := generate(semver); err != nil {
+	if err := generate(semver, target.Value); err != nil {
 		log.Fatalln(err)
 	}
 }
 
-func generate(version string) error {
-	dec := yaml.NewDecoder(strings.NewReader(exampleSpec))
-	if err := dec.Decode(&examples); err != nil {
-		return err
+func generate(version, target string) error {
+	switch target {
+	case srcCommand:
+		return writeCommandSpec(version, os.Stdout)
+	case srcConfig:
+		return writeConfigSpec(version, os.Stdout)
 	}
-	root := cli.GetRootCmd()
-	root.InitDefaultCompletionCmd()
-	root.InitDefaultHelpFlag()
-	spec := SpecDoc{
-		Clispec: "001",
+	return errors.Errorf("unsupported target document: %s", target)
+}
+
+type ConfigDoc struct {
+	Configspec string     `yaml:",omitempty"`
+	Info       InfoDoc    `yaml:",omitempty"`
+	Parameters []ParamDoc `yaml:",omitempty"`
+}
+
+type ParamDoc struct {
+	Id          string    `yaml:",omitempty"`
+	Title       string    `yaml:",omitempty"`
+	Description string    `yaml:",omitempty"`
+	Required    bool      `yaml:",omitempty"`
+	Default     string    `yaml:",omitempty"`
+	Tags        []string  `yaml:",omitempty"`
+	Links       []LinkDoc `yaml:""`
+}
+
+func writeConfigSpec(version string, w io.Writer) error {
+	spec := ConfigDoc{
+		Configspec: "001",
 		Info: InfoDoc{
 			Id:          "cli",
 			Version:     version,
-			Title:       strings.TrimSpace(root.Short),
-			Description: forceMultiLine("Supabase CLI provides you with tools to develop your application locally, and deploy your application to the Supabase platform."),
-			Language:    "sh",
+			Title:       "CLI",
+			Description: "A `supabase/config.toml` file is generated after running `supabase init`.\n\nYou can edit this file to change the settings for your locally running project. After you make changes, you will need to restart using `supabase stop` and then `supabase start` for the changes to take effect.",
 			Source:      "https://github.com/supabase/cli",
 			Bugs:        "https://github.com/supabase/cli/issues",
-			Spec:        "https://github.com/supabase/spec/cli_v1_commands.yaml",
-			Tags:        getTags(root),
+			Spec:        "https://github.com/supabase/supabase/apps/docs/spec/cli_v1_config.yaml",
+			Tags: []TagDoc{{
+				Id:          "general",
+				Title:       "General",
+				Description: "General settings.",
+			}},
 		},
 	}
-	root.Flags().VisitAll(func(flag *pflag.Flag) {
-		if !flag.Hidden {
-			spec.Flags = append(spec.Flags, getFlags(flag))
+	// Load default values
+	v := viper.New()
+	if err := loadDefaultValues(v); err != nil {
+		return err
+	}
+	exists := map[string]struct{}{}
+	for _, k := range v.AllKeys() {
+		tag := spec.Info.Tags[0].Id
+		if i := strings.IndexByte(k, '.'); i > 0 {
+			tag = k[:i]
+			exists[tag] = struct{}{}
 		}
+		spec.Parameters = append(spec.Parameters, ParamDoc{
+			Id:       k,
+			Title:    k,
+			Tags:     []string{tag},
+			Required: false,
+			Default:  v.GetString(k),
+		})
+	}
+	sort.Slice(spec.Parameters, func(i, j int) bool {
+		return spec.Parameters[i].Id < spec.Parameters[j].Id
 	})
-	cobra.CheckErr(root.MarkFlagRequired("experimental"))
-	// Generate, serialise, and print
-	yamlDoc := GenYamlDoc(root, &spec)
-	spec.Info.Options = yamlDoc.Options
-	// Reverse commands list
-	for i, j := 0, len(spec.Commands)-1; i < j; i, j = i+1, j-1 {
-		spec.Commands[i], spec.Commands[j] = spec.Commands[j], spec.Commands[i]
+	for k := range exists {
+		spec.Info.Tags = append(spec.Info.Tags, TagDoc{
+			Id:          k,
+			Title:       k,
+			Description: fmt.Sprintf("%s settings.", k),
+		})
+		fmt.Fprintln(os.Stderr, k)
 	}
 	// Write to stdout
-	encoder := yaml.NewEncoder(os.Stdout)
+	encoder := yaml.NewEncoder(w)
 	encoder.SetIndent(2)
 	return encoder.Encode(spec)
+}
+
+func loadDefaultValues(v *viper.Viper) error {
+	if err := utils.Config.Load("", embed.FS{}); err != nil {
+		return err
+	}
+	base, _ := utils.Config.GetRemoteByProjectRef("")
+	var result map[string]any
+	if dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+		TagName:    "toml",
+		Squash:     true,
+		ZeroFields: true,
+		Result:     &result,
+	}); err != nil {
+		return errors.Errorf("failed to init decoder: %w", err)
+	} else if err := dec.Decode(base); err != nil {
+		return errors.Errorf("failed to decode config: %w", err)
+	}
+	if err := v.MergeConfigMap(result); err != nil {
+		return errors.Errorf("failed to merge config: %w", err)
+	}
+	return nil
 }
 
 type TagDoc struct {
@@ -144,22 +211,65 @@ type LinkDoc struct {
 	Link string `yaml:",omitempty"`
 }
 
-type ParamDoc struct {
-	Id          string    `yaml:",omitempty"`
-	Title       string    `yaml:",omitempty"`
-	Description string    `yaml:",omitempty"`
-	Required    bool      `yaml:",omitempty"`
-	Default     string    `yaml:",omitempty"`
-	Tags        []string  `yaml:",omitempty"`
-	Links       []LinkDoc `yaml:""`
-}
-
 type SpecDoc struct {
 	Clispec    string    `yaml:",omitempty"`
 	Info       InfoDoc   `yaml:",omitempty"`
 	Flags      []FlagDoc `yaml:",omitempty"`
 	Commands   []CmdDoc  `yaml:",omitempty"`
 	Parameters []FlagDoc `yaml:",omitempty"`
+}
+
+const tagOthers = "other-commands"
+
+var (
+	examples map[string][]ExampleDoc
+	//go:embed templates/examples.yaml
+	exampleSpec string
+	//go:embed supabase/*
+	docsDir embed.FS
+)
+
+func writeCommandSpec(version string, w io.Writer) error {
+	dec := yaml.NewDecoder(strings.NewReader(exampleSpec))
+	if err := dec.Decode(&examples); err != nil {
+		return err
+	}
+	root := cli.GetRootCmd()
+	root.InitDefaultCompletionCmd()
+	root.InitDefaultHelpFlag()
+	spec := SpecDoc{
+		Clispec: "001",
+		Info: InfoDoc{
+			Id:          "cli",
+			Version:     version,
+			Title:       strings.TrimSpace(root.Short),
+			Description: forceMultiLine("Supabase CLI provides you with tools to develop your application locally, and deploy your application to the Supabase platform."),
+			Language:    "sh",
+			Source:      "https://github.com/supabase/cli",
+			Bugs:        "https://github.com/supabase/cli/issues",
+			Spec:        "https://github.com/supabase/supabase/apps/docs/spec/cli_v1_commands.yaml",
+			Tags:        getTags(root),
+		},
+	}
+	root.Flags().VisitAll(func(flag *pflag.Flag) {
+		if !flag.Hidden {
+			spec.Flags = append(spec.Flags, getFlags(flag))
+		}
+	})
+	if err := root.MarkFlagRequired("experimental"); err != nil {
+		return err
+	}
+	// Generate, serialise, and print
+	yamlDoc := GenYamlDoc(root, &spec)
+	spec.Info.Options = yamlDoc.Options
+	// Reverse commands list
+	for i, j := 0, len(spec.Commands)-1; i < j; i, j = i+1, j-1 {
+		spec.Commands[i], spec.Commands[j] = spec.Commands[j], spec.Commands[i]
+	}
+	// Write to stdout
+	encoder := yaml.NewEncoder(w)
+	encoder.SetIndent(2)
+	return encoder.Encode(spec)
 }
 
 // DFS on command tree to generate documentation specs.
