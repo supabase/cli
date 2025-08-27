@@ -999,15 +999,23 @@ const (
 	Sql V1GetSecurityAdvisorsParamsLintType = "sql"
 )
 
+// Defines values for V1GetProjectFunctionCombinedStatsParamsInterval.
+const (
+	V1GetProjectFunctionCombinedStatsParamsIntervalN15min V1GetProjectFunctionCombinedStatsParamsInterval = "15min"
+	V1GetProjectFunctionCombinedStatsParamsIntervalN1day  V1GetProjectFunctionCombinedStatsParamsInterval = "1day"
+	V1GetProjectFunctionCombinedStatsParamsIntervalN1hr   V1GetProjectFunctionCombinedStatsParamsInterval = "1hr"
+	V1GetProjectFunctionCombinedStatsParamsIntervalN3hr   V1GetProjectFunctionCombinedStatsParamsInterval = "3hr"
+)
+
 // Defines values for V1GetProjectUsageApiCountParamsInterval.
 const (
-	N15min V1GetProjectUsageApiCountParamsInterval = "15min"
-	N1day  V1GetProjectUsageApiCountParamsInterval = "1day"
-	N1hr   V1GetProjectUsageApiCountParamsInterval = "1hr"
-	N30min V1GetProjectUsageApiCountParamsInterval = "30min"
-	N3day  V1GetProjectUsageApiCountParamsInterval = "3day"
-	N3hr   V1GetProjectUsageApiCountParamsInterval = "3hr"
-	N7day  V1GetProjectUsageApiCountParamsInterval = "7day"
+	V1GetProjectUsageApiCountParamsIntervalN15min V1GetProjectUsageApiCountParamsInterval = "15min"
+	V1GetProjectUsageApiCountParamsIntervalN1day  V1GetProjectUsageApiCountParamsInterval = "1day"
+	V1GetProjectUsageApiCountParamsIntervalN1hr   V1GetProjectUsageApiCountParamsInterval = "1hr"
+	V1GetProjectUsageApiCountParamsIntervalN30min V1GetProjectUsageApiCountParamsInterval = "30min"
+	V1GetProjectUsageApiCountParamsIntervalN3day  V1GetProjectUsageApiCountParamsInterval = "3day"
+	V1GetProjectUsageApiCountParamsIntervalN3hr   V1GetProjectUsageApiCountParamsInterval = "3hr"
+	V1GetProjectUsageApiCountParamsIntervalN7day  V1GetProjectUsageApiCountParamsInterval = "7day"
 )
 
 // Defines values for V1RemoveProjectAddonParamsAddonVariant0.
@@ -1272,6 +1280,8 @@ type AuthConfigResponse struct {
 	MfaTotpVerifyEnabled                          nullable.Nullable[bool]                                         `json:"mfa_totp_verify_enabled"`
 	MfaWebAuthnEnrollEnabled                      nullable.Nullable[bool]                                         `json:"mfa_web_authn_enroll_enabled"`
 	MfaWebAuthnVerifyEnabled                      nullable.Nullable[bool]                                         `json:"mfa_web_authn_verify_enabled"`
+	NimbusOauthClientId                           nullable.Nullable[string]                                       `json:"nimbus_oauth_client_id"`
+	NimbusOauthClientSecret                       nullable.Nullable[string]                                       `json:"nimbus_oauth_client_secret"`
 	PasswordHibpEnabled                           nullable.Nullable[bool]                                         `json:"password_hibp_enabled"`
 	PasswordMinLength                             nullable.Nullable[int]                                          `json:"password_min_length"`
 	PasswordRequiredCharacters                    nullable.Nullable[AuthConfigResponsePasswordRequiredCharacters] `json:"password_required_characters"`
@@ -2529,6 +2539,8 @@ type UpdateAuthConfigBody struct {
 	MfaTotpVerifyEnabled                          nullable.Nullable[bool]                                           `json:"mfa_totp_verify_enabled,omitempty"`
 	MfaWebAuthnEnrollEnabled                      nullable.Nullable[bool]                                           `json:"mfa_web_authn_enroll_enabled,omitempty"`
 	MfaWebAuthnVerifyEnabled                      nullable.Nullable[bool]                                           `json:"mfa_web_authn_verify_enabled,omitempty"`
+	NimbusOauthClientId                           nullable.Nullable[string]                                         `json:"nimbus_oauth_client_id,omitempty"`
+	NimbusOauthClientSecret                       nullable.Nullable[string]                                         `json:"nimbus_oauth_client_secret,omitempty"`
 	PasswordHibpEnabled                           nullable.Nullable[bool]                                           `json:"password_hibp_enabled,omitempty"`
 	PasswordMinLength                             nullable.Nullable[int]                                            `json:"password_min_length,omitempty"`
 	PasswordRequiredCharacters                    nullable.Nullable[UpdateAuthConfigBodyPasswordRequiredCharacters] `json:"password_required_characters,omitempty"`
@@ -3258,6 +3270,15 @@ type V1GetSecurityAdvisorsParams struct {
 
 // V1GetSecurityAdvisorsParamsLintType defines parameters for V1GetSecurityAdvisors.
 type V1GetSecurityAdvisorsParamsLintType string
+
+// V1GetProjectFunctionCombinedStatsParams defines parameters for V1GetProjectFunctionCombinedStats.
+type V1GetProjectFunctionCombinedStatsParams struct {
+	Interval   V1GetProjectFunctionCombinedStatsParamsInterval `form:"interval" json:"interval"`
+	FunctionId string                                          `form:"function_id" json:"function_id"`
+}
+
+// V1GetProjectFunctionCombinedStatsParamsInterval defines parameters for V1GetProjectFunctionCombinedStats.
+type V1GetProjectFunctionCombinedStatsParamsInterval string
 
 // V1GetProjectLogsParams defines parameters for V1GetProjectLogs.
 type V1GetProjectLogsParams struct {
