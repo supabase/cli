@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
@@ -28,7 +29,7 @@ const (
 	SwiftInternalAccessControl = "internal"
 )
 
-func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang string, schemas []string, postgrestV9Compat bool, swiftAccessControl string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang string, schemas []string, postgrestV9Compat bool, swiftAccessControl string, queryTimeout time.Duration, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	originalURL := utils.ToPostgresURL(dbConfig)
 	// Add default schemas if --schema flag is not specified
 	if len(schemas) == 0 {
@@ -91,6 +92,8 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang str
 			Image: utils.Config.Studio.PgmetaImage,
 			Env: []string{
 				"PG_META_DB_URL=" + escaped,
+				fmt.Sprintf("PG_CONN_TIMEOUT_SECS=%.0f", queryTimeout.Seconds()),
+				fmt.Sprintf("PG_QUERY_TIMEOUT_SECS=%.0f", queryTimeout.Seconds()),
 				"PG_META_GENERATE_TYPES=" + lang,
 				"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=" + included,
 				"PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL=" + swiftAccessControl,
