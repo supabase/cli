@@ -385,6 +385,11 @@ type ClientInterface interface {
 	// V1GetJitAccess request
 	V1GetJitAccess(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1AuthorizeJitAccessWithBody request with any body
+	V1AuthorizeJitAccessWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1AuthorizeJitAccess(ctx context.Context, ref string, body V1AuthorizeJitAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1UpdateJitAccessWithBody request with any body
 	V1UpdateJitAccessWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1838,6 +1843,30 @@ func (c *Client) V1GetDatabaseMetadata(ctx context.Context, ref string, reqEdito
 
 func (c *Client) V1GetJitAccess(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1GetJitAccessRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1AuthorizeJitAccessWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1AuthorizeJitAccessRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1AuthorizeJitAccess(ctx context.Context, ref string, body V1AuthorizeJitAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1AuthorizeJitAccessRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6410,6 +6439,53 @@ func NewV1GetJitAccessRequest(server string, ref string) (*http.Request, error) 
 	return req, nil
 }
 
+// NewV1AuthorizeJitAccessRequest calls the generic V1AuthorizeJitAccess builder with application/json body
+func NewV1AuthorizeJitAccessRequest(server string, ref string, body V1AuthorizeJitAccessJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1AuthorizeJitAccessRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1AuthorizeJitAccessRequestWithBody generates requests for V1AuthorizeJitAccess with any type of body
+func NewV1AuthorizeJitAccessRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/jit", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewV1UpdateJitAccessRequest calls the generic V1UpdateJitAccess builder with application/json body
 func NewV1UpdateJitAccessRequest(server string, ref string, body V1UpdateJitAccessJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -9193,6 +9269,11 @@ type ClientWithResponsesInterface interface {
 	// V1GetJitAccessWithResponse request
 	V1GetJitAccessWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetJitAccessResponse, error)
 
+	// V1AuthorizeJitAccessWithBodyWithResponse request with any body
+	V1AuthorizeJitAccessWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1AuthorizeJitAccessResponse, error)
+
+	V1AuthorizeJitAccessWithResponse(ctx context.Context, ref string, body V1AuthorizeJitAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*V1AuthorizeJitAccessResponse, error)
+
 	// V1UpdateJitAccessWithBodyWithResponse request with any body
 	V1UpdateJitAccessWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateJitAccessResponse, error)
 
@@ -11145,6 +11226,28 @@ func (r V1GetJitAccessResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1GetJitAccessResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1AuthorizeJitAccessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *JitAuthorizeAccessResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1AuthorizeJitAccessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1AuthorizeJitAccessResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -13164,6 +13267,23 @@ func (c *ClientWithResponses) V1GetJitAccessWithResponse(ctx context.Context, re
 		return nil, err
 	}
 	return ParseV1GetJitAccessResponse(rsp)
+}
+
+// V1AuthorizeJitAccessWithBodyWithResponse request with arbitrary body returning *V1AuthorizeJitAccessResponse
+func (c *ClientWithResponses) V1AuthorizeJitAccessWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1AuthorizeJitAccessResponse, error) {
+	rsp, err := c.V1AuthorizeJitAccessWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1AuthorizeJitAccessResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1AuthorizeJitAccessWithResponse(ctx context.Context, ref string, body V1AuthorizeJitAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*V1AuthorizeJitAccessResponse, error) {
+	rsp, err := c.V1AuthorizeJitAccess(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1AuthorizeJitAccessResponse(rsp)
 }
 
 // V1UpdateJitAccessWithBodyWithResponse request with arbitrary body returning *V1UpdateJitAccessResponse
@@ -15734,6 +15854,32 @@ func ParseV1GetJitAccessResponse(rsp *http.Response) (*V1GetJitAccessResponse, e
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest JitAccessResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1AuthorizeJitAccessResponse parses an HTTP response from a V1AuthorizeJitAccessWithResponse call
+func ParseV1AuthorizeJitAccessResponse(rsp *http.Response) (*V1AuthorizeJitAccessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1AuthorizeJitAccessResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest JitAuthorizeAccessResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
