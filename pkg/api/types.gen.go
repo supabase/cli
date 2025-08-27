@@ -1348,6 +1348,12 @@ type AuthConfigResponseSecurityCaptchaProvider string
 // AuthConfigResponseSmsProvider defines model for AuthConfigResponse.SmsProvider.
 type AuthConfigResponseSmsProvider string
 
+// AuthorizeJitAccessBody defines model for AuthorizeJitAccessBody.
+type AuthorizeJitAccessBody struct {
+	Rhost string `json:"rhost"`
+	Role  string `json:"role"`
+}
+
 // BranchActionBody defines model for BranchActionBody.
 type BranchActionBody struct {
 	MigrationVersion *string `json:"migration_version,omitempty"`
@@ -1817,9 +1823,34 @@ type GetProviderResponse struct {
 type JitAccessResponse struct {
 	UserId    openapi_types.UUID `json:"user_id"`
 	UserRoles []struct {
-		ExpiresAt *string `json:"expires_at,omitempty"`
-		Role      string  `json:"role"`
+		AllowedNetworks *struct {
+			AllowedCidrs *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs,omitempty"`
+			AllowedCidrsV6 *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs_v6,omitempty"`
+		} `json:"allowed_networks,omitempty"`
+		ExpiresAt *float32 `json:"expires_at,omitempty"`
+		Role      string   `json:"role"`
 	} `json:"user_roles"`
+}
+
+// JitAuthorizeAccessResponse defines model for JitAuthorizeAccessResponse.
+type JitAuthorizeAccessResponse struct {
+	UserId   openapi_types.UUID `json:"user_id"`
+	UserRole struct {
+		AllowedNetworks *struct {
+			AllowedCidrs *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs,omitempty"`
+			AllowedCidrsV6 *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs_v6,omitempty"`
+		} `json:"allowed_networks,omitempty"`
+		ExpiresAt *float32 `json:"expires_at,omitempty"`
+		Role      string   `json:"role"`
+	} `json:"user_role"`
 }
 
 // JitListAccessResponse defines model for JitListAccessResponse.
@@ -1827,8 +1858,16 @@ type JitListAccessResponse struct {
 	Items []struct {
 		UserId    openapi_types.UUID `json:"user_id"`
 		UserRoles []struct {
-			ExpiresAt *string `json:"expires_at,omitempty"`
-			Role      string  `json:"role"`
+			AllowedNetworks *struct {
+				AllowedCidrs *[]struct {
+					Cidr string `json:"cidr"`
+				} `json:"allowed_cidrs,omitempty"`
+				AllowedCidrsV6 *[]struct {
+					Cidr string `json:"cidr"`
+				} `json:"allowed_cidrs_v6,omitempty"`
+			} `json:"allowed_networks,omitempty"`
+			ExpiresAt *float32 `json:"expires_at,omitempty"`
+			Role      string   `json:"role"`
 		} `json:"user_roles"`
 	} `json:"items"`
 }
@@ -2666,8 +2705,16 @@ type UpdateCustomHostnameResponseStatus string
 // UpdateJitAccessBody defines model for UpdateJitAccessBody.
 type UpdateJitAccessBody struct {
 	Roles []struct {
-		ExpiresAt *string `json:"expires_at,omitempty"`
-		Role      string  `json:"role"`
+		AllowedNetworks *struct {
+			AllowedCidrs *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs,omitempty"`
+			AllowedCidrsV6 *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs_v6,omitempty"`
+		} `json:"allowed_networks,omitempty"`
+		ExpiresAt *float32 `json:"expires_at,omitempty"`
+		Role      string   `json:"role"`
 	} `json:"roles"`
 	UserId openapi_types.UUID `json:"user_id"`
 }
@@ -3514,6 +3561,9 @@ type V1CreateRestorePointJSONRequestBody = V1RestorePointPostBody
 
 // V1UndoJSONRequestBody defines body for V1Undo for application/json ContentType.
 type V1UndoJSONRequestBody = V1UndoBody
+
+// V1AuthorizeJitAccessJSONRequestBody defines body for V1AuthorizeJitAccess for application/json ContentType.
+type V1AuthorizeJitAccessJSONRequestBody = AuthorizeJitAccessBody
 
 // V1UpdateJitAccessJSONRequestBody defines body for V1UpdateJitAccess for application/json ContentType.
 type V1UpdateJitAccessJSONRequestBody = UpdateJitAccessBody
