@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"os/signal"
+	"time"
 
 	env "github.com/Netflix/go-env"
 	"github.com/go-errors/errors"
@@ -56,6 +57,7 @@ var (
 		},
 		Value: types.LangTypescript,
 	}
+	queryTimeout       time.Duration
 	postgrestV9Compat  bool
 	swiftAccessControl = utils.EnumFlag{
 		Allowed: []string{
@@ -88,7 +90,7 @@ var (
 					return err
 				}
 			}
-			return types.Run(ctx, flags.ProjectRef, flags.DbConfig, lang.Value, schema, postgrestV9Compat, swiftAccessControl.Value, afero.NewOsFs())
+			return types.Run(ctx, flags.ProjectRef, flags.DbConfig, lang.Value, schema, postgrestV9Compat, swiftAccessControl.Value, queryTimeout, afero.NewOsFs())
 		},
 		Example: `  supabase gen types --local
   supabase gen types --linked --lang=go
@@ -126,8 +128,13 @@ func init() {
 	genTypesCmd.MarkFlagsMutuallyExclusive("local", "linked", "project-id", "db-url")
 	typeFlags.Var(&lang, "lang", "Output language of the generated types.")
 	typeFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
+	// Direct connection only flags
 	typeFlags.Var(&swiftAccessControl, "swift-access-control", "Access control for Swift generated types.")
-	typeFlags.BoolVar(&postgrestV9Compat, "postgrest-v9-compat", false, "Generate types compatible with PostgREST v9 and below. Only use together with --db-url.")
+	genTypesCmd.MarkFlagsMutuallyExclusive("linked", "project-id", "swift-access-control")
+	typeFlags.BoolVar(&postgrestV9Compat, "postgrest-v9-compat", false, "Generate types compatible with PostgREST v9 and below.")
+	genTypesCmd.MarkFlagsMutuallyExclusive("linked", "project-id", "postgrest-v9-compat")
+	typeFlags.DurationVar(&queryTimeout, "query-timeout", time.Second*15, "Maximum timeout allowed for the database query.")
+	genTypesCmd.MarkFlagsMutuallyExclusive("linked", "project-id", "query-timeout")
 	genCmd.AddCommand(genTypesCmd)
 	keyFlags := genKeysCmd.Flags()
 	keyFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")

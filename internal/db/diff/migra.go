@@ -23,11 +23,6 @@ var (
 	//go:embed templates/migra.ts
 	diffSchemaTypeScript string
 
-	//go:embed templates/staging-ca-2021.crt
-	caStaging string
-	//go:embed templates/prod-ca-2021.crt
-	caProd string
-
 	managedSchemas = []string{
 		// Local development
 		"_analytics",
@@ -107,12 +102,10 @@ func loadSchema(ctx context.Context, dbURL string, options ...func(*pgx.ConnConf
 
 func DiffSchemaMigra(ctx context.Context, source, target string, schema []string, options ...func(*pgx.ConnConfig)) (string, error) {
 	env := []string{"SOURCE=" + source, "TARGET=" + target}
-	// node-postgres does not support sslmode=prefer
-	if require, err := types.IsRequireSSL(ctx, target, options...); err != nil {
+	if ca, err := types.GetRootCA(ctx, target, options...); err != nil {
 		return "", err
-	} else if require {
-		rootCA := caStaging + caProd
-		env = append(env, "SSL_CA="+rootCA)
+	} else if len(ca) > 0 {
+		env = append(env, "SSL_CA="+ca)
 	}
 	if len(schema) > 0 {
 		env = append(env, "INCLUDED_SCHEMAS="+strings.Join(schema, ","))
