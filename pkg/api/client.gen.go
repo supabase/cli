@@ -469,6 +469,11 @@ type ClientInterface interface {
 	// V1GetNetworkRestrictions request
 	V1GetNetworkRestrictions(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1PatchNetworkRestrictionsWithBody request with any body
+	V1PatchNetworkRestrictionsWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1PatchNetworkRestrictions(ctx context.Context, ref string, body V1PatchNetworkRestrictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1UpdateNetworkRestrictionsWithBody request with any body
 	V1UpdateNetworkRestrictionsWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2215,6 +2220,30 @@ func (c *Client) V1ListAllNetworkBansEnriched(ctx context.Context, ref string, r
 
 func (c *Client) V1GetNetworkRestrictions(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1GetNetworkRestrictionsRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1PatchNetworkRestrictionsWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1PatchNetworkRestrictionsRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1PatchNetworkRestrictions(ctx context.Context, ref string, body V1PatchNetworkRestrictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1PatchNetworkRestrictionsRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7679,6 +7708,53 @@ func NewV1GetNetworkRestrictionsRequest(server string, ref string) (*http.Reques
 	return req, nil
 }
 
+// NewV1PatchNetworkRestrictionsRequest calls the generic V1PatchNetworkRestrictions builder with application/json body
+func NewV1PatchNetworkRestrictionsRequest(server string, ref string, body V1PatchNetworkRestrictionsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1PatchNetworkRestrictionsRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1PatchNetworkRestrictionsRequestWithBody generates requests for V1PatchNetworkRestrictions with any type of body
+func NewV1PatchNetworkRestrictionsRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/network-restrictions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewV1UpdateNetworkRestrictionsRequest calls the generic V1UpdateNetworkRestrictions builder with application/json body
 func NewV1UpdateNetworkRestrictionsRequest(server string, ref string, body V1UpdateNetworkRestrictionsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -9352,6 +9428,11 @@ type ClientWithResponsesInterface interface {
 
 	// V1GetNetworkRestrictionsWithResponse request
 	V1GetNetworkRestrictionsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetNetworkRestrictionsResponse, error)
+
+	// V1PatchNetworkRestrictionsWithBodyWithResponse request with any body
+	V1PatchNetworkRestrictionsWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1PatchNetworkRestrictionsResponse, error)
+
+	V1PatchNetworkRestrictionsWithResponse(ctx context.Context, ref string, body V1PatchNetworkRestrictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*V1PatchNetworkRestrictionsResponse, error)
 
 	// V1UpdateNetworkRestrictionsWithBodyWithResponse request with any body
 	V1UpdateNetworkRestrictionsWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateNetworkRestrictionsResponse, error)
@@ -11709,6 +11790,28 @@ func (r V1GetNetworkRestrictionsResponse) StatusCode() int {
 	return 0
 }
 
+type V1PatchNetworkRestrictionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *NetworkRestrictionsV2Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1PatchNetworkRestrictionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1PatchNetworkRestrictionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1UpdateNetworkRestrictionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -13537,6 +13640,23 @@ func (c *ClientWithResponses) V1GetNetworkRestrictionsWithResponse(ctx context.C
 		return nil, err
 	}
 	return ParseV1GetNetworkRestrictionsResponse(rsp)
+}
+
+// V1PatchNetworkRestrictionsWithBodyWithResponse request with arbitrary body returning *V1PatchNetworkRestrictionsResponse
+func (c *ClientWithResponses) V1PatchNetworkRestrictionsWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1PatchNetworkRestrictionsResponse, error) {
+	rsp, err := c.V1PatchNetworkRestrictionsWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1PatchNetworkRestrictionsResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1PatchNetworkRestrictionsWithResponse(ctx context.Context, ref string, body V1PatchNetworkRestrictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*V1PatchNetworkRestrictionsResponse, error) {
+	rsp, err := c.V1PatchNetworkRestrictions(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1PatchNetworkRestrictionsResponse(rsp)
 }
 
 // V1UpdateNetworkRestrictionsWithBodyWithResponse request with arbitrary body returning *V1UpdateNetworkRestrictionsResponse
@@ -16356,6 +16476,32 @@ func ParseV1GetNetworkRestrictionsResponse(rsp *http.Response) (*V1GetNetworkRes
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest NetworkRestrictionsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1PatchNetworkRestrictionsResponse parses an HTTP response from a V1PatchNetworkRestrictionsWithResponse call
+func ParseV1PatchNetworkRestrictionsResponse(rsp *http.Response) (*V1PatchNetworkRestrictionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1PatchNetworkRestrictionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest NetworkRestrictionsV2Response
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
