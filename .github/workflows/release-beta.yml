@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - id: semantic-release
-        uses: cycjimmy/semantic-release-action@v4
+        uses: cycjimmy/semantic-release-action@v5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
