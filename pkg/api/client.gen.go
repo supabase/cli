@@ -248,6 +248,14 @@ type ClientInterface interface {
 	// V1CreateProjectClaimToken request
 	V1CreateProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1DeleteLoginRoles request
+	V1DeleteLoginRoles(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1CreateLoginRoleWithBody request with any body
+	V1CreateLoginRoleWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1CreateLoginRole(ctx context.Context, ref string, body V1CreateLoginRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1GetAuthServiceConfig request
 	V1GetAuthServiceConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -468,6 +476,11 @@ type ClientInterface interface {
 
 	// V1GetNetworkRestrictions request
 	V1GetNetworkRestrictions(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1PatchNetworkRestrictionsWithBody request with any body
+	V1PatchNetworkRestrictionsWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1PatchNetworkRestrictions(ctx context.Context, ref string, body V1PatchNetworkRestrictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1UpdateNetworkRestrictionsWithBody request with any body
 	V1UpdateNetworkRestrictionsWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1243,6 +1256,42 @@ func (c *Client) V1GetProjectClaimToken(ctx context.Context, ref string, reqEdit
 
 func (c *Client) V1CreateProjectClaimToken(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1CreateProjectClaimTokenRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1DeleteLoginRoles(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1DeleteLoginRolesRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1CreateLoginRoleWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1CreateLoginRoleRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1CreateLoginRole(ctx context.Context, ref string, body V1CreateLoginRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1CreateLoginRoleRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2215,6 +2264,30 @@ func (c *Client) V1ListAllNetworkBansEnriched(ctx context.Context, ref string, r
 
 func (c *Client) V1GetNetworkRestrictions(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1GetNetworkRestrictionsRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1PatchNetworkRestrictionsWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1PatchNetworkRestrictionsRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1PatchNetworkRestrictions(ctx context.Context, ref string, body V1PatchNetworkRestrictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1PatchNetworkRestrictionsRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4930,6 +5003,87 @@ func NewV1CreateProjectClaimTokenRequest(server string, ref string) (*http.Reque
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewV1DeleteLoginRolesRequest generates requests for V1DeleteLoginRoles
+func NewV1DeleteLoginRolesRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/cli/login-role", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1CreateLoginRoleRequest calls the generic V1CreateLoginRole builder with application/json body
+func NewV1CreateLoginRoleRequest(server string, ref string, body V1CreateLoginRoleJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1CreateLoginRoleRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1CreateLoginRoleRequestWithBody generates requests for V1CreateLoginRole with any type of body
+func NewV1CreateLoginRoleRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/cli/login-role", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -7679,6 +7833,53 @@ func NewV1GetNetworkRestrictionsRequest(server string, ref string) (*http.Reques
 	return req, nil
 }
 
+// NewV1PatchNetworkRestrictionsRequest calls the generic V1PatchNetworkRestrictions builder with application/json body
+func NewV1PatchNetworkRestrictionsRequest(server string, ref string, body V1PatchNetworkRestrictionsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1PatchNetworkRestrictionsRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1PatchNetworkRestrictionsRequestWithBody generates requests for V1PatchNetworkRestrictions with any type of body
+func NewV1PatchNetworkRestrictionsRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/network-restrictions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewV1UpdateNetworkRestrictionsRequest calls the generic V1UpdateNetworkRestrictions builder with application/json body
 func NewV1UpdateNetworkRestrictionsRequest(server string, ref string, body V1UpdateNetworkRestrictionsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -9132,6 +9333,14 @@ type ClientWithResponsesInterface interface {
 	// V1CreateProjectClaimTokenWithResponse request
 	V1CreateProjectClaimTokenWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1CreateProjectClaimTokenResponse, error)
 
+	// V1DeleteLoginRolesWithResponse request
+	V1DeleteLoginRolesWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteLoginRolesResponse, error)
+
+	// V1CreateLoginRoleWithBodyWithResponse request with any body
+	V1CreateLoginRoleWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1CreateLoginRoleResponse, error)
+
+	V1CreateLoginRoleWithResponse(ctx context.Context, ref string, body V1CreateLoginRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateLoginRoleResponse, error)
+
 	// V1GetAuthServiceConfigWithResponse request
 	V1GetAuthServiceConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetAuthServiceConfigResponse, error)
 
@@ -9352,6 +9561,11 @@ type ClientWithResponsesInterface interface {
 
 	// V1GetNetworkRestrictionsWithResponse request
 	V1GetNetworkRestrictionsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetNetworkRestrictionsResponse, error)
+
+	// V1PatchNetworkRestrictionsWithBodyWithResponse request with any body
+	V1PatchNetworkRestrictionsWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1PatchNetworkRestrictionsResponse, error)
+
+	V1PatchNetworkRestrictionsWithResponse(ctx context.Context, ref string, body V1PatchNetworkRestrictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*V1PatchNetworkRestrictionsResponse, error)
 
 	// V1UpdateNetworkRestrictionsWithBodyWithResponse request with any body
 	V1UpdateNetworkRestrictionsWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateNetworkRestrictionsResponse, error)
@@ -10416,6 +10630,50 @@ func (r V1CreateProjectClaimTokenResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1CreateProjectClaimTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1DeleteLoginRolesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *DeleteRolesResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1DeleteLoginRolesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1DeleteLoginRolesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1CreateLoginRoleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *CreateRoleResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1CreateLoginRoleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1CreateLoginRoleResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -11709,6 +11967,28 @@ func (r V1GetNetworkRestrictionsResponse) StatusCode() int {
 	return 0
 }
 
+type V1PatchNetworkRestrictionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *NetworkRestrictionsV2Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1PatchNetworkRestrictionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1PatchNetworkRestrictionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1UpdateNetworkRestrictionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -12832,6 +13112,32 @@ func (c *ClientWithResponses) V1CreateProjectClaimTokenWithResponse(ctx context.
 	return ParseV1CreateProjectClaimTokenResponse(rsp)
 }
 
+// V1DeleteLoginRolesWithResponse request returning *V1DeleteLoginRolesResponse
+func (c *ClientWithResponses) V1DeleteLoginRolesWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteLoginRolesResponse, error) {
+	rsp, err := c.V1DeleteLoginRoles(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1DeleteLoginRolesResponse(rsp)
+}
+
+// V1CreateLoginRoleWithBodyWithResponse request with arbitrary body returning *V1CreateLoginRoleResponse
+func (c *ClientWithResponses) V1CreateLoginRoleWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1CreateLoginRoleResponse, error) {
+	rsp, err := c.V1CreateLoginRoleWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1CreateLoginRoleResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1CreateLoginRoleWithResponse(ctx context.Context, ref string, body V1CreateLoginRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateLoginRoleResponse, error) {
+	rsp, err := c.V1CreateLoginRole(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1CreateLoginRoleResponse(rsp)
+}
+
 // V1GetAuthServiceConfigWithResponse request returning *V1GetAuthServiceConfigResponse
 func (c *ClientWithResponses) V1GetAuthServiceConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetAuthServiceConfigResponse, error) {
 	rsp, err := c.V1GetAuthServiceConfig(ctx, ref, reqEditors...)
@@ -13537,6 +13843,23 @@ func (c *ClientWithResponses) V1GetNetworkRestrictionsWithResponse(ctx context.C
 		return nil, err
 	}
 	return ParseV1GetNetworkRestrictionsResponse(rsp)
+}
+
+// V1PatchNetworkRestrictionsWithBodyWithResponse request with arbitrary body returning *V1PatchNetworkRestrictionsResponse
+func (c *ClientWithResponses) V1PatchNetworkRestrictionsWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1PatchNetworkRestrictionsResponse, error) {
+	rsp, err := c.V1PatchNetworkRestrictionsWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1PatchNetworkRestrictionsResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1PatchNetworkRestrictionsWithResponse(ctx context.Context, ref string, body V1PatchNetworkRestrictionsJSONRequestBody, reqEditors ...RequestEditorFn) (*V1PatchNetworkRestrictionsResponse, error) {
+	rsp, err := c.V1PatchNetworkRestrictions(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1PatchNetworkRestrictionsResponse(rsp)
 }
 
 // V1UpdateNetworkRestrictionsWithBodyWithResponse request with arbitrary body returning *V1UpdateNetworkRestrictionsResponse
@@ -14936,6 +15259,58 @@ func ParseV1CreateProjectClaimTokenResponse(rsp *http.Response) (*V1CreateProjec
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1DeleteLoginRolesResponse parses an HTTP response from a V1DeleteLoginRolesWithResponse call
+func ParseV1DeleteLoginRolesResponse(rsp *http.Response) (*V1DeleteLoginRolesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1DeleteLoginRolesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DeleteRolesResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1CreateLoginRoleResponse parses an HTTP response from a V1CreateLoginRoleWithResponse call
+func ParseV1CreateLoginRoleResponse(rsp *http.Response) (*V1CreateLoginRoleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1CreateLoginRoleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest CreateRoleResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
 
 	}
 
@@ -16356,6 +16731,32 @@ func ParseV1GetNetworkRestrictionsResponse(rsp *http.Response) (*V1GetNetworkRes
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest NetworkRestrictionsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1PatchNetworkRestrictionsResponse parses an HTTP response from a V1PatchNetworkRestrictionsWithResponse call
+func ParseV1PatchNetworkRestrictionsResponse(rsp *http.Response) (*V1PatchNetworkRestrictionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1PatchNetworkRestrictionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest NetworkRestrictionsV2Response
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
