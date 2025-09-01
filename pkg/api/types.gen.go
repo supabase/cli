@@ -280,6 +280,11 @@ const (
 	N9CompletedUpgrade                   DatabaseUpgradeStatusResponseDatabaseUpgradeStatusProgress = "9_completed_upgrade"
 )
 
+// Defines values for DeleteRolesResponseMessage.
+const (
+	Ok DeleteRolesResponseMessage = "ok"
+)
+
 // Defines values for DeployFunctionResponseStatus.
 const (
 	DeployFunctionResponseStatusACTIVE    DeployFunctionResponseStatus = "ACTIVE"
@@ -476,14 +481,38 @@ const (
 
 // Defines values for NetworkRestrictionsResponseEntitlement.
 const (
-	Allowed    NetworkRestrictionsResponseEntitlement = "allowed"
-	Disallowed NetworkRestrictionsResponseEntitlement = "disallowed"
+	NetworkRestrictionsResponseEntitlementAllowed    NetworkRestrictionsResponseEntitlement = "allowed"
+	NetworkRestrictionsResponseEntitlementDisallowed NetworkRestrictionsResponseEntitlement = "disallowed"
 )
 
 // Defines values for NetworkRestrictionsResponseStatus.
 const (
-	Applied NetworkRestrictionsResponseStatus = "applied"
-	Stored  NetworkRestrictionsResponseStatus = "stored"
+	NetworkRestrictionsResponseStatusApplied NetworkRestrictionsResponseStatus = "applied"
+	NetworkRestrictionsResponseStatusStored  NetworkRestrictionsResponseStatus = "stored"
+)
+
+// Defines values for NetworkRestrictionsV2ResponseConfigDbAllowedCidrsType.
+const (
+	NetworkRestrictionsV2ResponseConfigDbAllowedCidrsTypeV4 NetworkRestrictionsV2ResponseConfigDbAllowedCidrsType = "v4"
+	NetworkRestrictionsV2ResponseConfigDbAllowedCidrsTypeV6 NetworkRestrictionsV2ResponseConfigDbAllowedCidrsType = "v6"
+)
+
+// Defines values for NetworkRestrictionsV2ResponseEntitlement.
+const (
+	NetworkRestrictionsV2ResponseEntitlementAllowed    NetworkRestrictionsV2ResponseEntitlement = "allowed"
+	NetworkRestrictionsV2ResponseEntitlementDisallowed NetworkRestrictionsV2ResponseEntitlement = "disallowed"
+)
+
+// Defines values for NetworkRestrictionsV2ResponseOldConfigDbAllowedCidrsType.
+const (
+	NetworkRestrictionsV2ResponseOldConfigDbAllowedCidrsTypeV4 NetworkRestrictionsV2ResponseOldConfigDbAllowedCidrsType = "v4"
+	NetworkRestrictionsV2ResponseOldConfigDbAllowedCidrsTypeV6 NetworkRestrictionsV2ResponseOldConfigDbAllowedCidrsType = "v6"
+)
+
+// Defines values for NetworkRestrictionsV2ResponseStatus.
+const (
+	NetworkRestrictionsV2ResponseStatusApplied NetworkRestrictionsV2ResponseStatus = "applied"
+	NetworkRestrictionsV2ResponseStatusStored  NetworkRestrictionsV2ResponseStatus = "stored"
 )
 
 // Defines values for OAuthTokenBodyGrantType.
@@ -1556,6 +1585,18 @@ type CreateProviderResponse struct {
 	UpdatedAt *string `json:"updated_at,omitempty"`
 }
 
+// CreateRoleBody defines model for CreateRoleBody.
+type CreateRoleBody struct {
+	ReadOnly bool `json:"read_only"`
+}
+
+// CreateRoleResponse defines model for CreateRoleResponse.
+type CreateRoleResponse struct {
+	Password   string `json:"password"`
+	Role       string `json:"role"`
+	TtlSeconds int64  `json:"ttl_seconds"`
+}
+
 // CreateSecretBody defines model for CreateSecretBody.
 type CreateSecretBody = []struct {
 	// Name Secret name must not start with the SUPABASE_ prefix.
@@ -1689,6 +1730,14 @@ type DeleteProviderResponse struct {
 	} `json:"saml,omitempty"`
 	UpdatedAt *string `json:"updated_at,omitempty"`
 }
+
+// DeleteRolesResponse defines model for DeleteRolesResponse.
+type DeleteRolesResponse struct {
+	Message DeleteRolesResponseMessage `json:"message"`
+}
+
+// DeleteRolesResponseMessage defines model for DeleteRolesResponse.Message.
+type DeleteRolesResponseMessage string
 
 // DeployFunctionResponse defines model for DeployFunctionResponse.
 type DeployFunctionResponse struct {
@@ -2027,6 +2076,18 @@ type NetworkBanResponseEnriched struct {
 	} `json:"banned_ipv4_addresses"`
 }
 
+// NetworkRestrictionsPatchRequest defines model for NetworkRestrictionsPatchRequest.
+type NetworkRestrictionsPatchRequest struct {
+	Add *struct {
+		DbAllowedCidrs   *[]string `json:"dbAllowedCidrs,omitempty"`
+		DbAllowedCidrsV6 *[]string `json:"dbAllowedCidrsV6,omitempty"`
+	} `json:"add,omitempty"`
+	Remove *struct {
+		DbAllowedCidrs   *[]string `json:"dbAllowedCidrs,omitempty"`
+		DbAllowedCidrsV6 *[]string `json:"dbAllowedCidrsV6,omitempty"`
+	} `json:"remove,omitempty"`
+}
+
 // NetworkRestrictionsRequest defines model for NetworkRestrictionsRequest.
 type NetworkRestrictionsRequest struct {
 	DbAllowedCidrs   *[]string `json:"dbAllowedCidrs,omitempty"`
@@ -2035,6 +2096,8 @@ type NetworkRestrictionsRequest struct {
 
 // NetworkRestrictionsResponse defines model for NetworkRestrictionsResponse.
 type NetworkRestrictionsResponse struct {
+	AppliedAt *time.Time `json:"applied_at,omitempty"`
+
 	// Config At any given point in time, this is the config that the user has requested be applied to their project. The `status` field indicates if it has been applied to the project, or is pending. When an updated config is received, the applied config is moved to `old_config`.
 	Config struct {
 		DbAllowedCidrs   *[]string `json:"dbAllowedCidrs,omitempty"`
@@ -2047,7 +2110,8 @@ type NetworkRestrictionsResponse struct {
 		DbAllowedCidrs   *[]string `json:"dbAllowedCidrs,omitempty"`
 		DbAllowedCidrsV6 *[]string `json:"dbAllowedCidrsV6,omitempty"`
 	} `json:"old_config,omitempty"`
-	Status NetworkRestrictionsResponseStatus `json:"status"`
+	Status    NetworkRestrictionsResponseStatus `json:"status"`
+	UpdatedAt *time.Time                        `json:"updated_at,omitempty"`
 }
 
 // NetworkRestrictionsResponseEntitlement defines model for NetworkRestrictionsResponse.Entitlement.
@@ -2055,6 +2119,42 @@ type NetworkRestrictionsResponseEntitlement string
 
 // NetworkRestrictionsResponseStatus defines model for NetworkRestrictionsResponse.Status.
 type NetworkRestrictionsResponseStatus string
+
+// NetworkRestrictionsV2Response defines model for NetworkRestrictionsV2Response.
+type NetworkRestrictionsV2Response struct {
+	AppliedAt *time.Time `json:"applied_at,omitempty"`
+
+	// Config At any given point in time, this is the config that the user has requested be applied to their project. The `status` field indicates if it has been applied to the project, or is pending. When an updated config is received, the applied config is moved to `old_config`.
+	Config struct {
+		DbAllowedCidrs *[]struct {
+			Address string                                                `json:"address"`
+			Type    NetworkRestrictionsV2ResponseConfigDbAllowedCidrsType `json:"type"`
+		} `json:"dbAllowedCidrs,omitempty"`
+	} `json:"config"`
+	Entitlement NetworkRestrictionsV2ResponseEntitlement `json:"entitlement"`
+
+	// OldConfig Populated when a new config has been received, but not registered as successfully applied to a project.
+	OldConfig *struct {
+		DbAllowedCidrs *[]struct {
+			Address string                                                   `json:"address"`
+			Type    NetworkRestrictionsV2ResponseOldConfigDbAllowedCidrsType `json:"type"`
+		} `json:"dbAllowedCidrs,omitempty"`
+	} `json:"old_config,omitempty"`
+	Status    NetworkRestrictionsV2ResponseStatus `json:"status"`
+	UpdatedAt *time.Time                          `json:"updated_at,omitempty"`
+}
+
+// NetworkRestrictionsV2ResponseConfigDbAllowedCidrsType defines model for NetworkRestrictionsV2Response.Config.DbAllowedCidrs.Type.
+type NetworkRestrictionsV2ResponseConfigDbAllowedCidrsType string
+
+// NetworkRestrictionsV2ResponseEntitlement defines model for NetworkRestrictionsV2Response.Entitlement.
+type NetworkRestrictionsV2ResponseEntitlement string
+
+// NetworkRestrictionsV2ResponseOldConfigDbAllowedCidrsType defines model for NetworkRestrictionsV2Response.OldConfig.DbAllowedCidrs.Type.
+type NetworkRestrictionsV2ResponseOldConfigDbAllowedCidrsType string
+
+// NetworkRestrictionsV2ResponseStatus defines model for NetworkRestrictionsV2Response.Status.
+type NetworkRestrictionsV2ResponseStatus string
 
 // OAuthRevokeTokenBody defines model for OAuthRevokeTokenBody.
 type OAuthRevokeTokenBody struct {
@@ -3523,6 +3623,9 @@ type V1ApplyProjectAddonJSONRequestBody = ApplyProjectAddonBody
 // V1CreateABranchJSONRequestBody defines body for V1CreateABranch for application/json ContentType.
 type V1CreateABranchJSONRequestBody = CreateBranchBody
 
+// V1CreateLoginRoleJSONRequestBody defines body for V1CreateLoginRole for application/json ContentType.
+type V1CreateLoginRoleJSONRequestBody = CreateRoleBody
+
 // V1UpdateAuthServiceConfigJSONRequestBody defines body for V1UpdateAuthServiceConfig for application/json ContentType.
 type V1UpdateAuthServiceConfigJSONRequestBody = UpdateAuthConfigBody
 
@@ -3591,6 +3694,9 @@ type V1UpdateAFunctionJSONRequestBody = V1UpdateFunctionBody
 
 // V1DeleteNetworkBansJSONRequestBody defines body for V1DeleteNetworkBans for application/json ContentType.
 type V1DeleteNetworkBansJSONRequestBody = RemoveNetworkBanRequest
+
+// V1PatchNetworkRestrictionsJSONRequestBody defines body for V1PatchNetworkRestrictions for application/json ContentType.
+type V1PatchNetworkRestrictionsJSONRequestBody = NetworkRestrictionsPatchRequest
 
 // V1UpdateNetworkRestrictionsJSONRequestBody defines body for V1UpdateNetworkRestrictions for application/json ContentType.
 type V1UpdateNetworkRestrictionsJSONRequestBody = NetworkRestrictionsRequest
