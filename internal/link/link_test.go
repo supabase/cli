@@ -96,8 +96,13 @@ func TestLinkCommand(t *testing.T) {
 			Reply(200).
 			JSON(api.NetworkRestrictionsResponse{})
 		gock.New(utils.DefaultApiHost).
-			Post("/v1/projects/" + project + "/database/query").
-			Reply(http.StatusCreated)
+			Post("/v1/projects/" + project + "/cli/login-role").
+			Reply(http.StatusCreated).
+			JSON(api.CreateRoleResponse{
+				Password:   "pass",
+				Role:       "cli_login_user",
+				TtlSeconds: 300,
+			})
 		// Link versions
 		auth := tenant.HealthResponse{Version: "v2.74.2"}
 		gock.New("https://" + utils.GetSupabaseHost(project)).
@@ -167,7 +172,7 @@ func TestLinkCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(api.NetworkRestrictionsResponse{})
 		gock.New(utils.DefaultApiHost).
-			Post("/v1/projects/" + project + "/database/query").
+			Post("/v1/projects/" + project + "/cli/login-role").
 			Reply(http.StatusServiceUnavailable)
 		// Link versions
 		gock.New("https://" + utils.GetSupabaseHost(project)).
@@ -233,8 +238,13 @@ func TestLinkCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(api.NetworkRestrictionsResponse{})
 		gock.New(utils.DefaultApiHost).
-			Post("/v1/projects/" + project + "/database/query").
-			Reply(http.StatusCreated)
+			Post("/v1/projects/" + project + "/cli/login-role").
+			Reply(http.StatusCreated).
+			JSON(api.CreateRoleResponse{
+				Password:   "pass",
+				Role:       "cli_login_user",
+				TtlSeconds: 300,
+			})
 		// Link versions
 		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/auth/v1/health").

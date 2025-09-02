@@ -1,16 +1,13 @@
 package flags
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	_ "embed"
 	"fmt"
 	"math/big"
-	"net/http"
 	"os"
 	"strings"
-	"text/template"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/go-errors/errors"
@@ -22,7 +19,6 @@ import (
 	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/config"
-	"github.com/supabase/cli/pkg/pgxv5"
 )
 
 type connection int
@@ -124,24 +120,12 @@ func NewDbConfigWithPassword(ctx context.Context, projectRef string) pgconn.Conf
 	if len(config.Password) > 0 {
 		return config
 	}
-	var err error
-	if config.Password, err = RandomString(32); err == nil {
-		newRole := pgconn.Config{
-			User:     pgxv5.CLI_LOGIN_ROLE,
-			Password: config.Password,
-		}
-		if err := initLoginRole(ctx, projectRef, newRole); err == nil {
-			// Special handling for pooler username
-			if suffix := "." + projectRef; strings.HasSuffix(config.User, suffix) {
-				newRole.User += suffix
-				defer tryPooler(ctx, &config)
-			}
-			config.User = newRole.User
-			return config
-		} else {
-			fmt.Fprintln(utils.GetDebugLogger(), err)
-		}
+	loginRole, err := initLoginRole(ctx, projectRef, config)
+	if err == nil {
+		return loginRole
 	}
+	// Proceed with password prompt
+	fmt.Fprintln(utils.GetDebugLogger(), err)
 	if config.Password, err = credentials.StoreProvider.Get(projectRef); err == nil {
 		return config
 	}
@@ -152,37 +136,37 @@ func NewDbConfigWithPassword(ctx context.Context, projectRef string) pgconn.Conf
 	return config
 }
 
-func tryPooler(ctx context.Context, config *pgconn.Config) {
-	if err := backoff.RetryNotify(func() error {
-		conn, err := pgconn.ConnectConfig(ctx, config)
+func initLoginRole(ctx context.Context, projectRef string, config pgconn.Config) (pgconn.Config, error) {
+	fmt.Fprintln(os.Stderr, "Initialising login role...")
+	body := api.CreateRoleBody{ReadOnly: false}
+	resp, err := utils.GetSupabase().V1CreateLoginRoleWithResponse(ctx, projectRef, body)
+	if err != nil {
+		return pgconn.Config{}, errors.Errorf("failed to initialise login role: %w", err)
+	} else if resp.JSON201 == nil {
+		return pgconn.Config{}, errors.Errorf("unexpected login role status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+	// Direct connection can be tried immediately
+	suffix := "." + projectRef
+	if !strings.HasSuffix(config.User, suffix) {
+		config.User = resp.JSON201.Role
+		config.Password = resp.JSON201.Password
+		return config, nil
+	}
+	// Wait for pooler to refresh password
+	config.User = resp.JSON201.Role + suffix
+	config.Password = resp.JSON201.Password
+	login := func() error {
+		conn, err := pgconn.ConnectConfig(ctx, &config)
 		if err != nil {
 			return errors.Errorf("failed to connect as temp role: %w", err)
 		}
 		return conn.Close(ctx)
-	}, utils.NewBackoffPolicy(ctx), utils.NewErrorCallback()); err != nil {
-		fmt.Fprintln(os.Stderr, err)
 	}
-}
-
-var (
-	//go:embed queries/role.sql
-	initRoleEmbed    string
-	initRoleTemplate = template.Must(template.New("initRole").Parse(initRoleEmbed))
-)
-
-func initLoginRole(ctx context.Context, projectRef string, config pgconn.Config) error {
-	fmt.Fprintf(os.Stderr, "Initialising %s role...\n", config.User)
-	var initRoleBuf bytes.Buffer
-	if err := initRoleTemplate.Option("missingkey=error").Execute(&initRoleBuf, config); err != nil {
-		return errors.Errorf("failed to exec template: %w", err)
+	// Fallback to password prompt on error
+	if err := backoff.RetryNotify(login, utils.NewBackoffPolicy(ctx), utils.NewErrorCallback()); err != nil {
+		return pgconn.Config{}, err
 	}
-	body := api.V1RunQueryBody{Query: initRoleBuf.String()}
-	if resp, err := utils.GetSupabase().V1RunAQueryWithResponse(ctx, projectRef, body); err != nil {
-		return errors.Errorf("failed to initialise login role: %w", err)
-	} else if resp.StatusCode() != http.StatusCreated {
-		return errors.Errorf("unexpected query status %d: %s", resp.StatusCode(), string(resp.Body))
-	}
-	return nil
+	return config, nil
 }
 
 const PASSWORD_LENGTH = 16

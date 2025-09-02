@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	CLI_LOGIN_ROLE   = "cli_login_postgres"
+	CLI_LOGIN_PREFIX = "cli_login_"
 	SET_SESSION_ROLE = "SET SESSION ROLE postgres"
 )
 
@@ -28,7 +28,7 @@ func Connect(ctx context.Context, connString string, options ...func(*pgx.ConnCo
 			fmt.Fprintf(os.Stderr, "%s (%s): %s\n", n.Severity, n.Code, n.Message)
 		}
 	}
-	if strings.HasPrefix(config.User, CLI_LOGIN_ROLE) {
+	if strings.HasPrefix(config.User, CLI_LOGIN_PREFIX) {
 		config.AfterConnect = func(ctx context.Context, pgconn *pgconn.PgConn) error {
 			return pgconn.Exec(ctx, SET_SESSION_ROLE).Close()
 		}
