@@ -27,8 +27,9 @@ var (
 	keyNames keys.CustomName
 
 	genKeysCmd = &cobra.Command{
-		Use:   "keys",
-		Short: "Generate keys for preview branch",
+		Deprecated: `use "gen signing-key" instead.`,
+		Use:        "keys",
+		Short:      "Generate keys for preview branch",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			es, err := env.EnvironToEnvSet(override)
 			if err != nil {
