@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"math/big"
+	"net/http"
 	"os"
 	"strings"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/config"
 )
 
@@ -163,10 +165,26 @@ func initLoginRole(ctx context.Context, projectRef string, config pgconn.Config)
 		return conn.Close(ctx)
 	}
 	// Fallback to password prompt on error
-	if err := backoff.RetryNotify(login, utils.NewBackoffPolicy(ctx), utils.NewErrorCallback()); err != nil {
+	notify := utils.NewErrorCallback(func(attempt uint) error {
+		if attempt%3 > 0 {
+			return nil
+		}
+		return unbanIP(ctx, projectRef)
+	})
+	if err := backoff.RetryNotify(login, utils.NewBackoffPolicy(ctx), notify); err != nil {
 		return pgconn.Config{}, err
 	}
 	return config, nil
+}
+
+func unbanIP(ctx context.Context, projectRef string) error {
+	body := api.RemoveNetworkBanRequest{RequesterIp: cast.Ptr(true)}
+	if resp, err := utils.GetSupabase().V1DeleteNetworkBansWithResponse(ctx, projectRef, body); err != nil {
+		return errors.Errorf("failed to unban IP: %w", err)
+	} else if resp.StatusCode() != http.StatusOK {
+		return errors.Errorf("unexpected unban status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+	return nil
 }
 
 const PASSWORD_LENGTH = 16
