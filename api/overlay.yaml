@@ -23,6 +23,12 @@ actions:
 - target: $.components.schemas.*.properties.items.items.properties.saml.properties.attribute_mapping.properties.keys.additionalProperties.properties.default.oneOf
   description: Replaces list union type with interface for easier casting
   remove: true
+- target: $.components.schemas.*.properties.saml.properties.name_id_format.enum
+  description: Converts enum with duplicated type to a string
+  remove: true
+- target: $.components.schemas.*.properties.items.items.properties.saml.properties.name_id_format.enum
+  description: Converts list of enum with duplicated type to a string
+  remove: true
 - target: $.components.schemas.*.properties.connectionString
   description: Removes deprecated field that conflicts with naming convention
   remove: true

@@ -198,6 +198,14 @@ const (
 	CreateBranchBodyReleaseChannelWithdrawn CreateBranchBodyReleaseChannel = "withdrawn"
 )
 
+// Defines values for CreateProviderBodyNameIdFormat.
+const (
+	CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatEmailAddress CreateProviderBodyNameIdFormat = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+	CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatUnspecified  CreateProviderBodyNameIdFormat = "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
+	CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatPersistent   CreateProviderBodyNameIdFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
+	CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatTransient    CreateProviderBodyNameIdFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
+)
+
 // Defines values for CreateProviderBodyType.
 const (
 	Saml CreateProviderBodyType = "saml"
@@ -728,6 +736,14 @@ const (
 	UpdatePostgresConfigBodySessionReplicationRoleLocal   UpdatePostgresConfigBodySessionReplicationRole = "local"
 	UpdatePostgresConfigBodySessionReplicationRoleOrigin  UpdatePostgresConfigBodySessionReplicationRole = "origin"
 	UpdatePostgresConfigBodySessionReplicationRoleReplica UpdatePostgresConfigBodySessionReplicationRole = "replica"
+)
+
+// Defines values for UpdateProviderBodyNameIdFormat.
+const (
+	UpdateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatEmailAddress UpdateProviderBodyNameIdFormat = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+	UpdateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatUnspecified  UpdateProviderBodyNameIdFormat = "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
+	UpdateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatPersistent   UpdateProviderBodyNameIdFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
+	UpdateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatTransient    UpdateProviderBodyNameIdFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
 )
 
 // Defines values for UpdateSigningKeyBodyStatus.
@@ -1547,13 +1563,17 @@ type CreateProviderBody struct {
 			Names   *[]string    `json:"names,omitempty"`
 		} `json:"keys"`
 	} `json:"attribute_mapping,omitempty"`
-	Domains     *[]string `json:"domains,omitempty"`
-	MetadataUrl *string   `json:"metadata_url,omitempty"`
-	MetadataXml *string   `json:"metadata_xml,omitempty"`
+	Domains      *[]string                       `json:"domains,omitempty"`
+	MetadataUrl  *string                         `json:"metadata_url,omitempty"`
+	MetadataXml  *string                         `json:"metadata_xml,omitempty"`
+	NameIdFormat *CreateProviderBodyNameIdFormat `json:"name_id_format,omitempty"`
 
 	// Type What type of provider will be created
 	Type CreateProviderBodyType `json:"type"`
 }
+
+// CreateProviderBodyNameIdFormat defines model for CreateProviderBody.NameIdFormat.
+type CreateProviderBodyNameIdFormat string
 
 // CreateProviderBodyType What type of provider will be created
 type CreateProviderBodyType string
@@ -1577,10 +1597,11 @@ type CreateProviderResponse struct {
 				Names   *[]string    `json:"names,omitempty"`
 			} `json:"keys"`
 		} `json:"attribute_mapping,omitempty"`
-		EntityId    string  `json:"entity_id"`
-		Id          string  `json:"id"`
-		MetadataUrl *string `json:"metadata_url,omitempty"`
-		MetadataXml *string `json:"metadata_xml,omitempty"`
+		EntityId     string  `json:"entity_id"`
+		Id           string  `json:"id"`
+		MetadataUrl  *string `json:"metadata_url,omitempty"`
+		MetadataXml  *string `json:"metadata_xml,omitempty"`
+		NameIdFormat *string `json:"name_id_format,omitempty"`
 	} `json:"saml,omitempty"`
 	UpdatedAt *string `json:"updated_at,omitempty"`
 }
@@ -1723,10 +1744,11 @@ type DeleteProviderResponse struct {
 				Names   *[]string    `json:"names,omitempty"`
 			} `json:"keys"`
 		} `json:"attribute_mapping,omitempty"`
-		EntityId    string  `json:"entity_id"`
-		Id          string  `json:"id"`
-		MetadataUrl *string `json:"metadata_url,omitempty"`
-		MetadataXml *string `json:"metadata_xml,omitempty"`
+		EntityId     string  `json:"entity_id"`
+		Id           string  `json:"id"`
+		MetadataUrl  *string `json:"metadata_url,omitempty"`
+		MetadataXml  *string `json:"metadata_xml,omitempty"`
+		NameIdFormat *string `json:"name_id_format,omitempty"`
 	} `json:"saml,omitempty"`
 	UpdatedAt *string `json:"updated_at,omitempty"`
 }
@@ -1860,10 +1882,11 @@ type GetProviderResponse struct {
 				Names   *[]string    `json:"names,omitempty"`
 			} `json:"keys"`
 		} `json:"attribute_mapping,omitempty"`
-		EntityId    string  `json:"entity_id"`
-		Id          string  `json:"id"`
-		MetadataUrl *string `json:"metadata_url,omitempty"`
-		MetadataXml *string `json:"metadata_xml,omitempty"`
+		EntityId     string  `json:"entity_id"`
+		Id           string  `json:"id"`
+		MetadataUrl  *string `json:"metadata_url,omitempty"`
+		MetadataXml  *string `json:"metadata_xml,omitempty"`
+		NameIdFormat *string `json:"name_id_format,omitempty"`
 	} `json:"saml,omitempty"`
 	UpdatedAt *string `json:"updated_at,omitempty"`
 }
@@ -2053,10 +2076,11 @@ type ListProvidersResponse struct {
 					Names   *[]string    `json:"names,omitempty"`
 				} `json:"keys"`
 			} `json:"attribute_mapping,omitempty"`
-			EntityId    string  `json:"entity_id"`
-			Id          string  `json:"id"`
-			MetadataUrl *string `json:"metadata_url,omitempty"`
-			MetadataXml *string `json:"metadata_xml,omitempty"`
+			EntityId     string  `json:"entity_id"`
+			Id           string  `json:"id"`
+			MetadataUrl  *string `json:"metadata_url,omitempty"`
+			MetadataXml  *string `json:"metadata_xml,omitempty"`
+			NameIdFormat *string `json:"name_id_format,omitempty"`
 		} `json:"saml,omitempty"`
 		UpdatedAt *string `json:"updated_at,omitempty"`
 	} `json:"items"`
@@ -2335,8 +2359,13 @@ type ReadOnlyStatusResponse struct {
 
 // RemoveNetworkBanRequest defines model for RemoveNetworkBanRequest.
 type RemoveNetworkBanRequest struct {
-	Identifier    *string  `json:"identifier,omitempty"`
+	Identifier *string `json:"identifier,omitempty"`
+
+	// Ipv4Addresses List of IP addresses to unban.
 	Ipv4Addresses []string `json:"ipv4_addresses"`
+
+	// RequesterIp Include requester's public IP in the list of addresses to unban.
+	RequesterIp *bool `json:"requester_ip,omitempty"`
 }
 
 // RemoveReadReplicaBody defines model for RemoveReadReplicaBody.
@@ -2865,10 +2894,14 @@ type UpdateProviderBody struct {
 			Names   *[]string    `json:"names,omitempty"`
 		} `json:"keys"`
 	} `json:"attribute_mapping,omitempty"`
-	Domains     *[]string `json:"domains,omitempty"`
-	MetadataUrl *string   `json:"metadata_url,omitempty"`
-	MetadataXml *string   `json:"metadata_xml,omitempty"`
+	Domains      *[]string                       `json:"domains,omitempty"`
+	MetadataUrl  *string                         `json:"metadata_url,omitempty"`
+	MetadataXml  *string                         `json:"metadata_xml,omitempty"`
+	NameIdFormat *UpdateProviderBodyNameIdFormat `json:"name_id_format,omitempty"`
 }
+
+// UpdateProviderBodyNameIdFormat defines model for UpdateProviderBody.NameIdFormat.
+type UpdateProviderBodyNameIdFormat string
 
 // UpdateProviderResponse defines model for UpdateProviderResponse.
 type UpdateProviderResponse struct {
@@ -2889,10 +2922,11 @@ type UpdateProviderResponse struct {
 				Names   *[]string    `json:"names,omitempty"`
 			} `json:"keys"`
 		} `json:"attribute_mapping,omitempty"`
-		EntityId    string  `json:"entity_id"`
-		Id          string  `json:"id"`
-		MetadataUrl *string `json:"metadata_url,omitempty"`
-		MetadataXml *string `json:"metadata_xml,omitempty"`
+		EntityId     string  `json:"entity_id"`
+		Id           string  `json:"id"`
+		MetadataUrl  *string `json:"metadata_url,omitempty"`
+		MetadataXml  *string `json:"metadata_xml,omitempty"`
+		NameIdFormat *string `json:"name_id_format,omitempty"`
 	} `json:"saml,omitempty"`
 	UpdatedAt *string `json:"updated_at,omitempty"`
 }
