@@ -2,6 +2,7 @@ package utils
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"testing"
@@ -25,9 +26,9 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
-const (
-	PG13_POOLER_URL = "postgres://postgres:[YOUR-PASSWORD]@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres?options=reference%3Dzupyfdrjfhbeevcogohz"
-	PG15_POOLER_URL = "postgres://postgres.zupyfdrjfhbeevcogohz:[YOUR-PASSWORD]@fly-0-sin.pooler.supabase.com:6543/postgres"
+var (
+	PG13_POOLER_URL = fmt.Sprintf("postgres://postgres:[YOUR-PASSWORD]@aws-0-ap-southeast-1.pooler.%s:6543/postgres?options=reference%%3Dzupyfdrjfhbeevcogohz", CurrentProfile.ProjectHost)
+	PG15_POOLER_URL = fmt.Sprintf("postgres://postgres.zupyfdrjfhbeevcogohz:[YOUR-PASSWORD]@fly-0-sin.pooler.%s:6543/postgres", CurrentProfile.ProjectHost)
 )
 
 func TestConnectByConfig(t *testing.T) {

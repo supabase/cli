@@ -70,8 +70,8 @@ func GetPoolerConfig(projectRef string) *pgconn.Config {
 		return nil
 	}
 	// There is a risk of MITM attack if we simply trust the hostname specified in pooler URL.
-	if !isSupabaseDomain(poolerConfig.Host) {
-		fmt.Fprintln(logger, "Pooler hostname does not belong to Supabase domain:", poolerConfig.Host)
+	if !strings.HasSuffix(poolerConfig.Host, "."+CurrentProfile.ProjectHost) {
+		fmt.Fprintln(logger, "Pooler hostname does not belong to current profile:", poolerConfig.Host)
 		return nil
 	}
 	fmt.Fprintln(logger, "Using connection pooler:", Config.Db.Pooler.ConnectionString)
@@ -90,15 +90,6 @@ func ParsePoolerURL(connString string) (*pgconn.Config, error) {
 		return nil, errors.Errorf("failed to parse pooler URL: %w", err)
 	}
 	return poolerConfig, nil
-}
-
-func isSupabaseDomain(host string) bool {
-	switch GetSupabaseAPIHost() {
-	case "https://api.supabase.green":
-		return strings.HasSuffix(host, ".supabase.green")
-	default:
-		return strings.HasSuffix(host, ".supabase.com")
-	}
 }
 
 // Connnect to local Postgres with optimised settings. The caller is responsible for closing the connection returned.
@@ -121,6 +112,9 @@ func ConnectLocalPostgres(ctx context.Context, config pgconn.Config, options ...
 	if config.ConnectTimeout == 0 {
 		config.ConnectTimeout = 2 * time.Second
 	}
+	options = append(options, func(cc *pgx.ConnConfig) {
+		cc.TLSConfig = nil
+	})
 	return ConnectByUrl(ctx, ToPostgresURL(config), options...)
 }
 
@@ -128,6 +122,19 @@ func ConnectByUrl(ctx context.Context, url string, options ...func(*pgx.ConnConf
 	if viper.GetBool("DEBUG") {
 		options = append(options, debug.SetupPGX)
 	}
+	// No fallback from TLS to unsecure connection
+	options = append(options, func(cc *pgx.ConnConfig) {
+		if cc.TLSConfig == nil {
+			return
+		}
+		var fallbacks []*pgconn.FallbackConfig
+		for _, fc := range cc.Fallbacks {
+			if fc.TLSConfig != nil {
+				fallbacks = append(fallbacks, fc)
+			}
+		}
+		cc.Fallbacks = fallbacks
+	})
 	return pgxv5.Connect(ctx, url, options...)
 }
 

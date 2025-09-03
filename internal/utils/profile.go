@@ -2,6 +2,7 @@ package utils
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/go-errors/errors"
@@ -45,6 +46,7 @@ func LoadProfile(ctx context.Context, fsys afero.Fs) error {
 	prof := viper.GetString("PROFILE")
 	for _, p := range allProfiles {
 		if strings.EqualFold(p.Name, prof) {
+			fmt.Fprintln(GetDebugLogger(), "Using project host:", p.ProjectHost)
 			CurrentProfile = p
 			return nil
 		}
