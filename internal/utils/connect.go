@@ -71,7 +71,7 @@ func GetPoolerConfig(projectRef string) *pgconn.Config {
 	}
 	// There is a risk of MITM attack if we simply trust the hostname specified in pooler URL.
 	if !strings.HasSuffix(poolerConfig.Host, "."+CurrentProfile.ProjectHost) {
-		fmt.Fprintln(logger, "Pooler hostname does not belong to Supabase domain:", poolerConfig.Host)
+		fmt.Fprintln(logger, "Pooler hostname does not belong to current profile:", poolerConfig.Host)
 		return nil
 	}
 	fmt.Fprintln(logger, "Using connection pooler:", Config.Db.Pooler.ConnectionString)
