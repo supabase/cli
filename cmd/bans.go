@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/bans/get"
@@ -25,6 +27,9 @@ The subcommands help you view the current bans, and unblock IPs if desired.`,
 		Short: "Remove a network ban",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return update.Run(cmd.Context(), flags.ProjectRef, dbIpsToUnban, afero.NewOsFs())
+		},
+		PostRun: func(cmd *cobra.Command, args []string) {
+			fmt.Println("Successfully removed network bans.")
 		},
 	}
 

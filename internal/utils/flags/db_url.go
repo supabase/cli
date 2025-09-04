@@ -19,7 +19,6 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/supabase/cli/pkg/api"
-	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/config"
 )
 
@@ -169,7 +168,7 @@ func initLoginRole(ctx context.Context, projectRef string, config pgconn.Config)
 		if attempt%3 > 0 {
 			return nil
 		}
-		return unbanIP(ctx, projectRef)
+		return UnbanIP(ctx, projectRef)
 	})
 	if err := backoff.RetryNotify(login, utils.NewBackoffPolicy(ctx), notify); err != nil {
 		return pgconn.Config{}, err
@@ -177,10 +176,14 @@ func initLoginRole(ctx context.Context, projectRef string, config pgconn.Config)
 	return config, nil
 }
 
-func unbanIP(ctx context.Context, projectRef string) error {
-	body := api.RemoveNetworkBanRequest{RequesterIp: cast.Ptr(true)}
+func UnbanIP(ctx context.Context, projectRef string, addrs ...string) error {
+	includeSelf := len(addrs) == 0
+	body := api.RemoveNetworkBanRequest{
+		Ipv4Addresses: addrs,
+		RequesterIp:   &includeSelf,
+	}
 	if resp, err := utils.GetSupabase().V1DeleteNetworkBansWithResponse(ctx, projectRef, body); err != nil {
-		return errors.Errorf("failed to unban IP: %w", err)
+		return errors.Errorf("failed to remove network bans: %w", err)
 	} else if resp.StatusCode() != http.StatusOK {
 		return errors.Errorf("unexpected unban status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
