@@ -2,13 +2,11 @@ package update
 
 import (
 	"context"
-	"fmt"
 	"net"
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/internal/utils/flags"
 )
 
 func validateIps(ips []string) error {
@@ -25,19 +23,6 @@ func Run(ctx context.Context, projectRef string, dbIpsToUnban []string, fsys afe
 	if err := validateIps(dbIpsToUnban); err != nil {
 		return err
 	}
-
 	// 2. remove bans
-	{
-		resp, err := utils.GetSupabase().V1DeleteNetworkBansWithResponse(ctx, projectRef, api.RemoveNetworkBanRequest{
-			Ipv4Addresses: dbIpsToUnban,
-		})
-		if err != nil {
-			return errors.Errorf("failed to remove network bans: %w", err)
-		}
-		if resp.StatusCode() != 200 {
-			return errors.New("Unexpected error removing network bans: " + string(resp.Body))
-		}
-		fmt.Printf("Successfully removed bans for %+v.\n", dbIpsToUnban)
-		return nil
-	}
+	return flags.UnbanIP(ctx, projectRef, dbIpsToUnban...)
 }
