@@ -12,9 +12,9 @@ require (
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/containerd/errdefs v1.0.0
-	github.com/containers/common v0.64.1
-	github.com/docker/cli v28.3.3+incompatible
-	github.com/docker/docker v28.3.3+incompatible
+	github.com/containers/common v0.64.2
+	github.com/docker/cli v28.4.0+incompatible
+	github.com/docker/docker v28.4.0+incompatible
 	github.com/docker/go-connections v0.6.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/getsentry/sentry-go v0.35.1
@@ -37,7 +37,7 @@ require (
 	github.com/slack-go/slack v0.17.3
 	github.com/spf13/afero v1.14.0
 	github.com/spf13/cobra v1.10.1
-	github.com/spf13/pflag v1.0.9
+	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.11.1
 	github.com/stripe/pg-schema-diff v1.0.2
@@ -155,7 +155,6 @@ require (
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/gofrs/flock v0.12.1 // indirect
-	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.0 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
