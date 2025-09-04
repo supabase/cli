@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/andybalholm/brotli"
 	"github.com/go-errors/errors"
@@ -19,12 +20,23 @@ import (
 type nativeBundler struct {
 	tempDir string
 	fsys    fs.FS
+	timeout time.Duration
 }
 
-func NewNativeBundler(tempDir string, fsys fs.FS) EszipBundler {
-	return &nativeBundler{
+func NewNativeBundler(tempDir string, fsys fs.FS, opts ...func(*nativeBundler)) EszipBundler {
+	b := &nativeBundler{
 		tempDir: tempDir,
 		fsys:    fsys,
+	}
+	for _, apply := range opts {
+		apply(b)
+	}
+	return b
+}
+
+func WithTimeout(timeout time.Duration) func(*nativeBundler) {
+	return func(b *nativeBundler) {
+		b.timeout = timeout
 	}
 }
 
@@ -48,6 +60,11 @@ func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 		args = append(args, "--static", staticFile)
 	}
 	args = append(args, BundleFlags...)
+	if b.timeout > 0 {
+		timeoutCtx, cancel := context.WithTimeout(ctx, b.timeout)
+		defer cancel() // release resources if command exits before timeout
+		ctx = timeoutCtx
+	}
 	cmd := exec.CommandContext(ctx, edgeRuntimeBin, args...)
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
