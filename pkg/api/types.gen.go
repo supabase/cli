@@ -928,6 +928,7 @@ const (
 	UnindexedForeignKeys          V1ProjectAdvisorsResponseLintsName = "unindexed_foreign_keys"
 	UnsupportedRegTypes           V1ProjectAdvisorsResponseLintsName = "unsupported_reg_types"
 	UnusedIndex                   V1ProjectAdvisorsResponseLintsName = "unused_index"
+	VulnerablePostgresVersion     V1ProjectAdvisorsResponseLintsName = "vulnerable_postgres_version"
 )
 
 // Defines values for V1ProjectResponseStatus.

@@ -54,11 +54,16 @@ func Run(ctx context.Context, branchId string, fsys afero.Fs) error {
 
 func getBranchDetail(ctx context.Context, branchId string) (api.BranchDetailResponse, error) {
 	var result api.BranchDetailResponse
-	parsed, err := GetBranchID(ctx, branchId)
-	if err != nil {
-		return result, err
+	if err := uuid.Validate(branchId); err != nil && !utils.ProjectRefPattern.Match([]byte(branchId)) {
+		resp, err := utils.GetSupabase().V1GetABranchWithResponse(ctx, flags.ProjectRef, branchId)
+		if err != nil {
+			return result, errors.Errorf("failed to find branch: %w", err)
+		} else if resp.JSON200 == nil {
+			return result, errors.Errorf("unexpected find branch status %d: %s", resp.StatusCode(), string(resp.Body))
+		}
+		branchId = resp.JSON200.ProjectRef
 	}
-	resp, err := utils.GetSupabase().V1GetABranchConfigWithResponse(ctx, parsed)
+	resp, err := utils.GetSupabase().V1GetABranchConfigWithResponse(ctx, branchId)
 	if err != nil {
 		return result, errors.Errorf("failed to get branch: %w", err)
 	} else if resp.JSON200 == nil {
@@ -75,20 +80,6 @@ func getBranchDetail(ctx context.Context, branchId string) (api.BranchDetailResp
 		resp.JSON200.JwtSecret = &masked
 	}
 	return *resp.JSON200, nil
-}
-
-func GetBranchID(ctx context.Context, branchId string) (uuid.UUID, error) {
-	parsed, err := uuid.Parse(branchId)
-	if err == nil {
-		return parsed, nil
-	}
-	resp, err := utils.GetSupabase().V1GetABranchWithResponse(ctx, flags.ProjectRef, branchId)
-	if err != nil {
-		return parsed, errors.Errorf("failed to get branch: %w", err)
-	} else if resp.JSON200 == nil {
-		return parsed, errors.Errorf("unexpected get branch status %d: %s", resp.StatusCode(), string(resp.Body))
-	}
-	return resp.JSON200.Id, nil
 }
 
 func getPoolerConfig(ctx context.Context, ref string) (api.SupavisorConfigResponse, error) {

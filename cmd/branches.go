@@ -249,7 +249,7 @@ func promptBranchId(ctx context.Context, fsys afero.Fs) error {
 	for i, branch := range branches {
 		items[i] = utils.PromptItem{
 			Summary: branch.Name,
-			Details: branch.Id.String(),
+			Details: branch.ProjectRef,
 		}
 	}
 	title := "Select a branch:"

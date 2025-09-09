@@ -1,4 +1,7 @@
 package: api
 generate:
   client: true
+output-options:
+  overlay:
+    path: api/overlay.yaml
 output: pkg/api/client.gen.go
