@@ -22,7 +22,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 
 	switch utils.OutputFormat.Value {
 	case utils.OutputPretty:
-		table := `|ID|BRANCH PROJECT ID|NAME|DEFAULT|GIT BRANCH|STATUS|CREATED AT (UTC)|UPDATED AT (UTC)|
+		table := `|ID|NAME|DEFAULT|GIT BRANCH|STATUS|CREATED AT (UTC)|UPDATED AT (UTC)|
 |-|-|-|-|-|-|-|-|
 `
 		for _, branch := range branches {
@@ -31,8 +31,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 				gitBranch = *branch.GitBranch
 			}
 			table += fmt.Sprintf(
-				"|`%s`|`%s`|`%s`|`%t`|`%s`|`%s`|`%s`|`%s`|\n",
-				branch.Id,
+				"|`%s`|`%s`|`%t`|`%s`|`%s`|`%s`|`%s`|\n",
 				branch.ProjectRef,
 				strings.ReplaceAll(branch.Name, "|", "\\|"),
 				branch.IsDefault,

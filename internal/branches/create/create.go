@@ -34,6 +34,6 @@ func Run(ctx context.Context, body api.CreateBranchBody, fsys afero.Fs) error {
 		return errors.New("Unexpected error creating preview branch: " + string(resp.Body))
 	}
 
-	fmt.Println("Created preview branch:", resp.JSON201.Id)
+	fmt.Println("Created preview branch:", resp.JSON201.ProjectRef)
 	return nil
 }
