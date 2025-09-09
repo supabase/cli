@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/debug"
 	"github.com/supabase/cli/pkg/pgxv5"
+	"golang.org/x/net/publicsuffix"
 )
 
 func ToPostgresURL(config pgconn.Config) string {
@@ -70,8 +71,8 @@ func GetPoolerConfig(projectRef string) *pgconn.Config {
 		return nil
 	}
 	// There is a risk of MITM attack if we simply trust the hostname specified in pooler URL.
-	if !strings.HasSuffix(poolerConfig.Host, "."+CurrentProfile.ProjectHost) {
-		fmt.Fprintln(logger, "Pooler hostname does not belong to current profile:", poolerConfig.Host)
+	if err := assertDomainInProfile(poolerConfig.Host); err != nil {
+		fmt.Fprintln(logger, err)
 		return nil
 	}
 	fmt.Fprintln(logger, "Using connection pooler:", Config.Db.Pooler.ConnectionString)
@@ -90,6 +91,17 @@ func ParsePoolerURL(connString string) (*pgconn.Config, error) {
 		return nil, errors.Errorf("failed to parse pooler URL: %w", err)
 	}
 	return poolerConfig, nil
+}
+
+func assertDomainInProfile(host string) error {
+	domain, err := publicsuffix.EffectiveTLDPlusOne(host)
+	if err != nil {
+		return errors.Errorf("failed to parse pooler TLD: %w", err)
+	}
+	if !strings.HasSuffix(CurrentProfile.APIURL, "."+domain) {
+		return errors.Errorf("Pooler domain does not belong to current profile: %s", domain)
+	}
+	return nil
 }
 
 // Connnect to local Postgres with optimised settings. The caller is responsible for closing the connection returned.
