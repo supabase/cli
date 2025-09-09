@@ -113,6 +113,7 @@ var (
 	roleOnly     bool
 	keepComments bool
 	excludeTable []string
+	pgpassFile   string
 
 	dbDumpCmd = &cobra.Command{
 		Use:   "dump",
@@ -123,6 +124,9 @@ var (
 			}
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if pgpassFile != "" {
+				os.Setenv("PGPASSFILE", pgpassFile)
+			}
 			opts := []migration.DumpOptionFunc{
 				migration.WithSchema(schema...),
 				migration.WithoutTable(excludeTable...),
@@ -286,6 +290,7 @@ func init() {
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", dumpFlags.Lookup("password")))
 	dumpFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	dbDumpCmd.MarkFlagsMutuallyExclusive("schema", "role-only")
+	dumpFlags.StringVarP(&pgpassFile, "pgpass-file", "P", "", "Path to .pgpass file to use for authentication.")
 	dbCmd.AddCommand(dbDumpCmd)
 	// Build push command
 	pushFlags := dbPushCmd.Flags()
