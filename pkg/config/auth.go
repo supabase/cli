@@ -358,8 +358,13 @@ type (
 		Enabled bool `toml:"enabled"`
 	}
 
+	ethereum struct {
+		Enabled bool `toml:"enabled"`
+	}
+
 	web3 struct {
 		Solana solana `toml:"solana"`
+		Ethereum ethereum `toml:"ethereum"`
 	}
 )
 
@@ -1318,11 +1323,16 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 
 func (w web3) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.ExternalWeb3SolanaEnabled = nullable.NewNullableWithValue(w.Solana.Enabled)
+	body.ExternalWeb3EthereumEnabled = nullable.NewNullableWithValue(w.Ethereum.Enabled)
 }
 
 func (w *web3) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if value, err := remoteConfig.ExternalWeb3SolanaEnabled.Get(); err == nil {
 		w.Solana.Enabled = value
+	}
+
+	if value, err := remoteConfig.ExternalWeb3EthereumEnabled.Get(); err == nil {
+		w.Ethereum.Enabled = value
 	}
 }
 
