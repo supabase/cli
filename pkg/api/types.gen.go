@@ -1642,6 +1642,7 @@ type CreateSigningKeyBodyPrivateJwk0 struct {
 	Dp  string                             `json:"dp"`
 	Dq  string                             `json:"dq"`
 	E   CreateSigningKeyBodyPrivateJwk0E   `json:"e"`
+	Kid *openapi_types.UUID                `json:"kid,omitempty"`
 	Kty CreateSigningKeyBodyPrivateJwk0Kty `json:"kty"`
 	N   string                             `json:"n"`
 	P   string                             `json:"p"`
@@ -1659,6 +1660,7 @@ type CreateSigningKeyBodyPrivateJwk0Kty string
 type CreateSigningKeyBodyPrivateJwk1 struct {
 	Crv CreateSigningKeyBodyPrivateJwk1Crv `json:"crv"`
 	D   string                             `json:"d"`
+	Kid *openapi_types.UUID                `json:"kid,omitempty"`
 	Kty CreateSigningKeyBodyPrivateJwk1Kty `json:"kty"`
 	X   string                             `json:"x"`
 	Y   string                             `json:"y"`
@@ -1674,6 +1676,7 @@ type CreateSigningKeyBodyPrivateJwk1Kty string
 type CreateSigningKeyBodyPrivateJwk2 struct {
 	Crv CreateSigningKeyBodyPrivateJwk2Crv `json:"crv"`
 	D   string                             `json:"d"`
+	Kid *openapi_types.UUID                `json:"kid,omitempty"`
 	Kty CreateSigningKeyBodyPrivateJwk2Kty `json:"kty"`
 	X   string                             `json:"x"`
 }
@@ -1687,6 +1690,7 @@ type CreateSigningKeyBodyPrivateJwk2Kty string
 // CreateSigningKeyBodyPrivateJwk3 defines model for .
 type CreateSigningKeyBodyPrivateJwk3 struct {
 	K   string                             `json:"k"`
+	Kid *openapi_types.UUID                `json:"kid,omitempty"`
 	Kty CreateSigningKeyBodyPrivateJwk3Kty `json:"kty"`
 }
 
@@ -2429,6 +2433,7 @@ type SnippetList struct {
 	Cursor *string `json:"cursor,omitempty"`
 	Data   []struct {
 		Description nullable.Nullable[string] `json:"description"`
+		Favorite    bool                      `json:"favorite"`
 		Id          string                    `json:"id"`
 		InsertedAt  string                    `json:"inserted_at"`
 		Name        string                    `json:"name"`
@@ -2459,11 +2464,14 @@ type SnippetListDataVisibility string
 // SnippetResponse defines model for SnippetResponse.
 type SnippetResponse struct {
 	Content struct {
-		Favorite      bool   `json:"favorite"`
+		// Favorite Deprecated: Rely on root-level favorite property instead.
+		// Deprecated:
+		Favorite      *bool  `json:"favorite,omitempty"`
 		SchemaVersion string `json:"schema_version"`
 		Sql           string `json:"sql"`
 	} `json:"content"`
 	Description nullable.Nullable[string] `json:"description"`
+	Favorite    bool                      `json:"favorite"`
 	Id          string                    `json:"id"`
 	InsertedAt  string                    `json:"inserted_at"`
 	Name        string                    `json:"name"`
