@@ -28,7 +28,7 @@ import (
 	"github.com/supabase/cli/pkg/parser"
 )
 
-type DiffFunc func(context.Context, string, string, []string, ...func(*pgx.ConnConfig)) (string, error)
+type DiffFunc func(context.Context, pgconn.Config, pgconn.Config, []string, ...func(*pgx.ConnConfig)) (string, error)
 
 func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
 	out, err := DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, options...)
@@ -173,9 +173,7 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 	} else {
 		fmt.Fprintln(w, "Diffing schemas...")
 	}
-	source := utils.ToPostgresURL(shadowConfig)
-	target := utils.ToPostgresURL(config)
-	return differ(ctx, source, target, schema, options...)
+	return differ(ctx, shadowConfig, config, schema, options...)
 }
 
 func migrateBaseDatabase(ctx context.Context, config pgconn.Config, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
