@@ -98,6 +98,7 @@ func TestRun(t *testing.T) {
 	})
 
 	t.Run("throws error on failure to diff target", func(t *testing.T) {
+		errNetwork := errors.New("network error")
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
@@ -109,7 +110,7 @@ func TestRun(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), []string{"public"}, "file", dbConfig, DiffSchemaMigra, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "network error")
+		assert.ErrorIs(t, err, errNetwork)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
@@ -192,6 +193,7 @@ func TestDiffDatabase(t *testing.T) {
 	utils.InitialSchemaPg14Sql = "create schema private"
 
 	t.Run("throws error on failure to create shadow", func(t *testing.T) {
+		errNetwork := errors.New("network error")
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
@@ -199,12 +201,12 @@ func TestDiffDatabase(t *testing.T) {
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Config.Db.Image) + "/json").
-			ReplyError(errors.New("network error"))
+			ReplyError(errNetwork)
 		// Run test
 		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra)
 		// Check error
 		assert.Empty(t, diff)
-		assert.ErrorContains(t, err, "network error")
+		assert.ErrorIs(t, err, errNetwork)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
