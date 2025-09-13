@@ -98,7 +98,6 @@ func TestRun(t *testing.T) {
 	})
 
 	t.Run("throws error on failure to diff target", func(t *testing.T) {
-		errNetwork := errors.New("network error")
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
@@ -110,7 +109,7 @@ func TestRun(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), []string{"public"}, "file", dbConfig, DiffSchemaMigra, fsys)
 		// Check error
-		assert.ErrorIs(t, err, errNetwork)
+		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
