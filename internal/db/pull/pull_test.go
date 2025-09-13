@@ -57,6 +57,7 @@ func TestPullCommand(t *testing.T) {
 
 func TestPullSchema(t *testing.T) {
 	t.Run("dumps remote schema", func(t *testing.T) {
+		errNetwork := errors.New("network error")
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
@@ -64,6 +65,9 @@ func TestPullSchema(t *testing.T) {
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Db.Image), "test-db")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-db", "test"))
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Config.Db.Image) + "/json").
+			ReplyError(errNetwork)
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -72,7 +76,7 @@ func TestPullSchema(t *testing.T) {
 		// Run test
 		err := run(context.Background(), nil, "0_test.sql", conn.MockClient(t), fsys)
 		// Check error
-		assert.NoError(t, err)
+		assert.ErrorIs(t, err, errNetwork)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 		contents, err := afero.ReadFile(fsys, "0_test.sql")
 		assert.NoError(t, err)
