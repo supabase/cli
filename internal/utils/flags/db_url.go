@@ -179,7 +179,7 @@ func initLoginRole(ctx context.Context, projectRef string, config pgconn.Config)
 func UnbanIP(ctx context.Context, projectRef string, addrs ...string) error {
 	includeSelf := len(addrs) == 0
 	body := api.RemoveNetworkBanRequest{
-		Ipv4Addresses: addrs,
+		Ipv4Addresses: append([]string{}, addrs...),
 		RequesterIp:   &includeSelf,
 	}
 	if resp, err := utils.GetSupabase().V1DeleteNetworkBansWithResponse(ctx, projectRef, body); err != nil {
