@@ -109,9 +109,7 @@ func DiffSchemaMigra(ctx context.Context, source, target pgconn.Config, schema [
 		"SOURCE=" + utils.ToPostgresURL(source),
 		"TARGET=" + utils.ToPostgresURL(target),
 	}
-	if ca, err := types.GetRootCA(ctx, utils.ToPostgresURL(target), options...); err != nil {
-		return "", err
-	} else if len(ca) > 0 {
+	if ca := types.GetRootCA(target); len(ca) > 0 {
 		env = append(env, "SSL_CA="+ca)
 	}
 	if len(schema) > 0 {

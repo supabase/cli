@@ -31,7 +31,6 @@ const (
 )
 
 func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang string, schemas []string, postgrestV9Compat bool, swiftAccessControl string, queryTimeout time.Duration, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	originalURL := utils.ToPostgresURL(dbConfig)
 	// Add default schemas if --schema flag is not specified
 	if len(schemas) == 0 {
 		schemas = utils.RemoveDuplicates(append([]string{"public"}, utils.Config.Api.Schemas...))
@@ -57,6 +56,10 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang str
 		return nil
 	}
 
+	var env []string
+	if ca := GetRootCA(dbConfig); len(ca) > 0 {
+		env = append(env, "PG_META_DB_SSL_ROOT_CERT="+ca)
+	}
 	hostConfig := container.HostConfig{}
 	if utils.IsLocalDatabase(dbConfig) {
 		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
@@ -79,20 +82,15 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang str
 	}
 
 	fmt.Fprintln(os.Stderr, "Connecting to", dbConfig.Host, dbConfig.Port)
-	env := []string{
-		"PG_META_DB_URL=" + utils.ToPostgresURL(dbConfig),
+	env = append(env,
+		"PG_META_DB_URL="+utils.ToPostgresURL(dbConfig),
 		fmt.Sprintf("PG_CONN_TIMEOUT_SECS=%.0f", queryTimeout.Seconds()),
 		fmt.Sprintf("PG_QUERY_TIMEOUT_SECS=%.0f", queryTimeout.Seconds()),
-		"PG_META_GENERATE_TYPES=" + lang,
-		"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=" + included,
-		"PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL=" + swiftAccessControl,
+		"PG_META_GENERATE_TYPES="+lang,
+		"PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS="+included,
+		"PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL="+swiftAccessControl,
 		fmt.Sprintf("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=%v", !postgrestV9Compat),
-	}
-	if ca, err := GetRootCA(ctx, originalURL, options...); err != nil {
-		return err
-	} else if len(ca) > 0 {
-		env = append(env, "PG_META_DB_SSL_ROOT_CERT="+ca)
-	}
+	)
 
 	return utils.DockerRunOnceWithConfig(
 		ctx,
@@ -116,22 +114,10 @@ var (
 	caProd string
 )
 
-func GetRootCA(ctx context.Context, dbURL string, options ...func(*pgx.ConnConfig)) (string, error) {
-	// node-postgres does not support sslmode=prefer
-	if require, err := isRequireSSL(ctx, dbURL, options...); !require {
-		return "", err
+func GetRootCA(config pgconn.Config) string {
+	// Defaults to SSL unless we are in debug mode, connecting to local, or PGSSLMODE=disable
+	if viper.GetBool("DEBUG") || utils.IsLocalDatabase(config) || config.TLSConfig == nil {
+		return ""
 	}
-	return caStaging + caProd, nil
-}
-
-func isRequireSSL(ctx context.Context, dbUrl string, options ...func(*pgx.ConnConfig)) (bool, error) {
-	conn, err := utils.ConnectByUrl(ctx, dbUrl+"&sslmode=require", options...)
-	if err != nil {
-		if strings.HasSuffix(err.Error(), "(server refused TLS connection)") {
-			return false, nil
-		}
-		return false, err
-	}
-	// SSL is not supported in debug mode
-	return !viper.GetBool("DEBUG"), conn.Close(ctx)
+	return caStaging + caProd
 }
