@@ -167,3 +167,11 @@ func jwkToECDSAPrivateKey(jwk JWK) (*ecdsa.PrivateKey, error) {
 		D: d,
 	}, nil
 }
+
+func NewFromString(n string) (*big.Int, error) {
+	nBytes, err := base64.RawURLEncoding.DecodeString(n)
+	if err != nil {
+		return nil, errors.Errorf("failed to decode base64: %w", err)
+	}
+	return new(big.Int).SetBytes(nBytes), nil
+}

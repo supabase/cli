@@ -363,7 +363,7 @@ type (
 	}
 
 	web3 struct {
-		Solana solana `toml:"solana"`
+		Solana   solana   `toml:"solana"`
 		Ethereum ethereum `toml:"ethereum"`
 	}
 )
