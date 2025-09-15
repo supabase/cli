@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
@@ -32,9 +33,10 @@ func Run(ctx context.Context, claims config.CustomClaims, w io.Writer, fsys afer
 		}
 	}
 	fmt.Fprintln(os.Stderr, "Using legacy JWT secret...")
-	key, err := claims.NewToken().SignedString([]byte(utils.Config.Auth.JwtSecret.Value))
-	if err == nil {
-		fmt.Fprintln(w, key)
+	token, err := claims.NewToken().SignedString([]byte(utils.Config.Auth.JwtSecret.Value))
+	if err != nil {
+		return errors.Errorf("failed to generate auth token: %w", err)
 	}
-	return err
+	fmt.Fprintln(w, token)
+	return nil
 }
