@@ -20,7 +20,6 @@ import (
 )
 
 func TestGenerateToken(t *testing.T) {
-
 	t.Run("mints custom JWT", func(t *testing.T) {
 		claims := config.CustomClaims{
 			Role: "authenticated",
@@ -30,9 +29,9 @@ func TestGenerateToken(t *testing.T) {
 		require.NoError(t, err)
 		// Setup public key for validation
 		publicKey := ecdsa.PublicKey{Curve: elliptic.P256()}
-		publicKey.X, err = config.NewFromString(privateKey.X)
+		publicKey.X, err = config.NewBigIntFromBase64(privateKey.X)
 		require.NoError(t, err)
-		publicKey.Y, err = config.NewFromString(privateKey.Y)
+		publicKey.Y, err = config.NewBigIntFromBase64(privateKey.Y)
 		require.NoError(t, err)
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -42,7 +41,7 @@ func TestGenerateToken(t *testing.T) {
 		`), fsys))
 		testKey, err := json.Marshal([]config.JWK{*privateKey})
 		require.NoError(t, err)
-		require.NoError(t, utils.WriteFile("supabase/keys.json", []byte(testKey), fsys))
+		require.NoError(t, utils.WriteFile("supabase/keys.json", testKey, fsys))
 		// Run test
 		var buf bytes.Buffer
 		err = Run(context.Background(), claims, &buf, fsys)
@@ -65,6 +64,8 @@ func TestGenerateToken(t *testing.T) {
 	})
 
 	t.Run("mints legacy JWT", func(t *testing.T) {
+		utils.Config.Auth.SigningKeysPath = ""
+		utils.Config.Auth.SigningKeys = nil
 		claims := config.CustomClaims{
 			RegisteredClaims: jwt.RegisteredClaims{
 				Subject: uuid.New().String(),
