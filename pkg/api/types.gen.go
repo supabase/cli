@@ -219,9 +219,25 @@ const (
 	CreateSigningKeyBodyAlgorithmRS256 CreateSigningKeyBodyAlgorithm = "RS256"
 )
 
+// Defines values for CreateSigningKeyBodyPrivateJwk0Alg.
+const (
+	CreateSigningKeyBodyPrivateJwk0AlgRS256 CreateSigningKeyBodyPrivateJwk0Alg = "RS256"
+)
+
 // Defines values for CreateSigningKeyBodyPrivateJwk0E.
 const (
 	AQAB CreateSigningKeyBodyPrivateJwk0E = "AQAB"
+)
+
+// Defines values for CreateSigningKeyBodyPrivateJwk0Ext.
+const (
+	CreateSigningKeyBodyPrivateJwk0ExtTrue CreateSigningKeyBodyPrivateJwk0Ext = true
+)
+
+// Defines values for CreateSigningKeyBodyPrivateJwk0KeyOps.
+const (
+	CreateSigningKeyBodyPrivateJwk0KeyOpsSign   CreateSigningKeyBodyPrivateJwk0KeyOps = "sign"
+	CreateSigningKeyBodyPrivateJwk0KeyOpsVerify CreateSigningKeyBodyPrivateJwk0KeyOps = "verify"
 )
 
 // Defines values for CreateSigningKeyBodyPrivateJwk0Kty.
@@ -229,9 +245,30 @@ const (
 	RSA CreateSigningKeyBodyPrivateJwk0Kty = "RSA"
 )
 
+// Defines values for CreateSigningKeyBodyPrivateJwk0Use.
+const (
+	CreateSigningKeyBodyPrivateJwk0UseSig CreateSigningKeyBodyPrivateJwk0Use = "sig"
+)
+
+// Defines values for CreateSigningKeyBodyPrivateJwk1Alg.
+const (
+	CreateSigningKeyBodyPrivateJwk1AlgES256 CreateSigningKeyBodyPrivateJwk1Alg = "ES256"
+)
+
 // Defines values for CreateSigningKeyBodyPrivateJwk1Crv.
 const (
 	P256 CreateSigningKeyBodyPrivateJwk1Crv = "P-256"
+)
+
+// Defines values for CreateSigningKeyBodyPrivateJwk1Ext.
+const (
+	CreateSigningKeyBodyPrivateJwk1ExtTrue CreateSigningKeyBodyPrivateJwk1Ext = true
+)
+
+// Defines values for CreateSigningKeyBodyPrivateJwk1KeyOps.
+const (
+	CreateSigningKeyBodyPrivateJwk1KeyOpsSign   CreateSigningKeyBodyPrivateJwk1KeyOps = "sign"
+	CreateSigningKeyBodyPrivateJwk1KeyOpsVerify CreateSigningKeyBodyPrivateJwk1KeyOps = "verify"
 )
 
 // Defines values for CreateSigningKeyBodyPrivateJwk1Kty.
@@ -239,9 +276,30 @@ const (
 	EC CreateSigningKeyBodyPrivateJwk1Kty = "EC"
 )
 
+// Defines values for CreateSigningKeyBodyPrivateJwk1Use.
+const (
+	CreateSigningKeyBodyPrivateJwk1UseSig CreateSigningKeyBodyPrivateJwk1Use = "sig"
+)
+
+// Defines values for CreateSigningKeyBodyPrivateJwk2Alg.
+const (
+	CreateSigningKeyBodyPrivateJwk2AlgEdDSA CreateSigningKeyBodyPrivateJwk2Alg = "EdDSA"
+)
+
 // Defines values for CreateSigningKeyBodyPrivateJwk2Crv.
 const (
 	Ed25519 CreateSigningKeyBodyPrivateJwk2Crv = "Ed25519"
+)
+
+// Defines values for CreateSigningKeyBodyPrivateJwk2Ext.
+const (
+	CreateSigningKeyBodyPrivateJwk2ExtTrue CreateSigningKeyBodyPrivateJwk2Ext = true
+)
+
+// Defines values for CreateSigningKeyBodyPrivateJwk2KeyOps.
+const (
+	CreateSigningKeyBodyPrivateJwk2KeyOpsSign   CreateSigningKeyBodyPrivateJwk2KeyOps = "sign"
+	CreateSigningKeyBodyPrivateJwk2KeyOpsVerify CreateSigningKeyBodyPrivateJwk2KeyOps = "verify"
 )
 
 // Defines values for CreateSigningKeyBodyPrivateJwk2Kty.
@@ -249,9 +307,35 @@ const (
 	OKP CreateSigningKeyBodyPrivateJwk2Kty = "OKP"
 )
 
+// Defines values for CreateSigningKeyBodyPrivateJwk2Use.
+const (
+	CreateSigningKeyBodyPrivateJwk2UseSig CreateSigningKeyBodyPrivateJwk2Use = "sig"
+)
+
+// Defines values for CreateSigningKeyBodyPrivateJwk3Alg.
+const (
+	HS256 CreateSigningKeyBodyPrivateJwk3Alg = "HS256"
+)
+
+// Defines values for CreateSigningKeyBodyPrivateJwk3Ext.
+const (
+	CreateSigningKeyBodyPrivateJwk3ExtTrue CreateSigningKeyBodyPrivateJwk3Ext = true
+)
+
+// Defines values for CreateSigningKeyBodyPrivateJwk3KeyOps.
+const (
+	CreateSigningKeyBodyPrivateJwk3KeyOpsSign   CreateSigningKeyBodyPrivateJwk3KeyOps = "sign"
+	CreateSigningKeyBodyPrivateJwk3KeyOpsVerify CreateSigningKeyBodyPrivateJwk3KeyOps = "verify"
+)
+
 // Defines values for CreateSigningKeyBodyPrivateJwk3Kty.
 const (
 	Oct CreateSigningKeyBodyPrivateJwk3Kty = "oct"
+)
+
+// Defines values for CreateSigningKeyBodyPrivateJwk3Use.
+const (
+	CreateSigningKeyBodyPrivateJwk3UseSig CreateSigningKeyBodyPrivateJwk3Use = "sig"
 )
 
 // Defines values for CreateSigningKeyBodyStatus.
@@ -532,6 +616,7 @@ const (
 // Defines values for OAuthTokenBodyResource.
 const (
 	OAuthTokenBodyResourceHttpsapiSupabaseGreenmcp OAuthTokenBodyResource = "https://api.supabase.green/mcp"
+	OAuthTokenBodyResourceHttpsmcpSupabaseGreenmcp OAuthTokenBodyResource = "https://mcp.supabase.green/mcp"
 )
 
 // Defines values for OAuthTokenResponseTokenType.
@@ -631,10 +716,10 @@ const (
 
 // Defines values for SigningKeysResponseKeysAlgorithm.
 const (
-	ES256 SigningKeysResponseKeysAlgorithm = "ES256"
-	EdDSA SigningKeysResponseKeysAlgorithm = "EdDSA"
-	HS256 SigningKeysResponseKeysAlgorithm = "HS256"
-	RS256 SigningKeysResponseKeysAlgorithm = "RS256"
+	SigningKeysResponseKeysAlgorithmES256 SigningKeysResponseKeysAlgorithm = "ES256"
+	SigningKeysResponseKeysAlgorithmEdDSA SigningKeysResponseKeysAlgorithm = "EdDSA"
+	SigningKeysResponseKeysAlgorithmHS256 SigningKeysResponseKeysAlgorithm = "HS256"
+	SigningKeysResponseKeysAlgorithmRS256 SigningKeysResponseKeysAlgorithm = "RS256"
 )
 
 // Defines values for SigningKeysResponseKeysStatus.
@@ -1024,6 +1109,7 @@ const (
 // Defines values for V1AuthorizeUserParamsResource.
 const (
 	V1AuthorizeUserParamsResourceHttpsapiSupabaseGreenmcp V1AuthorizeUserParamsResource = "https://api.supabase.green/mcp"
+	V1AuthorizeUserParamsResourceHttpsmcpSupabaseGreenmcp V1AuthorizeUserParamsResource = "https://mcp.supabase.green/mcp"
 )
 
 // Defines values for V1OauthAuthorizeProjectClaimParamsResponseType.
@@ -1638,64 +1724,128 @@ type CreateSigningKeyBodyAlgorithm string
 
 // CreateSigningKeyBodyPrivateJwk0 defines model for .
 type CreateSigningKeyBodyPrivateJwk0 struct {
-	D   string                             `json:"d"`
-	Dp  string                             `json:"dp"`
-	Dq  string                             `json:"dq"`
-	E   CreateSigningKeyBodyPrivateJwk0E   `json:"e"`
-	Kid *openapi_types.UUID                `json:"kid,omitempty"`
-	Kty CreateSigningKeyBodyPrivateJwk0Kty `json:"kty"`
-	N   string                             `json:"n"`
-	P   string                             `json:"p"`
-	Q   string                             `json:"q"`
-	Qi  string                             `json:"qi"`
+	Alg    *CreateSigningKeyBodyPrivateJwk0Alg      `json:"alg,omitempty"`
+	D      string                                   `json:"d"`
+	Dp     string                                   `json:"dp"`
+	Dq     string                                   `json:"dq"`
+	E      CreateSigningKeyBodyPrivateJwk0E         `json:"e"`
+	Ext    *CreateSigningKeyBodyPrivateJwk0Ext      `json:"ext,omitempty"`
+	KeyOps *[]CreateSigningKeyBodyPrivateJwk0KeyOps `json:"key_ops,omitempty"`
+	Kid    *openapi_types.UUID                      `json:"kid,omitempty"`
+	Kty    CreateSigningKeyBodyPrivateJwk0Kty       `json:"kty"`
+	N      string                                   `json:"n"`
+	P      string                                   `json:"p"`
+	Q      string                                   `json:"q"`
+	Qi     string                                   `json:"qi"`
+	Use    *CreateSigningKeyBodyPrivateJwk0Use      `json:"use,omitempty"`
 }
+
+// CreateSigningKeyBodyPrivateJwk0Alg defines model for CreateSigningKeyBody.PrivateJwk.0.Alg.
+type CreateSigningKeyBodyPrivateJwk0Alg string
 
 // CreateSigningKeyBodyPrivateJwk0E defines model for CreateSigningKeyBody.PrivateJwk.0.E.
 type CreateSigningKeyBodyPrivateJwk0E string
 
+// CreateSigningKeyBodyPrivateJwk0Ext defines model for CreateSigningKeyBody.PrivateJwk.0.Ext.
+type CreateSigningKeyBodyPrivateJwk0Ext bool
+
+// CreateSigningKeyBodyPrivateJwk0KeyOps defines model for CreateSigningKeyBody.PrivateJwk.0.KeyOps.
+type CreateSigningKeyBodyPrivateJwk0KeyOps string
+
 // CreateSigningKeyBodyPrivateJwk0Kty defines model for CreateSigningKeyBody.PrivateJwk.0.Kty.
 type CreateSigningKeyBodyPrivateJwk0Kty string
 
+// CreateSigningKeyBodyPrivateJwk0Use defines model for CreateSigningKeyBody.PrivateJwk.0.Use.
+type CreateSigningKeyBodyPrivateJwk0Use string
+
 // CreateSigningKeyBodyPrivateJwk1 defines model for .
 type CreateSigningKeyBodyPrivateJwk1 struct {
-	Crv CreateSigningKeyBodyPrivateJwk1Crv `json:"crv"`
-	D   string                             `json:"d"`
-	Kid *openapi_types.UUID                `json:"kid,omitempty"`
-	Kty CreateSigningKeyBodyPrivateJwk1Kty `json:"kty"`
-	X   string                             `json:"x"`
-	Y   string                             `json:"y"`
+	Alg    *CreateSigningKeyBodyPrivateJwk1Alg      `json:"alg,omitempty"`
+	Crv    CreateSigningKeyBodyPrivateJwk1Crv       `json:"crv"`
+	D      string                                   `json:"d"`
+	Ext    *CreateSigningKeyBodyPrivateJwk1Ext      `json:"ext,omitempty"`
+	KeyOps *[]CreateSigningKeyBodyPrivateJwk1KeyOps `json:"key_ops,omitempty"`
+	Kid    *openapi_types.UUID                      `json:"kid,omitempty"`
+	Kty    CreateSigningKeyBodyPrivateJwk1Kty       `json:"kty"`
+	Use    *CreateSigningKeyBodyPrivateJwk1Use      `json:"use,omitempty"`
+	X      string                                   `json:"x"`
+	Y      string                                   `json:"y"`
 }
+
+// CreateSigningKeyBodyPrivateJwk1Alg defines model for CreateSigningKeyBody.PrivateJwk.1.Alg.
+type CreateSigningKeyBodyPrivateJwk1Alg string
 
 // CreateSigningKeyBodyPrivateJwk1Crv defines model for CreateSigningKeyBody.PrivateJwk.1.Crv.
 type CreateSigningKeyBodyPrivateJwk1Crv string
 
+// CreateSigningKeyBodyPrivateJwk1Ext defines model for CreateSigningKeyBody.PrivateJwk.1.Ext.
+type CreateSigningKeyBodyPrivateJwk1Ext bool
+
+// CreateSigningKeyBodyPrivateJwk1KeyOps defines model for CreateSigningKeyBody.PrivateJwk.1.KeyOps.
+type CreateSigningKeyBodyPrivateJwk1KeyOps string
+
 // CreateSigningKeyBodyPrivateJwk1Kty defines model for CreateSigningKeyBody.PrivateJwk.1.Kty.
 type CreateSigningKeyBodyPrivateJwk1Kty string
 
+// CreateSigningKeyBodyPrivateJwk1Use defines model for CreateSigningKeyBody.PrivateJwk.1.Use.
+type CreateSigningKeyBodyPrivateJwk1Use string
+
 // CreateSigningKeyBodyPrivateJwk2 defines model for .
 type CreateSigningKeyBodyPrivateJwk2 struct {
-	Crv CreateSigningKeyBodyPrivateJwk2Crv `json:"crv"`
-	D   string                             `json:"d"`
-	Kid *openapi_types.UUID                `json:"kid,omitempty"`
-	Kty CreateSigningKeyBodyPrivateJwk2Kty `json:"kty"`
-	X   string                             `json:"x"`
+	Alg    *CreateSigningKeyBodyPrivateJwk2Alg      `json:"alg,omitempty"`
+	Crv    CreateSigningKeyBodyPrivateJwk2Crv       `json:"crv"`
+	D      string                                   `json:"d"`
+	Ext    *CreateSigningKeyBodyPrivateJwk2Ext      `json:"ext,omitempty"`
+	KeyOps *[]CreateSigningKeyBodyPrivateJwk2KeyOps `json:"key_ops,omitempty"`
+	Kid    *openapi_types.UUID                      `json:"kid,omitempty"`
+	Kty    CreateSigningKeyBodyPrivateJwk2Kty       `json:"kty"`
+	Use    *CreateSigningKeyBodyPrivateJwk2Use      `json:"use,omitempty"`
+	X      string                                   `json:"x"`
 }
+
+// CreateSigningKeyBodyPrivateJwk2Alg defines model for CreateSigningKeyBody.PrivateJwk.2.Alg.
+type CreateSigningKeyBodyPrivateJwk2Alg string
 
 // CreateSigningKeyBodyPrivateJwk2Crv defines model for CreateSigningKeyBody.PrivateJwk.2.Crv.
 type CreateSigningKeyBodyPrivateJwk2Crv string
 
+// CreateSigningKeyBodyPrivateJwk2Ext defines model for CreateSigningKeyBody.PrivateJwk.2.Ext.
+type CreateSigningKeyBodyPrivateJwk2Ext bool
+
+// CreateSigningKeyBodyPrivateJwk2KeyOps defines model for CreateSigningKeyBody.PrivateJwk.2.KeyOps.
+type CreateSigningKeyBodyPrivateJwk2KeyOps string
+
 // CreateSigningKeyBodyPrivateJwk2Kty defines model for CreateSigningKeyBody.PrivateJwk.2.Kty.
 type CreateSigningKeyBodyPrivateJwk2Kty string
 
+// CreateSigningKeyBodyPrivateJwk2Use defines model for CreateSigningKeyBody.PrivateJwk.2.Use.
+type CreateSigningKeyBodyPrivateJwk2Use string
+
 // CreateSigningKeyBodyPrivateJwk3 defines model for .
 type CreateSigningKeyBodyPrivateJwk3 struct {
-	K   string                             `json:"k"`
-	Kid *openapi_types.UUID                `json:"kid,omitempty"`
-	Kty CreateSigningKeyBodyPrivateJwk3Kty `json:"kty"`
+	Alg    *CreateSigningKeyBodyPrivateJwk3Alg      `json:"alg,omitempty"`
+	Ext    *CreateSigningKeyBodyPrivateJwk3Ext      `json:"ext,omitempty"`
+	K      string                                   `json:"k"`
+	KeyOps *[]CreateSigningKeyBodyPrivateJwk3KeyOps `json:"key_ops,omitempty"`
+	Kid    *openapi_types.UUID                      `json:"kid,omitempty"`
+	Kty    CreateSigningKeyBodyPrivateJwk3Kty       `json:"kty"`
+	Use    *CreateSigningKeyBodyPrivateJwk3Use      `json:"use,omitempty"`
 }
+
+// CreateSigningKeyBodyPrivateJwk3Alg defines model for CreateSigningKeyBody.PrivateJwk.3.Alg.
+type CreateSigningKeyBodyPrivateJwk3Alg string
+
+// CreateSigningKeyBodyPrivateJwk3Ext defines model for CreateSigningKeyBody.PrivateJwk.3.Ext.
+type CreateSigningKeyBodyPrivateJwk3Ext bool
+
+// CreateSigningKeyBodyPrivateJwk3KeyOps defines model for CreateSigningKeyBody.PrivateJwk.3.KeyOps.
+type CreateSigningKeyBodyPrivateJwk3KeyOps string
 
 // CreateSigningKeyBodyPrivateJwk3Kty defines model for CreateSigningKeyBody.PrivateJwk.3.Kty.
 type CreateSigningKeyBodyPrivateJwk3Kty string
+
+// CreateSigningKeyBodyPrivateJwk3Use defines model for CreateSigningKeyBody.PrivateJwk.3.Use.
+type CreateSigningKeyBodyPrivateJwk3Use string
 
 // CreateSigningKeyBody_PrivateJwk defines model for CreateSigningKeyBody.PrivateJwk.
 type CreateSigningKeyBody_PrivateJwk struct {
