@@ -134,13 +134,6 @@ func IsServiceReady(ctx context.Context, container string) error {
 	return assertContainerHealthy(ctx, container)
 }
 
-var (
-	//go:embed kong.local.crt
-	KongCert string
-	//go:embed kong.local.key
-	KongKey string
-)
-
 // To regenerate local certificate pair:
 //
 //	openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 \
@@ -157,7 +150,7 @@ func NewKongClient() *http.Client {
 			pool = x509.NewCertPool()
 		}
 		// No need to replace TLS config if we fail to append cert
-		if pool.AppendCertsFromPEM([]byte(KongCert)) {
+		if pool.AppendCertsFromPEM(utils.Config.Api.Tls.CertContent) {
 			rt := t.Clone()
 			rt.TLSClientConfig = &tls.Config{
 				MinVersion: tls.VersionTLS12,

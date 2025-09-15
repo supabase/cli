@@ -399,9 +399,9 @@ cat <<'EOF' > /home/kong/localhost.key && \
 EOF
 ` + nginxConfigEmbed + `
 EOF
-` + status.KongCert + `
+` + string(utils.Config.Api.Tls.CertContent) + `
 EOF
-` + status.KongKey + `
+` + string(utils.Config.Api.Tls.KeyContent) + `
 EOF
 `},
 				ExposedPorts: nat.PortSet{
