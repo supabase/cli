@@ -39,7 +39,7 @@ func (a auth) generateJWT(role string) (string, error) {
 	claims := CustomClaims{Issuer: "supabase-demo", Role: role}
 	if len(a.SigningKeys) > 0 {
 		claims.ExpiresAt = jwt.NewNumericDate(time.Now().Add(time.Hour * 24 * 365 * 10)) // 10 years
-		return generateAsymmetricJWT(a.SigningKeys[0], claims)
+		return GenerateAsymmetricJWT(a.SigningKeys[0], claims)
 	}
 	// Fallback to generating symmetric keys
 	if len(a.JwtSecret.Value) < 16 {
@@ -52,8 +52,8 @@ func (a auth) generateJWT(role string) (string, error) {
 	return signed, nil
 }
 
-// generateAsymmetricJWT generates a JWT token signed with the provided JWK private key
-func generateAsymmetricJWT(jwk JWK, claims CustomClaims) (string, error) {
+// GenerateAsymmetricJWT generates a JWT token signed with the provided JWK private key
+func GenerateAsymmetricJWT(jwk JWK, claims CustomClaims) (string, error) {
 	privateKey, err := jwkToPrivateKey(jwk)
 	if err != nil {
 		return "", errors.Errorf("failed to convert JWK to private key: %w", err)
@@ -166,4 +166,12 @@ func jwkToECDSAPrivateKey(jwk JWK) (*ecdsa.PrivateKey, error) {
 		},
 		D: d,
 	}, nil
+}
+
+func NewBigIntFromBase64(n string) (*big.Int, error) {
+	nBytes, err := base64.RawURLEncoding.DecodeString(n)
+	if err != nil {
+		return nil, errors.Errorf("failed to decode base64: %w", err)
+	}
+	return new(big.Int).SetBytes(nBytes), nil
 }

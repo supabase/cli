@@ -130,6 +130,7 @@ type CustomClaims struct {
 	Issuer string `json:"iss,omitempty"`
 	Ref    string `json:"ref,omitempty"`
 	Role   string `json:"role"`
+	IsAnon bool   `json:"is_anonymous,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -914,7 +915,6 @@ func (c *config) Validate(fsys fs.FS) error {
 		return errors.New("Missing required field in config: edge_runtime.deno_version")
 	case 1:
 		c.EdgeRuntime.Image = deno1
-		break
 	case 2:
 		break
 	default:
