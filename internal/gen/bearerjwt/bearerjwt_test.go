@@ -1,4 +1,4 @@
-package token
+package bearerjwt
 
 import (
 	"bytes"

@@ -10,9 +10,9 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/supabase/cli/internal/gen/bearerjwt"
 	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/gen/signingkeys"
-	"github.com/supabase/cli/internal/gen/token"
 	"github.com/supabase/cli/internal/gen/types"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
@@ -125,16 +125,16 @@ Supported algorithms:
 	expiry   time.Time
 	validFor time.Duration
 
-	genTokenCmd = &cobra.Command{
-		Use:   "auth-token",
-		Short: "Generate Bearer Auth token for accessing Data API",
+	genJWTCmd = &cobra.Command{
+		Use:   "bearer-jwt",
+		Short: "Generate a Bearer Auth JWT for accessing Data API",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if expiry.IsZero() {
 				expiry = time.Now().Add(validFor)
 			}
 			claims.ExpiresAt = jwt.NewNumericDate(expiry)
-			return token.Run(cmd.Context(), claims, os.Stdout, afero.NewOsFs())
+			return bearerjwt.Run(cmd.Context(), claims, os.Stdout, afero.NewOsFs())
 		},
 	}
 )
@@ -164,14 +164,14 @@ func init() {
 	signingKeyFlags.Var(&algorithm, "algorithm", "Algorithm for signing key generation.")
 	signingKeyFlags.BoolVar(&appendKeys, "append", false, "Append new key to existing keys file instead of overwriting.")
 	genCmd.AddCommand(genSigningKeyCmd)
-	tokenFlags := genTokenCmd.Flags()
+	tokenFlags := genJWTCmd.Flags()
 	tokenFlags.StringVar(&claims.Role, "role", "", "Postgres role to use.")
 	tokenFlags.StringVar(&claims.Subject, "sub", "", "User ID to impersonate.")
-	genTokenCmd.Flag("sub").DefValue = "anonymous"
+	genJWTCmd.Flag("sub").DefValue = "anonymous"
 	tokenFlags.TimeVar(&expiry, "exp", time.Time{}, []string{time.RFC3339}, "Expiry timestamp for this token.")
 	tokenFlags.DurationVar(&validFor, "valid-for", time.Minute*30, "Validity duration for this token.")
-	genTokenCmd.MarkFlagsMutuallyExclusive("exp", "valid-for")
-	cobra.CheckErr(genTokenCmd.MarkFlagRequired("role"))
-	genCmd.AddCommand(genTokenCmd)
+	genJWTCmd.MarkFlagsMutuallyExclusive("exp", "valid-for")
+	cobra.CheckErr(genJWTCmd.MarkFlagRequired("role"))
+	genCmd.AddCommand(genJWTCmd)
 	rootCmd.AddCommand(genCmd)
 }
