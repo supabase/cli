@@ -17,11 +17,12 @@ require (
 	github.com/docker/docker v28.4.0+incompatible
 	github.com/docker/go-connections v0.6.0
 	github.com/fsnotify/fsnotify v1.9.0
-	github.com/getsentry/sentry-go v0.35.2
+	github.com/getsentry/sentry-go v0.35.3
 	github.com/go-errors/errors v1.5.1
 	github.com/go-git/go-git/v5 v5.16.2
 	github.com/go-playground/validator/v10 v10.27.0
 	github.com/go-xmlfmt/xmlfmt v1.1.3
+	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/go-github/v62 v62.0.0
 	github.com/google/go-querystring v1.1.0
 	github.com/google/uuid v1.6.0
@@ -156,7 +157,6 @@ require (
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/gofrs/flock v0.12.1 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.0 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golangci/dupl v0.0.0-20250308024227-f665c8d69b32 // indirect
