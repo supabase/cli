@@ -27,7 +27,6 @@ import (
 	"github.com/docker/go-units"
 	"github.com/go-errors/errors"
 	"github.com/go-viper/mapstructure/v2"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
@@ -123,30 +122,6 @@ func (g Glob) Files(fsys fs.FS) ([]string, error) {
 		}
 	}
 	return result, errors.Join(allErrors...)
-}
-
-type CustomClaims struct {
-	// Overrides Issuer to maintain json order when marshalling
-	Issuer string `json:"iss,omitempty"`
-	Ref    string `json:"ref,omitempty"`
-	Role   string `json:"role"`
-	IsAnon bool   `json:"is_anonymous,omitempty"`
-	jwt.RegisteredClaims
-}
-
-const (
-	defaultJwtSecret = "super-secret-jwt-token-with-at-least-32-characters-long"
-	defaultJwtExpiry = 1983812996
-)
-
-func (c CustomClaims) NewToken() *jwt.Token {
-	if c.ExpiresAt == nil {
-		c.ExpiresAt = jwt.NewNumericDate(time.Unix(defaultJwtExpiry, 0))
-	}
-	if len(c.Issuer) == 0 {
-		c.Issuer = "supabase-demo"
-	}
-	return jwt.NewWithClaims(jwt.SigningMethodHS256, c)
 }
 
 // We follow these rules when adding new config:
@@ -403,9 +378,6 @@ func NewConfig(editors ...ConfigEditor) config {
 				TestOTP: map[string]string{},
 			},
 			External: map[string]provider{},
-			JwtSecret: Secret{
-				Value: defaultJwtSecret,
-			},
 		},
 		Inbucket: inbucket{
 			Image:      Images.Inbucket,
