@@ -85,6 +85,7 @@ type kongConfig struct {
 	PoolerId      string
 	ApiHost       string
 	ApiPort       uint16
+	BearerToken   string
 }
 
 var (
@@ -345,6 +346,14 @@ EOF
 			PoolerId:      utils.PoolerId,
 			ApiHost:       utils.Config.Hostname,
 			ApiPort:       utils.Config.Api.Port,
+			BearerToken: fmt.Sprintf(
+				// Pass down apikey as Authorization header for backwards compatibility with legacy JWT
+				`$((function() return (headers.apikey == '%s' and 'Bearer %s') or (headers.apikey == '%s' and 'Bearer %s') or headers.apikey end)())`,
+				utils.Config.Auth.SecretKey.Value,
+				utils.Config.Auth.ServiceRoleKey.Value,
+				utils.Config.Auth.PublishableKey.Value,
+				utils.Config.Auth.AnonKey.Value,
+			),
 		}); err != nil {
 			return errors.Errorf("failed to exec template: %w", err)
 		}

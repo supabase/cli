@@ -173,6 +173,8 @@ type (
 		Web3      web3      `toml:"web3"`
 
 		// Custom secrets can be injected from .env file
+		PublishableKey Secret `toml:"publishable_key"`
+		SecretKey      Secret `toml:"secret_key"`
 		JwtSecret      Secret `toml:"jwt_secret"`
 		AnonKey        Secret `toml:"anon_key"`
 		ServiceRoleKey Secret `toml:"service_role_key"`
