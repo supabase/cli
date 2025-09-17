@@ -32,6 +32,13 @@ func (a *auth) generateAPIKeys() error {
 		}
 		a.ServiceRoleKey.Value = signed
 	}
+	// Set hardcoded opaque keys
+	if len(a.SecretKey.Value) == 0 {
+		a.SecretKey.Value = "sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz"
+	}
+	if len(a.PublishableKey.Value) == 0 {
+		a.PublishableKey.Value = "sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH"
+	}
 	return nil
 }
 
