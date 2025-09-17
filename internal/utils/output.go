@@ -6,6 +6,8 @@ import (
 	"io"
 
 	"github.com/BurntSushi/toml"
+	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/glamour/styles"
 	"github.com/go-errors/errors"
 	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
@@ -73,5 +75,21 @@ func EncodeOutput(format string, w io.Writer, value any) error {
 	default:
 		return errors.Errorf("Unsupported output encoding %q", format)
 	}
+	return nil
+}
+
+func RenderTable(markdown string) error {
+	r, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle(styles.AsciiStyle),
+		glamour.WithWordWrap(-1),
+	)
+	if err != nil {
+		return errors.Errorf("failed to initialise terminal renderer: %w", err)
+	}
+	out, err := r.Render(markdown)
+	if err != nil {
+		return errors.Errorf("failed to render markdown: %w", err)
+	}
+	fmt.Print(out)
 	return nil
 }
