@@ -75,6 +75,6 @@ func TestCreateCommand(t *testing.T) {
 			Region: cast.Ptr("sin"),
 		}, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "Unexpected error creating preview branch:")
+		assert.ErrorContains(t, err, "unexpected create branch status 503:")
 	})
 }
