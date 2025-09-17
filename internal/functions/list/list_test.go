@@ -66,7 +66,7 @@ func TestFunctionsListCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), project, fsys)
 		// Check error
-		assert.ErrorContains(t, err, "Unexpected error retrieving functions")
+		assert.ErrorContains(t, err, "unexpected list functions status 503:")
 	})
 
 	t.Run("throws error on network error", func(t *testing.T) {

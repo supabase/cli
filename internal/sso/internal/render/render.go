@@ -7,7 +7,6 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/go-xmlfmt/xmlfmt"
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -83,7 +82,7 @@ func ListMarkdown(providers api.ListProvidersResponse) error {
 		))
 	}
 
-	return list.RenderTable(strings.Join(markdownTable, ""))
+	return utils.RenderTable(strings.Join(markdownTable, ""))
 }
 
 func SingleMarkdown(provider api.GetProviderResponse) error {
@@ -143,7 +142,7 @@ func SingleMarkdown(provider api.GetProviderResponse) error {
 		markdownTable = append(markdownTable, "", "## SAML 2.0 Metadata XML", "```xml", prettyXML, "```")
 	}
 
-	return list.RenderTable(strings.Join(markdownTable, "\n"))
+	return utils.RenderTable(strings.Join(markdownTable, "\n"))
 }
 
 func InfoMarkdown(ref string) error {
@@ -167,5 +166,5 @@ func InfoMarkdown(ref string) error {
 		fmt.Sprintf("https://%s.supabase.co", ref),
 	))
 
-	return list.RenderTable(strings.Join(markdownTable, "\n"))
+	return utils.RenderTable(strings.Join(markdownTable, "\n"))
 }

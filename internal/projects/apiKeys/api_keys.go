@@ -9,7 +9,6 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/oapi-codegen/nullable"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -31,7 +30,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 			table += fmt.Sprintf("|`%s`|`%s`|\n", k, v)
 		}
 
-		return list.RenderTable(table)
+		return utils.RenderTable(table)
 	case utils.OutputToml, utils.OutputEnv:
 		return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, ToEnv(keys))
 	}

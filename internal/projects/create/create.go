@@ -35,12 +35,21 @@ func Run(ctx context.Context, params api.V1CreateProjectBody, fsys afero.Fs) err
 	}
 
 	projectUrl := fmt.Sprintf("%s/project/%s", utils.GetSupabaseDashboardURL(), resp.JSON201.Id)
-	fmt.Fprintf(os.Stderr, "Created a new project %s at %s\n", utils.Aqua(resp.JSON201.Name), utils.Bold(projectUrl))
-	switch utils.OutputFormat.Value {
-	case utils.OutputPretty, utils.OutputEnv:
-		return nil
+	fmt.Fprintf(os.Stderr, "Created a new project at %s\n", utils.Bold(projectUrl))
+	if utils.OutputFormat.Value == utils.OutputPretty {
+		table := `|ORG ID|REFERENCE ID|NAME|REGION|CREATED AT (UTC)|
+|-|-|-|-|-|
+`
+		table += fmt.Sprintf(
+			"|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
+			resp.JSON201.OrganizationId,
+			resp.JSON201.Id,
+			strings.ReplaceAll(resp.JSON201.Name, "|", "\\|"),
+			utils.FormatRegion(resp.JSON201.Region),
+			utils.FormatTimestamp(resp.JSON201.CreatedAt),
+		)
+		return utils.RenderTable(table)
 	}
-
 	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, resp.JSON201)
 }
 

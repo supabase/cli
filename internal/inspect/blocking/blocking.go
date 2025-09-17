@@ -10,7 +10,6 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/pgxv5"
 )
@@ -56,5 +55,5 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		blocked_statement = re.ReplaceAllString(blocked_statement, `\|`)
 		table += fmt.Sprintf("|`%d`|`%s`|`%s`|`%d`|%s|`%s`|\n", r.Blocked_pid, blocking_statement, r.Blocking_duration, r.Blocking_pid, blocked_statement, r.Blocked_duration)
 	}
-	return list.RenderTable(table)
+	return utils.RenderTable(table)
 }
