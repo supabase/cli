@@ -30,7 +30,8 @@ type CustomName struct {
 	StorageS3URL             string `env:"api.storage_s3_url,default=STORAGE_S3_URL"`
 	DbURL                    string `env:"db.url,default=DB_URL"`
 	StudioURL                string `env:"studio.url,default=STUDIO_URL"`
-	InbucketURL              string `env:"inbucket.url,default=INBUCKET_URL"`
+	InbucketURL              string `env:"inbucket.url,default=INBUCKET_URL,deprecated"`
+	MailpitURL               string `env:"mailpit.url,default=MAILPIT_URL"`
 	PublishableKey           string `env:"auth.publishable_key,default=PUBLISHABLE_KEY"`
 	SecretKey                string `env:"auth.secret_key,default=SECRET_KEY"`
 	JWTSecret                string `env:"auth.jwt_secret,default=JWT_SECRET,deprecated"`
@@ -60,6 +61,7 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 		values[c.ServiceRoleKey] = utils.Config.Auth.ServiceRoleKey.Value
 	}
 	if utils.Config.Inbucket.Enabled && !utils.SliceContains(exclude, utils.InbucketId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Inbucket.Image)) {
+		values[c.MailpitURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Inbucket.Port)
 		values[c.InbucketURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Inbucket.Port)
 	}
 	if utils.Config.Storage.Enabled && !utils.SliceContains(exclude, utils.StorageId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Storage.Image)) {
@@ -200,9 +202,10 @@ func PrettyPrint(w io.Writer, exclude ...string) {
 		ApiURL:                   "         " + utils.Aqua("API URL"),
 		GraphqlURL:               "     " + utils.Aqua("GraphQL URL"),
 		StorageS3URL:             "  " + utils.Aqua("S3 Storage URL"),
-		DbURL:                    "          " + utils.Aqua("DB URL"),
+		DbURL:                    "    " + utils.Aqua("Database URL"),
 		StudioURL:                "      " + utils.Aqua("Studio URL"),
 		InbucketURL:              "    " + utils.Aqua("Inbucket URL"),
+		MailpitURL:               "     " + utils.Aqua("Mailpit URL"),
 		PublishableKey:           " " + utils.Aqua("Publishable key"),
 		SecretKey:                "      " + utils.Aqua("Secret key"),
 		JWTSecret:                "      " + utils.Aqua("JWT secret"),
