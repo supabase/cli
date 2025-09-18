@@ -32,6 +32,14 @@ func Run(ctx context.Context, backup bool, projectId string, all bool, fsys afer
 		return err
 	}
 
+	// Remove local JWT secret if --no-backup is used
+	if !backup {
+		configPath := utils.ConfigPath // typically ".supabase/config.json"
+		if err := fsys.Remove(configPath); err != nil && err != afero.ErrFileNotFound {
+			fmt.Printf("Warning: failed to remove JWT secret config: %v\n", err)
+		}
+	}
+
 	fmt.Println("Stopped " + utils.Aqua("supabase") + " local development setup.")
 	if resp, err := utils.Docker.VolumeList(ctx, volume.ListOptions{
 		Filters: utils.CliProjectFilter(searchProjectIdFilter),

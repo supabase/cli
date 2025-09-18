@@ -242,3 +242,47 @@ func TestStopServices(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
+
+func TestRun_RemovesConfigOnNoBackup(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	configPath := utils.ConfigPath
+	// Write a valid TOML config file using the CLI's config struct
+	require.NoError(t, utils.WriteConfig(fsys, false))
+
+	// Setup mock docker to avoid real HTTP requests
+	require.NoError(t, apitest.MockDocker(utils.Docker))
+	defer gock.OffAll()
+	gock.New(utils.Docker.DaemonHost()).
+		Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
+		Reply(http.StatusOK).
+		JSON([]container.Summary{})
+	gock.New(utils.Docker.DaemonHost()).
+		Post("/v" + utils.Docker.ClientVersion() + "/containers/prune").
+		Reply(http.StatusOK).
+		JSON(container.PruneReport{})
+	gock.New(utils.Docker.DaemonHost()).
+		Post("/v" + utils.Docker.ClientVersion() + "/networks/prune").
+		Reply(http.StatusOK).
+		JSON(network.PruneReport{})
+	gock.New(utils.Docker.DaemonHost()).
+		Get("/v" + utils.Docker.ClientVersion() + "/volumes").
+		Reply(http.StatusOK).
+		JSON(volume.ListResponse{Volumes: []*volume.Volume{{
+			Name: utils.DbId,
+		}}})
+	// Add missing mock for volumes/prune using container.PruneReport as a generic empty response
+	gock.New(utils.Docker.DaemonHost()).
+		Post("/v" + utils.Docker.ClientVersion() + "/volumes/prune").
+		Reply(http.StatusOK).
+		JSON(container.PruneReport{})
+
+	err := Run(context.Background(), false, "", false, fsys)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	exists, _ := afero.Exists(fsys, configPath)
+	if exists {
+		t.Errorf("Config file was not removed on --no-backup")
+	}
+}
