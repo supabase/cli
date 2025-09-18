@@ -27,7 +27,14 @@ try {
       ignore_extension_versions: true,
     });
     m.set_safety(false);
-    m.add_all_changes(true);
+    if (managedSchemas.includes(schema)) {
+      m.add(m.changes.triggers({ drops_only: true }));
+      m.add(m.changes.rlspolicies({ drops_only: true }));
+      m.add(m.changes.rlspolicies({ creations_only: true }));
+      m.add(m.changes.triggers({ creations_only: true }));
+    } else {
+      m.add_all_changes(true);
+    }
     sql += m.sql;
   }
   if (includedSchemas.length === 0) {

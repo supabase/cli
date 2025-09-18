@@ -27,7 +27,6 @@ import (
 	"github.com/docker/go-units"
 	"github.com/go-errors/errors"
 	"github.com/go-viper/mapstructure/v2"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
@@ -123,29 +122,6 @@ func (g Glob) Files(fsys fs.FS) ([]string, error) {
 		}
 	}
 	return result, errors.Join(allErrors...)
-}
-
-type CustomClaims struct {
-	// Overrides Issuer to maintain json order when marshalling
-	Issuer string `json:"iss,omitempty"`
-	Ref    string `json:"ref,omitempty"`
-	Role   string `json:"role"`
-	jwt.RegisteredClaims
-}
-
-const (
-	defaultJwtSecret = "super-secret-jwt-token-with-at-least-32-characters-long"
-	defaultJwtExpiry = 1983812996
-)
-
-func (c CustomClaims) NewToken() *jwt.Token {
-	if c.ExpiresAt == nil {
-		c.ExpiresAt = jwt.NewNumericDate(time.Unix(defaultJwtExpiry, 0))
-	}
-	if len(c.Issuer) == 0 {
-		c.Issuer = "supabase-demo"
-	}
-	return jwt.NewWithClaims(jwt.SigningMethodHS256, c)
 }
 
 // We follow these rules when adding new config:
@@ -351,6 +327,10 @@ func NewConfig(editors ...ConfigEditor) config {
 		Api: api{
 			Image:     Images.Postgrest,
 			KongImage: Images.Kong,
+			Tls: tlsKong{
+				CertContent: kongCert,
+				KeyContent:  kongKey,
+			},
 		},
 		Db: db{
 			Image:    Images.Pg,
@@ -398,9 +378,6 @@ func NewConfig(editors ...ConfigEditor) config {
 				TestOTP: map[string]string{},
 			},
 			External: map[string]provider{},
-			JwtSecret: Secret{
-				Value: defaultJwtSecret,
-			},
 		},
 		Inbucket: inbucket{
 			Image:      Images.Inbucket,
@@ -429,6 +406,11 @@ func NewConfig(editors ...ConfigEditor) config {
 }
 
 var (
+	//go:embed templates/certs/kong.local.crt
+	kongCert []byte
+	//go:embed templates/certs/kong.local.key
+	kongKey []byte
+
 	//go:embed templates/config.toml
 	initConfigEmbed    string
 	initConfigTemplate = template.Must(template.New("initConfig").Parse(initConfigEmbed))
@@ -720,6 +702,16 @@ func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 		}
 		c.Functions[slug] = function
 	}
+	// Resolve TLS config
+	if c.Api.Enabled && c.Api.Tls.Enabled {
+		if len(c.Api.Tls.CertPath) > 0 {
+			c.Api.Tls.CertPath = path.Join(builder.SupabaseDirPath, c.Api.Tls.CertPath)
+		}
+		if len(c.Api.Tls.KeyPath) > 0 {
+			c.Api.Tls.KeyPath = path.Join(builder.SupabaseDirPath, c.Api.Tls.KeyPath)
+		}
+	}
+	// Resolve database config
 	if c.Db.Seed.Enabled {
 		for i, pattern := range c.Db.Seed.SqlPaths {
 			if len(pattern) > 0 && !filepath.IsAbs(pattern) {
@@ -752,6 +744,25 @@ func (c *config) Validate(fsys fs.FS) error {
 	if c.Api.Enabled {
 		if c.Api.Port == 0 {
 			return errors.New("Missing required field in config: api.port")
+		}
+		if c.Api.Tls.Enabled {
+			var err error
+			if len(c.Api.Tls.CertPath) > 0 {
+				if len(c.Api.Tls.KeyPath) == 0 {
+					return errors.New("Missing required field in config: api.tls.key_path")
+				}
+				if c.Api.Tls.CertContent, err = fs.ReadFile(fsys, c.Api.Tls.CertPath); err != nil {
+					return errors.Errorf("failed to read TLS cert: %w", err)
+				}
+			}
+			if len(c.Api.Tls.KeyPath) > 0 {
+				if len(c.Api.Tls.CertPath) == 0 {
+					return errors.New("Missing required field in config: api.tls.cert_path")
+				}
+				if c.Api.Tls.KeyContent, err = fs.ReadFile(fsys, c.Api.Tls.KeyPath); err != nil {
+					return errors.Errorf("failed to read TLS key: %w", err)
+				}
+			}
 		}
 	}
 	// Validate db config
@@ -876,7 +887,6 @@ func (c *config) Validate(fsys fs.FS) error {
 		return errors.New("Missing required field in config: edge_runtime.deno_version")
 	case 1:
 		c.EdgeRuntime.Image = deno1
-		break
 	case 2:
 		break
 	default:

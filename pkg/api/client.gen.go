@@ -91,33 +91,33 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 	// V1DeleteABranch request
-	V1DeleteABranch(ctx context.Context, branchId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1DeleteABranch(ctx context.Context, branchIdOrRef string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1GetABranchConfig request
-	V1GetABranchConfig(ctx context.Context, branchId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1GetABranchConfig(ctx context.Context, branchIdOrRef string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1UpdateABranchConfigWithBody request with any body
-	V1UpdateABranchConfigWithBody(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1UpdateABranchConfigWithBody(ctx context.Context, branchIdOrRef string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	V1UpdateABranchConfig(ctx context.Context, branchId openapi_types.UUID, body V1UpdateABranchConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1UpdateABranchConfig(ctx context.Context, branchIdOrRef string, body V1UpdateABranchConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1DiffABranch request
-	V1DiffABranch(ctx context.Context, branchId openapi_types.UUID, params *V1DiffABranchParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1DiffABranch(ctx context.Context, branchIdOrRef string, params *V1DiffABranchParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1MergeABranchWithBody request with any body
-	V1MergeABranchWithBody(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1MergeABranchWithBody(ctx context.Context, branchIdOrRef string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	V1MergeABranch(ctx context.Context, branchId openapi_types.UUID, body V1MergeABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1MergeABranch(ctx context.Context, branchIdOrRef string, body V1MergeABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1PushABranchWithBody request with any body
-	V1PushABranchWithBody(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1PushABranchWithBody(ctx context.Context, branchIdOrRef string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	V1PushABranch(ctx context.Context, branchId openapi_types.UUID, body V1PushABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1PushABranch(ctx context.Context, branchIdOrRef string, body V1PushABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1ResetABranchWithBody request with any body
-	V1ResetABranchWithBody(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1ResetABranchWithBody(ctx context.Context, branchIdOrRef string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	V1ResetABranch(ctx context.Context, branchId openapi_types.UUID, body V1ResetABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1ResetABranch(ctx context.Context, branchIdOrRef string, body V1ResetABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1AuthorizeUser request
 	V1AuthorizeUser(ctx context.Context, params *V1AuthorizeUserParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -592,8 +592,8 @@ type ClientInterface interface {
 	V1GetASnippet(ctx context.Context, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
-func (c *Client) V1DeleteABranch(ctx context.Context, branchId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1DeleteABranchRequest(c.Server, branchId)
+func (c *Client) V1DeleteABranch(ctx context.Context, branchIdOrRef string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1DeleteABranchRequest(c.Server, branchIdOrRef)
 	if err != nil {
 		return nil, err
 	}
@@ -604,8 +604,8 @@ func (c *Client) V1DeleteABranch(ctx context.Context, branchId openapi_types.UUI
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1GetABranchConfig(ctx context.Context, branchId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1GetABranchConfigRequest(c.Server, branchId)
+func (c *Client) V1GetABranchConfig(ctx context.Context, branchIdOrRef string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetABranchConfigRequest(c.Server, branchIdOrRef)
 	if err != nil {
 		return nil, err
 	}
@@ -616,8 +616,8 @@ func (c *Client) V1GetABranchConfig(ctx context.Context, branchId openapi_types.
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1UpdateABranchConfigWithBody(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1UpdateABranchConfigRequestWithBody(c.Server, branchId, contentType, body)
+func (c *Client) V1UpdateABranchConfigWithBody(ctx context.Context, branchIdOrRef string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateABranchConfigRequestWithBody(c.Server, branchIdOrRef, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -628,8 +628,8 @@ func (c *Client) V1UpdateABranchConfigWithBody(ctx context.Context, branchId ope
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1UpdateABranchConfig(ctx context.Context, branchId openapi_types.UUID, body V1UpdateABranchConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1UpdateABranchConfigRequest(c.Server, branchId, body)
+func (c *Client) V1UpdateABranchConfig(ctx context.Context, branchIdOrRef string, body V1UpdateABranchConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateABranchConfigRequest(c.Server, branchIdOrRef, body)
 	if err != nil {
 		return nil, err
 	}
@@ -640,8 +640,8 @@ func (c *Client) V1UpdateABranchConfig(ctx context.Context, branchId openapi_typ
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1DiffABranch(ctx context.Context, branchId openapi_types.UUID, params *V1DiffABranchParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1DiffABranchRequest(c.Server, branchId, params)
+func (c *Client) V1DiffABranch(ctx context.Context, branchIdOrRef string, params *V1DiffABranchParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1DiffABranchRequest(c.Server, branchIdOrRef, params)
 	if err != nil {
 		return nil, err
 	}
@@ -652,8 +652,8 @@ func (c *Client) V1DiffABranch(ctx context.Context, branchId openapi_types.UUID,
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1MergeABranchWithBody(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1MergeABranchRequestWithBody(c.Server, branchId, contentType, body)
+func (c *Client) V1MergeABranchWithBody(ctx context.Context, branchIdOrRef string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1MergeABranchRequestWithBody(c.Server, branchIdOrRef, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -664,8 +664,8 @@ func (c *Client) V1MergeABranchWithBody(ctx context.Context, branchId openapi_ty
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1MergeABranch(ctx context.Context, branchId openapi_types.UUID, body V1MergeABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1MergeABranchRequest(c.Server, branchId, body)
+func (c *Client) V1MergeABranch(ctx context.Context, branchIdOrRef string, body V1MergeABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1MergeABranchRequest(c.Server, branchIdOrRef, body)
 	if err != nil {
 		return nil, err
 	}
@@ -676,8 +676,8 @@ func (c *Client) V1MergeABranch(ctx context.Context, branchId openapi_types.UUID
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1PushABranchWithBody(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1PushABranchRequestWithBody(c.Server, branchId, contentType, body)
+func (c *Client) V1PushABranchWithBody(ctx context.Context, branchIdOrRef string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1PushABranchRequestWithBody(c.Server, branchIdOrRef, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -688,8 +688,8 @@ func (c *Client) V1PushABranchWithBody(ctx context.Context, branchId openapi_typ
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1PushABranch(ctx context.Context, branchId openapi_types.UUID, body V1PushABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1PushABranchRequest(c.Server, branchId, body)
+func (c *Client) V1PushABranch(ctx context.Context, branchIdOrRef string, body V1PushABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1PushABranchRequest(c.Server, branchIdOrRef, body)
 	if err != nil {
 		return nil, err
 	}
@@ -700,8 +700,8 @@ func (c *Client) V1PushABranch(ctx context.Context, branchId openapi_types.UUID,
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1ResetABranchWithBody(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1ResetABranchRequestWithBody(c.Server, branchId, contentType, body)
+func (c *Client) V1ResetABranchWithBody(ctx context.Context, branchIdOrRef string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ResetABranchRequestWithBody(c.Server, branchIdOrRef, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -712,8 +712,8 @@ func (c *Client) V1ResetABranchWithBody(ctx context.Context, branchId openapi_ty
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1ResetABranch(ctx context.Context, branchId openapi_types.UUID, body V1ResetABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1ResetABranchRequest(c.Server, branchId, body)
+func (c *Client) V1ResetABranch(ctx context.Context, branchIdOrRef string, body V1ResetABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ResetABranchRequest(c.Server, branchIdOrRef, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2779,12 +2779,12 @@ func (c *Client) V1GetASnippet(ctx context.Context, id openapi_types.UUID, reqEd
 }
 
 // NewV1DeleteABranchRequest generates requests for V1DeleteABranch
-func NewV1DeleteABranchRequest(server string, branchId openapi_types.UUID) (*http.Request, error) {
+func NewV1DeleteABranchRequest(server string, branchIdOrRef string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id", runtime.ParamLocationPath, branchId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id_or_ref", runtime.ParamLocationPath, branchIdOrRef)
 	if err != nil {
 		return nil, err
 	}
@@ -2813,12 +2813,12 @@ func NewV1DeleteABranchRequest(server string, branchId openapi_types.UUID) (*htt
 }
 
 // NewV1GetABranchConfigRequest generates requests for V1GetABranchConfig
-func NewV1GetABranchConfigRequest(server string, branchId openapi_types.UUID) (*http.Request, error) {
+func NewV1GetABranchConfigRequest(server string, branchIdOrRef string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id", runtime.ParamLocationPath, branchId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id_or_ref", runtime.ParamLocationPath, branchIdOrRef)
 	if err != nil {
 		return nil, err
 	}
@@ -2847,23 +2847,23 @@ func NewV1GetABranchConfigRequest(server string, branchId openapi_types.UUID) (*
 }
 
 // NewV1UpdateABranchConfigRequest calls the generic V1UpdateABranchConfig builder with application/json body
-func NewV1UpdateABranchConfigRequest(server string, branchId openapi_types.UUID, body V1UpdateABranchConfigJSONRequestBody) (*http.Request, error) {
+func NewV1UpdateABranchConfigRequest(server string, branchIdOrRef string, body V1UpdateABranchConfigJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewV1UpdateABranchConfigRequestWithBody(server, branchId, "application/json", bodyReader)
+	return NewV1UpdateABranchConfigRequestWithBody(server, branchIdOrRef, "application/json", bodyReader)
 }
 
 // NewV1UpdateABranchConfigRequestWithBody generates requests for V1UpdateABranchConfig with any type of body
-func NewV1UpdateABranchConfigRequestWithBody(server string, branchId openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+func NewV1UpdateABranchConfigRequestWithBody(server string, branchIdOrRef string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id", runtime.ParamLocationPath, branchId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id_or_ref", runtime.ParamLocationPath, branchIdOrRef)
 	if err != nil {
 		return nil, err
 	}
@@ -2894,12 +2894,12 @@ func NewV1UpdateABranchConfigRequestWithBody(server string, branchId openapi_typ
 }
 
 // NewV1DiffABranchRequest generates requests for V1DiffABranch
-func NewV1DiffABranchRequest(server string, branchId openapi_types.UUID, params *V1DiffABranchParams) (*http.Request, error) {
+func NewV1DiffABranchRequest(server string, branchIdOrRef string, params *V1DiffABranchParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id", runtime.ParamLocationPath, branchId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id_or_ref", runtime.ParamLocationPath, branchIdOrRef)
 	if err != nil {
 		return nil, err
 	}
@@ -2950,23 +2950,23 @@ func NewV1DiffABranchRequest(server string, branchId openapi_types.UUID, params 
 }
 
 // NewV1MergeABranchRequest calls the generic V1MergeABranch builder with application/json body
-func NewV1MergeABranchRequest(server string, branchId openapi_types.UUID, body V1MergeABranchJSONRequestBody) (*http.Request, error) {
+func NewV1MergeABranchRequest(server string, branchIdOrRef string, body V1MergeABranchJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewV1MergeABranchRequestWithBody(server, branchId, "application/json", bodyReader)
+	return NewV1MergeABranchRequestWithBody(server, branchIdOrRef, "application/json", bodyReader)
 }
 
 // NewV1MergeABranchRequestWithBody generates requests for V1MergeABranch with any type of body
-func NewV1MergeABranchRequestWithBody(server string, branchId openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+func NewV1MergeABranchRequestWithBody(server string, branchIdOrRef string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id", runtime.ParamLocationPath, branchId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id_or_ref", runtime.ParamLocationPath, branchIdOrRef)
 	if err != nil {
 		return nil, err
 	}
@@ -2997,23 +2997,23 @@ func NewV1MergeABranchRequestWithBody(server string, branchId openapi_types.UUID
 }
 
 // NewV1PushABranchRequest calls the generic V1PushABranch builder with application/json body
-func NewV1PushABranchRequest(server string, branchId openapi_types.UUID, body V1PushABranchJSONRequestBody) (*http.Request, error) {
+func NewV1PushABranchRequest(server string, branchIdOrRef string, body V1PushABranchJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewV1PushABranchRequestWithBody(server, branchId, "application/json", bodyReader)
+	return NewV1PushABranchRequestWithBody(server, branchIdOrRef, "application/json", bodyReader)
 }
 
 // NewV1PushABranchRequestWithBody generates requests for V1PushABranch with any type of body
-func NewV1PushABranchRequestWithBody(server string, branchId openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+func NewV1PushABranchRequestWithBody(server string, branchIdOrRef string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id", runtime.ParamLocationPath, branchId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id_or_ref", runtime.ParamLocationPath, branchIdOrRef)
 	if err != nil {
 		return nil, err
 	}
@@ -3044,23 +3044,23 @@ func NewV1PushABranchRequestWithBody(server string, branchId openapi_types.UUID,
 }
 
 // NewV1ResetABranchRequest calls the generic V1ResetABranch builder with application/json body
-func NewV1ResetABranchRequest(server string, branchId openapi_types.UUID, body V1ResetABranchJSONRequestBody) (*http.Request, error) {
+func NewV1ResetABranchRequest(server string, branchIdOrRef string, body V1ResetABranchJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewV1ResetABranchRequestWithBody(server, branchId, "application/json", bodyReader)
+	return NewV1ResetABranchRequestWithBody(server, branchIdOrRef, "application/json", bodyReader)
 }
 
 // NewV1ResetABranchRequestWithBody generates requests for V1ResetABranch with any type of body
-func NewV1ResetABranchRequestWithBody(server string, branchId openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+func NewV1ResetABranchRequestWithBody(server string, branchIdOrRef string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id", runtime.ParamLocationPath, branchId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id_or_ref", runtime.ParamLocationPath, branchIdOrRef)
 	if err != nil {
 		return nil, err
 	}
@@ -9176,33 +9176,33 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 	// V1DeleteABranchWithResponse request
-	V1DeleteABranchWithResponse(ctx context.Context, branchId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1DeleteABranchResponse, error)
+	V1DeleteABranchWithResponse(ctx context.Context, branchIdOrRef string, reqEditors ...RequestEditorFn) (*V1DeleteABranchResponse, error)
 
 	// V1GetABranchConfigWithResponse request
-	V1GetABranchConfigWithResponse(ctx context.Context, branchId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1GetABranchConfigResponse, error)
+	V1GetABranchConfigWithResponse(ctx context.Context, branchIdOrRef string, reqEditors ...RequestEditorFn) (*V1GetABranchConfigResponse, error)
 
 	// V1UpdateABranchConfigWithBodyWithResponse request with any body
-	V1UpdateABranchConfigWithBodyWithResponse(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateABranchConfigResponse, error)
+	V1UpdateABranchConfigWithBodyWithResponse(ctx context.Context, branchIdOrRef string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateABranchConfigResponse, error)
 
-	V1UpdateABranchConfigWithResponse(ctx context.Context, branchId openapi_types.UUID, body V1UpdateABranchConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateABranchConfigResponse, error)
+	V1UpdateABranchConfigWithResponse(ctx context.Context, branchIdOrRef string, body V1UpdateABranchConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateABranchConfigResponse, error)
 
 	// V1DiffABranchWithResponse request
-	V1DiffABranchWithResponse(ctx context.Context, branchId openapi_types.UUID, params *V1DiffABranchParams, reqEditors ...RequestEditorFn) (*V1DiffABranchResponse, error)
+	V1DiffABranchWithResponse(ctx context.Context, branchIdOrRef string, params *V1DiffABranchParams, reqEditors ...RequestEditorFn) (*V1DiffABranchResponse, error)
 
 	// V1MergeABranchWithBodyWithResponse request with any body
-	V1MergeABranchWithBodyWithResponse(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1MergeABranchResponse, error)
+	V1MergeABranchWithBodyWithResponse(ctx context.Context, branchIdOrRef string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1MergeABranchResponse, error)
 
-	V1MergeABranchWithResponse(ctx context.Context, branchId openapi_types.UUID, body V1MergeABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1MergeABranchResponse, error)
+	V1MergeABranchWithResponse(ctx context.Context, branchIdOrRef string, body V1MergeABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1MergeABranchResponse, error)
 
 	// V1PushABranchWithBodyWithResponse request with any body
-	V1PushABranchWithBodyWithResponse(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1PushABranchResponse, error)
+	V1PushABranchWithBodyWithResponse(ctx context.Context, branchIdOrRef string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1PushABranchResponse, error)
 
-	V1PushABranchWithResponse(ctx context.Context, branchId openapi_types.UUID, body V1PushABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1PushABranchResponse, error)
+	V1PushABranchWithResponse(ctx context.Context, branchIdOrRef string, body V1PushABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1PushABranchResponse, error)
 
 	// V1ResetABranchWithBodyWithResponse request with any body
-	V1ResetABranchWithBodyWithResponse(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ResetABranchResponse, error)
+	V1ResetABranchWithBodyWithResponse(ctx context.Context, branchIdOrRef string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ResetABranchResponse, error)
 
-	V1ResetABranchWithResponse(ctx context.Context, branchId openapi_types.UUID, body V1ResetABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ResetABranchResponse, error)
+	V1ResetABranchWithResponse(ctx context.Context, branchIdOrRef string, body V1ResetABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ResetABranchResponse, error)
 
 	// V1AuthorizeUserWithResponse request
 	V1AuthorizeUserWithResponse(ctx context.Context, params *V1AuthorizeUserParams, reqEditors ...RequestEditorFn) (*V1AuthorizeUserResponse, error)
@@ -12619,8 +12619,8 @@ func (r V1GetASnippetResponse) StatusCode() int {
 }
 
 // V1DeleteABranchWithResponse request returning *V1DeleteABranchResponse
-func (c *ClientWithResponses) V1DeleteABranchWithResponse(ctx context.Context, branchId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1DeleteABranchResponse, error) {
-	rsp, err := c.V1DeleteABranch(ctx, branchId, reqEditors...)
+func (c *ClientWithResponses) V1DeleteABranchWithResponse(ctx context.Context, branchIdOrRef string, reqEditors ...RequestEditorFn) (*V1DeleteABranchResponse, error) {
+	rsp, err := c.V1DeleteABranch(ctx, branchIdOrRef, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -12628,8 +12628,8 @@ func (c *ClientWithResponses) V1DeleteABranchWithResponse(ctx context.Context, b
 }
 
 // V1GetABranchConfigWithResponse request returning *V1GetABranchConfigResponse
-func (c *ClientWithResponses) V1GetABranchConfigWithResponse(ctx context.Context, branchId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1GetABranchConfigResponse, error) {
-	rsp, err := c.V1GetABranchConfig(ctx, branchId, reqEditors...)
+func (c *ClientWithResponses) V1GetABranchConfigWithResponse(ctx context.Context, branchIdOrRef string, reqEditors ...RequestEditorFn) (*V1GetABranchConfigResponse, error) {
+	rsp, err := c.V1GetABranchConfig(ctx, branchIdOrRef, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -12637,16 +12637,16 @@ func (c *ClientWithResponses) V1GetABranchConfigWithResponse(ctx context.Context
 }
 
 // V1UpdateABranchConfigWithBodyWithResponse request with arbitrary body returning *V1UpdateABranchConfigResponse
-func (c *ClientWithResponses) V1UpdateABranchConfigWithBodyWithResponse(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateABranchConfigResponse, error) {
-	rsp, err := c.V1UpdateABranchConfigWithBody(ctx, branchId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) V1UpdateABranchConfigWithBodyWithResponse(ctx context.Context, branchIdOrRef string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateABranchConfigResponse, error) {
+	rsp, err := c.V1UpdateABranchConfigWithBody(ctx, branchIdOrRef, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseV1UpdateABranchConfigResponse(rsp)
 }
 
-func (c *ClientWithResponses) V1UpdateABranchConfigWithResponse(ctx context.Context, branchId openapi_types.UUID, body V1UpdateABranchConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateABranchConfigResponse, error) {
-	rsp, err := c.V1UpdateABranchConfig(ctx, branchId, body, reqEditors...)
+func (c *ClientWithResponses) V1UpdateABranchConfigWithResponse(ctx context.Context, branchIdOrRef string, body V1UpdateABranchConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateABranchConfigResponse, error) {
+	rsp, err := c.V1UpdateABranchConfig(ctx, branchIdOrRef, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -12654,8 +12654,8 @@ func (c *ClientWithResponses) V1UpdateABranchConfigWithResponse(ctx context.Cont
 }
 
 // V1DiffABranchWithResponse request returning *V1DiffABranchResponse
-func (c *ClientWithResponses) V1DiffABranchWithResponse(ctx context.Context, branchId openapi_types.UUID, params *V1DiffABranchParams, reqEditors ...RequestEditorFn) (*V1DiffABranchResponse, error) {
-	rsp, err := c.V1DiffABranch(ctx, branchId, params, reqEditors...)
+func (c *ClientWithResponses) V1DiffABranchWithResponse(ctx context.Context, branchIdOrRef string, params *V1DiffABranchParams, reqEditors ...RequestEditorFn) (*V1DiffABranchResponse, error) {
+	rsp, err := c.V1DiffABranch(ctx, branchIdOrRef, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -12663,16 +12663,16 @@ func (c *ClientWithResponses) V1DiffABranchWithResponse(ctx context.Context, bra
 }
 
 // V1MergeABranchWithBodyWithResponse request with arbitrary body returning *V1MergeABranchResponse
-func (c *ClientWithResponses) V1MergeABranchWithBodyWithResponse(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1MergeABranchResponse, error) {
-	rsp, err := c.V1MergeABranchWithBody(ctx, branchId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) V1MergeABranchWithBodyWithResponse(ctx context.Context, branchIdOrRef string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1MergeABranchResponse, error) {
+	rsp, err := c.V1MergeABranchWithBody(ctx, branchIdOrRef, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseV1MergeABranchResponse(rsp)
 }
 
-func (c *ClientWithResponses) V1MergeABranchWithResponse(ctx context.Context, branchId openapi_types.UUID, body V1MergeABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1MergeABranchResponse, error) {
-	rsp, err := c.V1MergeABranch(ctx, branchId, body, reqEditors...)
+func (c *ClientWithResponses) V1MergeABranchWithResponse(ctx context.Context, branchIdOrRef string, body V1MergeABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1MergeABranchResponse, error) {
+	rsp, err := c.V1MergeABranch(ctx, branchIdOrRef, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -12680,16 +12680,16 @@ func (c *ClientWithResponses) V1MergeABranchWithResponse(ctx context.Context, br
 }
 
 // V1PushABranchWithBodyWithResponse request with arbitrary body returning *V1PushABranchResponse
-func (c *ClientWithResponses) V1PushABranchWithBodyWithResponse(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1PushABranchResponse, error) {
-	rsp, err := c.V1PushABranchWithBody(ctx, branchId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) V1PushABranchWithBodyWithResponse(ctx context.Context, branchIdOrRef string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1PushABranchResponse, error) {
+	rsp, err := c.V1PushABranchWithBody(ctx, branchIdOrRef, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseV1PushABranchResponse(rsp)
 }
 
-func (c *ClientWithResponses) V1PushABranchWithResponse(ctx context.Context, branchId openapi_types.UUID, body V1PushABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1PushABranchResponse, error) {
-	rsp, err := c.V1PushABranch(ctx, branchId, body, reqEditors...)
+func (c *ClientWithResponses) V1PushABranchWithResponse(ctx context.Context, branchIdOrRef string, body V1PushABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1PushABranchResponse, error) {
+	rsp, err := c.V1PushABranch(ctx, branchIdOrRef, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -12697,16 +12697,16 @@ func (c *ClientWithResponses) V1PushABranchWithResponse(ctx context.Context, bra
 }
 
 // V1ResetABranchWithBodyWithResponse request with arbitrary body returning *V1ResetABranchResponse
-func (c *ClientWithResponses) V1ResetABranchWithBodyWithResponse(ctx context.Context, branchId openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ResetABranchResponse, error) {
-	rsp, err := c.V1ResetABranchWithBody(ctx, branchId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) V1ResetABranchWithBodyWithResponse(ctx context.Context, branchIdOrRef string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ResetABranchResponse, error) {
+	rsp, err := c.V1ResetABranchWithBody(ctx, branchIdOrRef, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseV1ResetABranchResponse(rsp)
 }
 
-func (c *ClientWithResponses) V1ResetABranchWithResponse(ctx context.Context, branchId openapi_types.UUID, body V1ResetABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ResetABranchResponse, error) {
-	rsp, err := c.V1ResetABranch(ctx, branchId, body, reqEditors...)
+func (c *ClientWithResponses) V1ResetABranchWithResponse(ctx context.Context, branchIdOrRef string, body V1ResetABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ResetABranchResponse, error) {
+	rsp, err := c.V1ResetABranch(ctx, branchIdOrRef, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

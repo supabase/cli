@@ -24,8 +24,11 @@ func Run(ctx context.Context, branchId string) error {
 }
 
 func GetBranchProjectRef(ctx context.Context, branchId string) (string, error) {
-	if parsed, err := uuid.Parse(branchId); err == nil {
-		resp, err := utils.GetSupabase().V1GetABranchConfigWithResponse(ctx, parsed)
+	if utils.ProjectRefPattern.Match([]byte(branchId)) {
+		return branchId, nil
+	}
+	if err := uuid.Validate(branchId); err == nil {
+		resp, err := utils.GetSupabase().V1GetABranchConfigWithResponse(ctx, branchId)
 		if err != nil {
 			return "", errors.Errorf("failed to get branch: %w", err)
 		} else if resp.JSON200 == nil {
@@ -35,9 +38,9 @@ func GetBranchProjectRef(ctx context.Context, branchId string) (string, error) {
 	}
 	resp, err := utils.GetSupabase().V1GetABranchWithResponse(ctx, flags.ProjectRef, branchId)
 	if err != nil {
-		return "", errors.Errorf("failed to get branch: %w", err)
+		return "", errors.Errorf("failed to find branch: %w", err)
 	} else if resp.JSON200 == nil {
-		return "", errors.Errorf("unexpected get branch status %d: %s", resp.StatusCode(), string(resp.Body))
+		return "", errors.Errorf("unexpected find branch status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 	return resp.JSON200.ProjectRef, nil
 }

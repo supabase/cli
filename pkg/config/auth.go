@@ -173,6 +173,8 @@ type (
 		Web3      web3      `toml:"web3"`
 
 		// Custom secrets can be injected from .env file
+		PublishableKey Secret `toml:"publishable_key"`
+		SecretKey      Secret `toml:"secret_key"`
 		JwtSecret      Secret `toml:"jwt_secret"`
 		AnonKey        Secret `toml:"anon_key"`
 		ServiceRoleKey Secret `toml:"service_role_key"`
@@ -358,8 +360,13 @@ type (
 		Enabled bool `toml:"enabled"`
 	}
 
+	ethereum struct {
+		Enabled bool `toml:"enabled"`
+	}
+
 	web3 struct {
-		Solana solana `toml:"solana"`
+		Solana   solana   `toml:"solana"`
+		Ethereum ethereum `toml:"ethereum"`
 	}
 )
 
@@ -1318,22 +1325,44 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 
 func (w web3) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.ExternalWeb3SolanaEnabled = nullable.NewNullableWithValue(w.Solana.Enabled)
+	body.ExternalWeb3EthereumEnabled = nullable.NewNullableWithValue(w.Ethereum.Enabled)
 }
 
 func (w *web3) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if value, err := remoteConfig.ExternalWeb3SolanaEnabled.Get(); err == nil {
 		w.Solana.Enabled = value
 	}
+
+	if value, err := remoteConfig.ExternalWeb3EthereumEnabled.Get(); err == nil {
+		w.Ethereum.Enabled = value
+	}
 }
 
-func (a *auth) DiffWithRemote(remoteConfig v1API.AuthConfigResponse) ([]byte, error) {
+func (a *auth) DiffWithRemote(remoteConfig v1API.AuthConfigResponse, filter ...func(string) bool) ([]byte, error) {
 	copy := a.Clone()
+	copy.FromRemoteAuthConfig(remoteConfig)
+	// Confirm cost before enabling addons
+	for _, keep := range filter {
+		if a.MFA.Phone.VerifyEnabled && !copy.MFA.Phone.VerifyEnabled {
+			if !keep(string(v1API.ListProjectAddonsResponseAvailableAddonsTypeAuthMfaPhone)) {
+				a.MFA.Phone.VerifyEnabled = false
+				// Enroll cannot be enabled on its own
+				a.MFA.Phone.EnrollEnabled = false
+			}
+		}
+		if a.MFA.WebAuthn.VerifyEnabled && !copy.MFA.WebAuthn.VerifyEnabled {
+			if !keep(string(v1API.ListProjectAddonsResponseAvailableAddonsTypeAuthMfaWebAuthn)) {
+				a.MFA.WebAuthn.VerifyEnabled = false
+				// Enroll cannot be enabled on its own
+				a.MFA.WebAuthn.EnrollEnabled = false
+			}
+		}
+	}
 	// Convert the config values into easily comparable remoteConfig values
-	currentValue, err := ToTomlBytes(copy)
+	currentValue, err := ToTomlBytes(a)
 	if err != nil {
 		return nil, err
 	}
-	copy.FromRemoteAuthConfig(remoteConfig)
 	remoteCompare, err := ToTomlBytes(copy)
 	if err != nil {
 		return nil, err

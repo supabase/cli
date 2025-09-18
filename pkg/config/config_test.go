@@ -45,6 +45,8 @@ func TestConfigParsing(t *testing.T) {
 		fsys := fs.MapFS{
 			"supabase/config.toml":           &fs.MapFile{Data: testInitConfigEmbed},
 			"supabase/templates/invite.html": &fs.MapFile{},
+			"certs/my-cert.pem":              &fs.MapFile{},
+			"certs/my-key.pem":               &fs.MapFile{},
 		}
 		// Run test
 		t.Setenv("TWILIO_AUTH_TOKEN", "token")
@@ -509,7 +511,7 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		// Run test
 		err := config.Load("", fsys)
 		// Check error contains both decode errors
-		assert.ErrorContains(t, err, `cannot parse 'functions[hello].verify_jwt' as bool: strconv.ParseBool: parsing "not-a-bool"`)
+		assert.ErrorContains(t, err, `'functions[hello].verify_jwt' cannot parse value as 'bool': strconv.ParseBool: invalid syntax`)
 	})
 
 	t.Run("returns error for unknown function fields", func(t *testing.T) {
@@ -524,8 +526,8 @@ func TestLoadFunctionErrorMessageParsing(t *testing.T) {
 		}
 		// Run test
 		err := config.Load("", fsys)
-		assert.ErrorContains(t, err, `'functions[name]' expected a map, got 'string'`)
-		assert.ErrorContains(t, err, `'functions[verify_jwt]' expected a map, got 'bool'`)
+		assert.ErrorContains(t, err, `'functions[name]' expected a map or struct, got "string"`)
+		assert.ErrorContains(t, err, `'functions[verify_jwt]' expected a map or struct, got "bool"`)
 	})
 }
 

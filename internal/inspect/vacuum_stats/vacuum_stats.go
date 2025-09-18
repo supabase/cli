@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/reset"
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/pgxv5"
 )
@@ -49,5 +48,5 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		rowcount := strings.Replace(r.Rowcount, "-1", "No stats", 1)
 		table += fmt.Sprintf("|`%s`|%s|%s|`%s`|`%s`|`%s`|\n", r.Name, r.Last_vacuum, r.Last_autovacuum, rowcount, r.Dead_rowcount, r.Expect_autovacuum)
 	}
-	return list.RenderTable(table)
+	return utils.RenderTable(table)
 }

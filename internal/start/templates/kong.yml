@@ -10,6 +10,11 @@ services:
           - /auth/v1/verify
     plugins:
       - name: cors
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Authorization: {{ .BearerToken }}"
   - name: auth-v1-open-callback
     _comment: "GoTrue: /auth/v1/callback* -> http://auth:9999/callback*"
     url: http://{{ .GotrueId }}:9999/callback
@@ -20,6 +25,11 @@ services:
           - /auth/v1/callback
     plugins:
       - name: cors
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Authorization: {{ .BearerToken }}"
   - name: auth-v1-open-authorize
     _comment: "GoTrue: /auth/v1/authorize* -> http://auth:9999/authorize*"
     url: http://{{ .GotrueId }}:9999/authorize
@@ -30,6 +40,11 @@ services:
           - /auth/v1/authorize
     plugins:
       - name: cors
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Authorization: {{ .BearerToken }}"
   - name: auth-v1
     _comment: "GoTrue: /auth/v1/* -> http://auth:9999/*"
     url: http://{{ .GotrueId }}:9999/
@@ -40,6 +55,11 @@ services:
           - /auth/v1/
     plugins:
       - name: cors
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Authorization: {{ .BearerToken }}"
   - name: rest-v1
     _comment: "PostgREST: /rest/v1/* -> http://rest:3000/*"
     url: http://{{ .RestId }}:3000/
@@ -50,6 +70,11 @@ services:
           - /rest/v1/
     plugins:
       - name: cors
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Authorization: {{ .BearerToken }}"
   - name: rest-admin-v1
     _comment: "PostgREST: /rest-admin/v1/* -> http://rest:3001/*"
     url: http://{{ .RestId }}:3001/
@@ -60,6 +85,11 @@ services:
           - /rest-admin/v1/
     plugins:
       - name: cors
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Authorization: {{ .BearerToken }}"
   - name: graphql-v1
     _comment: "PostgREST: /graphql/v1 -> http://rest:3000/rpc/graphql"
     url: http://{{ .RestId }}:3000/rpc/graphql
@@ -75,6 +105,7 @@ services:
           add:
             headers:
               - "Content-Profile: graphql_public"
+              - "Authorization: {{ .BearerToken }}"
   - name: realtime-v1-ws
     _comment: "Realtime: /realtime/v1/* -> ws://realtime:4000/socket/websocket"
     url: http://{{ .RealtimeId }}:4000/socket
@@ -86,6 +117,11 @@ services:
           - /realtime/v1/
     plugins:
       - name: cors
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Authorization: {{ .BearerToken }}"
   - name: realtime-v1-longpoll
     _comment: "Realtime: /realtime/v1/* -> ws://realtime:4000/socket/longpoll"
     url: http://{{ .RealtimeId }}:4000/socket
@@ -97,6 +133,11 @@ services:
           - /realtime/v1/
     plugins:
       - name: cors
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Authorization: {{ .BearerToken }}"
   - name: realtime-v1-rest
     _comment: "Realtime: /realtime/v1/* -> http://realtime:4000/api/*"
     url: http://{{ .RealtimeId }}:4000/api
@@ -108,7 +149,11 @@ services:
           - /realtime/v1/api
     plugins:
       - name: cors
-
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Authorization: {{ .BearerToken }}"
   - name: storage-v1
     _comment: "Storage: /storage/v1/* -> http://storage-api:5000/*"
     url: http://{{ .StorageId }}:5000/
@@ -119,6 +164,11 @@ services:
           - /storage/v1/
     plugins:
       - name: cors
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Authorization: {{ .BearerToken }}"
   - name: pg-meta
     _comment: "pg-meta: /pg/* -> http://pg-meta:8080/*"
     url: http://{{ .PgmetaId }}:8080/
@@ -138,6 +188,13 @@ services:
         strip_path: true
         paths:
           - /functions/v1/
+    plugins:
+      - name: cors
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Authorization: {{ .BearerToken }}"
   - name: analytics-v1
     _comment: "Analytics: /analytics/v1/* -> http://logflare:4000/*"
     url: http://{{ .LogflareId }}:4000/
@@ -146,6 +203,13 @@ services:
         strip_path: true
         paths:
           - /analytics/v1/
+    plugins:
+      - name: cors
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Authorization: {{ .BearerToken }}"
   - name: pooler-v2-ws
     _comment: "Pooler: /pooler/v2/* -> ws://pooler:4000/v2/*"
     url: http://{{ .PoolerId }}:4000/v2
@@ -157,3 +221,8 @@ services:
           - /pooler/v2/
     plugins:
       - name: cors
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Authorization: {{ .BearerToken }}"

@@ -20,6 +20,9 @@ max_rows = 1000
 [api.tls]
 # Enable HTTPS endpoints locally using a self-signed certificate.
 enabled = false
+# Paths to self-signed certificate pair.
+# cert_path = "../certs/my-cert.pem"
+# key_path = "../certs/my-key.pem"
 
 [db]
 # Port to use for the local database URL.

@@ -18,7 +18,6 @@ import (
 	_ "github.com/mithrandie/csvq-driver"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/reset"
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -121,5 +120,5 @@ func printSummary(ctx context.Context, outDir string) error {
 		}
 		table += fmt.Sprintf("|`%s`|`%s`|`%s`|\n", r.Name, status, match.String)
 	}
-	return list.RenderTable(table)
+	return utils.RenderTable(table)
 }

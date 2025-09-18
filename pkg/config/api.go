@@ -24,7 +24,11 @@ type (
 	}
 
 	tlsKong struct {
-		Enabled bool `toml:"enabled"`
+		Enabled     bool   `toml:"enabled"`
+		CertPath    string `toml:"cert_path"`
+		CertContent []byte `toml:"-"`
+		KeyPath     string `toml:"key_path"`
+		KeyContent  []byte `toml:"-"`
 	}
 )
 

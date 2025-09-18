@@ -6,9 +6,6 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/glamour/styles"
-	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
@@ -26,7 +23,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 	table := makeTable(remoteVersions, localVersions)
-	return RenderTable(table)
+	return utils.RenderTable(table)
 }
 
 func loadRemoteVersions(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) ([]string, error) {
@@ -70,22 +67,6 @@ func makeTable(remoteMigrations, localMigrations []string) string {
 		}
 	}
 	return table
-}
-
-func RenderTable(markdown string) error {
-	r, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle(styles.AsciiStyle),
-		glamour.WithWordWrap(-1),
-	)
-	if err != nil {
-		return errors.Errorf("failed to initialise terminal renderer: %w", err)
-	}
-	out, err := r.Render(markdown)
-	if err != nil {
-		return errors.Errorf("failed to render markdown: %w", err)
-	}
-	fmt.Print(out)
-	return nil
 }
 
 func LoadLocalVersions(fsys afero.Fs) ([]string, error) {

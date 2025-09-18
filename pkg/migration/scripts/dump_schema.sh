@@ -14,6 +14,7 @@ export PGDATABASE="$PGDATABASE"
 #
 # Explanation of sed substitutions:
 #
+#   - do not emit psql meta commands
 #   - do not alter superuser role "supabase_admin"
 #   - do not alter foreign data wrappers owner
 #   - do not include ACL changes on internal schemas
@@ -28,6 +29,7 @@ pg_dump \
     --role "postgres" \
     --exclude-schema "${EXCLUDED_SCHEMAS:-}" \
     ${EXTRA_FLAGS:-} \
+| sed -E 's/^\\(un)?restrict .*$/-- &/' \
 | sed -E 's/^CREATE SCHEMA "/CREATE SCHEMA IF NOT EXISTS "/' \
 | sed -E 's/^CREATE TABLE "/CREATE TABLE IF NOT EXISTS "/' \
 | sed -E 's/^CREATE SEQUENCE "/CREATE SEQUENCE IF NOT EXISTS "/' \

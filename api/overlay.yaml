@@ -35,3 +35,7 @@ actions:
 - target: $.components.schemas.*.properties.private_jwk.discriminator
   description: Replaces discriminated union with concrete type
   remove: true
+- target: $.paths.*.*.parameters[?(@.name=='branch_id_or_ref')]
+  update:
+    schema:
+      type: string

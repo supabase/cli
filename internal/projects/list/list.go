@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
@@ -57,7 +56,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 				utils.FormatTimestamp(project.CreatedAt),
 			)
 		}
-		return list.RenderTable(table)
+		return utils.RenderTable(table)
 	case utils.OutputToml:
 		return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, struct {
 			Projects []linkedProject `toml:"projects"`

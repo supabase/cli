@@ -7,17 +7,19 @@ import (
 	"strings"
 
 	"github.com/go-errors/errors"
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	pgschema "github.com/stripe/pg-schema-diff/pkg/diff"
+	"github.com/supabase/cli/internal/utils"
 )
 
-func DiffPgSchema(ctx context.Context, source, target string, schema []string, _ ...func(*pgx.ConnConfig)) (string, error) {
-	dbSrc, err := sql.Open("pgx", source)
+func DiffPgSchema(ctx context.Context, source, target pgconn.Config, schema []string, _ ...func(*pgx.ConnConfig)) (string, error) {
+	dbSrc, err := sql.Open("pgx", utils.ToPostgresURL(source))
 	if err != nil {
 		return "", errors.Errorf("failed to open source database: %w", err)
 	}
 	defer dbSrc.Close()
-	dbDst, err := sql.Open("pgx", target)
+	dbDst, err := sql.Open("pgx", utils.ToPostgresURL(target))
 	if err != nil {
 		return "", errors.Errorf("failed to open target database: %w", err)
 	}

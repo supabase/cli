@@ -14,8 +14,39 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	defaultJwtSecret      = "super-secret-jwt-token-with-at-least-32-characters-long"
+	defaultJwtExpiry      = 1983812996
+	defaultPublishableKey = "sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH"
+	defaultSecretKey      = "sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz"
+)
+
+type CustomClaims struct {
+	// Overrides Issuer to maintain json order when marshalling
+	Issuer string `json:"iss,omitempty"`
+	Ref    string `json:"ref,omitempty"`
+	Role   string `json:"role"`
+	IsAnon bool   `json:"is_anonymous,omitempty"`
+	jwt.RegisteredClaims
+}
+
+func (c CustomClaims) NewToken() *jwt.Token {
+	if c.ExpiresAt == nil {
+		c.ExpiresAt = jwt.NewNumericDate(time.Unix(defaultJwtExpiry, 0))
+	}
+	if len(c.Issuer) == 0 {
+		c.Issuer = "supabase-demo"
+	}
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, c)
+}
+
 // generateAPIKeys generates JWT tokens using the appropriate signing method
 func (a *auth) generateAPIKeys() error {
+	if len(a.JwtSecret.Value) == 0 {
+		a.JwtSecret.Value = defaultJwtSecret
+	} else if len(a.JwtSecret.Value) < 16 {
+		return errors.Errorf("Invalid config for auth.jwt_secret. Must be at least 16 characters")
+	}
 	// Generate anon key if not provided
 	if len(a.AnonKey.Value) == 0 {
 		signed, err := a.generateJWT("anon")
@@ -32,6 +63,13 @@ func (a *auth) generateAPIKeys() error {
 		}
 		a.ServiceRoleKey.Value = signed
 	}
+	// Set hardcoded opaque keys
+	if len(a.PublishableKey.Value) == 0 {
+		a.PublishableKey.Value = defaultPublishableKey
+	}
+	if len(a.SecretKey.Value) == 0 {
+		a.SecretKey.Value = defaultSecretKey
+	}
 	return nil
 }
 
@@ -39,12 +77,9 @@ func (a auth) generateJWT(role string) (string, error) {
 	claims := CustomClaims{Issuer: "supabase-demo", Role: role}
 	if len(a.SigningKeys) > 0 {
 		claims.ExpiresAt = jwt.NewNumericDate(time.Now().Add(time.Hour * 24 * 365 * 10)) // 10 years
-		return generateAsymmetricJWT(a.SigningKeys[0], claims)
+		return GenerateAsymmetricJWT(a.SigningKeys[0], claims)
 	}
 	// Fallback to generating symmetric keys
-	if len(a.JwtSecret.Value) < 16 {
-		return "", errors.Errorf("Invalid config for auth.jwt_secret. Must be at least 16 characters")
-	}
 	signed, err := claims.NewToken().SignedString([]byte(a.JwtSecret.Value))
 	if err != nil {
 		return "", errors.Errorf("failed to generate JWT: %w", err)
@@ -52,8 +87,8 @@ func (a auth) generateJWT(role string) (string, error) {
 	return signed, nil
 }
 
-// generateAsymmetricJWT generates a JWT token signed with the provided JWK private key
-func generateAsymmetricJWT(jwk JWK, claims CustomClaims) (string, error) {
+// GenerateAsymmetricJWT generates a JWT token signed with the provided JWK private key
+func GenerateAsymmetricJWT(jwk JWK, claims CustomClaims) (string, error) {
 	privateKey, err := jwkToPrivateKey(jwk)
 	if err != nil {
 		return "", errors.Errorf("failed to convert JWK to private key: %w", err)
@@ -166,4 +201,12 @@ func jwkToECDSAPrivateKey(jwk JWK) (*ecdsa.PrivateKey, error) {
 		},
 		D: d,
 	}, nil
+}
+
+func NewBigIntFromBase64(n string) (*big.Int, error) {
+	nBytes, err := base64.RawURLEncoding.DecodeString(n)
+	if err != nil {
+		return nil, errors.Errorf("failed to decode base64: %w", err)
+	}
+	return new(big.Int).SetBytes(nBytes), nil
 }

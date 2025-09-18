@@ -9,6 +9,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/go-errors/errors"
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/gen/types"
@@ -57,7 +58,7 @@ var (
 )
 
 // Diffs local database schema against shadow, dumps output to stdout.
-func DiffSchemaMigraBash(ctx context.Context, source, target string, schema []string, options ...func(*pgx.ConnConfig)) (string, error) {
+func DiffSchemaMigraBash(ctx context.Context, source, target pgconn.Config, schema []string, options ...func(*pgx.ConnConfig)) (string, error) {
 	// Load all user defined schemas
 	if len(schema) == 0 {
 		var err error
@@ -65,7 +66,10 @@ func DiffSchemaMigraBash(ctx context.Context, source, target string, schema []st
 			return "", err
 		}
 	}
-	env := []string{"SOURCE=" + source, "TARGET=" + target}
+	env := []string{
+		"SOURCE=" + utils.ToPostgresURL(source),
+		"TARGET=" + utils.ToPostgresURL(target),
+	}
 	// Passing in script string means command line args must be set manually, ie. "$@"
 	args := "set -- " + strings.Join(schema, " ") + ";"
 	cmd := []string{"/bin/sh", "-c", args + diffSchemaScript}
@@ -90,8 +94,8 @@ func DiffSchemaMigraBash(ctx context.Context, source, target string, schema []st
 	return out.String(), nil
 }
 
-func loadSchema(ctx context.Context, dbURL string, options ...func(*pgx.ConnConfig)) ([]string, error) {
-	conn, err := utils.ConnectByUrl(ctx, dbURL, options...)
+func loadSchema(ctx context.Context, config pgconn.Config, options ...func(*pgx.ConnConfig)) ([]string, error) {
+	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
 		return nil, err
 	}
@@ -100,9 +104,12 @@ func loadSchema(ctx context.Context, dbURL string, options ...func(*pgx.ConnConf
 	return migration.ListUserSchemas(ctx, conn)
 }
 
-func DiffSchemaMigra(ctx context.Context, source, target string, schema []string, options ...func(*pgx.ConnConfig)) (string, error) {
-	env := []string{"SOURCE=" + source, "TARGET=" + target}
-	if ca, err := types.GetRootCA(ctx, target, options...); err != nil {
+func DiffSchemaMigra(ctx context.Context, source, target pgconn.Config, schema []string, options ...func(*pgx.ConnConfig)) (string, error) {
+	env := []string{
+		"SOURCE=" + utils.ToPostgresURL(source),
+		"TARGET=" + utils.ToPostgresURL(target),
+	}
+	if ca, err := types.GetRootCA(ctx, utils.ToPostgresURL(target), options...); err != nil {
 		return "", err
 	} else if len(ca) > 0 {
 		env = append(env, "SSL_CA="+ca)

@@ -13,6 +13,7 @@ export PGDATABASE="$PGDATABASE"
 #
 # Explanation of sed substitutions:
 #
+#   - do not emit psql meta commands
 #   - do not create or alter reserved roles as they are blocked by supautils
 #   - explicitly allow altering safe attributes, ie. statement_timeout, pgrst.*
 #   - discard role attributes that require superuser, ie. nosuperuser, noreplication
@@ -23,6 +24,7 @@ pg_dumpall \
     --quote-all-identifier \
     --no-role-passwords \
     --no-comments \
+| sed -E 's/^\\(un)?restrict .*$/-- &/' \
 | sed -E "s/^CREATE ROLE \"($RESERVED_ROLES)\"/-- &/" \
 | sed -E "s/^ALTER ROLE \"($RESERVED_ROLES)\"/-- &/" \
 | sed -E "s/ (NOSUPERUSER|NOREPLICATION)//g" \

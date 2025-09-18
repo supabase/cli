@@ -9,7 +9,7 @@ import (
 )
 
 func TestEncodeOutput(t *testing.T) {
-	t.Run("encodes env format", func(t *testing.T) {
+	t.Run("encodes flat env", func(t *testing.T) {
 		input := map[string]string{
 			"DATABASE_URL": "postgres://user:pass@host:5432/db",
 			"API_KEY":      "secret-key",
@@ -21,11 +21,16 @@ func TestEncodeOutput(t *testing.T) {
 		assert.Equal(t, expected, buf.String())
 	})
 
-	t.Run("fails env format with invalid type", func(t *testing.T) {
-		input := map[string]int{"FOO": 123}
+	t.Run("encodes nested env", func(t *testing.T) {
+		input := map[string]any{
+			"FOO": map[string]any{
+				"BAR": 123,
+			},
+		}
 		var buf bytes.Buffer
 		err := EncodeOutput(OutputEnv, &buf, input)
-		assert.ErrorContains(t, err, "value is not a map[string]string")
+		assert.NoError(t, err)
+		assert.Equal(t, "FOO_BAR=123\n", buf.String())
 	})
 
 	t.Run("encodes json format", func(t *testing.T) {

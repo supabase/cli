@@ -3,6 +3,7 @@ package list
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 
 	"github.com/h2non/gock"
@@ -40,16 +41,6 @@ func TestSecretListCommand(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("throws error on missing access token", func(t *testing.T) {
-		t.Skip()
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Run test
-		err := Run(context.Background(), "", fsys)
-		// Check error
-		assert.ErrorContains(t, err, "Unexpected error retrieving project secrets")
-	})
-
 	t.Run("throws error on network error", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -82,12 +73,12 @@ func TestSecretListCommand(t *testing.T) {
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/secrets").
-			Reply(500).
+			Reply(http.StatusServiceUnavailable).
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test
 		err := Run(context.Background(), project, fsys)
 		// Check error
-		assert.ErrorContains(t, err, `Unexpected error retrieving project secrets: {"message":"unavailable"}`)
+		assert.ErrorContains(t, err, `unexpected list secrets status 503: {"message":"unavailable"}`)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 

@@ -317,6 +317,7 @@ func initStorageJob(host string) utils.DockerJob {
 			// TODO: https://github.com/supabase/storage-api/issues/55
 			"REGION=stub",
 			"GLOBAL_S3_BUCKET=stub",
+			"SIGNED_UPLOAD_URL_EXPIRATION_TIME=7200",
 		},
 		Cmd: []string{"node", "dist/scripts/migrate-call.js"},
 	}
