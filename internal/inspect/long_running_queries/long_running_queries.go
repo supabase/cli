@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/pgxv5"
 )
@@ -42,5 +41,5 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	for _, r := range result {
 		table += fmt.Sprintf("|`%d`|`%s`|`%s`|\n", r.Pid, r.Duration, r.Query)
 	}
-	return list.RenderTable(table)
+	return utils.RenderTable(table)
 }

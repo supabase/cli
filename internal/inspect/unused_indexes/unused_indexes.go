@@ -10,7 +10,6 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/reset"
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/pgxv5"
 )
@@ -44,5 +43,5 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	for _, r := range result {
 		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%d`|\n", r.Name, r.Index, r.Index_size, r.Index_scans)
 	}
-	return list.RenderTable(table)
+	return utils.RenderTable(table)
 }

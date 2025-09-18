@@ -2,15 +2,14 @@ package services
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"sync"
 
+	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
@@ -25,18 +24,30 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	}
 
 	serviceImages := CheckVersions(ctx, fsys)
-	table := `|SERVICE IMAGE|LOCAL|LINKED|
+	switch utils.OutputFormat.Value {
+	case utils.OutputPretty:
+		table := `|SERVICE IMAGE|LOCAL|LINKED|
 |-|-|-|
 `
-	for _, image := range serviceImages {
-		remote := image.Remote
-		if len(remote) == 0 {
-			remote = "-"
+		for _, image := range serviceImages {
+			remote := image.Remote
+			if len(remote) == 0 {
+				remote = "-"
+			}
+			table += fmt.Sprintf("|`%s`|`%s`|`%s`|\n", image.Name, image.Local, remote)
 		}
-		table += fmt.Sprintf("|`%s`|`%s`|`%s`|\n", image.Name, image.Local, remote)
+		return utils.RenderTable(table)
+	case utils.OutputToml:
+		return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, struct {
+			Services []imageVersion `toml:"services"`
+		}{
+			Services: serviceImages,
+		})
+	case utils.OutputEnv:
+		return errors.Errorf("--output env flag is not supported")
 	}
 
-	return list.RenderTable(table)
+	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, serviceImages)
 }
 
 type imageVersion struct {

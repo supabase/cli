@@ -3,11 +3,11 @@ package list
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
@@ -18,26 +18,30 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().V1ListAllSnippetsWithResponse(ctx, &opts)
 	if err != nil {
 		return errors.Errorf("failed to list snippets: %w", err)
+	} else if resp.JSON200 == nil {
+		return errors.Errorf("unexpected list snippets status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 
-	if resp.JSON200 == nil {
-		return errors.New("Unexpected error listing SQL snippets: " + string(resp.Body))
-	}
-
-	table := `|ID|NAME|VISIBILITY|OWNER|CREATED AT (UTC)|UPDATED AT (UTC)|
+	switch utils.OutputFormat.Value {
+	case utils.OutputPretty:
+		table := `|ID|NAME|VISIBILITY|OWNER|CREATED AT (UTC)|UPDATED AT (UTC)|
 |-|-|-|-|-|-|
 `
-	for _, snippet := range resp.JSON200.Data {
-		table += fmt.Sprintf(
-			"|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
-			snippet.Id,
-			strings.ReplaceAll(snippet.Name, "|", "\\|"),
-			strings.ReplaceAll(string(snippet.Visibility), "|", "\\|"),
-			strings.ReplaceAll(snippet.Owner.Username, "|", "\\|"),
-			utils.FormatTimestamp(snippet.InsertedAt),
-			utils.FormatTimestamp(snippet.UpdatedAt),
-		)
+		for _, snippet := range resp.JSON200.Data {
+			table += fmt.Sprintf(
+				"|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
+				snippet.Id,
+				strings.ReplaceAll(snippet.Name, "|", "\\|"),
+				strings.ReplaceAll(string(snippet.Visibility), "|", "\\|"),
+				strings.ReplaceAll(snippet.Owner.Username, "|", "\\|"),
+				utils.FormatTimestamp(snippet.InsertedAt),
+				utils.FormatTimestamp(snippet.UpdatedAt),
+			)
+		}
+		return utils.RenderTable(table)
+	case utils.OutputEnv:
+		return errors.Errorf("--output env flag is not supported")
 	}
 
-	return list.RenderTable(table)
+	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, *resp.JSON200)
 }
