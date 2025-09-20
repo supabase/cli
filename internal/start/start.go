@@ -79,6 +79,7 @@ type kongConfig struct {
 	RestId        string
 	RealtimeId    string
 	StorageId     string
+	StudioId      string
 	PgmetaId      string
 	EdgeRuntimeId string
 	LogflareId    string
@@ -340,6 +341,7 @@ EOF
 			RestId:        utils.RestId,
 			RealtimeId:    utils.Config.Realtime.TenantId,
 			StorageId:     utils.StorageId,
+			StudioId:      utils.StudioId,
 			PgmetaId:      utils.PgmetaId,
 			EdgeRuntimeId: utils.EdgeRuntimeId,
 			LogflareId:    utils.LogflareId,
