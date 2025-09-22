@@ -14,8 +14,39 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	defaultJwtSecret      = "super-secret-jwt-token-with-at-least-32-characters-long"
+	defaultJwtExpiry      = 1983812996
+	defaultPublishableKey = "sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH"
+	defaultSecretKey      = "sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz"
+)
+
+type CustomClaims struct {
+	// Overrides Issuer to maintain json order when marshalling
+	Issuer string `json:"iss,omitempty"`
+	Ref    string `json:"ref,omitempty"`
+	Role   string `json:"role"`
+	IsAnon bool   `json:"is_anonymous,omitempty"`
+	jwt.RegisteredClaims
+}
+
+func (c CustomClaims) NewToken() *jwt.Token {
+	if c.ExpiresAt == nil {
+		c.ExpiresAt = jwt.NewNumericDate(time.Unix(defaultJwtExpiry, 0))
+	}
+	if len(c.Issuer) == 0 {
+		c.Issuer = "supabase-demo"
+	}
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, c)
+}
+
 // generateAPIKeys generates JWT tokens using the appropriate signing method
 func (a *auth) generateAPIKeys() error {
+	if len(a.JwtSecret.Value) == 0 {
+		a.JwtSecret.Value = defaultJwtSecret
+	} else if len(a.JwtSecret.Value) < 16 {
+		return errors.Errorf("Invalid config for auth.jwt_secret. Must be at least 16 characters")
+	}
 	// Generate anon key if not provided
 	if len(a.AnonKey.Value) == 0 {
 		signed, err := a.generateJWT("anon")
@@ -32,6 +63,13 @@ func (a *auth) generateAPIKeys() error {
 		}
 		a.ServiceRoleKey.Value = signed
 	}
+	// Set hardcoded opaque keys
+	if len(a.PublishableKey.Value) == 0 {
+		a.PublishableKey.Value = defaultPublishableKey
+	}
+	if len(a.SecretKey.Value) == 0 {
+		a.SecretKey.Value = defaultSecretKey
+	}
 	return nil
 }
 
@@ -42,9 +80,6 @@ func (a auth) generateJWT(role string) (string, error) {
 		return GenerateAsymmetricJWT(a.SigningKeys[0], claims)
 	}
 	// Fallback to generating symmetric keys
-	if len(a.JwtSecret.Value) < 16 {
-		return "", errors.Errorf("Invalid config for auth.jwt_secret. Must be at least 16 characters")
-	}
 	signed, err := claims.NewToken().SignedString([]byte(a.JwtSecret.Value))
 	if err != nil {
 		return "", errors.Errorf("failed to generate JWT: %w", err)

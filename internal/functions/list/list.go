@@ -3,39 +3,50 @@ package list
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/api"
 )
 
 func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().V1ListAllFunctionsWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to list functions: %w", err)
+	} else if resp.JSON200 == nil {
+		return errors.Errorf("unexpected list functions status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 
-	if resp.JSON200 == nil {
-		return errors.New("Unexpected error retrieving functions: " + string(resp.Body))
-	}
-
-	table := `|ID|NAME|SLUG|STATUS|VERSION|UPDATED_AT (UTC)|
+	switch utils.OutputFormat.Value {
+	case utils.OutputPretty:
+		table := `|ID|NAME|SLUG|STATUS|VERSION|UPDATED_AT (UTC)|
 |-|-|-|-|-|-|
 `
-	for _, function := range *resp.JSON200 {
-		t := time.UnixMilli(function.UpdatedAt)
-		table += fmt.Sprintf(
-			"|`%s`|`%s`|`%s`|`%s`|`%d`|`%s`|\n",
-			function.Id,
-			function.Name,
-			function.Slug,
-			function.Status,
-			function.Version,
-			t.UTC().Format("2006-01-02 15:04:05"),
-		)
+		for _, function := range *resp.JSON200 {
+			t := time.UnixMilli(function.UpdatedAt)
+			table += fmt.Sprintf(
+				"|`%s`|`%s`|`%s`|`%s`|`%d`|`%s`|\n",
+				function.Id,
+				function.Name,
+				function.Slug,
+				function.Status,
+				function.Version,
+				t.UTC().Format("2006-01-02 15:04:05"),
+			)
+		}
+		return utils.RenderTable(table)
+	case utils.OutputToml:
+		return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, struct {
+			Functions []api.FunctionResponse `toml:"functions"`
+		}{
+			Functions: *resp.JSON200,
+		})
+	case utils.OutputEnv:
+		return errors.Errorf("--output env flag is not supported")
 	}
 
-	return list.RenderTable(table)
+	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, *resp.JSON200)
 }

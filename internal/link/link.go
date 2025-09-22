@@ -215,10 +215,7 @@ func linkDatabase(ctx context.Context, config pgconn.Config, fsys afero.Fs, opti
 func updatePostgresConfig(conn *pgx.Conn) {
 	serverVersion := conn.PgConn().ParameterStatus("server_version")
 	// Safe to assume that supported Postgres version is 10.0 <= n < 100.0
-	majorDigits := len(serverVersion)
-	if majorDigits > 2 {
-		majorDigits = 2
-	}
+	majorDigits := min(len(serverVersion), 2)
 	// Treat error as unchanged
 	if dbMajorVersion, err := strconv.ParseUint(serverVersion[:majorDigits], 10, 7); err == nil {
 		utils.Config.Db.MajorVersion = uint(dbMajorVersion)

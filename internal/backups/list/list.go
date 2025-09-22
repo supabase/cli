@@ -6,7 +6,6 @@ import (
 	"os"
 
 	"github.com/go-errors/errors"
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
@@ -20,8 +19,7 @@ func Run(ctx context.Context) error {
 	} else if resp.JSON200 == nil {
 		return errors.Errorf("unexpected list backup status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
-	switch utils.OutputFormat.Value {
-	case utils.OutputPretty:
+	if utils.OutputFormat.Value == utils.OutputPretty {
 		if len(resp.JSON200.Backups) > 0 {
 			return listLogicalBackups(*resp.JSON200)
 		}
@@ -36,9 +34,7 @@ func Run(ctx context.Context) error {
 			cast.Val(resp.JSON200.PhysicalBackupData.EarliestPhysicalBackupDateUnix, 0),
 			cast.Val(resp.JSON200.PhysicalBackupData.LatestPhysicalBackupDateUnix, 0),
 		)
-		return list.RenderTable(table)
-	case utils.OutputEnv:
-		return errors.Errorf("--output env flag is not supported")
+		return utils.RenderTable(table)
 	}
 	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, *resp.JSON200)
 }
@@ -65,5 +61,5 @@ func listLogicalBackups(resp api.V1BackupsResponse) error {
 			utils.FormatTimestamp(backup.InsertedAt),
 		)
 	}
-	return list.RenderTable(table)
+	return utils.RenderTable(table)
 }

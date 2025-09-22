@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,10 +30,13 @@ type CustomName struct {
 	StorageS3URL             string `env:"api.storage_s3_url,default=STORAGE_S3_URL"`
 	DbURL                    string `env:"db.url,default=DB_URL"`
 	StudioURL                string `env:"studio.url,default=STUDIO_URL"`
-	InbucketURL              string `env:"inbucket.url,default=INBUCKET_URL"`
-	JWTSecret                string `env:"auth.jwt_secret,default=JWT_SECRET"`
-	AnonKey                  string `env:"auth.anon_key,default=ANON_KEY"`
-	ServiceRoleKey           string `env:"auth.service_role_key,default=SERVICE_ROLE_KEY"`
+	InbucketURL              string `env:"inbucket.url,default=INBUCKET_URL,deprecated"`
+	MailpitURL               string `env:"mailpit.url,default=MAILPIT_URL"`
+	PublishableKey           string `env:"auth.publishable_key,default=PUBLISHABLE_KEY"`
+	SecretKey                string `env:"auth.secret_key,default=SECRET_KEY"`
+	JWTSecret                string `env:"auth.jwt_secret,default=JWT_SECRET,deprecated"`
+	AnonKey                  string `env:"auth.anon_key,default=ANON_KEY,deprecated"`
+	ServiceRoleKey           string `env:"auth.service_role_key,default=SERVICE_ROLE_KEY,deprecated"`
 	StorageS3AccessKeyId     string `env:"storage.s3_access_key_id,default=S3_PROTOCOL_ACCESS_KEY_ID"`
 	StorageS3SecretAccessKey string `env:"storage.s3_secret_access_key,default=S3_PROTOCOL_ACCESS_KEY_SECRET"`
 	StorageS3Region          string `env:"storage.s3_region,default=S3_PROTOCOL_REGION"`
@@ -50,11 +54,14 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 		values[c.StudioURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Studio.Port)
 	}
 	if utils.Config.Auth.Enabled && !utils.SliceContains(exclude, utils.GotrueId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Auth.Image)) {
+		values[c.PublishableKey] = utils.Config.Auth.PublishableKey.Value
+		values[c.SecretKey] = utils.Config.Auth.SecretKey.Value
 		values[c.JWTSecret] = utils.Config.Auth.JwtSecret.Value
 		values[c.AnonKey] = utils.Config.Auth.AnonKey.Value
 		values[c.ServiceRoleKey] = utils.Config.Auth.ServiceRoleKey.Value
 	}
 	if utils.Config.Inbucket.Enabled && !utils.SliceContains(exclude, utils.InbucketId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Inbucket.Image)) {
+		values[c.MailpitURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Inbucket.Port)
 		values[c.InbucketURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Inbucket.Port)
 	}
 	if utils.Config.Storage.Enabled && !utils.SliceContains(exclude, utils.StorageId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Storage.Image)) {
@@ -171,7 +178,7 @@ func checkHTTPHead(ctx context.Context, path string) error {
 	healthOnce.Do(func() {
 		healthClient = fetcher.NewServiceGateway(
 			utils.Config.Api.ExternalUrl,
-			utils.Config.Auth.AnonKey.Value,
+			utils.Config.Auth.SecretKey.Value,
 			fetcher.WithHTTPClient(NewKongClient()),
 			fetcher.WithUserAgent("SupabaseCLI/"+utils.Version),
 		)
@@ -195,9 +202,12 @@ func PrettyPrint(w io.Writer, exclude ...string) {
 		ApiURL:                   "         " + utils.Aqua("API URL"),
 		GraphqlURL:               "     " + utils.Aqua("GraphQL URL"),
 		StorageS3URL:             "  " + utils.Aqua("S3 Storage URL"),
-		DbURL:                    "          " + utils.Aqua("DB URL"),
+		DbURL:                    "    " + utils.Aqua("Database URL"),
 		StudioURL:                "      " + utils.Aqua("Studio URL"),
 		InbucketURL:              "    " + utils.Aqua("Inbucket URL"),
+		MailpitURL:               "     " + utils.Aqua("Mailpit URL"),
+		PublishableKey:           " " + utils.Aqua("Publishable key"),
+		SecretKey:                "      " + utils.Aqua("Secret key"),
 		JWTSecret:                "      " + utils.Aqua("JWT secret"),
 		AnonKey:                  "        " + utils.Aqua("anon key"),
 		ServiceRoleKey:           "" + utils.Aqua("service_role key"),
@@ -207,11 +217,24 @@ func PrettyPrint(w io.Writer, exclude ...string) {
 	}
 	values := names.toValues(exclude...)
 	// Iterate through map in order of declared struct fields
+	t := reflect.TypeOf(names)
 	val := reflect.ValueOf(names)
 	for i := 0; i < val.NumField(); i++ {
 		k := val.Field(i).String()
+		if tag := t.Field(i).Tag.Get("env"); isDeprecated(tag) {
+			continue
+		}
 		if v, ok := values[k]; ok {
 			fmt.Fprintf(w, "%s: %s\n", k, v)
 		}
 	}
+}
+
+func isDeprecated(tag string) bool {
+	for part := range strings.SplitSeq(tag, ",") {
+		if strings.EqualFold(part, "deprecated") {
+			return true
+		}
+	}
+	return false
 }

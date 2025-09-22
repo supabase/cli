@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
@@ -22,26 +21,8 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 
 	switch utils.OutputFormat.Value {
 	case utils.OutputPretty:
-		table := `|ID|NAME|DEFAULT|GIT BRANCH|STATUS|CREATED AT (UTC)|UPDATED AT (UTC)|
-|-|-|-|-|-|-|-|-|
-`
-		for _, branch := range branches {
-			gitBranch := " "
-			if branch.GitBranch != nil {
-				gitBranch = *branch.GitBranch
-			}
-			table += fmt.Sprintf(
-				"|`%s`|`%s`|`%t`|`%s`|`%s`|`%s`|`%s`|\n",
-				branch.ProjectRef,
-				strings.ReplaceAll(branch.Name, "|", "\\|"),
-				branch.IsDefault,
-				strings.ReplaceAll(gitBranch, "|", "\\|"),
-				branch.Status,
-				utils.FormatTime(branch.CreatedAt),
-				utils.FormatTime(branch.UpdatedAt),
-			)
-		}
-		return list.RenderTable(table)
+		table := ToMarkdown(branches)
+		return utils.RenderTable(table)
 	case utils.OutputToml:
 		return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, struct {
 			Branches []api.BranchResponse `toml:"branches"`
@@ -53,6 +34,30 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	}
 
 	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, branches)
+}
+
+func ToMarkdown(branches []api.BranchResponse) string {
+	table := `|ID|NAME|DEFAULT|GIT BRANCH|WITH DATA|STATUS|CREATED AT (UTC)|UPDATED AT (UTC)|
+|-|-|-|-|-|-|-|-|
+`
+	for _, branch := range branches {
+		gitBranch := " "
+		if branch.GitBranch != nil {
+			gitBranch = *branch.GitBranch
+		}
+		table += fmt.Sprintf(
+			"|`%s`|`%s`|`%t`|`%s`|`%t`|`%s`|`%s`|`%s`|\n",
+			branch.ProjectRef,
+			strings.ReplaceAll(branch.Name, "|", "\\|"),
+			branch.IsDefault,
+			strings.ReplaceAll(gitBranch, "|", "\\|"),
+			branch.WithData,
+			branch.Status,
+			utils.FormatTime(branch.CreatedAt),
+			utils.FormatTime(branch.UpdatedAt),
+		)
+	}
+	return table
 }
 
 type BranchFilter func(api.BranchResponse) bool
