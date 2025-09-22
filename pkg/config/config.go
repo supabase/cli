@@ -854,9 +854,6 @@ func (c *config) Validate(fsys fs.FS) error {
 				return errors.Errorf("failed to decode signing keys: %w", err)
 			}
 		}
-		if err := c.Auth.generateAPIKeys(); err != nil {
-			return err
-		}
 		if err := c.Auth.Hook.validate(); err != nil {
 			return err
 		}
@@ -875,6 +872,9 @@ func (c *config) Validate(fsys fs.FS) error {
 		if err := c.Auth.ThirdParty.validate(); err != nil {
 			return err
 		}
+	}
+	if err := c.Auth.generateAPIKeys(); err != nil {
+		return err
 	}
 	// Validate functions config
 	for name := range c.Functions {
