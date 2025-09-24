@@ -226,3 +226,13 @@ services:
           add:
             headers:
               - "Authorization: {{ .BearerToken }}"
+  - name: mcp
+    _comment: "MCP: /mcp -> http://studio:3000/api/mcp"
+    url: http://{{ .StudioId }}:3000/api/mcp
+    routes:
+      - name: mcp
+        strip_path: true
+        paths:
+          - /mcp
+    plugins:
+      - name: cors

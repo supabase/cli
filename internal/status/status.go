@@ -28,6 +28,7 @@ type CustomName struct {
 	ApiURL                   string `env:"api.url,default=API_URL"`
 	GraphqlURL               string `env:"api.graphql_url,default=GRAPHQL_URL"`
 	StorageS3URL             string `env:"api.storage_s3_url,default=STORAGE_S3_URL"`
+	McpURL                   string `env:"api.mcp_url,default=MCP_URL"`
 	DbURL                    string `env:"db.url,default=DB_URL"`
 	StudioURL                string `env:"studio.url,default=STUDIO_URL"`
 	InbucketURL              string `env:"inbucket.url,default=INBUCKET_URL,deprecated"`
@@ -46,25 +47,35 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 	values := map[string]string{
 		c.DbURL: fmt.Sprintf("postgresql://%s@%s:%d/postgres", url.UserPassword("postgres", utils.Config.Db.Password), utils.Config.Hostname, utils.Config.Db.Port),
 	}
-	if utils.Config.Api.Enabled && !utils.SliceContains(exclude, utils.RestId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Api.Image)) {
+
+	apiEnabled := utils.Config.Api.Enabled && !utils.SliceContains(exclude, utils.RestId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Api.Image))
+	studioEnabled := utils.Config.Studio.Enabled && !utils.SliceContains(exclude, utils.StudioId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Studio.Image))
+	authEnabled := utils.Config.Auth.Enabled && !utils.SliceContains(exclude, utils.GotrueId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Auth.Image))
+	inbucketEnabled := utils.Config.Inbucket.Enabled && !utils.SliceContains(exclude, utils.InbucketId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Inbucket.Image))
+	storageEnabled := utils.Config.Storage.Enabled && !utils.SliceContains(exclude, utils.StorageId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Storage.Image))
+
+	if apiEnabled {
 		values[c.ApiURL] = utils.Config.Api.ExternalUrl
 		values[c.GraphqlURL] = utils.GetApiUrl("/graphql/v1")
+		if studioEnabled {
+			values[c.McpURL] = utils.GetApiUrl("/mcp")
+		}
 	}
-	if utils.Config.Studio.Enabled && !utils.SliceContains(exclude, utils.StudioId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Studio.Image)) {
+	if studioEnabled {
 		values[c.StudioURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Studio.Port)
 	}
-	if utils.Config.Auth.Enabled && !utils.SliceContains(exclude, utils.GotrueId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Auth.Image)) {
+	if authEnabled {
 		values[c.PublishableKey] = utils.Config.Auth.PublishableKey.Value
 		values[c.SecretKey] = utils.Config.Auth.SecretKey.Value
 		values[c.JWTSecret] = utils.Config.Auth.JwtSecret.Value
 		values[c.AnonKey] = utils.Config.Auth.AnonKey.Value
 		values[c.ServiceRoleKey] = utils.Config.Auth.ServiceRoleKey.Value
 	}
-	if utils.Config.Inbucket.Enabled && !utils.SliceContains(exclude, utils.InbucketId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Inbucket.Image)) {
+	if inbucketEnabled {
 		values[c.MailpitURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Inbucket.Port)
 		values[c.InbucketURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Inbucket.Port)
 	}
-	if utils.Config.Storage.Enabled && !utils.SliceContains(exclude, utils.StorageId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Storage.Image)) {
+	if storageEnabled {
 		values[c.StorageS3URL] = utils.GetApiUrl("/storage/v1/s3")
 		values[c.StorageS3AccessKeyId] = utils.Config.Storage.S3Credentials.AccessKeyId
 		values[c.StorageS3SecretAccessKey] = utils.Config.Storage.S3Credentials.SecretAccessKey
@@ -202,6 +213,7 @@ func PrettyPrint(w io.Writer, exclude ...string) {
 		ApiURL:                   "         " + utils.Aqua("API URL"),
 		GraphqlURL:               "     " + utils.Aqua("GraphQL URL"),
 		StorageS3URL:             "  " + utils.Aqua("S3 Storage URL"),
+		McpURL:                   "         " + utils.Aqua("MCP URL"),
 		DbURL:                    "    " + utils.Aqua("Database URL"),
 		StudioURL:                "      " + utils.Aqua("Studio URL"),
 		InbucketURL:              "    " + utils.Aqua("Inbucket URL"),
