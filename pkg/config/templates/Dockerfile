@@ -10,7 +10,7 @@ FROM darthsim/imgproxy:v3.8.0 AS imgproxy
 FROM supabase/edge-runtime:v1.69.12 AS edgeruntime
 FROM timberio/vector:0.28.1-alpine AS vector
 FROM supabase/supavisor:2.7.0 AS supavisor
-FROM supabase/gotrue:v2.179.0 AS gotrue
+FROM supabase/gotrue:v2.180.0 AS gotrue
 FROM supabase/realtime:v2.51.3 AS realtime
 FROM supabase/storage-api:v1.27.4 AS storage
 FROM supabase/logflare:1.22.3 AS logflare
