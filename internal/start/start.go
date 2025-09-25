@@ -698,7 +698,7 @@ EOF
 		if utils.Config.Auth.OAuthServer.Enabled {
 			env = append(env,
 				fmt.Sprintf("GOTRUE_OAUTH_SERVER_ENABLED=%v", utils.Config.Auth.OAuthServer.Enabled),
-				"GOTRUE_OAUTH_SERVER_AUTHORIZATION_PATH="+utils.Config.Auth.OAuthServer.AuthorizationPath,
+				"GOTRUE_OAUTH_SERVER_AUTHORIZATION_PATH="+utils.Config.Auth.OAuthServer.AuthorizationUrlPath,
 				fmt.Sprintf("GOTRUE_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION=%v", utils.Config.Auth.OAuthServer.AllowDynamicRegistration),
 			)
 		}

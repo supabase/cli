@@ -309,7 +309,7 @@ enabled = false
 # Enable OAuth server functionality
 enabled = false
 # Path for OAuth consent flow UI
-authorization_path = "/oauth/consent"
+authorization_url_path = "/oauth/consent"
 # Allow dynamic client registration
 allow_dynamic_registration = false
 

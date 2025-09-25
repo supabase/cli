@@ -373,7 +373,7 @@ type (
 	OAuthServer struct {
 		Enabled                  bool   `toml:"enabled"`
 		AllowDynamicRegistration bool   `toml:"allow_dynamic_registration"`
-		AuthorizationPath        string `toml:"authorization_path"`
+		AuthorizationPath        string `toml:"authorization_url_path"`
 	}
 )
 
