@@ -12,7 +12,7 @@ services:
       - name: cors
       - name: request-transformer
         config:
-          add:
+          replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
   - name: auth-v1-open-callback
@@ -27,7 +27,7 @@ services:
       - name: cors
       - name: request-transformer
         config:
-          add:
+          replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
   - name: auth-v1-open-authorize
@@ -42,7 +42,7 @@ services:
       - name: cors
       - name: request-transformer
         config:
-          add:
+          replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
   - name: auth-v1
@@ -57,7 +57,7 @@ services:
       - name: cors
       - name: request-transformer
         config:
-          add:
+          replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
   - name: rest-v1
@@ -72,7 +72,7 @@ services:
       - name: cors
       - name: request-transformer
         config:
-          add:
+          replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
   - name: rest-admin-v1
@@ -87,7 +87,7 @@ services:
       - name: cors
       - name: request-transformer
         config:
-          add:
+          replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
   - name: graphql-v1
@@ -105,6 +105,8 @@ services:
           add:
             headers:
               - "Content-Profile: graphql_public"
+          replace:
+            headers:
               - "Authorization: {{ .BearerToken }}"
   - name: realtime-v1-ws
     _comment: "Realtime: /realtime/v1/* -> ws://realtime:4000/socket/websocket"
@@ -119,7 +121,7 @@ services:
       - name: cors
       - name: request-transformer
         config:
-          add:
+          replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
   - name: realtime-v1-longpoll
@@ -135,7 +137,7 @@ services:
       - name: cors
       - name: request-transformer
         config:
-          add:
+          replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
   - name: realtime-v1-rest
@@ -151,7 +153,7 @@ services:
       - name: cors
       - name: request-transformer
         config:
-          add:
+          replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
   - name: storage-v1
@@ -166,7 +168,7 @@ services:
       - name: cors
       - name: request-transformer
         config:
-          add:
+          replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
   - name: pg-meta
@@ -192,7 +194,7 @@ services:
       - name: cors
       - name: request-transformer
         config:
-          add:
+          replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
   - name: analytics-v1
@@ -207,7 +209,7 @@ services:
       - name: cors
       - name: request-transformer
         config:
-          add:
+          replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
   - name: pooler-v2-ws
@@ -223,7 +225,7 @@ services:
       - name: cors
       - name: request-transformer
         config:
-          add:
+          replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
   - name: mcp
