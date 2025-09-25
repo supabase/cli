@@ -694,6 +694,13 @@ EOF
 		}
 		env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED=%v", utils.Config.Auth.Web3.Solana.Enabled))
 
+		// OAuth server configuration
+		if utils.Config.Auth.OAuthServer.Enabled {
+			env = append(env, fmt.Sprintf("GOTRUE_OAUTH_SERVER_ENABLED=%v", utils.Config.Auth.OAuthServer.Enabled))
+			env = append(env, "GOTRUE_OAUTH_SERVER_AUTHORIZATION_PATH="+utils.Config.Auth.OAuthServer.AuthorizationPath)
+			env = append(env, fmt.Sprintf("GOTRUE_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION=%v", utils.Config.Auth.OAuthServer.AllowDynamicRegistration))
+		}
+
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
