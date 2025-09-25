@@ -696,9 +696,11 @@ EOF
 
 		// OAuth server configuration
 		if utils.Config.Auth.OAuthServer.Enabled {
-			env = append(env, fmt.Sprintf("GOTRUE_OAUTH_SERVER_ENABLED=%v", utils.Config.Auth.OAuthServer.Enabled))
-			env = append(env, "GOTRUE_OAUTH_SERVER_AUTHORIZATION_PATH="+utils.Config.Auth.OAuthServer.AuthorizationPath)
-			env = append(env, fmt.Sprintf("GOTRUE_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION=%v", utils.Config.Auth.OAuthServer.AllowDynamicRegistration))
+			env = append(env,
+				fmt.Sprintf("GOTRUE_OAUTH_SERVER_ENABLED=%v", utils.Config.Auth.OAuthServer.Enabled),
+				"GOTRUE_OAUTH_SERVER_AUTHORIZATION_PATH="+utils.Config.Auth.OAuthServer.AuthorizationPath,
+				fmt.Sprintf("GOTRUE_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION=%v", utils.Config.Auth.OAuthServer.AllowDynamicRegistration),
+			)
 		}
 
 		if _, err := utils.DockerStart(
