@@ -349,9 +349,14 @@ EOF
 			ApiHost:       utils.Config.Hostname,
 			ApiPort:       utils.Config.Api.Port,
 			BearerToken: fmt.Sprintf(
-				// Pass down apikey as Authorization header for backwards compatibility with legacy JWT.
-				// If Authorization header is already set, Kong simply skips evaluating this Lua script.
-				`$((function() return (headers.apikey == '%s' and 'Bearer %s') or (headers.apikey == '%s' and 'Bearer %s') or headers.apikey end)())`,
+				// If Authorization header is set to a self-minted JWT, we want to pass it down.
+				// Legacy supabase-js may set Authorization header to Bearer <apikey>. We must remove it
+				// to avoid failing JWT validation.
+				// If Authorization header is missing, we want to match against apikey header to set the
+				// default JWT for downstream services.
+				// Finally, the apikey header may be set to a legacy JWT. In that case, we want to copy
+				// it to Authorization header for backwards compatibility.
+				`$((function() return (headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) or (headers.apikey == '%s' and 'Bearer %s') or (headers.apikey == '%s' and 'Bearer %s') or headers.apikey end)())`,
 				utils.Config.Auth.SecretKey.Value,
 				utils.Config.Auth.ServiceRoleKey.Value,
 				utils.Config.Auth.PublishableKey.Value,
