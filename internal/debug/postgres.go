@@ -59,8 +59,12 @@ func (p *Proxy) DialFunc(ctx context.Context, network, addr string) (net.Conn, e
 		go frontend.forward(backend, p.errChan)
 
 		for {
-			// Since pgx closes connection first, every EOF is seen as unexpected
-			if err := <-p.errChan; err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
+			if err := <-p.errChan; err != nil &&
+				// Since pgx closes connection first, every EOF is seen as unexpected
+				!errors.Is(err, io.ErrUnexpectedEOF) &&
+				// Frontend might receive a reply after pgx closes the connection, in
+				// which case the backend will write to a closed pipe. So ignore.
+				!errors.Is(err, io.ErrClosedPipe) {
 				panic(err)
 			}
 		}
