@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"strings"
+	"regexp"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
@@ -147,5 +148,12 @@ EOF
 	); err != nil && !strings.HasPrefix(stderr.String(), "main worker has been destroyed") {
 		return "", errors.Errorf("error diffing schema: %w:\n%s", err, stderr.String())
 	}
-	return out.String(), nil
+	// TODO: migra does not support ignoring functions yet
+	return filterFunctionBody(out.String()), nil
+}
+
+var grantFuncPattern = regexp.MustCompile(`(?s)CREATE OR REPLACE FUNCTION extensions.grant_pg_(cron|net)_access.+?END;\$function\$;`)
+
+func filterFunctionBody(diff string) string {
+	return grantFuncPattern.ReplaceAllString(diff, "")
 }
