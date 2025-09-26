@@ -899,6 +899,7 @@ EOF
 					"S3_PROTOCOL_PREFIX=/storage/v1",
 					"UPLOAD_FILE_SIZE_LIMIT=52428800000",
 					"UPLOAD_FILE_SIZE_LIMIT_STANDARD=5242880000",
+					"SIGNED_UPLOAD_URL_EXPIRATION_TIME=7200",
 				},
 				Healthcheck: &container.HealthConfig{
 					// For some reason, localhost resolves to IPv6 address on GitPod which breaks healthcheck.
