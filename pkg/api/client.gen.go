@@ -169,6 +169,23 @@ type ClientInterface interface {
 	// V1GetProject request
 	V1GetProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1ListActionRuns request
+	V1ListActionRuns(ctx context.Context, ref string, params *V1ListActionRunsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1CountActionRuns request
+	V1CountActionRuns(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetActionRun request
+	V1GetActionRun(ctx context.Context, ref string, runId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetActionRunLogs request
+	V1GetActionRunLogs(ctx context.Context, ref string, runId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1UpdateActionRunStatusWithBody request with any body
+	V1UpdateActionRunStatusWithBody(ctx context.Context, ref string, runId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1UpdateActionRunStatus(ctx context.Context, ref string, runId string, body V1UpdateActionRunStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1GetPerformanceAdvisors request
 	V1GetPerformanceAdvisors(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -930,6 +947,78 @@ func (c *Client) V1DeleteAProject(ctx context.Context, ref string, reqEditors ..
 
 func (c *Client) V1GetProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1GetProjectRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ListActionRuns(ctx context.Context, ref string, params *V1ListActionRunsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ListActionRunsRequest(c.Server, ref, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1CountActionRuns(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1CountActionRunsRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetActionRun(ctx context.Context, ref string, runId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetActionRunRequest(c.Server, ref, runId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetActionRunLogs(ctx context.Context, ref string, runId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetActionRunLogsRequest(c.Server, ref, runId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateActionRunStatusWithBody(ctx context.Context, ref string, runId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateActionRunStatusRequestWithBody(c.Server, ref, runId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateActionRunStatus(ctx context.Context, ref string, runId string, body V1UpdateActionRunStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateActionRunStatusRequest(c.Server, ref, runId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3844,6 +3933,248 @@ func NewV1GetProjectRequest(server string, ref string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewV1ListActionRunsRequest generates requests for V1ListActionRuns
+func NewV1ListActionRunsRequest(server string, ref string, params *V1ListActionRunsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/actions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "offset", runtime.ParamLocationQuery, *params.Offset); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1CountActionRunsRequest generates requests for V1CountActionRuns
+func NewV1CountActionRunsRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/actions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("HEAD", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1GetActionRunRequest generates requests for V1GetActionRun
+func NewV1GetActionRunRequest(server string, ref string, runId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "run_id", runtime.ParamLocationPath, runId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/actions/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1GetActionRunLogsRequest generates requests for V1GetActionRunLogs
+func NewV1GetActionRunLogsRequest(server string, ref string, runId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "run_id", runtime.ParamLocationPath, runId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/actions/%s/logs", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1UpdateActionRunStatusRequest calls the generic V1UpdateActionRunStatus builder with application/json body
+func NewV1UpdateActionRunStatusRequest(server string, ref string, runId string, body V1UpdateActionRunStatusJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1UpdateActionRunStatusRequestWithBody(server, ref, runId, "application/json", bodyReader)
+}
+
+// NewV1UpdateActionRunStatusRequestWithBody generates requests for V1UpdateActionRunStatus with any type of body
+func NewV1UpdateActionRunStatusRequestWithBody(server string, ref string, runId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "run_id", runtime.ParamLocationPath, runId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/actions/%s/status", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -9254,6 +9585,23 @@ type ClientWithResponsesInterface interface {
 	// V1GetProjectWithResponse request
 	V1GetProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectResponse, error)
 
+	// V1ListActionRunsWithResponse request
+	V1ListActionRunsWithResponse(ctx context.Context, ref string, params *V1ListActionRunsParams, reqEditors ...RequestEditorFn) (*V1ListActionRunsResponse, error)
+
+	// V1CountActionRunsWithResponse request
+	V1CountActionRunsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1CountActionRunsResponse, error)
+
+	// V1GetActionRunWithResponse request
+	V1GetActionRunWithResponse(ctx context.Context, ref string, runId string, reqEditors ...RequestEditorFn) (*V1GetActionRunResponse, error)
+
+	// V1GetActionRunLogsWithResponse request
+	V1GetActionRunLogsWithResponse(ctx context.Context, ref string, runId string, reqEditors ...RequestEditorFn) (*V1GetActionRunLogsResponse, error)
+
+	// V1UpdateActionRunStatusWithBodyWithResponse request with any body
+	V1UpdateActionRunStatusWithBodyWithResponse(ctx context.Context, ref string, runId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateActionRunStatusResponse, error)
+
+	V1UpdateActionRunStatusWithResponse(ctx context.Context, ref string, runId string, body V1UpdateActionRunStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateActionRunStatusResponse, error)
+
 	// V1GetPerformanceAdvisorsWithResponse request
 	V1GetPerformanceAdvisorsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPerformanceAdvisorsResponse, error)
 
@@ -10128,6 +10476,114 @@ func (r V1GetProjectResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1GetProjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1ListActionRunsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ListActionRunResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1ListActionRunsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1ListActionRunsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1CountActionRunsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1CountActionRunsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1CountActionRunsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetActionRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ActionRunResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetActionRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetActionRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetActionRunLogsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetActionRunLogsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetActionRunLogsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1UpdateActionRunStatusResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ActionRunResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1UpdateActionRunStatusResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1UpdateActionRunStatusResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -12871,6 +13327,59 @@ func (c *ClientWithResponses) V1GetProjectWithResponse(ctx context.Context, ref 
 	return ParseV1GetProjectResponse(rsp)
 }
 
+// V1ListActionRunsWithResponse request returning *V1ListActionRunsResponse
+func (c *ClientWithResponses) V1ListActionRunsWithResponse(ctx context.Context, ref string, params *V1ListActionRunsParams, reqEditors ...RequestEditorFn) (*V1ListActionRunsResponse, error) {
+	rsp, err := c.V1ListActionRuns(ctx, ref, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ListActionRunsResponse(rsp)
+}
+
+// V1CountActionRunsWithResponse request returning *V1CountActionRunsResponse
+func (c *ClientWithResponses) V1CountActionRunsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1CountActionRunsResponse, error) {
+	rsp, err := c.V1CountActionRuns(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1CountActionRunsResponse(rsp)
+}
+
+// V1GetActionRunWithResponse request returning *V1GetActionRunResponse
+func (c *ClientWithResponses) V1GetActionRunWithResponse(ctx context.Context, ref string, runId string, reqEditors ...RequestEditorFn) (*V1GetActionRunResponse, error) {
+	rsp, err := c.V1GetActionRun(ctx, ref, runId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetActionRunResponse(rsp)
+}
+
+// V1GetActionRunLogsWithResponse request returning *V1GetActionRunLogsResponse
+func (c *ClientWithResponses) V1GetActionRunLogsWithResponse(ctx context.Context, ref string, runId string, reqEditors ...RequestEditorFn) (*V1GetActionRunLogsResponse, error) {
+	rsp, err := c.V1GetActionRunLogs(ctx, ref, runId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetActionRunLogsResponse(rsp)
+}
+
+// V1UpdateActionRunStatusWithBodyWithResponse request with arbitrary body returning *V1UpdateActionRunStatusResponse
+func (c *ClientWithResponses) V1UpdateActionRunStatusWithBodyWithResponse(ctx context.Context, ref string, runId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateActionRunStatusResponse, error) {
+	rsp, err := c.V1UpdateActionRunStatusWithBody(ctx, ref, runId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateActionRunStatusResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1UpdateActionRunStatusWithResponse(ctx context.Context, ref string, runId string, body V1UpdateActionRunStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateActionRunStatusResponse, error) {
+	rsp, err := c.V1UpdateActionRunStatus(ctx, ref, runId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateActionRunStatusResponse(rsp)
+}
+
 // V1GetPerformanceAdvisorsWithResponse request returning *V1GetPerformanceAdvisorsResponse
 func (c *ClientWithResponses) V1GetPerformanceAdvisorsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetPerformanceAdvisorsResponse, error) {
 	rsp, err := c.V1GetPerformanceAdvisors(ctx, ref, reqEditors...)
@@ -14697,6 +15206,116 @@ func ParseV1GetProjectResponse(rsp *http.Response) (*V1GetProjectResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest V1ProjectWithDatabaseResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1ListActionRunsResponse parses an HTTP response from a V1ListActionRunsWithResponse call
+func ParseV1ListActionRunsResponse(rsp *http.Response) (*V1ListActionRunsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1ListActionRunsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ListActionRunResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1CountActionRunsResponse parses an HTTP response from a V1CountActionRunsWithResponse call
+func ParseV1CountActionRunsResponse(rsp *http.Response) (*V1CountActionRunsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1CountActionRunsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1GetActionRunResponse parses an HTTP response from a V1GetActionRunWithResponse call
+func ParseV1GetActionRunResponse(rsp *http.Response) (*V1GetActionRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetActionRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ActionRunResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetActionRunLogsResponse parses an HTTP response from a V1GetActionRunLogsWithResponse call
+func ParseV1GetActionRunLogsResponse(rsp *http.Response) (*V1GetActionRunLogsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetActionRunLogsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1UpdateActionRunStatusResponse parses an HTTP response from a V1UpdateActionRunStatusWithResponse call
+func ParseV1UpdateActionRunStatusResponse(rsp *http.Response) (*V1UpdateActionRunStatusResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1UpdateActionRunStatusResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ActionRunResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

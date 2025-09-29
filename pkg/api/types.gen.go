@@ -18,6 +18,28 @@ const (
 	Oauth2Scopes = "oauth2.Scopes"
 )
 
+// Defines values for ActionRunResponseRunStepsName.
+const (
+	ActionRunResponseRunStepsNameClone     ActionRunResponseRunStepsName = "clone"
+	ActionRunResponseRunStepsNameConfigure ActionRunResponseRunStepsName = "configure"
+	ActionRunResponseRunStepsNameDeploy    ActionRunResponseRunStepsName = "deploy"
+	ActionRunResponseRunStepsNameHealth    ActionRunResponseRunStepsName = "health"
+	ActionRunResponseRunStepsNameMigrate   ActionRunResponseRunStepsName = "migrate"
+	ActionRunResponseRunStepsNamePull      ActionRunResponseRunStepsName = "pull"
+	ActionRunResponseRunStepsNameSeed      ActionRunResponseRunStepsName = "seed"
+)
+
+// Defines values for ActionRunResponseRunStepsStatus.
+const (
+	ActionRunResponseRunStepsStatusCREATED    ActionRunResponseRunStepsStatus = "CREATED"
+	ActionRunResponseRunStepsStatusDEAD       ActionRunResponseRunStepsStatus = "DEAD"
+	ActionRunResponseRunStepsStatusEXITED     ActionRunResponseRunStepsStatus = "EXITED"
+	ActionRunResponseRunStepsStatusPAUSED     ActionRunResponseRunStepsStatus = "PAUSED"
+	ActionRunResponseRunStepsStatusREMOVING   ActionRunResponseRunStepsStatus = "REMOVING"
+	ActionRunResponseRunStepsStatusRESTARTING ActionRunResponseRunStepsStatus = "RESTARTING"
+	ActionRunResponseRunStepsStatusRUNNING    ActionRunResponseRunStepsStatus = "RUNNING"
+)
+
 // Defines values for ApiKeyResponseType.
 const (
 	ApiKeyResponseTypeLegacy      ApiKeyResponseType = "legacy"
@@ -415,6 +437,28 @@ const (
 	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelInternal  GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "internal"
 	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelPreview   GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "preview"
 	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelWithdrawn GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "withdrawn"
+)
+
+// Defines values for ListActionRunResponseRunStepsName.
+const (
+	ListActionRunResponseRunStepsNameClone     ListActionRunResponseRunStepsName = "clone"
+	ListActionRunResponseRunStepsNameConfigure ListActionRunResponseRunStepsName = "configure"
+	ListActionRunResponseRunStepsNameDeploy    ListActionRunResponseRunStepsName = "deploy"
+	ListActionRunResponseRunStepsNameHealth    ListActionRunResponseRunStepsName = "health"
+	ListActionRunResponseRunStepsNameMigrate   ListActionRunResponseRunStepsName = "migrate"
+	ListActionRunResponseRunStepsNamePull      ListActionRunResponseRunStepsName = "pull"
+	ListActionRunResponseRunStepsNameSeed      ListActionRunResponseRunStepsName = "seed"
+)
+
+// Defines values for ListActionRunResponseRunStepsStatus.
+const (
+	ListActionRunResponseRunStepsStatusCREATED    ListActionRunResponseRunStepsStatus = "CREATED"
+	ListActionRunResponseRunStepsStatusDEAD       ListActionRunResponseRunStepsStatus = "DEAD"
+	ListActionRunResponseRunStepsStatusEXITED     ListActionRunResponseRunStepsStatus = "EXITED"
+	ListActionRunResponseRunStepsStatusPAUSED     ListActionRunResponseRunStepsStatus = "PAUSED"
+	ListActionRunResponseRunStepsStatusREMOVING   ListActionRunResponseRunStepsStatus = "REMOVING"
+	ListActionRunResponseRunStepsStatusRESTARTING ListActionRunResponseRunStepsStatus = "RESTARTING"
+	ListActionRunResponseRunStepsStatusRUNNING    ListActionRunResponseRunStepsStatus = "RUNNING"
 )
 
 // Defines values for ListProjectAddonsResponseAvailableAddonsType.
@@ -831,6 +875,83 @@ const (
 	UpdateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatTransient    UpdateProviderBodyNameIdFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
 )
 
+// Defines values for UpdateRunStatusBodyClone.
+const (
+	UpdateRunStatusBodyCloneCREATED    UpdateRunStatusBodyClone = "CREATED"
+	UpdateRunStatusBodyCloneDEAD       UpdateRunStatusBodyClone = "DEAD"
+	UpdateRunStatusBodyCloneEXITED     UpdateRunStatusBodyClone = "EXITED"
+	UpdateRunStatusBodyClonePAUSED     UpdateRunStatusBodyClone = "PAUSED"
+	UpdateRunStatusBodyCloneREMOVING   UpdateRunStatusBodyClone = "REMOVING"
+	UpdateRunStatusBodyCloneRESTARTING UpdateRunStatusBodyClone = "RESTARTING"
+	UpdateRunStatusBodyCloneRUNNING    UpdateRunStatusBodyClone = "RUNNING"
+)
+
+// Defines values for UpdateRunStatusBodyConfigure.
+const (
+	UpdateRunStatusBodyConfigureCREATED    UpdateRunStatusBodyConfigure = "CREATED"
+	UpdateRunStatusBodyConfigureDEAD       UpdateRunStatusBodyConfigure = "DEAD"
+	UpdateRunStatusBodyConfigureEXITED     UpdateRunStatusBodyConfigure = "EXITED"
+	UpdateRunStatusBodyConfigurePAUSED     UpdateRunStatusBodyConfigure = "PAUSED"
+	UpdateRunStatusBodyConfigureREMOVING   UpdateRunStatusBodyConfigure = "REMOVING"
+	UpdateRunStatusBodyConfigureRESTARTING UpdateRunStatusBodyConfigure = "RESTARTING"
+	UpdateRunStatusBodyConfigureRUNNING    UpdateRunStatusBodyConfigure = "RUNNING"
+)
+
+// Defines values for UpdateRunStatusBodyDeploy.
+const (
+	UpdateRunStatusBodyDeployCREATED    UpdateRunStatusBodyDeploy = "CREATED"
+	UpdateRunStatusBodyDeployDEAD       UpdateRunStatusBodyDeploy = "DEAD"
+	UpdateRunStatusBodyDeployEXITED     UpdateRunStatusBodyDeploy = "EXITED"
+	UpdateRunStatusBodyDeployPAUSED     UpdateRunStatusBodyDeploy = "PAUSED"
+	UpdateRunStatusBodyDeployREMOVING   UpdateRunStatusBodyDeploy = "REMOVING"
+	UpdateRunStatusBodyDeployRESTARTING UpdateRunStatusBodyDeploy = "RESTARTING"
+	UpdateRunStatusBodyDeployRUNNING    UpdateRunStatusBodyDeploy = "RUNNING"
+)
+
+// Defines values for UpdateRunStatusBodyHealth.
+const (
+	UpdateRunStatusBodyHealthCREATED    UpdateRunStatusBodyHealth = "CREATED"
+	UpdateRunStatusBodyHealthDEAD       UpdateRunStatusBodyHealth = "DEAD"
+	UpdateRunStatusBodyHealthEXITED     UpdateRunStatusBodyHealth = "EXITED"
+	UpdateRunStatusBodyHealthPAUSED     UpdateRunStatusBodyHealth = "PAUSED"
+	UpdateRunStatusBodyHealthREMOVING   UpdateRunStatusBodyHealth = "REMOVING"
+	UpdateRunStatusBodyHealthRESTARTING UpdateRunStatusBodyHealth = "RESTARTING"
+	UpdateRunStatusBodyHealthRUNNING    UpdateRunStatusBodyHealth = "RUNNING"
+)
+
+// Defines values for UpdateRunStatusBodyMigrate.
+const (
+	UpdateRunStatusBodyMigrateCREATED    UpdateRunStatusBodyMigrate = "CREATED"
+	UpdateRunStatusBodyMigrateDEAD       UpdateRunStatusBodyMigrate = "DEAD"
+	UpdateRunStatusBodyMigrateEXITED     UpdateRunStatusBodyMigrate = "EXITED"
+	UpdateRunStatusBodyMigratePAUSED     UpdateRunStatusBodyMigrate = "PAUSED"
+	UpdateRunStatusBodyMigrateREMOVING   UpdateRunStatusBodyMigrate = "REMOVING"
+	UpdateRunStatusBodyMigrateRESTARTING UpdateRunStatusBodyMigrate = "RESTARTING"
+	UpdateRunStatusBodyMigrateRUNNING    UpdateRunStatusBodyMigrate = "RUNNING"
+)
+
+// Defines values for UpdateRunStatusBodyPull.
+const (
+	UpdateRunStatusBodyPullCREATED    UpdateRunStatusBodyPull = "CREATED"
+	UpdateRunStatusBodyPullDEAD       UpdateRunStatusBodyPull = "DEAD"
+	UpdateRunStatusBodyPullEXITED     UpdateRunStatusBodyPull = "EXITED"
+	UpdateRunStatusBodyPullPAUSED     UpdateRunStatusBodyPull = "PAUSED"
+	UpdateRunStatusBodyPullREMOVING   UpdateRunStatusBodyPull = "REMOVING"
+	UpdateRunStatusBodyPullRESTARTING UpdateRunStatusBodyPull = "RESTARTING"
+	UpdateRunStatusBodyPullRUNNING    UpdateRunStatusBodyPull = "RUNNING"
+)
+
+// Defines values for UpdateRunStatusBodySeed.
+const (
+	UpdateRunStatusBodySeedCREATED    UpdateRunStatusBodySeed = "CREATED"
+	UpdateRunStatusBodySeedDEAD       UpdateRunStatusBodySeed = "DEAD"
+	UpdateRunStatusBodySeedEXITED     UpdateRunStatusBodySeed = "EXITED"
+	UpdateRunStatusBodySeedPAUSED     UpdateRunStatusBodySeed = "PAUSED"
+	UpdateRunStatusBodySeedREMOVING   UpdateRunStatusBodySeed = "REMOVING"
+	UpdateRunStatusBodySeedRESTARTING UpdateRunStatusBodySeed = "RESTARTING"
+	UpdateRunStatusBodySeedRUNNING    UpdateRunStatusBodySeed = "RUNNING"
+)
+
 // Defines values for UpdateSigningKeyBodyStatus.
 const (
 	UpdateSigningKeyBodyStatusInUse          UpdateSigningKeyBodyStatus = "in_use"
@@ -1056,9 +1177,9 @@ const (
 
 // Defines values for V1RestorePointResponseStatus.
 const (
-	V1RestorePointResponseStatusAVAILABLE V1RestorePointResponseStatus = "AVAILABLE"
-	V1RestorePointResponseStatusPENDING   V1RestorePointResponseStatus = "PENDING"
-	V1RestorePointResponseStatusREMOVED   V1RestorePointResponseStatus = "REMOVED"
+	AVAILABLE V1RestorePointResponseStatus = "AVAILABLE"
+	PENDING   V1RestorePointResponseStatus = "PENDING"
+	REMOVED   V1RestorePointResponseStatus = "REMOVED"
 )
 
 // Defines values for V1ServiceHealthResponseInfo0Name.
@@ -1212,6 +1333,29 @@ const (
 	Asc  V1ListAllSnippetsParamsSortOrder = "asc"
 	Desc V1ListAllSnippetsParamsSortOrder = "desc"
 )
+
+// ActionRunResponse defines model for ActionRunResponse.
+type ActionRunResponse struct {
+	BranchId   string                         `json:"branch_id"`
+	CheckRunId nullable.Nullable[float32]     `json:"check_run_id"`
+	CreatedAt  string                         `json:"created_at"`
+	GitConfig  nullable.Nullable[interface{}] `json:"git_config,omitempty"`
+	Id         string                         `json:"id"`
+	RunSteps   []struct {
+		CreatedAt string                          `json:"created_at"`
+		Name      ActionRunResponseRunStepsName   `json:"name"`
+		Status    ActionRunResponseRunStepsStatus `json:"status"`
+		UpdatedAt string                          `json:"updated_at"`
+	} `json:"run_steps"`
+	UpdatedAt string                    `json:"updated_at"`
+	Workdir   nullable.Nullable[string] `json:"workdir"`
+}
+
+// ActionRunResponseRunStepsName defines model for ActionRunResponse.RunSteps.Name.
+type ActionRunResponseRunStepsName string
+
+// ActionRunResponseRunStepsStatus defines model for ActionRunResponse.RunSteps.Status.
+type ActionRunResponseRunStepsStatus string
 
 // ActivateVanitySubdomainResponse defines model for ActivateVanitySubdomainResponse.
 type ActivateVanitySubdomainResponse struct {
@@ -2123,6 +2267,29 @@ type JitListAccessResponse struct {
 type LegacyApiKeysResponse struct {
 	Enabled bool `json:"enabled"`
 }
+
+// ListActionRunResponse defines model for ListActionRunResponse.
+type ListActionRunResponse = []struct {
+	BranchId   string                         `json:"branch_id"`
+	CheckRunId nullable.Nullable[float32]     `json:"check_run_id"`
+	CreatedAt  string                         `json:"created_at"`
+	GitConfig  nullable.Nullable[interface{}] `json:"git_config,omitempty"`
+	Id         string                         `json:"id"`
+	RunSteps   []struct {
+		CreatedAt string                              `json:"created_at"`
+		Name      ListActionRunResponseRunStepsName   `json:"name"`
+		Status    ListActionRunResponseRunStepsStatus `json:"status"`
+		UpdatedAt string                              `json:"updated_at"`
+	} `json:"run_steps"`
+	UpdatedAt string                    `json:"updated_at"`
+	Workdir   nullable.Nullable[string] `json:"workdir"`
+}
+
+// ListActionRunResponseRunStepsName defines model for ListActionRunResponse.RunSteps.Name.
+type ListActionRunResponseRunStepsName string
+
+// ListActionRunResponseRunStepsStatus defines model for ListActionRunResponse.RunSteps.Status.
+type ListActionRunResponseRunStepsStatus string
 
 // ListProjectAddonsResponse defines model for ListProjectAddonsResponse.
 type ListProjectAddonsResponse struct {
@@ -3129,6 +3296,38 @@ type UpdateProviderResponse struct {
 	UpdatedAt *string `json:"updated_at,omitempty"`
 }
 
+// UpdateRunStatusBody defines model for UpdateRunStatusBody.
+type UpdateRunStatusBody struct {
+	Clone     *UpdateRunStatusBodyClone     `json:"clone,omitempty"`
+	Configure *UpdateRunStatusBodyConfigure `json:"configure,omitempty"`
+	Deploy    *UpdateRunStatusBodyDeploy    `json:"deploy,omitempty"`
+	Health    *UpdateRunStatusBodyHealth    `json:"health,omitempty"`
+	Migrate   *UpdateRunStatusBodyMigrate   `json:"migrate,omitempty"`
+	Pull      *UpdateRunStatusBodyPull      `json:"pull,omitempty"`
+	Seed      *UpdateRunStatusBodySeed      `json:"seed,omitempty"`
+}
+
+// UpdateRunStatusBodyClone defines model for UpdateRunStatusBody.Clone.
+type UpdateRunStatusBodyClone string
+
+// UpdateRunStatusBodyConfigure defines model for UpdateRunStatusBody.Configure.
+type UpdateRunStatusBodyConfigure string
+
+// UpdateRunStatusBodyDeploy defines model for UpdateRunStatusBody.Deploy.
+type UpdateRunStatusBodyDeploy string
+
+// UpdateRunStatusBodyHealth defines model for UpdateRunStatusBody.Health.
+type UpdateRunStatusBodyHealth string
+
+// UpdateRunStatusBodyMigrate defines model for UpdateRunStatusBody.Migrate.
+type UpdateRunStatusBodyMigrate string
+
+// UpdateRunStatusBodyPull defines model for UpdateRunStatusBody.Pull.
+type UpdateRunStatusBodyPull string
+
+// UpdateRunStatusBodySeed defines model for UpdateRunStatusBody.Seed.
+type UpdateRunStatusBodySeed string
+
 // UpdateSigningKeyBody defines model for UpdateSigningKeyBody.
 type UpdateSigningKeyBody struct {
 	Status UpdateSigningKeyBodyStatus `json:"status"`
@@ -3642,6 +3841,12 @@ type V1OauthAuthorizeProjectClaimParamsResponseType string
 // V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod defines parameters for V1OauthAuthorizeProjectClaim.
 type V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod string
 
+// V1ListActionRunsParams defines parameters for V1ListActionRuns.
+type V1ListActionRunsParams struct {
+	Offset *float32 `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit  *float32 `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // V1GetSecurityAdvisorsParams defines parameters for V1GetSecurityAdvisors.
 type V1GetSecurityAdvisorsParams struct {
 	LintType *V1GetSecurityAdvisorsParamsLintType `form:"lint_type,omitempty" json:"lint_type,omitempty"`
@@ -3842,6 +4047,9 @@ type V1CreateAnOrganizationJSONRequestBody = CreateOrganizationV1
 
 // V1CreateAProjectJSONRequestBody defines body for V1CreateAProject for application/json ContentType.
 type V1CreateAProjectJSONRequestBody = V1CreateProjectBody
+
+// V1UpdateActionRunStatusJSONRequestBody defines body for V1UpdateActionRunStatus for application/json ContentType.
+type V1UpdateActionRunStatusJSONRequestBody = UpdateRunStatusBody
 
 // V1CreateProjectApiKeyJSONRequestBody defines body for V1CreateProjectApiKey for application/json ContentType.
 type V1CreateProjectApiKeyJSONRequestBody = CreateApiKeyBody
