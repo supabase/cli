@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/go-errors/errors"
-	"github.com/google/uuid"
 	"github.com/oapi-codegen/nullable"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	v1API "github.com/supabase/cli/pkg/api"
@@ -87,7 +86,7 @@ func (p *Algorithm) UnmarshalText(text []byte) error {
 
 type JWK struct {
 	KeyType     string    `json:"kty"`
-	KeyID       uuid.UUID `json:"kid,omitempty"`
+	KeyID       string    `json:"kid,omitempty"`
 	Use         string    `json:"use,omitempty"`
 	KeyOps      []string  `json:"key_ops,omitempty"`
 	Algorithm   Algorithm `json:"alg,omitempty"`

@@ -11,7 +11,6 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
 )
 
 const (
@@ -88,7 +87,7 @@ func (a auth) generateJWT(role string) (string, error) {
 }
 
 // GenerateAsymmetricJWT generates a JWT token signed with the provided JWK private key
-func GenerateAsymmetricJWT(jwk JWK, claims CustomClaims) (string, error) {
+func GenerateAsymmetricJWT(jwk JWK, claims jwt.Claims) (string, error) {
 	privateKey, err := jwkToPrivateKey(jwk)
 	if err != nil {
 		return "", errors.Errorf("failed to convert JWK to private key: %w", err)
@@ -105,8 +104,8 @@ func GenerateAsymmetricJWT(jwk JWK, claims CustomClaims) (string, error) {
 		return "", errors.Errorf("unsupported algorithm: %s", jwk.Algorithm)
 	}
 
-	if jwk.KeyID != uuid.Nil {
-		token.Header["kid"] = jwk.KeyID.String()
+	if len(jwk.KeyID) > 0 {
+		token.Header["kid"] = jwk.KeyID
 	}
 
 	tokenString, err := token.SignedString(privateKey)

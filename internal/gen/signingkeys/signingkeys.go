@@ -52,7 +52,7 @@ func generateRSAKeyPair(keyID uuid.UUID) (*config.JWK, error) {
 	// Convert to JWK format
 	privateJWK := config.JWK{
 		KeyType:                 "RSA",
-		KeyID:                   keyID,
+		KeyID:                   keyID.String(),
 		Use:                     "sig",
 		KeyOps:                  []string{"sign", "verify"},
 		Algorithm:               "RS256",
@@ -82,7 +82,7 @@ func generateECDSAKeyPair(keyID uuid.UUID) (*config.JWK, error) {
 	// Convert to JWK format
 	privateJWK := config.JWK{
 		KeyType:         "EC",
-		KeyID:           keyID,
+		KeyID:           keyID.String(),
 		Use:             "sig",
 		KeyOps:          []string{"sign", "verify"},
 		Algorithm:       "ES256",
@@ -110,53 +110,12 @@ func Run(ctx context.Context, algorithm string, appendMode bool, fsys afero.Fs) 
 		return err
 	}
 
-	out := io.Writer(os.Stdout)
-	var jwkArray []config.JWK
-	if len(outputPath) > 0 {
-		if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(outputPath)); err != nil {
-			return err
-		}
-		f, err := fsys.OpenFile(outputPath, os.O_RDWR|os.O_CREATE, 0600)
-		if err != nil {
-			return errors.Errorf("failed to open signing key: %w", err)
-		}
-		defer f.Close()
-		if appendMode {
-			// Load existing key and reset file
-			dec := json.NewDecoder(f)
-			// Since a new file is empty, we must ignore EOF error
-			if err := dec.Decode(&jwkArray); err != nil && !errors.Is(err, io.EOF) {
-				return errors.Errorf("failed to decode signing key: %w", err)
-			}
-			if _, err = f.Seek(0, io.SeekStart); err != nil {
-				return errors.Errorf("failed to seek signing key: %w", err)
-			}
-		} else if fi, err := f.Stat(); fi.Size() > 0 {
-			if err != nil {
-				fmt.Fprintln(utils.GetDebugLogger(), err)
-			}
-			label := fmt.Sprintf("Do you want to overwrite the existing %s file?", utils.Bold(outputPath))
-			if shouldOverwrite, err := utils.NewConsole().PromptYesNo(ctx, label, true); err != nil {
-				return err
-			} else if !shouldOverwrite {
-				return errors.New(context.Canceled)
-			}
-			if err := f.Truncate(0); err != nil {
-				return errors.Errorf("failed to truncate signing key: %w", err)
-			}
-		}
-		out = f
-	}
-	jwkArray = append(jwkArray, *privateJWK)
-
-	// Write to file
-	enc := json.NewEncoder(out)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(jwkArray); err != nil {
-		return errors.Errorf("failed to encode signing key: %w", err)
-	}
-
+	// Only serialise a single key to stdout
 	if len(outputPath) == 0 {
+		enc := json.NewEncoder(os.Stdout)
+		if err := enc.Encode(privateJWK); err != nil {
+			return errors.Errorf("failed to encode signing key: %w", err)
+		}
 		utils.CmdSuggestion = fmt.Sprintf(`
 To enable JWT signing keys in your local project:
 1. Save the generated key to %s
@@ -166,6 +125,48 @@ To enable JWT signing keys in your local project:
 signing_keys_path = "./signing_key.json"
 `, utils.Bold(filepath.Join(utils.SupabaseDirPath, "signing_key.json")), utils.Bold(utils.ConfigPath))
 		return nil
+	}
+
+	var jwkArray []config.JWK
+	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(outputPath)); err != nil {
+		return err
+	}
+	f, err := fsys.OpenFile(outputPath, os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		return errors.Errorf("failed to open signing key: %w", err)
+	}
+	defer f.Close()
+	if appendMode {
+		// Load existing key and reset file
+		dec := json.NewDecoder(f)
+		// Since a new file is empty, we must ignore EOF error
+		if err := dec.Decode(&jwkArray); err != nil && !errors.Is(err, io.EOF) {
+			return errors.Errorf("failed to decode signing key: %w", err)
+		}
+		if _, err = f.Seek(0, io.SeekStart); err != nil {
+			return errors.Errorf("failed to seek signing key: %w", err)
+		}
+	} else if fi, err := f.Stat(); fi.Size() > 0 {
+		if err != nil {
+			fmt.Fprintln(utils.GetDebugLogger(), err)
+		}
+		label := fmt.Sprintf("Do you want to overwrite the existing %s file?", utils.Bold(outputPath))
+		if shouldOverwrite, err := utils.NewConsole().PromptYesNo(ctx, label, true); err != nil {
+			return err
+		} else if !shouldOverwrite {
+			return errors.New(context.Canceled)
+		}
+		if err := f.Truncate(0); err != nil {
+			return errors.Errorf("failed to truncate signing key: %w", err)
+		}
+	}
+	jwkArray = append(jwkArray, *privateJWK)
+
+	// Write to file
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(jwkArray); err != nil {
+		return errors.Errorf("failed to encode signing key: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "JWT signing key appended to: %s (now contains %d keys)\n", utils.Bold(outputPath), len(jwkArray))
