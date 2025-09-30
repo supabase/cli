@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"encoding/json"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	env "github.com/Netflix/go-env"
 	"github.com/go-errors/errors"
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -124,17 +127,18 @@ Supported algorithms:
 	claims   config.CustomClaims
 	expiry   time.Time
 	validFor time.Duration
+	payload  string
 
 	genJWTCmd = &cobra.Command{
 		Use:   "bearer-jwt",
 		Short: "Generate a Bearer Auth JWT for accessing Data API",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if expiry.IsZero() {
-				expiry = time.Now().Add(validFor)
+			custom := jwt.MapClaims{}
+			if err := parseClaims(custom); err != nil {
+				return err
 			}
-			claims.ExpiresAt = jwt.NewNumericDate(expiry)
-			return bearerjwt.Run(cmd.Context(), claims, os.Stdout, afero.NewOsFs())
+			return bearerjwt.Run(cmd.Context(), custom, os.Stdout, afero.NewOsFs())
 		},
 	}
 )
@@ -166,12 +170,41 @@ func init() {
 	genCmd.AddCommand(genSigningKeyCmd)
 	tokenFlags := genJWTCmd.Flags()
 	tokenFlags.StringVar(&claims.Role, "role", "", "Postgres role to use.")
+	cobra.CheckErr(genJWTCmd.MarkFlagRequired("role"))
 	tokenFlags.StringVar(&claims.Subject, "sub", "", "User ID to impersonate.")
 	genJWTCmd.Flag("sub").DefValue = "anonymous"
 	tokenFlags.TimeVar(&expiry, "exp", time.Time{}, []string{time.RFC3339}, "Expiry timestamp for this token.")
 	tokenFlags.DurationVar(&validFor, "valid-for", time.Minute*30, "Validity duration for this token.")
-	genJWTCmd.MarkFlagsMutuallyExclusive("exp", "valid-for")
-	cobra.CheckErr(genJWTCmd.MarkFlagRequired("role"))
+	tokenFlags.StringVar(&payload, "payload", "{}", "Custom claims in JSON format.")
 	genCmd.AddCommand(genJWTCmd)
 	rootCmd.AddCommand(genCmd)
+}
+
+func parseClaims(custom jwt.MapClaims) error {
+	// Initialise default claims
+	now := time.Now()
+	if expiry.IsZero() {
+		expiry = now.Add(validFor)
+	} else {
+		now = expiry.Add(-validFor)
+	}
+	claims.IssuedAt = jwt.NewNumericDate(now)
+	claims.ExpiresAt = jwt.NewNumericDate(expiry)
+	// Set is_anonymous = true for authenticated role without explicit user ID
+	if strings.EqualFold(claims.Role, "authenticated") && len(claims.Subject) == 0 {
+		claims.IsAnon = true
+	}
+	// Override with custom claims
+	if dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+		TagName: "json",
+		Result:  &custom,
+	}); err != nil {
+		return errors.Errorf("failed to init decoder: %w", err)
+	} else if err := dec.Decode(claims); err != nil {
+		return errors.Errorf("failed to decode claims: %w", err)
+	}
+	if err := json.Unmarshal([]byte(payload), &custom); err != nil {
+		return errors.Errorf("failed to parse payload: %w", err)
+	}
+	return nil
 }

@@ -79,6 +79,7 @@ type kongConfig struct {
 	RestId        string
 	RealtimeId    string
 	StorageId     string
+	StudioId      string
 	PgmetaId      string
 	EdgeRuntimeId string
 	LogflareId    string
@@ -340,6 +341,7 @@ EOF
 			RestId:        utils.RestId,
 			RealtimeId:    utils.Config.Realtime.TenantId,
 			StorageId:     utils.StorageId,
+			StudioId:      utils.StudioId,
 			PgmetaId:      utils.PgmetaId,
 			EdgeRuntimeId: utils.EdgeRuntimeId,
 			LogflareId:    utils.LogflareId,
@@ -347,9 +349,14 @@ EOF
 			ApiHost:       utils.Config.Hostname,
 			ApiPort:       utils.Config.Api.Port,
 			BearerToken: fmt.Sprintf(
-				// Pass down apikey as Authorization header for backwards compatibility with legacy JWT.
-				// If Authorization header is already set, Kong simply skips evaluating this Lua script.
-				`$((function() return (headers.apikey == '%s' and 'Bearer %s') or (headers.apikey == '%s' and 'Bearer %s') or headers.apikey end)())`,
+				// If Authorization header is set to a self-minted JWT, we want to pass it down.
+				// Legacy supabase-js may set Authorization header to Bearer <apikey>. We must remove it
+				// to avoid failing JWT validation.
+				// If Authorization header is missing, we want to match against apikey header to set the
+				// default JWT for downstream services.
+				// Finally, the apikey header may be set to a legacy JWT. In that case, we want to copy
+				// it to Authorization header for backwards compatibility.
+				`$((function() return (headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) or (headers.apikey == '%s' and 'Bearer %s') or (headers.apikey == '%s' and 'Bearer %s') or headers.apikey end)())`,
 				utils.Config.Auth.SecretKey.Value,
 				utils.Config.Auth.ServiceRoleKey.Value,
 				utils.Config.Auth.PublishableKey.Value,
@@ -693,6 +700,15 @@ EOF
 		}
 		env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED=%v", utils.Config.Auth.Web3.Solana.Enabled))
 
+		// OAuth server configuration
+		if utils.Config.Auth.OAuthServer.Enabled {
+			env = append(env,
+				fmt.Sprintf("GOTRUE_OAUTH_SERVER_ENABLED=%v", utils.Config.Auth.OAuthServer.Enabled),
+				"GOTRUE_OAUTH_SERVER_AUTHORIZATION_PATH="+utils.Config.Auth.OAuthServer.AuthorizationUrlPath,
+				fmt.Sprintf("GOTRUE_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION=%v", utils.Config.Auth.OAuthServer.AllowDynamicRegistration),
+			)
+		}
+
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -884,6 +900,7 @@ EOF
 					"S3_PROTOCOL_PREFIX=/storage/v1",
 					"UPLOAD_FILE_SIZE_LIMIT=52428800000",
 					"UPLOAD_FILE_SIZE_LIMIT_STANDARD=5242880000",
+					"SIGNED_UPLOAD_URL_EXPIRATION_TIME=7200",
 				},
 				Healthcheck: &container.HealthConfig{
 					// For some reason, localhost resolves to IPv6 address on GitPod which breaks healthcheck.

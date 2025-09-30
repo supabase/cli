@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/go-errors/errors"
-	"github.com/google/uuid"
 	"github.com/oapi-codegen/nullable"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	v1API "github.com/supabase/cli/pkg/api"
@@ -87,7 +86,7 @@ func (p *Algorithm) UnmarshalText(text []byte) error {
 
 type JWK struct {
 	KeyType     string    `json:"kty"`
-	KeyID       uuid.UUID `json:"kid,omitempty"`
+	KeyID       string    `json:"kid,omitempty"`
 	Use         string    `json:"use,omitempty"`
 	KeyOps      []string  `json:"key_ops,omitempty"`
 	Algorithm   Algorithm `json:"alg,omitempty"`
@@ -162,15 +161,16 @@ type (
 		SigningKeysPath            string               `toml:"signing_keys_path"`
 		SigningKeys                []JWK                `toml:"-"`
 
-		RateLimit rateLimit `toml:"rate_limit"`
-		Captcha   *captcha  `toml:"captcha"`
-		Hook      hook      `toml:"hook"`
-		MFA       mfa       `toml:"mfa"`
-		Sessions  sessions  `toml:"sessions"`
-		Email     email     `toml:"email"`
-		Sms       sms       `toml:"sms"`
-		External  external  `toml:"external"`
-		Web3      web3      `toml:"web3"`
+		RateLimit   rateLimit   `toml:"rate_limit"`
+		Captcha     *captcha    `toml:"captcha"`
+		Hook        hook        `toml:"hook"`
+		MFA         mfa         `toml:"mfa"`
+		Sessions    sessions    `toml:"sessions"`
+		Email       email       `toml:"email"`
+		Sms         sms         `toml:"sms"`
+		External    external    `toml:"external"`
+		Web3        web3        `toml:"web3"`
+		OAuthServer OAuthServer `toml:"oauth_server"`
 
 		// Custom secrets can be injected from .env file
 		PublishableKey Secret `toml:"publishable_key"`
@@ -369,6 +369,12 @@ type (
 		Solana   solana   `toml:"solana"`
 		Ethereum ethereum `toml:"ethereum"`
 	}
+
+	OAuthServer struct {
+		Enabled                  bool   `toml:"enabled"`
+		AllowDynamicRegistration bool   `toml:"allow_dynamic_registration"`
+		AuthorizationUrlPath     string `toml:"authorization_url_path"`
+	}
 )
 
 func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
@@ -400,6 +406,7 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 	a.Sms.toAuthConfigBody(&body)
 	a.External.toAuthConfigBody(&body)
 	a.Web3.toAuthConfigBody(&body)
+	a.OAuthServer.toAuthConfigBody(&body)
 	return body
 }
 
@@ -427,6 +434,7 @@ func (a *auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	a.Sms.fromAuthConfig(remoteConfig)
 	a.External.fromAuthConfig(remoteConfig)
 	a.Web3.fromAuthConfig(remoteConfig)
+	a.OAuthServer.fromAuthConfig(remoteConfig)
 }
 
 func (r rateLimit) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
@@ -1373,6 +1381,18 @@ func (w *web3) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	if value, err := remoteConfig.ExternalWeb3EthereumEnabled.Get(); err == nil {
 		w.Ethereum.Enabled = value
 	}
+}
+
+func (o OAuthServer) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+	// TODO(cemal) :: implement me
+	// OAuth server configuration is behind a feature flag in the remote API
+	// Will be implemented when the feature reaches GA
+}
+
+func (o *OAuthServer) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	// TODO(cemal) :: implement me
+	// OAuth server configuration is behind a feature flag in the remote API
+	// Will be implemented when the feature reaches GA
 }
 
 func (a *auth) DiffWithRemote(remoteConfig v1API.AuthConfigResponse, filter ...func(string) bool) ([]byte, error) {

@@ -6,7 +6,6 @@ import (
 	"os"
 
 	"github.com/go-errors/errors"
-	"github.com/google/uuid"
 	v1API "github.com/supabase/cli/pkg/api"
 )
 
@@ -174,10 +173,10 @@ func (u *ConfigUpdater) UpdateSigningKeys(ctx context.Context, projectRef string
 	} else if resp.JSON200 == nil {
 		return errors.Errorf("unexpected status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
-	exists := map[uuid.UUID]struct{}{}
+	exists := map[string]struct{}{}
 	for _, k := range resp.JSON200.Keys {
 		if k.PublicJwk != nil {
-			exists[k.Id] = struct{}{}
+			exists[k.Id.String()] = struct{}{}
 		}
 	}
 	var toInsert []JWK

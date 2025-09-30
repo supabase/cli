@@ -18,6 +18,28 @@ const (
 	Oauth2Scopes = "oauth2.Scopes"
 )
 
+// Defines values for ActionRunResponseRunStepsName.
+const (
+	ActionRunResponseRunStepsNameClone     ActionRunResponseRunStepsName = "clone"
+	ActionRunResponseRunStepsNameConfigure ActionRunResponseRunStepsName = "configure"
+	ActionRunResponseRunStepsNameDeploy    ActionRunResponseRunStepsName = "deploy"
+	ActionRunResponseRunStepsNameHealth    ActionRunResponseRunStepsName = "health"
+	ActionRunResponseRunStepsNameMigrate   ActionRunResponseRunStepsName = "migrate"
+	ActionRunResponseRunStepsNamePull      ActionRunResponseRunStepsName = "pull"
+	ActionRunResponseRunStepsNameSeed      ActionRunResponseRunStepsName = "seed"
+)
+
+// Defines values for ActionRunResponseRunStepsStatus.
+const (
+	ActionRunResponseRunStepsStatusCREATED    ActionRunResponseRunStepsStatus = "CREATED"
+	ActionRunResponseRunStepsStatusDEAD       ActionRunResponseRunStepsStatus = "DEAD"
+	ActionRunResponseRunStepsStatusEXITED     ActionRunResponseRunStepsStatus = "EXITED"
+	ActionRunResponseRunStepsStatusPAUSED     ActionRunResponseRunStepsStatus = "PAUSED"
+	ActionRunResponseRunStepsStatusREMOVING   ActionRunResponseRunStepsStatus = "REMOVING"
+	ActionRunResponseRunStepsStatusRESTARTING ActionRunResponseRunStepsStatus = "RESTARTING"
+	ActionRunResponseRunStepsStatusRUNNING    ActionRunResponseRunStepsStatus = "RUNNING"
+)
+
 // Defines values for ApiKeyResponseType.
 const (
 	ApiKeyResponseTypeLegacy      ApiKeyResponseType = "legacy"
@@ -415,6 +437,28 @@ const (
 	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelInternal  GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "internal"
 	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelPreview   GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "preview"
 	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelWithdrawn GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "withdrawn"
+)
+
+// Defines values for ListActionRunResponseRunStepsName.
+const (
+	ListActionRunResponseRunStepsNameClone     ListActionRunResponseRunStepsName = "clone"
+	ListActionRunResponseRunStepsNameConfigure ListActionRunResponseRunStepsName = "configure"
+	ListActionRunResponseRunStepsNameDeploy    ListActionRunResponseRunStepsName = "deploy"
+	ListActionRunResponseRunStepsNameHealth    ListActionRunResponseRunStepsName = "health"
+	ListActionRunResponseRunStepsNameMigrate   ListActionRunResponseRunStepsName = "migrate"
+	ListActionRunResponseRunStepsNamePull      ListActionRunResponseRunStepsName = "pull"
+	ListActionRunResponseRunStepsNameSeed      ListActionRunResponseRunStepsName = "seed"
+)
+
+// Defines values for ListActionRunResponseRunStepsStatus.
+const (
+	ListActionRunResponseRunStepsStatusCREATED    ListActionRunResponseRunStepsStatus = "CREATED"
+	ListActionRunResponseRunStepsStatusDEAD       ListActionRunResponseRunStepsStatus = "DEAD"
+	ListActionRunResponseRunStepsStatusEXITED     ListActionRunResponseRunStepsStatus = "EXITED"
+	ListActionRunResponseRunStepsStatusPAUSED     ListActionRunResponseRunStepsStatus = "PAUSED"
+	ListActionRunResponseRunStepsStatusREMOVING   ListActionRunResponseRunStepsStatus = "REMOVING"
+	ListActionRunResponseRunStepsStatusRESTARTING ListActionRunResponseRunStepsStatus = "RESTARTING"
+	ListActionRunResponseRunStepsStatusRUNNING    ListActionRunResponseRunStepsStatus = "RUNNING"
 )
 
 // Defines values for ListProjectAddonsResponseAvailableAddonsType.
@@ -831,6 +875,83 @@ const (
 	UpdateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatTransient    UpdateProviderBodyNameIdFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
 )
 
+// Defines values for UpdateRunStatusBodyClone.
+const (
+	UpdateRunStatusBodyCloneCREATED    UpdateRunStatusBodyClone = "CREATED"
+	UpdateRunStatusBodyCloneDEAD       UpdateRunStatusBodyClone = "DEAD"
+	UpdateRunStatusBodyCloneEXITED     UpdateRunStatusBodyClone = "EXITED"
+	UpdateRunStatusBodyClonePAUSED     UpdateRunStatusBodyClone = "PAUSED"
+	UpdateRunStatusBodyCloneREMOVING   UpdateRunStatusBodyClone = "REMOVING"
+	UpdateRunStatusBodyCloneRESTARTING UpdateRunStatusBodyClone = "RESTARTING"
+	UpdateRunStatusBodyCloneRUNNING    UpdateRunStatusBodyClone = "RUNNING"
+)
+
+// Defines values for UpdateRunStatusBodyConfigure.
+const (
+	UpdateRunStatusBodyConfigureCREATED    UpdateRunStatusBodyConfigure = "CREATED"
+	UpdateRunStatusBodyConfigureDEAD       UpdateRunStatusBodyConfigure = "DEAD"
+	UpdateRunStatusBodyConfigureEXITED     UpdateRunStatusBodyConfigure = "EXITED"
+	UpdateRunStatusBodyConfigurePAUSED     UpdateRunStatusBodyConfigure = "PAUSED"
+	UpdateRunStatusBodyConfigureREMOVING   UpdateRunStatusBodyConfigure = "REMOVING"
+	UpdateRunStatusBodyConfigureRESTARTING UpdateRunStatusBodyConfigure = "RESTARTING"
+	UpdateRunStatusBodyConfigureRUNNING    UpdateRunStatusBodyConfigure = "RUNNING"
+)
+
+// Defines values for UpdateRunStatusBodyDeploy.
+const (
+	UpdateRunStatusBodyDeployCREATED    UpdateRunStatusBodyDeploy = "CREATED"
+	UpdateRunStatusBodyDeployDEAD       UpdateRunStatusBodyDeploy = "DEAD"
+	UpdateRunStatusBodyDeployEXITED     UpdateRunStatusBodyDeploy = "EXITED"
+	UpdateRunStatusBodyDeployPAUSED     UpdateRunStatusBodyDeploy = "PAUSED"
+	UpdateRunStatusBodyDeployREMOVING   UpdateRunStatusBodyDeploy = "REMOVING"
+	UpdateRunStatusBodyDeployRESTARTING UpdateRunStatusBodyDeploy = "RESTARTING"
+	UpdateRunStatusBodyDeployRUNNING    UpdateRunStatusBodyDeploy = "RUNNING"
+)
+
+// Defines values for UpdateRunStatusBodyHealth.
+const (
+	UpdateRunStatusBodyHealthCREATED    UpdateRunStatusBodyHealth = "CREATED"
+	UpdateRunStatusBodyHealthDEAD       UpdateRunStatusBodyHealth = "DEAD"
+	UpdateRunStatusBodyHealthEXITED     UpdateRunStatusBodyHealth = "EXITED"
+	UpdateRunStatusBodyHealthPAUSED     UpdateRunStatusBodyHealth = "PAUSED"
+	UpdateRunStatusBodyHealthREMOVING   UpdateRunStatusBodyHealth = "REMOVING"
+	UpdateRunStatusBodyHealthRESTARTING UpdateRunStatusBodyHealth = "RESTARTING"
+	UpdateRunStatusBodyHealthRUNNING    UpdateRunStatusBodyHealth = "RUNNING"
+)
+
+// Defines values for UpdateRunStatusBodyMigrate.
+const (
+	UpdateRunStatusBodyMigrateCREATED    UpdateRunStatusBodyMigrate = "CREATED"
+	UpdateRunStatusBodyMigrateDEAD       UpdateRunStatusBodyMigrate = "DEAD"
+	UpdateRunStatusBodyMigrateEXITED     UpdateRunStatusBodyMigrate = "EXITED"
+	UpdateRunStatusBodyMigratePAUSED     UpdateRunStatusBodyMigrate = "PAUSED"
+	UpdateRunStatusBodyMigrateREMOVING   UpdateRunStatusBodyMigrate = "REMOVING"
+	UpdateRunStatusBodyMigrateRESTARTING UpdateRunStatusBodyMigrate = "RESTARTING"
+	UpdateRunStatusBodyMigrateRUNNING    UpdateRunStatusBodyMigrate = "RUNNING"
+)
+
+// Defines values for UpdateRunStatusBodyPull.
+const (
+	UpdateRunStatusBodyPullCREATED    UpdateRunStatusBodyPull = "CREATED"
+	UpdateRunStatusBodyPullDEAD       UpdateRunStatusBodyPull = "DEAD"
+	UpdateRunStatusBodyPullEXITED     UpdateRunStatusBodyPull = "EXITED"
+	UpdateRunStatusBodyPullPAUSED     UpdateRunStatusBodyPull = "PAUSED"
+	UpdateRunStatusBodyPullREMOVING   UpdateRunStatusBodyPull = "REMOVING"
+	UpdateRunStatusBodyPullRESTARTING UpdateRunStatusBodyPull = "RESTARTING"
+	UpdateRunStatusBodyPullRUNNING    UpdateRunStatusBodyPull = "RUNNING"
+)
+
+// Defines values for UpdateRunStatusBodySeed.
+const (
+	UpdateRunStatusBodySeedCREATED    UpdateRunStatusBodySeed = "CREATED"
+	UpdateRunStatusBodySeedDEAD       UpdateRunStatusBodySeed = "DEAD"
+	UpdateRunStatusBodySeedEXITED     UpdateRunStatusBodySeed = "EXITED"
+	UpdateRunStatusBodySeedPAUSED     UpdateRunStatusBodySeed = "PAUSED"
+	UpdateRunStatusBodySeedREMOVING   UpdateRunStatusBodySeed = "REMOVING"
+	UpdateRunStatusBodySeedRESTARTING UpdateRunStatusBodySeed = "RESTARTING"
+	UpdateRunStatusBodySeedRUNNING    UpdateRunStatusBodySeed = "RUNNING"
+)
+
 // Defines values for UpdateSigningKeyBodyStatus.
 const (
 	UpdateSigningKeyBodyStatusInUse          UpdateSigningKeyBodyStatus = "in_use"
@@ -1056,9 +1177,9 @@ const (
 
 // Defines values for V1RestorePointResponseStatus.
 const (
-	V1RestorePointResponseStatusAVAILABLE V1RestorePointResponseStatus = "AVAILABLE"
-	V1RestorePointResponseStatusPENDING   V1RestorePointResponseStatus = "PENDING"
-	V1RestorePointResponseStatusREMOVED   V1RestorePointResponseStatus = "REMOVED"
+	AVAILABLE V1RestorePointResponseStatus = "AVAILABLE"
+	PENDING   V1RestorePointResponseStatus = "PENDING"
+	REMOVED   V1RestorePointResponseStatus = "REMOVED"
 )
 
 // Defines values for V1ServiceHealthResponseInfo0Name.
@@ -1213,6 +1334,29 @@ const (
 	Desc V1ListAllSnippetsParamsSortOrder = "desc"
 )
 
+// ActionRunResponse defines model for ActionRunResponse.
+type ActionRunResponse struct {
+	BranchId   string                         `json:"branch_id"`
+	CheckRunId nullable.Nullable[float32]     `json:"check_run_id"`
+	CreatedAt  string                         `json:"created_at"`
+	GitConfig  nullable.Nullable[interface{}] `json:"git_config,omitempty"`
+	Id         string                         `json:"id"`
+	RunSteps   []struct {
+		CreatedAt string                          `json:"created_at"`
+		Name      ActionRunResponseRunStepsName   `json:"name"`
+		Status    ActionRunResponseRunStepsStatus `json:"status"`
+		UpdatedAt string                          `json:"updated_at"`
+	} `json:"run_steps"`
+	UpdatedAt string                    `json:"updated_at"`
+	Workdir   nullable.Nullable[string] `json:"workdir"`
+}
+
+// ActionRunResponseRunStepsName defines model for ActionRunResponse.RunSteps.Name.
+type ActionRunResponseRunStepsName string
+
+// ActionRunResponseRunStepsStatus defines model for ActionRunResponse.RunSteps.Status.
+type ActionRunResponseRunStepsStatus string
+
 // ActivateVanitySubdomainResponse defines model for ActivateVanitySubdomainResponse.
 type ActivateVanitySubdomainResponse struct {
 	CustomDomain string `json:"custom_domain"`
@@ -1297,64 +1441,82 @@ type AuthConfigResponse struct {
 	ExternalAnonymousUsersEnabled                 nullable.Nullable[bool]                                         `json:"external_anonymous_users_enabled"`
 	ExternalAppleAdditionalClientIds              nullable.Nullable[string]                                       `json:"external_apple_additional_client_ids"`
 	ExternalAppleClientId                         nullable.Nullable[string]                                       `json:"external_apple_client_id"`
+	ExternalAppleEmailOptional                    nullable.Nullable[bool]                                         `json:"external_apple_email_optional"`
 	ExternalAppleEnabled                          nullable.Nullable[bool]                                         `json:"external_apple_enabled"`
 	ExternalAppleSecret                           nullable.Nullable[string]                                       `json:"external_apple_secret"`
 	ExternalAzureClientId                         nullable.Nullable[string]                                       `json:"external_azure_client_id"`
+	ExternalAzureEmailOptional                    nullable.Nullable[bool]                                         `json:"external_azure_email_optional"`
 	ExternalAzureEnabled                          nullable.Nullable[bool]                                         `json:"external_azure_enabled"`
 	ExternalAzureSecret                           nullable.Nullable[string]                                       `json:"external_azure_secret"`
 	ExternalAzureUrl                              nullable.Nullable[string]                                       `json:"external_azure_url"`
 	ExternalBitbucketClientId                     nullable.Nullable[string]                                       `json:"external_bitbucket_client_id"`
+	ExternalBitbucketEmailOptional                nullable.Nullable[bool]                                         `json:"external_bitbucket_email_optional"`
 	ExternalBitbucketEnabled                      nullable.Nullable[bool]                                         `json:"external_bitbucket_enabled"`
 	ExternalBitbucketSecret                       nullable.Nullable[string]                                       `json:"external_bitbucket_secret"`
 	ExternalDiscordClientId                       nullable.Nullable[string]                                       `json:"external_discord_client_id"`
+	ExternalDiscordEmailOptional                  nullable.Nullable[bool]                                         `json:"external_discord_email_optional"`
 	ExternalDiscordEnabled                        nullable.Nullable[bool]                                         `json:"external_discord_enabled"`
 	ExternalDiscordSecret                         nullable.Nullable[string]                                       `json:"external_discord_secret"`
 	ExternalEmailEnabled                          nullable.Nullable[bool]                                         `json:"external_email_enabled"`
 	ExternalFacebookClientId                      nullable.Nullable[string]                                       `json:"external_facebook_client_id"`
+	ExternalFacebookEmailOptional                 nullable.Nullable[bool]                                         `json:"external_facebook_email_optional"`
 	ExternalFacebookEnabled                       nullable.Nullable[bool]                                         `json:"external_facebook_enabled"`
 	ExternalFacebookSecret                        nullable.Nullable[string]                                       `json:"external_facebook_secret"`
 	ExternalFigmaClientId                         nullable.Nullable[string]                                       `json:"external_figma_client_id"`
+	ExternalFigmaEmailOptional                    nullable.Nullable[bool]                                         `json:"external_figma_email_optional"`
 	ExternalFigmaEnabled                          nullable.Nullable[bool]                                         `json:"external_figma_enabled"`
 	ExternalFigmaSecret                           nullable.Nullable[string]                                       `json:"external_figma_secret"`
 	ExternalGithubClientId                        nullable.Nullable[string]                                       `json:"external_github_client_id"`
+	ExternalGithubEmailOptional                   nullable.Nullable[bool]                                         `json:"external_github_email_optional"`
 	ExternalGithubEnabled                         nullable.Nullable[bool]                                         `json:"external_github_enabled"`
 	ExternalGithubSecret                          nullable.Nullable[string]                                       `json:"external_github_secret"`
 	ExternalGitlabClientId                        nullable.Nullable[string]                                       `json:"external_gitlab_client_id"`
+	ExternalGitlabEmailOptional                   nullable.Nullable[bool]                                         `json:"external_gitlab_email_optional"`
 	ExternalGitlabEnabled                         nullable.Nullable[bool]                                         `json:"external_gitlab_enabled"`
 	ExternalGitlabSecret                          nullable.Nullable[string]                                       `json:"external_gitlab_secret"`
 	ExternalGitlabUrl                             nullable.Nullable[string]                                       `json:"external_gitlab_url"`
 	ExternalGoogleAdditionalClientIds             nullable.Nullable[string]                                       `json:"external_google_additional_client_ids"`
 	ExternalGoogleClientId                        nullable.Nullable[string]                                       `json:"external_google_client_id"`
+	ExternalGoogleEmailOptional                   nullable.Nullable[bool]                                         `json:"external_google_email_optional"`
 	ExternalGoogleEnabled                         nullable.Nullable[bool]                                         `json:"external_google_enabled"`
 	ExternalGoogleSecret                          nullable.Nullable[string]                                       `json:"external_google_secret"`
 	ExternalGoogleSkipNonceCheck                  nullable.Nullable[bool]                                         `json:"external_google_skip_nonce_check"`
 	ExternalKakaoClientId                         nullable.Nullable[string]                                       `json:"external_kakao_client_id"`
+	ExternalKakaoEmailOptional                    nullable.Nullable[bool]                                         `json:"external_kakao_email_optional"`
 	ExternalKakaoEnabled                          nullable.Nullable[bool]                                         `json:"external_kakao_enabled"`
 	ExternalKakaoSecret                           nullable.Nullable[string]                                       `json:"external_kakao_secret"`
 	ExternalKeycloakClientId                      nullable.Nullable[string]                                       `json:"external_keycloak_client_id"`
+	ExternalKeycloakEmailOptional                 nullable.Nullable[bool]                                         `json:"external_keycloak_email_optional"`
 	ExternalKeycloakEnabled                       nullable.Nullable[bool]                                         `json:"external_keycloak_enabled"`
 	ExternalKeycloakSecret                        nullable.Nullable[string]                                       `json:"external_keycloak_secret"`
 	ExternalKeycloakUrl                           nullable.Nullable[string]                                       `json:"external_keycloak_url"`
 	ExternalLinkedinOidcClientId                  nullable.Nullable[string]                                       `json:"external_linkedin_oidc_client_id"`
+	ExternalLinkedinOidcEmailOptional             nullable.Nullable[bool]                                         `json:"external_linkedin_oidc_email_optional"`
 	ExternalLinkedinOidcEnabled                   nullable.Nullable[bool]                                         `json:"external_linkedin_oidc_enabled"`
 	ExternalLinkedinOidcSecret                    nullable.Nullable[string]                                       `json:"external_linkedin_oidc_secret"`
 	ExternalNotionClientId                        nullable.Nullable[string]                                       `json:"external_notion_client_id"`
+	ExternalNotionEmailOptional                   nullable.Nullable[bool]                                         `json:"external_notion_email_optional"`
 	ExternalNotionEnabled                         nullable.Nullable[bool]                                         `json:"external_notion_enabled"`
 	ExternalNotionSecret                          nullable.Nullable[string]                                       `json:"external_notion_secret"`
 	ExternalPhoneEnabled                          nullable.Nullable[bool]                                         `json:"external_phone_enabled"`
 	ExternalSlackClientId                         nullable.Nullable[string]                                       `json:"external_slack_client_id"`
+	ExternalSlackEmailOptional                    nullable.Nullable[bool]                                         `json:"external_slack_email_optional"`
 	ExternalSlackEnabled                          nullable.Nullable[bool]                                         `json:"external_slack_enabled"`
 	ExternalSlackOidcClientId                     nullable.Nullable[string]                                       `json:"external_slack_oidc_client_id"`
+	ExternalSlackOidcEmailOptional                nullable.Nullable[bool]                                         `json:"external_slack_oidc_email_optional"`
 	ExternalSlackOidcEnabled                      nullable.Nullable[bool]                                         `json:"external_slack_oidc_enabled"`
 	ExternalSlackOidcSecret                       nullable.Nullable[string]                                       `json:"external_slack_oidc_secret"`
 	ExternalSlackSecret                           nullable.Nullable[string]                                       `json:"external_slack_secret"`
 	ExternalSpotifyClientId                       nullable.Nullable[string]                                       `json:"external_spotify_client_id"`
+	ExternalSpotifyEmailOptional                  nullable.Nullable[bool]                                         `json:"external_spotify_email_optional"`
 	ExternalSpotifyEnabled                        nullable.Nullable[bool]                                         `json:"external_spotify_enabled"`
 	ExternalSpotifySecret                         nullable.Nullable[string]                                       `json:"external_spotify_secret"`
 	ExternalTwitchClientId                        nullable.Nullable[string]                                       `json:"external_twitch_client_id"`
+	ExternalTwitchEmailOptional                   nullable.Nullable[bool]                                         `json:"external_twitch_email_optional"`
 	ExternalTwitchEnabled                         nullable.Nullable[bool]                                         `json:"external_twitch_enabled"`
 	ExternalTwitchSecret                          nullable.Nullable[string]                                       `json:"external_twitch_secret"`
 	ExternalTwitterClientId                       nullable.Nullable[string]                                       `json:"external_twitter_client_id"`
+	ExternalTwitterEmailOptional                  nullable.Nullable[bool]                                         `json:"external_twitter_email_optional"`
 	ExternalTwitterEnabled                        nullable.Nullable[bool]                                         `json:"external_twitter_enabled"`
 	ExternalTwitterSecret                         nullable.Nullable[string]                                       `json:"external_twitter_secret"`
 	ExternalWeb3EthereumEnabled                   nullable.Nullable[bool]                                         `json:"external_web3_ethereum_enabled"`
@@ -1364,6 +1526,7 @@ type AuthConfigResponse struct {
 	ExternalWorkosSecret                          nullable.Nullable[string]                                       `json:"external_workos_secret"`
 	ExternalWorkosUrl                             nullable.Nullable[string]                                       `json:"external_workos_url"`
 	ExternalZoomClientId                          nullable.Nullable[string]                                       `json:"external_zoom_client_id"`
+	ExternalZoomEmailOptional                     nullable.Nullable[bool]                                         `json:"external_zoom_email_optional"`
 	ExternalZoomEnabled                           nullable.Nullable[bool]                                         `json:"external_zoom_enabled"`
 	ExternalZoomSecret                            nullable.Nullable[string]                                       `json:"external_zoom_secret"`
 	HookBeforeUserCreatedEnabled                  nullable.Nullable[bool]                                         `json:"hook_before_user_created_enabled"`
@@ -1414,6 +1577,7 @@ type AuthConfigResponse struct {
 	MfaWebAuthnVerifyEnabled                      nullable.Nullable[bool]                                         `json:"mfa_web_authn_verify_enabled"`
 	NimbusOauthClientId                           nullable.Nullable[string]                                       `json:"nimbus_oauth_client_id"`
 	NimbusOauthClientSecret                       nullable.Nullable[string]                                       `json:"nimbus_oauth_client_secret"`
+	NimbusOauthEmailOptional                      nullable.Nullable[bool]                                         `json:"nimbus_oauth_email_optional"`
 	PasswordHibpEnabled                           nullable.Nullable[bool]                                         `json:"password_hibp_enabled"`
 	PasswordMinLength                             nullable.Nullable[int]                                          `json:"password_min_length"`
 	PasswordRequiredCharacters                    nullable.Nullable[AuthConfigResponsePasswordRequiredCharacters] `json:"password_required_characters"`
@@ -2104,6 +2268,29 @@ type LegacyApiKeysResponse struct {
 	Enabled bool `json:"enabled"`
 }
 
+// ListActionRunResponse defines model for ListActionRunResponse.
+type ListActionRunResponse = []struct {
+	BranchId   string                         `json:"branch_id"`
+	CheckRunId nullable.Nullable[float32]     `json:"check_run_id"`
+	CreatedAt  string                         `json:"created_at"`
+	GitConfig  nullable.Nullable[interface{}] `json:"git_config,omitempty"`
+	Id         string                         `json:"id"`
+	RunSteps   []struct {
+		CreatedAt string                              `json:"created_at"`
+		Name      ListActionRunResponseRunStepsName   `json:"name"`
+		Status    ListActionRunResponseRunStepsStatus `json:"status"`
+		UpdatedAt string                              `json:"updated_at"`
+	} `json:"run_steps"`
+	UpdatedAt string                    `json:"updated_at"`
+	Workdir   nullable.Nullable[string] `json:"workdir"`
+}
+
+// ListActionRunResponseRunStepsName defines model for ListActionRunResponse.RunSteps.Name.
+type ListActionRunResponseRunStepsName string
+
+// ListActionRunResponseRunStepsStatus defines model for ListActionRunResponse.RunSteps.Status.
+type ListActionRunResponseRunStepsStatus string
+
 // ListProjectAddonsResponse defines model for ListProjectAddonsResponse.
 type ListProjectAddonsResponse struct {
 	AvailableAddons []struct {
@@ -2751,64 +2938,82 @@ type UpdateAuthConfigBody struct {
 	ExternalAnonymousUsersEnabled                 nullable.Nullable[bool]                                           `json:"external_anonymous_users_enabled,omitempty"`
 	ExternalAppleAdditionalClientIds              nullable.Nullable[string]                                         `json:"external_apple_additional_client_ids,omitempty"`
 	ExternalAppleClientId                         nullable.Nullable[string]                                         `json:"external_apple_client_id,omitempty"`
+	ExternalAppleEmailOptional                    nullable.Nullable[bool]                                           `json:"external_apple_email_optional,omitempty"`
 	ExternalAppleEnabled                          nullable.Nullable[bool]                                           `json:"external_apple_enabled,omitempty"`
 	ExternalAppleSecret                           nullable.Nullable[string]                                         `json:"external_apple_secret,omitempty"`
 	ExternalAzureClientId                         nullable.Nullable[string]                                         `json:"external_azure_client_id,omitempty"`
+	ExternalAzureEmailOptional                    nullable.Nullable[bool]                                           `json:"external_azure_email_optional,omitempty"`
 	ExternalAzureEnabled                          nullable.Nullable[bool]                                           `json:"external_azure_enabled,omitempty"`
 	ExternalAzureSecret                           nullable.Nullable[string]                                         `json:"external_azure_secret,omitempty"`
 	ExternalAzureUrl                              nullable.Nullable[string]                                         `json:"external_azure_url,omitempty"`
 	ExternalBitbucketClientId                     nullable.Nullable[string]                                         `json:"external_bitbucket_client_id,omitempty"`
+	ExternalBitbucketEmailOptional                nullable.Nullable[bool]                                           `json:"external_bitbucket_email_optional,omitempty"`
 	ExternalBitbucketEnabled                      nullable.Nullable[bool]                                           `json:"external_bitbucket_enabled,omitempty"`
 	ExternalBitbucketSecret                       nullable.Nullable[string]                                         `json:"external_bitbucket_secret,omitempty"`
 	ExternalDiscordClientId                       nullable.Nullable[string]                                         `json:"external_discord_client_id,omitempty"`
+	ExternalDiscordEmailOptional                  nullable.Nullable[bool]                                           `json:"external_discord_email_optional,omitempty"`
 	ExternalDiscordEnabled                        nullable.Nullable[bool]                                           `json:"external_discord_enabled,omitempty"`
 	ExternalDiscordSecret                         nullable.Nullable[string]                                         `json:"external_discord_secret,omitempty"`
 	ExternalEmailEnabled                          nullable.Nullable[bool]                                           `json:"external_email_enabled,omitempty"`
 	ExternalFacebookClientId                      nullable.Nullable[string]                                         `json:"external_facebook_client_id,omitempty"`
+	ExternalFacebookEmailOptional                 nullable.Nullable[bool]                                           `json:"external_facebook_email_optional,omitempty"`
 	ExternalFacebookEnabled                       nullable.Nullable[bool]                                           `json:"external_facebook_enabled,omitempty"`
 	ExternalFacebookSecret                        nullable.Nullable[string]                                         `json:"external_facebook_secret,omitempty"`
 	ExternalFigmaClientId                         nullable.Nullable[string]                                         `json:"external_figma_client_id,omitempty"`
+	ExternalFigmaEmailOptional                    nullable.Nullable[bool]                                           `json:"external_figma_email_optional,omitempty"`
 	ExternalFigmaEnabled                          nullable.Nullable[bool]                                           `json:"external_figma_enabled,omitempty"`
 	ExternalFigmaSecret                           nullable.Nullable[string]                                         `json:"external_figma_secret,omitempty"`
 	ExternalGithubClientId                        nullable.Nullable[string]                                         `json:"external_github_client_id,omitempty"`
+	ExternalGithubEmailOptional                   nullable.Nullable[bool]                                           `json:"external_github_email_optional,omitempty"`
 	ExternalGithubEnabled                         nullable.Nullable[bool]                                           `json:"external_github_enabled,omitempty"`
 	ExternalGithubSecret                          nullable.Nullable[string]                                         `json:"external_github_secret,omitempty"`
 	ExternalGitlabClientId                        nullable.Nullable[string]                                         `json:"external_gitlab_client_id,omitempty"`
+	ExternalGitlabEmailOptional                   nullable.Nullable[bool]                                           `json:"external_gitlab_email_optional,omitempty"`
 	ExternalGitlabEnabled                         nullable.Nullable[bool]                                           `json:"external_gitlab_enabled,omitempty"`
 	ExternalGitlabSecret                          nullable.Nullable[string]                                         `json:"external_gitlab_secret,omitempty"`
 	ExternalGitlabUrl                             nullable.Nullable[string]                                         `json:"external_gitlab_url,omitempty"`
 	ExternalGoogleAdditionalClientIds             nullable.Nullable[string]                                         `json:"external_google_additional_client_ids,omitempty"`
 	ExternalGoogleClientId                        nullable.Nullable[string]                                         `json:"external_google_client_id,omitempty"`
+	ExternalGoogleEmailOptional                   nullable.Nullable[bool]                                           `json:"external_google_email_optional,omitempty"`
 	ExternalGoogleEnabled                         nullable.Nullable[bool]                                           `json:"external_google_enabled,omitempty"`
 	ExternalGoogleSecret                          nullable.Nullable[string]                                         `json:"external_google_secret,omitempty"`
 	ExternalGoogleSkipNonceCheck                  nullable.Nullable[bool]                                           `json:"external_google_skip_nonce_check,omitempty"`
 	ExternalKakaoClientId                         nullable.Nullable[string]                                         `json:"external_kakao_client_id,omitempty"`
+	ExternalKakaoEmailOptional                    nullable.Nullable[bool]                                           `json:"external_kakao_email_optional,omitempty"`
 	ExternalKakaoEnabled                          nullable.Nullable[bool]                                           `json:"external_kakao_enabled,omitempty"`
 	ExternalKakaoSecret                           nullable.Nullable[string]                                         `json:"external_kakao_secret,omitempty"`
 	ExternalKeycloakClientId                      nullable.Nullable[string]                                         `json:"external_keycloak_client_id,omitempty"`
+	ExternalKeycloakEmailOptional                 nullable.Nullable[bool]                                           `json:"external_keycloak_email_optional,omitempty"`
 	ExternalKeycloakEnabled                       nullable.Nullable[bool]                                           `json:"external_keycloak_enabled,omitempty"`
 	ExternalKeycloakSecret                        nullable.Nullable[string]                                         `json:"external_keycloak_secret,omitempty"`
 	ExternalKeycloakUrl                           nullable.Nullable[string]                                         `json:"external_keycloak_url,omitempty"`
 	ExternalLinkedinOidcClientId                  nullable.Nullable[string]                                         `json:"external_linkedin_oidc_client_id,omitempty"`
+	ExternalLinkedinOidcEmailOptional             nullable.Nullable[bool]                                           `json:"external_linkedin_oidc_email_optional,omitempty"`
 	ExternalLinkedinOidcEnabled                   nullable.Nullable[bool]                                           `json:"external_linkedin_oidc_enabled,omitempty"`
 	ExternalLinkedinOidcSecret                    nullable.Nullable[string]                                         `json:"external_linkedin_oidc_secret,omitempty"`
 	ExternalNotionClientId                        nullable.Nullable[string]                                         `json:"external_notion_client_id,omitempty"`
+	ExternalNotionEmailOptional                   nullable.Nullable[bool]                                           `json:"external_notion_email_optional,omitempty"`
 	ExternalNotionEnabled                         nullable.Nullable[bool]                                           `json:"external_notion_enabled,omitempty"`
 	ExternalNotionSecret                          nullable.Nullable[string]                                         `json:"external_notion_secret,omitempty"`
 	ExternalPhoneEnabled                          nullable.Nullable[bool]                                           `json:"external_phone_enabled,omitempty"`
 	ExternalSlackClientId                         nullable.Nullable[string]                                         `json:"external_slack_client_id,omitempty"`
+	ExternalSlackEmailOptional                    nullable.Nullable[bool]                                           `json:"external_slack_email_optional,omitempty"`
 	ExternalSlackEnabled                          nullable.Nullable[bool]                                           `json:"external_slack_enabled,omitempty"`
 	ExternalSlackOidcClientId                     nullable.Nullable[string]                                         `json:"external_slack_oidc_client_id,omitempty"`
+	ExternalSlackOidcEmailOptional                nullable.Nullable[bool]                                           `json:"external_slack_oidc_email_optional,omitempty"`
 	ExternalSlackOidcEnabled                      nullable.Nullable[bool]                                           `json:"external_slack_oidc_enabled,omitempty"`
 	ExternalSlackOidcSecret                       nullable.Nullable[string]                                         `json:"external_slack_oidc_secret,omitempty"`
 	ExternalSlackSecret                           nullable.Nullable[string]                                         `json:"external_slack_secret,omitempty"`
 	ExternalSpotifyClientId                       nullable.Nullable[string]                                         `json:"external_spotify_client_id,omitempty"`
+	ExternalSpotifyEmailOptional                  nullable.Nullable[bool]                                           `json:"external_spotify_email_optional,omitempty"`
 	ExternalSpotifyEnabled                        nullable.Nullable[bool]                                           `json:"external_spotify_enabled,omitempty"`
 	ExternalSpotifySecret                         nullable.Nullable[string]                                         `json:"external_spotify_secret,omitempty"`
 	ExternalTwitchClientId                        nullable.Nullable[string]                                         `json:"external_twitch_client_id,omitempty"`
+	ExternalTwitchEmailOptional                   nullable.Nullable[bool]                                           `json:"external_twitch_email_optional,omitempty"`
 	ExternalTwitchEnabled                         nullable.Nullable[bool]                                           `json:"external_twitch_enabled,omitempty"`
 	ExternalTwitchSecret                          nullable.Nullable[string]                                         `json:"external_twitch_secret,omitempty"`
 	ExternalTwitterClientId                       nullable.Nullable[string]                                         `json:"external_twitter_client_id,omitempty"`
+	ExternalTwitterEmailOptional                  nullable.Nullable[bool]                                           `json:"external_twitter_email_optional,omitempty"`
 	ExternalTwitterEnabled                        nullable.Nullable[bool]                                           `json:"external_twitter_enabled,omitempty"`
 	ExternalTwitterSecret                         nullable.Nullable[string]                                         `json:"external_twitter_secret,omitempty"`
 	ExternalWeb3EthereumEnabled                   nullable.Nullable[bool]                                           `json:"external_web3_ethereum_enabled,omitempty"`
@@ -2818,6 +3023,7 @@ type UpdateAuthConfigBody struct {
 	ExternalWorkosSecret                          nullable.Nullable[string]                                         `json:"external_workos_secret,omitempty"`
 	ExternalWorkosUrl                             nullable.Nullable[string]                                         `json:"external_workos_url,omitempty"`
 	ExternalZoomClientId                          nullable.Nullable[string]                                         `json:"external_zoom_client_id,omitempty"`
+	ExternalZoomEmailOptional                     nullable.Nullable[bool]                                           `json:"external_zoom_email_optional,omitempty"`
 	ExternalZoomEnabled                           nullable.Nullable[bool]                                           `json:"external_zoom_enabled,omitempty"`
 	ExternalZoomSecret                            nullable.Nullable[string]                                         `json:"external_zoom_secret,omitempty"`
 	HookBeforeUserCreatedEnabled                  nullable.Nullable[bool]                                           `json:"hook_before_user_created_enabled,omitempty"`
@@ -3089,6 +3295,38 @@ type UpdateProviderResponse struct {
 	} `json:"saml,omitempty"`
 	UpdatedAt *string `json:"updated_at,omitempty"`
 }
+
+// UpdateRunStatusBody defines model for UpdateRunStatusBody.
+type UpdateRunStatusBody struct {
+	Clone     *UpdateRunStatusBodyClone     `json:"clone,omitempty"`
+	Configure *UpdateRunStatusBodyConfigure `json:"configure,omitempty"`
+	Deploy    *UpdateRunStatusBodyDeploy    `json:"deploy,omitempty"`
+	Health    *UpdateRunStatusBodyHealth    `json:"health,omitempty"`
+	Migrate   *UpdateRunStatusBodyMigrate   `json:"migrate,omitempty"`
+	Pull      *UpdateRunStatusBodyPull      `json:"pull,omitempty"`
+	Seed      *UpdateRunStatusBodySeed      `json:"seed,omitempty"`
+}
+
+// UpdateRunStatusBodyClone defines model for UpdateRunStatusBody.Clone.
+type UpdateRunStatusBodyClone string
+
+// UpdateRunStatusBodyConfigure defines model for UpdateRunStatusBody.Configure.
+type UpdateRunStatusBodyConfigure string
+
+// UpdateRunStatusBodyDeploy defines model for UpdateRunStatusBody.Deploy.
+type UpdateRunStatusBodyDeploy string
+
+// UpdateRunStatusBodyHealth defines model for UpdateRunStatusBody.Health.
+type UpdateRunStatusBodyHealth string
+
+// UpdateRunStatusBodyMigrate defines model for UpdateRunStatusBody.Migrate.
+type UpdateRunStatusBodyMigrate string
+
+// UpdateRunStatusBodyPull defines model for UpdateRunStatusBody.Pull.
+type UpdateRunStatusBodyPull string
+
+// UpdateRunStatusBodySeed defines model for UpdateRunStatusBody.Seed.
+type UpdateRunStatusBodySeed string
 
 // UpdateSigningKeyBody defines model for UpdateSigningKeyBody.
 type UpdateSigningKeyBody struct {
@@ -3603,6 +3841,12 @@ type V1OauthAuthorizeProjectClaimParamsResponseType string
 // V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod defines parameters for V1OauthAuthorizeProjectClaim.
 type V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod string
 
+// V1ListActionRunsParams defines parameters for V1ListActionRuns.
+type V1ListActionRunsParams struct {
+	Offset *float32 `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit  *float32 `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // V1GetSecurityAdvisorsParams defines parameters for V1GetSecurityAdvisors.
 type V1GetSecurityAdvisorsParams struct {
 	LintType *V1GetSecurityAdvisorsParamsLintType `form:"lint_type,omitempty" json:"lint_type,omitempty"`
@@ -3803,6 +4047,9 @@ type V1CreateAnOrganizationJSONRequestBody = CreateOrganizationV1
 
 // V1CreateAProjectJSONRequestBody defines body for V1CreateAProject for application/json ContentType.
 type V1CreateAProjectJSONRequestBody = V1CreateProjectBody
+
+// V1UpdateActionRunStatusJSONRequestBody defines body for V1UpdateActionRunStatus for application/json ContentType.
+type V1UpdateActionRunStatusJSONRequestBody = UpdateRunStatusBody
 
 // V1CreateProjectApiKeyJSONRequestBody defines body for V1CreateProjectApiKey for application/json ContentType.
 type V1CreateProjectApiKeyJSONRequestBody = CreateApiKeyBody
