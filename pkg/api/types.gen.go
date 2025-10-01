@@ -396,7 +396,7 @@ const (
 
 // Defines values for DeleteRolesResponseMessage.
 const (
-	Ok DeleteRolesResponseMessage = "ok"
+	DeleteRolesResponseMessageOk DeleteRolesResponseMessage = "ok"
 )
 
 // Defines values for DeployFunctionResponseStatus.
@@ -950,6 +950,11 @@ const (
 	UpdateRunStatusBodySeedREMOVING   UpdateRunStatusBodySeed = "REMOVING"
 	UpdateRunStatusBodySeedRESTARTING UpdateRunStatusBodySeed = "RESTARTING"
 	UpdateRunStatusBodySeedRUNNING    UpdateRunStatusBodySeed = "RUNNING"
+)
+
+// Defines values for UpdateRunStatusResponseMessage.
+const (
+	UpdateRunStatusResponseMessageOk UpdateRunStatusResponseMessage = "ok"
 )
 
 // Defines values for UpdateSigningKeyBodyStatus.
@@ -3327,6 +3332,14 @@ type UpdateRunStatusBodyPull string
 
 // UpdateRunStatusBodySeed defines model for UpdateRunStatusBody.Seed.
 type UpdateRunStatusBodySeed string
+
+// UpdateRunStatusResponse defines model for UpdateRunStatusResponse.
+type UpdateRunStatusResponse struct {
+	Message UpdateRunStatusResponseMessage `json:"message"`
+}
+
+// UpdateRunStatusResponseMessage defines model for UpdateRunStatusResponse.Message.
+type UpdateRunStatusResponseMessage string
 
 // UpdateSigningKeyBody defines model for UpdateSigningKeyBody.
 type UpdateSigningKeyBody struct {
