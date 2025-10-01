@@ -61,7 +61,10 @@ OUTER:
 		}
 		var body bytes.Buffer
 		meta, err := s.eszip.Bundle(ctx, slug, function.Entrypoint, function.ImportMap, function.StaticFiles, &body)
-		if err != nil {
+		if errors.Is(err, ErrNoDeploy) {
+			fmt.Fprintln(os.Stderr, "Skipping undeployable Function:", slug)
+			continue
+		} else if err != nil {
 			return err
 		}
 		meta.VerifyJwt = &function.VerifyJWT
