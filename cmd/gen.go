@@ -197,6 +197,7 @@ func parseClaims(custom jwt.MapClaims) error {
 	// Override with custom claims
 	if dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
 		TagName: "json",
+		Squash:  true,
 		Result:  &custom,
 	}); err != nil {
 		return errors.Errorf("failed to init decoder: %w", err)
