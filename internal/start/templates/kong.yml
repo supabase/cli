@@ -45,6 +45,16 @@ services:
           replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
+  - name: well-known-oauth
+    _comment: "GoTrue: /.well-known/oauth-authorization-server -> http://auth:9999/.well-known/oauth-authorization-server"
+    url: http://{{ .GotrueId }}:9999/.well-known/oauth-authorization-server
+    routes:
+      - name: well-known-oauth
+        strip_path: true
+        paths:
+          - /.well-known/oauth-authorization-server
+    plugins:
+      - name: cors
   - name: auth-v1
     _comment: "GoTrue: /auth/v1/* -> http://auth:9999/*"
     url: http://{{ .GotrueId }}:9999/
