@@ -9,9 +9,9 @@ FROM supabase/studio:2025.10.01-sha-8460121 AS studio
 FROM darthsim/imgproxy:v3.8.0 AS imgproxy
 FROM supabase/edge-runtime:v1.69.12 AS edgeruntime
 FROM timberio/vector:0.28.1-alpine AS vector
-FROM supabase/supavisor:2.7.0 AS supavisor
+FROM supabase/supavisor:2.7.1 AS supavisor
 FROM supabase/gotrue:v2.180.0 AS gotrue
-FROM supabase/realtime:v2.51.11 AS realtime
+FROM supabase/realtime:v2.51.15 AS realtime
 FROM supabase/storage-api:v1.28.0 AS storage
 FROM supabase/logflare:1.22.4 AS logflare
 # Append to JobImages when adding new dependencies below
