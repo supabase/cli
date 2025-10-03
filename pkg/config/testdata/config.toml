@@ -285,6 +285,8 @@ secret = "env(AZURE_SECRET)"
 url = "https://login.microsoftonline.com/tenant"
 # If enabled, the nonce check will be skipped. Required for local sign in with Google auth.
 skip_nonce_check = true
+# If enabled, it will allow the user to successfully authenticate when the provider does not return an email address.
+email_optional = true
 
 # Allow Solana wallet holders to sign in to your project via the Sign in with Solana (SIWS, EIP-4361) standard.
 # You can configure "web3" rate limit in the [auth.rate_limit] section and set up [auth.captcha] if self-hosting.
