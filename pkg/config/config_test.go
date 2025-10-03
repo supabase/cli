@@ -74,6 +74,51 @@ func TestConfigParsing(t *testing.T) {
 		// Run test
 		assert.Error(t, config.Load("", fsys))
 	})
+
+	t.Run("config file with env defaults uses defaults when vars not set", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[auth]
+site_url = "env(SITE_URL, http://localhost:3000)"
+
+[auth.external.github]
+client_id = "env(GITHUB_CLIENT_ID, default_client_id)"
+`)},
+		}
+		config := NewConfig()
+		// Run test
+		assert.NoError(t, config.Load("", fsys))
+		// Check defaults are used
+		assert.Equal(t, "http://localhost:3000", config.Auth.SiteUrl)
+		github := config.Auth.External["github"]
+		assert.Equal(t, "default_client_id", github.ClientId)
+	})
+
+	t.Run("config file with env defaults uses env vars when set", func(t *testing.T) {
+		// Clear environment variables
+		os.Unsetenv("SITE_URL")
+		os.Unsetenv("GITHUB_CLIENT_ID")
+		// Setup in-memory fs
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[auth]
+site_url = "env(SITE_URL, http://localhost:3000)"
+
+[auth.external.github]
+client_id = "env(GITHUB_CLIENT_ID, default_client_id)"
+`)},
+		}
+		config := NewConfig()
+		// Run test
+		t.Setenv("SITE_URL", "https://example.com")
+		t.Setenv("GITHUB_CLIENT_ID", "real_client_id")
+		assert.NoError(t, config.Load("", fsys))
+		// Check env vars are used
+		assert.Equal(t, "https://example.com", config.Auth.SiteUrl)
+		github := config.Auth.External["github"]
+		assert.Equal(t, "real_client_id", github.ClientId)
+	})
 }
 
 func TestRemoteOverride(t *testing.T) {
