@@ -685,6 +685,7 @@ EOF
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_CLIENT_ID=%s", strings.ToUpper(name), config.ClientId),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SECRET=%s", strings.ToUpper(name), config.Secret.Value),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SKIP_NONCE_CHECK=%t", strings.ToUpper(name), config.SkipNonceCheck),
+				fmt.Sprintf("GOTRUE_EXTERNAL_%s_EMAIL_OPTIONAL=%t", strings.ToUpper(name), config.EmailOptional),
 			)
 
 			redirectUri := config.RedirectUri
