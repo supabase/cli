@@ -1,6 +1,7 @@
 package download
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -200,8 +201,38 @@ func extractOne(ctx context.Context, slug, eszipPath string) error {
 		network.NetworkingConfig{},
 		"",
 		os.Stdout,
-		os.Stderr,
+		getErrorLogger(),
 	)
+}
+
+func getErrorLogger() io.Writer {
+	if utils.Config.EdgeRuntime.DenoVersion > 1 {
+		return os.Stderr
+	}
+	// Additional error handling for deno v1
+	r, w := io.Pipe()
+	go func() {
+		logs := bufio.NewScanner(r)
+		for logs.Scan() {
+			line := logs.Text()
+			fmt.Fprintln(os.Stderr, line)
+			if strings.EqualFold(line, "invalid eszip v2") {
+				utils.CmdSuggestion = suggestDenoV2()
+			}
+		}
+		if err := logs.Err(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
+	return w
+}
+
+func suggestDenoV2() string {
+	return fmt.Sprintf(`Please use deno v2 in %s to download this Function:
+
+[edge_runtime]
+deno_version = 2
+`, utils.Bold(utils.ConfigPath))
 }
 
 func suggestLegacyBundle(slug string) string {

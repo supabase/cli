@@ -10571,7 +10571,7 @@ func (r V1GetActionRunLogsResponse) StatusCode() int {
 type V1UpdateActionRunStatusResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *ActionRunResponse
+	JSON200      *UpdateRunStatusResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -15315,7 +15315,7 @@ func ParseV1UpdateActionRunStatusResponse(rsp *http.Response) (*V1UpdateActionRu
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ActionRunResponse
+		var dest UpdateRunStatusResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
