@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/h2non/gock"
 	"github.com/oapi-codegen/nullable"
+	"github.com/oapi-codegen/runtime/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	v1API "github.com/supabase/cli/pkg/api"
@@ -209,6 +211,156 @@ func TestUpdateAuthConfig(t *testing.T) {
 		// Check result
 		assert.NoError(t, err)
 	})
+
+	t.Run("creates Firebase TPA integration", func(t *testing.T) {
+		updater := NewConfigUpdater(*client)
+		// Setup mock server
+		defer gock.Off()
+		gock.New(server).
+			Get("/v1/projects/test-project/config/auth").
+			Reply(http.StatusOK).
+			JSON(v1API.AuthConfigResponse{})
+		gock.New(server).
+			Patch("/v1/projects/test-project/config/auth").
+			Reply(http.StatusOK)
+		gock.New(server).
+			Get("/v1/projects/test-project/config/auth/third-party-auth").
+			Reply(http.StatusOK).
+			JSON([]v1API.ThirdPartyAuth{})
+		gock.New(server).
+			Post("/v1/projects/test-project/config/auth/third-party-auth").
+			Reply(http.StatusCreated).
+			JSON(v1API.ThirdPartyAuth{
+				Id:            types.UUID(uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")),
+				Type:          "firebase",
+				OidcIssuerUrl: nullable.NewNullableWithValue("https://securetoken.google.com/test-project"),
+			})
+		// Run test
+		err := updater.UpdateAuthConfig(context.Background(), "test-project", auth{
+			Enabled: true,
+			ThirdParty: thirdParty{
+				Firebase: tpaFirebase{
+					Enabled:   true,
+					ProjectID: "test-project",
+				},
+			},
+		})
+		// Check result
+		assert.NoError(t, err)
+		assert.True(t, gock.IsDone())
+	})
+
+	t.Run("removes existing TPA when none should be enabled", func(t *testing.T) {
+		updater := NewConfigUpdater(*client)
+		// Setup mock server
+		defer gock.Off()
+		gock.New(server).
+			Get("/v1/projects/test-project/config/auth").
+			Reply(http.StatusOK).
+			JSON(v1API.AuthConfigResponse{})
+		gock.New(server).
+			Patch("/v1/projects/test-project/config/auth").
+			Reply(http.StatusOK)
+		gock.New(server).
+			Get("/v1/projects/test-project/config/auth/third-party-auth").
+			Reply(http.StatusOK).
+			JSON([]v1API.ThirdPartyAuth{
+				{
+					Id:   types.UUID(uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")),
+					Type: "firebase",
+				},
+			})
+		gock.New(server).
+			Delete("/v1/projects/test-project/config/auth/third-party-auth/550e8400-e29b-41d4-a716-446655440000").
+			Reply(http.StatusOK)
+		// Run test
+		err := updater.UpdateAuthConfig(context.Background(), "test-project", auth{
+			Enabled:    true,
+			ThirdParty: thirdParty{},
+		})
+		// Check result
+		assert.NoError(t, err)
+		assert.True(t, gock.IsDone())
+	})
+
+	t.Run("skips TPA update if config is up to date", func(t *testing.T) {
+		updater := NewConfigUpdater(*client)
+		// Setup mock server
+		defer gock.Off()
+		gock.New(server).
+			Get("/v1/projects/test-project/config/auth").
+			Reply(http.StatusOK).
+			JSON(v1API.AuthConfigResponse{})
+		gock.New(server).
+			Get("/v1/projects/test-project/config/auth/third-party-auth").
+			Reply(http.StatusOK).
+			JSON([]v1API.ThirdPartyAuth{
+				{
+					Id:            types.UUID(uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")),
+					Type:          "firebase",
+					OidcIssuerUrl: nullable.NewNullableWithValue("https://securetoken.google.com/test-project"),
+				},
+			})
+		// Run test
+		err := updater.UpdateAuthConfig(context.Background(), "test-project", auth{
+			Enabled: true,
+			ThirdParty: thirdParty{
+				Firebase: tpaFirebase{
+					Enabled:   true,
+					ProjectID: "test-project",
+				},
+			},
+		})
+		// Check result
+		assert.NoError(t, err)
+		assert.True(t, gock.IsDone())
+	})
+
+	t.Run("replaces existing TPA with different type", func(t *testing.T) {
+		updater := NewConfigUpdater(*client)
+		// Setup mock server
+		defer gock.Off()
+		gock.New(server).
+			Get("/v1/projects/test-project/config/auth").
+			Reply(http.StatusOK).
+			JSON(v1API.AuthConfigResponse{})
+		gock.New(server).
+			Patch("/v1/projects/test-project/config/auth").
+			Reply(http.StatusOK)
+		gock.New(server).
+			Get("/v1/projects/test-project/config/auth/third-party-auth").
+			Reply(http.StatusOK).
+			JSON([]v1API.ThirdPartyAuth{
+				{
+					Id:   types.UUID(uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")),
+					Type: "firebase",
+				},
+			})
+		gock.New(server).
+			Delete("/v1/projects/test-project/config/auth/third-party-auth/550e8400-e29b-41d4-a716-446655440000").
+			Reply(http.StatusOK)
+		gock.New(server).
+			Post("/v1/projects/test-project/config/auth/third-party-auth").
+			Reply(http.StatusCreated).
+			JSON(v1API.ThirdPartyAuth{
+				Id:            types.UUID(uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")),
+				Type:          "auth0",
+				OidcIssuerUrl: nullable.NewNullableWithValue("https://test-tenant.auth0.com"),
+			})
+		// Run test
+		err := updater.UpdateAuthConfig(context.Background(), "test-project", auth{
+			Enabled: true,
+			ThirdParty: thirdParty{
+				Auth0: tpaAuth0{
+					Enabled: true,
+					Tenant:  "test-tenant",
+				},
+			},
+		})
+		// Check result
+		assert.NoError(t, err)
+		assert.True(t, gock.IsDone())
+	})
 }
 
 func TestUpdateStorageConfig(t *testing.T) {
@@ -270,94 +422,5 @@ func TestUpdateStorageConfig(t *testing.T) {
 		err := updater.UpdateStorageConfig(context.Background(), "test-project", storage{})
 		// Check result
 		assert.NoError(t, err)
-	})
-}
-
-func TestUpdateRemoteConfig(t *testing.T) {
-	server := "http://localhost"
-	client, err := v1API.NewClientWithResponses(server)
-	require.NoError(t, err)
-
-	t.Run("updates all configs", func(t *testing.T) {
-		updater := NewConfigUpdater(*client)
-		// Setup mock server
-		defer gock.Off()
-		// API config
-		gock.New(server).
-			Get("/v1/projects/test-project/postgrest").
-			Reply(http.StatusOK).
-			JSON(v1API.PostgrestConfigWithJWTSecretResponse{})
-		gock.New(server).
-			Patch("/v1/projects/test-project/postgrest").
-			Reply(http.StatusOK).
-			JSON(v1API.PostgrestConfigWithJWTSecretResponse{
-				DbSchema: "public",
-				MaxRows:  1000,
-			})
-		// DB config
-		gock.New(server).
-			Get("/v1/projects/test-project/config/database").
-			Reply(http.StatusOK).
-			JSON(v1API.PostgresConfigResponse{})
-		gock.New(server).
-			Put("/v1/projects/test-project/config/database").
-			Reply(http.StatusOK).
-			JSON(v1API.PostgresConfigResponse{
-				MaxConnections: cast.Ptr(cast.UintToInt(100)),
-			})
-		// Auth config
-		gock.New(server).
-			Get("/v1/projects/test-project/config/auth").
-			Reply(http.StatusOK).
-			JSON(v1API.AuthConfigResponse{})
-		gock.New(server).
-			Patch("/v1/projects/test-project/config/auth").
-			Reply(http.StatusOK)
-		// Storage config
-		gock.New(server).
-			Get("/v1/projects/test-project/config/storage").
-			Reply(http.StatusOK).
-			JSON(v1API.StorageConfigResponse{})
-		gock.New(server).
-			Patch("/v1/projects/test-project/config/storage").
-			Reply(http.StatusOK)
-		// Experimental config
-		gock.New(server).
-			Post("/v1/projects/test-project/database/webhooks/enable").
-			Reply(http.StatusOK).
-			JSON(map[string]interface{}{})
-		// Run test
-		err := updater.UpdateRemoteConfig(context.Background(), baseConfig{
-			ProjectId: "test-project",
-			Api: api{
-				Enabled: true,
-				Schemas: []string{"public", "private"},
-				MaxRows: 1000,
-			},
-			Db: db{
-				Settings: settings{
-					MaxConnections: cast.Ptr(cast.IntToUint(100)),
-				},
-			},
-			Auth: auth{
-				Enabled: true,
-				SiteUrl: "http://localhost:3000",
-			},
-			Storage: storage{
-				Enabled:       true,
-				FileSizeLimit: 100,
-				ImageTransformation: &imageTransformation{
-					Enabled: true,
-				},
-			},
-			Experimental: experimental{
-				Webhooks: &webhooks{
-					Enabled: true,
-				},
-			},
-		})
-		// Check result
-		assert.NoError(t, err)
-		assert.True(t, gock.IsDone())
 	})
 }

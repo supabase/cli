@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/go-errors/errors"
 	v1API "github.com/supabase/cli/pkg/api"
@@ -142,24 +143,57 @@ func (u *ConfigUpdater) UpdateAuthConfig(ctx context.Context, projectRef string,
 	} else if authConfig.JSON200 == nil {
 		return errors.Errorf("unexpected status %d: %s", authConfig.StatusCode(), string(authConfig.Body))
 	}
+
+	// Check if we need to update third-party auth configuration
+	tpaNeedsUpdate, tpaChanges, err := u.checkThirdPartyAuthChanges(ctx, projectRef, c.ThirdParty, filter...)
+	if err != nil {
+		return errors.Errorf("failed to check third-party auth changes: %w", err)
+	}
+
 	authDiff, err := c.DiffWithRemote(*authConfig.JSON200, filter...)
 	if err != nil {
 		return err
-	} else if len(authDiff) == 0 {
+	}
+
+	// If neither auth config nor TPA needs updates, we're done
+	if len(authDiff) == 0 && !tpaNeedsUpdate {
 		fmt.Fprintln(os.Stderr, "Remote Auth config is up to date.")
 		return nil
 	}
-	fmt.Fprintln(os.Stderr, "Updating Auth service with config:", string(authDiff))
+
+	// Show what changes will be made
+	if len(authDiff) > 0 {
+		fmt.Fprintln(os.Stderr, "Updating Auth service with config:", string(authDiff))
+	}
+	if tpaNeedsUpdate && len(tpaChanges) > 0 {
+		fmt.Fprintln(os.Stderr, "Third-party auth changes:")
+		for _, change := range tpaChanges {
+			fmt.Fprintln(os.Stderr, " -", change)
+		}
+	}
+
 	for _, keep := range filter {
 		if !keep("auth") {
 			return nil
 		}
 	}
-	if resp, err := u.client.V1UpdateAuthServiceConfigWithResponse(ctx, projectRef, c.ToUpdateAuthConfigBody()); err != nil {
-		return errors.Errorf("failed to update Auth config: %w", err)
-	} else if status := resp.StatusCode(); status < 200 || status >= 300 {
-		return errors.Errorf("unexpected status %d: %s", status, string(resp.Body))
+
+	// Update regular auth configuration
+	if len(authDiff) > 0 {
+		if resp, err := u.client.V1UpdateAuthServiceConfigWithResponse(ctx, projectRef, c.ToUpdateAuthConfigBody()); err != nil {
+			return errors.Errorf("failed to update Auth config: %w", err)
+		} else if status := resp.StatusCode(); status < 200 || status >= 300 {
+			return errors.Errorf("unexpected status %d: %s", status, string(resp.Body))
+		}
 	}
+
+	// Update third-party auth configuration
+	if tpaNeedsUpdate {
+		if err := u.updateThirdPartyAuthConfig(ctx, projectRef, c.ThirdParty, filter...); err != nil {
+			return errors.Errorf("failed to update third-party auth config: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -280,4 +314,187 @@ func (u *ConfigUpdater) UpdateExperimentalConfig(ctx context.Context, projectRef
 		}
 	}
 	return nil
+}
+
+func (u *ConfigUpdater) checkThirdPartyAuthChanges(ctx context.Context, projectRef string, tpa thirdParty, filter ...func(string) bool) (bool, []string, error) {
+	// Validate the third-party auth configuration first
+	if err := tpa.validate(); err != nil {
+		return false, nil, errors.Errorf("invalid third-party auth configuration: %w", err)
+	}
+
+	// Get current third-party auth integrations
+	remoteTPAs, err := u.client.V1ListProjectTpaIntegrationsWithResponse(ctx, projectRef)
+	if err != nil {
+		return false, nil, errors.Errorf("failed to read third-party auth config: %w", err)
+	} else if remoteTPAs.JSON200 == nil {
+		return false, nil, errors.Errorf("unexpected status %d: %s", remoteTPAs.StatusCode(), string(remoteTPAs.Body))
+	}
+
+	// Determine which TPA should be enabled based on local config
+	var enabledTPA *tpaConfig
+	var issuerURL string
+	var tpaType string
+
+	if tpa.Firebase.Enabled {
+		issuerURL = tpa.Firebase.issuerURL()
+		tpaType = "firebase"
+	} else if tpa.Auth0.Enabled {
+		issuerURL = tpa.Auth0.issuerURL()
+		tpaType = "auth0"
+	} else if tpa.Cognito.Enabled {
+		issuerURL = tpa.Cognito.issuerURL()
+		tpaType = "cognito"
+	} else if tpa.Clerk.Enabled {
+		issuerURL = tpa.Clerk.issuerURL()
+		// Determine if it's development or production based on domain pattern
+		if clerkDomainPattern.MatchString(tpa.Clerk.Domain) && strings.Contains(tpa.Clerk.Domain, ".clerk.accounts.dev") {
+			tpaType = "clerk-development"
+		} else {
+			tpaType = "clerk-production"
+		}
+	} else if tpa.WorkOs.Enabled {
+		issuerURL = tpa.WorkOs.issuerURL()
+		tpaType = "workos"
+	}
+
+	if issuerURL != "" && tpaType != "" {
+		enabledTPA = &tpaConfig{Type: tpaType, IssuerURL: issuerURL}
+	}
+
+	// Check if we need to make any changes
+	needsUpdate := false
+	var changes []string
+
+	if enabledTPA != nil {
+		// Check if the desired TPA is already configured with the correct issuer URL
+		found := false
+		for _, remoteTPA := range *remoteTPAs.JSON200 {
+			if remoteTPA.Type == enabledTPA.Type {
+				found = true
+				// Check if issuer URL matches
+				if issuerURL, err := remoteTPA.OidcIssuerUrl.Get(); err == nil && issuerURL == enabledTPA.IssuerURL {
+					// Perfect match, no update needed
+					break
+				} else {
+					// Type matches but issuer URL is different
+					changes = append(changes, fmt.Sprintf("updating %s issuer URL", enabledTPA.Type))
+					needsUpdate = true
+					break
+				}
+			}
+		}
+		if !found {
+			changes = append(changes, fmt.Sprintf("enabling %s", enabledTPA.Type))
+			needsUpdate = true
+		}
+	}
+
+	// Check if we need to remove existing TPAs
+	if enabledTPA != nil {
+		for _, remoteTPA := range *remoteTPAs.JSON200 {
+			if remoteTPA.Type != enabledTPA.Type {
+				changes = append(changes, fmt.Sprintf("removing %s", remoteTPA.Type))
+				needsUpdate = true
+			}
+		}
+	} else if len(*remoteTPAs.JSON200) > 0 {
+		// No TPA should be enabled but there are remote TPAs
+		for _, remoteTPA := range *remoteTPAs.JSON200 {
+			changes = append(changes, fmt.Sprintf("removing %s", remoteTPA.Type))
+		}
+		needsUpdate = true
+	}
+
+	// Apply filter
+	for _, keep := range filter {
+		if !keep("third_party_auth") {
+			return false, nil, nil
+		}
+	}
+
+	return needsUpdate, changes, nil
+}
+
+func (u *ConfigUpdater) updateThirdPartyAuthConfig(ctx context.Context, projectRef string, tpa thirdParty, filter ...func(string) bool) error {
+	// Get current third-party auth integrations
+	remoteTPAs, err := u.client.V1ListProjectTpaIntegrationsWithResponse(ctx, projectRef)
+	if err != nil {
+		return errors.Errorf("failed to read third-party auth config: %w", err)
+	} else if remoteTPAs.JSON200 == nil {
+		return errors.Errorf("unexpected status %d: %s", remoteTPAs.StatusCode(), string(remoteTPAs.Body))
+	}
+
+	// Determine which TPA should be enabled based on local config
+	var enabledTPA *tpaConfig
+	var issuerURL string
+	var tpaType string
+
+	if tpa.Firebase.Enabled {
+		issuerURL = tpa.Firebase.issuerURL()
+		tpaType = "firebase"
+	} else if tpa.Auth0.Enabled {
+		issuerURL = tpa.Auth0.issuerURL()
+		tpaType = "auth0"
+	} else if tpa.Cognito.Enabled {
+		issuerURL = tpa.Cognito.issuerURL()
+		tpaType = "cognito"
+	} else if tpa.Clerk.Enabled {
+		issuerURL = tpa.Clerk.issuerURL()
+		// Determine if it's development or production based on domain pattern
+		if clerkDomainPattern.MatchString(tpa.Clerk.Domain) && strings.Contains(tpa.Clerk.Domain, ".clerk.accounts.dev") {
+			tpaType = "clerk-development"
+		} else {
+			tpaType = "clerk-production"
+		}
+	} else if tpa.WorkOs.Enabled {
+		issuerURL = tpa.WorkOs.issuerURL()
+		tpaType = "workos"
+	}
+
+	if issuerURL != "" && tpaType != "" {
+		enabledTPA = &tpaConfig{Type: tpaType, IssuerURL: issuerURL}
+	}
+
+	// Delete existing TPAs that don't match the desired configuration
+	for _, remoteTPA := range *remoteTPAs.JSON200 {
+		if enabledTPA == nil || remoteTPA.Type != enabledTPA.Type {
+			fmt.Fprintln(os.Stderr, "Deleting existing third-party auth integration:", remoteTPA.Type)
+			if resp, err := u.client.V1DeleteProjectTpaIntegrationWithResponse(ctx, projectRef, remoteTPA.Id); err != nil {
+				return errors.Errorf("failed to delete third-party auth integration %s: %w", remoteTPA.Type, err)
+			} else if status := resp.StatusCode(); status < 200 || status >= 300 {
+				return errors.Errorf("unexpected delete status %d for %s: %s", status, remoteTPA.Type, string(resp.Body))
+			}
+		}
+	}
+
+	// Create new TPA if one should be enabled
+	if enabledTPA != nil {
+		// Check if we need to create a new one (not just update existing)
+		needsCreate := true
+		for _, remoteTPA := range *remoteTPAs.JSON200 {
+			if remoteTPA.Type == enabledTPA.Type {
+				needsCreate = false
+				break
+			}
+		}
+
+		if needsCreate {
+			fmt.Fprintln(os.Stderr, "Creating third-party auth integration:", enabledTPA.Type)
+			createBody := v1API.CreateThirdPartyAuthBody{
+				OidcIssuerUrl: &enabledTPA.IssuerURL,
+			}
+			if resp, err := u.client.V1CreateProjectTpaIntegrationWithResponse(ctx, projectRef, createBody); err != nil {
+				return errors.Errorf("failed to create third-party auth integration %s: %w", enabledTPA.Type, err)
+			} else if status := resp.StatusCode(); status < 200 || status >= 300 {
+				return errors.Errorf("unexpected create status %d for %s: %s", status, enabledTPA.Type, string(resp.Body))
+			}
+		}
+	}
+
+	return nil
+}
+
+type tpaConfig struct {
+	Type      string
+	IssuerURL string
 }
