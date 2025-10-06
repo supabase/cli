@@ -87,6 +87,7 @@ type kongConfig struct {
 	ApiHost       string
 	ApiPort       uint16
 	BearerToken   string
+	QueryToken    string
 }
 
 var (
@@ -357,6 +358,13 @@ EOF
 				// Finally, the apikey header may be set to a legacy JWT. In that case, we want to copy
 				// it to Authorization header for backwards compatibility.
 				`$((function() return (headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) or (headers.apikey == '%s' and 'Bearer %s') or (headers.apikey == '%s' and 'Bearer %s') or headers.apikey end)())`,
+				utils.Config.Auth.SecretKey.Value,
+				utils.Config.Auth.ServiceRoleKey.Value,
+				utils.Config.Auth.PublishableKey.Value,
+				utils.Config.Auth.AnonKey.Value,
+			),
+			QueryToken: fmt.Sprintf(
+				`$((function() return (query_params.apikey == '%s' and '%s') or (query_params.apikey == '%s' and '%s') or query_params.apikey end)())`,
 				utils.Config.Auth.SecretKey.Value,
 				utils.Config.Auth.ServiceRoleKey.Value,
 				utils.Config.Auth.PublishableKey.Value,
