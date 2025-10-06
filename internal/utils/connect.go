@@ -150,6 +150,12 @@ func ConnectByUrl(ctx context.Context, url string, options ...func(*pgx.ConnConf
 	return pgxv5.Connect(ctx, url, options...)
 }
 
+const (
+	SUPERUSER_ROLE   = "supabase_admin"
+	CLI_LOGIN_PREFIX = "cli_login_"
+	SET_SESSION_ROLE = "SET SESSION ROLE postgres"
+)
+
 func ConnectByConfigStream(ctx context.Context, config pgconn.Config, w io.Writer, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
 	if IsLocalDatabase(config) {
 		fmt.Fprintln(w, "Connecting to local database...")
@@ -159,6 +165,13 @@ func ConnectByConfigStream(ctx context.Context, config pgconn.Config, w io.Write
 	opts := append(options, func(cc *pgx.ConnConfig) {
 		if DNSResolver.Value == DNS_OVER_HTTPS {
 			cc.LookupFunc = FallbackLookupIP
+		}
+		// Step down from platform provisioned login roles or privileged roles
+		if user := strings.Split(cc.User, ".")[0]; strings.EqualFold(user, SUPERUSER_ROLE) ||
+			strings.HasPrefix(user, CLI_LOGIN_PREFIX) {
+			cc.AfterConnect = func(ctx context.Context, pgconn *pgconn.PgConn) error {
+				return pgconn.Exec(ctx, SET_SESSION_ROLE).Close()
+			}
 		}
 	})
 	return ConnectByUrl(ctx, ToPostgresURL(config), opts...)

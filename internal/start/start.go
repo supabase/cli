@@ -31,7 +31,6 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/config"
-	"github.com/supabase/cli/pkg/pgxv5"
 )
 
 func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool) error {
@@ -171,7 +170,7 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 			"DB_HOSTNAME=" + dbConfig.Host,
 			fmt.Sprintf("DB_PORT=%d", dbConfig.Port),
 			"DB_SCHEMA=_analytics",
-			"DB_USERNAME=" + pgxv5.SUPERUSER_ROLE,
+			"DB_USERNAME=" + utils.SUPERUSER_ROLE,
 			"DB_PASSWORD=" + dbConfig.Password,
 			"LOGFLARE_MIN_CLUSTER_SIZE=1",
 			"LOGFLARE_SINGLE_TENANT=true",
@@ -792,7 +791,7 @@ EOF
 					"PORT=4000",
 					"DB_HOST=" + dbConfig.Host,
 					fmt.Sprintf("DB_PORT=%d", dbConfig.Port),
-					"DB_USER=" + pgxv5.SUPERUSER_ROLE,
+					"DB_USER=" + utils.SUPERUSER_ROLE,
 					"DB_PASSWORD=" + dbConfig.Password,
 					"DB_NAME=" + dbConfig.Database,
 					"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",

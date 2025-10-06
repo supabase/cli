@@ -11,12 +11,6 @@ import (
 	"github.com/jackc/pgx/v4"
 )
 
-const (
-	CLI_LOGIN_PREFIX = "cli_login_"
-	SET_SESSION_ROLE = "SET SESSION ROLE postgres"
-	SUPERUSER_ROLE   = "supabase_admin"
-)
-
 // Extends pgx.Connect with support for programmatically overriding parsed config
 func Connect(ctx context.Context, connString string, options ...func(*pgx.ConnConfig)) (*pgx.Conn, error) {
 	// Parse connection url
@@ -27,12 +21,6 @@ func Connect(ctx context.Context, connString string, options ...func(*pgx.ConnCo
 	config.OnNotice = func(pc *pgconn.PgConn, n *pgconn.Notice) {
 		if !shouldIgnore(n.Message) {
 			fmt.Fprintf(os.Stderr, "%s (%s): %s\n", n.Severity, n.Code, n.Message)
-		}
-	}
-	user := strings.Split(config.User, ".")[0]
-	if strings.HasPrefix(user, CLI_LOGIN_PREFIX) || strings.EqualFold(user, SUPERUSER_ROLE) {
-		config.AfterConnect = func(ctx context.Context, pgconn *pgconn.PgConn) error {
-			return pgconn.Exec(ctx, SET_SESSION_ROLE).Close()
 		}
 	}
 	// Apply config overrides

@@ -21,7 +21,6 @@ import (
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/pgtest"
-	"github.com/supabase/cli/pkg/pgxv5"
 	"github.com/zalando/go-keyring"
 )
 
@@ -48,7 +47,7 @@ func TestLinkCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(pgxv5.SET_SESSION_ROLE).
+		conn.Query(utils.SET_SESSION_ROLE).
 			Reply("SET ROLE").
 			Query(GET_LATEST_STORAGE_MIGRATION).
 			Reply("SELECT 1", []interface{}{"custom-metadata"})
@@ -198,7 +197,7 @@ func TestLinkCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(pgxv5.SET_SESSION_ROLE).
+		conn.Query(utils.SET_SESSION_ROLE).
 			Reply("SET ROLE").
 			Query(GET_LATEST_STORAGE_MIGRATION).
 			Reply("SELECT 1", []interface{}{"custom-metadata"})
