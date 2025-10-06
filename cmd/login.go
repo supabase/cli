@@ -6,6 +6,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/login"
 	"github.com/supabase/cli/internal/utils"
 	"golang.org/x/term"
@@ -37,6 +38,13 @@ var (
 				params.OpenBrowser = false
 			}
 			return login.Run(cmd.Context(), os.Stdout, params)
+		},
+		PostRunE: func(cmd *cobra.Command, args []string) error {
+			if prof := viper.GetString("PROFILE"); viper.IsSet("PROFILE") {
+				// Failure to save should block subsequent commands on CI
+				return utils.WriteFile(utils.ProfilePath, []byte(prof), afero.NewOsFs())
+			}
+			return nil
 		},
 	}
 )
