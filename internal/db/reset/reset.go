@@ -29,6 +29,7 @@ import (
 	"github.com/supabase/cli/internal/seed/buckets"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/migration"
+	"github.com/supabase/cli/pkg/pgxv5"
 )
 
 func Run(ctx context.Context, version string, last uint, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -142,7 +143,7 @@ func resetDatabase15(ctx context.Context, version string, fsys afero.Fs, options
 }
 
 func initDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
-	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{User: "supabase_admin"}, options...)
+	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{User: pgxv5.SUPERUSER_ROLE}, options...)
 	if err != nil {
 		return err
 	}
@@ -152,7 +153,7 @@ func initDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
 
 // Recreate postgres database by connecting to template1
 func recreateDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
-	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{User: "supabase_admin", Database: "template1"}, options...)
+	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{User: pgxv5.SUPERUSER_ROLE, Database: "template1"}, options...)
 	if err != nil {
 		return err
 	}

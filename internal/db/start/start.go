@@ -26,6 +26,7 @@ import (
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/migration"
+	"github.com/supabase/cli/pkg/pgxv5"
 	"github.com/supabase/cli/pkg/vault"
 )
 
@@ -279,7 +280,7 @@ func initRealtimeJob(host string) utils.DockerJob {
 			"PORT=4000",
 			"DB_HOST=" + host,
 			"DB_PORT=5432",
-			"DB_USER=supabase_admin",
+			"DB_USER=" + pgxv5.SUPERUSER_ROLE,
 			"DB_PASSWORD=" + utils.Config.Db.Password,
 			"DB_NAME=postgres",
 			"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
