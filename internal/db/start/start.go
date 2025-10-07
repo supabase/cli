@@ -272,7 +272,7 @@ func InitSchema14(ctx context.Context, conn *pgx.Conn) error {
 	return file.ExecBatch(ctx, conn)
 }
 
-func initRealtimeJob(host string) utils.DockerJob {
+func initRealtimeJob(host, jwks string) utils.DockerJob {
 	return utils.DockerJob{
 		Image: utils.Config.Realtime.Image,
 		Env: []string{
@@ -284,6 +284,7 @@ func initRealtimeJob(host string) utils.DockerJob {
 			"DB_NAME=postgres",
 			"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
 			"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
+			fmt.Sprintf("API_JWT_JWKS=%s", jwks),
 			"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
 			"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
 			"APP_NAME=realtime",
@@ -341,7 +342,11 @@ func initSchema15(ctx context.Context, host string) error {
 	// Apply service migrations
 	var initJobs []utils.DockerJob
 	if utils.Config.Realtime.Enabled {
-		initJobs = append(initJobs, initRealtimeJob(host))
+		jwks, err := utils.Config.Auth.ResolveJWKS(context.Background())
+		if err != nil {
+			return err
+		}
+		initJobs = append(initJobs, initRealtimeJob(host, jwks))
 	}
 	if utils.Config.Storage.Enabled {
 		initJobs = append(initJobs, initStorageJob(host))

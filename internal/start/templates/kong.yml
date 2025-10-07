@@ -132,9 +132,9 @@ services:
       - name: request-transformer
         config:
           replace:
-            headers:
-              - "Authorization: {{ .BearerToken }}"
-  - name: realtime-v1-longpoll
+            querystring:
+              - "apikey:{{ .QueryToken }}"
+  - name: realtime-v1-longpoll-not-working
     _comment: "Realtime: /realtime/v1/* -> ws://realtime:4000/socket/longpoll"
     url: http://{{ .RealtimeId }}:4000/socket
     protocol: http
