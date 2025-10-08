@@ -1,5 +1,6 @@
 _format_version: "1.1"
 services:
+  # Tenant project endpoints
   - name: auth-v1-open
     _comment: "GoTrue: /auth/v1/verify* -> http://auth:9999/verify*"
     url: http://{{ .GotrueId }}:9999/verify
@@ -10,11 +11,6 @@ services:
           - /auth/v1/verify
     plugins:
       - name: cors
-      - name: request-transformer
-        config:
-          replace:
-            headers:
-              - "Authorization: {{ .BearerToken }}"
   - name: auth-v1-open-callback
     _comment: "GoTrue: /auth/v1/callback* -> http://auth:9999/callback*"
     url: http://{{ .GotrueId }}:9999/callback
@@ -25,11 +21,6 @@ services:
           - /auth/v1/callback
     plugins:
       - name: cors
-      - name: request-transformer
-        config:
-          replace:
-            headers:
-              - "Authorization: {{ .BearerToken }}"
   - name: auth-v1-open-authorize
     _comment: "GoTrue: /auth/v1/authorize* -> http://auth:9999/authorize*"
     url: http://{{ .GotrueId }}:9999/authorize
@@ -38,21 +29,6 @@ services:
         strip_path: true
         paths:
           - /auth/v1/authorize
-    plugins:
-      - name: cors
-      - name: request-transformer
-        config:
-          replace:
-            headers:
-              - "Authorization: {{ .BearerToken }}"
-  - name: well-known-oauth
-    _comment: "GoTrue: /.well-known/oauth-authorization-server -> http://auth:9999/.well-known/oauth-authorization-server"
-    url: http://{{ .GotrueId }}:9999/.well-known/oauth-authorization-server
-    routes:
-      - name: well-known-oauth
-        strip_path: true
-        paths:
-          - /.well-known/oauth-authorization-server
     plugins:
       - name: cors
   - name: auth-v1
@@ -65,11 +41,7 @@ services:
           - /auth/v1/
     plugins:
       - name: cors
-      - name: request-transformer
-        config:
-          replace:
-            headers:
-              - "Authorization: {{ .BearerToken }}"
+      # TODO: validate apikey
   - name: rest-v1
     _comment: "PostgREST: /rest/v1/* -> http://rest:3000/*"
     url: http://{{ .RestId }}:3000/
@@ -82,6 +54,9 @@ services:
       - name: cors
       - name: request-transformer
         config:
+          add:
+            headers:
+              - "Authorization: {{ .BearerToken }}"
           replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
@@ -95,11 +70,7 @@ services:
           - /rest-admin/v1/
     plugins:
       - name: cors
-      - name: request-transformer
-        config:
-          replace:
-            headers:
-              - "Authorization: {{ .BearerToken }}"
+      # TODO: validate apikey
   - name: graphql-v1
     _comment: "PostgREST: /graphql/v1 -> http://rest:3000/rpc/graphql"
     url: http://{{ .RestId }}:3000/rpc/graphql
@@ -115,6 +86,7 @@ services:
           add:
             headers:
               - "Content-Profile: graphql_public"
+              - "Authorization: {{ .BearerToken }}"
           replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
@@ -147,6 +119,9 @@ services:
       - name: cors
       - name: request-transformer
         config:
+          add:
+            headers:
+              - "Authorization: {{ .BearerToken }}"
           replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
@@ -163,6 +138,9 @@ services:
       - name: cors
       - name: request-transformer
         config:
+          add:
+            headers:
+              - "Authorization: {{ .BearerToken }}"
           replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
@@ -178,17 +156,12 @@ services:
       - name: cors
       - name: request-transformer
         config:
+          add:
+            headers:
+              - "Authorization: {{ .BearerToken }}"
           replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
-  - name: pg-meta
-    _comment: "pg-meta: /pg/* -> http://pg-meta:8080/*"
-    url: http://{{ .PgmetaId }}:8080/
-    routes:
-      - name: pg-meta-all
-        strip_path: true
-        paths:
-          - /pg/
   - name: functions-v1
     _comment: "Functions: /functions/v1/* -> http://edge-runtime:8081/*"
     url: http://{{ .EdgeRuntimeId }}:8081/
@@ -204,9 +177,33 @@ services:
       - name: cors
       - name: request-transformer
         config:
+          add:
+            headers:
+              - "Authorization: {{ .BearerToken }}"
           replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
+  # Management API endpoints
+  - name: well-known-oauth
+    _comment: "GoTrue: /.well-known/oauth-authorization-server -> http://auth:9999/.well-known/oauth-authorization-server"
+    url: http://{{ .GotrueId }}:9999/.well-known/oauth-authorization-server
+    routes:
+      - name: well-known-oauth
+        strip_path: true
+        paths:
+          - /.well-known/oauth-authorization-server
+    plugins:
+      - name: cors
+  - name: pg-meta
+    _comment: "pg-meta: /pg/* -> http://pg-meta:8080/*"
+    url: http://{{ .PgmetaId }}:8080/
+    routes:
+      - name: pg-meta-all
+        strip_path: true
+        paths:
+          - /pg/
+    plugins:
+      - name: cors
   - name: analytics-v1
     _comment: "Analytics: /analytics/v1/* -> http://logflare:4000/*"
     url: http://{{ .LogflareId }}:4000/
@@ -217,11 +214,6 @@ services:
           - /analytics/v1/
     plugins:
       - name: cors
-      - name: request-transformer
-        config:
-          replace:
-            headers:
-              - "Authorization: {{ .BearerToken }}"
   - name: pooler-v2-ws
     _comment: "Pooler: /pooler/v2/* -> ws://pooler:4000/v2/*"
     url: http://{{ .PoolerId }}:4000/v2
@@ -233,11 +225,6 @@ services:
           - /pooler/v2/
     plugins:
       - name: cors
-      - name: request-transformer
-        config:
-          replace:
-            headers:
-              - "Authorization: {{ .BearerToken }}"
   - name: mcp
     _comment: "MCP: /mcp -> http://studio:3000/api/mcp"
     url: http://{{ .StudioId }}:3000/api/mcp
