@@ -1534,6 +1534,9 @@ type AuthConfigResponse struct {
 	ExternalZoomEmailOptional                             nullable.Nullable[bool]                                         `json:"external_zoom_email_optional"`
 	ExternalZoomEnabled                                   nullable.Nullable[bool]                                         `json:"external_zoom_enabled"`
 	ExternalZoomSecret                                    nullable.Nullable[string]                                       `json:"external_zoom_secret"`
+	HookAfterUserCreatedEnabled                           nullable.Nullable[bool]                                         `json:"hook_after_user_created_enabled"`
+	HookAfterUserCreatedSecrets                           nullable.Nullable[string]                                       `json:"hook_after_user_created_secrets"`
+	HookAfterUserCreatedUri                               nullable.Nullable[string]                                       `json:"hook_after_user_created_uri"`
 	HookBeforeUserCreatedEnabled                          nullable.Nullable[bool]                                         `json:"hook_before_user_created_enabled"`
 	HookBeforeUserCreatedSecrets                          nullable.Nullable[string]                                       `json:"hook_before_user_created_secrets"`
 	HookBeforeUserCreatedUri                              nullable.Nullable[string]                                       `json:"hook_before_user_created_uri"`
@@ -3052,6 +3055,9 @@ type UpdateAuthConfigBody struct {
 	ExternalZoomEmailOptional                             nullable.Nullable[bool]                                           `json:"external_zoom_email_optional,omitempty"`
 	ExternalZoomEnabled                                   nullable.Nullable[bool]                                           `json:"external_zoom_enabled,omitempty"`
 	ExternalZoomSecret                                    nullable.Nullable[string]                                         `json:"external_zoom_secret,omitempty"`
+	HookAfterUserCreatedEnabled                           nullable.Nullable[bool]                                           `json:"hook_after_user_created_enabled,omitempty"`
+	HookAfterUserCreatedSecrets                           nullable.Nullable[string]                                         `json:"hook_after_user_created_secrets,omitempty"`
+	HookAfterUserCreatedUri                               nullable.Nullable[string]                                         `json:"hook_after_user_created_uri,omitempty"`
 	HookBeforeUserCreatedEnabled                          nullable.Nullable[bool]                                           `json:"hook_before_user_created_enabled,omitempty"`
 	HookBeforeUserCreatedSecrets                          nullable.Nullable[string]                                         `json:"hook_before_user_created_secrets,omitempty"`
 	HookBeforeUserCreatedUri                              nullable.Nullable[string]                                         `json:"hook_before_user_created_uri,omitempty"`
