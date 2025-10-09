@@ -10,14 +10,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"reflect"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/go-errors/errors"
+	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/tw"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
@@ -26,9 +26,11 @@ import (
 
 type CustomName struct {
 	ApiURL                   string `env:"api.url,default=API_URL"`
+	RestURL                  string `env:"api.rest_url,default=REST_URL"`
 	GraphqlURL               string `env:"api.graphql_url,default=GRAPHQL_URL"`
 	StorageS3URL             string `env:"api.storage_s3_url,default=STORAGE_S3_URL"`
 	McpURL                   string `env:"api.mcp_url,default=MCP_URL"`
+	FunctionsURL             string `env:"api.functions_url,default=FUNCTIONS_URL"`
 	DbURL                    string `env:"db.url,default=DB_URL"`
 	StudioURL                string `env:"studio.url,default=STUDIO_URL"`
 	InbucketURL              string `env:"inbucket.url,default=INBUCKET_URL,deprecated"`
@@ -41,6 +43,24 @@ type CustomName struct {
 	StorageS3AccessKeyId     string `env:"storage.s3_access_key_id,default=S3_PROTOCOL_ACCESS_KEY_ID"`
 	StorageS3SecretAccessKey string `env:"storage.s3_secret_access_key,default=S3_PROTOCOL_ACCESS_KEY_SECRET"`
 	StorageS3Region          string `env:"storage.s3_region,default=S3_PROTOCOL_REGION"`
+}
+type OutputType string
+
+const (
+	Text OutputType = "text"
+	Link OutputType = "link"
+	Key  OutputType = "key"
+)
+
+type OutputItem struct {
+	Label string
+	Value string
+	Type  OutputType
+}
+
+type OutputGroup struct {
+	Name  string
+	Items []OutputItem
 }
 
 func (c *CustomName) toValues(exclude ...string) map[string]string {
@@ -56,7 +76,9 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 
 	if apiEnabled {
 		values[c.ApiURL] = utils.Config.Api.ExternalUrl
+		values[c.RestURL] = utils.GetApiUrl("/rest/v1")
 		values[c.GraphqlURL] = utils.GetApiUrl("/graphql/v1")
+		values[c.FunctionsURL] = utils.GetApiUrl("/functions/v1")
 		if studioEnabled {
 			values[c.McpURL] = utils.GetApiUrl("/mcp")
 		}
@@ -210,43 +232,149 @@ func printStatus(names CustomName, format string, w io.Writer, exclude ...string
 
 func PrettyPrint(w io.Writer, exclude ...string) {
 	names := CustomName{
-		ApiURL:                   "         " + utils.Aqua("API URL"),
-		GraphqlURL:               "     " + utils.Aqua("GraphQL URL"),
-		StorageS3URL:             "  " + utils.Aqua("S3 Storage URL"),
-		McpURL:                   "         " + utils.Aqua("MCP URL"),
-		DbURL:                    "    " + utils.Aqua("Database URL"),
-		StudioURL:                "      " + utils.Aqua("Studio URL"),
-		InbucketURL:              "    " + utils.Aqua("Inbucket URL"),
-		MailpitURL:               "     " + utils.Aqua("Mailpit URL"),
-		PublishableKey:           " " + utils.Aqua("Publishable key"),
-		SecretKey:                "      " + utils.Aqua("Secret key"),
-		JWTSecret:                "      " + utils.Aqua("JWT secret"),
-		AnonKey:                  "        " + utils.Aqua("anon key"),
-		ServiceRoleKey:           "" + utils.Aqua("service_role key"),
-		StorageS3AccessKeyId:     "   " + utils.Aqua("S3 Access Key"),
-		StorageS3SecretAccessKey: "   " + utils.Aqua("S3 Secret Key"),
-		StorageS3Region:          "       " + utils.Aqua("S3 Region"),
+		ApiURL:                   "API_URL",
+		RestURL:                  "REST_URL",
+		GraphqlURL:               "GRAPHQL_URL",
+		FunctionsURL:             "FUNCTIONS_URL",
+		StorageS3URL:             "STORAGE_S3_URL",
+		McpURL:                   "MCP_URL",
+		DbURL:                    "DB_URL",
+		StudioURL:                "STUDIO_URL",
+		InbucketURL:              "INBUCKET_URL",
+		MailpitURL:               "MAILPIT_URL",
+		PublishableKey:           "PUBLISHABLE_KEY",
+		SecretKey:                "SECRET_KEY",
+		JWTSecret:                "JWT_SECRET",
+		AnonKey:                  "ANON_KEY",
+		ServiceRoleKey:           "SERVICE_ROLE_KEY",
+		StorageS3AccessKeyId:     "S3_PROTOCOL_ACCESS_KEY_ID",
+		StorageS3SecretAccessKey: "S3_PROTOCOL_SECRET_ACCESS_KEY",
+		StorageS3Region:          "S3_PROTOCOL_REGION",
 	}
 	values := names.toValues(exclude...)
-	// Iterate through map in order of declared struct fields
-	t := reflect.TypeOf(names)
-	val := reflect.ValueOf(names)
-	for i := 0; i < val.NumField(); i++ {
-		k := val.Field(i).String()
-		if tag := t.Field(i).Tag.Get("env"); isDeprecated(tag) {
-			continue
+
+	groups := []OutputGroup{
+		{
+			Name: "🛠️  Development Tools",
+			Items: []OutputItem{
+				{Label: "Studio", Value: values[names.StudioURL], Type: Link},
+				{Label: "Mailpit", Value: values[names.MailpitURL], Type: Link},
+				{Label: "MCP", Value: values[names.McpURL], Type: Link},
+			},
+		},
+		{
+			Name: "🌐 APIs",
+			Items: []OutputItem{
+				{Label: "Project URL", Value: values[names.ApiURL], Type: Link},
+				{Label: "REST", Value: values[names.RestURL], Type: Link},
+				{Label: "GraphQL", Value: values[names.GraphqlURL], Type: Link},
+				{Label: "Edge Functions", Value: values[names.FunctionsURL], Type: Link},
+			},
+		},
+		{
+			Name: "🗄️  Database",
+			Items: []OutputItem{
+				{Label: "URL", Value: values[names.DbURL], Type: Link},
+			},
+		},
+		{
+			Name: "🔑 Authentication Keys",
+			Items: []OutputItem{
+				{Label: "Publishable", Value: values[names.PublishableKey], Type: Key},
+				{Label: "Secret", Value: values[names.SecretKey], Type: Key},
+			},
+		},
+		{
+			Name: "📦 Storage (S3)",
+			Items: []OutputItem{
+				{Label: "URL", Value: values[names.StorageS3URL], Type: Link},
+				{Label: "Access Key", Value: values[names.StorageS3AccessKeyId], Type: Key},
+				{Label: "Secret Key", Value: values[names.StorageS3SecretAccessKey], Type: Key},
+				{Label: "Region", Value: values[names.StorageS3Region], Type: Text},
+			},
+		},
+	}
+
+	for _, group := range groups {
+		// ensure at least one item in the group is non-empty
+		shouldPrint := false
+		for _, item := range group.Items {
+			if item.Value != "" {
+				shouldPrint = true
+				break
+			}
 		}
-		if v, ok := values[k]; ok {
-			fmt.Fprintf(w, "%s: %s\n", k, v)
+		if shouldPrint {
+			printTable(w, group.Name, group.Items)
+			fmt.Fprintln(w)
 		}
 	}
+
 }
 
-func isDeprecated(tag string) bool {
-	for part := range strings.SplitSeq(tag, ",") {
-		if strings.EqualFold(part, "deprecated") {
-			return true
+func printTable(w io.Writer, title string, rows []OutputItem) {
+	table := tablewriter.NewTable(w,
+		// Rounded corners
+		tablewriter.WithSymbols(tw.NewSymbols(tw.StyleRounded)),
+
+		// Table content formatting
+		tablewriter.WithConfig(tablewriter.Config{
+			Header: tw.CellConfig{
+				Formatting: tw.CellFormatting{
+					AutoFormat: tw.Off,
+					MergeMode:  tw.MergeHorizontal,
+				},
+				Alignment: tw.CellAlignment{
+					Global: tw.AlignLeft,
+				},
+				Filter: tw.CellFilter{
+					Global: func(s []string) []string {
+						for i := range s {
+							s[i] = utils.Bold(s[i])
+						}
+						return s
+					},
+				},
+			},
+			Row: tw.CellConfig{
+				Alignment: tw.CellAlignment{
+					Global: tw.AlignLeft,
+				},
+				ColMaxWidths: tw.CellWidth{
+					PerColumn: map[int]int{0: 16},
+				},
+				Filter: tw.CellFilter{
+					PerColumn: []func(string) string{
+						func(s string) string {
+							return utils.Green(s)
+						},
+					},
+				},
+			},
+			Behavior: tw.Behavior{
+				Compact: tw.Compact{
+					Merge: tw.On,
+				},
+			},
+		}),
+	)
+
+	// Set title as header (merged across all columns)
+	table.Header(title, title)
+
+	// Add data rows with values colored based on type
+	for _, row := range rows {
+		if row.Value != "" {
+			switch row.Type {
+			case Link:
+				table.Append(row.Label, utils.Aqua(row.Value))
+			case Key:
+				table.Append(row.Label, utils.Yellow(row.Value))
+			case Text:
+				table.Append(row.Label, row.Value)
+			}
 		}
 	}
-	return false
+
+	table.Render()
 }
