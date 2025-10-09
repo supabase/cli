@@ -37,8 +37,6 @@ updates:
       prefix: "fix(docker): "
     groups:
       docker-minor:
-        exclude-patterns:
-          - supabase/logflare
         update-types:
           - minor
           - patch
