@@ -309,7 +309,6 @@ func PrettyPrint(w io.Writer, exclude ...string) {
 			fmt.Fprintln(w)
 		}
 	}
-
 }
 
 func printTable(w io.Writer, title string, rows []OutputItem) {
@@ -362,19 +361,28 @@ func printTable(w io.Writer, title string, rows []OutputItem) {
 	// Set title as header (merged across all columns)
 	table.Header(title, title)
 
+	var appendError error
+
 	// Add data rows with values colored based on type
 	for _, row := range rows {
 		if row.Value != "" {
 			switch row.Type {
 			case Link:
-				table.Append(row.Label, utils.Aqua(row.Value))
+				appendError = table.Append(row.Label, utils.Aqua(row.Value))
 			case Key:
-				table.Append(row.Label, utils.Yellow(row.Value))
+				appendError = table.Append(row.Label, utils.Yellow(row.Value))
 			case Text:
-				table.Append(row.Label, row.Value)
+				appendError = table.Append(row.Label, row.Value)
 			}
 		}
 	}
 
-	table.Render()
+	if appendError != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), appendError)
+	}
+
+	renderError := table.Render()
+	if renderError != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), renderError)
+	}
 }
