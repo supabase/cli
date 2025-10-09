@@ -35,4 +35,4 @@ jobs:
         if: ${{ steps.meta.outputs.update-type == 'version-update:semver-patch' || (!startsWith(steps.meta.outputs.previous-version, '0.') && steps.meta.outputs.update-type == 'version-update:semver-minor') }}
         run: gh pr merge --auto --squash "${{ github.event.pull_request.html_url }}"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
