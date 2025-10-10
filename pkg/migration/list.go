@@ -38,6 +38,9 @@ func ListLocalMigrations(migrationsDir string, fsys fs.FS, filter ...func(string
 	var clean []string
 OUTER:
 	for i, migration := range localMigrations {
+		if migration.IsDir() {
+			continue
+		}
 		filename := migration.Name()
 		if i == 0 && shouldSkip(filename) {
 			fmt.Fprintf(os.Stderr, "Skipping migration %s... (replace \"init\" with a different file name to apply this migration)\n", filename)
