@@ -133,7 +133,21 @@ func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs,
 	if _, err := conn.Exec(ctx, CREATE_TEMPLATE); err != nil {
 		return errors.Errorf("failed to create template database: %w", err)
 	}
-	return migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys))
+	// Migrations take precedence over declarative schemas
+	if len(migrations) > 0 {
+		return migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys))
+	}
+	declared, err := loadDeclaredSchemas(fsys)
+	if err != nil || len(declared) == 0 {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "Creating local database from declarative schemas:")
+	msg := make([]string, len(declared))
+	for i, m := range declared {
+		msg[i] = fmt.Sprintf(" • %s", utils.Bold(m))
+	}
+	fmt.Fprintln(os.Stderr, strings.Join(msg, "\n"))
+	return migration.SeedGlobals(ctx, declared, conn, afero.NewIOFS(fsys))
 }
 
 func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ DiffFunc, options ...func(*pgx.ConnConfig)) (string, error) {
