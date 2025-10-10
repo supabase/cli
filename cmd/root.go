@@ -120,6 +120,7 @@ var (
 			if viper.GetBool("DEBUG") {
 				http.DefaultTransport = debug.NewTransport()
 				fmt.Fprintln(os.Stderr, cmd.Root().Short)
+				fmt.Fprintf(os.Stderr, "Using profile: %s (%s)\n", utils.CurrentProfile.Name, utils.CurrentProfile.ProjectHost)
 			}
 			cmd.SetContext(ctx)
 			// Setup sentry last to ignore errors from parsing cli flags

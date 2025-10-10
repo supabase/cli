@@ -354,6 +354,7 @@ type (
 		Url            string `toml:"url"`
 		RedirectUri    string `toml:"redirect_uri"`
 		SkipNonceCheck bool   `toml:"skip_nonce_check"`
+		EmailOptional  bool   `toml:"email_optional"`
 	}
 
 	solana struct {
@@ -952,6 +953,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 			if len(p.Secret.SHA256) > 0 {
 				body.ExternalAppleSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
+			body.ExternalAppleEmailOptional = nullable.NewNullableWithValue(p.EmailOptional)
 		}
 	}
 	if p, ok := e["azure"]; ok {
@@ -961,6 +963,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 				body.ExternalAzureSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
 			body.ExternalAzureUrl = nullable.NewNullableWithValue(p.Url)
+			body.ExternalAzureEmailOptional = nullable.NewNullableWithValue(p.EmailOptional)
 		}
 	}
 	if p, ok := e["bitbucket"]; ok {
@@ -969,6 +972,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 			if len(p.Secret.SHA256) > 0 {
 				body.ExternalBitbucketSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
+			body.ExternalBitbucketEmailOptional = nullable.NewNullableWithValue(p.EmailOptional)
 		}
 	}
 	if p, ok := e["discord"]; ok {
@@ -977,6 +981,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 			if len(p.Secret.SHA256) > 0 {
 				body.ExternalDiscordSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
+			body.ExternalDiscordEmailOptional = nullable.NewNullableWithValue(p.EmailOptional)
 		}
 	}
 	if p, ok := e["facebook"]; ok {
@@ -985,6 +990,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 			if len(p.Secret.SHA256) > 0 {
 				body.ExternalFacebookSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
+			body.ExternalFacebookEmailOptional = nullable.NewNullableWithValue(p.EmailOptional)
 		}
 	}
 	if p, ok := e["figma"]; ok {
@@ -993,6 +999,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 			if len(p.Secret.SHA256) > 0 {
 				body.ExternalFigmaSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
+			body.ExternalFigmaEmailOptional = nullable.NewNullableWithValue(p.EmailOptional)
 		}
 	}
 	if p, ok := e["github"]; ok {
@@ -1001,6 +1008,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 			if len(p.Secret.SHA256) > 0 {
 				body.ExternalGithubSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
+			body.ExternalGithubEmailOptional = nullable.NewNullableWithValue(p.EmailOptional)
 		}
 	}
 	if p, ok := e["gitlab"]; ok {
@@ -1010,6 +1018,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 				body.ExternalGitlabSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
 			body.ExternalGitlabUrl = nullable.NewNullableWithValue(p.Url)
+			body.ExternalGitlabEmailOptional = nullable.NewNullableWithValue(p.EmailOptional)
 		}
 	}
 	if p, ok := e["google"]; ok {
@@ -1019,6 +1028,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 				body.ExternalGoogleSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
 			body.ExternalGoogleSkipNonceCheck = nullable.NewNullableWithValue(p.SkipNonceCheck)
+			body.ExternalGoogleEmailOptional = nullable.NewNullableWithValue(p.EmailOptional)
 		}
 	}
 	if p, ok := e["kakao"]; ok {
@@ -1027,6 +1037,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 			if len(p.Secret.SHA256) > 0 {
 				body.ExternalKakaoSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
+			body.ExternalKakaoEmailOptional = nullable.NewNullableWithValue(p.EmailOptional)
 		}
 	}
 	if p, ok := e["keycloak"]; ok {
@@ -1036,6 +1047,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 				body.ExternalKeycloakSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
 			body.ExternalKeycloakUrl = nullable.NewNullableWithValue(p.Url)
+			body.ExternalKeycloakEmailOptional = nullable.NewNullableWithValue(p.EmailOptional)
 		}
 	}
 	if p, ok := e["linkedin_oidc"]; ok {
@@ -1044,6 +1056,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 			if len(p.Secret.SHA256) > 0 {
 				body.ExternalLinkedinOidcSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
+			body.ExternalLinkedinOidcEmailOptional = nullable.NewNullableWithValue(p.EmailOptional)
 		}
 	}
 	if p, ok := e["notion"]; ok {
@@ -1052,6 +1065,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 			if len(p.Secret.SHA256) > 0 {
 				body.ExternalNotionSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
+			body.ExternalNotionEmailOptional = nullable.NewNullableWithValue(p.EmailOptional)
 		}
 	}
 	if p, ok := e["slack_oidc"]; ok {
@@ -1060,6 +1074,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 			if len(p.Secret.SHA256) > 0 {
 				body.ExternalSlackOidcSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
+			body.ExternalSlackOidcEmailOptional = nullable.NewNullableWithValue(p.EmailOptional)
 		}
 	}
 	if p, ok := e["spotify"]; ok {
@@ -1068,6 +1083,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 			if len(p.Secret.SHA256) > 0 {
 				body.ExternalSpotifySecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
+			body.ExternalSpotifyEmailOptional = nullable.NewNullableWithValue(p.EmailOptional)
 		}
 	}
 	if p, ok := e["twitch"]; ok {
@@ -1076,6 +1092,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 			if len(p.Secret.SHA256) > 0 {
 				body.ExternalTwitchSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
+			body.ExternalTwitchEmailOptional = nullable.NewNullableWithValue(p.EmailOptional)
 		}
 	}
 	if p, ok := e["twitter"]; ok {
@@ -1084,6 +1101,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 			if len(p.Secret.SHA256) > 0 {
 				body.ExternalTwitterSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
+			body.ExternalTwitterEmailOptional = nullable.NewNullableWithValue(p.EmailOptional)
 		}
 	}
 	if p, ok := e["workos"]; ok {
@@ -1101,6 +1119,7 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 			if len(p.Secret.SHA256) > 0 {
 				body.ExternalZoomSecret = nullable.NewNullableWithValue(p.Secret.Value)
 			}
+			body.ExternalZoomEmailOptional = nullable.NewNullableWithValue(p.EmailOptional)
 		}
 	}
 }
@@ -1119,6 +1138,7 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if len(p.Secret.SHA256) > 0 {
 				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalAppleSecret, "")
 			}
+			p.EmailOptional = ValOrDefault(remoteConfig.ExternalAppleEmailOptional, false)
 		}
 		p.Enabled = ValOrDefault(remoteConfig.ExternalAppleEnabled, false)
 		e["apple"] = p
@@ -1131,6 +1151,7 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalAzureSecret, "")
 			}
 			p.Url = ValOrDefault(remoteConfig.ExternalAzureUrl, "")
+			p.EmailOptional = ValOrDefault(remoteConfig.ExternalAzureEmailOptional, false)
 		}
 		p.Enabled = ValOrDefault(remoteConfig.ExternalAzureEnabled, false)
 		e["azure"] = p
@@ -1142,6 +1163,7 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if len(p.Secret.SHA256) > 0 {
 				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalBitbucketSecret, "")
 			}
+			p.EmailOptional = ValOrDefault(remoteConfig.ExternalBitbucketEmailOptional, false)
 		}
 		p.Enabled = ValOrDefault(remoteConfig.ExternalBitbucketEnabled, false)
 		e["bitbucket"] = p
@@ -1153,6 +1175,7 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if len(p.Secret.SHA256) > 0 {
 				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalDiscordSecret, "")
 			}
+			p.EmailOptional = ValOrDefault(remoteConfig.ExternalDiscordEmailOptional, false)
 		}
 		p.Enabled = ValOrDefault(remoteConfig.ExternalDiscordEnabled, false)
 		e["discord"] = p
@@ -1164,6 +1187,7 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if len(p.Secret.SHA256) > 0 {
 				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalFacebookSecret, "")
 			}
+			p.EmailOptional = ValOrDefault(remoteConfig.ExternalFacebookEmailOptional, false)
 		}
 		p.Enabled = ValOrDefault(remoteConfig.ExternalFacebookEnabled, false)
 		e["facebook"] = p
@@ -1175,6 +1199,7 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if len(p.Secret.SHA256) > 0 {
 				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalFigmaSecret, "")
 			}
+			p.EmailOptional = ValOrDefault(remoteConfig.ExternalFigmaEmailOptional, false)
 		}
 		p.Enabled = ValOrDefault(remoteConfig.ExternalFigmaEnabled, false)
 		e["figma"] = p
@@ -1186,6 +1211,7 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if len(p.Secret.SHA256) > 0 {
 				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalGithubSecret, "")
 			}
+			p.EmailOptional = ValOrDefault(remoteConfig.ExternalGithubEmailOptional, false)
 		}
 		p.Enabled = ValOrDefault(remoteConfig.ExternalGithubEnabled, false)
 		e["github"] = p
@@ -1198,6 +1224,7 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalGitlabSecret, "")
 			}
 			p.Url = ValOrDefault(remoteConfig.ExternalGitlabUrl, "")
+			p.EmailOptional = ValOrDefault(remoteConfig.ExternalGitlabEmailOptional, false)
 		}
 		p.Enabled = ValOrDefault(remoteConfig.ExternalGitlabEnabled, false)
 		e["gitlab"] = p
@@ -1213,6 +1240,7 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalGoogleSecret, "")
 			}
 			p.SkipNonceCheck = ValOrDefault(remoteConfig.ExternalGoogleSkipNonceCheck, false)
+			p.EmailOptional = ValOrDefault(remoteConfig.ExternalGoogleEmailOptional, false)
 		}
 		p.Enabled = ValOrDefault(remoteConfig.ExternalGoogleEnabled, false)
 		e["google"] = p
@@ -1224,6 +1252,7 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if len(p.Secret.SHA256) > 0 {
 				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalKakaoSecret, "")
 			}
+			p.EmailOptional = ValOrDefault(remoteConfig.ExternalKakaoEmailOptional, false)
 		}
 		p.Enabled = ValOrDefault(remoteConfig.ExternalKakaoEnabled, false)
 		e["kakao"] = p
@@ -1236,6 +1265,7 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalKeycloakSecret, "")
 			}
 			p.Url = ValOrDefault(remoteConfig.ExternalKeycloakUrl, "")
+			p.EmailOptional = ValOrDefault(remoteConfig.ExternalKeycloakEmailOptional, false)
 		}
 		p.Enabled = ValOrDefault(remoteConfig.ExternalKeycloakEnabled, false)
 		e["keycloak"] = p
@@ -1247,6 +1277,7 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if len(p.Secret.SHA256) > 0 {
 				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalLinkedinOidcSecret, "")
 			}
+			p.EmailOptional = ValOrDefault(remoteConfig.ExternalLinkedinOidcEmailOptional, false)
 		}
 		p.Enabled = ValOrDefault(remoteConfig.ExternalLinkedinOidcEnabled, false)
 		e["linkedin_oidc"] = p
@@ -1258,6 +1289,7 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if len(p.Secret.SHA256) > 0 {
 				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalNotionSecret, "")
 			}
+			p.EmailOptional = ValOrDefault(remoteConfig.ExternalNotionEmailOptional, false)
 		}
 		p.Enabled = ValOrDefault(remoteConfig.ExternalNotionEnabled, false)
 		e["notion"] = p
@@ -1269,6 +1301,7 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if len(p.Secret.SHA256) > 0 {
 				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalSlackOidcSecret, "")
 			}
+			p.EmailOptional = ValOrDefault(remoteConfig.ExternalSlackOidcEmailOptional, false)
 		}
 		p.Enabled = ValOrDefault(remoteConfig.ExternalSlackOidcEnabled, false)
 		e["slack_oidc"] = p
@@ -1280,6 +1313,7 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if len(p.Secret.SHA256) > 0 {
 				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalSpotifySecret, "")
 			}
+			p.EmailOptional = ValOrDefault(remoteConfig.ExternalSpotifyEmailOptional, false)
 		}
 		p.Enabled = ValOrDefault(remoteConfig.ExternalSpotifyEnabled, false)
 		e["spotify"] = p
@@ -1291,6 +1325,7 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if len(p.Secret.SHA256) > 0 {
 				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalTwitchSecret, "")
 			}
+			p.EmailOptional = ValOrDefault(remoteConfig.ExternalTwitchEmailOptional, false)
 		}
 		p.Enabled = ValOrDefault(remoteConfig.ExternalTwitchEnabled, false)
 		e["twitch"] = p
@@ -1302,6 +1337,7 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if len(p.Secret.SHA256) > 0 {
 				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalTwitterSecret, "")
 			}
+			p.EmailOptional = ValOrDefault(remoteConfig.ExternalTwitterEmailOptional, false)
 		}
 		p.Enabled = ValOrDefault(remoteConfig.ExternalTwitterEnabled, false)
 		e["twitter"] = p
@@ -1325,6 +1361,7 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if len(p.Secret.SHA256) > 0 {
 				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalZoomSecret, "")
 			}
+			p.EmailOptional = ValOrDefault(remoteConfig.ExternalZoomEmailOptional, false)
 		}
 		p.Enabled = ValOrDefault(remoteConfig.ExternalZoomEnabled, false)
 		e["zoom"] = p

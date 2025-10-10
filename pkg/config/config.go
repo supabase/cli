@@ -28,7 +28,6 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/joho/godotenv"
-	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/fetcher"
@@ -1428,7 +1427,7 @@ type (
 // ResolveJWKS creates the JWKS from the JWT secret and Third-Party Auth
 // configs by resolving the JWKS via the OIDC discovery URL.
 // It always returns a JWKS string, except when there's an error fetching.
-func (a *auth) ResolveJWKS(ctx context.Context, fsys afero.Fs) (string, error) {
+func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 	var jwks remoteJWKS
 
 	if issuerURL := a.ThirdParty.IssuerURL(); issuerURL != "" {

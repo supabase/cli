@@ -33,10 +33,10 @@ updates:
     directory: "pkg/config/templates"
     schedule:
       interval: "daily"
+    commit-message:
+      prefix: "fix(docker): "
     groups:
       docker-minor:
-        exclude-patterns:
-          - supabase/logflare
         update-types:
           - minor
           - patch

@@ -160,6 +160,7 @@ EOF
 ` + utils.Config.Db.RootKey.Value + `
 EOF
 ` + utils.Config.Db.Settings.ToPostgresConfig() + `
+cron.launch_active_jobs = off
 EOF`}
 		if !filepath.IsAbs(fromBackup) {
 			fromBackup = filepath.Join(utils.CurrentDirAbs, fromBackup)
@@ -180,15 +181,12 @@ EOF`}
 	if _, err := utils.DockerStart(ctx, config, hostConfig, networkingConfig, utils.DbId); err != nil {
 		return err
 	}
-	if err := WaitForHealthyService(ctx, HealthTimeout, utils.DbId); err != nil {
+	// Ignore health check because restoring a large backup may take longer than 2 minutes
+	if err := WaitForHealthyService(ctx, HealthTimeout, utils.DbId); err != nil && len(fromBackup) == 0 {
 		return err
 	}
 	// Initialize if we are on PG14 and there's no existing db volume
-	if len(fromBackup) > 0 {
-		if err := initSchema15(ctx, utils.DbId); err != nil {
-			return err
-		}
-	} else if utils.NoBackupVolume {
+	if utils.NoBackupVolume && len(fromBackup) == 0 {
 		if err := SetupLocalDatabase(ctx, "", fsys, w, options...); err != nil {
 			return err
 		}
@@ -272,18 +270,19 @@ func InitSchema14(ctx context.Context, conn *pgx.Conn) error {
 	return file.ExecBatch(ctx, conn)
 }
 
-func initRealtimeJob(host string) utils.DockerJob {
+func initRealtimeJob(host, jwks string) utils.DockerJob {
 	return utils.DockerJob{
 		Image: utils.Config.Realtime.Image,
 		Env: []string{
 			"PORT=4000",
 			"DB_HOST=" + host,
 			"DB_PORT=5432",
-			"DB_USER=supabase_admin",
+			"DB_USER=" + utils.SUPERUSER_ROLE,
 			"DB_PASSWORD=" + utils.Config.Db.Password,
 			"DB_NAME=postgres",
 			"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
 			"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
+			fmt.Sprintf("API_JWT_JWKS=%s", jwks),
 			"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
 			"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
 			"APP_NAME=realtime",
@@ -341,7 +340,11 @@ func initSchema15(ctx context.Context, host string) error {
 	// Apply service migrations
 	var initJobs []utils.DockerJob
 	if utils.Config.Realtime.Enabled {
-		initJobs = append(initJobs, initRealtimeJob(host))
+		jwks, err := utils.Config.Auth.ResolveJWKS(context.Background())
+		if err != nil {
+			return err
+		}
+		initJobs = append(initJobs, initRealtimeJob(host, jwks))
 	}
 	if utils.Config.Storage.Enabled {
 		initJobs = append(initJobs, initStorageJob(host))

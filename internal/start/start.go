@@ -87,6 +87,7 @@ type kongConfig struct {
 	ApiHost       string
 	ApiPort       uint16
 	BearerToken   string
+	QueryToken    string
 }
 
 var (
@@ -145,7 +146,7 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 		excluded[name] = true
 	}
 
-	jwks, err := utils.Config.Auth.ResolveJWKS(ctx, fsys)
+	jwks, err := utils.Config.Auth.ResolveJWKS(ctx)
 	if err != nil {
 		return err
 	}
@@ -170,7 +171,7 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 			"DB_HOSTNAME=" + dbConfig.Host,
 			fmt.Sprintf("DB_PORT=%d", dbConfig.Port),
 			"DB_SCHEMA=_analytics",
-			"DB_USERNAME=supabase_admin",
+			"DB_USERNAME=" + utils.SUPERUSER_ROLE,
 			"DB_PASSWORD=" + dbConfig.Password,
 			"LOGFLARE_MIN_CLUSTER_SIZE=1",
 			"LOGFLARE_SINGLE_TENANT=true",
@@ -357,6 +358,13 @@ EOF
 				// Finally, the apikey header may be set to a legacy JWT. In that case, we want to copy
 				// it to Authorization header for backwards compatibility.
 				`$((function() return (headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) or (headers.apikey == '%s' and 'Bearer %s') or (headers.apikey == '%s' and 'Bearer %s') or headers.apikey end)())`,
+				utils.Config.Auth.SecretKey.Value,
+				utils.Config.Auth.ServiceRoleKey.Value,
+				utils.Config.Auth.PublishableKey.Value,
+				utils.Config.Auth.AnonKey.Value,
+			),
+			QueryToken: fmt.Sprintf(
+				`$((function() return (query_params.apikey == '%s' and '%s') or (query_params.apikey == '%s' and '%s') or query_params.apikey end)())`,
 				utils.Config.Auth.SecretKey.Value,
 				utils.Config.Auth.ServiceRoleKey.Value,
 				utils.Config.Auth.PublishableKey.Value,
@@ -685,6 +693,7 @@ EOF
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_CLIENT_ID=%s", strings.ToUpper(name), config.ClientId),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SECRET=%s", strings.ToUpper(name), config.Secret.Value),
 				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SKIP_NONCE_CHECK=%t", strings.ToUpper(name), config.SkipNonceCheck),
+				fmt.Sprintf("GOTRUE_EXTERNAL_%s_EMAIL_OPTIONAL=%t", strings.ToUpper(name), config.EmailOptional),
 			)
 
 			redirectUri := config.RedirectUri
@@ -790,7 +799,7 @@ EOF
 					"PORT=4000",
 					"DB_HOST=" + dbConfig.Host,
 					fmt.Sprintf("DB_PORT=%d", dbConfig.Port),
-					"DB_USER=supabase_admin",
+					"DB_USER=" + utils.SUPERUSER_ROLE,
 					"DB_PASSWORD=" + dbConfig.Password,
 					"DB_NAME=" + dbConfig.Database,
 					"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",

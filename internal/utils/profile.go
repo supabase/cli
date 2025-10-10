@@ -43,10 +43,9 @@ var allProfiles = []Profile{{
 var CurrentProfile Profile
 
 func LoadProfile(ctx context.Context, fsys afero.Fs) error {
-	prof := viper.GetString("PROFILE")
+	prof := getProfileName(fsys)
 	for _, p := range allProfiles {
 		if strings.EqualFold(p.Name, prof) {
-			fmt.Fprintln(GetDebugLogger(), "Using project host:", p.ProjectHost)
 			CurrentProfile = p
 			return nil
 		}
@@ -67,4 +66,18 @@ func LoadProfile(ctx context.Context, fsys afero.Fs) error {
 		return errors.Errorf("invalid profile: %w", err)
 	}
 	return nil
+}
+
+func getProfileName(fsys afero.Fs) string {
+	debuglogger := GetDebugLogger()
+	if prof := viper.GetString("PROFILE"); viper.IsSet("PROFILE") {
+		fmt.Fprintln(debuglogger, "Loading profile from flag:", prof)
+		return prof
+	} else if content, err := afero.ReadFile(fsys, ProfilePath); err == nil {
+		fmt.Fprintln(debuglogger, "Loading profile from file:", ProfilePath)
+		return string(content)
+	} else {
+		fmt.Fprintln(debuglogger, err)
+		return prof
+	}
 }
