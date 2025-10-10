@@ -657,12 +657,6 @@ const (
 	RefreshToken      OAuthTokenBodyGrantType = "refresh_token"
 )
 
-// Defines values for OAuthTokenBodyResource.
-const (
-	OAuthTokenBodyResourceHttpsapiSupabaseGreenmcp OAuthTokenBodyResource = "https://api.supabase.green/mcp"
-	OAuthTokenBodyResourceHttpsmcpSupabaseGreenmcp OAuthTokenBodyResource = "https://mcp.supabase.green/mcp"
-)
-
 // Defines values for OAuthTokenResponseTokenType.
 const (
 	Bearer OAuthTokenResponseTokenType = "Bearer"
@@ -1230,12 +1224,6 @@ const (
 	V1AuthorizeUserParamsCodeChallengeMethodPlain  V1AuthorizeUserParamsCodeChallengeMethod = "plain"
 	V1AuthorizeUserParamsCodeChallengeMethodS256   V1AuthorizeUserParamsCodeChallengeMethod = "S256"
 	V1AuthorizeUserParamsCodeChallengeMethodSha256 V1AuthorizeUserParamsCodeChallengeMethod = "sha256"
-)
-
-// Defines values for V1AuthorizeUserParamsResource.
-const (
-	V1AuthorizeUserParamsResourceHttpsapiSupabaseGreenmcp V1AuthorizeUserParamsResource = "https://api.supabase.green/mcp"
-	V1AuthorizeUserParamsResourceHttpsmcpSupabaseGreenmcp V1AuthorizeUserParamsResource = "https://mcp.supabase.green/mcp"
 )
 
 // Defines values for V1OauthAuthorizeProjectClaimParamsResponseType.
@@ -2569,14 +2557,12 @@ type OAuthTokenBody struct {
 	RefreshToken *string                  `json:"refresh_token,omitempty"`
 
 	// Resource Resource indicator for MCP (Model Context Protocol) clients
-	Resource *OAuthTokenBodyResource `json:"resource,omitempty"`
+	Resource *string `json:"resource,omitempty"`
+	Scope    *string `json:"scope,omitempty"`
 }
 
 // OAuthTokenBodyGrantType defines model for OAuthTokenBody.GrantType.
 type OAuthTokenBodyGrantType string
-
-// OAuthTokenBodyResource Resource indicator for MCP (Model Context Protocol) clients
-type OAuthTokenBodyResource string
 
 // OAuthTokenResponse defines model for OAuthTokenResponse.
 type OAuthTokenResponse struct {
@@ -2607,12 +2593,10 @@ type OrganizationProjectClaimResponse struct {
 			Limit float32 `json:"limit"`
 			Name  string  `json:"name"`
 		} `json:"members_exceeding_free_project_limit"`
-		SourceSubscriptionPlan                OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan                    `json:"source_subscription_plan"`
-		TargetOrganizationEligible            nullable.Nullable[bool]                                                          `json:"target_organization_eligible"`
-		TargetOrganizationHasFreeProjectSlots nullable.Nullable[bool]                                                          `json:"target_organization_has_free_project_slots"`
-		TargetSubscriptionPlan                nullable.Nullable[OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan] `json:"target_subscription_plan"`
-		Valid                                 bool                                                                             `json:"valid"`
-		Warnings                              []struct {
+		SourceSubscriptionPlan OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan                    `json:"source_subscription_plan"`
+		TargetSubscriptionPlan nullable.Nullable[OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan] `json:"target_subscription_plan"`
+		Valid                  bool                                                                             `json:"valid"`
+		Warnings               []struct {
 			Key     string `json:"key"`
 			Message string `json:"message"`
 		} `json:"warnings"`
@@ -3871,7 +3855,7 @@ type V1AuthorizeUserParams struct {
 	OrganizationSlug *string `form:"organization_slug,omitempty" json:"organization_slug,omitempty"`
 
 	// Resource Resource indicator for MCP (Model Context Protocol) clients
-	Resource *V1AuthorizeUserParamsResource `form:"resource,omitempty" json:"resource,omitempty"`
+	Resource *string `form:"resource,omitempty" json:"resource,omitempty"`
 }
 
 // V1AuthorizeUserParamsResponseType defines parameters for V1AuthorizeUser.
@@ -3879,9 +3863,6 @@ type V1AuthorizeUserParamsResponseType string
 
 // V1AuthorizeUserParamsCodeChallengeMethod defines parameters for V1AuthorizeUser.
 type V1AuthorizeUserParamsCodeChallengeMethod string
-
-// V1AuthorizeUserParamsResource defines parameters for V1AuthorizeUser.
-type V1AuthorizeUserParamsResource string
 
 // V1OauthAuthorizeProjectClaimParams defines parameters for V1OauthAuthorizeProjectClaim.
 type V1OauthAuthorizeProjectClaimParams struct {
