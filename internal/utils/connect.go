@@ -182,5 +182,5 @@ func ConnectByConfig(ctx context.Context, config pgconn.Config, options ...func(
 }
 
 func IsLocalDatabase(config pgconn.Config) bool {
-	return config.Host == Config.Hostname && config.Port == Config.Db.Port
+	return config.Host == Config.Hostname && (config.Port == Config.Db.Port || config.Port == Config.Db.ShadowPort)
 }
