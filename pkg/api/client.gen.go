@@ -163,6 +163,9 @@ type ClientInterface interface {
 
 	V1CreateAProject(ctx context.Context, body V1CreateAProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1GetAvailableRegions request
+	V1GetAvailableRegions(ctx context.Context, params *V1GetAvailableRegionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1DeleteAProject request
 	V1DeleteAProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -923,6 +926,18 @@ func (c *Client) V1CreateAProjectWithBody(ctx context.Context, contentType strin
 
 func (c *Client) V1CreateAProject(ctx context.Context, body V1CreateAProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1CreateAProjectRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetAvailableRegions(ctx context.Context, params *V1GetAvailableRegionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetAvailableRegionsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3865,6 +3880,67 @@ func NewV1CreateAProjectRequestWithBody(server string, contentType string, body 
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1GetAvailableRegionsRequest generates requests for V1GetAvailableRegions
+func NewV1GetAvailableRegionsRequest(server string, params *V1GetAvailableRegionsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/available-regions")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "organization_slug", runtime.ParamLocationQuery, params.OrganizationSlug); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		if params.Continent != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "continent", runtime.ParamLocationQuery, *params.Continent); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -9579,6 +9655,9 @@ type ClientWithResponsesInterface interface {
 
 	V1CreateAProjectWithResponse(ctx context.Context, body V1CreateAProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateAProjectResponse, error)
 
+	// V1GetAvailableRegionsWithResponse request
+	V1GetAvailableRegionsWithResponse(ctx context.Context, params *V1GetAvailableRegionsParams, reqEditors ...RequestEditorFn) (*V1GetAvailableRegionsResponse, error)
+
 	// V1DeleteAProjectWithResponse request
 	V1DeleteAProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteAProjectResponse, error)
 
@@ -10432,6 +10511,28 @@ func (r V1CreateAProjectResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1CreateAProjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetAvailableRegionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *RegionsInfo
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetAvailableRegionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetAvailableRegionsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -13309,6 +13410,15 @@ func (c *ClientWithResponses) V1CreateAProjectWithResponse(ctx context.Context, 
 	return ParseV1CreateAProjectResponse(rsp)
 }
 
+// V1GetAvailableRegionsWithResponse request returning *V1GetAvailableRegionsResponse
+func (c *ClientWithResponses) V1GetAvailableRegionsWithResponse(ctx context.Context, params *V1GetAvailableRegionsParams, reqEditors ...RequestEditorFn) (*V1GetAvailableRegionsResponse, error) {
+	rsp, err := c.V1GetAvailableRegions(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetAvailableRegionsResponse(rsp)
+}
+
 // V1DeleteAProjectWithResponse request returning *V1DeleteAProjectResponse
 func (c *ClientWithResponses) V1DeleteAProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteAProjectResponse, error) {
 	rsp, err := c.V1DeleteAProject(ctx, ref, reqEditors...)
@@ -15158,6 +15268,32 @@ func ParseV1CreateAProjectResponse(rsp *http.Response) (*V1CreateAProjectRespons
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetAvailableRegionsResponse parses an HTTP response from a V1GetAvailableRegionsWithResponse call
+func ParseV1GetAvailableRegionsResponse(rsp *http.Response) (*V1GetAvailableRegionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetAvailableRegionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RegionsInfo
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	}
 
