@@ -38,6 +38,12 @@ var allProfiles = []Profile{{
 	DashboardURL: "http://localhost:8082",
 	DocsURL:      "https://supabase.com/docs",
 	ProjectHost:  "supabase.red",
+}, {
+	Name:         "placeholder",
+	APIURL:       "https://cloudapi.placeholder.com",
+	DashboardURL: "https://cloud.placeholder.com/dashboard",
+	DocsURL:      "https://cloud.placeholder.com/docs",
+	ProjectHost:  "placeholdercloud.dev",
 }}
 
 var CurrentProfile Profile
