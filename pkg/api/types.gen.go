@@ -697,11 +697,11 @@ const (
 
 // Defines values for ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion.
 const (
-	N13       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "13"
-	N14       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "14"
-	N15       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "15"
-	N17       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "17"
-	N17Oriole ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "17-oriole"
+	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersionN13       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "13"
+	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersionN14       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "14"
+	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersionN15       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "15"
+	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersionN17       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "17"
+	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersionN17Oriole ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "17-oriole"
 )
 
 // Defines values for ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel.
@@ -712,6 +712,68 @@ const (
 	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelInternal  ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel = "internal"
 	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelPreview   ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel = "preview"
 	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelWithdrawn ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel = "withdrawn"
+)
+
+// Defines values for RegionsInfoAllSmartGroupCode.
+const (
+	RegionsInfoAllSmartGroupCodeAmericas RegionsInfoAllSmartGroupCode = "americas"
+	RegionsInfoAllSmartGroupCodeApac     RegionsInfoAllSmartGroupCode = "apac"
+	RegionsInfoAllSmartGroupCodeEmea     RegionsInfoAllSmartGroupCode = "emea"
+)
+
+// Defines values for RegionsInfoAllSmartGroupType.
+const (
+	RegionsInfoAllSmartGroupTypeSmartGroup RegionsInfoAllSmartGroupType = "smartGroup"
+)
+
+// Defines values for RegionsInfoAllSpecificProvider.
+const (
+	RegionsInfoAllSpecificProviderAWS       RegionsInfoAllSpecificProvider = "AWS"
+	RegionsInfoAllSpecificProviderAWSK8S    RegionsInfoAllSpecificProvider = "AWS_K8S"
+	RegionsInfoAllSpecificProviderAWSNIMBUS RegionsInfoAllSpecificProvider = "AWS_NIMBUS"
+	RegionsInfoAllSpecificProviderFLY       RegionsInfoAllSpecificProvider = "FLY"
+)
+
+// Defines values for RegionsInfoAllSpecificStatus.
+const (
+	RegionsInfoAllSpecificStatusCapacity RegionsInfoAllSpecificStatus = "capacity"
+	RegionsInfoAllSpecificStatusOther    RegionsInfoAllSpecificStatus = "other"
+)
+
+// Defines values for RegionsInfoAllSpecificType.
+const (
+	RegionsInfoAllSpecificTypeSpecific RegionsInfoAllSpecificType = "specific"
+)
+
+// Defines values for RegionsInfoRecommendationsSmartGroupCode.
+const (
+	RegionsInfoRecommendationsSmartGroupCodeAmericas RegionsInfoRecommendationsSmartGroupCode = "americas"
+	RegionsInfoRecommendationsSmartGroupCodeApac     RegionsInfoRecommendationsSmartGroupCode = "apac"
+	RegionsInfoRecommendationsSmartGroupCodeEmea     RegionsInfoRecommendationsSmartGroupCode = "emea"
+)
+
+// Defines values for RegionsInfoRecommendationsSmartGroupType.
+const (
+	RegionsInfoRecommendationsSmartGroupTypeSmartGroup RegionsInfoRecommendationsSmartGroupType = "smartGroup"
+)
+
+// Defines values for RegionsInfoRecommendationsSpecificProvider.
+const (
+	RegionsInfoRecommendationsSpecificProviderAWS       RegionsInfoRecommendationsSpecificProvider = "AWS"
+	RegionsInfoRecommendationsSpecificProviderAWSK8S    RegionsInfoRecommendationsSpecificProvider = "AWS_K8S"
+	RegionsInfoRecommendationsSpecificProviderAWSNIMBUS RegionsInfoRecommendationsSpecificProvider = "AWS_NIMBUS"
+	RegionsInfoRecommendationsSpecificProviderFLY       RegionsInfoRecommendationsSpecificProvider = "FLY"
+)
+
+// Defines values for RegionsInfoRecommendationsSpecificStatus.
+const (
+	RegionsInfoRecommendationsSpecificStatusCapacity RegionsInfoRecommendationsSpecificStatus = "capacity"
+	RegionsInfoRecommendationsSpecificStatusOther    RegionsInfoRecommendationsSpecificStatus = "other"
+)
+
+// Defines values for RegionsInfoRecommendationsSpecificType.
+const (
+	RegionsInfoRecommendationsSpecificTypeSpecific RegionsInfoRecommendationsSpecificType = "specific"
 )
 
 // Defines values for SetUpReadReplicaBodyReadReplicaRegion.
@@ -1021,6 +1083,13 @@ const (
 	V1CreateProjectBodyPlanPro  V1CreateProjectBodyPlan = "pro"
 )
 
+// Defines values for V1CreateProjectBodyPostgresEngine.
+const (
+	V1CreateProjectBodyPostgresEngineN15       V1CreateProjectBodyPostgresEngine = "15"
+	V1CreateProjectBodyPostgresEngineN17       V1CreateProjectBodyPostgresEngine = "17"
+	V1CreateProjectBodyPostgresEngineN17Oriole V1CreateProjectBodyPostgresEngine = "17-oriole"
+)
+
 // Defines values for V1CreateProjectBodyRegion.
 const (
 	V1CreateProjectBodyRegionApEast1      V1CreateProjectBodyRegion = "ap-east-1"
@@ -1043,14 +1112,63 @@ const (
 	V1CreateProjectBodyRegionUsWest2      V1CreateProjectBodyRegion = "us-west-2"
 )
 
+// Defines values for V1CreateProjectBodyRegionSelection0Code.
+const (
+	ApEast1      V1CreateProjectBodyRegionSelection0Code = "ap-east-1"
+	ApNortheast1 V1CreateProjectBodyRegionSelection0Code = "ap-northeast-1"
+	ApNortheast2 V1CreateProjectBodyRegionSelection0Code = "ap-northeast-2"
+	ApSouth1     V1CreateProjectBodyRegionSelection0Code = "ap-south-1"
+	ApSoutheast1 V1CreateProjectBodyRegionSelection0Code = "ap-southeast-1"
+	ApSoutheast2 V1CreateProjectBodyRegionSelection0Code = "ap-southeast-2"
+	CaCentral1   V1CreateProjectBodyRegionSelection0Code = "ca-central-1"
+	EuCentral1   V1CreateProjectBodyRegionSelection0Code = "eu-central-1"
+	EuCentral2   V1CreateProjectBodyRegionSelection0Code = "eu-central-2"
+	EuNorth1     V1CreateProjectBodyRegionSelection0Code = "eu-north-1"
+	EuWest1      V1CreateProjectBodyRegionSelection0Code = "eu-west-1"
+	EuWest2      V1CreateProjectBodyRegionSelection0Code = "eu-west-2"
+	EuWest3      V1CreateProjectBodyRegionSelection0Code = "eu-west-3"
+	SaEast1      V1CreateProjectBodyRegionSelection0Code = "sa-east-1"
+	UsEast1      V1CreateProjectBodyRegionSelection0Code = "us-east-1"
+	UsEast2      V1CreateProjectBodyRegionSelection0Code = "us-east-2"
+	UsWest1      V1CreateProjectBodyRegionSelection0Code = "us-west-1"
+	UsWest2      V1CreateProjectBodyRegionSelection0Code = "us-west-2"
+)
+
+// Defines values for V1CreateProjectBodyRegionSelection0Type.
+const (
+	Specific V1CreateProjectBodyRegionSelection0Type = "specific"
+)
+
+// Defines values for V1CreateProjectBodyRegionSelection1Code.
+const (
+	Americas V1CreateProjectBodyRegionSelection1Code = "americas"
+	Apac     V1CreateProjectBodyRegionSelection1Code = "apac"
+	Emea     V1CreateProjectBodyRegionSelection1Code = "emea"
+)
+
+// Defines values for V1CreateProjectBodyRegionSelection1Type.
+const (
+	SmartGroup V1CreateProjectBodyRegionSelection1Type = "smartGroup"
+)
+
+// Defines values for V1CreateProjectBodyReleaseChannel.
+const (
+	V1CreateProjectBodyReleaseChannelAlpha     V1CreateProjectBodyReleaseChannel = "alpha"
+	V1CreateProjectBodyReleaseChannelBeta      V1CreateProjectBodyReleaseChannel = "beta"
+	V1CreateProjectBodyReleaseChannelGa        V1CreateProjectBodyReleaseChannel = "ga"
+	V1CreateProjectBodyReleaseChannelInternal  V1CreateProjectBodyReleaseChannel = "internal"
+	V1CreateProjectBodyReleaseChannelPreview   V1CreateProjectBodyReleaseChannel = "preview"
+	V1CreateProjectBodyReleaseChannelWithdrawn V1CreateProjectBodyReleaseChannel = "withdrawn"
+)
+
 // Defines values for V1OrganizationSlugResponseAllowedReleaseChannels.
 const (
-	V1OrganizationSlugResponseAllowedReleaseChannelsAlpha     V1OrganizationSlugResponseAllowedReleaseChannels = "alpha"
-	V1OrganizationSlugResponseAllowedReleaseChannelsBeta      V1OrganizationSlugResponseAllowedReleaseChannels = "beta"
-	V1OrganizationSlugResponseAllowedReleaseChannelsGa        V1OrganizationSlugResponseAllowedReleaseChannels = "ga"
-	V1OrganizationSlugResponseAllowedReleaseChannelsInternal  V1OrganizationSlugResponseAllowedReleaseChannels = "internal"
-	V1OrganizationSlugResponseAllowedReleaseChannelsPreview   V1OrganizationSlugResponseAllowedReleaseChannels = "preview"
-	V1OrganizationSlugResponseAllowedReleaseChannelsWithdrawn V1OrganizationSlugResponseAllowedReleaseChannels = "withdrawn"
+	Alpha     V1OrganizationSlugResponseAllowedReleaseChannels = "alpha"
+	Beta      V1OrganizationSlugResponseAllowedReleaseChannels = "beta"
+	Ga        V1OrganizationSlugResponseAllowedReleaseChannels = "ga"
+	Internal  V1OrganizationSlugResponseAllowedReleaseChannels = "internal"
+	Preview   V1OrganizationSlugResponseAllowedReleaseChannels = "preview"
+	Withdrawn V1OrganizationSlugResponseAllowedReleaseChannels = "withdrawn"
 )
 
 // Defines values for V1OrganizationSlugResponseOptInTags.
@@ -1238,6 +1356,17 @@ const (
 	V1OauthAuthorizeProjectClaimParamsCodeChallengeMethodPlain  V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod = "plain"
 	V1OauthAuthorizeProjectClaimParamsCodeChallengeMethodS256   V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod = "S256"
 	V1OauthAuthorizeProjectClaimParamsCodeChallengeMethodSha256 V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod = "sha256"
+)
+
+// Defines values for V1GetAvailableRegionsParamsContinent.
+const (
+	AF V1GetAvailableRegionsParamsContinent = "AF"
+	AN V1GetAvailableRegionsParamsContinent = "AN"
+	AS V1GetAvailableRegionsParamsContinent = "AS"
+	EU V1GetAvailableRegionsParamsContinent = "EU"
+	NA V1GetAvailableRegionsParamsContinent = "NA"
+	OC V1GetAvailableRegionsParamsContinent = "OC"
+	SA V1GetAvailableRegionsParamsContinent = "SA"
 )
 
 // Defines values for V1GetSecurityAdvisorsParamsLintType.
@@ -2712,6 +2841,68 @@ type ReadOnlyStatusResponse struct {
 	OverrideEnabled     bool   `json:"override_enabled"`
 }
 
+// RegionsInfo defines model for RegionsInfo.
+type RegionsInfo struct {
+	All struct {
+		SmartGroup []struct {
+			Code RegionsInfoAllSmartGroupCode `json:"code"`
+			Name string                       `json:"name"`
+			Type RegionsInfoAllSmartGroupType `json:"type"`
+		} `json:"smartGroup"`
+		Specific []struct {
+			Code     string                         `json:"code"`
+			Name     string                         `json:"name"`
+			Provider RegionsInfoAllSpecificProvider `json:"provider"`
+			Status   *RegionsInfoAllSpecificStatus  `json:"status,omitempty"`
+			Type     RegionsInfoAllSpecificType     `json:"type"`
+		} `json:"specific"`
+	} `json:"all"`
+	Recommendations struct {
+		SmartGroup struct {
+			Code RegionsInfoRecommendationsSmartGroupCode `json:"code"`
+			Name string                                   `json:"name"`
+			Type RegionsInfoRecommendationsSmartGroupType `json:"type"`
+		} `json:"smartGroup"`
+		Specific []struct {
+			Code     string                                     `json:"code"`
+			Name     string                                     `json:"name"`
+			Provider RegionsInfoRecommendationsSpecificProvider `json:"provider"`
+			Status   *RegionsInfoRecommendationsSpecificStatus  `json:"status,omitempty"`
+			Type     RegionsInfoRecommendationsSpecificType     `json:"type"`
+		} `json:"specific"`
+	} `json:"recommendations"`
+}
+
+// RegionsInfoAllSmartGroupCode defines model for RegionsInfo.All.SmartGroup.Code.
+type RegionsInfoAllSmartGroupCode string
+
+// RegionsInfoAllSmartGroupType defines model for RegionsInfo.All.SmartGroup.Type.
+type RegionsInfoAllSmartGroupType string
+
+// RegionsInfoAllSpecificProvider defines model for RegionsInfo.All.Specific.Provider.
+type RegionsInfoAllSpecificProvider string
+
+// RegionsInfoAllSpecificStatus defines model for RegionsInfo.All.Specific.Status.
+type RegionsInfoAllSpecificStatus string
+
+// RegionsInfoAllSpecificType defines model for RegionsInfo.All.Specific.Type.
+type RegionsInfoAllSpecificType string
+
+// RegionsInfoRecommendationsSmartGroupCode defines model for RegionsInfo.Recommendations.SmartGroup.Code.
+type RegionsInfoRecommendationsSmartGroupCode string
+
+// RegionsInfoRecommendationsSmartGroupType defines model for RegionsInfo.Recommendations.SmartGroup.Type.
+type RegionsInfoRecommendationsSmartGroupType string
+
+// RegionsInfoRecommendationsSpecificProvider defines model for RegionsInfo.Recommendations.Specific.Provider.
+type RegionsInfoRecommendationsSpecificProvider string
+
+// RegionsInfoRecommendationsSpecificStatus defines model for RegionsInfo.Recommendations.Specific.Status.
+type RegionsInfoRecommendationsSpecificStatus string
+
+// RegionsInfoRecommendationsSpecificType defines model for RegionsInfo.Recommendations.Specific.Type.
+type RegionsInfoRecommendationsSpecificType string
+
 // RemoveNetworkBanRequest defines model for RemoveNetworkBanRequest.
 type RemoveNetworkBanRequest struct {
 	Identifier *string `json:"identifier,omitempty"`
@@ -3482,8 +3673,20 @@ type V1CreateProjectBody struct {
 	// Deprecated:
 	Plan *V1CreateProjectBodyPlan `json:"plan,omitempty"`
 
-	// Region Region you want your server to reside in
-	Region V1CreateProjectBodyRegion `json:"region"`
+	// PostgresEngine Postgres engine version. If not provided, the latest version will be used.
+	// Deprecated:
+	PostgresEngine *V1CreateProjectBodyPostgresEngine `json:"postgres_engine,omitempty"`
+
+	// Region Region you want your server to reside in. Use region_selection instead.
+	// Deprecated:
+	Region *V1CreateProjectBodyRegion `json:"region,omitempty"`
+
+	// RegionSelection Region selection. Only one of region or region_selection can be specified.
+	RegionSelection *V1CreateProjectBody_RegionSelection `json:"region_selection,omitempty"`
+
+	// ReleaseChannel Release channel. If not provided, GA will be used.
+	// Deprecated:
+	ReleaseChannel *V1CreateProjectBodyReleaseChannel `json:"release_channel,omitempty"`
 
 	// TemplateUrl Template URL used to create the project from the CLI.
 	TemplateUrl *string `json:"template_url,omitempty"`
@@ -3495,8 +3698,45 @@ type V1CreateProjectBodyDesiredInstanceSize string
 // V1CreateProjectBodyPlan Subscription Plan is now set on organization level and is ignored in this request
 type V1CreateProjectBodyPlan string
 
-// V1CreateProjectBodyRegion Region you want your server to reside in
+// V1CreateProjectBodyPostgresEngine Postgres engine version. If not provided, the latest version will be used.
+type V1CreateProjectBodyPostgresEngine string
+
+// V1CreateProjectBodyRegion Region you want your server to reside in. Use region_selection instead.
 type V1CreateProjectBodyRegion string
+
+// V1CreateProjectBodyRegionSelection0 defines model for .
+type V1CreateProjectBodyRegionSelection0 struct {
+	// Code Specific region code. The codes supported are not a stable API, and should be retrieved from the /available-regions endpoint.
+	Code V1CreateProjectBodyRegionSelection0Code `json:"code"`
+	Type V1CreateProjectBodyRegionSelection0Type `json:"type"`
+}
+
+// V1CreateProjectBodyRegionSelection0Code Specific region code. The codes supported are not a stable API, and should be retrieved from the /available-regions endpoint.
+type V1CreateProjectBodyRegionSelection0Code string
+
+// V1CreateProjectBodyRegionSelection0Type defines model for V1CreateProjectBody.RegionSelection.0.Type.
+type V1CreateProjectBodyRegionSelection0Type string
+
+// V1CreateProjectBodyRegionSelection1 defines model for .
+type V1CreateProjectBodyRegionSelection1 struct {
+	// Code The Smart Region Group's code. The codes supported are not a stable API, and should be retrieved from the /available-regions endpoint.
+	Code V1CreateProjectBodyRegionSelection1Code `json:"code"`
+	Type V1CreateProjectBodyRegionSelection1Type `json:"type"`
+}
+
+// V1CreateProjectBodyRegionSelection1Code The Smart Region Group's code. The codes supported are not a stable API, and should be retrieved from the /available-regions endpoint.
+type V1CreateProjectBodyRegionSelection1Code string
+
+// V1CreateProjectBodyRegionSelection1Type defines model for V1CreateProjectBody.RegionSelection.1.Type.
+type V1CreateProjectBodyRegionSelection1Type string
+
+// V1CreateProjectBody_RegionSelection Region selection. Only one of region or region_selection can be specified.
+type V1CreateProjectBody_RegionSelection struct {
+	union json.RawMessage
+}
+
+// V1CreateProjectBodyReleaseChannel Release channel. If not provided, GA will be used.
+type V1CreateProjectBodyReleaseChannel string
 
 // V1GetUsageApiCountResponse defines model for V1GetUsageApiCountResponse.
 type V1GetUsageApiCountResponse struct {
@@ -3882,6 +4122,18 @@ type V1OauthAuthorizeProjectClaimParamsResponseType string
 
 // V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod defines parameters for V1OauthAuthorizeProjectClaim.
 type V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod string
+
+// V1GetAvailableRegionsParams defines parameters for V1GetAvailableRegions.
+type V1GetAvailableRegionsParams struct {
+	// OrganizationSlug Slug of your organization
+	OrganizationSlug string `form:"organization_slug" json:"organization_slug"`
+
+	// Continent Continent code to determine regional recommendations
+	Continent *V1GetAvailableRegionsParamsContinent `form:"continent,omitempty" json:"continent,omitempty"`
+}
+
+// V1GetAvailableRegionsParamsContinent defines parameters for V1GetAvailableRegions.
+type V1GetAvailableRegionsParamsContinent string
 
 // V1ListActionRunsParams defines parameters for V1ListActionRuns.
 type V1ListActionRunsParams struct {
@@ -5028,6 +5280,68 @@ func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) MarshalJSON() ([]by
 }
 
 func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsV1CreateProjectBodyRegionSelection0 returns the union data inside the V1CreateProjectBody_RegionSelection as a V1CreateProjectBodyRegionSelection0
+func (t V1CreateProjectBody_RegionSelection) AsV1CreateProjectBodyRegionSelection0() (V1CreateProjectBodyRegionSelection0, error) {
+	var body V1CreateProjectBodyRegionSelection0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromV1CreateProjectBodyRegionSelection0 overwrites any union data inside the V1CreateProjectBody_RegionSelection as the provided V1CreateProjectBodyRegionSelection0
+func (t *V1CreateProjectBody_RegionSelection) FromV1CreateProjectBodyRegionSelection0(v V1CreateProjectBodyRegionSelection0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeV1CreateProjectBodyRegionSelection0 performs a merge with any union data inside the V1CreateProjectBody_RegionSelection, using the provided V1CreateProjectBodyRegionSelection0
+func (t *V1CreateProjectBody_RegionSelection) MergeV1CreateProjectBodyRegionSelection0(v V1CreateProjectBodyRegionSelection0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsV1CreateProjectBodyRegionSelection1 returns the union data inside the V1CreateProjectBody_RegionSelection as a V1CreateProjectBodyRegionSelection1
+func (t V1CreateProjectBody_RegionSelection) AsV1CreateProjectBodyRegionSelection1() (V1CreateProjectBodyRegionSelection1, error) {
+	var body V1CreateProjectBodyRegionSelection1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromV1CreateProjectBodyRegionSelection1 overwrites any union data inside the V1CreateProjectBody_RegionSelection as the provided V1CreateProjectBodyRegionSelection1
+func (t *V1CreateProjectBody_RegionSelection) FromV1CreateProjectBodyRegionSelection1(v V1CreateProjectBodyRegionSelection1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeV1CreateProjectBodyRegionSelection1 performs a merge with any union data inside the V1CreateProjectBody_RegionSelection, using the provided V1CreateProjectBodyRegionSelection1
+func (t *V1CreateProjectBody_RegionSelection) MergeV1CreateProjectBodyRegionSelection1(v V1CreateProjectBodyRegionSelection1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t V1CreateProjectBody_RegionSelection) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *V1CreateProjectBody_RegionSelection) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
