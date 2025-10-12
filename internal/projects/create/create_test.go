@@ -11,6 +11,7 @@ import (
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
 )
 
 func TestProjectCreateCommand(t *testing.T) {
@@ -18,7 +19,7 @@ func TestProjectCreateCommand(t *testing.T) {
 		Name:           "Test Project",
 		OrganizationId: "combined-fuchsia-lion",
 		DbPass:         "redacted",
-		Region:         api.V1CreateProjectBodyRegionUsWest1,
+		Region:         cast.Ptr(api.V1CreateProjectBodyRegionUsWest1),
 	}
 
 	t.Run("creates a new project", func(t *testing.T) {
@@ -38,7 +39,7 @@ func TestProjectCreateCommand(t *testing.T) {
 				Id:             apitest.RandomProjectRef(),
 				OrganizationId: params.OrganizationId,
 				Name:           params.Name,
-				Region:         string(params.Region),
+				Region:         string(*params.Region),
 				CreatedAt:      "2022-04-25T02:14:55.906498Z",
 			})
 		// Run test

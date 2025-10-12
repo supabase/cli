@@ -74,11 +74,13 @@ func promptMissingParams(ctx context.Context, body *api.V1CreateProjectBody) err
 		}
 		fmt.Fprintln(os.Stderr, printKeyValue("Selected org-id", body.OrganizationId))
 	}
-	if len(body.Region) == 0 {
-		if body.Region, err = promptProjectRegion(ctx); err != nil {
+	if body.Region == nil || len(*body.Region) == 0 {
+		region, err := promptProjectRegion(ctx)
+		if err != nil {
 			return err
 		}
-		fmt.Fprintln(os.Stderr, printKeyValue("Selected region", string(body.Region)))
+		body.Region = &region
+		fmt.Fprintln(os.Stderr, printKeyValue("Selected region", string(region)))
 	}
 	if len(body.DbPass) == 0 {
 		body.DbPass = flags.PromptPassword(os.Stdin)

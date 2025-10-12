@@ -130,6 +130,9 @@ func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointPath, hostImpo
 	// Remove any duplicate mount points
 	for _, mod := range modules {
 		hostPath := strings.Split(mod, ":")[0]
+		if volName := filepath.VolumeName(mod); len(volName) > 0 {
+			hostPath = volName + strings.Split(strings.TrimPrefix(mod, volName), ":")[0]
+		}
 		if !strings.HasPrefix(hostPath, hostFuncDir) &&
 			(len(hostOutputDir) == 0 || !strings.HasPrefix(hostPath, hostOutputDir)) {
 			binds = append(binds, mod)

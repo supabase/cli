@@ -14,6 +14,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
 	"golang.org/x/term"
 )
 
@@ -78,7 +79,7 @@ var (
 				Name:           projectName,
 				OrganizationId: orgId,
 				DbPass:         dbPassword,
-				Region:         api.V1CreateProjectBodyRegion(region.Value),
+				Region:         cast.Ptr(api.V1CreateProjectBodyRegion(region.Value)),
 			}
 			if cmd.Flags().Changed("size") {
 				body.DesiredInstanceSize = (*api.V1CreateProjectBodyDesiredInstanceSize)(&size.Value)
