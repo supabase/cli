@@ -62,6 +62,11 @@ func ApplyMigrations(ctx context.Context, pending []string, conn *pgx.Conn, fsys
 	for _, path := range pending {
 		filename := filepath.Base(path)
 		fmt.Fprintf(os.Stderr, "Applying migration %s...\n", filename)
+		// Reset all connection settings that might have been modified by another statement on the same connection
+		// eg: `SELECT pg_catalog.set_config('search_path', '', false);`
+		if _, err := conn.Exec(ctx, "RESET ALL"); err != nil {
+			return errors.Errorf("failed to reset connection state: %v", err)
+		}
 		if migration, err := NewMigrationFromFile(path, fsys); err != nil {
 			return err
 		} else if err := migration.ExecBatch(ctx, conn); err != nil {

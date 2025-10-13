@@ -99,6 +99,8 @@ func TestMigrationPush(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		helper.MockMigrationHistory(conn).
+			Query("RESET ALL").
+			Reply("RESET").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", nil).
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "version" of relation "schema_migrations"`)
 		// Run test
@@ -121,6 +123,8 @@ func TestPushAll(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		helper.MockMigrationHistory(conn).
+			Query("RESET ALL").
+			Reply("RESET").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", nil).
 			Reply("INSERT 0 1")
 		// Run test
@@ -179,6 +183,8 @@ func TestPushAll(t *testing.T) {
 			Query(migration.SELECT_SEED_TABLE).
 			Reply("SELECT 0")
 		helper.MockMigrationHistory(conn).
+			Query("RESET ALL").
+			Reply("RESET").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", nil).
 			Reply("INSERT 0 1")
 		helper.MockSeedHistory(conn).

@@ -88,6 +88,8 @@ func TestResetRemote(t *testing.T) {
 		conn.Query(migration.DropObjects).
 			Reply("INSERT 0")
 		helper.MockMigrationHistory(conn).
+			Query("RESET ALL").
+			Reply("RESET").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "schema", nil).
 			Reply("INSERT 0 1")
 		// Run test
@@ -110,6 +112,8 @@ func TestResetRemote(t *testing.T) {
 		conn.Query(migration.DropObjects).
 			Reply("INSERT 0")
 		helper.MockMigrationHistory(conn).
+			Query("RESET ALL").
+			Reply("RESET").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "schema", nil).
 			Reply("INSERT 0 1")
 		utils.Config.Db.Seed.Enabled = false
