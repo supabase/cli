@@ -39,11 +39,11 @@ var allProfiles = []Profile{{
 	DocsURL:      "https://supabase.com/docs",
 	ProjectHost:  "supabase.red",
 }, {
-	Name:         "placeholder",
-	APIURL:       "https://cloudapi.placeholder.com",
-	DashboardURL: "https://cloud.placeholder.com/dashboard",
-	DocsURL:      "https://cloud.placeholder.com/docs",
-	ProjectHost:  "placeholdercloud.dev",
+	Name:         "snap",
+	APIURL:       "https://cloudapi.snap.com",
+	DashboardURL: "https://cloud.snap.com/dashboard",
+	DocsURL:      "https://cloud.snap.com/docs",
+	ProjectHost:  "snapcloud.dev",
 }}
 
 var CurrentProfile Profile
