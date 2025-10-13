@@ -27,6 +27,8 @@ func TestMigrateDatabase(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		helper.MockMigrationHistory(conn).
+			Query("RESET ALL").
+			Reply("RESET").
 			Query(sql).
 			Reply("CREATE SCHEMA").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", []string{sql}).
@@ -50,6 +52,8 @@ func TestMigrateDatabase(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		helper.MockMigrationHistory(conn).
+			Query("RESET ALL").
+			Reply("RESET").
 			Query(sql).
 			Reply("CREATE SCHEMA").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", []string{sql}).
