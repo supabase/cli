@@ -4135,7 +4135,7 @@ type V1GetAvailableRegionsParams struct {
 	// OrganizationSlug Slug of your organization
 	OrganizationSlug string `form:"organization_slug" json:"organization_slug"`
 
-	// Continent Continent code to determine regional recommendations
+	// Continent Continent code to determine regional recommendations: NA (North America), SA (South America), EU (Europe), AF (Africa), AS (Asia), OC (Oceania), AN (Antarctica)
 	Continent *V1GetAvailableRegionsParamsContinent `form:"continent,omitempty" json:"continent,omitempty"`
 }
 
