@@ -1837,6 +1837,7 @@ type BranchResponse struct {
 	// Deprecated:
 	LatestCheckRunId  *float32             `json:"latest_check_run_id,omitempty"`
 	Name              string               `json:"name"`
+	NotifyUrl         *string              `json:"notify_url,omitempty"`
 	ParentProjectRef  string               `json:"parent_project_ref"`
 	Persistent        bool                 `json:"persistent"`
 	PrNumber          *int32               `json:"pr_number,omitempty"`
@@ -1915,7 +1916,10 @@ type CreateBranchBody struct {
 	DesiredInstanceSize *CreateBranchBodyDesiredInstanceSize `json:"desired_instance_size,omitempty"`
 	GitBranch           *string                              `json:"git_branch,omitempty"`
 	IsDefault           *bool                                `json:"is_default,omitempty"`
-	Persistent          *bool                                `json:"persistent,omitempty"`
+
+	// NotifyUrl HTTP endpoint to receive branch status updates.
+	NotifyUrl  *string `json:"notify_url,omitempty"`
+	Persistent *bool   `json:"persistent,omitempty"`
 
 	// PostgresEngine Postgres engine version. If not provided, the latest version will be used.
 	PostgresEngine *CreateBranchBodyPostgresEngine `json:"postgres_engine,omitempty"`
@@ -3369,8 +3373,11 @@ type UpdateAuthConfigBodySmsProvider string
 
 // UpdateBranchBody defines model for UpdateBranchBody.
 type UpdateBranchBody struct {
-	BranchName    *string `json:"branch_name,omitempty"`
-	GitBranch     *string `json:"git_branch,omitempty"`
+	BranchName *string `json:"branch_name,omitempty"`
+	GitBranch  *string `json:"git_branch,omitempty"`
+
+	// NotifyUrl HTTP endpoint to receive branch status updates.
+	NotifyUrl     *string `json:"notify_url,omitempty"`
 	Persistent    *bool   `json:"persistent,omitempty"`
 	RequestReview *bool   `json:"request_review,omitempty"`
 
