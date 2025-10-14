@@ -34,9 +34,9 @@ func TestEncodeOutput(t *testing.T) {
 	})
 
 	t.Run("encodes json format", func(t *testing.T) {
-		input := map[string]interface{}{
+		input := map[string]any{
 			"name": "test",
-			"config": map[string]interface{}{
+			"config": map[string]any{
 				"port":    5432,
 				"enabled": true,
 			},
@@ -56,9 +56,9 @@ func TestEncodeOutput(t *testing.T) {
 	})
 
 	t.Run("encodes yaml format", func(t *testing.T) {
-		input := map[string]interface{}{
+		input := map[string]any{
 			"name": "test",
-			"config": map[string]interface{}{
+			"config": map[string]any{
 				"port":    5432,
 				"enabled": true,
 			},
@@ -75,9 +75,9 @@ name: test
 	})
 
 	t.Run("encodes toml format", func(t *testing.T) {
-		input := map[string]interface{}{
+		input := map[string]any{
 			"name": "test",
-			"config": map[string]interface{}{
+			"config": map[string]any{
 				"port":    5432,
 				"enabled": true,
 			},
@@ -101,9 +101,9 @@ name: test
 	})
 
 	t.Run("handles complex nested structures", func(t *testing.T) {
-		input := map[string]interface{}{
-			"database": map[string]interface{}{
-				"connections": []map[string]interface{}{
+		input := map[string]any{
+			"database": map[string]any{
+				"connections": []map[string]any{
 					{
 						"host": "localhost",
 						"port": 5432,
@@ -113,7 +113,7 @@ name: test
 						"port": 6543,
 					},
 				},
-				"settings": map[string]interface{}{
+				"settings": map[string]any{
 					"max_connections": 100,
 					"ssl_enabled":     true,
 				},

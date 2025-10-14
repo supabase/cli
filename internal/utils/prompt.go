@@ -113,10 +113,7 @@ func PromptChoice(ctx context.Context, title string, items []PromptItem, opts ..
 		listItems = append(listItems, v)
 	}
 	// Create list model
-	height := len(listItems) * 4
-	if height > 14 {
-		height = 14
-	}
+	height := min(len(listItems)*4, 14)
 	l := list.New(listItems, itemDelegate{}, 0, height)
 	l.Title = title
 	l.SetShowStatusBar(false)

@@ -99,7 +99,7 @@ func updateGitIgnore(ignorePath string, fsys afero.Fs) error {
 	return nil
 }
 
-type VSCodeSettings map[string]interface{}
+type VSCodeSettings map[string]any
 
 func loadUserSettings(path string, fsys afero.Fs) (VSCodeSettings, error) {
 	data, err := afero.ReadFile(fsys, path)

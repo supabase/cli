@@ -40,7 +40,7 @@ func TestMigrationsDown(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
-			Reply("SELECT 2", []interface{}{"20221201000000"}, []interface{}{"20221201000001"})
+			Reply("SELECT 2", []any{"20221201000000"}, []any{"20221201000001"})
 		// Run test
 		err := Run(context.Background(), 1, dbConfig, fsys, conn.Intercept)
 		// Check error
@@ -54,7 +54,7 @@ func TestMigrationsDown(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
-			Reply("SELECT 2", []interface{}{"20221201000000"}, []interface{}{"20221201000001"})
+			Reply("SELECT 2", []any{"20221201000000"}, []any{"20221201000001"})
 		// Run test
 		err := Run(context.Background(), 2, dbConfig, fsys, conn.Intercept)
 		// Check error

@@ -224,7 +224,7 @@ var timeUnit = time.Second
 
 func DockerImagePullWithRetry(ctx context.Context, image string, retries int) error {
 	err := DockerImagePull(ctx, image, os.Stderr)
-	for i := 0; i < retries; i++ {
+	for i := range retries {
 		if err == nil || errors.Is(ctx.Err(), context.Canceled) {
 			break
 		}

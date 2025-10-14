@@ -1,12 +1,9 @@
 package utils
 
+import "slices"
+
 func SliceContains[T comparable](s []T, e T) bool {
-	for _, a := range s {
-		if a == e {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s, e)
 }
 
 func SliceEqual[T comparable](a, b []T) bool {
