@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -24,7 +25,7 @@ const (
 
 func (r *PasswordRequirements) UnmarshalText(text []byte) error {
 	allowed := []PasswordRequirements{NoRequirements, LettersDigits, LowerUpperLettersDigits, LowerUpperLettersDigitsSymbols}
-	if *r = PasswordRequirements(text); !sliceContains(allowed, *r) {
+	if *r = PasswordRequirements(text); !slices.Contains(allowed, *r) {
 		return errors.Errorf("must be one of %v", allowed)
 	}
 	return nil
@@ -63,7 +64,7 @@ const (
 
 func (p *CaptchaProvider) UnmarshalText(text []byte) error {
 	allowed := []CaptchaProvider{HCaptchaProvider, TurnstileProvider}
-	if *p = CaptchaProvider(text); !sliceContains(allowed, *p) {
+	if *p = CaptchaProvider(text); !slices.Contains(allowed, *p) {
 		return errors.Errorf("must be one of %v", allowed)
 	}
 	return nil
@@ -78,7 +79,7 @@ const (
 
 func (p *Algorithm) UnmarshalText(text []byte) error {
 	allowed := []Algorithm{AlgRS256, AlgES256}
-	if *p = Algorithm(text); !sliceContains(allowed, *p) {
+	if *p = Algorithm(text); !slices.Contains(allowed, *p) {
 		return errors.Errorf("must be one of %v", allowed)
 	}
 	return nil

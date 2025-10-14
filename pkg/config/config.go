@@ -17,6 +17,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -58,7 +59,7 @@ const (
 
 func (b *LogflareBackend) UnmarshalText(text []byte) error {
 	allowed := []LogflareBackend{LogflarePostgres, LogflareBigQuery}
-	if *b = LogflareBackend(text); !sliceContains(allowed, *b) {
+	if *b = LogflareBackend(text); !slices.Contains(allowed, *b) {
 		return errors.Errorf("must be one of %v", allowed)
 	}
 	return nil
@@ -73,7 +74,7 @@ const (
 
 func (f *AddressFamily) UnmarshalText(text []byte) error {
 	allowed := []AddressFamily{AddressIPv6, AddressIPv4}
-	if *f = AddressFamily(text); !sliceContains(allowed, *f) {
+	if *f = AddressFamily(text); !slices.Contains(allowed, *f) {
 		return errors.Errorf("must be one of %v", allowed)
 	}
 	return nil
@@ -88,7 +89,7 @@ const (
 
 func (p *RequestPolicy) UnmarshalText(text []byte) error {
 	allowed := []RequestPolicy{PolicyPerWorker, PolicyOneshot}
-	if *p = RequestPolicy(text); !sliceContains(allowed, *p) {
+	if *p = RequestPolicy(text); !slices.Contains(allowed, *p) {
 		return errors.Errorf("must be one of %v", allowed)
 	}
 	return nil
@@ -1133,7 +1134,7 @@ func (e external) validate() (err error) {
 		if provider.ClientId == "" {
 			return errors.Errorf("Missing required field in config: auth.external.%s.client_id", ext)
 		}
-		if !sliceContains([]string{"apple", "google"}, ext) && len(provider.Secret.Value) == 0 {
+		if !slices.Contains([]string{"apple", "google"}, ext) && len(provider.Secret.Value) == 0 {
 			return errors.Errorf("Missing required field in config: auth.external.%s.secret", ext)
 		}
 		if err := assertEnvLoaded(provider.ClientId); err != nil {

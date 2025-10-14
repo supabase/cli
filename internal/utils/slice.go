@@ -1,23 +1,5 @@
 package utils
 
-import "slices"
-
-func SliceContains[T comparable](s []T, e T) bool {
-	return slices.Contains(s, e)
-}
-
-func SliceEqual[T comparable](a, b []T) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i, v := range a {
-		if v != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 func RemoveDuplicates[T comparable](slice []T) (result []T) {
 	set := make(map[T]struct{})
 	for _, item := range slice {

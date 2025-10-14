@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -120,7 +121,7 @@ func diffRemoteSchema(ctx context.Context, schema []string, path string, config 
 func diffUserSchemas(ctx context.Context, schema []string, path string, config pgconn.Config, fsys afero.Fs) error {
 	var managed, user []string
 	for _, s := range schema {
-		if utils.SliceContains(managedSchemas, s) {
+		if slices.Contains(managedSchemas, s) {
 			managed = append(managed, s)
 		} else {
 			user = append(user, s)

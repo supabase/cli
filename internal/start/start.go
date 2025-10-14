@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"text/template"
@@ -1152,7 +1153,7 @@ EOF
 	}
 
 	fmt.Fprintln(os.Stderr, "Waiting for health checks...")
-	if utils.NoBackupVolume && utils.SliceContains(started, utils.StorageId) {
+	if utils.NoBackupVolume && slices.Contains(started, utils.StorageId) {
 		if err := start.WaitForHealthyService(ctx, serviceTimeout, utils.StorageId); err != nil {
 			return err
 		}
