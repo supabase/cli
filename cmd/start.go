@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -18,7 +19,7 @@ func validateExcludedContainers(excludedContainers []string) {
 	var invalidContainers []string
 
 	for _, e := range excludedContainers {
-		if !utils.SliceContains(validContainers, e) {
+		if !slices.Contains(validContainers, e) {
 			invalidContainers = append(invalidContainers, e)
 		}
 	}

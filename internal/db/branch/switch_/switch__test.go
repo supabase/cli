@@ -48,7 +48,7 @@ func TestSwitchCommand(t *testing.T) {
 			Query(reset.TERMINATE_BACKENDS).
 			Reply("SELECT 1").
 			Query(reset.COUNT_REPLICATION_SLOTS).
-			Reply("SELECT 1", []interface{}{0}).
+			Reply("SELECT 1", []any{0}).
 			Query("ALTER DATABASE postgres RENAME TO main;").
 			Reply("ALTER DATABASE").
 			Query("ALTER DATABASE " + branch + " RENAME TO postgres;").
@@ -237,7 +237,7 @@ func TestSwitchDatabase(t *testing.T) {
 			Query(reset.TERMINATE_BACKENDS).
 			Reply("SELECT 1").
 			Query(reset.COUNT_REPLICATION_SLOTS).
-			Reply("SELECT 1", []interface{}{0}).
+			Reply("SELECT 1", []any{0}).
 			Query("ALTER DATABASE postgres RENAME TO main;").
 			ReplyError(pgerrcode.DuplicateDatabase, `database "main" already exists`)
 		// Setup mock docker
@@ -267,7 +267,7 @@ func TestSwitchDatabase(t *testing.T) {
 			Query(reset.TERMINATE_BACKENDS).
 			Reply("SELECT 1").
 			Query(reset.COUNT_REPLICATION_SLOTS).
-			Reply("SELECT 1", []interface{}{0}).
+			Reply("SELECT 1", []any{0}).
 			Query("ALTER DATABASE postgres RENAME TO main;").
 			Reply("ALTER DATABASE").
 			Query("ALTER DATABASE target RENAME TO postgres;").

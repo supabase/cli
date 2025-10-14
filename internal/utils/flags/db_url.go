@@ -202,7 +202,7 @@ func PromptPassword(stdin *os.File) string {
 	charset := string(config.LowerUpperLettersDigits.ToChar())
 	charset = strings.ReplaceAll(charset, ":", "")
 	maxRange := big.NewInt(int64(len(charset)))
-	for i := 0; i < PASSWORD_LENGTH; i++ {
+	for range PASSWORD_LENGTH {
 		random, err := rand.Int(rand.Reader, maxRange)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Failed to randomise password:", err)

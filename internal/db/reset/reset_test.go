@@ -206,7 +206,7 @@ func TestRecreateDatabase(t *testing.T) {
 			Query(TERMINATE_BACKENDS).
 			Reply("SELECT 1").
 			Query(COUNT_REPLICATION_SLOTS).
-			Reply("SELECT 1", []interface{}{0}).
+			Reply("SELECT 1", []any{0}).
 			Query("DROP DATABASE IF EXISTS postgres WITH (FORCE)").
 			Reply("DROP DATABASE").
 			Query("CREATE DATABASE postgres WITH OWNER postgres").
@@ -269,7 +269,7 @@ func TestRecreateDatabase(t *testing.T) {
 			Query(TERMINATE_BACKENDS).
 			Reply("SELECT 1").
 			Query(COUNT_REPLICATION_SLOTS).
-			Reply("SELECT 1", []interface{}{0}).
+			Reply("SELECT 1", []any{0}).
 			Query("DROP DATABASE IF EXISTS postgres WITH (FORCE)").
 			ReplyError(pgerrcode.ObjectInUse, `database "postgres" is used by an active logical replication slot`).
 			Query("CREATE DATABASE postgres WITH OWNER postgres").

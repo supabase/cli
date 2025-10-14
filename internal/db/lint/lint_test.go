@@ -62,7 +62,7 @@ func TestLintCommand(t *testing.T) {
 		Query(ENABLE_PGSQL_CHECK).
 		Reply("CREATE EXTENSION").
 		Query(checkSchemaScript, "public").
-		Reply("SELECT 1", []interface{}{"f1", string(data)}).
+		Reply("SELECT 1", []any{"f1", string(data)}).
 		Query("rollback").Reply("ROLLBACK")
 	// Run test
 	err = Run(context.Background(), []string{"public"}, "warning", "none", dbConfig, fsys, conn.Intercept)
@@ -117,8 +117,8 @@ func TestLintDatabase(t *testing.T) {
 			Reply("CREATE EXTENSION").
 			Query(checkSchemaScript, "public").
 			Reply("SELECT 2",
-				[]interface{}{"f1", string(r1)},
-				[]interface{}{"f2", string(r2)},
+				[]any{"f1", string(r1)},
+				[]any{"f2", string(r2)},
 			).
 			Query("rollback").Reply("ROLLBACK")
 		// Run test
@@ -158,9 +158,9 @@ func TestLintDatabase(t *testing.T) {
 			Query(ENABLE_PGSQL_CHECK).
 			Reply("CREATE EXTENSION").
 			Query(checkSchemaScript, "public").
-			Reply("SELECT 1", []interface{}{"where_clause", string(r1)}).
+			Reply("SELECT 1", []any{"where_clause", string(r1)}).
 			Query(checkSchemaScript, "private").
-			Reply("SELECT 1", []interface{}{"f2", string(r2)}).
+			Reply("SELECT 1", []any{"f2", string(r2)}).
 			Query("rollback").Reply("ROLLBACK")
 		// Run test
 		result, err := LintDatabase(context.Background(), conn.MockClient(t), []string{"public", "private"})
@@ -191,7 +191,7 @@ func TestLintDatabase(t *testing.T) {
 			Query(ENABLE_PGSQL_CHECK).
 			Reply("CREATE EXTENSION").
 			Query(checkSchemaScript, "public").
-			Reply("SELECT 1", []interface{}{"f1", "malformed"}).
+			Reply("SELECT 1", []any{"f1", "malformed"}).
 			Query("rollback").Reply("ROLLBACK")
 		// Run test
 		_, err := LintDatabase(context.Background(), conn.MockClient(t), []string{"public"})
@@ -253,7 +253,7 @@ func TestPrintResult(t *testing.T) {
 			Query(ENABLE_PGSQL_CHECK).
 			Reply("CREATE EXTENSION").
 			Query(checkSchemaScript, "public").
-			Reply("SELECT 1", []interface{}{"f1", `{"function":"22751","issues":[{"level":"warning","message":"test warning"}]}`}).
+			Reply("SELECT 1", []any{"f1", `{"function":"22751","issues":[{"level":"warning","message":"test warning"}]}`}).
 			Query("rollback").Reply("ROLLBACK")
 		// Run test
 		err := Run(context.Background(), []string{"public"}, "warning", "warning", dbConfig, fsys, conn.Intercept)
@@ -271,7 +271,7 @@ func TestPrintResult(t *testing.T) {
 			Query(ENABLE_PGSQL_CHECK).
 			Reply("CREATE EXTENSION").
 			Query(checkSchemaScript, "public").
-			Reply("SELECT 1", []interface{}{"f1", `{"function":"22751","issues":[{"level":"error","message":"test error"}]}`}).
+			Reply("SELECT 1", []any{"f1", `{"function":"22751","issues":[{"level":"error","message":"test error"}]}`}).
 			Query("rollback").Reply("ROLLBACK")
 		// Run test
 		err := Run(context.Background(), []string{"public"}, "warning", "error", dbConfig, fsys, conn.Intercept)
@@ -289,7 +289,7 @@ func TestPrintResult(t *testing.T) {
 			Query(ENABLE_PGSQL_CHECK).
 			Reply("CREATE EXTENSION").
 			Query(checkSchemaScript, "public").
-			Reply("SELECT 1", []interface{}{"f1", `{"function":"22751","issues":[{"level":"error","message":"test error"}]}`}).
+			Reply("SELECT 1", []any{"f1", `{"function":"22751","issues":[{"level":"error","message":"test error"}]}`}).
 			Query("rollback").Reply("ROLLBACK")
 		// Run test
 		err := Run(context.Background(), []string{"public"}, "warning", "none", dbConfig, fsys, conn.Intercept)

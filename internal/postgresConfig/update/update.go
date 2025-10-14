@@ -25,7 +25,7 @@ func Run(ctx context.Context, projectRef string, values []string, replaceOverrid
 		newConfigOverrides[splits[0]] = splits[1]
 	}
 	// 2. If not in replace mode, retrieve current overrides
-	finalOverrides := make(map[string]interface{})
+	finalOverrides := make(map[string]any)
 	{
 		if !replaceOverrides {
 			config, err := get.GetCurrentPostgresConfig(ctx, projectRef)

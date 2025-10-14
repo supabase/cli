@@ -72,15 +72,6 @@ func NewPathBuilder(configPath string) pathBuilder {
 	}
 }
 
-func sliceContains[T comparable](s []T, e T) bool {
-	for _, a := range s {
-		if a == e {
-			return true
-		}
-	}
-	return false
-}
-
 func replaceImageTag(image string, tag string) string {
 	index := strings.IndexByte(image, ':')
 	return image[:index+1] + strings.TrimSpace(tag)

@@ -71,7 +71,7 @@ func TestRemoteMigrations(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
-			Reply("SELECT 1", []interface{}{"20220727064247"})
+			Reply("SELECT 1", []any{"20220727064247"})
 		// Run test
 		versions, err := loadRemoteVersions(context.Background(), dbConfig, conn.Intercept)
 		// Check error
@@ -104,7 +104,7 @@ func TestRemoteMigrations(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
-			Reply("SELECT 1", []interface{}{})
+			Reply("SELECT 1", []any{})
 		// Run test
 		_, err := loadRemoteVersions(context.Background(), dbConfig, conn.Intercept)
 		// Check error

@@ -92,7 +92,7 @@ func TestPullSchema(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
-			Reply("SELECT 1", []interface{}{"0"}).
+			Reply("SELECT 1", []any{"0"}).
 			Query(migration.ListSchemas, migration.ManagedSchemas).
 			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
 		// Run test
@@ -116,7 +116,7 @@ func TestPullSchema(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
-			Reply("SELECT 1", []interface{}{"0"})
+			Reply("SELECT 1", []any{"0"})
 		// Run test
 		err := run(context.Background(), []string{"public"}, "", conn.MockClient(t), fsys)
 		// Check error
@@ -167,7 +167,7 @@ func TestSyncRemote(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
-			Reply("SELECT 1", []interface{}{"20220727064247"})
+			Reply("SELECT 1", []any{"20220727064247"})
 		// Run test
 		err := assertRemoteInSync(context.Background(), conn.MockClient(t), fsys)
 		// Check error

@@ -50,7 +50,7 @@ func TestLinkCommand(t *testing.T) {
 		conn.Query(utils.SET_SESSION_ROLE).
 			Reply("SET ROLE").
 			Query(GET_LATEST_STORAGE_MIGRATION).
-			Reply("SELECT 1", []interface{}{"custom-metadata"})
+			Reply("SELECT 1", []any{"custom-metadata"})
 		helper.MockMigrationHistory(conn)
 		helper.MockSeedHistory(conn)
 		// Flush pending mocks after test execution
@@ -200,7 +200,7 @@ func TestLinkCommand(t *testing.T) {
 		conn.Query(utils.SET_SESSION_ROLE).
 			Reply("SET ROLE").
 			Query(GET_LATEST_STORAGE_MIGRATION).
-			Reply("SELECT 1", []interface{}{"custom-metadata"})
+			Reply("SELECT 1", []any{"custom-metadata"})
 		helper.MockMigrationHistory(conn)
 		helper.MockSeedHistory(conn)
 		// Flush pending mocks after test execution
@@ -423,7 +423,7 @@ func TestLinkDatabase(t *testing.T) {
 		})
 		defer conn.Close(t)
 		conn.Query(GET_LATEST_STORAGE_MIGRATION).
-			Reply("SELECT 1", []interface{}{"custom-metadata"})
+			Reply("SELECT 1", []any{"custom-metadata"})
 		helper.MockMigrationHistory(conn)
 		helper.MockSeedHistory(conn)
 		// Run test
@@ -446,7 +446,7 @@ func TestLinkDatabase(t *testing.T) {
 		})
 		defer conn.Close(t)
 		conn.Query(GET_LATEST_STORAGE_MIGRATION).
-			Reply("SELECT 1", []interface{}{"custom-metadata"})
+			Reply("SELECT 1", []any{"custom-metadata"})
 		helper.MockMigrationHistory(conn)
 		helper.MockSeedHistory(conn)
 		// Run test

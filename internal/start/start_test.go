@@ -268,7 +268,7 @@ func TestFormatMapForEnvConfig(t *testing.T) {
 		if len(output.Bytes()) > 0 {
 			t.Error("No values should be expected when empty map is provided")
 		}
-		for i := 0; i < 4; i++ {
+		for i := range 4 {
 			output.Reset()
 			input[keys[i]] = values[i]
 			formatMapForEnvConfig(input, &output)

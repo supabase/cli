@@ -51,10 +51,10 @@ func Run(ctx context.Context, params RunParams) error {
 	if params.AttributeMapping != "" {
 		body.AttributeMapping = &struct {
 			Keys map[string]struct {
-				Array   *bool        "json:\"array,omitempty\""
-				Default *interface{} "json:\"default,omitempty\""
-				Name    *string      "json:\"name,omitempty\""
-				Names   *[]string    "json:\"names,omitempty\""
+				Array   *bool     "json:\"array,omitempty\""
+				Default *any      "json:\"default,omitempty\""
+				Name    *string   "json:\"name,omitempty\""
+				Names   *[]string "json:\"names,omitempty\""
 			} "json:\"keys\""
 		}{}
 		if err := saml.ReadAttributeMappingFile(Fs, params.AttributeMapping, body.AttributeMapping); err != nil {
