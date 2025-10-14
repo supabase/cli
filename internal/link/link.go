@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/go-errors/errors"
@@ -239,8 +240,14 @@ func linkPooler(ctx context.Context, projectRef string, fsys afero.Fs) error {
 }
 
 func updatePoolerConfig(config api.SupavisorConfigResponse) {
-	utils.Config.Db.Pooler.ConnectionString = config.ConnectionString
-	utils.Config.Db.Pooler.PoolMode = cliConfig.PoolMode(config.PoolMode)
+	// Remove password from pooler connection string because the placeholder text
+	// [YOUR-PASSWORD] messes up pgconn.ParseConfig. The password must be percent
+	// escaped so we cannot simply call strings.Replace with actual password.
+	utils.Config.Db.Pooler.ConnectionString = strings.ReplaceAll(config.ConnectionString, ":[YOUR-PASSWORD]", "")
+	// Always use session mode for running migrations
+	if utils.Config.Db.Pooler.PoolMode = cliConfig.SessionMode; config.PoolMode != api.SupavisorConfigResponsePoolModeSession {
+		utils.Config.Db.Pooler.ConnectionString = strings.ReplaceAll(utils.Config.Db.Pooler.ConnectionString, ":6543/", ":5432/")
+	}
 	if value, err := config.DefaultPoolSize.Get(); err == nil {
 		utils.Config.Db.Pooler.DefaultPoolSize = cast.IntToUint(value)
 	}
