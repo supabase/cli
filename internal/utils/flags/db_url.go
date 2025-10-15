@@ -124,6 +124,8 @@ func NewDbConfigWithPassword(ctx context.Context, projectRef string) pgconn.Conf
 	loginRole, err := initLoginRole(ctx, projectRef, config)
 	if err == nil {
 		return loginRole
+	} else if errors.Is(err, context.Canceled) {
+		return config
 	}
 	// Proceed with password prompt
 	fmt.Fprintln(utils.GetDebugLogger(), err)
