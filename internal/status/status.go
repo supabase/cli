@@ -234,11 +234,14 @@ func PrettyPrint(w io.Writer, exclude ...string) {
 	val := reflect.ValueOf(names)
 	for i := 0; i < val.NumField(); i++ {
 		k := val.Field(i).String()
-		if tag := t.Field(i).Tag.Get("env"); isDeprecated(tag) {
-			continue
-		}
+		tag := t.Field(i).Tag.Get("env")
+		deprecated := isDeprecated(tag)
 		if v, ok := values[k]; ok {
-			fmt.Fprintf(w, "%s: %s\n", k, v)
+			if deprecated {
+				fmt.Fprintf(w, "%s: %s %s\n", k, v, utils.Yellow("(deprecating soon)"))
+			} else {
+				fmt.Fprintf(w, "%s: %s\n", k, v)
+			}
 		}
 	}
 }
