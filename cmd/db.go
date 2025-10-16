@@ -271,7 +271,7 @@ func init() {
 	dumpFlags := dbDumpCmd.Flags()
 	dumpFlags.BoolVar(&dryRun, "dry-run", false, "Prints the pg_dump script that would be executed.")
 	dumpFlags.BoolVar(&dataOnly, "data-only", false, "Dumps only data records.")
-	dumpFlags.BoolVar(&useCopy, "use-copy", false, "Uses copy statements in place of inserts.")
+	dumpFlags.BoolVar(&useCopy, "use-copy", false, "Use copy statements in place of inserts.")
 	dumpFlags.StringSliceVarP(&excludeTable, "exclude", "x", []string{}, "List of schema.tables to exclude from data-only dump.")
 	dumpFlags.BoolVar(&roleOnly, "role-only", false, "Dumps only cluster roles.")
 	dbDumpCmd.MarkFlagsMutuallyExclusive("role-only", "data-only")
