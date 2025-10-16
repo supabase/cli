@@ -7,13 +7,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
@@ -21,6 +19,7 @@ import (
 	"github.com/supabase/cli/pkg/cast"
 	cliConfig "github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/migration"
+	"github.com/supabase/cli/pkg/queue"
 )
 
 func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -60,59 +59,20 @@ major_version = %d
 }
 
 func LinkServices(ctx context.Context, projectRef, serviceKey string, fsys afero.Fs) {
-	// Ignore non-fatal errors linking services
-	var wg sync.WaitGroup
-	wg.Add(8)
-	go func() {
-		defer wg.Done()
-		if err := linkDatabaseSettings(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := linkNetworkRestrictions(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := linkPostgrest(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := linkGotrue(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := linkStorage(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := linkPooler(ctx, projectRef, fsys); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
+	jq := queue.NewJobQueue(5)
+	logger := utils.GetDebugLogger()
+	fmt.Fprintln(logger, jq.Put(func() error { return linkDatabaseSettings(ctx, projectRef) }))
+	fmt.Fprintln(logger, jq.Put(func() error { return linkNetworkRestrictions(ctx, projectRef) }))
+	fmt.Fprintln(logger, jq.Put(func() error { return linkPostgrest(ctx, projectRef) }))
+	fmt.Fprintln(logger, jq.Put(func() error { return linkGotrue(ctx, projectRef) }))
+	fmt.Fprintln(logger, jq.Put(func() error { return linkStorage(ctx, projectRef) }))
+	fmt.Fprintln(logger, jq.Put(func() error { return linkPooler(ctx, projectRef, fsys) }))
 	api := tenant.NewTenantAPI(ctx, projectRef, serviceKey)
-	go func() {
-		defer wg.Done()
-		if err := linkPostgrestVersion(ctx, api, fsys); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := linkGotrueVersion(ctx, api, fsys); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
-	wg.Wait()
+	fmt.Fprintln(logger, jq.Put(func() error { return linkPostgrestVersion(ctx, api, fsys) }))
+	fmt.Fprintln(logger, jq.Put(func() error { return linkGotrueVersion(ctx, api, fsys) }))
+	fmt.Fprintln(logger, jq.Put(func() error { return linkStorageVersion(ctx, api, fsys) }))
+	// Ignore non-fatal errors linking services
+	fmt.Fprintln(logger, jq.Collect())
 }
 
 func linkPostgrest(ctx context.Context, projectRef string) error {
@@ -164,14 +124,23 @@ func linkStorage(ctx context.Context, projectRef string) error {
 	return nil
 }
 
+func linkStorageVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs) error {
+	version, err := api.GetStorageVersion(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, version)
+	return utils.WriteFile(utils.StorageVersionPath, []byte(version), fsys)
+}
+
 const GET_LATEST_STORAGE_MIGRATION = "SELECT name FROM storage.migrations ORDER BY id DESC LIMIT 1"
 
-func linkStorageVersion(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
+func linkStorageMigration(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 	var name string
 	if err := conn.QueryRow(ctx, GET_LATEST_STORAGE_MIGRATION).Scan(&name); err != nil {
 		return errors.Errorf("failed to fetch storage migration: %w", err)
 	}
-	return utils.WriteFile(utils.StorageVersionPath, []byte(name), fsys)
+	return utils.WriteFile(utils.StorageMigrationPath, []byte(name), fsys)
 }
 
 func linkDatabaseSettings(ctx context.Context, projectRef string) error {
@@ -203,7 +172,7 @@ func linkDatabase(ctx context.Context, config pgconn.Config, fsys afero.Fs, opti
 	}
 	defer conn.Close(context.Background())
 	updatePostgresConfig(conn)
-	if err := linkStorageVersion(ctx, conn, fsys); err != nil {
+	if err := linkStorageMigration(ctx, conn, fsys); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}
 	// If `schema_migrations` doesn't exist on the remote database, create it.
