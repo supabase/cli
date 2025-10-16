@@ -22,7 +22,7 @@ import (
 	"github.com/supabase/cli/pkg/queue"
 )
 
-func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, projectRef string, skipPooler bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	majorVersion := utils.Config.Db.MajorVersion
 	if err := checkRemoteProjectStatus(ctx, projectRef, fsys); err != nil {
 		return err
@@ -33,7 +33,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 	if err != nil {
 		return err
 	}
-	LinkServices(ctx, projectRef, keys.ServiceRole, fsys)
+	LinkServices(ctx, projectRef, keys.ServiceRole, skipPooler, fsys)
 
 	// 2. Check database connection
 	config := flags.NewDbConfigWithPassword(ctx, projectRef)
@@ -58,21 +58,35 @@ major_version = %d
 	return nil
 }
 
-func LinkServices(ctx context.Context, projectRef, serviceKey string, fsys afero.Fs) {
+func LinkServices(ctx context.Context, projectRef, serviceKey string, skipPooler bool, fsys afero.Fs) {
 	jq := queue.NewJobQueue(5)
-	logger := utils.GetDebugLogger()
-	fmt.Fprintln(logger, jq.Put(func() error { return linkDatabaseSettings(ctx, projectRef) }))
-	fmt.Fprintln(logger, jq.Put(func() error { return linkNetworkRestrictions(ctx, projectRef) }))
-	fmt.Fprintln(logger, jq.Put(func() error { return linkPostgrest(ctx, projectRef) }))
-	fmt.Fprintln(logger, jq.Put(func() error { return linkGotrue(ctx, projectRef) }))
-	fmt.Fprintln(logger, jq.Put(func() error { return linkStorage(ctx, projectRef) }))
-	fmt.Fprintln(logger, jq.Put(func() error { return linkPooler(ctx, projectRef, fsys) }))
 	api := tenant.NewTenantAPI(ctx, projectRef, serviceKey)
-	fmt.Fprintln(logger, jq.Put(func() error { return linkPostgrestVersion(ctx, api, fsys) }))
-	fmt.Fprintln(logger, jq.Put(func() error { return linkGotrueVersion(ctx, api, fsys) }))
-	fmt.Fprintln(logger, jq.Put(func() error { return linkStorageVersion(ctx, api, fsys) }))
+	jobs := []func() error{
+		func() error { return linkDatabaseSettings(ctx, projectRef) },
+		func() error { return linkNetworkRestrictions(ctx, projectRef) },
+		func() error { return linkPostgrest(ctx, projectRef) },
+		func() error { return linkGotrue(ctx, projectRef) },
+		func() error { return linkStorage(ctx, projectRef) },
+		func() error {
+			if skipPooler {
+				return fsys.RemoveAll(utils.PoolerUrlPath)
+			}
+			return linkPooler(ctx, projectRef, fsys)
+		},
+		func() error { return linkPostgrestVersion(ctx, api, fsys) },
+		func() error { return linkGotrueVersion(ctx, api, fsys) },
+		func() error { return linkStorageVersion(ctx, api, fsys) },
+	}
 	// Ignore non-fatal errors linking services
-	fmt.Fprintln(logger, jq.Collect())
+	logger := utils.GetDebugLogger()
+	for _, job := range jobs {
+		if err := jq.Put(job); err != nil {
+			fmt.Fprintln(logger, err)
+		}
+	}
+	if err := jq.Collect(); err != nil {
+		fmt.Fprintln(logger, err)
+	}
 }
 
 func linkPostgrest(ctx context.Context, projectRef string) error {
@@ -129,7 +143,6 @@ func linkStorageVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, version)
 	return utils.WriteFile(utils.StorageVersionPath, []byte(version), fsys)
 }
 

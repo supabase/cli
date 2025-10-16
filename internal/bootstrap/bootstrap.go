@@ -99,7 +99,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
-	link.LinkServices(ctx, flags.ProjectRef, tenant.NewApiKey(keys).Anon, fsys)
+	link.LinkServices(ctx, flags.ProjectRef, tenant.NewApiKey(keys).Anon, false, fsys)
 	if err := utils.WriteFile(utils.ProjectRefPath, []byte(flags.ProjectRef), fsys); err != nil {
 		return err
 	}

@@ -13,6 +13,8 @@ import (
 )
 
 var (
+	skipPooler bool
+
 	linkCmd = &cobra.Command{
 		GroupID: groupLocalDev,
 		Use:     "link",
@@ -35,7 +37,7 @@ var (
 			}
 			// TODO: move this to root cmd
 			cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", cmd.Flags().Lookup("password")))
-			return link.Run(ctx, flags.ProjectRef, fsys)
+			return link.Run(ctx, flags.ProjectRef, skipPooler, fsys)
 		},
 	}
 )
@@ -44,6 +46,7 @@ func init() {
 	linkFlags := linkCmd.Flags()
 	linkFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	linkFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
+	linkFlags.BoolVar(&skipPooler, "skip-pooler", false, "Use direct connection instead of pooler.")
 	// For some reason, BindPFlag only works for StringVarP instead of StringP
 	rootCmd.AddCommand(linkCmd)
 }
