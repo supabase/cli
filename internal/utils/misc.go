@@ -69,6 +69,7 @@ var (
 	GotrueVersionPath     = filepath.Join(TempDir, "gotrue-version")
 	RestVersionPath       = filepath.Join(TempDir, "rest-version")
 	StorageVersionPath    = filepath.Join(TempDir, "storage-version")
+	StorageMigrationPath  = filepath.Join(TempDir, "storage-migration")
 	StudioVersionPath     = filepath.Join(TempDir, "studio-version")
 	PgmetaVersionPath     = filepath.Join(TempDir, "pgmeta-version")
 	PoolerVersionPath     = filepath.Join(TempDir, "pooler-version")

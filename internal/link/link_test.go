@@ -113,6 +113,11 @@ func TestLinkCommand(t *testing.T) {
 			Get("/rest/v1/").
 			Reply(200).
 			JSON(rest)
+		storage := "1.28.0"
+		gock.New("https://" + utils.GetSupabaseHost(project)).
+			Get("/storage/v1/version").
+			Reply(200).
+			BodyString(storage)
 		// Run test
 		err := Run(context.Background(), project, fsys, conn.Intercept)
 		// Check error
@@ -128,6 +133,9 @@ func TestLinkCommand(t *testing.T) {
 		authVersion, err := afero.ReadFile(fsys, utils.GotrueVersionPath)
 		assert.NoError(t, err)
 		assert.Equal(t, []byte(auth.Version), authVersion)
+		storageVersion, err := afero.ReadFile(fsys, utils.StorageVersionPath)
+		assert.NoError(t, err)
+		assert.Equal(t, []byte("v"+storage), storageVersion)
 		postgresVersion, err := afero.ReadFile(fsys, utils.PostgresVersionPath)
 		assert.NoError(t, err)
 		assert.Equal(t, []byte(mockPostgres.Database.Version), postgresVersion)
@@ -179,6 +187,9 @@ func TestLinkCommand(t *testing.T) {
 			ReplyError(errors.New("network error"))
 		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/rest/v1/").
+			ReplyError(errors.New("network error"))
+		gock.New("https://" + utils.GetSupabaseHost(project)).
+			Get("/storage/v1/version").
 			ReplyError(errors.New("network error"))
 		// Run test
 		err := Run(context.Background(), project, fsys, func(cc *pgx.ConnConfig) {
@@ -250,6 +261,9 @@ func TestLinkCommand(t *testing.T) {
 			ReplyError(errors.New("network error"))
 		gock.New("https://" + utils.GetSupabaseHost(project)).
 			Get("/rest/v1/").
+			ReplyError(errors.New("network error"))
+		gock.New("https://" + utils.GetSupabaseHost(project)).
+			Get("/storage/v1/version").
 			ReplyError(errors.New("network error"))
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects").
@@ -430,7 +444,7 @@ func TestLinkDatabase(t *testing.T) {
 		err := linkDatabase(context.Background(), dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
-		version, err := afero.ReadFile(fsys, utils.StorageVersionPath)
+		version, err := afero.ReadFile(fsys, utils.StorageMigrationPath)
 		assert.NoError(t, err)
 		assert.Equal(t, "custom-metadata", string(version))
 	})
@@ -454,7 +468,7 @@ func TestLinkDatabase(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		assert.Equal(t, uint(15), utils.Config.Db.MajorVersion)
-		version, err := afero.ReadFile(fsys, utils.StorageVersionPath)
+		version, err := afero.ReadFile(fsys, utils.StorageMigrationPath)
 		assert.NoError(t, err)
 		assert.Equal(t, "custom-metadata", string(version))
 	})
@@ -479,7 +493,7 @@ func TestLinkDatabase(t *testing.T) {
 		err := linkDatabase(context.Background(), dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, "ERROR: permission denied for relation supabase_migrations (SQLSTATE 42501)")
-		exists, err := afero.Exists(fsys, utils.StorageVersionPath)
+		exists, err := afero.Exists(fsys, utils.StorageMigrationPath)
 		assert.NoError(t, err)
 		assert.False(t, exists)
 	})

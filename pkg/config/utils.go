@@ -21,6 +21,7 @@ type pathBuilder struct {
 	GotrueVersionPath      string
 	RestVersionPath        string
 	StorageVersionPath     string
+	StorageMigrationPath   string
 	StudioVersionPath      string
 	PgmetaVersionPath      string
 	PoolerVersionPath      string
@@ -55,6 +56,7 @@ func NewPathBuilder(configPath string) pathBuilder {
 		GotrueVersionPath:      filepath.Join(base, ".temp", "gotrue-version"),
 		RestVersionPath:        filepath.Join(base, ".temp", "rest-version"),
 		StorageVersionPath:     filepath.Join(base, ".temp", "storage-version"),
+		StorageMigrationPath:   filepath.Join(base, ".temp", "storage-migration"),
 		EdgeRuntimeVersionPath: filepath.Join(base, ".temp", "edge-runtime-version"),
 		StudioVersionPath:      filepath.Join(base, ".temp", "studio-version"),
 		PgmetaVersionPath:      filepath.Join(base, ".temp", "pgmeta-version"),
