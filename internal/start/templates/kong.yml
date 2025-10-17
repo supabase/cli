@@ -225,6 +225,28 @@ services:
           - /pooler/v2/
     plugins:
       - name: cors
+      - name: request-transformer
+        config:
+          replace:
+            headers:
+              - "Authorization: {{ .BearerToken }}"
+  - name: oauth-protected-resource
+    _comment: "OAuth Protected Resource: /.well-known/oauth-protected-resource/functions/v1/<whatever> -> /functions/v1/<whatever>/.well-known/oauth-protected-resource"
+    url: http://{{ .EdgeRuntimeId }}:8081/
+    routes:
+      - name: oauth-protected-resource
+        strip_path: false
+        paths:
+          - /.well-known/oauth-protected-resource/functions/v1/
+    plugins:
+      - name: cors
+      - name: pre-function
+        config:
+          access:
+            - |
+              local uri = kong.request.get_path()
+              local new_uri = uri:gsub("^/.well%-known/oauth%-protected%-resource/functions/v1", "") .. "/.well-known/oauth-protected-resource"
+              kong.service.request.set_path(new_uri)
   - name: mcp
     _comment: "MCP: /mcp -> http://studio:3000/api/mcp"
     url: http://{{ .StudioId }}:3000/api/mcp
