@@ -169,12 +169,13 @@ type (
 	}
 
 	studio struct {
-		Enabled      bool   `toml:"enabled"`
-		Image        string `toml:"-"`
-		Port         uint16 `toml:"port"`
-		ApiUrl       string `toml:"api_url"`
-		OpenaiApiKey Secret `toml:"openai_api_key"`
-		PgmetaImage  string `toml:"-"`
+		Enabled         bool   `toml:"enabled"`
+		Image           string `toml:"-"`
+		Port            uint16 `toml:"port"`
+		ApiUrl          string `toml:"api_url"`
+		OpenaiApiKey    Secret `toml:"openai_api_key"`
+		PgmetaImage     string `toml:"-"`
+		PgmetaCryptoKey string `toml:"-"`
 	}
 
 	inbucket struct {
@@ -385,8 +386,9 @@ func NewConfig(editors ...ConfigEditor) config {
 			SenderName: "Admin",
 		},
 		Studio: studio{
-			Image:       Images.Studio,
-			PgmetaImage: Images.Pgmeta,
+			Image:           Images.Studio,
+			PgmetaImage:     Images.Pgmeta,
+			PgmetaCryptoKey: "SAMPLE_KEY",
 		},
 		Analytics: analytics{
 			Image:       Images.Logflare,
