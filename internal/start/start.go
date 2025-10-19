@@ -1113,6 +1113,7 @@ EOF
 					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
 					"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
 					"REGION=local",
+					"RLIMIT_NOFILE=",
 					"RUN_JANITOR=true",
 					"ERL_AFLAGS=-proto_dist inet_tcp",
 				},
