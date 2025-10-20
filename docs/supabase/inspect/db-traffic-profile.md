@@ -11,13 +11,13 @@ The command classifies tables into categories:
 - **Write-Only** - Only write operations detected
 
 ```
- SCHEMA  │    TABLE      │ BLOCKS READ │ WRITE TUPLES │ BLOCKS WRITE │ ACTIVITY RATIO
-─────────┼───────────────┼─────────────┼──────────────┼──────────────┼────────────────────────────
- public  │ user_events   │    450,234  │   1,234,567  │    23,450    │ 1 : 2.7   (Write-Heavy)
- public  │ users         │     89,203  │      12,451  │     1,203    │ 7.2 : 1   (Read-Heavy)
- public  │ sessions      │     15,402  │      14,823  │     2,341    │ ~1 : 1    (Balanced)
- public  │ cache_data    │    123,456  │           0  │         0    │ Read-Only
- auth    │ audit_logs    │          0  │      98,234  │    12,341    │ Write-Only
+SCHEMA │ TABLE        │ BLOCKS READ │ WRITE TUPLES │ BLOCKS WRITE │ ACTIVITY RATIO
+───────┼──────────────┼─────────────┼──────────────┼──────────────┼────────────────────
+public │ user_events  │     450,234 │     9,004,680│       23,450 │ 20:1 (Write-Heavy)
+public │ users        │      89,203 │        12,451│        1,203 │ 7.2:1 (Read-Heavy)
+public │ sessions     │      15,402 │        14,823│        2,341 │ ≈1:1 (Balanced)
+public │ cache_data   │     123,456 │             0│            0 │ Read-Only
+auth   │ audit_logs   │           0 │        98,234│       12,341 │ Write-Only
 ```
 
 **Note:** This command only displays tables that have had both read and write activity. Tables with no I/O operations are not shown. The classification ratio threshold (default: 5:1) determines when a table is considered "heavy" in one direction versus balanced.
