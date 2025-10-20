@@ -2784,6 +2784,7 @@ type PgsodiumConfigResponse struct {
 // PostgresConfigResponse defines model for PostgresConfigResponse.
 type PostgresConfigResponse struct {
 	EffectiveCacheSize            *string                                       `json:"effective_cache_size,omitempty"`
+	HotStandbyFeedback            *bool                                         `json:"hot_standby_feedback,omitempty"`
 	LogicalDecodingWorkMem        *string                                       `json:"logical_decoding_work_mem,omitempty"`
 	MaintenanceWorkMem            *string                                       `json:"maintenance_work_mem,omitempty"`
 	MaxConnections                *int                                          `json:"max_connections,omitempty"`
@@ -3480,6 +3481,7 @@ type UpdatePgsodiumConfigBody struct {
 // UpdatePostgresConfigBody defines model for UpdatePostgresConfigBody.
 type UpdatePostgresConfigBody struct {
 	EffectiveCacheSize            *string                                         `json:"effective_cache_size,omitempty"`
+	HotStandbyFeedback            *bool                                           `json:"hot_standby_feedback,omitempty"`
 	LogicalDecodingWorkMem        *string                                         `json:"logical_decoding_work_mem,omitempty"`
 	MaintenanceWorkMem            *string                                         `json:"maintenance_work_mem,omitempty"`
 	MaxConnections                *int                                            `json:"max_connections,omitempty"`
@@ -4043,6 +4045,11 @@ type V1ServiceHealthResponseInfo1 struct {
 	ConnectedCluster int  `json:"connected_cluster"`
 	DbConnected      bool `json:"db_connected"`
 	Healthy          bool `json:"healthy"`
+}
+
+// V1ServiceHealthResponseInfo2 defines model for .
+type V1ServiceHealthResponseInfo2 struct {
+	DbSchema string `json:"db_schema"`
 }
 
 // V1ServiceHealthResponse_Info defines model for V1ServiceHealthResponse.Info.
@@ -5549,6 +5556,32 @@ func (t *V1ServiceHealthResponse_Info) FromV1ServiceHealthResponseInfo1(v V1Serv
 
 // MergeV1ServiceHealthResponseInfo1 performs a merge with any union data inside the V1ServiceHealthResponse_Info, using the provided V1ServiceHealthResponseInfo1
 func (t *V1ServiceHealthResponse_Info) MergeV1ServiceHealthResponseInfo1(v V1ServiceHealthResponseInfo1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsV1ServiceHealthResponseInfo2 returns the union data inside the V1ServiceHealthResponse_Info as a V1ServiceHealthResponseInfo2
+func (t V1ServiceHealthResponse_Info) AsV1ServiceHealthResponseInfo2() (V1ServiceHealthResponseInfo2, error) {
+	var body V1ServiceHealthResponseInfo2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromV1ServiceHealthResponseInfo2 overwrites any union data inside the V1ServiceHealthResponse_Info as the provided V1ServiceHealthResponseInfo2
+func (t *V1ServiceHealthResponse_Info) FromV1ServiceHealthResponseInfo2(v V1ServiceHealthResponseInfo2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeV1ServiceHealthResponseInfo2 performs a merge with any union data inside the V1ServiceHealthResponse_Info, using the provided V1ServiceHealthResponseInfo2
+func (t *V1ServiceHealthResponse_Info) MergeV1ServiceHealthResponseInfo2(v V1ServiceHealthResponseInfo2) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
