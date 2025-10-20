@@ -18,6 +18,7 @@ import (
 	"github.com/supabase/cli/internal/inspect/replication_slots"
 	"github.com/supabase/cli/internal/inspect/role_stats"
 	"github.com/supabase/cli/internal/inspect/table_stats"
+	"github.com/supabase/cli/internal/inspect/traffic_profile"
 	"github.com/supabase/cli/internal/inspect/vacuum_stats"
 	"github.com/supabase/cli/internal/utils/flags"
 )
@@ -132,6 +133,14 @@ var (
 		Short: "Show combined table size, index size, and estimated row count",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return table_stats.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
+		},
+	}
+
+	inspectTrafficProfileCmd = &cobra.Command{
+		Use:   "traffic-profile",
+		Short: "Show read/write activity ratio for tables based on block I/O operations",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return traffic_profile.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -270,6 +279,7 @@ func init() {
 	inspectDBCmd.AddCommand(inspectBloatCmd)
 	inspectDBCmd.AddCommand(inspectVacuumStatsCmd)
 	inspectDBCmd.AddCommand(inspectTableStatsCmd)
+	inspectDBCmd.AddCommand(inspectTrafficProfileCmd)
 	inspectDBCmd.AddCommand(inspectRoleStatsCmd)
 	inspectDBCmd.AddCommand(inspectDBStatsCmd)
 	// DEPRECATED
