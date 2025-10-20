@@ -1,3 +1,4 @@
+ -- Query adapted from Crunchy Data blog: "Is Postgres Read Heavy or Write Heavy? (And Why You Should Care)" by David Christensen
 WITH
 ratio_target AS (SELECT 5 AS ratio),
 table_list AS (SELECT
