@@ -1369,6 +1369,30 @@ const (
 	SA V1GetAvailableRegionsParamsContinent = "SA"
 )
 
+// Defines values for V1GetAvailableRegionsParamsDesiredInstanceSize.
+const (
+	Large                    V1GetAvailableRegionsParamsDesiredInstanceSize = "large"
+	Medium                   V1GetAvailableRegionsParamsDesiredInstanceSize = "medium"
+	Micro                    V1GetAvailableRegionsParamsDesiredInstanceSize = "micro"
+	N12xlarge                V1GetAvailableRegionsParamsDesiredInstanceSize = "12xlarge"
+	N16xlarge                V1GetAvailableRegionsParamsDesiredInstanceSize = "16xlarge"
+	N24xlarge                V1GetAvailableRegionsParamsDesiredInstanceSize = "24xlarge"
+	N24xlargeHighMemory      V1GetAvailableRegionsParamsDesiredInstanceSize = "24xlarge_high_memory"
+	N24xlargeOptimizedCpu    V1GetAvailableRegionsParamsDesiredInstanceSize = "24xlarge_optimized_cpu"
+	N24xlargeOptimizedMemory V1GetAvailableRegionsParamsDesiredInstanceSize = "24xlarge_optimized_memory"
+	N2xlarge                 V1GetAvailableRegionsParamsDesiredInstanceSize = "2xlarge"
+	N48xlarge                V1GetAvailableRegionsParamsDesiredInstanceSize = "48xlarge"
+	N48xlargeHighMemory      V1GetAvailableRegionsParamsDesiredInstanceSize = "48xlarge_high_memory"
+	N48xlargeOptimizedCpu    V1GetAvailableRegionsParamsDesiredInstanceSize = "48xlarge_optimized_cpu"
+	N48xlargeOptimizedMemory V1GetAvailableRegionsParamsDesiredInstanceSize = "48xlarge_optimized_memory"
+	N4xlarge                 V1GetAvailableRegionsParamsDesiredInstanceSize = "4xlarge"
+	N8xlarge                 V1GetAvailableRegionsParamsDesiredInstanceSize = "8xlarge"
+	Nano                     V1GetAvailableRegionsParamsDesiredInstanceSize = "nano"
+	Pico                     V1GetAvailableRegionsParamsDesiredInstanceSize = "pico"
+	Small                    V1GetAvailableRegionsParamsDesiredInstanceSize = "small"
+	Xlarge                   V1GetAvailableRegionsParamsDesiredInstanceSize = "xlarge"
+)
+
 // Defines values for V1GetSecurityAdvisorsParamsLintType.
 const (
 	Sql V1GetSecurityAdvisorsParamsLintType = "sql"
@@ -2760,6 +2784,7 @@ type PgsodiumConfigResponse struct {
 // PostgresConfigResponse defines model for PostgresConfigResponse.
 type PostgresConfigResponse struct {
 	EffectiveCacheSize            *string                                       `json:"effective_cache_size,omitempty"`
+	HotStandbyFeedback            *bool                                         `json:"hot_standby_feedback,omitempty"`
 	LogicalDecodingWorkMem        *string                                       `json:"logical_decoding_work_mem,omitempty"`
 	MaintenanceWorkMem            *string                                       `json:"maintenance_work_mem,omitempty"`
 	MaxConnections                *int                                          `json:"max_connections,omitempty"`
@@ -3456,6 +3481,7 @@ type UpdatePgsodiumConfigBody struct {
 // UpdatePostgresConfigBody defines model for UpdatePostgresConfigBody.
 type UpdatePostgresConfigBody struct {
 	EffectiveCacheSize            *string                                         `json:"effective_cache_size,omitempty"`
+	HotStandbyFeedback            *bool                                           `json:"hot_standby_feedback,omitempty"`
 	LogicalDecodingWorkMem        *string                                         `json:"logical_decoding_work_mem,omitempty"`
 	MaintenanceWorkMem            *string                                         `json:"maintenance_work_mem,omitempty"`
 	MaxConnections                *int                                            `json:"max_connections,omitempty"`
@@ -4021,6 +4047,11 @@ type V1ServiceHealthResponseInfo1 struct {
 	Healthy          bool `json:"healthy"`
 }
 
+// V1ServiceHealthResponseInfo2 defines model for .
+type V1ServiceHealthResponseInfo2 struct {
+	DbSchema string `json:"db_schema"`
+}
+
 // V1ServiceHealthResponse_Info defines model for V1ServiceHealthResponse.Info.
 type V1ServiceHealthResponse_Info struct {
 	union json.RawMessage
@@ -4137,10 +4168,16 @@ type V1GetAvailableRegionsParams struct {
 
 	// Continent Continent code to determine regional recommendations: NA (North America), SA (South America), EU (Europe), AF (Africa), AS (Asia), OC (Oceania), AN (Antarctica)
 	Continent *V1GetAvailableRegionsParamsContinent `form:"continent,omitempty" json:"continent,omitempty"`
+
+	// DesiredInstanceSize Desired instance size
+	DesiredInstanceSize *V1GetAvailableRegionsParamsDesiredInstanceSize `form:"desired_instance_size,omitempty" json:"desired_instance_size,omitempty"`
 }
 
 // V1GetAvailableRegionsParamsContinent defines parameters for V1GetAvailableRegions.
 type V1GetAvailableRegionsParamsContinent string
+
+// V1GetAvailableRegionsParamsDesiredInstanceSize defines parameters for V1GetAvailableRegions.
+type V1GetAvailableRegionsParamsDesiredInstanceSize string
 
 // V1ListActionRunsParams defines parameters for V1ListActionRuns.
 type V1ListActionRunsParams struct {
@@ -5519,6 +5556,32 @@ func (t *V1ServiceHealthResponse_Info) FromV1ServiceHealthResponseInfo1(v V1Serv
 
 // MergeV1ServiceHealthResponseInfo1 performs a merge with any union data inside the V1ServiceHealthResponse_Info, using the provided V1ServiceHealthResponseInfo1
 func (t *V1ServiceHealthResponse_Info) MergeV1ServiceHealthResponseInfo1(v V1ServiceHealthResponseInfo1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsV1ServiceHealthResponseInfo2 returns the union data inside the V1ServiceHealthResponse_Info as a V1ServiceHealthResponseInfo2
+func (t V1ServiceHealthResponse_Info) AsV1ServiceHealthResponseInfo2() (V1ServiceHealthResponseInfo2, error) {
+	var body V1ServiceHealthResponseInfo2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromV1ServiceHealthResponseInfo2 overwrites any union data inside the V1ServiceHealthResponse_Info as the provided V1ServiceHealthResponseInfo2
+func (t *V1ServiceHealthResponse_Info) FromV1ServiceHealthResponseInfo2(v V1ServiceHealthResponseInfo2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeV1ServiceHealthResponseInfo2 performs a merge with any union data inside the V1ServiceHealthResponse_Info, using the provided V1ServiceHealthResponseInfo2
+func (t *V1ServiceHealthResponse_Info) MergeV1ServiceHealthResponseInfo2(v V1ServiceHealthResponseInfo2) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
