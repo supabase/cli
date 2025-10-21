@@ -79,7 +79,7 @@ func (r *MockConn) Intercept(config *pgx.ConnConfig) {
 }
 
 // Adds a simple query or prepared statement to the mock connection.
-func (r *MockConn) Query(sql string, args ...interface{}) *MockConn {
+func (r *MockConn) Query(sql string, args ...any) *MockConn {
 	var oids []uint32
 	var params [][]byte
 	for _, v := range args {
@@ -92,7 +92,7 @@ func (r *MockConn) Query(sql string, args ...interface{}) *MockConn {
 	return r
 }
 
-func (r *MockConn) encodeValueArg(v interface{}) (value []byte, oid uint32) {
+func (r *MockConn) encodeValueArg(v any) (value []byte, oid uint32) {
 	if v == nil {
 		return nil, pgtype.TextArrayOID
 	}
@@ -119,7 +119,7 @@ func (r *MockConn) encodeValueArg(v interface{}) (value []byte, oid uint32) {
 	return value, dt.OID
 }
 
-func getDataTypeSize(v interface{}) int16 {
+func getDataTypeSize(v any) int16 {
 	t := reflect.TypeOf(v)
 	k := t.Kind()
 	if k < reflect.Int || k > reflect.Complex128 {
@@ -135,12 +135,12 @@ func (r *MockConn) lastQuery() *extendedQueryStep {
 // Adds a server reply using binary or text protocol format.
 //
 // TODO: support prepared statements when using binary protocol
-func (r *MockConn) Reply(tag string, rows ...interface{}) *MockConn {
+func (r *MockConn) Reply(tag string, rows ...any) *MockConn {
 	q := r.lastQuery()
 	// Add field description
 	if len(rows) > 0 {
 		var desc pgproto3.RowDescription
-		if arr, ok := rows[0].([]interface{}); ok {
+		if arr, ok := rows[0].([]any); ok {
 			for i, v := range arr {
 				name := fmt.Sprintf("c_%02d", i)
 				if fd := toFieldDescription(v); fd != nil {
@@ -176,7 +176,7 @@ func (r *MockConn) Reply(tag string, rows ...interface{}) *MockConn {
 	// Add row data
 	for _, data := range rows {
 		var dr pgproto3.DataRow
-		if arr, ok := data.([]interface{}); ok {
+		if arr, ok := data.([]any); ok {
 			for _, v := range arr {
 				if value, oid := r.encodeValueArg(v); oid > 0 {
 					dr.Values = append(dr.Values, value)
@@ -209,7 +209,7 @@ func (r *MockConn) Reply(tag string, rows ...interface{}) *MockConn {
 	return r
 }
 
-func toFieldDescription(v interface{}) *pgproto3.FieldDescription {
+func toFieldDescription(v any) *pgproto3.FieldDescription {
 	if dt, ok := ci.DataTypeForValue(v); ok {
 		size := getDataTypeSize(v)
 		format := ci.ParamFormatCodeForOID(dt.OID)

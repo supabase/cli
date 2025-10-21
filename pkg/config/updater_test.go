@@ -130,7 +130,7 @@ func TestUpdateExperimentalConfig(t *testing.T) {
 		gock.New(server).
 			Post("/v1/projects/test-project/database/webhooks/enable").
 			Reply(http.StatusOK).
-			JSON(map[string]interface{}{})
+			JSON(map[string]any{})
 		// Run test
 		err := updater.UpdateExperimentalConfig(context.Background(), "test-project", experimental{
 			Webhooks: &webhooks{
@@ -325,7 +325,7 @@ func TestUpdateRemoteConfig(t *testing.T) {
 		gock.New(server).
 			Post("/v1/projects/test-project/database/webhooks/enable").
 			Reply(http.StatusOK).
-			JSON(map[string]interface{}{})
+			JSON(map[string]any{})
 		// Run test
 		err := updater.UpdateRemoteConfig(context.Background(), baseConfig{
 			ProjectId: "test-project",

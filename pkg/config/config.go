@@ -558,7 +558,7 @@ func (c *config) newDecodeHook(fs ...mapstructure.DecodeHookFunc) mapstructure.D
 	return mapstructure.ComposeDecodeHookFunc(fs...)
 }
 
-func (c *config) Load(path string, fsys fs.FS) error {
+func (c *config) Load(path string, fsys fs.FS, overrides ...ConfigEditor) error {
 	builder := NewPathBuilder(path)
 	// Load secrets from .env file
 	if err := loadNestedEnv(builder.SupabaseDirPath); err != nil {
@@ -636,6 +636,9 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	// TODO: replace derived config resolution with viper decode hooks
 	if err := c.resolve(builder, fsys); err != nil {
 		return err
+	}
+	for _, apply := range overrides {
+		apply(c)
 	}
 	return c.Validate(fsys)
 }
@@ -852,9 +855,7 @@ func (c *config) Validate(fsys fs.FS) error {
 			}
 		}
 		if len(c.Auth.SigningKeysPath) > 0 {
-			if f, err := fsys.Open(c.Auth.SigningKeysPath); errors.Is(err, os.ErrNotExist) {
-				// Ignore missing signing key path on CI
-			} else if err != nil {
+			if f, err := fsys.Open(c.Auth.SigningKeysPath); err != nil {
 				return errors.Errorf("failed to read signing keys: %w", err)
 			} else if c.Auth.SigningKeys, err = fetcher.ParseJSON[[]JWK](f); err != nil {
 				return errors.Errorf("failed to decode signing keys: %w", err)
@@ -1215,7 +1216,7 @@ func (h *hookConfig) validate(hookType string) (err error) {
 		} else if err := assertEnvLoaded(h.Secrets.Value); err != nil {
 			return err
 		}
-		for _, secret := range strings.Split(h.Secrets.Value, "|") {
+		for secret := range strings.SplitSeq(h.Secrets.Value, "|") {
 			if !hookSecretPattern.MatchString(secret) {
 				return errors.Errorf(`Invalid hook config: auth.hook.%s.secrets must be formatted as "v1,whsec_<base64_encoded_secret>" with a minimum length of 32 characters.`, hookType)
 			}
