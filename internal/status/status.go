@@ -12,7 +12,6 @@ import (
 	"os"
 	"reflect"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -99,6 +98,10 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 	}
 	if len(stopped) > 0 {
 		fmt.Fprintln(os.Stderr, "Stopped services:", stopped)
+	}
+	// Set suggestion to use new keys instead of deprecated ones
+	if utils.Config.Auth.Enabled && !slices.Contains(stopped, utils.GotrueId) && !slices.Contains(stopped, utils.ShortContainerImageName(utils.Config.Auth.Image)) {
+		utils.CmdSuggestion = utils.Orange("Please use publishable and secret key instead of anon and service role key.")
 	}
 	if format == utils.OutputPretty {
 		fmt.Fprintf(os.Stderr, "%s local development setup is running.\n\n", utils.Aqua("supabase"))
@@ -230,27 +233,11 @@ func PrettyPrint(w io.Writer, exclude ...string) {
 	}
 	values := names.toValues(exclude...)
 	// Iterate through map in order of declared struct fields
-	t := reflect.TypeOf(names)
 	val := reflect.ValueOf(names)
 	for i := 0; i < val.NumField(); i++ {
 		k := val.Field(i).String()
-		tag := t.Field(i).Tag.Get("env")
-		deprecated := isDeprecated(tag)
 		if v, ok := values[k]; ok {
-			if deprecated {
-				fmt.Fprintf(w, "%s: %s %s\n", k, v, utils.Yellow("(deprecating soon)"))
-			} else {
-				fmt.Fprintf(w, "%s: %s\n", k, v)
-			}
+			fmt.Fprintf(w, "%s: %s\n", k, v)
 		}
 	}
-}
-
-func isDeprecated(tag string) bool {
-	for part := range strings.SplitSeq(tag, ",") {
-		if strings.EqualFold(part, "deprecated") {
-			return true
-		}
-	}
-	return false
 }
