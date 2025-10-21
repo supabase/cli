@@ -630,6 +630,9 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if version, err := fs.ReadFile(fsys, builder.PgmetaVersionPath); err == nil && len(version) > 0 {
 		c.Studio.PgmetaImage = replaceImageTag(Images.Pgmeta, string(version))
 	}
+	if version, err := fs.ReadFile(fsys, builder.LogflareVersionPath); err == nil && len(version) > 0 {
+		c.Analytics.Image = replaceImageTag(Images.Logflare, string(version))
+	}
 	// TODO: replace derived config resolution with viper decode hooks
 	if err := c.resolve(builder, fsys); err != nil {
 		return err

@@ -27,6 +27,7 @@ type pathBuilder struct {
 	PoolerVersionPath      string
 	RealtimeVersionPath    string
 	EdgeRuntimeVersionPath string
+	LogflareVersionPath    string
 	CliVersionPath         string
 	CurrBranchPath         string
 	SchemasDir             string
