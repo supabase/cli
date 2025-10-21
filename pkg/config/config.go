@@ -558,7 +558,7 @@ func (c *config) newDecodeHook(fs ...mapstructure.DecodeHookFunc) mapstructure.D
 	return mapstructure.ComposeDecodeHookFunc(fs...)
 }
 
-func (c *config) Load(path string, fsys fs.FS, overrides ...func(*config)) error {
+func (c *config) Load(path string, fsys fs.FS, overrides ...ConfigEditor) error {
 	builder := NewPathBuilder(path)
 	// Load secrets from .env file
 	if err := loadNestedEnv(builder.SupabaseDirPath); err != nil {
