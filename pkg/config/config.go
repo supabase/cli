@@ -558,7 +558,7 @@ func (c *config) newDecodeHook(fs ...mapstructure.DecodeHookFunc) mapstructure.D
 	return mapstructure.ComposeDecodeHookFunc(fs...)
 }
 
-func (c *config) Load(path string, fsys fs.FS) error {
+func (c *config) Load(path string, fsys fs.FS, overrides ...func(*config)) error {
 	builder := NewPathBuilder(path)
 	// Load secrets from .env file
 	if err := loadNestedEnv(builder.SupabaseDirPath); err != nil {
@@ -636,6 +636,9 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	// TODO: replace derived config resolution with viper decode hooks
 	if err := c.resolve(builder, fsys); err != nil {
 		return err
+	}
+	for _, apply := range overrides {
+		apply(c)
 	}
 	return c.Validate(fsys)
 }
