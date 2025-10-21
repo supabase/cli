@@ -97,6 +97,7 @@ OUTER:
 		toUpdate = append(toUpdate, result...)
 		policy.Reset()
 	}
+	fmt.Fprintf(os.Stderr, "Updating %d Functions...\n", len(toUpdate))
 	if len(toUpdate) > 1 {
 		if err := backoff.Retry(func() error {
 			if resp, err := s.client.V1BulkUpdateFunctionsWithResponse(ctx, s.project, toUpdate); err != nil {
@@ -109,7 +110,7 @@ OUTER:
 			return err
 		}
 	}
-	return nil
+	return ErrNoDeploy
 }
 
 func (s *EdgeRuntimeAPI) updateFunction(ctx context.Context, slug string, meta FunctionDeployMetadata, body io.Reader) (api.BulkUpdateFunctionBody, error) {
