@@ -42,5 +42,4 @@ SELECT
   END AS activity_ratio
 FROM table_list, ratio_target
 ORDER BY
- (blocks_read + blocks_write) DESC;
-
+ (blocks_read + blocks_write) DESC
