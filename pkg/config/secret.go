@@ -83,7 +83,7 @@ func DecryptSecretHookFunc(hashKey string) mapstructure.DecodeHookFunc {
 			privateKeys = append(privateKeys, strToArr(kv[1])...)
 		}
 	}
-	return func(f reflect.Type, t reflect.Type, data interface{}) (interface{}, error) {
+	return func(f reflect.Type, t reflect.Type, data any) (any, error) {
 		if f.Kind() != reflect.String {
 			return data, nil
 		}

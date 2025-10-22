@@ -180,6 +180,7 @@ func TestGenerateToken(t *testing.T) {
 		claims := jwt.MapClaims{}
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteFile("supabase/keys.json", []byte("[]"), fsys))
 		require.NoError(t, utils.WriteFile("supabase/config.toml", []byte(`
 			[auth]
 			signing_keys_path = "./keys.json"
