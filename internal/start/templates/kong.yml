@@ -113,25 +113,6 @@ services:
           replace:
             querystring:
               - "apikey:{{ .QueryToken }}"
-  - name: realtime-v1-longpoll-not-working
-    _comment: "Realtime: /realtime/v1/* -> ws://realtime:4000/socket/longpoll"
-    url: http://{{ .RealtimeId }}:4000/socket
-    protocol: http
-    routes:
-      - name: realtime-v1-longpoll
-        strip_path: true
-        paths:
-          - /realtime/v1/
-    plugins:
-      - name: cors
-      - name: request-transformer
-        config:
-          add:
-            headers:
-              - "Authorization: {{ .BearerToken }}"
-          replace:
-            headers:
-              - "Authorization: {{ .BearerToken }}"
   - name: realtime-v1-rest
     _comment: "Realtime: /realtime/v1/* -> http://realtime:4000/api/*"
     url: http://{{ .RealtimeId }}:4000/api
