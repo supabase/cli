@@ -4,9 +4,9 @@ This command analyzes table I/O patterns to show read/write activity ratios base
 
 
 The command classifies tables into categories:
-- **Read-Heavy** - Predominantly read operations (ratio 1:X, where X > 5)
-- **Write-Heavy** - Predominantly write operations (ratio X:1, where X > 5)
-- **Balanced** - Mixed workload with relatively even read/write distribution
+- **Read-Heavy** - Read operations are more than 5x write operations (e.g., 1:10, 1:50)
+- **Write-Heavy** - Write operations are more than 20% of read operations (e.g., 1:2, 1:4, 2:1, 10:1)
+- **Balanced** - Mixed workload where writes are between 20% and 500% of reads
 - **Read-Only** - Only read operations detected
 - **Write-Only** - Only write operations detected
 
