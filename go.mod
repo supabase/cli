@@ -17,7 +17,7 @@ require (
 	github.com/docker/docker v28.5.1+incompatible
 	github.com/docker/go-connections v0.6.0
 	github.com/fsnotify/fsnotify v1.9.0
-	github.com/getsentry/sentry-go v0.36.0
+	github.com/getsentry/sentry-go v0.36.1
 	github.com/go-errors/errors v1.5.1
 	github.com/go-git/go-git/v5 v5.16.3
 	github.com/go-playground/validator/v10 v10.28.0

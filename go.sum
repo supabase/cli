@@ -300,8 +300,8 @@ github.com/gabriel-vasile/mimetype v1.4.10 h1:zyueNbySn/z8mJZHLt6IPw0KoZsiQNszIp
 github.com/gabriel-vasile/mimetype v1.4.10/go.mod h1:d+9Oxyo1wTzWdyVUPMmXFvp4F9tea18J8ufA774AB3s=
 github.com/getkin/kin-openapi v0.131.0 h1:NO2UeHnFKRYhZ8wg6Nyh5Cq7dHk4suQQr72a4pMrDxE=
 github.com/getkin/kin-openapi v0.131.0/go.mod h1:3OlG51PCYNsPByuiMB0t4fjnNlIDnaEDsjiKUV8nL58=
-github.com/getsentry/sentry-go v0.36.0 h1:UkCk0zV28PiGf+2YIONSSYiYhxwlERE5Li3JPpZqEns=
-github.com/getsentry/sentry-go v0.36.0/go.mod h1:p5Im24mJBeruET8Q4bbcMfCQ+F+Iadc4L48tB1apo2c=
+github.com/getsentry/sentry-go v0.36.1 h1:kMJt0WWsxWATUxkvFgVBZdIeHSk/Oiv5P0jZ9e5m/Lw=
+github.com/getsentry/sentry-go v0.36.1/go.mod h1:p5Im24mJBeruET8Q4bbcMfCQ+F+Iadc4L48tB1apo2c=
 github.com/ghostiam/protogetter v0.3.15 h1:1KF5sXel0HE48zh1/vn0Loiw25A9ApyseLzQuif1mLY=
 github.com/ghostiam/protogetter v0.3.15/go.mod h1:WZ0nw9pfzsgxuRsPOFQomgDVSWtDLJRfQJEhsGbmQMA=
 github.com/gliderlabs/ssh v0.3.8 h1:a4YXD1V7xMF9g5nTkdfnja3Sxy1PVDCj1Zg4Wb8vY6c=
