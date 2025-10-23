@@ -7,7 +7,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -17,7 +16,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
-	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/migration/repair"
@@ -71,16 +69,8 @@ func run(ctx context.Context, schema []string, path string, conn *pgx.Conn, fsys
 	} else if err != nil {
 		return err
 	}
-	// 2. Fetch user defined schemas
-	if len(schema) == 0 {
-		var err error
-		if schema, err = migration.ListUserSchemas(ctx, conn); err != nil {
-			return err
-		}
-		schema = append(schema, managedSchemas...)
-	}
-	// 3. Fetch remote schema changes
-	return diffUserSchemas(ctx, schema, path, config, fsys)
+	// 2. Fetch remote schema changes
+	return diffRemoteSchema(ctx, schema, path, config, fsys)
 }
 
 func dumpRemoteSchema(ctx context.Context, path string, config pgconn.Config, fsys afero.Fs) error {
@@ -103,7 +93,7 @@ func diffRemoteSchema(ctx context.Context, schema []string, path string, config 
 	if err != nil {
 		return err
 	}
-	if len(output) == 0 {
+	if trimmed := strings.TrimSpace(output); len(trimmed) == 0 {
 		return errors.New(errInSync)
 	}
 	// Append to existing migration file since we run this after dump
@@ -114,59 +104,6 @@ func diffRemoteSchema(ctx context.Context, schema []string, path string, config 
 	defer f.Close()
 	if _, err := f.WriteString(output); err != nil {
 		return errors.Errorf("failed to write migration file: %w", err)
-	}
-	return nil
-}
-
-func diffUserSchemas(ctx context.Context, schema []string, path string, config pgconn.Config, fsys afero.Fs) error {
-	var managed, user []string
-	for _, s := range schema {
-		if slices.Contains(managedSchemas, s) {
-			managed = append(managed, s)
-		} else {
-			user = append(user, s)
-		}
-	}
-	fmt.Fprintln(os.Stderr, "Creating shadow database...")
-	shadow, err := diff.CreateShadowDatabase(ctx, utils.Config.Db.ShadowPort)
-	if err != nil {
-		return err
-	}
-	defer utils.DockerRemove(shadow)
-	if err := start.WaitForHealthyService(ctx, start.HealthTimeout, shadow); err != nil {
-		return err
-	}
-	if err := diff.MigrateShadowDatabase(ctx, shadow, fsys); err != nil {
-		return err
-	}
-	shadowConfig := pgconn.Config{
-		Host:     utils.Config.Hostname,
-		Port:     utils.Config.Db.ShadowPort,
-		User:     "postgres",
-		Password: utils.Config.Db.Password,
-		Database: "postgres",
-	}
-	// Diff managed and user defined schemas separately
-	var output string
-	if len(user) > 0 {
-		fmt.Fprintln(os.Stderr, "Diffing schemas:", strings.Join(user, ","))
-		if output, err = diff.DiffSchemaMigraBash(ctx, shadowConfig, config, user); err != nil {
-			return err
-		}
-	}
-	if len(managed) > 0 {
-		fmt.Fprintln(os.Stderr, "Diffing schemas:", strings.Join(managed, ","))
-		if result, err := diff.DiffSchemaMigra(ctx, shadowConfig, config, managed); err != nil {
-			return err
-		} else {
-			output += result
-		}
-	}
-	if len(output) == 0 {
-		return errors.New(errInSync)
-	}
-	if err := utils.WriteFile(path, []byte(output), fsys); err != nil {
-		return errors.Errorf("failed to write dump file: %w", err)
 	}
 	return nil
 }
