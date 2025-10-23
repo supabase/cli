@@ -22,3 +22,13 @@ func Red(str string) string {
 func Bold(str string) string {
 	return lipgloss.NewStyle().Bold(true).Render(str)
 }
+
+// For success, healthy, etc.
+func Green(str string) string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render(str)
+}
+
+// For secondary labels
+func Dim(str string) string {
+	return lipgloss.NewStyle().Faint(true).Render(str)
+}
