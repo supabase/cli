@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
@@ -92,7 +93,7 @@ func diffRemoteSchema(ctx context.Context, schema []string, path string, config 
 	if err != nil {
 		return err
 	}
-	if len(output) == 0 {
+	if trimmed := strings.TrimSpace(output); len(trimmed) == 0 {
 		return errors.New(errInSync)
 	}
 	// Append to existing migration file since we run this after dump
