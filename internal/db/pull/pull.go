@@ -24,10 +24,9 @@ import (
 )
 
 var (
-	errMissing     = errors.New("No migrations found")
-	errInSync      = errors.New("No schema changes found")
-	errConflict    = errors.Errorf("The remote database's migration history does not match local files in %s directory.", utils.MigrationsDir)
-	managedSchemas = []string{"auth", "storage", "realtime"}
+	errMissing  = errors.New("No migrations found")
+	errInSync   = errors.New("No schema changes found")
+	errConflict = errors.Errorf("The remote database's migration history does not match local files in %s directory.", utils.MigrationsDir)
 )
 
 func Run(ctx context.Context, schema []string, config pgconn.Config, name string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -61,8 +60,8 @@ func run(ctx context.Context, schema []string, path string, conn *pgx.Conn, fsys
 		if err = dumpRemoteSchema(ctx, path, config, fsys); err != nil {
 			return err
 		}
-		// Pull changes in managed schemas automatically
-		if err = diffRemoteSchema(ctx, managedSchemas, path, config, fsys); errors.Is(err, errInSync) {
+		// Run a second pass to pull in changes from default privileges and managed schemas
+		if err = diffRemoteSchema(ctx, nil, path, config, fsys); errors.Is(err, errInSync) {
 			err = nil
 		}
 		return err
