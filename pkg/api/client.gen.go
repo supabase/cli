@@ -155,6 +155,9 @@ type ClientInterface interface {
 	// V1ClaimProjectForOrganization request
 	V1ClaimProjectForOrganization(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1GetAllProjectsForOrganization request
+	V1GetAllProjectsForOrganization(ctx context.Context, slug string, params *V1GetAllProjectsForOrganizationParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1ListAllProjects request
 	V1ListAllProjects(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -890,6 +893,18 @@ func (c *Client) V1GetOrganizationProjectClaim(ctx context.Context, slug string,
 
 func (c *Client) V1ClaimProjectForOrganization(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1ClaimProjectForOrganizationRequest(c.Server, slug, token)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetAllProjectsForOrganization(ctx context.Context, slug string, params *V1GetAllProjectsForOrganizationParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetAllProjectsForOrganizationRequest(c.Server, slug, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3810,6 +3825,126 @@ func NewV1ClaimProjectForOrganizationRequest(server string, slug string, token s
 	}
 
 	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1GetAllProjectsForOrganizationRequest generates requests for V1GetAllProjectsForOrganization
+func NewV1GetAllProjectsForOrganizationRequest(server string, slug string, params *V1GetAllProjectsForOrganizationParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "slug", runtime.ParamLocationPath, slug)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/organizations/%s/projects", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "offset", runtime.ParamLocationQuery, *params.Offset); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Search != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "search", runtime.ParamLocationQuery, *params.Search); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Sort != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "sort", runtime.ParamLocationQuery, *params.Sort); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Statuses != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "statuses", runtime.ParamLocationQuery, *params.Statuses); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -9663,6 +9798,9 @@ type ClientWithResponsesInterface interface {
 	// V1ClaimProjectForOrganizationWithResponse request
 	V1ClaimProjectForOrganizationWithResponse(ctx context.Context, slug string, token string, reqEditors ...RequestEditorFn) (*V1ClaimProjectForOrganizationResponse, error)
 
+	// V1GetAllProjectsForOrganizationWithResponse request
+	V1GetAllProjectsForOrganizationWithResponse(ctx context.Context, slug string, params *V1GetAllProjectsForOrganizationParams, reqEditors ...RequestEditorFn) (*V1GetAllProjectsForOrganizationResponse, error)
+
 	// V1ListAllProjectsWithResponse request
 	V1ListAllProjectsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*V1ListAllProjectsResponse, error)
 
@@ -10483,6 +10621,28 @@ func (r V1ClaimProjectForOrganizationResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1ClaimProjectForOrganizationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetAllProjectsForOrganizationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *OrganizationProjectsResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetAllProjectsForOrganizationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetAllProjectsForOrganizationResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -13400,6 +13560,15 @@ func (c *ClientWithResponses) V1ClaimProjectForOrganizationWithResponse(ctx cont
 	return ParseV1ClaimProjectForOrganizationResponse(rsp)
 }
 
+// V1GetAllProjectsForOrganizationWithResponse request returning *V1GetAllProjectsForOrganizationResponse
+func (c *ClientWithResponses) V1GetAllProjectsForOrganizationWithResponse(ctx context.Context, slug string, params *V1GetAllProjectsForOrganizationParams, reqEditors ...RequestEditorFn) (*V1GetAllProjectsForOrganizationResponse, error) {
+	rsp, err := c.V1GetAllProjectsForOrganization(ctx, slug, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetAllProjectsForOrganizationResponse(rsp)
+}
+
 // V1ListAllProjectsWithResponse request returning *V1ListAllProjectsResponse
 func (c *ClientWithResponses) V1ListAllProjectsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*V1ListAllProjectsResponse, error) {
 	rsp, err := c.V1ListAllProjects(ctx, reqEditors...)
@@ -15233,6 +15402,32 @@ func ParseV1ClaimProjectForOrganizationResponse(rsp *http.Response) (*V1ClaimPro
 	response := &V1ClaimProjectForOrganizationResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1GetAllProjectsForOrganizationResponse parses an HTTP response from a V1GetAllProjectsForOrganizationWithResponse call
+func ParseV1GetAllProjectsForOrganizationResponse(rsp *http.Response) (*V1GetAllProjectsForOrganizationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetAllProjectsForOrganizationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OrganizationProjectsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	}
 
 	return response, nil
