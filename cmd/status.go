@@ -13,9 +13,9 @@ import (
 )
 
 var (
-	override []string
-	names    status.CustomName
-	remote   bool
+	override         []string
+	names            status.CustomName
+	useRemoteProject bool
 
 	statusCmd = &cobra.Command{
 		GroupID: groupLocalDev,
@@ -30,7 +30,7 @@ var (
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			if remote {
+			if useRemoteProject {
 				fmt.Fprintf(os.Stderr, "Project health check:\n")
 				return status.RunRemote(ctx, utils.OutputFormat.Value, afero.NewOsFs())
 			}
@@ -45,6 +45,6 @@ var (
 func init() {
 	flags := statusCmd.Flags()
 	flags.StringSliceVar(&override, "override-name", []string{}, "Override specific variable names.")
-	flags.BoolVar(&remote, "remote", false, "Check health of remote project.")
+	flags.BoolVar(&useRemoteProject, "remote", false, "Check health of remote project.")
 	rootCmd.AddCommand(statusCmd)
 }

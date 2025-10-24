@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -11,9 +12,10 @@ import (
 	"github.com/spf13/viper"
 	configPush "github.com/supabase/cli/internal/config/push"
 	"github.com/supabase/cli/internal/db/push"
-	"github.com/supabase/cli/internal/functions/deploy"
+	funcDeploy "github.com/supabase/cli/internal/functions/deploy"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/function"
 )
 
@@ -43,11 +45,6 @@ Use individual flags to customize what gets deployed.`,
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			fsys := afero.NewOsFs()
 
-			// Load config
-			// if err := flags.LoadConfig(fsys); err != nil {
-			// 	return err
-			// }
-
 			// Determine what to deploy
 			// If no specific flags are set, default to db and functions
 			includeDb, _ := cmd.Flags().GetBool("include-db")
@@ -55,23 +52,20 @@ Use individual flags to customize what gets deployed.`,
 			includeConfig, _ := cmd.Flags().GetBool("include-config")
 
 			fmt.Fprintln(os.Stderr, utils.Bold("Deploying to project:"), flags.ProjectRef)
-			fmt.Fprintln(os.Stderr, "")
+
+			spinner := utils.NewSpinner("Connecting to project")
+			spinner.Start(context.Background())
+			cancelSpinner := spinner.Start(context.Background())
+			defer cancelSpinner()
+			if !isProjectHealthy(ctx) {
+				spinner.Fail("Project is not healthy. Please ensure all services are running before deploying.")
+				return errors.New("project is not healthy")
+			}
+			spinner.Stop("Connected to project")
 
 			var deployErrors []error
 
-			// 1. Deploy config first (if requested)
-			if includeConfig {
-				fmt.Fprintln(os.Stderr, utils.Aqua(">>>")+" Deploying config...")
-				if err := configPush.Run(ctx, flags.ProjectRef, fsys); err != nil {
-					deployErrors = append(deployErrors, errors.Errorf("config push failed: %w", err))
-					fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:")+" Config deployment failed:", err)
-				} else {
-					fmt.Fprintln(os.Stderr, utils.Aqua("✓")+" Config deployed successfully")
-				}
-				fmt.Fprintln(os.Stderr, "")
-			}
-
-			// 2. Deploy database migrations
+			// Maybe deploy database migrations
 			if includeDb {
 				fmt.Fprintln(os.Stderr, utils.Aqua(">>>")+" Deploying database migrations...")
 				if err := push.Run(ctx, deployDryRun, deployIncludeAll, deployIncludeRoles, deployIncludeSeed, flags.DbConfig, fsys); err != nil {
@@ -81,10 +75,10 @@ Use individual flags to customize what gets deployed.`,
 				fmt.Fprintln(os.Stderr, "")
 			}
 
-			// 3. Deploy edge functions
+			// Maybe deploy edge functions
 			if includeFunctions {
 				fmt.Fprintln(os.Stderr, utils.Aqua(">>>")+" Deploying edge functions...")
-				if err := deploy.Run(ctx, []string{}, true, nil, "", 1, false, fsys); err != nil && !errors.Is(err, function.ErrNoDeploy) {
+				if err := funcDeploy.Run(ctx, []string{}, true, nil, "", 1, false, fsys); err != nil && !errors.Is(err, function.ErrNoDeploy) {
 					deployErrors = append(deployErrors, errors.Errorf("functions deploy failed: %w", err))
 					fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:")+" Functions deployment failed:", err)
 				} else if errors.Is(err, function.ErrNoDeploy) {
@@ -93,6 +87,18 @@ Use individual flags to customize what gets deployed.`,
 					// print error just in case
 					fmt.Fprintln(os.Stderr, err)
 					fmt.Fprintln(os.Stderr, utils.Aqua("✓")+" Functions deployed successfully")
+				}
+				fmt.Fprintln(os.Stderr, "")
+			}
+
+			// Maybe deploy config
+			if includeConfig {
+				fmt.Fprintln(os.Stderr, utils.Aqua(">>>")+" Deploying config...")
+				if err := configPush.Run(ctx, flags.ProjectRef, fsys); err != nil {
+					deployErrors = append(deployErrors, errors.Errorf("config push failed: %w", err))
+					fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:")+" Config deployment failed:", err)
+				} else {
+					fmt.Fprintln(os.Stderr, utils.Aqua("✓")+" Config deployed successfully")
 				}
 				fmt.Fprintln(os.Stderr, "")
 			}
@@ -140,4 +146,31 @@ func init() {
 	cmdFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project")
 
 	rootCmd.AddCommand(deployCmd)
+}
+func isProjectHealthy(ctx context.Context) bool {
+	services := []api.V1GetServicesHealthParamsServices{
+		api.Auth,
+		// Not checking Realtime for now as it can be flaky
+		// api.Realtime,
+		api.Rest,
+		api.Storage,
+		api.Db,
+	}
+	resp, err := utils.GetSupabase().V1GetServicesHealthWithResponse(ctx, flags.ProjectRef, &api.V1GetServicesHealthParams{
+		Services: services,
+	})
+	if err != nil {
+		// return errors.Errorf("failed to check remote health: %w", err)
+		return false
+	}
+	if resp.JSON200 == nil {
+		// return errors.New("Unexpected error checking remote health: " + string(resp.Body))
+		return false
+	}
+	for _, service := range *resp.JSON200 {
+		if !service.Healthy {
+			return false
+		}
+	}
+	return true
 }
