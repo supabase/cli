@@ -22,8 +22,9 @@ const extensionSchemas = [
 try {
   // Step down from login role to postgres
   await clientHead.query(sql`set role postgres`);
-  // Use schema qualified references for pg_get_expr
+  // Force schema qualified references for pg_get_expr
   await clientHead.query(sql`set search_path = ''`);
+  await clientBase.query(sql`set search_path = ''`);
   let result = "";
   for (const schema of includedSchemas) {
     const m = await Migration.create(clientBase, clientHead, {
