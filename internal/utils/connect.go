@@ -98,7 +98,7 @@ func assertDomainInProfile(host string) error {
 	if err != nil {
 		return errors.Errorf("failed to parse pooler TLD: %w", err)
 	}
-	if !strings.HasSuffix(CurrentProfile.APIURL, "."+domain) {
+	if len(CurrentProfile.PoolerHost) > 0 && !strings.EqualFold(CurrentProfile.PoolerHost, domain) {
 		return errors.Errorf("Pooler domain does not belong to current profile: %s", domain)
 	}
 	return nil
