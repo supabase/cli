@@ -145,11 +145,11 @@ func Execute() {
 	if err != nil {
 		fmt.Fprintln(utils.GetDebugLogger(), err)
 	}
-	if semver.Compare(version, "v"+utils.Version) > 0 {
-		fmt.Fprintln(os.Stderr, suggestUpgrade(version))
-	}
 	if len(utils.CmdSuggestion) > 0 {
 		fmt.Fprintln(os.Stderr, utils.CmdSuggestion)
+	}
+	if semver.Compare(version, "v"+utils.Version) > 0 {
+		fmt.Fprintln(os.Stderr, suggestUpgrade(version))
 	}
 }
 
