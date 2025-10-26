@@ -25,6 +25,10 @@ const (
 )
 
 func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig config.FunctionConfig, filter ...func(string) bool) error {
+	return s.upsertFunctions(ctx, functionConfig, false, filter...)
+}
+
+func (s *EdgeRuntimeAPI) upsertFunctions(ctx context.Context, functionConfig config.FunctionConfig, dryRun bool, filter ...func(string) bool) error {
 	policy := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), maxRetries), ctx)
 	result, err := backoff.RetryWithData(func() ([]api.FunctionResponse, error) {
 		resp, err := s.client.V1ListAllFunctionsWithResponse(ctx, s.project)
@@ -47,11 +51,22 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 	for i, f := range result {
 		slugToIndex[f.Slug] = i
 	}
+
+	// Track functions by status for reporting
+	var toCreate []string
+	var toUpdateList []string
+	var upToDate []string
+	var disabled []string
 	var toUpdate api.BulkUpdateFunctionBody
+
 OUTER:
 	for slug, function := range functionConfig {
 		if !function.Enabled {
-			fmt.Fprintln(os.Stderr, "Skipping disabled Function:", slug)
+			if dryRun {
+				disabled = append(disabled, slug)
+			} else {
+				fmt.Fprintln(os.Stderr, "Skipping disabled Function:", slug)
+			}
 			continue
 		}
 		for _, keep := range filter {
@@ -74,9 +89,25 @@ OUTER:
 		if i, exists := slugToIndex[slug]; exists && i >= 0 &&
 			result[i].EzbrSha256 != nil && *result[i].EzbrSha256 == meta.SHA256 &&
 			result[i].VerifyJwt != nil && *result[i].VerifyJwt == function.VerifyJWT {
-			fmt.Fprintln(os.Stderr, "No change found in Function:", slug)
+			if dryRun {
+				upToDate = append(upToDate, slug)
+			} else {
+				fmt.Fprintln(os.Stderr, "No change found in Function:", slug)
+			}
 			continue
 		}
+
+		// Track what would be created vs updated
+		_, exists := slugToIndex[slug]
+		if dryRun {
+			if !exists {
+				toCreate = append(toCreate, slug)
+			} else {
+				toUpdateList = append(toUpdateList, slug)
+			}
+			continue
+		}
+
 		// Update if function already exists
 		upsert := func() (api.BulkUpdateFunctionBody, error) {
 			if _, exists := slugToIndex[slug]; exists {
@@ -97,6 +128,51 @@ OUTER:
 		toUpdate = append(toUpdate, result...)
 		policy.Reset()
 	}
+
+	// In dry-run mode, print summary and return
+	if dryRun {
+		fmt.Fprintln(os.Stderr, "DRY RUN: functions will *not* be deployed.")
+
+		if len(toCreate) > 0 {
+			fmt.Fprintln(os.Stderr, "\nWould create these functions:")
+			for _, slug := range toCreate {
+				fc := functionConfig[slug]
+				fmt.Fprintf(os.Stderr, " • %s\n", slug)
+				fmt.Fprintf(os.Stderr, "   - Entrypoint: %s\n", fc.Entrypoint)
+				if fc.ImportMap != "" {
+					fmt.Fprintf(os.Stderr, "   - Import map: %s\n", fc.ImportMap)
+				}
+				fmt.Fprintf(os.Stderr, "   - Verify JWT: %v\n", fc.VerifyJWT)
+			}
+		}
+
+		if len(toUpdateList) > 0 {
+			fmt.Fprintln(os.Stderr, "\nWould update these functions (code or config changed):")
+			for _, slug := range toUpdateList {
+				fmt.Fprintf(os.Stderr, " • %s\n", slug)
+			}
+		}
+
+		if len(upToDate) > 0 {
+			fmt.Fprintln(os.Stderr, "\nThese functions are up to date:")
+			for _, slug := range upToDate {
+				fmt.Fprintf(os.Stderr, " • %s\n", slug)
+			}
+		}
+
+		if len(disabled) > 0 {
+			fmt.Fprintln(os.Stderr, "\nThese functions are disabled (would be skipped):")
+			for _, slug := range disabled {
+				fmt.Fprintf(os.Stderr, " • %s\n", slug)
+			}
+		}
+
+		if len(toCreate) == 0 && len(toUpdateList) == 0 {
+			return ErrNoDeploy
+		}
+		return nil
+	}
+
 	fmt.Fprintf(os.Stderr, "Updating %d Functions...\n", len(toUpdate))
 	if len(toUpdate) > 1 {
 		if err := backoff.Retry(func() error {

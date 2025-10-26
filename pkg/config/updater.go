@@ -17,26 +17,26 @@ func NewConfigUpdater(client v1API.ClientWithResponses) ConfigUpdater {
 	return ConfigUpdater{client: client}
 }
 
-func (u *ConfigUpdater) UpdateRemoteConfig(ctx context.Context, remote baseConfig, filter ...func(string) bool) error {
-	if err := u.UpdateApiConfig(ctx, remote.ProjectId, remote.Api, filter...); err != nil {
+func (u *ConfigUpdater) UpdateRemoteConfig(ctx context.Context, remote baseConfig, dryRun bool, filter ...func(string) bool) error {
+	if err := u.UpdateApiConfig(ctx, remote.ProjectId, remote.Api, dryRun, filter...); err != nil {
 		return err
 	}
-	if err := u.UpdateDbConfig(ctx, remote.ProjectId, remote.Db, filter...); err != nil {
+	if err := u.UpdateDbConfig(ctx, remote.ProjectId, remote.Db, dryRun, filter...); err != nil {
 		return err
 	}
-	if err := u.UpdateAuthConfig(ctx, remote.ProjectId, remote.Auth, filter...); err != nil {
+	if err := u.UpdateAuthConfig(ctx, remote.ProjectId, remote.Auth, dryRun, filter...); err != nil {
 		return err
 	}
-	if err := u.UpdateStorageConfig(ctx, remote.ProjectId, remote.Storage, filter...); err != nil {
+	if err := u.UpdateStorageConfig(ctx, remote.ProjectId, remote.Storage, dryRun, filter...); err != nil {
 		return err
 	}
-	if err := u.UpdateExperimentalConfig(ctx, remote.ProjectId, remote.Experimental, filter...); err != nil {
+	if err := u.UpdateExperimentalConfig(ctx, remote.ProjectId, remote.Experimental, dryRun, filter...); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (u *ConfigUpdater) UpdateApiConfig(ctx context.Context, projectRef string, c api, filter ...func(string) bool) error {
+func (u *ConfigUpdater) UpdateApiConfig(ctx context.Context, projectRef string, c api, dryRun bool, filter ...func(string) bool) error {
 	apiConfig, err := u.client.V1GetPostgrestServiceConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to read API config: %w", err)
@@ -48,6 +48,10 @@ func (u *ConfigUpdater) UpdateApiConfig(ctx context.Context, projectRef string, 
 		return err
 	} else if len(apiDiff) == 0 {
 		fmt.Fprintln(os.Stderr, "Remote API config is up to date.")
+		return nil
+	}
+	if dryRun {
+		fmt.Fprintln(os.Stderr, "Would update API service with config:", string(apiDiff))
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, "Updating API service with config:", string(apiDiff))
@@ -64,7 +68,7 @@ func (u *ConfigUpdater) UpdateApiConfig(ctx context.Context, projectRef string, 
 	return nil
 }
 
-func (u *ConfigUpdater) UpdateDbSettingsConfig(ctx context.Context, projectRef string, s settings, filter ...func(string) bool) error {
+func (u *ConfigUpdater) UpdateDbSettingsConfig(ctx context.Context, projectRef string, s settings, dryRun bool, filter ...func(string) bool) error {
 	dbConfig, err := u.client.V1GetPostgresConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to read DB config: %w", err)
@@ -76,6 +80,10 @@ func (u *ConfigUpdater) UpdateDbSettingsConfig(ctx context.Context, projectRef s
 		return err
 	} else if len(dbDiff) == 0 {
 		fmt.Fprintln(os.Stderr, "Remote DB config is up to date.")
+		return nil
+	}
+	if dryRun {
+		fmt.Fprintln(os.Stderr, "Would update DB service with config:", string(dbDiff))
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, "Updating DB service with config:", string(dbDiff))
@@ -93,17 +101,17 @@ func (u *ConfigUpdater) UpdateDbSettingsConfig(ctx context.Context, projectRef s
 	return nil
 }
 
-func (u *ConfigUpdater) UpdateDbConfig(ctx context.Context, projectRef string, c db, filter ...func(string) bool) error {
-	if err := u.UpdateDbSettingsConfig(ctx, projectRef, c.Settings, filter...); err != nil {
+func (u *ConfigUpdater) UpdateDbConfig(ctx context.Context, projectRef string, c db, dryRun bool, filter ...func(string) bool) error {
+	if err := u.UpdateDbSettingsConfig(ctx, projectRef, c.Settings, dryRun, filter...); err != nil {
 		return err
 	}
-	if err := u.UpdateDbNetworkRestrictionsConfig(ctx, projectRef, c.NetworkRestrictions, filter...); err != nil {
+	if err := u.UpdateDbNetworkRestrictionsConfig(ctx, projectRef, c.NetworkRestrictions, dryRun, filter...); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (u *ConfigUpdater) UpdateDbNetworkRestrictionsConfig(ctx context.Context, projectRef string, n networkRestrictions, filter ...func(string) bool) error {
+func (u *ConfigUpdater) UpdateDbNetworkRestrictionsConfig(ctx context.Context, projectRef string, n networkRestrictions, dryRun bool, filter ...func(string) bool) error {
 	networkRestrictionsConfig, err := u.client.V1GetNetworkRestrictionsWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to read network restrictions config: %w", err)
@@ -115,6 +123,10 @@ func (u *ConfigUpdater) UpdateDbNetworkRestrictionsConfig(ctx context.Context, p
 		return err
 	} else if len(networkRestrictionsDiff) == 0 {
 		fmt.Fprintln(os.Stderr, "Remote DB Network restrictions config is up to date.")
+		return nil
+	}
+	if dryRun {
+		fmt.Fprintln(os.Stderr, "Would update network restrictions with config:", string(networkRestrictionsDiff))
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, "Updating network restrictions with config:", string(networkRestrictionsDiff))
@@ -132,7 +144,7 @@ func (u *ConfigUpdater) UpdateDbNetworkRestrictionsConfig(ctx context.Context, p
 	return nil
 }
 
-func (u *ConfigUpdater) UpdateAuthConfig(ctx context.Context, projectRef string, c auth, filter ...func(string) bool) error {
+func (u *ConfigUpdater) UpdateAuthConfig(ctx context.Context, projectRef string, c auth, dryRun bool, filter ...func(string) bool) error {
 	if !c.Enabled {
 		return nil
 	}
@@ -149,6 +161,10 @@ func (u *ConfigUpdater) UpdateAuthConfig(ctx context.Context, projectRef string,
 		fmt.Fprintln(os.Stderr, "Remote Auth config is up to date.")
 		return nil
 	}
+	if dryRun {
+		fmt.Fprintln(os.Stderr, "Would update Auth service with config:", string(authDiff))
+		return nil
+	}
 	fmt.Fprintln(os.Stderr, "Updating Auth service with config:", string(authDiff))
 	for _, keep := range filter {
 		if !keep("auth") {
@@ -163,7 +179,7 @@ func (u *ConfigUpdater) UpdateAuthConfig(ctx context.Context, projectRef string,
 	return nil
 }
 
-func (u *ConfigUpdater) UpdateSigningKeys(ctx context.Context, projectRef string, signingKeys []JWK, filter ...func(string) bool) error {
+func (u *ConfigUpdater) UpdateSigningKeys(ctx context.Context, projectRef string, signingKeys []JWK, dryRun bool, filter ...func(string) bool) error {
 	if len(signingKeys) == 0 {
 		return nil
 	}
@@ -192,6 +208,10 @@ func (u *ConfigUpdater) UpdateSigningKeys(ctx context.Context, projectRef string
 	fmt.Fprintln(os.Stderr, "JWT signing keys to insert:")
 	for _, k := range toInsert {
 		fmt.Fprintln(os.Stderr, " -", k.KeyID)
+	}
+	if dryRun {
+		fmt.Fprintln(os.Stderr, "Would insert", len(toInsert), "signing keys")
+		return nil
 	}
 	for _, keep := range filter {
 		if !keep("signing keys") {
@@ -234,7 +254,7 @@ func (u *ConfigUpdater) UpdateSigningKeys(ctx context.Context, projectRef string
 	return nil
 }
 
-func (u *ConfigUpdater) UpdateStorageConfig(ctx context.Context, projectRef string, c storage, filter ...func(string) bool) error {
+func (u *ConfigUpdater) UpdateStorageConfig(ctx context.Context, projectRef string, c storage, dryRun bool, filter ...func(string) bool) error {
 	if !c.Enabled {
 		return nil
 	}
@@ -251,6 +271,10 @@ func (u *ConfigUpdater) UpdateStorageConfig(ctx context.Context, projectRef stri
 		fmt.Fprintln(os.Stderr, "Remote Storage config is up to date.")
 		return nil
 	}
+	if dryRun {
+		fmt.Fprintln(os.Stderr, "Would update Storage service with config:", string(storageDiff))
+		return nil
+	}
 	fmt.Fprintln(os.Stderr, "Updating Storage service with config:", string(storageDiff))
 	for _, keep := range filter {
 		if !keep("storage") {
@@ -265,8 +289,12 @@ func (u *ConfigUpdater) UpdateStorageConfig(ctx context.Context, projectRef stri
 	return nil
 }
 
-func (u *ConfigUpdater) UpdateExperimentalConfig(ctx context.Context, projectRef string, exp experimental, filter ...func(string) bool) error {
+func (u *ConfigUpdater) UpdateExperimentalConfig(ctx context.Context, projectRef string, exp experimental, dryRun bool, filter ...func(string) bool) error {
 	if exp.Webhooks != nil && exp.Webhooks.Enabled {
+		if dryRun {
+			fmt.Fprintln(os.Stderr, "Would enable webhooks for project:", projectRef)
+			return nil
+		}
 		fmt.Fprintln(os.Stderr, "Enabling webhooks for project:", projectRef)
 		for _, keep := range filter {
 			if !keep("webhooks") {

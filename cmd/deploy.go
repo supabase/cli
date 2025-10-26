@@ -78,7 +78,7 @@ Use individual flags to customize what gets deployed.`,
 			// Maybe deploy edge functions
 			if includeFunctions {
 				fmt.Fprintln(os.Stderr, utils.Aqua(">>>")+" Deploying edge functions...")
-				if err := funcDeploy.Run(ctx, []string{}, true, nil, "", 1, false, fsys); err != nil && !errors.Is(err, function.ErrNoDeploy) {
+				if err := funcDeploy.Run(ctx, []string{}, true, nil, "", 1, false, deployDryRun, fsys); err != nil && !errors.Is(err, function.ErrNoDeploy) {
 					deployErrors = append(deployErrors, errors.Errorf("functions deploy failed: %w", err))
 					fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:")+" Functions deployment failed:", err)
 				} else if errors.Is(err, function.ErrNoDeploy) {
@@ -86,7 +86,11 @@ Use individual flags to customize what gets deployed.`,
 				} else {
 					// print error just in case
 					fmt.Fprintln(os.Stderr, err)
-					fmt.Fprintln(os.Stderr, utils.Aqua("✓")+" Functions deployed successfully")
+					if deployDryRun {
+						fmt.Fprintln(os.Stderr, utils.Aqua("✓")+" Functions dry run complete")
+					} else {
+						fmt.Fprintln(os.Stderr, utils.Aqua("✓")+" Functions deployed successfully")
+					}
 				}
 				fmt.Fprintln(os.Stderr, "")
 			}
@@ -94,25 +98,37 @@ Use individual flags to customize what gets deployed.`,
 			// Maybe deploy config
 			if includeConfig {
 				fmt.Fprintln(os.Stderr, utils.Aqua(">>>")+" Deploying config...")
-				if err := configPush.Run(ctx, flags.ProjectRef, fsys); err != nil {
+				if err := configPush.Run(ctx, flags.ProjectRef, deployDryRun, fsys); err != nil {
 					deployErrors = append(deployErrors, errors.Errorf("config push failed: %w", err))
 					fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:")+" Config deployment failed:", err)
 				} else {
-					fmt.Fprintln(os.Stderr, utils.Aqua("✓")+" Config deployed successfully")
+					if deployDryRun {
+						fmt.Fprintln(os.Stderr, utils.Aqua("✓")+" Config dry run complete")
+					} else {
+						fmt.Fprintln(os.Stderr, utils.Aqua("✓")+" Config deployed successfully")
+					}
 				}
 				fmt.Fprintln(os.Stderr, "")
 			}
 
 			// Summary
 			if len(deployErrors) > 0 {
-				fmt.Fprintln(os.Stderr, utils.Yellow("Deploy completed with warnings:"))
+				if deployDryRun {
+					fmt.Fprintln(os.Stderr, utils.Yellow("Dry run completed with warnings:"))
+				} else {
+					fmt.Fprintln(os.Stderr, utils.Yellow("Deploy completed with warnings:"))
+				}
 				for _, err := range deployErrors {
 					fmt.Fprintln(os.Stderr, " •", err)
 				}
 				return nil // Don't fail the command for non-critical errors
 			}
 
-			fmt.Fprintln(os.Stderr, utils.Aqua("✓")+" "+utils.Bold("Deployment completed successfully!"))
+			if deployDryRun {
+				fmt.Fprintln(os.Stderr, utils.Aqua("✓")+" "+utils.Bold("Dry run completed successfully!"))
+			} else {
+				fmt.Fprintln(os.Stderr, utils.Aqua("✓")+" "+utils.Bold("Deployment completed successfully!"))
+			}
 			return nil
 		},
 		Example: `  supabase deploy

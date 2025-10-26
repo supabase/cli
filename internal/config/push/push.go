@@ -12,7 +12,7 @@ import (
 	"github.com/supabase/cli/pkg/config"
 )
 
-func Run(ctx context.Context, ref string, fsys afero.Fs) error {
+func Run(ctx context.Context, ref string, dryRun bool, fsys afero.Fs) error {
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
@@ -25,6 +25,11 @@ func Run(ctx context.Context, ref string, fsys afero.Fs) error {
 	cost, err := getCostMatrix(ctx, ref)
 	if err != nil {
 		return err
+	}
+	if dryRun {
+		fmt.Fprintln(os.Stderr, "DRY RUN: config will *not* be pushed to the project.")
+		fmt.Fprintln(os.Stderr, "Checking config for project:", remote.ProjectId)
+		return client.UpdateRemoteConfig(ctx, remote, dryRun)
 	}
 	fmt.Fprintln(os.Stderr, "Pushing config to project:", remote.ProjectId)
 	console := utils.NewConsole()
@@ -39,7 +44,7 @@ func Run(ctx context.Context, ref string, fsys afero.Fs) error {
 		}
 		return shouldPush
 	}
-	return client.UpdateRemoteConfig(ctx, remote, keep)
+	return client.UpdateRemoteConfig(ctx, remote, dryRun, keep)
 }
 
 type CostItem struct {

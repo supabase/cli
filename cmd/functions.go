@@ -53,12 +53,13 @@ var (
 		},
 	}
 
-	useApi          bool
-	useDocker       bool
-	useLegacyBundle bool
-	noVerifyJWT     = new(bool)
-	importMapPath   string
-	prune           bool
+	useApi            bool
+	useDocker         bool
+	useLegacyBundle   bool
+	noVerifyJWT       = new(bool)
+	importMapPath     string
+	prune             bool
+	functionsDryRun   bool
 
 	functionsDeployCmd = &cobra.Command{
 		Use:   "deploy [Function name]",
@@ -74,7 +75,7 @@ var (
 			} else if maxJobs > 1 {
 				return errors.New("--jobs must be used together with --use-api")
 			}
-			return deploy.Run(cmd.Context(), args, useDocker, noVerifyJWT, importMapPath, maxJobs, prune, afero.NewOsFs())
+			return deploy.Run(cmd.Context(), args, useDocker, noVerifyJWT, importMapPath, maxJobs, prune, functionsDryRun, afero.NewOsFs())
 		},
 	}
 
@@ -141,6 +142,7 @@ func init() {
 	deployFlags.UintVarP(&maxJobs, "jobs", "j", 1, "Maximum number of parallel jobs.")
 	deployFlags.BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	deployFlags.BoolVar(&prune, "prune", false, "Delete Functions that exist in Supabase project but not locally.")
+	deployFlags.BoolVar(&functionsDryRun, "dry-run", false, "Print operations that would be performed without executing them.")
 	deployFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	deployFlags.StringVar(&importMapPath, "import-map", "", "Path to import map file.")
 	functionsServeCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")

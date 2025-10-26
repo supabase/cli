@@ -19,6 +19,43 @@ import (
 
 var ErrNoDeploy = errors.New("All Functions are up to date.")
 
+func (s *EdgeRuntimeAPI) DryRun(ctx context.Context, functionConfig config.FunctionConfig, fsys fs.FS) error {
+	// If we have an eszip bundler, use the same logic as UpsertFunctions
+	if s.eszip != nil {
+		return s.upsertFunctions(ctx, functionConfig, true)
+	}
+
+	// Without eszip bundler, we can't accurately detect changes
+	// Fallback to listing what would be deployed based on API deploy logic
+	var toDeploy []string
+	for slug, fc := range functionConfig {
+		if !fc.Enabled {
+			fmt.Fprintln(os.Stderr, "Skipping disabled Function:", slug)
+			continue
+		}
+		toDeploy = append(toDeploy, slug)
+	}
+
+	if len(toDeploy) == 0 {
+		return errors.New(ErrNoDeploy)
+	}
+
+	fmt.Fprintln(os.Stderr, "DRY RUN: functions will *not* be deployed.")
+	fmt.Fprintln(os.Stderr, "\nWould deploy these functions:")
+	fmt.Fprintln(os.Stderr, "(Unable to detect changes without Docker bundler)")
+	for _, slug := range toDeploy {
+		fc := functionConfig[slug]
+		fmt.Fprintf(os.Stderr, " • %s\n", slug)
+		fmt.Fprintf(os.Stderr, "   - Entrypoint: %s\n", fc.Entrypoint)
+		if fc.ImportMap != "" {
+			fmt.Fprintf(os.Stderr, "   - Import map: %s\n", fc.ImportMap)
+		}
+		fmt.Fprintf(os.Stderr, "   - Verify JWT: %v\n", fc.VerifyJWT)
+	}
+
+	return nil
+}
+
 func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.FunctionConfig, fsys fs.FS) error {
 	if s.eszip != nil {
 		return s.UpsertFunctions(ctx, functionConfig)

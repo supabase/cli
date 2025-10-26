@@ -17,7 +17,7 @@ import (
 	"github.com/supabase/cli/pkg/function"
 )
 
-func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool, importMapPath string, maxJobs uint, prune bool, fsys afero.Fs) error {
+func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool, importMapPath string, maxJobs uint, prune bool, dryRun bool, fsys afero.Fs) error {
 	// Load function config and project id
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
@@ -51,7 +51,8 @@ func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool,
 	if err != nil {
 		return err
 	}
-	// Deploy new and updated functions
+
+	// Setup API with optional bundler
 	opt := function.WithMaxJobs(maxJobs)
 	if useDocker {
 		if utils.IsDockerRunning(ctx) {
@@ -61,6 +62,22 @@ func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool,
 		}
 	}
 	api := function.NewEdgeRuntimeAPI(flags.ProjectRef, *utils.GetSupabase(), opt)
+
+	// In dry-run mode, check what would be deployed
+	if dryRun {
+		if err := api.DryRun(ctx, functionConfig, afero.NewIOFS(fsys)); errors.Is(err, function.ErrNoDeploy) {
+			fmt.Fprintln(os.Stderr, err)
+			return err
+		} else if err != nil {
+			return err
+		}
+		if prune {
+			fmt.Fprintln(os.Stderr, "\nWould check for functions to prune.")
+		}
+		return nil
+	}
+
+	// Deploy new and updated functions
 	if err := api.Deploy(ctx, functionConfig, afero.NewIOFS(fsys)); errors.Is(err, function.ErrNoDeploy) {
 		fmt.Fprintln(os.Stderr, err)
 		return err
