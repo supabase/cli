@@ -404,7 +404,7 @@ EOF
 					"KONG_DATABASE=off",
 					"KONG_DECLARATIVE_CONFIG=/home/kong/kong.yml",
 					"KONG_DNS_ORDER=LAST,A,CNAME", // https://github.com/supabase/cli/issues/14
-					"KONG_PLUGINS=request-transformer,cors",
+					"KONG_PLUGINS=request-transformer,cors,pre-function",
 					fmt.Sprintf("KONG_PORT_MAPS=%d:8000", utils.Config.Api.Port),
 					// Need to increase the nginx buffers in kong to avoid it rejecting the rather
 					// sizeable response headers azure can generate
