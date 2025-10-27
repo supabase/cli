@@ -28,7 +28,7 @@ jobs:
           mv tmp.$$.json package.json
           npm pack
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: installer
           path: supabase-1.28.0.tgz
