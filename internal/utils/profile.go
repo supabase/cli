@@ -16,7 +16,7 @@ type Profile struct {
 	APIURL       string `mapstructure:"api_url" validate:"required,http_url"`
 	DashboardURL string `mapstructure:"dashboard_url" validate:"required,http_url"`
 	ProjectHost  string `mapstructure:"project_host" validate:"required,hostname_rfc1123"`
-	PoolerHost   string `mapstructure:"pooler_host" validate:"required,hostname_rfc1123"`
+	PoolerHost   string `mapstructure:"pooler_host" validate:"omitempty,hostname_rfc1123"`
 	DocsURL      string `mapstructure:"docs_url" validate:"omitempty,http_url"`
 	StudioImage  string `mapstructure:"studio_image"`
 }
