@@ -678,6 +678,77 @@ const (
 	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanTeam       OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "team"
 )
 
+// Defines values for OrganizationProjectsResponseProjectsDatabasesDiskType.
+const (
+	Gp3 OrganizationProjectsResponseProjectsDatabasesDiskType = "gp3"
+	Io2 OrganizationProjectsResponseProjectsDatabasesDiskType = "io2"
+)
+
+// Defines values for OrganizationProjectsResponseProjectsDatabasesInfraComputeSize.
+const (
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeLarge                    OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "large"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeMedium                   OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "medium"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeMicro                    OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "micro"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN12xlarge                OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "12xlarge"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN16xlarge                OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "16xlarge"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN24xlarge                OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "24xlarge"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN24xlargeHighMemory      OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "24xlarge_high_memory"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN24xlargeOptimizedCpu    OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "24xlarge_optimized_cpu"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN24xlargeOptimizedMemory OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "24xlarge_optimized_memory"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN2xlarge                 OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "2xlarge"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN48xlarge                OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "48xlarge"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN48xlargeHighMemory      OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "48xlarge_high_memory"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN48xlargeOptimizedCpu    OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "48xlarge_optimized_cpu"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN48xlargeOptimizedMemory OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "48xlarge_optimized_memory"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN4xlarge                 OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "4xlarge"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN8xlarge                 OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "8xlarge"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeNano                     OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "nano"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizePico                     OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "pico"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeSmall                    OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "small"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeXlarge                   OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "xlarge"
+)
+
+// Defines values for OrganizationProjectsResponseProjectsDatabasesStatus.
+const (
+	OrganizationProjectsResponseProjectsDatabasesStatusACTIVEHEALTHY         OrganizationProjectsResponseProjectsDatabasesStatus = "ACTIVE_HEALTHY"
+	OrganizationProjectsResponseProjectsDatabasesStatusACTIVEUNHEALTHY       OrganizationProjectsResponseProjectsDatabasesStatus = "ACTIVE_UNHEALTHY"
+	OrganizationProjectsResponseProjectsDatabasesStatusCOMINGUP              OrganizationProjectsResponseProjectsDatabasesStatus = "COMING_UP"
+	OrganizationProjectsResponseProjectsDatabasesStatusGOINGDOWN             OrganizationProjectsResponseProjectsDatabasesStatus = "GOING_DOWN"
+	OrganizationProjectsResponseProjectsDatabasesStatusINITFAILED            OrganizationProjectsResponseProjectsDatabasesStatus = "INIT_FAILED"
+	OrganizationProjectsResponseProjectsDatabasesStatusINITREADREPLICA       OrganizationProjectsResponseProjectsDatabasesStatus = "INIT_READ_REPLICA"
+	OrganizationProjectsResponseProjectsDatabasesStatusINITREADREPLICAFAILED OrganizationProjectsResponseProjectsDatabasesStatus = "INIT_READ_REPLICA_FAILED"
+	OrganizationProjectsResponseProjectsDatabasesStatusREMOVED               OrganizationProjectsResponseProjectsDatabasesStatus = "REMOVED"
+	OrganizationProjectsResponseProjectsDatabasesStatusRESIZING              OrganizationProjectsResponseProjectsDatabasesStatus = "RESIZING"
+	OrganizationProjectsResponseProjectsDatabasesStatusRESTARTING            OrganizationProjectsResponseProjectsDatabasesStatus = "RESTARTING"
+	OrganizationProjectsResponseProjectsDatabasesStatusRESTORING             OrganizationProjectsResponseProjectsDatabasesStatus = "RESTORING"
+	OrganizationProjectsResponseProjectsDatabasesStatusUNKNOWN               OrganizationProjectsResponseProjectsDatabasesStatus = "UNKNOWN"
+)
+
+// Defines values for OrganizationProjectsResponseProjectsDatabasesType.
+const (
+	OrganizationProjectsResponseProjectsDatabasesTypePRIMARY     OrganizationProjectsResponseProjectsDatabasesType = "PRIMARY"
+	OrganizationProjectsResponseProjectsDatabasesTypeREADREPLICA OrganizationProjectsResponseProjectsDatabasesType = "READ_REPLICA"
+)
+
+// Defines values for OrganizationProjectsResponseProjectsStatus.
+const (
+	OrganizationProjectsResponseProjectsStatusACTIVEHEALTHY   OrganizationProjectsResponseProjectsStatus = "ACTIVE_HEALTHY"
+	OrganizationProjectsResponseProjectsStatusACTIVEUNHEALTHY OrganizationProjectsResponseProjectsStatus = "ACTIVE_UNHEALTHY"
+	OrganizationProjectsResponseProjectsStatusCOMINGUP        OrganizationProjectsResponseProjectsStatus = "COMING_UP"
+	OrganizationProjectsResponseProjectsStatusGOINGDOWN       OrganizationProjectsResponseProjectsStatus = "GOING_DOWN"
+	OrganizationProjectsResponseProjectsStatusINACTIVE        OrganizationProjectsResponseProjectsStatus = "INACTIVE"
+	OrganizationProjectsResponseProjectsStatusINITFAILED      OrganizationProjectsResponseProjectsStatus = "INIT_FAILED"
+	OrganizationProjectsResponseProjectsStatusPAUSEFAILED     OrganizationProjectsResponseProjectsStatus = "PAUSE_FAILED"
+	OrganizationProjectsResponseProjectsStatusPAUSING         OrganizationProjectsResponseProjectsStatus = "PAUSING"
+	OrganizationProjectsResponseProjectsStatusREMOVED         OrganizationProjectsResponseProjectsStatus = "REMOVED"
+	OrganizationProjectsResponseProjectsStatusRESIZING        OrganizationProjectsResponseProjectsStatus = "RESIZING"
+	OrganizationProjectsResponseProjectsStatusRESTARTING      OrganizationProjectsResponseProjectsStatus = "RESTARTING"
+	OrganizationProjectsResponseProjectsStatusRESTOREFAILED   OrganizationProjectsResponseProjectsStatus = "RESTORE_FAILED"
+	OrganizationProjectsResponseProjectsStatusRESTORING       OrganizationProjectsResponseProjectsStatus = "RESTORING"
+	OrganizationProjectsResponseProjectsStatusUNKNOWN         OrganizationProjectsResponseProjectsStatus = "UNKNOWN"
+	OrganizationProjectsResponseProjectsStatusUPGRADING       OrganizationProjectsResponseProjectsStatus = "UPGRADING"
+)
+
 // Defines values for PostgresConfigResponseSessionReplicationRole.
 const (
 	PostgresConfigResponseSessionReplicationRoleLocal   PostgresConfigResponseSessionReplicationRole = "local"
@@ -864,8 +935,8 @@ const (
 
 // Defines values for SupavisorConfigResponseDatabaseType.
 const (
-	PRIMARY     SupavisorConfigResponseDatabaseType = "PRIMARY"
-	READREPLICA SupavisorConfigResponseDatabaseType = "READ_REPLICA"
+	SupavisorConfigResponseDatabaseTypePRIMARY     SupavisorConfigResponseDatabaseType = "PRIMARY"
+	SupavisorConfigResponseDatabaseTypeREADREPLICA SupavisorConfigResponseDatabaseType = "READ_REPLICA"
 )
 
 // Defines values for SupavisorConfigResponsePoolMode.
@@ -1358,6 +1429,14 @@ const (
 	V1OauthAuthorizeProjectClaimParamsCodeChallengeMethodSha256 V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod = "sha256"
 )
 
+// Defines values for V1GetAllProjectsForOrganizationParamsSort.
+const (
+	CreatedAsc  V1GetAllProjectsForOrganizationParamsSort = "created_asc"
+	CreatedDesc V1GetAllProjectsForOrganizationParamsSort = "created_desc"
+	NameAsc     V1GetAllProjectsForOrganizationParamsSort = "name_asc"
+	NameDesc    V1GetAllProjectsForOrganizationParamsSort = "name_desc"
+)
+
 // Defines values for V1GetAvailableRegionsParamsContinent.
 const (
 	AF V1GetAvailableRegionsParamsContinent = "AF"
@@ -1371,26 +1450,26 @@ const (
 
 // Defines values for V1GetAvailableRegionsParamsDesiredInstanceSize.
 const (
-	Large                    V1GetAvailableRegionsParamsDesiredInstanceSize = "large"
-	Medium                   V1GetAvailableRegionsParamsDesiredInstanceSize = "medium"
-	Micro                    V1GetAvailableRegionsParamsDesiredInstanceSize = "micro"
-	N12xlarge                V1GetAvailableRegionsParamsDesiredInstanceSize = "12xlarge"
-	N16xlarge                V1GetAvailableRegionsParamsDesiredInstanceSize = "16xlarge"
-	N24xlarge                V1GetAvailableRegionsParamsDesiredInstanceSize = "24xlarge"
-	N24xlargeHighMemory      V1GetAvailableRegionsParamsDesiredInstanceSize = "24xlarge_high_memory"
-	N24xlargeOptimizedCpu    V1GetAvailableRegionsParamsDesiredInstanceSize = "24xlarge_optimized_cpu"
-	N24xlargeOptimizedMemory V1GetAvailableRegionsParamsDesiredInstanceSize = "24xlarge_optimized_memory"
-	N2xlarge                 V1GetAvailableRegionsParamsDesiredInstanceSize = "2xlarge"
-	N48xlarge                V1GetAvailableRegionsParamsDesiredInstanceSize = "48xlarge"
-	N48xlargeHighMemory      V1GetAvailableRegionsParamsDesiredInstanceSize = "48xlarge_high_memory"
-	N48xlargeOptimizedCpu    V1GetAvailableRegionsParamsDesiredInstanceSize = "48xlarge_optimized_cpu"
-	N48xlargeOptimizedMemory V1GetAvailableRegionsParamsDesiredInstanceSize = "48xlarge_optimized_memory"
-	N4xlarge                 V1GetAvailableRegionsParamsDesiredInstanceSize = "4xlarge"
-	N8xlarge                 V1GetAvailableRegionsParamsDesiredInstanceSize = "8xlarge"
-	Nano                     V1GetAvailableRegionsParamsDesiredInstanceSize = "nano"
-	Pico                     V1GetAvailableRegionsParamsDesiredInstanceSize = "pico"
-	Small                    V1GetAvailableRegionsParamsDesiredInstanceSize = "small"
-	Xlarge                   V1GetAvailableRegionsParamsDesiredInstanceSize = "xlarge"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeLarge                    V1GetAvailableRegionsParamsDesiredInstanceSize = "large"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeMedium                   V1GetAvailableRegionsParamsDesiredInstanceSize = "medium"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeMicro                    V1GetAvailableRegionsParamsDesiredInstanceSize = "micro"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN12xlarge                V1GetAvailableRegionsParamsDesiredInstanceSize = "12xlarge"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN16xlarge                V1GetAvailableRegionsParamsDesiredInstanceSize = "16xlarge"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN24xlarge                V1GetAvailableRegionsParamsDesiredInstanceSize = "24xlarge"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN24xlargeHighMemory      V1GetAvailableRegionsParamsDesiredInstanceSize = "24xlarge_high_memory"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN24xlargeOptimizedCpu    V1GetAvailableRegionsParamsDesiredInstanceSize = "24xlarge_optimized_cpu"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN24xlargeOptimizedMemory V1GetAvailableRegionsParamsDesiredInstanceSize = "24xlarge_optimized_memory"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN2xlarge                 V1GetAvailableRegionsParamsDesiredInstanceSize = "2xlarge"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN48xlarge                V1GetAvailableRegionsParamsDesiredInstanceSize = "48xlarge"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN48xlargeHighMemory      V1GetAvailableRegionsParamsDesiredInstanceSize = "48xlarge_high_memory"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN48xlargeOptimizedCpu    V1GetAvailableRegionsParamsDesiredInstanceSize = "48xlarge_optimized_cpu"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN48xlargeOptimizedMemory V1GetAvailableRegionsParamsDesiredInstanceSize = "48xlarge_optimized_memory"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN4xlarge                 V1GetAvailableRegionsParamsDesiredInstanceSize = "4xlarge"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN8xlarge                 V1GetAvailableRegionsParamsDesiredInstanceSize = "8xlarge"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeNano                     V1GetAvailableRegionsParamsDesiredInstanceSize = "nano"
+	V1GetAvailableRegionsParamsDesiredInstanceSizePico                     V1GetAvailableRegionsParamsDesiredInstanceSize = "pico"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeSmall                    V1GetAvailableRegionsParamsDesiredInstanceSize = "small"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeXlarge                   V1GetAvailableRegionsParamsDesiredInstanceSize = "xlarge"
 )
 
 // Defines values for V1GetSecurityAdvisorsParamsLintType.
@@ -2770,6 +2849,56 @@ type OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan string
 // OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan defines model for OrganizationProjectClaimResponse.Preview.TargetSubscriptionPlan.
 type OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan string
 
+// OrganizationProjectsResponse defines model for OrganizationProjectsResponse.
+type OrganizationProjectsResponse struct {
+	Pagination struct {
+		// Count Total number of projects. Use this to calculate the total number of pages.
+		Count float32 `json:"count"`
+
+		// Limit Maximum number of projects per page
+		Limit float32 `json:"limit"`
+
+		// Offset Number of projects skipped in this response
+		Offset float32 `json:"offset"`
+	} `json:"pagination"`
+	Projects []struct {
+		CloudProvider string `json:"cloud_provider"`
+		Databases     []struct {
+			CloudProvider      string                                                         `json:"cloud_provider"`
+			DiskLastModifiedAt *string                                                        `json:"disk_last_modified_at,omitempty"`
+			DiskThroughputMbps *float32                                                       `json:"disk_throughput_mbps,omitempty"`
+			DiskType           *OrganizationProjectsResponseProjectsDatabasesDiskType         `json:"disk_type,omitempty"`
+			DiskVolumeSizeGb   *float32                                                       `json:"disk_volume_size_gb,omitempty"`
+			Identifier         string                                                         `json:"identifier"`
+			InfraComputeSize   *OrganizationProjectsResponseProjectsDatabasesInfraComputeSize `json:"infra_compute_size,omitempty"`
+			Region             string                                                         `json:"region"`
+			Status             OrganizationProjectsResponseProjectsDatabasesStatus            `json:"status"`
+			Type               OrganizationProjectsResponseProjectsDatabasesType              `json:"type"`
+		} `json:"databases"`
+		InsertedAt string                                     `json:"inserted_at"`
+		IsBranch   bool                                       `json:"is_branch"`
+		Name       string                                     `json:"name"`
+		Ref        string                                     `json:"ref"`
+		Region     string                                     `json:"region"`
+		Status     OrganizationProjectsResponseProjectsStatus `json:"status"`
+	} `json:"projects"`
+}
+
+// OrganizationProjectsResponseProjectsDatabasesDiskType defines model for OrganizationProjectsResponse.Projects.Databases.DiskType.
+type OrganizationProjectsResponseProjectsDatabasesDiskType string
+
+// OrganizationProjectsResponseProjectsDatabasesInfraComputeSize defines model for OrganizationProjectsResponse.Projects.Databases.InfraComputeSize.
+type OrganizationProjectsResponseProjectsDatabasesInfraComputeSize string
+
+// OrganizationProjectsResponseProjectsDatabasesStatus defines model for OrganizationProjectsResponse.Projects.Databases.Status.
+type OrganizationProjectsResponseProjectsDatabasesStatus string
+
+// OrganizationProjectsResponseProjectsDatabasesType defines model for OrganizationProjectsResponse.Projects.Databases.Type.
+type OrganizationProjectsResponseProjectsDatabasesType string
+
+// OrganizationProjectsResponseProjectsStatus defines model for OrganizationProjectsResponse.Projects.Status.
+type OrganizationProjectsResponseProjectsStatus string
+
 // OrganizationResponseV1 defines model for OrganizationResponseV1.
 type OrganizationResponseV1 struct {
 	Id   string `json:"id"`
@@ -2783,6 +2912,7 @@ type PgsodiumConfigResponse struct {
 
 // PostgresConfigResponse defines model for PostgresConfigResponse.
 type PostgresConfigResponse struct {
+	CheckpointTimeout             *int                                          `json:"checkpoint_timeout,omitempty"`
 	EffectiveCacheSize            *string                                       `json:"effective_cache_size,omitempty"`
 	HotStandbyFeedback            *bool                                         `json:"hot_standby_feedback,omitempty"`
 	LogicalDecodingWorkMem        *string                                       `json:"logical_decoding_work_mem,omitempty"`
@@ -3480,6 +3610,7 @@ type UpdatePgsodiumConfigBody struct {
 
 // UpdatePostgresConfigBody defines model for UpdatePostgresConfigBody.
 type UpdatePostgresConfigBody struct {
+	CheckpointTimeout             *int                                            `json:"checkpoint_timeout,omitempty"`
 	EffectiveCacheSize            *string                                         `json:"effective_cache_size,omitempty"`
 	HotStandbyFeedback            *bool                                           `json:"hot_standby_feedback,omitempty"`
 	LogicalDecodingWorkMem        *string                                         `json:"logical_decoding_work_mem,omitempty"`
@@ -4017,8 +4148,9 @@ type V1RestorePointResponseStatus string
 
 // V1RunQueryBody defines model for V1RunQueryBody.
 type V1RunQueryBody struct {
-	Query    string `json:"query"`
-	ReadOnly *bool  `json:"read_only,omitempty"`
+	Parameters *[]interface{} `json:"parameters,omitempty"`
+	Query      string         `json:"query"`
+	ReadOnly   *bool          `json:"read_only,omitempty"`
 }
 
 // V1ServiceHealthResponse defines model for V1ServiceHealthResponse.
@@ -4160,6 +4292,29 @@ type V1OauthAuthorizeProjectClaimParamsResponseType string
 
 // V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod defines parameters for V1OauthAuthorizeProjectClaim.
 type V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod string
+
+// V1GetAllProjectsForOrganizationParams defines parameters for V1GetAllProjectsForOrganization.
+type V1GetAllProjectsForOrganizationParams struct {
+	// Offset Number of projects to skip
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+
+	// Limit Number of projects to return per page
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Search Search projects by name
+	Search *string `form:"search,omitempty" json:"search,omitempty"`
+
+	// Sort Sort order for projects
+	Sort *V1GetAllProjectsForOrganizationParamsSort `form:"sort,omitempty" json:"sort,omitempty"`
+
+	// Statuses A comma-separated list of project statuses to filter by.
+	//
+	// The following values are supported: `ACTIVE_HEALTHY`, `INACTIVE`.
+	Statuses *string `form:"statuses,omitempty" json:"statuses,omitempty"`
+}
+
+// V1GetAllProjectsForOrganizationParamsSort defines parameters for V1GetAllProjectsForOrganization.
+type V1GetAllProjectsForOrganizationParamsSort string
 
 // V1GetAvailableRegionsParams defines parameters for V1GetAvailableRegions.
 type V1GetAvailableRegionsParams struct {

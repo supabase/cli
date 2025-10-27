@@ -90,7 +90,7 @@ func getPoolerConfig(ctx context.Context, ref string) (api.SupavisorConfigRespon
 		return result, errors.Errorf("unexpected get pooler status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 	for _, config := range *resp.JSON200 {
-		if config.DatabaseType == api.PRIMARY {
+		if config.DatabaseType == api.SupavisorConfigResponseDatabaseTypePRIMARY {
 			return config, nil
 		}
 	}

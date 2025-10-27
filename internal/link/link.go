@@ -214,7 +214,7 @@ func linkPooler(ctx context.Context, projectRef string, fsys afero.Fs) error {
 		return errors.Errorf("%w: %s", tenant.ErrAuthToken, string(resp.Body))
 	}
 	for _, config := range *resp.JSON200 {
-		if config.DatabaseType == api.PRIMARY {
+		if config.DatabaseType == api.SupavisorConfigResponseDatabaseTypePRIMARY {
 			updatePoolerConfig(config)
 		}
 	}
