@@ -29,7 +29,7 @@ func Run(ctx context.Context, ref string, dryRun bool, fsys afero.Fs) error {
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "DRY RUN: config will *not* be pushed to the project.")
 		fmt.Fprintln(os.Stderr, "Checking config for project:", remote.ProjectId)
-		return client.UpdateRemoteConfig(ctx, remote, dryRun)
+		return client.UpdateRemoteConfigDryRun(ctx, remote)
 	}
 	fmt.Fprintln(os.Stderr, "Pushing config to project:", remote.ProjectId)
 	console := utils.NewConsole()
@@ -44,7 +44,7 @@ func Run(ctx context.Context, ref string, dryRun bool, fsys afero.Fs) error {
 		}
 		return shouldPush
 	}
-	return client.UpdateRemoteConfig(ctx, remote, dryRun, keep)
+	return client.UpdateRemoteConfig(ctx, remote, keep)
 }
 
 type CostItem struct {
