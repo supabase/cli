@@ -308,22 +308,9 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 		// Create the full path for the file
 		filePath := filepath.Join(funcDir, relPath)
 
-		// Create parent directories if needed
-		if err := fsys.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-			return errors.Errorf("failed to create directory for %s: %w", relPath, err)
+		if err := afero.WriteReader(fsys, filePath, part); err != nil {
+			return errors.Errorf("failed to write file: %w", err)
 		}
-
-		// Write the file
-		file, err := fsys.Create(filePath)
-		if err != nil {
-			return errors.Errorf("failed to create file %s: %w", relPath, err)
-		}
-
-		if _, err := io.Copy(file, part); err != nil {
-			file.Close()
-			return errors.Errorf("failed to write file %s: %w", relPath, err)
-		}
-		file.Close()
 	}
 
 	fmt.Println("Downloaded Function " + utils.Aqua(slug) + " from project " + utils.Aqua(projectRef) + ".")
