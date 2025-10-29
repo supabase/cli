@@ -14,557 +14,519 @@ import (
 )
 
 type ClientConfig struct {
-	Name        string
-	ConfigPath  string
-	ConfigType  string // "cursor", "vscode", "claude-desktop", "claude-code", "windsurf", "cline"
-	Detected    bool
-	CanAutomate bool // Can we automatically configure this client?
+	Name         string
+	ConfigPath   string
+	Description  string
+	Detected     bool
+	Installed    bool
+	CanAutomate  bool
 }
 
-// Run executes the MCP initialization wizard
-func Run(ctx context.Context, fsys afero.Fs, targetClient string) error {
-	fmt.Println("🚀 Supabase MCP Server Setup")
-	fmt.Println("───────────────────────────────")
-	fmt.Println()
-
-	// Detect or validate client
-	clients := detectClients()
+func Run(ctx context.Context, fsys afero.Fs, clientFlag string) error {
+	clients := detectClients(fsys)
 	
-	if targetClient != "" {
-		// Validate the specified client
-		found := false
-		for _, c := range clients {
-			if strings.EqualFold(c.ConfigType, targetClient) {
-				found = true
-				fmt.Printf("📍 Configuring for: %s\n", c.Name)
-				fmt.Printf("   Config path: %s\n\n", c.ConfigPath)
-				
-				// Check if we can automate configuration
-				if c.CanAutomate {
-					return configureClient(c, fsys)
-				} else {
-					displayConfigInstructions(c.ConfigType)
-				}
+	var selectedClient *ClientConfig
+	if clientFlag != "" {
+		// Find the specified client
+		for i := range clients {
+			if strings.EqualFold(clients[i].Name, clientFlag) {
+				selectedClient = &clients[i]
 				break
 			}
 		}
-		if !found {
-			return fmt.Errorf("unknown client: %s. Supported clients: cursor, vscode, claude-desktop, claude-code, windsurf, cline", targetClient)
-		}
-	} else {
-		// Display detected clients
-		fmt.Println("🔍 Detected MCP-compatible clients:")
-		fmt.Println()
-		
-		detectedCount := 0
-		for _, c := range clients {
-			if c.Detected {
-				fmt.Printf("  ✅ %s\n", c.Name)
-				fmt.Printf("     Config: %s\n", c.ConfigPath)
-				detectedCount++
-			}
+		if selectedClient == nil {
+			return fmt.Errorf("Unknown client: %s. Supported clients: cursor, vscode, claude-desktop, claude-code, windsurf, cline", clientFlag)
 		}
 		
-		if detectedCount == 0 {
-			fmt.Println("  ⚠️  No MCP clients detected on this system")
-			fmt.Println()
-			fmt.Println("Supported clients:")
-			for _, c := range clients {
-				fmt.Printf("  • %s (%s)\n", c.Name, c.ConfigPath)
-			}
+		// Check if client is actually installed
+		if !selectedClient.Installed {
+			fmt.Printf("❌ %s is not installed on this system.\n\n", selectedClient.Name)
+			displayConfigInstructions(*selectedClient)
+			return nil
 		}
 		
-		fmt.Println()
-		fmt.Println("💡 To configure a specific client, use:")
-		fmt.Println("   supabase mcp init --client <client-name>")
-		fmt.Println()
-		fmt.Println("   Supported clients:")
-		fmt.Println("   • cursor       (auto-configurable)")
-		fmt.Println("   • vscode       (auto-configurable)")
-		fmt.Println("   • claude-code  (auto-configurable via CLI)")
-		fmt.Println("   • claude-desktop")
-		fmt.Println("   • windsurf")
-		fmt.Println("   • cline")
+		// Auto-configure if possible
+		if selectedClient.CanAutomate {
+			return configureClient(ctx, fsys, *selectedClient)
+		}
+		
+		// Otherwise show manual instructions
+		displayConfigInstructions(*selectedClient)
+		return nil
 	}
-
+	
+	// Interactive mode: show detected clients
+	fmt.Println("Supabase MCP Server Configuration")
+	fmt.Println("==================================\n")
+	
+	var installedClients []ClientConfig
+	var notInstalledClients []ClientConfig
+	
+	for _, client := range clients {
+		if client.Installed {
+			installedClients = append(installedClients, client)
+		} else {
+			notInstalledClients = append(notInstalledClients, client)
+		}
+	}
+	
+	if len(installedClients) > 0 {
+		fmt.Println("✓ Detected MCP Clients:")
+		for _, client := range installedClients {
+			fmt.Printf("  - %s: %s\n", client.Name, client.Description)
+		}
+		fmt.Println()
+	}
+	
+	if len(notInstalledClients) > 0 {
+		fmt.Println("ℹ Available but not installed:")
+		for _, client := range notInstalledClients {
+			fmt.Printf("  - %s: %s\n", client.Name, client.Description)
+		}
+		fmt.Println()
+	}
+	
+	if len(installedClients) == 0 {
+		fmt.Println("No MCP clients detected. Install one of the supported clients:")
+		fmt.Println("  • Cursor: https://cursor.sh")
+		fmt.Println("  • VS Code: https://code.visualstudio.com")
+		fmt.Println("  • Claude Desktop: https://claude.ai/download")
+		fmt.Println("  • Claude Code: Install via 'npm install -g @anthropic-ai/claude-cli'")
+		fmt.Println("  • Windsurf: https://codeium.com/windsurf")
+		fmt.Println("  • Cline: Install as VS Code extension")
+		return nil
+	}
+	
+	fmt.Println("Use the --client flag to configure a specific client.")
+	fmt.Println("Example: supabase mcp init --client cursor")
+	
 	return nil
 }
 
-// configureClient automatically configures the specified client
-func configureClient(client ClientConfig, fsys afero.Fs) error {
-	fmt.Println("🔧 Auto-configuration mode")
-	fmt.Println()
+func detectClients(fsys afero.Fs) []ClientConfig {
+	homeDir, _ := os.UserHomeDir()
 	
-	switch client.ConfigType {
-	case "cursor", "vscode":
-		return configureJSONClient(client, fsys)
+	clients := []ClientConfig{
+		{
+			Name:         "cursor",
+			ConfigPath:   filepath.Join(homeDir, ".cursor", "mcp.json"),
+			Description:  "Cursor AI Editor",
+			CanAutomate:  true,
+		},
+		{
+			Name:         "vscode",
+			ConfigPath:   filepath.Join(homeDir, ".vscode", "mcp.json"),
+			Description:  "Visual Studio Code with Copilot",
+			CanAutomate:  true,
+		},
+		{
+			Name:         "claude-desktop",
+			ConfigPath:   getClaudeDesktopConfigPath(),
+			Description:  "Claude Desktop App",
+			CanAutomate:  false,
+		},
+		{
+			Name:         "claude-code",
+			ConfigPath:   filepath.Join(homeDir, ".mcp.json"),
+			Description:  "Claude Code CLI",
+			CanAutomate:  true,
+		},
+		{
+			Name:         "windsurf",
+			ConfigPath:   getWindsurfConfigPath(),
+			Description:  "Windsurf Editor by Codeium",
+			CanAutomate:  false,
+		},
+		{
+			Name:         "cline",
+			ConfigPath:   filepath.Join(homeDir, ".vscode", "mcp.json"),
+			Description:  "Cline VS Code Extension",
+			CanAutomate:  false,
+		},
+	}
+	
+	// Check for directory existence (config folder)
+	for i := range clients {
+		configDir := filepath.Dir(clients[i].ConfigPath)
+		if _, err := fsys.Stat(configDir); err == nil {
+			clients[i].Detected = true
+		}
+		
+		// Check if client is actually installed
+		clients[i].Installed = isClientInstalled(clients[i].Name)
+	}
+	
+	return clients
+}
+
+func isClientInstalled(clientName string) bool {
+	switch clientName {
+	case "cursor":
+		// Check for cursor binary
+		return commandExists("cursor") || appExists("Cursor")
+	case "vscode":
+		// Check for code binary
+		return commandExists("code")
+	case "claude-desktop":
+		// Check for Claude app
+		return appExists("Claude")
 	case "claude-code":
-		return configureClaudeCode()
+		// Check for claude CLI
+		return commandExists("claude")
+	case "windsurf":
+		// Check for windsurf binary or app
+		return commandExists("windsurf") || appExists("Windsurf")
+	case "cline":
+		// Cline is a VS Code extension, check if VS Code is installed
+		return commandExists("code")
 	default:
-		displayConfigInstructions(client.ConfigType)
-		return nil
+		return false
 	}
 }
 
-// configureJSONClient creates or updates mcp.json for Cursor/VS Code
-func configureJSONClient(client ClientConfig, fsys afero.Fs) error {
-	// Prompt for project ref
-	fmt.Print("📝 Enter your Supabase project reference (or press Enter to skip): ")
-	var projectRef string
-	fmt.Scanln(&projectRef)
-	
-	if projectRef == "" {
-		projectRef = "<project-ref>"
-		fmt.Println("   ⚠️  You'll need to replace <project-ref> in the config file")
+func commandExists(command string) bool {
+	_, err := exec.LookPath(command)
+	return err == nil
+}
+
+func appExists(appName string) bool {
+	if runtime.GOOS == "darwin" {
+		// Check in common macOS app locations
+		locations := []string{
+			fmt.Sprintf("/Applications/%s.app", appName),
+			fmt.Sprintf("%s/Applications/%s.app", os.Getenv("HOME"), appName),
+		}
+		for _, location := range locations {
+			if _, err := os.Stat(location); err == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func getClaudeDesktopConfigPath() string {
+	homeDir, _ := os.UserHomeDir()
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(homeDir, "Library", "Application Support", "Claude", "claude_desktop_config.json")
+	case "windows":
+		return filepath.Join(homeDir, "AppData", "Roaming", "Claude", "config.json")
+	default:
+		return filepath.Join(homeDir, ".config", "Claude", "config.json")
+	}
+}
+
+func getWindsurfConfigPath() string {
+	homeDir, _ := os.UserHomeDir()
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(homeDir, "Library", "Application Support", "Windsurf", "User", "globalStorage", "windsurf.mcp", "config.json")
+	case "windows":
+		return filepath.Join(homeDir, "AppData", "Roaming", "Windsurf", "User", "globalStorage", "windsurf.mcp", "config.json")
+	default:
+		return filepath.Join(homeDir, ".config", "Windsurf", "User", "globalStorage", "windsurf.mcp", "config.json")
+	}
+}
+
+func configureClient(ctx context.Context, fsys afero.Fs, client ClientConfig) error {
+	if client.Name == "claude-code" {
+		return configureClaudeCode(ctx)
 	}
 	
-	// Determine config directory
-	configDir := filepath.Dir(client.ConfigPath)
-	configFile := client.ConfigPath
+	// JSON-based clients (Cursor, VS Code)
+	return configureJSONClient(ctx, fsys, client)
+}
+
+func configureClaudeCode(ctx context.Context) error {
+	fmt.Printf("Configuring Claude Code...\n\n")
 	
-	// Check if we should use project-local config
-	cwd, _ := os.Getwd()
-	var useProjectLocal bool
+	// Prompt for scope
+	fmt.Println("Would you like to add this server:")
+	fmt.Println("  1. Globally (available in all projects)")
+	fmt.Println("  2. Locally (only in current project)")
+	fmt.Print("Choice [1]: ")
 	
-	fmt.Println()
-	fmt.Printf("📂 Configuration location options:\n")
-	fmt.Printf("   1. Project-local: %s\n", filepath.Join(cwd, filepath.Base(configDir), "mcp.json"))
-	fmt.Printf("   2. Global: %s\n", configFile)
-	fmt.Print("   Choose (1/2) [1]: ")
+	var scope string
+	fmt.Scanln(&scope)
+	if scope == "" {
+		scope = "1"
+	}
+	
+	scopeFlag := "global"
+	if scope == "2" {
+		scopeFlag = "local"
+	}
+	
+	// Prompt for access token
+	fmt.Print("\nEnter your Supabase access token: ")
+	var accessToken string
+	fmt.Scanln(&accessToken)
+	
+	if accessToken == "" {
+		return fmt.Errorf("Access token is required")
+	}
+	
+	// Build the claude mcp add command for remote server
+	cmd := exec.CommandContext(ctx, "claude", "mcp", "add", "supabase",
+"-s", scopeFlag,
+"-e", fmt.Sprintf("SUPABASE_MCP_SERVER_PERSONAL_ACCESS_TOKEN=%s", accessToken),
+"--",
+"remote",
+"https://mcp.supabase.com/mcp",
+)
+	
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("Failed to configure Claude Code: %w", err)
+	}
+	
+	fmt.Println("\n✓ Successfully configured Claude Code with Supabase MCP Server (remote)")
+	return nil
+}
+
+func configureJSONClient(ctx context.Context, fsys afero.Fs, client ClientConfig) error {
+	fmt.Printf("Configuring %s...\n\n", client.Name)
+	
+	// Prompt for access token
+	fmt.Print("Enter your Supabase access token: ")
+	var accessToken string
+	fmt.Scanln(&accessToken)
+	
+	if accessToken == "" {
+		return fmt.Errorf("Access token is required")
+	}
+	
+	// Prompt for scope
+	fmt.Println("\nWould you like to configure:")
+	fmt.Println("  1. Project-local config (in .vscode/mcp.json or .cursor/mcp.json)")
+	fmt.Println("  2. Global config (in your home directory)")
+	fmt.Print("Choice [1]: ")
 	
 	var choice string
 	fmt.Scanln(&choice)
-	
-	if choice == "" || choice == "1" {
-		useProjectLocal = true
-		configDir = filepath.Join(cwd, filepath.Base(configDir))
-		configFile = filepath.Join(configDir, "mcp.json")
+	if choice == "" {
+		choice = "1"
 	}
 	
-	fmt.Println()
-	fmt.Printf("📁 Creating config in: %s\n", configFile)
+	var configPath string
+	if choice == "2" {
+		// Global config
+		configPath = client.ConfigPath
+	} else {
+		// Project-local config
+		cwd, _ := os.Getwd()
+		if client.Name == "vscode" || client.Name == "cline" {
+			configPath = filepath.Join(cwd, ".vscode", "mcp.json")
+		} else {
+			configPath = filepath.Join(cwd, ".cursor", "mcp.json")
+		}
+	}
 	
-	// Create directory if it doesn't exist
-if err := os.MkdirAll(configDir, 0755); err != nil {
-return fmt.Errorf("failed to create config directory: %w", err)
+	// Get the remote server config
+	var config map[string]interface{}
+	if client.Name == "vscode" {
+		config = getRemoteVSCodeConfig(accessToken)
+	} else {
+		config = getRemoteCursorStyleConfig(accessToken)
+	}
+	
+	// Ensure directory exists
+	configDir := filepath.Dir(configPath)
+	if err := fsys.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("Failed to create config directory: %w", err)
+	}
+	
+	// Read existing config if it exists
+	existingData, err := afero.ReadFile(fsys, configPath)
+	if err == nil {
+		var existing map[string]interface{}
+		if err := json.Unmarshal(existingData, &existing); err == nil {
+			// Merge configs
+			for key, value := range config {
+				if key == "mcpServers" || key == "servers" {
+					// Merge server configs
+					if existingServers, ok := existing[key].(map[string]interface{}); ok {
+						if newServers, ok := value.(map[string]interface{}); ok {
+							for serverName, serverConfig := range newServers {
+								existingServers[serverName] = serverConfig
+							}
+							config[key] = existingServers
+						}
+					}
+				} else {
+					existing[key] = value
+				}
+			}
+			config = existing
+		}
+	}
+	
+	// Write config
+	configJSON, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("Failed to marshal config: %w", err)
+	}
+	
+	if err := afero.WriteFile(fsys, configPath, configJSON, 0644); err != nil {
+		return fmt.Errorf("Failed to write config file: %w", err)
+	}
+	
+	fmt.Printf("\n✓ Successfully configured %s at: %s\n", client.Name, configPath)
+	fmt.Println("\nThe remote Supabase MCP Server is now connected via OAuth.")
+	fmt.Println("Your access token will be used to authenticate with Supabase.")
+	
+	return nil
 }
 
-// Read existing config or create new one
-var config map[string]interface{}
-existingData, err := os.ReadFile(configFile)
-if err == nil {
-// Config exists, parse it
-if err := json.Unmarshal(existingData, &config); err != nil {
-return fmt.Errorf("failed to parse existing config: %w", err)
-}
-fmt.Println("   ✓ Found existing configuration")
-} else {
-// Create new config
-config = make(map[string]interface{})
-fmt.Println("   ✓ Creating new configuration")
-}
-
-// Generate the Supabase MCP server config
-var supabaseConfig map[string]interface{}
-if client.ConfigType == "vscode" {
-supabaseConfig = getVSCodeServerConfig(projectRef)
-// Ensure inputs array exists
-if _, ok := config["inputs"]; !ok {
-config["inputs"] = []map[string]interface{}{}
-}
-// Add input for PAT if not exists
-inputs := config["inputs"].([]interface{})
-hasInput := false
-for _, input := range inputs {
-if inputMap, ok := input.(map[string]interface{}); ok {
-if inputMap["id"] == "supabase-access-token" {
-hasInput = true
-break
-}
-}
-}
-if !hasInput {
-inputs = append(inputs, map[string]interface{}{
-"type":        "promptString",
-"id":          "supabase-access-token",
-"description": "Supabase personal access token",
-"password":    true,
-})
-config["inputs"] = inputs
-}
-// Add to servers
-if _, ok := config["servers"]; !ok {
-config["servers"] = make(map[string]interface{})
-}
-servers := config["servers"].(map[string]interface{})
-servers["supabase"] = supabaseConfig
-} else {
-// Cursor, Windsurf, Cline format
-supabaseConfig = getCursorStyleServerConfig(projectRef)
-if _, ok := config["mcpServers"]; !ok {
-config["mcpServers"] = make(map[string]interface{})
-}
-mcpServers := config["mcpServers"].(map[string]interface{})
-mcpServers["supabase"] = supabaseConfig
+func getRemoteCursorStyleConfig(accessToken string) map[string]interface{} {
+	return map[string]interface{}{
+		"mcpServers": map[string]interface{}{
+			"supabase": map[string]interface{}{
+				"type": "remote",
+				"url":  "https://mcp.supabase.com/mcp",
+				"oauth": map[string]interface{}{
+					"authorizationServer": "https://api.supabase.com",
+					"clientId":            "mcp-server",
+					"scopes":              []string{"mcp"},
+				},
+				"env": map[string]string{
+					"SUPABASE_MCP_SERVER_PERSONAL_ACCESS_TOKEN": accessToken,
+				},
+			},
+		},
+	}
 }
 
-// Write config file
-configJSON, err := json.MarshalIndent(config, "", "  ")
-if err != nil {
-return fmt.Errorf("failed to marshal config: %w", err)
+func getRemoteVSCodeConfig(accessToken string) map[string]interface{} {
+	return map[string]interface{}{
+		"servers": map[string]interface{}{
+			"supabase": map[string]interface{}{
+				"type": "remote",
+				"url":  "https://mcp.supabase.com/mcp",
+				"oauth": map[string]interface{}{
+					"authorizationServer": "https://api.supabase.com",
+					"clientId":            "mcp-server",
+					"scopes":              []string{"mcp"},
+				},
+				"env": map[string]string{
+					"SUPABASE_MCP_SERVER_PERSONAL_ACCESS_TOKEN": accessToken,
+				},
+			},
+		},
+	}
 }
 
-if err := os.WriteFile(configFile, configJSON, 0644); err != nil {
-return fmt.Errorf("failed to write config file: %w", err)
+func displayConfigInstructions(client ClientConfig) {
+	fmt.Printf("Manual Configuration Instructions for %s\n", client.Name)
+	fmt.Println(strings.Repeat("=", 50))
+	fmt.Println()
+	
+	accessTokenPlaceholder := "<your-access-token>"
+	
+	switch client.Name {
+	case "cursor":
+		fmt.Println("1. Open Cursor Settings")
+		fmt.Println("2. Navigate to MCP Servers configuration")
+		fmt.Printf("3. Add the following to %s:\n\n", client.ConfigPath)
+		fmt.Printf(`{
+  "mcpServers": {
+    "supabase": {
+      "type": "remote",
+      "url": "https://mcp.supabase.com/mcp",
+      "oauth": {
+        "authorizationServer": "https://api.supabase.com",
+        "clientId": "mcp-server",
+        "scopes": ["mcp"]
+      },
+      "env": {
+        "SUPABASE_MCP_SERVER_PERSONAL_ACCESS_TOKEN": "%s"
+      }
+    }
+  }
 }
-
-fmt.Println()
-fmt.Println("✅ Configuration complete!")
-fmt.Println()
-fmt.Printf("📄 Config file: %s\n", configFile)
-fmt.Println()
-
-if projectRef == "<project-ref>" {
-fmt.Println("⚠️  Next steps:")
-fmt.Println("   1. Edit the config file and replace <project-ref> with your project reference")
-fmt.Println("   2. Replace <personal-access-token> with your PAT from:")
-fmt.Println("      https://supabase.com/dashboard/account/tokens")
-} else {
-fmt.Println("⚠️  Next steps:")
-if client.ConfigType == "vscode" {
-fmt.Println("   1. Open Copilot chat and switch to Agent mode")
-fmt.Println("   2. You'll be prompted for your PAT when first using the server")
-} else {
-fmt.Println("   1. Edit the config file and replace <personal-access-token> with your PAT from:")
-fmt.Println("      https://supabase.com/dashboard/account/tokens")
-fmt.Println("   2. Restart", client.Name)
+`, accessTokenPlaceholder)
+		
+	case "vscode", "cline":
+		fmt.Println("1. Open VS Code")
+		fmt.Println("2. Create .vscode/mcp.json in your project root")
+		fmt.Println("3. Add the following configuration:\n")
+		fmt.Printf(`{
+  "servers": {
+    "supabase": {
+      "type": "remote",
+      "url": "https://mcp.supabase.com/mcp",
+      "oauth": {
+        "authorizationServer": "https://api.supabase.com",
+        "clientId": "mcp-server",
+        "scopes": ["mcp"]
+      },
+      "env": {
+        "SUPABASE_MCP_SERVER_PERSONAL_ACCESS_TOKEN": "%s"
+      }
+    }
+  }
 }
+`, accessTokenPlaceholder)
+		
+	case "claude-desktop":
+		fmt.Println("1. Open Claude Desktop")
+		fmt.Println("2. Go to Settings > Developer > Edit Config")
+		fmt.Printf("3. Add the following to %s:\n\n", client.ConfigPath)
+		fmt.Printf(`{
+  "mcpServers": {
+    "supabase": {
+      "type": "remote",
+      "url": "https://mcp.supabase.com/mcp",
+      "oauth": {
+        "authorizationServer": "https://api.supabase.com",
+        "clientId": "mcp-server",
+        "scopes": ["mcp"]
+      },
+      "env": {
+        "SUPABASE_MCP_SERVER_PERSONAL_ACCESS_TOKEN": "%s"
+      }
+    }
+  }
 }
-
-if client.ConfigType == "cursor" {
-fmt.Println()
-fmt.Println("💡 In Cursor, go to Settings → MCP to verify the connection")
+`, accessTokenPlaceholder)
+		fmt.Println("\n4. Restart Claude Desktop")
+		
+	case "claude-code":
+		fmt.Println("Run this command:")
+		fmt.Printf("  claude mcp add supabase -s global -e SUPABASE_MCP_SERVER_PERSONAL_ACCESS_TOKEN=%s -- remote https://mcp.supabase.com/mcp\n", accessTokenPlaceholder)
+		
+	case "windsurf":
+		fmt.Println("1. Open Windsurf")
+		fmt.Println("2. Navigate to Cascade > MCP > Configure")
+		fmt.Printf("3. Add the following to %s:\n\n", client.ConfigPath)
+		fmt.Printf(`{
+  "mcpServers": {
+    "supabase": {
+      "type": "remote",
+      "url": "https://mcp.supabase.com/mcp",
+      "oauth": {
+        "authorizationServer": "https://api.supabase.com",
+        "clientId": "mcp-server",
+        "scopes": ["mcp"]
+      },
+      "env": {
+        "SUPABASE_MCP_SERVER_PERSONAL_ACCESS_TOKEN": "%s"
+      }
+    }
+  }
 }
-
-return nil
-}
-
-// configureClaudeCode uses the Claude CLI to configure the server
-func configureClaudeCode() error {
-fmt.Println("🤖 Claude Code can be configured using the Claude CLI")
-fmt.Println()
-
-// Check if claude CLI is available
-if _, err := exec.LookPath("claude"); err != nil {
-fmt.Println("⚠️  Claude CLI not found in PATH")
-fmt.Println()
-fmt.Println("Please install the Claude CLI first, or use manual configuration:")
-displayConfigInstructions("claude-code")
-return nil
-}
-
-fmt.Println("✓ Found Claude CLI")
-fmt.Println()
-
-// Prompt for configuration
-fmt.Print("📝 Enter your Supabase project reference (or press Enter to skip): ")
-var projectRef string
-fmt.Scanln(&projectRef)
-
-fmt.Print("🔑 Enter your Supabase Personal Access Token (or press Enter to skip): ")
-var token string
-fmt.Scanln(&token)
-
-if projectRef == "" || token == "" {
-fmt.Println()
-fmt.Println("⚠️  Project ref or token not provided. Here's the command to run manually:")
-fmt.Println()
-fmt.Println("   claude mcp add supabase -s local \\")
-fmt.Println("     -e SUPABASE_ACCESS_TOKEN=<your-token> \\")
-fmt.Println("     -- npx -y @supabase/mcp-server-supabase@latest \\")
-fmt.Println("     --read-only --project-ref=<project-ref>")
-fmt.Println()
-return nil
-}
-
-// Build the command
-args := []string{
-"mcp", "add", "supabase",
-"-s", "local",
-"-e", fmt.Sprintf("SUPABASE_ACCESS_TOKEN=%s", token),
-"--",
-"npx", "-y", "@supabase/mcp-server-supabase@latest",
-"--read-only",
-fmt.Sprintf("--project-ref=%s", projectRef),
-}
-
-fmt.Println()
-fmt.Println("🚀 Running: claude mcp add supabase...")
-
-cmd := exec.Command("claude", args...)
-cmd.Stdout = os.Stdout
-cmd.Stderr = os.Stderr
-
-if err := cmd.Run(); err != nil {
-return fmt.Errorf("failed to configure Claude Code: %w", err)
-}
-
-fmt.Println()
-fmt.Println("✅ Claude Code configured successfully!")
-
-return nil
-}
-
-// detectClients checks for installed MCP clients
-func detectClients() []ClientConfig {
-homeDir, _ := os.UserHomeDir()
-
-clients := []ClientConfig{
-{
-Name:        "Cursor",
-ConfigPath:  filepath.Join(homeDir, ".cursor", "mcp.json"),
-ConfigType:  "cursor",
-CanAutomate: true,
-},
-{
-Name:        "VS Code (Copilot)",
-ConfigPath:  filepath.Join(homeDir, ".vscode", "mcp.json"),
-ConfigType:  "vscode",
-CanAutomate: true,
-},
-{
-Name:        "Claude Desktop",
-ConfigPath:  getClaudeDesktopConfigPath(homeDir),
-ConfigType:  "claude-desktop",
-CanAutomate: false,
-},
-{
-Name:        "Claude Code",
-ConfigPath:  filepath.Join(homeDir, ".mcp.json"),
-ConfigType:  "claude-code",
-CanAutomate: true, // Via CLI
-},
-{
-Name:        "Windsurf",
-ConfigPath:  getWindsurfConfigPath(homeDir),
-ConfigType:  "windsurf",
-CanAutomate: false,
-},
-{
-Name:        "Cline (VS Code)",
-ConfigPath:  getClineConfigPath(homeDir),
-ConfigType:  "cline",
-CanAutomate: false,
-},
-}
-
-// Check which clients are actually installed
-for i := range clients {
-if _, err := os.Stat(filepath.Dir(clients[i].ConfigPath)); err == nil {
-clients[i].Detected = true
-}
-}
-
-return clients
-}
-
-func getClaudeDesktopConfigPath(homeDir string) string {
-switch runtime.GOOS {
-case "darwin":
-return filepath.Join(homeDir, "Library", "Application Support", "Claude", "claude_desktop_config.json")
-case "windows":
-return filepath.Join(homeDir, "AppData", "Roaming", "Claude", "claude_desktop_config.json")
-default: // linux
-return filepath.Join(homeDir, ".config", "Claude", "claude_desktop_config.json")
-}
-}
-
-func getWindsurfConfigPath(homeDir string) string {
-switch runtime.GOOS {
-case "darwin":
-return filepath.Join(homeDir, "Library", "Application Support", "Windsurf", "User", "globalStorage", "windsurf-cascade", "mcp_settings.json")
-case "windows":
-return filepath.Join(homeDir, "AppData", "Roaming", "Windsurf", "User", "globalStorage", "windsurf-cascade", "mcp_settings.json")
-default: // linux
-return filepath.Join(homeDir, ".config", "Windsurf", "User", "globalStorage", "windsurf-cascade", "mcp_settings.json")
-}
-}
-
-func getClineConfigPath(homeDir string) string {
-switch runtime.GOOS {
-case "darwin":
-return filepath.Join(homeDir, "Library", "Application Support", "Code", "User", "globalStorage", "saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json")
-case "windows":
-return filepath.Join(homeDir, "AppData", "Roaming", "Code", "User", "globalStorage", "saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json")
-default: // linux
-return filepath.Join(homeDir, ".config", "Code", "User", "globalStorage", "saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json")
-}
-}
-
-// displayConfigInstructions shows the configuration template for a specific client
-func displayConfigInstructions(clientType string) {
-fmt.Println("📝 Manual Configuration Required")
-fmt.Println()
-fmt.Println("Configuration Template:")
-fmt.Println()
-
-var config interface{}
-
-switch clientType {
-case "cursor", "windsurf", "cline":
-config = getCursorStyleConfig()
-case "vscode":
-config = getVSCodeConfig()
-case "claude-desktop":
-config = getCursorStyleConfig() // Same format as Cursor
-case "claude-code":
-config = getClaudeCodeConfig()
-}
-
-configJSON, _ := json.MarshalIndent(config, "", "  ")
-fmt.Println(string(configJSON))
-fmt.Println()
-
-fmt.Println("📋 Setup Instructions:")
-fmt.Println()
-
-switch clientType {
-case "cursor":
-fmt.Println("1. Create .cursor/mcp.json in your project root")
-fmt.Println("2. Replace <project-ref> with your Supabase project reference")
-fmt.Println("3. Replace <personal-access-token> with your PAT from:")
-fmt.Println("   https://supabase.com/dashboard/account/tokens")
-fmt.Println("4. Open Cursor → Settings → MCP to verify connection")
-
-case "vscode":
-fmt.Println("1. Create .vscode/mcp.json in your project root")
-fmt.Println("2. Replace <project-ref> with your Supabase project reference")
-fmt.Println("3. Open Copilot chat and switch to Agent mode")
-fmt.Println("4. You'll be prompted for your PAT when first using the server")
-
-case "claude-desktop":
-fmt.Println("1. Open Claude Desktop → Settings → Developer → Edit Config")
-fmt.Println("2. Replace <project-ref> with your Supabase project reference")
-fmt.Println("3. Replace <personal-access-token> with your PAT")
-fmt.Println("4. Restart Claude Desktop")
-fmt.Println("5. Look for the hammer (MCP) icon in new chats")
-
-case "claude-code":
-fmt.Println("Option 1 - Project-scoped (.mcp.json file):")
-fmt.Println("  1. Create .mcp.json in your project root")
-fmt.Println("  2. Add the configuration above")
-fmt.Println("  3. Replace <project-ref> and <personal-access-token>")
-fmt.Println()
-fmt.Println("Option 2 - Local-scoped (CLI command):")
-fmt.Println("  claude mcp add supabase -s local -e SUPABASE_ACCESS_TOKEN=<your-token> -- npx -y @supabase/mcp-server-supabase@latest")
-
-case "windsurf":
-fmt.Println("1. Open Windsurf Cascade assistant")
-fmt.Println("2. Click the hammer (MCP) icon → Configure")
-fmt.Println("3. Add the configuration above")
-fmt.Println("4. Replace <project-ref> and <personal-access-token>")
-fmt.Println("5. Save and tap Refresh in Cascade")
-
-case "cline":
-fmt.Println("1. Open Cline extension in VS Code")
-fmt.Println("2. Tap MCP Servers icon → Configure MCP Servers")
-fmt.Println("3. Add the configuration above")
-fmt.Println("4. Replace <project-ref> and <personal-access-token>")
-fmt.Println("5. Cline will auto-reload the configuration")
-}
-
-fmt.Println()
-fmt.Println("📚 Full documentation: https://supabase.com/docs/guides/getting-started/mcp")
-}
-
-func getCursorStyleConfig() map[string]interface{} {
-command := "npx"
-args := []interface{}{"-y", "@supabase/mcp-server-supabase@latest", "--read-only", "--project-ref=<project-ref>"}
-
-if runtime.GOOS == "windows" {
-command = "cmd"
-args = append([]interface{}{"/c", "npx"}, args[1:]...)
-}
-
-return map[string]interface{}{
-"mcpServers": map[string]interface{}{
-"supabase": map[string]interface{}{
-"command": command,
-"args":    args,
-"env": map[string]string{
-"SUPABASE_ACCESS_TOKEN": "<personal-access-token>",
-},
-},
-},
-}
-}
-
-func getCursorStyleServerConfig(projectRef string) map[string]interface{} {
-command := "npx"
-args := []interface{}{"-y", "@supabase/mcp-server-supabase@latest", "--read-only", fmt.Sprintf("--project-ref=%s", projectRef)}
-
-if runtime.GOOS == "windows" {
-command = "cmd"
-args = append([]interface{}{"/c", "npx"}, args[1:]...)
-}
-
-return map[string]interface{}{
-"command": command,
-"args":    args,
-"env": map[string]string{
-"SUPABASE_ACCESS_TOKEN": "<personal-access-token>",
-},
-}
-}
-
-func getVSCodeConfig() map[string]interface{} {
-command := "npx"
-args := []interface{}{"-y", "@supabase/mcp-server-supabase@latest", "--read-only", "--project-ref=<project-ref>"}
-
-if runtime.GOOS == "windows" {
-command = "cmd"
-args = append([]interface{}{"/c", "npx"}, args[1:]...)
-}
-
-return map[string]interface{}{
-"inputs": []map[string]interface{}{
-{
-"type":        "promptString",
-"id":          "supabase-access-token",
-"description": "Supabase personal access token",
-"password":    true,
-},
-},
-"servers": map[string]interface{}{
-"supabase": map[string]interface{}{
-"command": command,
-"args":    args,
-"env": map[string]string{
-"SUPABASE_ACCESS_TOKEN": "${input:supabase-access-token}",
-},
-},
-},
-}
-}
-
-func getVSCodeServerConfig(projectRef string) map[string]interface{} {
-command := "npx"
-args := []interface{}{"-y", "@supabase/mcp-server-supabase@latest", "--read-only", fmt.Sprintf("--project-ref=%s", projectRef)}
-
-if runtime.GOOS == "windows" {
-command = "cmd"
-args = append([]interface{}{"/c", "npx"}, args[1:]...)
-}
-
-return map[string]interface{}{
-"command": command,
-"args":    args,
-"env": map[string]string{
-"SUPABASE_ACCESS_TOKEN": "${input:supabase-access-token}",
-},
-}
-}
-
-func getClaudeCodeConfig() map[string]interface{} {
-return getCursorStyleConfig() // Same format
+`, accessTokenPlaceholder)
+		fmt.Println("\n4. Tap 'Refresh' in Cascade assistant")
+	}
+	
+	fmt.Println("\n" + strings.Repeat("=", 50))
+	fmt.Println("\nTo get your access token:")
+	fmt.Println("  1. Go to https://supabase.com/dashboard/account/tokens")
+	fmt.Println("  2. Create a new access token")
+	fmt.Println("  3. Copy and use it in the configuration above")
+	fmt.Println("\nFor more information, visit:")
+	fmt.Println("  https://supabase.com/docs/guides/getting-started/mcp")
 }
