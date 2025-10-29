@@ -317,6 +317,7 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 	return nil
 }
 
+// parse multipart part headers to read and sanitize relative file path for writing
 func resolvedPartPath(slug string, part *multipart.Part) (string, error) {
 	// dedicated header to specify relative path, not expected to be used
 	if relPath := part.Header.Get("Supabase-Path"); relPath != "" {
@@ -340,6 +341,7 @@ func resolvedPartPath(slug string, part *multipart.Part) (string, error) {
 	return "", nil
 }
 
+// ensure path in a given function's part metadata stays confined within that function's directory
 func sanitizeRelativePath(slug, raw string) (string, error) {
 	candidate := strings.TrimSpace(raw)
 	if candidate == "" {
