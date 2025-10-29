@@ -303,7 +303,7 @@ func TestRunProducesSameFilesWithOrWithoutUseAPI(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 				return err
 			}
-			if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
+			if err := os.WriteFile(abs, []byte(content), 0o600); err != nil {
 				return err
 			}
 		}
