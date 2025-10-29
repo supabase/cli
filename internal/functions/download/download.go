@@ -248,7 +248,7 @@ func suggestLegacyBundle(slug string) string {
 }
 
 func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string, fsys afero.Fs) error {
-	fmt.Println("Downloading " + utils.Bold(slug))
+	fmt.Fprintln(os.Stderr, "Downloading " + utils.Bold(slug))
 
 	// Request multipart/form-data response using RequestEditorFn
 	resp, err := utils.GetSupabase().V1GetAFunctionBody(ctx, projectRef, slug, func(ctx context.Context, req *http.Request) error {
