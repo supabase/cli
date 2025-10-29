@@ -25,6 +25,7 @@ var (
 	deployIncludeAll   bool
 	deployIncludeRoles bool
 	deployIncludeSeed  bool
+	only               []string
 
 	deployCmd = &cobra.Command{
 		GroupID: groupLocalDev,
@@ -45,11 +46,28 @@ Use individual flags to customize what gets deployed.`,
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			fsys := afero.NewOsFs()
 
-			// Determine what to deploy
-			// If no specific flags are set, default to db and functions
-			includeDb, _ := cmd.Flags().GetBool("include-db")
-			includeFunctions, _ := cmd.Flags().GetBool("include-functions")
-			includeConfig, _ := cmd.Flags().GetBool("include-config")
+			// Determine components to deploy
+			includeDb := false
+			includeFunctions := false
+			includeConfig := false
+			if len(only) == 0 {
+				includeDb = true
+				includeFunctions = true
+				includeConfig = true
+			} else {
+				for _, component := range only {
+					switch component {
+					case "db":
+						includeDb = true
+					case "functions":
+						includeFunctions = true
+					case "config":
+						includeConfig = true
+					default:
+						return errors.Errorf("unknown component to deploy: %s", component)
+					}
+				}
+			}
 
 			fmt.Fprintln(os.Stderr, utils.Bold("Deploying to project:"), flags.ProjectRef)
 
@@ -148,18 +166,10 @@ Use individual flags to customize what gets deployed.`,
 func init() {
 	cmdFlags := deployCmd.Flags()
 
-	// What to deploy - use direct Bool() since we check via cmd.Flags().Changed()
-	cmdFlags.Bool("include-db", true, "Include database migrations (default: true)")
-	cmdFlags.Bool("include-functions", true, "Include edge functions (default: true)")
-	cmdFlags.Bool("include-config", true, "Include config.toml settings (default: true)")
+	deployCmd.Flags().StringSliceVar(&only, "only", []string{}, "Comma-separated list of components to deploy (e.g., db,storage,functions).")
 
-	// DB push options (from db push command)
 	cmdFlags.BoolVar(&deployDryRun, "dry-run", false, "Print operations that would be performed without executing them")
-	cmdFlags.BoolVar(&deployIncludeAll, "include-all", false, "Include all migrations not found on remote history table")
-	cmdFlags.BoolVar(&deployIncludeRoles, "include-roles", false, "Include custom roles from "+utils.CustomRolesPath)
-	cmdFlags.BoolVar(&deployIncludeSeed, "include-seed", false, "Include seed data from your config")
 
-	// Project config
 	cmdFlags.String("db-url", "", "Deploys to the database specified by the connection string (must be percent-encoded)")
 	cmdFlags.Bool("linked", true, "Deploys to the linked project")
 	cmdFlags.Bool("local", false, "Deploys to the local database")
