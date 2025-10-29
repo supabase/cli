@@ -288,7 +288,7 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 	mr := multipart.NewReader(resp.Body, params["boundary"])
 	for {
 		part, err := mr.NextPart()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
