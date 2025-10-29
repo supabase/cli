@@ -59,6 +59,7 @@ func TestDockerBundle(t *testing.T) {
 			filepath.Join("hello", "index.ts"),
 			filepath.Join("hello", "deno.json"),
 			[]string{filepath.Join("hello", "data.pdf")},
+			false,
 			&body,
 		)
 		// Check error
@@ -86,6 +87,7 @@ func TestDockerBundle(t *testing.T) {
 			"hello/index.ts",
 			"",
 			nil,
+			false,
 			nil,
 		)
 		// Check error
