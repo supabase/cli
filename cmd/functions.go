@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
@@ -53,13 +54,13 @@ var (
 		},
 	}
 
-	useApi            bool
-	useDocker         bool
-	useLegacyBundle   bool
-	noVerifyJWT       = new(bool)
-	importMapPath     string
-	prune             bool
-	functionsDryRun   bool
+	useApi          bool
+	useDocker       bool
+	useLegacyBundle bool
+	noVerifyJWT     = new(bool)
+	importMapPath   string
+	prune           bool
+	functionsDryRun bool
 
 	functionsDeployCmd = &cobra.Command{
 		Use:   "deploy [Function name]",
@@ -75,7 +76,14 @@ var (
 			} else if maxJobs > 1 {
 				return errors.New("--jobs must be used together with --use-api")
 			}
-			return deploy.Run(cmd.Context(), args, useDocker, noVerifyJWT, importMapPath, maxJobs, prune, functionsDryRun, afero.NewOsFs())
+			keep := func(name string) bool {
+				if functionsDryRun {
+					fmt.Fprintln(os.Stderr, "Would deploy:", name)
+					return false
+				}
+				return true
+			}
+			return deploy.Run(cmd.Context(), args, useDocker, noVerifyJWT, importMapPath, maxJobs, prune, afero.NewOsFs(), keep)
 		},
 	}
 

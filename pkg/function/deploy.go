@@ -19,49 +19,9 @@ import (
 
 var ErrNoDeploy = errors.New("All Functions are up to date.")
 
-func (s *EdgeRuntimeAPI) DryRun(ctx context.Context, functionConfig config.FunctionConfig, fsys fs.FS) error {
-	// If we have an eszip bundler, use the same logic as UpsertFunctions
+func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.FunctionConfig, fsys fs.FS, filter ...func(string) bool) error {
 	if s.eszip != nil {
-		keep := func(name string) bool {
-			return false
-		}
-		return s.upsertFunctions(ctx, functionConfig, keep)
-	}
-
-	// Without eszip bundler, we can't accurately detect changes
-	// Fallback to listing what would be deployed based on API deploy logic
-	var toDeploy []string
-	for slug, fc := range functionConfig {
-		if !fc.Enabled {
-			fmt.Fprintln(os.Stderr, "Skipping disabled Function:", slug)
-			continue
-		}
-		toDeploy = append(toDeploy, slug)
-	}
-
-	if len(toDeploy) == 0 {
-		return errors.New(ErrNoDeploy)
-	}
-
-	fmt.Fprintln(os.Stderr, "DRY RUN: functions will *not* be deployed.")
-	fmt.Fprintln(os.Stderr, "\nWould deploy these functions:")
-	fmt.Fprintln(os.Stderr, "(Unable to detect changes without Docker bundler)")
-	for _, slug := range toDeploy {
-		fc := functionConfig[slug]
-		fmt.Fprintf(os.Stderr, " • %s\n", slug)
-		fmt.Fprintf(os.Stderr, "   - Entrypoint: %s\n", fc.Entrypoint)
-		if fc.ImportMap != "" {
-			fmt.Fprintf(os.Stderr, "   - Import map: %s\n", fc.ImportMap)
-		}
-		fmt.Fprintf(os.Stderr, "   - Verify JWT: %v\n", fc.VerifyJWT)
-	}
-
-	return nil
-}
-
-func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.FunctionConfig, fsys fs.FS) error {
-	if s.eszip != nil {
-		return s.UpsertFunctions(ctx, functionConfig)
+		return s.UpsertFunctions(ctx, functionConfig, filter...)
 	}
 	// Convert all paths in functions config to relative when using api deploy
 	var toDeploy []FunctionDeployMetadata
@@ -81,6 +41,17 @@ func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.Funct
 			files[i] = toRelPath(sf)
 		}
 		meta.StaticPatterns = &files
+		shouldDeploy := true
+		for _, keep := range filter {
+			if !keep(slug) {
+				shouldDeploy = false
+				break
+			}
+		}
+		if !shouldDeploy {
+			fmt.Fprintln(os.Stderr, "Would deploy:", slug)
+			continue
+		}
 		toDeploy = append(toDeploy, meta)
 	}
 	if len(toDeploy) == 0 {

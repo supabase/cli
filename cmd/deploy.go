@@ -78,7 +78,14 @@ Use individual flags to customize what gets deployed.`,
 			// Maybe deploy edge functions
 			if includeFunctions {
 				fmt.Fprintln(os.Stderr, utils.Aqua(">>>")+" Deploying edge functions...")
-				if err := funcDeploy.Run(ctx, []string{}, true, nil, "", 1, false, deployDryRun, fsys); err != nil && !errors.Is(err, function.ErrNoDeploy) {
+				keep := func(name string) bool {
+					if deployDryRun {
+						fmt.Fprintln(os.Stderr, utils.Yellow("⏭ ")+"Would deploy:", name)
+						return false
+					}
+					return true
+				}
+				if err := funcDeploy.Run(ctx, []string{}, true, nil, "", 1, false, fsys, keep); err != nil && !errors.Is(err, function.ErrNoDeploy) {
 					deployErrors = append(deployErrors, errors.Errorf("functions deploy failed: %w", err))
 					fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:")+" Functions deployment failed:", err)
 				} else if errors.Is(err, function.ErrNoDeploy) {
