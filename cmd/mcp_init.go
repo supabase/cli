@@ -23,14 +23,22 @@ Examples:
   # Run interactive setup
   supabase mcp init
 
+  # Configure a specific client
+  supabase mcp init --client cursor
+  supabase mcp init --client vscode
+  supabase mcp init --client claude-desktop
+  supabase mcp init --client claude-code
+
   # Skip credential storage and only generate configs
   supabase mcp init --no-save-credentials`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return mcpinit.Run(cmd.Context(), afero.NewOsFs())
+			client, _ := cmd.Flags().GetString("client")
+			return mcpinit.Run(cmd.Context(), afero.NewOsFs(), client)
 		},
 	}
 )
 
 func init() {
+	mcpInitCmd.Flags().StringP("client", "c", "", "Target specific client (cursor, vscode, claude-desktop, claude-code, windsurf, cline)")
 	mcpCmd.AddCommand(mcpInitCmd)
 }
