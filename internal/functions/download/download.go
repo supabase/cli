@@ -248,7 +248,7 @@ func suggestLegacyBundle(slug string) string {
 }
 
 func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string, fsys afero.Fs) error {
-	fmt.Fprintln(os.Stderr, "Downloading " + utils.Bold(slug))
+	fmt.Fprintln(os.Stderr, "Downloading "+utils.Bold(slug))
 
 	// Request multipart/form-data response using RequestEditorFn
 	resp, err := utils.GetSupabase().V1GetAFunctionBody(ctx, projectRef, slug, func(ctx context.Context, req *http.Request) error {
@@ -318,10 +318,12 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 }
 
 func resolvedPartPath(slug string, part *multipart.Part) (string, error) {
+	// dedicated header to specify relative path, not expected to be used
 	if relPath := part.Header.Get("Supabase-Path"); relPath != "" {
 		return sanitizeRelativePath(slug, relPath)
 	}
 
+	// part.FileName() does not allow us to handle relative paths, so we parse Content-Disposition manually
 	cd := part.Header.Get("Content-Disposition")
 	if cd == "" {
 		return "", nil

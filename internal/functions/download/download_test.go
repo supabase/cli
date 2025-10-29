@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/h2non/gock"
@@ -233,5 +236,108 @@ func TestGetMetadata(t *testing.T) {
 		// Check error
 		assert.ErrorContains(t, err, "Failed to download Function test-func on the Supabase project:")
 		assert.Nil(t, meta)
+	})
+}
+
+func TestSanitizeRelativePath(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns cleaned relative path", func(t *testing.T) {
+		got, err := sanitizeRelativePath("test-func", "src/index.ts")
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join("src", "index.ts"), got)
+	})
+
+	t.Run("normalizes windows separators", func(t *testing.T) {
+		got, err := sanitizeRelativePath("", `dir\\file.ts`)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join("dir", "file.ts"), got)
+	})
+
+	t.Run("strips slug prefix", func(t *testing.T) {
+		got, err := sanitizeRelativePath("test-func", "test-func/index.ts")
+		require.NoError(t, err)
+		assert.Equal(t, "index.ts", got)
+	})
+
+	t.Run("skips slug directory itself", func(t *testing.T) {
+		got, err := sanitizeRelativePath("test-func", "test-func")
+		require.NoError(t, err)
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("rejects path traversal", func(t *testing.T) {
+		got, err := sanitizeRelativePath("", "../secrets.txt")
+		require.ErrorContains(t, err, "refusing to write file outside of function directory")
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("rejects absolute path", func(t *testing.T) {
+		got, err := sanitizeRelativePath("", "/etc/passwd")
+		require.ErrorContains(t, err, "refusing to write file outside of function directory")
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("returns empty for whitespace input", func(t *testing.T) {
+		got, err := sanitizeRelativePath("", " \t\n ")
+		require.NoError(t, err)
+		assert.Equal(t, "", got)
+	})
+}
+
+func TestResolvedPartPath(t *testing.T) {
+	t.Parallel()
+
+	newPart := func(headers map[string]string) *multipart.Part {
+		mh := make(textproto.MIMEHeader, len(headers))
+		for k, v := range headers {
+			mh.Set(k, v)
+		}
+		return &multipart.Part{Header: mh}
+	}
+
+	t.Run("returns path from Supabase header", func(t *testing.T) {
+		part := newPart(map[string]string{
+			"Supabase-Path": "dir/file.ts",
+		})
+		got, err := resolvedPartPath("test-func", part)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join("dir", "file.ts"), got)
+	})
+
+	t.Run("returns filename from content disposition", func(t *testing.T) {
+		part := newPart(map[string]string{
+			"Content-Disposition": `form-data; name="file"; filename="test-func/index.ts"`,
+		})
+		got, err := resolvedPartPath("test-func", part)
+		require.NoError(t, err)
+		assert.Equal(t, "index.ts", got)
+	})
+
+	t.Run("returns empty when no filename provided", func(t *testing.T) {
+		part := newPart(map[string]string{
+			"Content-Disposition": `form-data; name="file"`,
+		})
+		got, err := resolvedPartPath("test-func", part)
+		require.NoError(t, err)
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("propagates sanitize errors", func(t *testing.T) {
+		part := newPart(map[string]string{
+			"Supabase-Path": "../escape",
+		})
+		got, err := resolvedPartPath("test-func", part)
+		require.ErrorContains(t, err, "refusing to write file outside of function directory")
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("returns error on invalid content disposition", func(t *testing.T) {
+		part := newPart(map[string]string{
+			"Content-Disposition": `form-data; filename="unterminated`,
+		})
+		got, err := resolvedPartPath("test-func", part)
+		require.ErrorContains(t, err, "failed to parse content disposition")
+		assert.Equal(t, "", got)
 	})
 }
