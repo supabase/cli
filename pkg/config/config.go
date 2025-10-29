@@ -201,7 +201,7 @@ type (
 
 	function struct {
 		Enabled        bool   `toml:"enabled" json:"-"`
-		UsePackageJson bool   `toml:"-"`
+		UsePackageJson bool   `toml:"-" join:"-"`
 		VerifyJWT      bool   `toml:"verify_jwt" json:"verifyJWT"`
 		ImportMap      string `toml:"import_map" json:"importMapPath,omitempty"`
 		Entrypoint     string `toml:"entrypoint" json:"entrypointPath,omitempty"`
