@@ -1,13 +1,13 @@
 package cmd
 
 import (
-"github.com/spf13/afero"
-"github.com/spf13/cobra"
-"github.com/supabase/cli/internal/mcp/init"
+	"github.com/spf13/afero"
+	"github.com/spf13/cobra"
+	mcpinit "github.com/supabase/cli/internal/mcp/init"
 )
 
 var (
-mcpInitCmd = &cobra.Command{
+	mcpInitCmd = &cobra.Command{
 		Use:   "init",
 		Short: "Initialize MCP server configuration for AI assistants",
 		Long: `Interactive setup wizard to configure the Supabase MCP server for your AI assistant clients.
