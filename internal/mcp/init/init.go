@@ -35,7 +35,7 @@ func Run(ctx context.Context, fsys afero.Fs, clientFlag string) error {
 			}
 		}
 		if selectedClient == nil {
-			return fmt.Errorf("Unknown client: %s. Supported clients: cursor, vscode, claude-desktop, claude-code, windsurf, cline", clientFlag)
+			return fmt.Errorf("Unknown client: %s. Supported clients: cursor, vscode, claude-desktop, claude-code, windsurf, cline, codex", clientFlag)
 		}
 		
 		// Check if client is actually installed
@@ -94,6 +94,7 @@ func Run(ctx context.Context, fsys afero.Fs, clientFlag string) error {
 		fmt.Println("  • Claude Code: Install via 'npm install -g @anthropic-ai/claude-cli'")
 		fmt.Println("  • Windsurf: https://codeium.com/windsurf")
 		fmt.Println("  • Cline: Install as VS Code extension")
+		fmt.Println("  • Codex: https://codex.so")
 		return nil
 	}
 	
@@ -143,6 +144,12 @@ func detectClients(fsys afero.Fs) []ClientConfig {
 			Description:  "Cline VS Code Extension",
 			CanAutomate:  false,
 		},
+		{
+			Name:         "codex",
+			ConfigPath:   getCodexConfigPath(),
+			Description:  "Codex AI Editor",
+			CanAutomate:  false,
+		},
 	}
 	
 	// Check for directory existence (config folder)
@@ -179,6 +186,9 @@ func isClientInstalled(clientName string) bool {
 	case "cline":
 		// Cline is a VS Code extension, check if VS Code is installed
 		return commandExists("code")
+	case "codex":
+		// Check for codex binary or app
+		return commandExists("codex") || appExists("Codex")
 	default:
 		return false
 	}
@@ -226,6 +236,18 @@ func getWindsurfConfigPath() string {
 		return filepath.Join(homeDir, "AppData", "Roaming", "Windsurf", "User", "globalStorage", "windsurf.mcp", "config.json")
 	default:
 		return filepath.Join(homeDir, ".config", "Windsurf", "User", "globalStorage", "windsurf.mcp", "config.json")
+	}
+}
+
+func getCodexConfigPath() string {
+	homeDir, _ := os.UserHomeDir()
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(homeDir, "Library", "Application Support", "Codex", "mcp.json")
+	case "windows":
+		return filepath.Join(homeDir, "AppData", "Roaming", "Codex", "mcp.json")
+	default:
+		return filepath.Join(homeDir, ".config", "Codex", "mcp.json")
 	}
 }
 
@@ -520,6 +542,29 @@ func displayConfigInstructions(client ClientConfig) {
 }
 `, accessTokenPlaceholder)
 		fmt.Println("\n4. Tap 'Refresh' in Cascade assistant")
+		
+	case "codex":
+		fmt.Println("1. Open Codex")
+		fmt.Println("2. Navigate to Settings > MCP Servers")
+		fmt.Printf("3. Add the following to %s:\n\n", client.ConfigPath)
+		fmt.Printf(`{
+  "mcpServers": {
+    "supabase": {
+      "type": "remote",
+      "url": "https://mcp.supabase.com/mcp",
+      "oauth": {
+        "authorizationServer": "https://api.supabase.com",
+        "clientId": "mcp-server",
+        "scopes": ["mcp"]
+      },
+      "env": {
+        "SUPABASE_MCP_SERVER_PERSONAL_ACCESS_TOKEN": "%s"
+      }
+    }
+  }
+}
+`, accessTokenPlaceholder)
+		fmt.Println("\n4. Restart Codex")
 	}
 	
 	fmt.Println("\n" + strings.Repeat("=", 50))
