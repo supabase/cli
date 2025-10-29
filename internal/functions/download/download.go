@@ -280,8 +280,8 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 
 	// Create function directory
 	funcDir := filepath.Join(utils.FunctionsDir, slug)
-	if err := fsys.MkdirAll(funcDir, 0755); err != nil {
-		return errors.Errorf("failed to create function directory: %w", err)
+	if err := utils.MkdirIfNotExistFS(fsys, funcDir); err != nil {
+		return err
 	}
 
 	// Parse multipart form
