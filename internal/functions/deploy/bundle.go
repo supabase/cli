@@ -25,7 +25,7 @@ func NewDockerBundler(fsys afero.Fs) function.EszipBundler {
 	return &dockerBundler{fsys: fsys}
 }
 
-func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) (function.FunctionDeployMetadata, error) {
+func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, usePackageJson bool, output io.Writer) (function.FunctionDeployMetadata, error) {
 	meta := function.NewMetadata(slug, entrypoint, importMap, staticFiles)
 	fmt.Fprintln(os.Stderr, "Bundling Function:", utils.Bold(slug))
 	cwd, err := os.Getwd()
@@ -62,8 +62,17 @@ func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	cmd = append(cmd, function.BundleFlags...)
 
 	env := []string{}
+	denoNoPackageJsonValue := "1"
+	if usePackageJson {
+		denoNoPackageJsonValue = "0"
+	}
 	if custom_registry := os.Getenv("NPM_CONFIG_REGISTRY"); custom_registry != "" {
 		env = append(env, "NPM_CONFIG_REGISTRY="+custom_registry)
+	}
+	if deno_no_package_json := os.Getenv("DENO_NO_PACKAGE_JSON"); deno_no_package_json != "" {
+		env = append(env, "DENO_NO_PACKAGE_JSON="+deno_no_package_json)
+	} else {
+		env = append(env, "DENO_NO_PACKAGE_JSON="+denoNoPackageJsonValue)
 	}
 	// Run bundle
 	if err := utils.DockerRunOnceWithConfig(

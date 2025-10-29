@@ -136,6 +136,12 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 				functionsUsingDeprecatedGlobalFallback = append(functionsUsingDeprecatedGlobalFallback, name)
 			}
 		}
+		packageJsonPath := filepath.Join(functionDir, "package.json")
+		packageJsonExists := false
+		if _, err := fsys.Stat(packageJsonPath); err == nil {
+			packageJsonExists = true
+		}
+		function.UsePackageJson = len(function.ImportMap) == 0 && packageJsonExists
 		if noVerifyJWT != nil {
 			function.VerifyJWT = !*noVerifyJWT
 		}

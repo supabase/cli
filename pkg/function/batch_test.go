@@ -18,7 +18,7 @@ import (
 type MockBundler struct {
 }
 
-func (b *MockBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) (FunctionDeployMetadata, error) {
+func (b *MockBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, usePackageJson bool, output io.Writer) (FunctionDeployMetadata, error) {
 	if staticFiles == nil {
 		staticFiles = []string{}
 	}
