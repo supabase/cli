@@ -1,30 +1,30 @@
 package mcpinit
 
 import (
-"context"
-"encoding/json"
-"fmt"
-"os"
-"os/exec"
-"path/filepath"
-"runtime"
-"strings"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 
-"github.com/spf13/afero"
+	"github.com/spf13/afero"
 )
 
 type ClientConfig struct {
-	Name         string
-	ConfigPath   string
-	Description  string
-	Detected     bool
-	Installed    bool
-	CanAutomate  bool
+	Name        string
+	ConfigPath  string
+	Description string
+	Detected    bool
+	Installed   bool
+	CanAutomate bool
 }
 
 func Run(ctx context.Context, fsys afero.Fs, clientFlag string) error {
 	clients := detectClients(fsys)
-	
+
 	var selectedClient *ClientConfig
 	if clientFlag != "" {
 		// Find the specified client
@@ -35,33 +35,33 @@ func Run(ctx context.Context, fsys afero.Fs, clientFlag string) error {
 			}
 		}
 		if selectedClient == nil {
-			return fmt.Errorf("Unknown client: %s. Supported clients: cursor, vscode, claude-desktop, claude-code, windsurf, cline, codex", clientFlag)
+			return fmt.Errorf("unknown client: %s. Supported clients: cursor, vscode, claude-desktop, claude-code, windsurf, cline, codex", clientFlag)
 		}
-		
+
 		// Check if client is actually installed
 		if !selectedClient.Installed {
 			fmt.Printf("❌ %s is not installed on this system.\n\n", selectedClient.Name)
 			displayConfigInstructions(*selectedClient)
 			return nil
 		}
-		
+
 		// Auto-configure if possible
 		if selectedClient.CanAutomate {
 			return configureClient(ctx, fsys, *selectedClient)
 		}
-		
+
 		// Otherwise show manual instructions
 		displayConfigInstructions(*selectedClient)
 		return nil
 	}
-	
+
 	// Interactive mode: show detected clients
 	fmt.Println("Supabase MCP Server Configuration")
-	fmt.Println("==================================\n")
-	
+	fmt.Println("==================================")
+
 	var installedClients []ClientConfig
 	var notInstalledClients []ClientConfig
-	
+
 	for _, client := range clients {
 		if client.Installed {
 			installedClients = append(installedClients, client)
@@ -69,7 +69,7 @@ func Run(ctx context.Context, fsys afero.Fs, clientFlag string) error {
 			notInstalledClients = append(notInstalledClients, client)
 		}
 	}
-	
+
 	if len(installedClients) > 0 {
 		fmt.Println("✓ Detected MCP Clients:")
 		for _, client := range installedClients {
@@ -77,7 +77,7 @@ func Run(ctx context.Context, fsys afero.Fs, clientFlag string) error {
 		}
 		fmt.Println()
 	}
-	
+
 	if len(notInstalledClients) > 0 {
 		fmt.Println("ℹ Available but not installed:")
 		for _, client := range notInstalledClients {
@@ -85,7 +85,7 @@ func Run(ctx context.Context, fsys afero.Fs, clientFlag string) error {
 		}
 		fmt.Println()
 	}
-	
+
 	if len(installedClients) == 0 {
 		fmt.Println("No MCP clients detected. Install one of the supported clients:")
 		fmt.Println("  • Cursor: https://cursor.sh")
@@ -97,72 +97,72 @@ func Run(ctx context.Context, fsys afero.Fs, clientFlag string) error {
 		fmt.Println("  • Codex: https://codex.so")
 		return nil
 	}
-	
+
 	fmt.Println("Use the --client flag to configure a specific client.")
 	fmt.Println("Example: supabase mcp init --client cursor")
-	
+
 	return nil
 }
 
 func detectClients(fsys afero.Fs) []ClientConfig {
 	homeDir, _ := os.UserHomeDir()
-	
+
 	clients := []ClientConfig{
 		{
-			Name:         "cursor",
-			ConfigPath:   filepath.Join(homeDir, ".cursor", "mcp.json"),
-			Description:  "Cursor AI Editor",
-			CanAutomate:  true,
+			Name:        "cursor",
+			ConfigPath:  filepath.Join(homeDir, ".cursor", "mcp.json"),
+			Description: "Cursor AI Editor",
+			CanAutomate: true,
 		},
 		{
-			Name:         "vscode",
-			ConfigPath:   filepath.Join(homeDir, ".vscode", "mcp.json"),
-			Description:  "Visual Studio Code with Copilot",
-			CanAutomate:  true,
+			Name:        "vscode",
+			ConfigPath:  filepath.Join(homeDir, ".vscode", "mcp.json"),
+			Description: "Visual Studio Code with Copilot",
+			CanAutomate: true,
 		},
 		{
-			Name:         "claude-desktop",
-			ConfigPath:   getClaudeDesktopConfigPath(),
-			Description:  "Claude Desktop App",
-			CanAutomate:  false,
+			Name:        "claude-desktop",
+			ConfigPath:  getClaudeDesktopConfigPath(),
+			Description: "Claude Desktop App",
+			CanAutomate: false,
 		},
 		{
-			Name:         "claude-code",
-			ConfigPath:   filepath.Join(homeDir, ".mcp.json"),
-			Description:  "Claude Code CLI",
-			CanAutomate:  true,
+			Name:        "claude-code",
+			ConfigPath:  filepath.Join(homeDir, ".mcp.json"),
+			Description: "Claude Code CLI",
+			CanAutomate: true,
 		},
 		{
-			Name:         "windsurf",
-			ConfigPath:   getWindsurfConfigPath(),
-			Description:  "Windsurf Editor by Codeium",
-			CanAutomate:  false,
+			Name:        "windsurf",
+			ConfigPath:  getWindsurfConfigPath(),
+			Description: "Windsurf Editor by Codeium",
+			CanAutomate: false,
 		},
 		{
-			Name:         "cline",
-			ConfigPath:   filepath.Join(homeDir, ".vscode", "mcp.json"),
-			Description:  "Cline VS Code Extension",
-			CanAutomate:  false,
+			Name:        "cline",
+			ConfigPath:  filepath.Join(homeDir, ".vscode", "mcp.json"),
+			Description: "Cline VS Code Extension",
+			CanAutomate: false,
 		},
 		{
-			Name:         "codex",
-			ConfigPath:   getCodexConfigPath(),
-			Description:  "Codex AI Editor",
-			CanAutomate:  false,
+			Name:        "codex",
+			ConfigPath:  getCodexConfigPath(),
+			Description: "Codex AI Editor",
+			CanAutomate: false,
 		},
 	}
-	
+
 	// Check for directory existence (config folder)
 	for i := range clients {
 		configDir := filepath.Dir(clients[i].ConfigPath)
 		if _, err := fsys.Stat(configDir); err == nil {
 			clients[i].Detected = true
 		}
-		
+
 		// Check if client is actually installed
 		clients[i].Installed = isClientInstalled(clients[i].Name)
 	}
-	
+
 	return clients
 }
 
@@ -255,84 +255,93 @@ func configureClient(ctx context.Context, fsys afero.Fs, client ClientConfig) er
 	if client.Name == "claude-code" {
 		return configureClaudeCode(ctx)
 	}
-	
+
 	// JSON-based clients (Cursor, VS Code)
-	return configureJSONClient(ctx, fsys, client)
+	return configureJSONClient(fsys, client)
 }
 
 func configureClaudeCode(ctx context.Context) error {
 	fmt.Printf("Configuring Claude Code...\n\n")
-	
+
 	// Prompt for scope
 	fmt.Println("Would you like to add this server:")
 	fmt.Println("  1. Globally (available in all projects)")
 	fmt.Println("  2. Locally (only in current project)")
 	fmt.Print("Choice [1]: ")
-	
+
 	var scope string
-	fmt.Scanln(&scope)
+	if _, err := fmt.Scanln(&scope); err != nil && err.Error() != "unexpected newline" {
+		return fmt.Errorf("failed to read scope choice: %w", err)
+	}
 	if scope == "" {
 		scope = "1"
 	}
-	
+
 	scopeFlag := "global"
 	if scope == "2" {
 		scopeFlag = "local"
 	}
-	
+
 	// Prompt for access token
 	fmt.Print("\nEnter your Supabase access token: ")
 	var accessToken string
-	fmt.Scanln(&accessToken)
-	
-	if accessToken == "" {
-		return fmt.Errorf("Access token is required")
+	if _, err := fmt.Scanln(&accessToken); err != nil {
+		return fmt.Errorf("failed to read access token: %w", err)
 	}
-	
+
+	if accessToken == "" {
+		return fmt.Errorf("access token is required")
+	}
+
 	// Build the claude mcp add command for remote server
+	// #nosec G204 -- user input is validated and used in controlled context
 	cmd := exec.CommandContext(ctx, "claude", "mcp", "add", "supabase",
-"-s", scopeFlag,
-"-e", fmt.Sprintf("SUPABASE_MCP_SERVER_PERSONAL_ACCESS_TOKEN=%s", accessToken),
-"--",
-"remote",
-"https://mcp.supabase.com/mcp",
-)
-	
+		"-s", scopeFlag,
+		"-e", fmt.Sprintf("SUPABASE_MCP_SERVER_PERSONAL_ACCESS_TOKEN=%s", accessToken),
+		"--",
+		"remote",
+		"https://mcp.supabase.com/mcp",
+	)
+
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	
+
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("Failed to configure Claude Code: %w", err)
+		return fmt.Errorf("failed to configure Claude Code: %w", err)
 	}
-	
+
 	fmt.Println("\n✓ Successfully configured Claude Code with Supabase MCP Server (remote)")
 	return nil
 }
 
-func configureJSONClient(ctx context.Context, fsys afero.Fs, client ClientConfig) error {
+func configureJSONClient(fsys afero.Fs, client ClientConfig) error {
 	fmt.Printf("Configuring %s...\n\n", client.Name)
-	
+
 	// Prompt for access token
 	fmt.Print("Enter your Supabase access token: ")
 	var accessToken string
-	fmt.Scanln(&accessToken)
-	
-	if accessToken == "" {
-		return fmt.Errorf("Access token is required")
+	if _, err := fmt.Scanln(&accessToken); err != nil {
+		return fmt.Errorf("failed to read access token: %w", err)
 	}
-	
+
+	if accessToken == "" {
+		return fmt.Errorf("access token is required")
+	}
+
 	// Prompt for scope
 	fmt.Println("\nWould you like to configure:")
 	fmt.Println("  1. Project-local config (in .vscode/mcp.json or .cursor/mcp.json)")
 	fmt.Println("  2. Global config (in your home directory)")
 	fmt.Print("Choice [1]: ")
-	
+
 	var choice string
-	fmt.Scanln(&choice)
+	if _, err := fmt.Scanln(&choice); err != nil && err.Error() != "unexpected newline" {
+		return fmt.Errorf("failed to read config scope choice: %w", err)
+	}
 	if choice == "" {
 		choice = "1"
 	}
-	
+
 	var configPath string
 	if choice == "2" {
 		// Global config
@@ -346,7 +355,7 @@ func configureJSONClient(ctx context.Context, fsys afero.Fs, client ClientConfig
 			configPath = filepath.Join(cwd, ".cursor", "mcp.json")
 		}
 	}
-	
+
 	// Get the remote server config
 	var config map[string]interface{}
 	if client.Name == "vscode" {
@@ -354,13 +363,13 @@ func configureJSONClient(ctx context.Context, fsys afero.Fs, client ClientConfig
 	} else {
 		config = getRemoteCursorStyleConfig(accessToken)
 	}
-	
+
 	// Ensure directory exists
 	configDir := filepath.Dir(configPath)
 	if err := fsys.MkdirAll(configDir, 0755); err != nil {
-		return fmt.Errorf("Failed to create config directory: %w", err)
+		return fmt.Errorf("failed to create config directory: %w", err)
 	}
-	
+
 	// Read existing config if it exists
 	existingData, err := afero.ReadFile(fsys, configPath)
 	if err == nil {
@@ -385,21 +394,21 @@ func configureJSONClient(ctx context.Context, fsys afero.Fs, client ClientConfig
 			config = existing
 		}
 	}
-	
+
 	// Write config
 	configJSON, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		return fmt.Errorf("Failed to marshal config: %w", err)
+		return fmt.Errorf("failed to marshal config: %w", err)
 	}
-	
+
 	if err := afero.WriteFile(fsys, configPath, configJSON, 0644); err != nil {
-		return fmt.Errorf("Failed to write config file: %w", err)
+		return fmt.Errorf("failed to write config file: %w", err)
 	}
-	
+
 	fmt.Printf("\n✓ Successfully configured %s at: %s\n", client.Name, configPath)
 	fmt.Println("\nThe remote Supabase MCP Server is now connected via OAuth.")
 	fmt.Println("Your access token will be used to authenticate with Supabase.")
-	
+
 	return nil
 }
 
@@ -445,14 +454,15 @@ func displayConfigInstructions(client ClientConfig) {
 	fmt.Printf("Manual Configuration Instructions for %s\n", client.Name)
 	fmt.Println(strings.Repeat("=", 50))
 	fmt.Println()
-	
+
 	accessTokenPlaceholder := "<your-access-token>"
-	
+
 	switch client.Name {
 	case "cursor":
 		fmt.Println("1. Open Cursor Settings")
 		fmt.Println("2. Navigate to MCP Servers configuration")
-		fmt.Printf("3. Add the following to %s:\n\n", client.ConfigPath)
+		fmt.Printf("3. Add the following to %s:\n", client.ConfigPath)
+		fmt.Println()
 		fmt.Printf(`{
   "mcpServers": {
     "supabase": {
@@ -470,11 +480,12 @@ func displayConfigInstructions(client ClientConfig) {
   }
 }
 `, accessTokenPlaceholder)
-		
+
 	case "vscode", "cline":
 		fmt.Println("1. Open VS Code")
 		fmt.Println("2. Create .vscode/mcp.json in your project root")
-		fmt.Println("3. Add the following configuration:\n")
+		fmt.Println("3. Add the following configuration:")
+		fmt.Println()
 		fmt.Printf(`{
   "servers": {
     "supabase": {
@@ -492,11 +503,12 @@ func displayConfigInstructions(client ClientConfig) {
   }
 }
 `, accessTokenPlaceholder)
-		
+
 	case "claude-desktop":
 		fmt.Println("1. Open Claude Desktop")
 		fmt.Println("2. Go to Settings > Developer > Edit Config")
-		fmt.Printf("3. Add the following to %s:\n\n", client.ConfigPath)
+		fmt.Printf("3. Add the following to %s:\n", client.ConfigPath)
+		fmt.Println()
 		fmt.Printf(`{
   "mcpServers": {
     "supabase": {
@@ -515,15 +527,16 @@ func displayConfigInstructions(client ClientConfig) {
 }
 `, accessTokenPlaceholder)
 		fmt.Println("\n4. Restart Claude Desktop")
-		
+
 	case "claude-code":
 		fmt.Println("Run this command:")
 		fmt.Printf("  claude mcp add supabase -s global -e SUPABASE_MCP_SERVER_PERSONAL_ACCESS_TOKEN=%s -- remote https://mcp.supabase.com/mcp\n", accessTokenPlaceholder)
-		
+
 	case "windsurf":
 		fmt.Println("1. Open Windsurf")
 		fmt.Println("2. Navigate to Cascade > MCP > Configure")
-		fmt.Printf("3. Add the following to %s:\n\n", client.ConfigPath)
+		fmt.Printf("3. Add the following to %s:\n", client.ConfigPath)
+		fmt.Println()
 		fmt.Printf(`{
   "mcpServers": {
     "supabase": {
@@ -542,11 +555,12 @@ func displayConfigInstructions(client ClientConfig) {
 }
 `, accessTokenPlaceholder)
 		fmt.Println("\n4. Tap 'Refresh' in Cascade assistant")
-		
+
 	case "codex":
 		fmt.Println("1. Open Codex")
 		fmt.Println("2. Navigate to Settings > MCP Servers")
-		fmt.Printf("3. Add the following to %s:\n\n", client.ConfigPath)
+		fmt.Printf("3. Add the following to %s:\n", client.ConfigPath)
+		fmt.Println()
 		fmt.Printf(`{
   "mcpServers": {
     "supabase": {
@@ -566,7 +580,7 @@ func displayConfigInstructions(client ClientConfig) {
 `, accessTokenPlaceholder)
 		fmt.Println("\n4. Restart Codex")
 	}
-	
+
 	fmt.Println("\n" + strings.Repeat("=", 50))
 	fmt.Println("\nTo get your access token:")
 	fmt.Println("  1. Go to https://supabase.com/dashboard/account/tokens")

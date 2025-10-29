@@ -1,11 +1,11 @@
 package cmd
 
 import (
-"github.com/spf13/cobra"
+	"github.com/spf13/cobra"
 )
 
 var (
-mcpCmd = &cobra.Command{
+	mcpCmd = &cobra.Command{
 		GroupID: groupQuickStart,
 		Use:     "mcp",
 		Short:   "Manage Model Context Protocol (MCP) configuration",
