@@ -22,7 +22,10 @@ var ErrNoDeploy = errors.New("All Functions are up to date.")
 func (s *EdgeRuntimeAPI) DryRun(ctx context.Context, functionConfig config.FunctionConfig, fsys fs.FS) error {
 	// If we have an eszip bundler, use the same logic as UpsertFunctions
 	if s.eszip != nil {
-		return s.upsertFunctions(ctx, functionConfig, true)
+		keep := func(name string) bool {
+			return false
+		}
+		return s.upsertFunctions(ctx, functionConfig, keep)
 	}
 
 	// Without eszip bundler, we can't accurately detect changes
