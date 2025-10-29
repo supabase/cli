@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
@@ -25,8 +27,9 @@ import (
 )
 
 var (
-	legacyEntrypointPath = "file:///src/index.ts"
-	legacyImportMapPath  = "file:///src/import_map.json"
+	legacyEntrypointPath    = "file:///src/index.ts"
+	legacyImportMapPath     = "file:///src/import_map.json"
+	dockerRunOnceWithConfig = utils.DockerRunOnceWithConfig
 )
 
 func RunLegacy(ctx context.Context, slug string, projectRef string, fsys afero.Fs) error {
@@ -112,7 +115,7 @@ func downloadFunction(ctx context.Context, projectRef, slug, extractScriptPath s
 	return nil
 }
 
-func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bool, fsys afero.Fs) error {
+func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bool, useApi bool, fsys afero.Fs) error {
 	if useLegacyBundle {
 		return RunLegacy(ctx, slug, projectRef, fsys)
 	}
@@ -120,7 +123,12 @@ func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bo
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
-	// 2. Download eszip to temp file
+	// 2. Download function
+	if useApi {
+		// Use server-side unbundling with multipart/form-data
+		return downloadWithServerSideUnbundle(ctx, slug, projectRef, fsys)
+	}
+	// Download eszip to temp file
 	eszipPath, err := downloadOne(ctx, slug, projectRef, fsys)
 	if err != nil {
 		return err
@@ -189,7 +197,7 @@ func extractOne(ctx context.Context, slug, eszipPath string) error {
 		hostFuncDirPath + ":" + utils.DockerDenoDir + ":rw",
 	}
 
-	return utils.DockerRunOnceWithConfig(
+	return dockerRunOnceWithConfig(
 		ctx,
 		container.Config{
 			Image: utils.Config.EdgeRuntime.Image,
@@ -237,4 +245,135 @@ deno_version = 2
 
 func suggestLegacyBundle(slug string) string {
 	return fmt.Sprintf("\nIf your function is deployed using CLI < 1.120.0, trying running %s instead.", utils.Aqua("supabase functions download --legacy-bundle "+slug))
+}
+
+func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string, fsys afero.Fs) error {
+	fmt.Println("Downloading " + utils.Bold(slug))
+
+	// Request multipart/form-data response using RequestEditorFn
+	resp, err := utils.GetSupabase().V1GetAFunctionBody(ctx, projectRef, slug, func(ctx context.Context, req *http.Request) error {
+		req.Header.Set("Accept", "multipart/form-data")
+		return nil
+	})
+	if err != nil {
+		return errors.Errorf("failed to download function: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return errors.Errorf("Error status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse the multipart response
+	mediaType, params, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil {
+		return errors.Errorf("failed to parse content type: %w", err)
+	}
+
+	if !strings.HasPrefix(mediaType, "multipart/") {
+		return errors.Errorf("expected multipart response, got %s", mediaType)
+	}
+
+	// Create function directory
+	funcDir := filepath.Join(utils.FunctionsDir, slug)
+	if err := fsys.MkdirAll(funcDir, 0755); err != nil {
+		return errors.Errorf("failed to create function directory: %w", err)
+	}
+
+	// Parse multipart form
+	mr := multipart.NewReader(resp.Body, params["boundary"])
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return errors.Errorf("failed to read multipart: %w", err)
+		}
+
+		// Determine the relative path from headers to preserve directory structure.
+		relPath, err := resolvedPartPath(slug, part)
+		if err != nil {
+			return err
+		}
+		if relPath == "" {
+			// Skip parts without filenames
+			continue
+		}
+
+		// Create the full path for the file
+		filePath := filepath.Join(funcDir, relPath)
+
+		// Create parent directories if needed
+		if err := fsys.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+			return errors.Errorf("failed to create directory for %s: %w", relPath, err)
+		}
+
+		// Write the file
+		file, err := fsys.Create(filePath)
+		if err != nil {
+			return errors.Errorf("failed to create file %s: %w", relPath, err)
+		}
+
+		if _, err := io.Copy(file, part); err != nil {
+			file.Close()
+			return errors.Errorf("failed to write file %s: %w", relPath, err)
+		}
+		file.Close()
+	}
+
+	fmt.Println("Downloaded Function " + utils.Aqua(slug) + " from project " + utils.Aqua(projectRef) + ".")
+	return nil
+}
+
+func resolvedPartPath(slug string, part *multipart.Part) (string, error) {
+	if relPath := part.Header.Get("Supabase-Path"); relPath != "" {
+		return sanitizeRelativePath(slug, relPath)
+	}
+
+	cd := part.Header.Get("Content-Disposition")
+	if cd == "" {
+		return "", nil
+	}
+
+	_, params, err := mime.ParseMediaType(cd)
+	if err != nil {
+		return "", errors.Errorf("failed to parse content disposition: %w", err)
+	}
+
+	if filename := params["filename"]; filename != "" {
+		return sanitizeRelativePath(slug, filename)
+	}
+	return "", nil
+}
+
+func sanitizeRelativePath(slug, raw string) (string, error) {
+	candidate := strings.TrimSpace(raw)
+	if candidate == "" {
+		return "", nil
+	}
+
+	// Normalize to forward slashes before cleaning for consistent handling.
+	candidate = strings.ReplaceAll(candidate, "\\", "/")
+	cleaned := path.Clean(candidate)
+
+	if cleaned == "." || cleaned == "/" {
+		return "", nil
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, "/") {
+		return "", errors.Errorf("refusing to write file outside of function directory: %s", raw)
+	}
+
+	if slug != "" {
+		if cleaned == slug {
+			return "", nil
+		}
+		prefix := slug + "/"
+		if after, ok := strings.CutPrefix(cleaned, prefix); ok {
+			cleaned = after
+		}
+	}
+
+	return filepath.FromSlash(cleaned), nil
 }

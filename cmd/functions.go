@@ -49,7 +49,7 @@ var (
 		Long:  "Download the source code for a Function from the linked Supabase project.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return download.Run(cmd.Context(), args[0], flags.ProjectRef, useLegacyBundle, afero.NewOsFs())
+			return download.Run(cmd.Context(), args[0], flags.ProjectRef, useLegacyBundle, useApi, afero.NewOsFs())
 		},
 	}
 
@@ -154,6 +154,7 @@ func init() {
 	cobra.CheckErr(functionsServeCmd.Flags().MarkHidden("all"))
 	functionsDownloadCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsDownloadCmd.Flags().BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
+	functionsDownloadCmd.Flags().BoolVar(&useApi, "use-api", false, "Use Management API to unbundle functions server-side.")
 	functionsCmd.AddCommand(functionsListCmd)
 	functionsCmd.AddCommand(functionsDeleteCmd)
 	functionsCmd.AddCommand(functionsDeployCmd)
