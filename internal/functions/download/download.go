@@ -27,9 +27,8 @@ import (
 )
 
 var (
-	legacyEntrypointPath    = "file:///src/index.ts"
-	legacyImportMapPath     = "file:///src/import_map.json"
-	dockerRunOnceWithConfig = utils.DockerRunOnceWithConfig
+	legacyEntrypointPath = "file:///src/index.ts"
+	legacyImportMapPath  = "file:///src/import_map.json"
 )
 
 func RunLegacy(ctx context.Context, slug string, projectRef string, fsys afero.Fs) error {
@@ -119,16 +118,17 @@ func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bo
 	if useLegacyBundle {
 		return RunLegacy(ctx, slug, projectRef, fsys)
 	}
-	// 1. Sanity check
+	// Sanity check
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
-	// 2. Download function
+
 	if useApi {
 		// Use server-side unbundling with multipart/form-data
 		return downloadWithServerSideUnbundle(ctx, slug, projectRef, fsys)
 	}
-	// Download eszip to temp file
+
+	// download eszip file for client-side unbundling with edge-runtime
 	eszipPath, err := downloadOne(ctx, slug, projectRef, fsys)
 	if err != nil {
 		return err
@@ -197,7 +197,7 @@ func extractOne(ctx context.Context, slug, eszipPath string) error {
 		hostFuncDirPath + ":" + utils.DockerDenoDir + ":rw",
 	}
 
-	return dockerRunOnceWithConfig(
+	return utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
 			Image: utils.Config.EdgeRuntime.Image,
