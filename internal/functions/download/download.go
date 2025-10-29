@@ -261,7 +261,10 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return errors.Errorf("Error status %d: %w", resp.StatusCode, err)
+		}
 		return errors.Errorf("Error status %d: %s", resp.StatusCode, string(body))
 	}
 
