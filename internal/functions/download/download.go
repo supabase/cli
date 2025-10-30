@@ -115,12 +115,13 @@ func downloadFunction(ctx context.Context, projectRef, slug, extractScriptPath s
 }
 
 func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bool, useApi bool, useDocker bool, fsys afero.Fs) error {
-	if useLegacyBundle {
-		return RunLegacy(ctx, slug, projectRef, fsys)
-	}
 	// Sanity check
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
+	}
+
+	if useLegacyBundle {
+		return RunLegacy(ctx, slug, projectRef, fsys)
 	}
 
 	if useApi {
