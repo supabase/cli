@@ -114,7 +114,7 @@ func downloadFunction(ctx context.Context, projectRef, slug, extractScriptPath s
 	return nil
 }
 
-func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bool, useApi bool, fsys afero.Fs) error {
+func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bool, useApi bool, useDocker bool, fsys afero.Fs) error {
 	if useLegacyBundle {
 		return RunLegacy(ctx, slug, projectRef, fsys)
 	}
@@ -128,7 +128,20 @@ func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bo
 		return downloadWithServerSideUnbundle(ctx, slug, projectRef, fsys)
 	}
 
-	// download eszip file for client-side unbundling with edge-runtime
+	if useDocker {
+		// download eszip file for client-side unbundling with edge-runtime
+		return downloadWithDockerUnbundle(ctx, slug, projectRef, fsys)
+	}
+
+	// Default: Try Docker first, fallback to server-side unbundling if Docker is not available
+	if utils.IsDockerRunning(ctx) {
+		return downloadWithDockerUnbundle(ctx, slug, projectRef, fsys)
+	}
+	fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Docker is not running, falling back to server-side unbundling")
+	return downloadWithServerSideUnbundle(ctx, slug, projectRef, fsys)
+}
+
+func downloadWithDockerUnbundle(ctx context.Context, slug string, projectRef string, fsys afero.Fs) error {
 	eszipPath, err := downloadOne(ctx, slug, projectRef, fsys)
 	if err != nil {
 		return err
