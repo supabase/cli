@@ -384,13 +384,13 @@ func joinWithinDir(base, rel string) (string, error) {
 	if filepath.IsAbs(cleanRel) {
 		cleanRel = strings.TrimLeft(cleanRel, "/\\")
 	}
-	if cleanRel == ".." || strings.HasPrefix(cleanRel, ".."+string(os.PathSeparator)) {
+	if cleanRel == ".." || strings.HasPrefix(cleanRel, "../") {
 		return "", errors.Errorf("invalid file path outside function directory: %s", rel)
 	}
 	joined := filepath.Join(base, cleanRel)
 	cleanJoined := filepath.Clean(joined)
 	cleanBase := filepath.Clean(base)
-	if cleanJoined != cleanBase && !strings.HasPrefix(cleanJoined, cleanBase+string(os.PathSeparator)) {
+	if cleanJoined != cleanBase && !strings.HasPrefix(cleanJoined, cleanBase+"/") {
 		return "", errors.Errorf("refusing to write outside function directory: %s", rel)
 	}
 	return joined, nil

@@ -323,21 +323,21 @@ func TestJoinWithinDir(t *testing.T) {
 	t.Run("joins path within base directory", func(t *testing.T) {
 		got, err := joinWithinDir(base, filepath.Join("sub", "file.ts"))
 		require.NoError(t, err)
-		assert.True(t, strings.HasPrefix(filepath.Clean(got), filepath.Clean(base)+string(os.PathSeparator)) || filepath.Clean(got) == filepath.Clean(base))
+		assert.True(t, strings.HasPrefix(filepath.Clean(got), filepath.Clean(base)+"/") || filepath.Clean(got) == filepath.Clean(base))
 	})
 
 	t.Run("treats leading slash as relative to base", func(t *testing.T) {
 		got, err := joinWithinDir(base, "/foo/bar.ts")
 		require.NoError(t, err)
-		assert.True(t, strings.HasPrefix(filepath.Clean(got), filepath.Clean(base)+string(os.PathSeparator)))
+		assert.True(t, strings.HasPrefix(filepath.Clean(got), filepath.Clean(base)+"/"))
 		assert.Equal(t, filepath.Join(filepath.Clean(base), "foo", "bar.ts"), filepath.Clean(got))
 	})
 
 	t.Run("rejects absolute path", func(t *testing.T) {
-		abs := string(os.PathSeparator) + filepath.Join("etc", "passwd")
+		abs := "/" + filepath.Join("etc", "passwd")
 		got, err := joinWithinDir(base, abs)
 		require.NoError(t, err)
-		assert.True(t, strings.HasPrefix(filepath.Clean(got), filepath.Clean(base)+string(os.PathSeparator)))
+		assert.True(t, strings.HasPrefix(filepath.Clean(got), filepath.Clean(base)+"/"))
 	})
 
 	t.Run("rejects parent directory traversal", func(t *testing.T) {
