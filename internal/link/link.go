@@ -69,6 +69,7 @@ func LinkServices(ctx context.Context, projectRef, serviceKey string, skipPooler
 		func() error { return linkStorage(ctx, projectRef) },
 		func() error {
 			if skipPooler {
+				utils.Config.Db.Pooler.ConnectionString = ""
 				return fsys.RemoveAll(utils.PoolerUrlPath)
 			}
 			return linkPooler(ctx, projectRef, fsys)
