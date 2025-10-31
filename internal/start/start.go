@@ -464,6 +464,11 @@ EOF
 			formatMapForEnvConfig(utils.Config.Auth.Sms.TestOTP, &testOTP)
 		}
 
+		jwtIssuer := utils.GetApiUrl("/auth/v1")
+		if utils.Config.Auth.JwtIssuer != "" {
+			jwtIssuer = utils.Config.Auth.JwtIssuer
+		}
+
 		env := []string{
 			"API_EXTERNAL_URL=" + utils.Config.Api.ExternalUrl,
 
@@ -482,7 +487,7 @@ EOF
 			"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
 			fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
 			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
-			"GOTRUE_JWT_ISSUER=" + utils.GetApiUrl("/auth/v1"),
+			"GOTRUE_JWT_ISSUER=" + jwtIssuer,
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", utils.Config.Auth.Email.EnableSignup),
 			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", utils.Config.Auth.Email.DoubleConfirmChanges),
