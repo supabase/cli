@@ -383,5 +383,5 @@ func sanitizeRelativePath(slug, raw string) (string, error) {
 		return "", nil
 	}
 
-	return cleaned, nil
+	return strings.TrimPrefix(cleaned, slug+"/"), nil
 }
