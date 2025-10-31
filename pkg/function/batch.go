@@ -60,7 +60,7 @@ OUTER:
 			}
 		}
 		var body bytes.Buffer
-		meta, err := s.eszip.Bundle(ctx, slug, function.Entrypoint, function.ImportMap, function.StaticFiles, &body)
+		meta, err := s.eszip.Bundle(ctx, slug, function.Entrypoint, function.ImportMap, function.StaticFiles, function.UsePackageJson, &body)
 		if errors.Is(err, ErrNoDeploy) {
 			fmt.Fprintln(os.Stderr, "Skipping undeployable Function:", slug)
 			continue
