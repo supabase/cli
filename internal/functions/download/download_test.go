@@ -248,12 +248,6 @@ func TestSanitizeRelativePath(t *testing.T) {
 		assert.Equal(t, filepath.Join("src", "index.ts"), got)
 	})
 
-	t.Run("normalizes windows separators", func(t *testing.T) {
-		got, err := sanitizeRelativePath("", `dir\\file.ts`)
-		require.NoError(t, err)
-		assert.Equal(t, filepath.Join("dir", "file.ts"), got)
-	})
-
 	t.Run("strips slug prefix", func(t *testing.T) {
 		got, err := sanitizeRelativePath("test-func", "test-func/index.ts")
 		require.NoError(t, err)

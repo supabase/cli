@@ -362,8 +362,6 @@ func sanitizeRelativePath(slug, raw string) (string, error) {
 		return "", nil
 	}
 
-	// Normalize to forward slashes before cleaning for consistent handling.
-	candidate = strings.ReplaceAll(candidate, "\\", "/")
 	cleaned := path.Clean(candidate)
 
 	if cleaned == "." || cleaned == "/" {
