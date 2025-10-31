@@ -238,13 +238,38 @@ func DockerImagePullWithRetry(ctx context.Context, image string, retries int) er
 }
 
 func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
+	return DockerPullImageIfNotCachedWithWriter(ctx, imageName, os.Stderr, 5)
+}
+
+// DockerPullImageIfNotCachedWithWriter pulls an image if not cached, using the provided writer for output.
+// Use io.Discard to suppress output.
+func DockerPullImageIfNotCachedWithWriter(ctx context.Context, imageName string, w io.Writer, retries int) error {
 	imageUrl := GetRegistryImageUrl(imageName)
 	if _, err := Docker.ImageInspect(ctx, imageUrl); err == nil {
 		return nil
 	} else if !errdefs.IsNotFound(err) {
 		return errors.Errorf("failed to inspect docker image: %w", err)
 	}
-	return DockerImagePullWithRetry(ctx, imageUrl, 2)
+	// Pull with retry using the provided writer
+	// Increased retries to 5 to handle rate limiting better
+	err := DockerImagePull(ctx, imageUrl, w)
+
+	if retries > 0 {
+		if err == nil || errors.Is(ctx.Err(), context.Canceled) {
+			return nil
+		}
+		if w != io.Discard {
+			fmt.Fprintln(w, err)
+		}
+		// Exponential backoff: 4s, 8s, 16s, 32s, 64s
+		period := time.Duration(2<<(5-retries)) * timeUnit
+		if w != io.Discard {
+			fmt.Fprintf(w, "Retrying after %v: %s\n", period, imageUrl)
+		}
+		time.Sleep(period)
+		return DockerPullImageIfNotCachedWithWriter(ctx, imageName, w, retries-1)
+	}
+	return err
 }
 
 var suggestDockerInstall = "Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop"
