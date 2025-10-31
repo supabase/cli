@@ -314,8 +314,9 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 		if err != nil {
 			return err
 		}
+
+		// result of invalid or missing filename but we're letting it slide
 		if relPath == "" {
-			// Skip parts without filenames
 			continue
 		}
 
@@ -364,22 +365,23 @@ func sanitizeRelativePath(slug, raw string) (string, error) {
 
 	cleaned := path.Clean(candidate)
 
-	if cleaned == "." || cleaned == "/" {
+	// Ensure the first segment is the slug. If it's "source", replace it with slug.
+	first, rest, hasMore := strings.Cut(cleaned, "/")
+
+	if first == "source" {
+		cleaned = slug + "/" + rest
+	} else if first != slug {
+		// Prefix slug if it's not already the first segment
+		if hasMore {
+			cleaned = slug + "/" + cleaned
+		} else {
+			cleaned = slug + "/" + first
+		}
+	}
+
+	if cleaned == slug {
 		return "", nil
 	}
-	if cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, "/") {
-		return "", errors.Errorf("refusing to write file outside of function directory: %s", raw)
-	}
 
-	if slug != "" {
-		if cleaned == slug {
-			return "", nil
-		}
-		prefix := slug + "/"
-		if after, ok := strings.CutPrefix(cleaned, prefix); ok {
-			cleaned = after
-		}
-	}
-
-	return filepath.FromSlash(cleaned), nil
+	return cleaned, nil
 }
