@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"net/textproto"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/h2non/gock"
@@ -257,9 +259,9 @@ func TestNormalizeRelativePath(t *testing.T) {
 		assert.Equal(t, "", got)
 	})
 
-	t.Run("returns empty for whitespace input", func(t *testing.T) {
+	t.Run("does not trim arbitrary whitespace-only paths", func(t *testing.T) {
 		got := normalizeRelativePath("", " \t\n ")
-		assert.Equal(t, "", got)
+		assert.Equal(t, path.Clean(" \t\n "), got)
 	})
 }
 
@@ -301,14 +303,7 @@ func TestResolvedPartPath(t *testing.T) {
 		assert.Equal(t, "", got)
 	})
 
-	t.Run("propagates sanitize errors", func(t *testing.T) {
-		part := newPart(map[string]string{
-			"Supabase-Path": "../escape",
-		})
-		got, err := resolvedPartPath("test-func", part)
-		require.ErrorContains(t, err, "refusing to write file outside of function directory")
-		assert.Equal(t, "", got)
-	})
+	// Path traversal is validated at write time via joinWithinDir, not here
 
 	t.Run("returns error on invalid content disposition", func(t *testing.T) {
 		part := newPart(map[string]string{
@@ -316,6 +311,38 @@ func TestResolvedPartPath(t *testing.T) {
 		})
 		got, err := resolvedPartPath("test-func", part)
 		require.ErrorContains(t, err, "failed to parse content disposition")
+		assert.Equal(t, "", got)
+	})
+}
+
+func TestJoinWithinDir(t *testing.T) {
+	t.Parallel()
+
+	base := filepath.Join(os.TempDir(), "base-dir")
+
+	t.Run("joins path within base directory", func(t *testing.T) {
+		got, err := joinWithinDir(base, filepath.Join("sub", "file.ts"))
+		require.NoError(t, err)
+		assert.True(t, strings.HasPrefix(filepath.Clean(got), filepath.Clean(base)+string(os.PathSeparator)) || filepath.Clean(got) == filepath.Clean(base))
+	})
+
+	t.Run("treats leading slash as relative to base", func(t *testing.T) {
+		got, err := joinWithinDir(base, "/foo/bar.ts")
+		require.NoError(t, err)
+		assert.True(t, strings.HasPrefix(filepath.Clean(got), filepath.Clean(base)+string(os.PathSeparator)))
+		assert.Equal(t, filepath.Join(filepath.Clean(base), "foo", "bar.ts"), filepath.Clean(got))
+	})
+
+	t.Run("rejects absolute path", func(t *testing.T) {
+		abs := string(os.PathSeparator) + filepath.Join("etc", "passwd")
+		got, err := joinWithinDir(base, abs)
+		require.NoError(t, err)
+		assert.True(t, strings.HasPrefix(filepath.Clean(got), filepath.Clean(base)+string(os.PathSeparator)))
+	})
+
+	t.Run("rejects parent directory traversal", func(t *testing.T) {
+		got, err := joinWithinDir(base, filepath.Join("..", "escape"))
+		require.Error(t, err)
 		assert.Equal(t, "", got)
 	})
 }

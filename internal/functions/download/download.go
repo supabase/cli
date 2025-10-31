@@ -322,8 +322,14 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 			continue
 		}
 
-		filePath := filepath.Join(funcDir, relPath)
+		filePath, err := joinWithinDir(funcDir, relPath)
+		if err != nil {
+			return err
+		}
 
+		if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(filePath)); err != nil {
+			return err
+		}
 		if err := afero.WriteReader(fsys, filePath, part); err != nil {
 			return errors.Errorf("failed to write file: %w", err)
 		}
@@ -357,10 +363,35 @@ func resolvedPartPath(slug string, part *multipart.Part) (string, error) {
 	return "", nil
 }
 
+// remove leading source/ or :slug/
 func normalizeRelativePath(slug, raw string) string {
 	cleaned := path.Clean(raw)
 	if after, ok := strings.CutPrefix(cleaned, "source/"); ok {
 		cleaned = after
+	} else if after, ok := strings.CutPrefix(cleaned, slug+"/"); ok {
+		cleaned = after
+	} else if cleaned == slug {
+		// If the path is exactly :slug, skip it
+		cleaned = ""
 	}
-	return strings.TrimPrefix(cleaned, slug+"/")
+	return cleaned
+}
+
+// joinWithinDir safely joins base and rel ensuring the result stays within base directory
+func joinWithinDir(base, rel string) (string, error) {
+	cleanRel := filepath.Clean(rel)
+	// Be forgiving: treat a rooted path as relative to base (e.g. "/foo" -> "foo")
+	if filepath.IsAbs(cleanRel) {
+		cleanRel = strings.TrimLeft(cleanRel, "/\\")
+	}
+	if cleanRel == ".." || strings.HasPrefix(cleanRel, ".."+string(os.PathSeparator)) {
+		return "", errors.Errorf("invalid file path outside function directory: %s", rel)
+	}
+	joined := filepath.Join(base, cleanRel)
+	cleanJoined := filepath.Clean(joined)
+	cleanBase := filepath.Clean(base)
+	if cleanJoined != cleanBase && !strings.HasPrefix(cleanJoined, cleanBase+string(os.PathSeparator)) {
+		return "", errors.Errorf("refusing to write outside function directory: %s", rel)
+	}
+	return joined, nil
 }
