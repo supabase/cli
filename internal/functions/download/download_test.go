@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/textproto"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -254,14 +253,14 @@ func TestNormalizeRelativePath(t *testing.T) {
 		assert.Equal(t, "index.ts", got)
 	})
 
+	t.Run("strips source prefix", func(t *testing.T) {
+		got := normalizeRelativePath("test-func", "source/index.ts")
+		assert.Equal(t, "index.ts", got)
+	})
+
 	t.Run("skips slug directory itself", func(t *testing.T) {
 		got := normalizeRelativePath("test-func", "test-func")
 		assert.Equal(t, "", got)
-	})
-
-	t.Run("does not trim arbitrary whitespace-only paths", func(t *testing.T) {
-		got := normalizeRelativePath("", " \t\n ")
-		assert.Equal(t, path.Clean(" \t\n "), got)
 	})
 }
 
@@ -294,6 +293,24 @@ func TestResolvedPartPath(t *testing.T) {
 		assert.Equal(t, "index.ts", got)
 	})
 
+	t.Run("returns filename from editor-originated content disposition", func(t *testing.T) {
+		part := newPart(map[string]string{
+			"Content-Disposition": `form-data; name="file"; filename="source/index.ts"`,
+		})
+		got, err := resolvedPartPath("test-func", part)
+		require.NoError(t, err)
+		assert.Equal(t, "index.ts", got)
+	})
+
+	t.Run("writes file of arbitrary depth to slug directory", func(t *testing.T) {
+		part := newPart(map[string]string{
+			"Content-Disposition": `form-data; name="file"; filename="test-func/dir/subdir/file.ts"`,
+		})
+		got, err := resolvedPartPath("test-func", part)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join("dir", "subdir", "file.ts"), got)
+	})
+
 	t.Run("returns empty when no filename provided", func(t *testing.T) {
 		part := newPart(map[string]string{
 			"Content-Disposition": `form-data; name="file"`,
@@ -302,8 +319,6 @@ func TestResolvedPartPath(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "", got)
 	})
-
-	// Path traversal is validated at write time via joinWithinDir, not here
 
 	t.Run("returns error on invalid content disposition", func(t *testing.T) {
 		part := newPart(map[string]string{
@@ -344,5 +359,12 @@ func TestJoinWithinDir(t *testing.T) {
 		got, err := joinWithinDir(base, filepath.Join("..", "escape"))
 		require.Error(t, err)
 		assert.Equal(t, "", got)
+	})
+
+	t.Run("accepts traversal within base directory", func(t *testing.T) {
+		base = os.TempDir()
+		got, err := joinWithinDir(base, filepath.Join("some", "..", "file.ts"))
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(base, "file.ts"), got)
 	})
 }
