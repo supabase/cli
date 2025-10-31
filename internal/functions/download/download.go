@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
@@ -112,15 +114,35 @@ func downloadFunction(ctx context.Context, projectRef, slug, extractScriptPath s
 	return nil
 }
 
-func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bool, fsys afero.Fs) error {
-	if useLegacyBundle {
-		return RunLegacy(ctx, slug, projectRef, fsys)
-	}
-	// 1. Sanity check
+func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bool, useApi bool, useDocker bool, fsys afero.Fs) error {
+	// Sanity check
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
-	// 2. Download eszip to temp file
+
+	if useLegacyBundle {
+		return RunLegacy(ctx, slug, projectRef, fsys)
+	}
+
+	if useApi {
+		// Use server-side unbundling with multipart/form-data
+		return downloadWithServerSideUnbundle(ctx, slug, projectRef, fsys)
+	}
+
+	if useDocker {
+		// download eszip file for client-side unbundling with edge-runtime
+		return downloadWithDockerUnbundle(ctx, slug, projectRef, fsys)
+	}
+
+	// Default: Try Docker first, fallback to server-side unbundling if Docker is not available
+	if utils.IsDockerRunning(ctx) {
+		return downloadWithDockerUnbundle(ctx, slug, projectRef, fsys)
+	}
+	fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Docker is not running, falling back to server-side unbundling")
+	return downloadWithServerSideUnbundle(ctx, slug, projectRef, fsys)
+}
+
+func downloadWithDockerUnbundle(ctx context.Context, slug string, projectRef string, fsys afero.Fs) error {
 	eszipPath, err := downloadOne(ctx, slug, projectRef, fsys)
 	if err != nil {
 		return err
@@ -237,4 +259,139 @@ deno_version = 2
 
 func suggestLegacyBundle(slug string) string {
 	return fmt.Sprintf("\nIf your function is deployed using CLI < 1.120.0, trying running %s instead.", utils.Aqua("supabase functions download --legacy-bundle "+slug))
+}
+
+func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string, fsys afero.Fs) error {
+	fmt.Fprintln(os.Stderr, "Downloading "+utils.Bold(slug))
+
+	// Request multipart/form-data response using RequestEditorFn
+	resp, err := utils.GetSupabase().V1GetAFunctionBody(ctx, projectRef, slug, func(ctx context.Context, req *http.Request) error {
+		req.Header.Set("Accept", "multipart/form-data")
+		return nil
+	})
+	if err != nil {
+		return errors.Errorf("failed to download function: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return errors.Errorf("Error status %d: %w", resp.StatusCode, err)
+		}
+		return errors.Errorf("Error status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse the multipart response
+	mediaType, params, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil {
+		return errors.Errorf("failed to parse content type: %w", err)
+	}
+
+	if !strings.HasPrefix(mediaType, "multipart/") {
+		return errors.Errorf("expected multipart response, got %s", mediaType)
+	}
+
+	// Create function directory
+	funcDir := filepath.Join(utils.FunctionsDir, slug)
+
+	if err := utils.MkdirIfNotExistFS(fsys, funcDir); err != nil {
+		return err
+	}
+
+	// Parse multipart form
+	mr := multipart.NewReader(resp.Body, params["boundary"])
+	for {
+		part, err := mr.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return errors.Errorf("failed to read multipart: %w", err)
+		}
+
+		// Determine the relative path from headers to preserve directory structure.
+		relPath, err := resolvedPartPath(slug, part) // always starts with :slug
+		if err != nil {
+			return err
+		}
+
+		// result of invalid or missing filename but we're letting it slide
+		if relPath == "" {
+			fmt.Fprintln(utils.GetDebugLogger(), "Skipping part without filename")
+			continue
+		}
+
+		filePath, err := joinWithinDir(funcDir, relPath)
+		if err != nil {
+			return err
+		}
+
+		if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(filePath)); err != nil {
+			return err
+		}
+		if err := afero.WriteReader(fsys, filePath, part); err != nil {
+			return errors.Errorf("failed to write file: %w", err)
+		}
+	}
+
+	fmt.Println("Downloaded Function " + utils.Aqua(slug) + " from project " + utils.Aqua(projectRef) + ".")
+	return nil
+}
+
+// parse multipart part headers to read and sanitize relative file path for writing
+func resolvedPartPath(slug string, part *multipart.Part) (string, error) {
+	// dedicated header to specify relative path, not expected to be used
+	if relPath := part.Header.Get("Supabase-Path"); relPath != "" {
+		return normalizeRelativePath(slug, relPath), nil
+	}
+
+	// part.FileName() does not allow us to handle relative paths, so we parse Content-Disposition manually
+	cd := part.Header.Get("Content-Disposition")
+	if cd == "" {
+		return "", nil
+	}
+
+	_, params, err := mime.ParseMediaType(cd)
+	if err != nil {
+		return "", errors.Errorf("failed to parse content disposition: %w", err)
+	}
+
+	if filename := params["filename"]; filename != "" {
+		return normalizeRelativePath(slug, filename), nil
+	}
+	return "", nil
+}
+
+// remove leading source/ or :slug/
+func normalizeRelativePath(slug, raw string) string {
+	cleaned := path.Clean(raw)
+	if after, ok := strings.CutPrefix(cleaned, "source/"); ok {
+		cleaned = after
+	} else if after, ok := strings.CutPrefix(cleaned, slug+"/"); ok {
+		cleaned = after
+	} else if cleaned == slug {
+		// If the path is exactly :slug, skip it
+		cleaned = ""
+	}
+	return cleaned
+}
+
+// joinWithinDir safely joins base and rel ensuring the result stays within base directory
+func joinWithinDir(base, rel string) (string, error) {
+	cleanRel := filepath.Clean(rel)
+	// Be forgiving: treat a rooted path as relative to base (e.g. "/foo" -> "foo")
+	if filepath.IsAbs(cleanRel) {
+		cleanRel = strings.TrimLeft(cleanRel, "/\\")
+	}
+	if cleanRel == ".." || strings.HasPrefix(cleanRel, "../") {
+		return "", errors.Errorf("invalid file path outside function directory: %s", rel)
+	}
+	joined := filepath.Join(base, cleanRel)
+	cleanJoined := filepath.Clean(joined)
+	cleanBase := filepath.Clean(base)
+	if cleanJoined != cleanBase && !strings.HasPrefix(cleanJoined, cleanBase+"/") {
+		return "", errors.Errorf("refusing to write outside function directory: %s", rel)
+	}
+	return joined, nil
 }
