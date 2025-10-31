@@ -3219,7 +3219,8 @@ type StorageConfigResponse struct {
 		IcebergCatalog bool `json:"iceberg_catalog"`
 		ListV2         bool `json:"list_v2"`
 	} `json:"capabilities"`
-	External struct {
+	DatabasePoolMode string `json:"databasePoolMode"`
+	External         struct {
 		UpstreamTarget StorageConfigResponseExternalUpstreamTarget `json:"upstreamTarget"`
 	} `json:"external"`
 	Features struct {
@@ -3233,7 +3234,8 @@ type StorageConfigResponse struct {
 			Enabled bool `json:"enabled"`
 		} `json:"s3Protocol"`
 	} `json:"features"`
-	FileSizeLimit int64 `json:"fileSizeLimit"`
+	FileSizeLimit    int64  `json:"fileSizeLimit"`
+	MigrationVersion string `json:"migrationVersion"`
 }
 
 // StorageConfigResponseExternalUpstreamTarget defines model for StorageConfigResponse.External.UpstreamTarget.
