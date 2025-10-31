@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/fetcher"
 )
 
@@ -250,4 +251,58 @@ func isDeprecated(tag string) bool {
 		}
 	}
 	return false
+}
+
+func RunRemote(ctx context.Context, format string, fsys afero.Fs) error {
+	// Parse project ref
+	if err := flags.ParseProjectRef(ctx, fsys); err != nil {
+		return err
+	}
+
+	// Define services to check
+	services := []api.V1GetServicesHealthParamsServices{
+		api.Auth,
+		api.Realtime,
+		api.Rest,
+		api.Storage,
+		api.Db,
+	}
+
+	// Call health check API
+	resp, err := utils.GetSupabase().V1GetServicesHealthWithResponse(ctx, flags.ProjectRef, &api.V1GetServicesHealthParams{
+		Services: services,
+	})
+	if err != nil {
+		return errors.Errorf("failed to check remote health: %w", err)
+	}
+	if resp.JSON200 == nil {
+		return errors.New("Unexpected error checking remote health: " + string(resp.Body))
+	}
+
+	// Print results
+	if format == utils.OutputPretty {
+		return prettyPrintRemoteHealth(os.Stdout, *resp.JSON200)
+	}
+	return utils.EncodeOutput(format, os.Stdout, resp.JSON200)
+}
+
+func prettyPrintRemoteHealth(w io.Writer, health []api.V1ServiceHealthResponse) error {
+	fmt.Fprintf(w, "\n")
+	for _, service := range health {
+		statusSymbol := "✓"
+		statusColor := utils.Green
+		if !service.Healthy {
+			statusSymbol = "✗"
+			statusColor = utils.Red
+		}
+
+		fmt.Fprintf(w, "%s %s %s\n", statusColor(statusSymbol), utils.Aqua(string(service.Name)), utils.Dim(string(service.Status)))
+
+		if service.Error != nil && *service.Error != "" {
+			fmt.Fprintf(w, "  Error: %s\n", utils.Red(*service.Error))
+		}
+	}
+	fmt.Fprintf(w, "\n")
+
+	return nil
 }

@@ -14,6 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/api"
 )
 
 func TestStatusCommand(t *testing.T) {
@@ -174,5 +176,66 @@ func TestPrintStatus(t *testing.T) {
 		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, utils.OutputToml, &stdout))
 		// Check error
 		assert.Equal(t, "DB_URL = \"postgresql://postgres:postgres@127.0.0.1:0/postgres\"\n", stdout.String())
+	})
+}
+
+func TestRemoteStatusCommand(t *testing.T) {
+	t.Run("shows remote health status", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		projectRef := apitest.RandomProjectRef()
+		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(projectRef), 0644))
+		// Setup access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Setup mock API
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + projectRef + "/health").
+			ParamPresent("services").
+			Reply(http.StatusOK).
+			JSON([]api.V1ServiceHealthResponse{
+				{
+					Name:    api.V1ServiceHealthResponseNameAuth,
+					Healthy: true,
+					Status:  api.ACTIVEHEALTHY,
+				},
+				{
+					Name:    api.V1ServiceHealthResponseNameRealtime,
+					Healthy: true,
+					Status:  api.ACTIVEHEALTHY,
+				},
+				{
+					Name:    api.V1ServiceHealthResponseNameRest,
+					Healthy: true,
+					Status:  api.ACTIVEHEALTHY,
+				},
+				{
+					Name:    api.V1ServiceHealthResponseNameStorage,
+					Healthy: true,
+					Status:  api.ACTIVEHEALTHY,
+				},
+				{
+					Name:    api.V1ServiceHealthResponseNameDb,
+					Healthy: true,
+					Status:  api.ACTIVEHEALTHY,
+				},
+			})
+		// Run test
+		assert.NoError(t, RunRemote(context.Background(), utils.OutputPretty, fsys))
+		// Check error
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("throws error on missing project ref", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		defer gock.OffAll()
+		// Reset global state
+		flags.ProjectRef = ""
+		// Run test
+		err := RunRemote(context.Background(), utils.OutputPretty, fsys)
+		// Check error
+		assert.ErrorContains(t, err, "project ref")
 	})
 }

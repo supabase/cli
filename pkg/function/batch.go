@@ -25,6 +25,10 @@ const (
 )
 
 func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig config.FunctionConfig, filter ...func(string) bool) error {
+	return s.upsertFunctions(ctx, functionConfig, filter...)
+}
+
+func (s *EdgeRuntimeAPI) upsertFunctions(ctx context.Context, functionConfig config.FunctionConfig, filter ...func(string) bool) error {
 	policy := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), maxRetries), ctx)
 	result, err := backoff.RetryWithData(func() ([]api.FunctionResponse, error) {
 		resp, err := s.client.V1ListAllFunctionsWithResponse(ctx, s.project)
@@ -47,7 +51,9 @@ func (s *EdgeRuntimeAPI) UpsertFunctions(ctx context.Context, functionConfig con
 	for i, f := range result {
 		slugToIndex[f.Slug] = i
 	}
+
 	var toUpdate api.BulkUpdateFunctionBody
+
 OUTER:
 	for slug, function := range functionConfig {
 		if !function.Enabled {
@@ -77,6 +83,7 @@ OUTER:
 			fmt.Fprintln(os.Stderr, "No change found in Function:", slug)
 			continue
 		}
+
 		// Update if function already exists
 		upsert := func() (api.BulkUpdateFunctionBody, error) {
 			if _, exists := slugToIndex[slug]; exists {
@@ -97,6 +104,7 @@ OUTER:
 		toUpdate = append(toUpdate, result...)
 		policy.Reset()
 	}
+
 	if len(toUpdate) > 1 {
 		if err := backoff.Retry(func() error {
 			if resp, err := s.client.V1BulkUpdateFunctionsWithResponse(ctx, s.project, toUpdate); err != nil {
