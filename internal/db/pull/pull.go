@@ -56,20 +56,25 @@ func run(ctx context.Context, schema []string, path string, conn *pgx.Conn, fsys
 	config := conn.Config().Config
 	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
 	if err := assertRemoteInSync(ctx, conn, fsys); errors.Is(err, errMissing) {
-		// Ignore schemas flag when working on the initial pull
-		if err = dumpRemoteSchema(ctx, path, config, fsys); err != nil {
-			return err
-		}
-		// Run a second pass to pull in changes from default privileges and managed schemas
-		if err = diffRemoteSchema(ctx, nil, path, config, fsys); errors.Is(err, errInSync) {
-			err = nil
-		}
-		return err
+		return CloneRemoteSchema(ctx, path, config, fsys)
 	} else if err != nil {
 		return err
 	}
 	// 2. Fetch remote schema changes
 	return diffRemoteSchema(ctx, schema, path, config, fsys)
+}
+
+func CloneRemoteSchema(ctx context.Context, path string, config pgconn.Config, fsys afero.Fs) error {
+	// Ignore schemas flag when working on the initial pull
+	if err := dumpRemoteSchema(ctx, path, config, fsys); err != nil {
+		return err
+	}
+	// Run a second pass to pull in changes from default privileges and managed schemas
+	err := diffRemoteSchema(ctx, nil, path, config, fsys)
+	if errors.Is(err, errInSync) {
+		err = nil
+	}
+	return err
 }
 
 func dumpRemoteSchema(ctx context.Context, path string, config pgconn.Config, fsys afero.Fs) error {
