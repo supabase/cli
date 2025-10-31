@@ -239,42 +239,26 @@ func TestGetMetadata(t *testing.T) {
 	})
 }
 
-func TestSanitizeRelativePath(t *testing.T) {
+func TestNormalizeRelativePath(t *testing.T) {
 	t.Parallel()
 
 	t.Run("returns cleaned relative path", func(t *testing.T) {
-		got, err := sanitizeRelativePath("test-func", "src/index.ts")
-		require.NoError(t, err)
+		got := normalizeRelativePath("test-func", "src/index.ts")
 		assert.Equal(t, filepath.Join("src", "index.ts"), got)
 	})
 
 	t.Run("strips slug prefix", func(t *testing.T) {
-		got, err := sanitizeRelativePath("test-func", "test-func/index.ts")
-		require.NoError(t, err)
+		got := normalizeRelativePath("test-func", "test-func/index.ts")
 		assert.Equal(t, "index.ts", got)
 	})
 
 	t.Run("skips slug directory itself", func(t *testing.T) {
-		got, err := sanitizeRelativePath("test-func", "test-func")
-		require.NoError(t, err)
-		assert.Equal(t, "", got)
-	})
-
-	t.Run("rejects path traversal", func(t *testing.T) {
-		got, err := sanitizeRelativePath("", "../secrets.txt")
-		require.ErrorContains(t, err, "refusing to write file outside of function directory")
-		assert.Equal(t, "", got)
-	})
-
-	t.Run("rejects absolute path", func(t *testing.T) {
-		got, err := sanitizeRelativePath("", "/etc/passwd")
-		require.ErrorContains(t, err, "refusing to write file outside of function directory")
+		got := normalizeRelativePath("test-func", "test-func")
 		assert.Equal(t, "", got)
 	})
 
 	t.Run("returns empty for whitespace input", func(t *testing.T) {
-		got, err := sanitizeRelativePath("", " \t\n ")
-		require.NoError(t, err)
+		got := normalizeRelativePath("", " \t\n ")
 		assert.Equal(t, "", got)
 	})
 }

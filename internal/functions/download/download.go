@@ -294,6 +294,7 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 
 	// Create function directory
 	funcDir := filepath.Join(utils.FunctionsDir, slug)
+
 	if err := utils.MkdirIfNotExistFS(fsys, funcDir); err != nil {
 		return err
 	}
@@ -310,17 +311,17 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 		}
 
 		// Determine the relative path from headers to preserve directory structure.
-		relPath, err := resolvedPartPath(slug, part)
+		relPath, err := resolvedPartPath(slug, part) // always starts with :slug
 		if err != nil {
 			return err
 		}
 
 		// result of invalid or missing filename but we're letting it slide
 		if relPath == "" {
+			fmt.Fprintln(utils.GetDebugLogger(), "Skipping part without filename")
 			continue
 		}
 
-		// Create the full path for the file
 		filePath := filepath.Join(funcDir, relPath)
 
 		if err := afero.WriteReader(fsys, filePath, part); err != nil {
@@ -336,7 +337,7 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 func resolvedPartPath(slug string, part *multipart.Part) (string, error) {
 	// dedicated header to specify relative path, not expected to be used
 	if relPath := part.Header.Get("Supabase-Path"); relPath != "" {
-		return sanitizeRelativePath(slug, relPath)
+		return normalizeRelativePath(slug, relPath), nil
 	}
 
 	// part.FileName() does not allow us to handle relative paths, so we parse Content-Disposition manually
@@ -351,37 +352,15 @@ func resolvedPartPath(slug string, part *multipart.Part) (string, error) {
 	}
 
 	if filename := params["filename"]; filename != "" {
-		return sanitizeRelativePath(slug, filename)
+		return normalizeRelativePath(slug, filename), nil
 	}
 	return "", nil
 }
 
-// ensure path in a given function's part metadata stays confined within that function's directory
-func sanitizeRelativePath(slug, raw string) (string, error) {
-	candidate := strings.TrimSpace(raw)
-	if candidate == "" {
-		return "", nil
+func normalizeRelativePath(slug, raw string) string {
+	cleaned := path.Clean(raw)
+	if after, ok := strings.CutPrefix(cleaned, "source/"); ok {
+		cleaned = after
 	}
-
-	cleaned := path.Clean(candidate)
-
-	// Ensure the first segment is the slug. If it's "source", replace it with slug.
-	first, rest, hasMore := strings.Cut(cleaned, "/")
-
-	if first == "source" {
-		cleaned = slug + "/" + rest
-	} else if first != slug {
-		// Prefix slug if it's not already the first segment
-		if hasMore {
-			cleaned = slug + "/" + cleaned
-		} else {
-			cleaned = slug + "/" + first
-		}
-	}
-
-	if cleaned == slug {
-		return "", nil
-	}
-
-	return strings.TrimPrefix(cleaned, slug+"/"), nil
+	return strings.TrimPrefix(cleaned, slug+"/")
 }
