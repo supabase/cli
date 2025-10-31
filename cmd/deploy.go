@@ -25,7 +25,6 @@ var (
 	deployIncludeAll   bool
 	deployIncludeRoles bool
 	deployIncludeSeed  bool
-	only               []string
 
 	deployCmd = &cobra.Command{
 		GroupID: groupLocalDev,
@@ -47,27 +46,9 @@ Use individual flags to customize what gets deployed.`,
 			fsys := afero.NewOsFs()
 
 			// Determine components to deploy
-			includeDb := false
-			includeFunctions := false
-			includeConfig := false
-			if len(only) == 0 {
-				includeDb = true
-				includeFunctions = true
-				includeConfig = true
-			} else {
-				for _, component := range only {
-					switch component {
-					case "db":
-						includeDb = true
-					case "functions":
-						includeFunctions = true
-					case "config":
-						includeConfig = true
-					default:
-						return errors.Errorf("unknown component to deploy: %s", component)
-					}
-				}
-			}
+			includeDb := true
+			includeFunctions := true
+			includeConfig := true
 
 			fmt.Fprintln(os.Stderr, utils.Bold("Deploying to project:"), flags.ProjectRef)
 
@@ -165,8 +146,6 @@ Use individual flags to customize what gets deployed.`,
 
 func init() {
 	cmdFlags := deployCmd.Flags()
-
-	deployCmd.Flags().StringSliceVar(&only, "only", []string{}, "Comma-separated list of components to deploy (e.g., db,storage,functions).")
 
 	cmdFlags.BoolVar(&deployDryRun, "dry-run", false, "Print operations that would be performed without executing them")
 
