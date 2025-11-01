@@ -5,7 +5,6 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
-	"io"
 	"net"
 	"net/url"
 	"os"
@@ -143,9 +142,52 @@ var (
 
 var serviceTimeout = 30 * time.Second
 
+// getImageBaseName extracts the base image name from a full image string.
+// For example: "supabase/postgres:17.6" -> "postgres", "library/kong:2.8.1" -> "kong"
+func getImageBaseName(fullImage string) string {
+	// Remove tag if present (everything after ':')
+	baseWithTag := strings.Split(fullImage, ":")[0]
+	// Extract the last part after '/'
+	parts := strings.Split(baseWithTag, "/")
+	return parts[len(parts)-1]
+}
+
+// imagePullPriority returns a priority value for an image based on its base name.
+// Lower values indicate higher priority (heavier images should be pulled first).
+// Priority is based on approximate image sizes from largest to smallest.
+func imagePullPriority(imageName string) int {
+	baseName := getImageBaseName(imageName)
+
+	// Priority map: lower number = higher priority (starts first)
+	// Based on approximate sizes: postgres (2.95GB) > studio (819MB) > edge-runtime (680MB) > ...
+	priorityMap := map[string]int{
+		"postgres":      1,  // 2.95 GB - highest priority
+		"studio":        2,  // 819.8 MB
+		"edge-runtime":  3,  // 680.6 MB
+		"logflare":      4,  // 670 MB
+		"storage-api":   5,  // 626.2 MB
+		"realtime":      6,  // 463.1 MB
+		"postgrest":     7,  // 436.6 MB
+		"postgres-meta": 8,  // 405.2 MB
+		"kong":          9,  // 149 MB
+		"vector":        10, // 111.3 MB
+		"gotrue":        11, // 48.3 MB
+		"mailpit":       12, // 28.9 MB
+		"supavisor":     13, // pooler - similar size to gotrue
+		"imgproxy":      14, // image proxy - typically smaller
+	}
+
+	if priority, ok := priorityMap[baseName]; ok {
+		return priority
+	}
+	// Unknown images get lowest priority (highest number)
+	return 100
+}
+
 // collectRequiredImages collects all Docker images that need to be pulled
 // based on the current configuration and excluded containers.
 // includeDb indicates whether the database will be started and should have its image pulled.
+// Images are returned sorted by priority (heavier images first).
 func collectRequiredImages(excluded map[string]bool, isStorageEnabled, isImgProxyEnabled bool, includeDb bool) []string {
 	images := make(map[string]bool)
 
@@ -220,6 +262,18 @@ func collectRequiredImages(excluded map[string]bool, isStorageEnabled, isImgProx
 	for img := range images {
 		result = append(result, img)
 	}
+
+	// Sort by priority (heavier images first)
+	slices.SortFunc(result, func(a, b string) int {
+		priorityA := imagePullPriority(a)
+		priorityB := imagePullPriority(b)
+		if priorityA != priorityB {
+			return priorityA - priorityB
+		}
+		// If priorities are equal, sort alphabetically for consistency
+		return strings.Compare(a, b)
+	})
+
 	return result
 }
 
@@ -251,16 +305,16 @@ func pullImagesInParallel(ctx context.Context, images []string) error {
 			p.Send(utils.StatusMsg(fmt.Sprintf("Pulling images (%d/%d)...", current, len(images))))
 		}
 
-		// Stagger pull starts slightly to reduce rate limiting (200ms delay between starts)
+		// Stagger pull starts slightly to reduce rate limiting (1s delay between starts because aws ECR allow 1 image pull per second)
 		for idx, image := range images {
 			if idx > 0 {
-				time.Sleep(200 * time.Millisecond)
+				time.Sleep(1 * time.Second)
 			}
 			wg.Add(1)
 			go func(img string) {
 				defer wg.Done()
-				// Suppress detailed output during parallel pulls to avoid interleaving
-				err := utils.DockerPullImageIfNotCachedWithWriter(ctx, img, io.Discard, 5)
+				// Show detailed output in debug mode, otherwise suppress to avoid interleaving
+				err := utils.DockerPullImageIfNotCachedWithWriter(ctx, img, utils.GetDebugLogger(), 5)
 				completedMutex.Lock()
 				completedCount++
 				current := completedCount

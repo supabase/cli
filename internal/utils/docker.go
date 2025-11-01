@@ -261,8 +261,8 @@ func DockerPullImageIfNotCachedWithWriter(ctx context.Context, imageName string,
 		if w != io.Discard {
 			fmt.Fprintln(w, err)
 		}
-		// Exponential backoff: 4s, 8s, 16s, 32s, 64s
-		period := time.Duration(2<<(5-retries)) * timeUnit
+		// Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s
+		period := time.Duration(1<<(5-retries)) * timeUnit
 		if w != io.Discard {
 			fmt.Fprintf(w, "Retrying after %v: %s\n", period, imageUrl)
 		}
