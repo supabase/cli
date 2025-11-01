@@ -305,11 +305,8 @@ func pullImagesInParallel(ctx context.Context, images []string) error {
 			p.Send(utils.StatusMsg(fmt.Sprintf("Pulling images (%d/%d)...", current, len(images))))
 		}
 
-		// Stagger pull starts slightly to reduce rate limiting (1s delay between starts because aws ECR allow 1 image pull per second)
-		for idx, image := range images {
-			if idx > 0 {
-				time.Sleep(1 * time.Second)
-			}
+		// Start pulling images in parallel
+		for _, image := range images {
 			wg.Add(1)
 			go func(img string) {
 				defer wg.Done()
