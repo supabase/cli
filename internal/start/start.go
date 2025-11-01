@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -141,6 +142,234 @@ var (
 
 var serviceTimeout = 30 * time.Second
 
+// getImageBaseName extracts the base image name from a full image string.
+// For example: "supabase/postgres:17.6" -> "postgres", "library/kong:2.8.1" -> "kong"
+func getImageBaseName(fullImage string) string {
+	// Remove tag if present (everything after ':')
+	baseWithTag := strings.Split(fullImage, ":")[0]
+	// Extract the last part after '/'
+	parts := strings.Split(baseWithTag, "/")
+	return parts[len(parts)-1]
+}
+
+// imagePullPriority returns a priority value for an image based on its base name.
+// Lower values indicate higher priority (heavier images should be pulled first).
+// Priority is based on approximate image sizes from largest to smallest.
+func imagePullPriority(imageName string) int {
+	baseName := getImageBaseName(imageName)
+
+	// Priority map: lower number = higher priority (starts first)
+	// Based on approximate sizes: postgres (2.95GB) > studio (819MB) > edge-runtime (680MB) > ...
+	priorityMap := map[string]int{
+		"postgres":      1,  // 2.95 GB - highest priority
+		"studio":        2,  // 819.8 MB
+		"edge-runtime":  3,  // 680.6 MB
+		"logflare":      4,  // 670 MB
+		"storage-api":   5,  // 626.2 MB
+		"realtime":      6,  // 463.1 MB
+		"postgrest":     7,  // 436.6 MB
+		"postgres-meta": 8,  // 405.2 MB
+		"kong":          9,  // 149 MB
+		"vector":        10, // 111.3 MB
+		"gotrue":        11, // 48.3 MB
+		"mailpit":       12, // 28.9 MB
+		"supavisor":     13, // pooler - similar size to gotrue
+		"imgproxy":      14, // image proxy - typically smaller
+	}
+
+	if priority, ok := priorityMap[baseName]; ok {
+		return priority
+	}
+	// Unknown images get lowest priority (highest number)
+	return 100
+}
+
+// collectRequiredImages collects all Docker images that need to be pulled
+// based on the current configuration and excluded containers.
+// includeDb indicates whether the database will be started and should have its image pulled.
+// Images are returned sorted by priority (heavier images first).
+func collectRequiredImages(excluded map[string]bool, isStorageEnabled, isImgProxyEnabled bool, includeDb bool) []string {
+	images := make(map[string]bool)
+
+	// Analytics services
+	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.Image, excluded) {
+		images[utils.Config.Analytics.Image] = true
+	}
+	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.VectorImage, excluded) {
+		images[utils.Config.Analytics.VectorImage] = true
+	}
+
+	// API Gateway
+	if !isContainerExcluded(utils.Config.Api.KongImage, excluded) {
+		images[utils.Config.Api.KongImage] = true
+	}
+
+	// Auth service
+	if utils.Config.Auth.Enabled && !isContainerExcluded(utils.Config.Auth.Image, excluded) {
+		images[utils.Config.Auth.Image] = true
+	}
+
+	// Mailpit/Inbucket
+	if utils.Config.Inbucket.Enabled && !isContainerExcluded(utils.Config.Inbucket.Image, excluded) {
+		images[utils.Config.Inbucket.Image] = true
+	}
+
+	// Realtime
+	if utils.Config.Realtime.Enabled && !isContainerExcluded(utils.Config.Realtime.Image, excluded) {
+		images[utils.Config.Realtime.Image] = true
+	}
+
+	// PostgREST
+	if utils.Config.Api.Enabled && !isContainerExcluded(utils.Config.Api.Image, excluded) {
+		images[utils.Config.Api.Image] = true
+	}
+
+	// Storage
+	if isStorageEnabled {
+		images[utils.Config.Storage.Image] = true
+	}
+	if isImgProxyEnabled {
+		images[utils.Config.Storage.ImgProxyImage] = true
+	}
+
+	// Edge Runtime
+	if utils.Config.EdgeRuntime.Enabled && !isContainerExcluded(utils.Config.EdgeRuntime.Image, excluded) {
+		images[utils.Config.EdgeRuntime.Image] = true
+	}
+
+	// Studio services
+	if utils.Config.Studio.Enabled {
+		if !isContainerExcluded(utils.Config.Studio.PgmetaImage, excluded) {
+			images[utils.Config.Studio.PgmetaImage] = true
+		}
+		if !isContainerExcluded(utils.Config.Studio.Image, excluded) {
+			images[utils.Config.Studio.Image] = true
+		}
+	}
+
+	// Pooler
+	if utils.Config.Db.Pooler.Enabled && !isContainerExcluded(utils.Config.Db.Pooler.Image, excluded) {
+		images[utils.Config.Db.Pooler.Image] = true
+	}
+
+	// Database (if it will be started)
+	if includeDb {
+		images[utils.Config.Db.Image] = true
+	}
+
+	// Convert map to slice
+	result := make([]string, 0, len(images))
+	for img := range images {
+		result = append(result, img)
+	}
+
+	// Sort by priority (heavier images first)
+	slices.SortFunc(result, func(a, b string) int {
+		priorityA := imagePullPriority(a)
+		priorityB := imagePullPriority(b)
+		if priorityA != priorityB {
+			return priorityA - priorityB
+		}
+		// If priorities are equal, sort alphabetically for consistency
+		return strings.Compare(a, b)
+	})
+
+	return result
+}
+
+// pullImagesInParallel pulls all provided images in parallel using goroutines.
+// Returns an error if any image pull fails.
+func pullImagesInParallel(ctx context.Context, images []string) error {
+	if len(images) == 0 {
+		return nil
+	}
+
+	type pullResult struct {
+		image string
+		err   error
+	}
+
+	return utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
+		p.Send(utils.StatusMsg(fmt.Sprintf("Pulling images in parallel (%d images)...", len(images))))
+
+		var wg sync.WaitGroup
+		resultChan := make(chan pullResult, len(images))
+		var completedMutex sync.Mutex
+		var completedCount int
+
+		// Update status as images complete
+		updateStatus := func() {
+			completedMutex.Lock()
+			current := completedCount
+			completedMutex.Unlock()
+			p.Send(utils.StatusMsg(fmt.Sprintf("Pulling images (%d/%d)...", current, len(images))))
+		}
+
+		// Start pulling images in parallel
+		for _, image := range images {
+			wg.Add(1)
+			go func(img string) {
+				defer wg.Done()
+				// Show detailed output in debug mode, otherwise suppress to avoid interleaving
+				err := utils.DockerPullImageIfNotCachedWithWriter(ctx, img, utils.GetDebugLogger(), 5)
+				completedMutex.Lock()
+				completedCount++
+				current := completedCount
+				completedMutex.Unlock()
+				resultChan <- pullResult{image: img, err: err}
+				// Update status when each image completes
+				if current < len(images) {
+					updateStatus()
+				}
+			}(image)
+		}
+
+		wg.Wait()
+		close(resultChan)
+
+		// Collect results and display clean summary
+		var successCount int
+		var errs []error
+		var failedImages []string
+
+		// Collect all results first, then display in sorted order for consistency
+		var results []pullResult
+		for result := range resultChan {
+			results = append(results, result)
+		}
+
+		// Sort by image name for consistent output
+		slices.SortFunc(results, func(a, b pullResult) int {
+			return strings.Compare(a.image, b.image)
+		})
+
+		// Display results
+		var statusLines []string
+		for _, result := range results {
+			shortName := utils.ShortContainerImageName(result.image)
+			if result.err != nil {
+				errs = append(errs, errors.Errorf("failed to pull image %s: %w", result.image, result.err))
+				failedImages = append(failedImages, result.image)
+				statusLines = append(statusLines, fmt.Sprintf("  ✗ %s", shortName))
+			} else {
+				successCount++
+				statusLines = append(statusLines, fmt.Sprintf("  ✓ %s", shortName))
+			}
+		}
+
+		// Send final status
+		if len(errs) > 0 {
+			statusLines = append(statusLines, fmt.Sprintf("\nFailed to pull %d image(s).", len(errs)))
+			p.Send(utils.StatusMsg(strings.Join(statusLines, "\n")))
+			return errors.Errorf("failed to pull images:\n%s", strings.Join(failedImages, "\n"))
+		}
+
+		statusLines = append(statusLines, fmt.Sprintf("Successfully pulled %d image(s).", successCount))
+		p.Send(utils.StatusMsg(strings.Join(statusLines, "\n")))
+		return nil
+	})
+}
+
 func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, options ...func(*pgx.ConnConfig)) error {
 	excluded := make(map[string]bool)
 	for _, name := range excludedContainers {
@@ -152,17 +381,25 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 		return err
 	}
 
+	var started []string
+	var isStorageEnabled = utils.Config.Storage.Enabled && !isContainerExcluded(utils.Config.Storage.Image, excluded)
+	var isImgProxyEnabled = utils.Config.Storage.ImageTransformation != nil &&
+		utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImgProxyImage, excluded)
+
+	// Collect and pull all required images in parallel before starting containers
+	includeDb := dbConfig.Host == utils.DbId
+	requiredImages := collectRequiredImages(excluded, isStorageEnabled, isImgProxyEnabled, includeDb)
+	if err := pullImagesInParallel(ctx, requiredImages); err != nil {
+		return err
+	}
+
 	// Start Postgres.
-	if dbConfig.Host == utils.DbId {
+	if includeDb {
 		if err := start.StartDatabase(ctx, "", fsys, os.Stderr, options...); err != nil {
 			return err
 		}
 	}
 
-	var started []string
-	var isStorageEnabled = utils.Config.Storage.Enabled && !isContainerExcluded(utils.Config.Storage.Image, excluded)
-	var isImgProxyEnabled = utils.Config.Storage.ImageTransformation != nil &&
-		utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImgProxyImage, excluded)
 	fmt.Fprintln(os.Stderr, "Starting containers...")
 
 	// Start Logflare
