@@ -424,7 +424,7 @@ func pullSingleImageWithProgress(ctx context.Context, imageName, resource string
 	}
 
 	// Pull with retry (same retry logic as DockerPullImageIfNotCachedWithWriter)
-	const maxRetries = 5
+	const maxRetries uint = 5
 	writer := progress.ContextWriter(ctx)
 	isRetry := false
 	return utils.RetryWithExponentialBackoff(ctx, func() error {

@@ -340,12 +340,12 @@ func DockerImagePullWithRetry(ctx context.Context, image string, retries int) er
 }
 
 func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
-	return DockerPullImageIfNotCachedWithWriter(ctx, imageName, os.Stderr, 5)
+	return DockerPullImageIfNotCachedWithWriter(ctx, imageName, os.Stderr, uint(5))
 }
 
 // DockerPullImageIfNotCachedWithWriter pulls an image if not cached, using the provided writer for output.
 // Use io.Discard to suppress output.
-func DockerPullImageIfNotCachedWithWriter(ctx context.Context, imageName string, w io.Writer, retries int) error {
+func DockerPullImageIfNotCachedWithWriter(ctx context.Context, imageName string, w io.Writer, retries uint) error {
 	imageUrl := GetRegistryImageUrl(imageName)
 	if _, err := Docker.ImageInspect(ctx, imageUrl); err == nil {
 		return nil
