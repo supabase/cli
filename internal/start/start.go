@@ -444,7 +444,7 @@ func pullSingleImageWithProgress(ctx context.Context, imageName, resource string
 			Status:     progress.Warning,
 			StatusText: fmt.Sprintf("Retrying after %v...", backoff),
 		})
-	})
+	}, utils.IsRetryablePullError)
 }
 
 func getUnwrappedErrorMessage(err error) string {
