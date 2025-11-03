@@ -324,6 +324,33 @@ func ToPullProgressEvent(parent string, jm jsonmessage.JSONMessage, writer progr
 // Used by unit tests
 var timeUnit = time.Second
 
+// IsRetryablePullError checks if an error is retryable.
+// Only transient errors like rate limits and network issues should be retried.
+func IsRetryablePullError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	// Check for retryable error messages that indicate transient failures
+	retryableErrors := []string{
+		"toomanyrequests",
+		"too many requests",
+		"rate limit",
+		"service unavailable",
+		"503",
+		"temporary failure",
+		"connection refused",
+		"timeout",
+	}
+	errStrLower := strings.ToLower(errStr)
+	for _, retryableErr := range retryableErrors {
+		if strings.Contains(errStrLower, retryableErr) {
+			return true
+		}
+	}
+	return false
+}
+
 func DockerImagePullWithRetry(ctx context.Context, image string, retries int) error {
 	err := DockerImagePull(ctx, image, os.Stderr)
 	for i := range retries {
@@ -366,7 +393,7 @@ func DockerPullImageIfNotCachedWithWriter(ctx context.Context, imageName string,
 			fmt.Fprintln(w, err)
 		}
 		return err
-	}, retries, onRetry)
+	}, retries, onRetry, IsRetryablePullError)
 }
 
 var suggestDockerInstall = "Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop"
