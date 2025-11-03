@@ -30,13 +30,41 @@ type Client interface {
 	Configure(ctx context.Context, fsys afero.Fs) error
 }
 
+
+// baseClient provides default implementations for the Client interface
+type baseClient struct {
+	name                string
+	displayName         string
+	installInstructions string
+	checkInstalled      func() bool
+}
+
+func (b *baseClient) Name() string {
+	return b.name
+}
+
+func (b *baseClient) DisplayName() string {
+	return b.displayName
+}
+
+func (b *baseClient) IsInstalled() bool {
+	if b.checkInstalled != nil {
+		return b.checkInstalled()
+	}
+	return false
+}
+
+func (b *baseClient) InstallInstructions() string {
+	return b.installInstructions
+}
+
 // clientRegistry holds all supported clients
 var clientRegistry = []Client{
-	&claudeCodeClient{},
-	&cursorClient{},
+	newClaudeCodeClient(),
+	newCursorClient(),
 	// Add new clients here in the future:
-	// &vscodeClient{},
-	// &claudeDesktopClient{},
+	// newVSCodeClient(),
+	// newClaudeDesktopClient(),
 }
 
 func Run(ctx context.Context, fsys afero.Fs, clientFlag string) error {
@@ -122,22 +150,21 @@ func configureSpecificClient(ctx context.Context, fsys afero.Fs, clientName stri
 }
 
 // claudeCodeClient implements the Client interface for Claude Code
-type claudeCodeClient struct{}
-
-func (c *claudeCodeClient) Name() string {
-	return "claude-code"
+type claudeCodeClient struct {
+	baseClient
 }
 
-func (c *claudeCodeClient) DisplayName() string {
-	return "Claude Code"
-}
-
-func (c *claudeCodeClient) IsInstalled() bool {
-	return commandExists("claude")
-}
-
-func (c *claudeCodeClient) InstallInstructions() string {
-	return "npm install -g @anthropic-ai/claude-cli"
+func newClaudeCodeClient() *claudeCodeClient {
+	return &claudeCodeClient{
+		baseClient: baseClient{
+			name:                "claude-code",
+			displayName:         "Claude Code",
+			installInstructions: "npm install -g @anthropic-ai/claude-cli",
+			checkInstalled: func() bool {
+				return commandExists("claude")
+			},
+		},
+	}
 }
 
 func (c *claudeCodeClient) Configure(ctx context.Context, fsys afero.Fs) error {
@@ -169,23 +196,21 @@ func commandExists(command string) bool {
 }
 
 // cursorClient implements the Client interface for Cursor
-type cursorClient struct{}
-
-func (c *cursorClient) Name() string {
-	return "cursor"
+type cursorClient struct {
+	baseClient
 }
 
-func (c *cursorClient) DisplayName() string {
-	return "Cursor"
-}
-
-func (c *cursorClient) IsInstalled() bool {
-	// Check if cursor command exists or app is installed
-	return commandExists("cursor") || appExists("Cursor")
-}
-
-func (c *cursorClient) InstallInstructions() string {
-	return "Download from https://cursor.sh"
+func newCursorClient() *cursorClient {
+	return &cursorClient{
+		baseClient: baseClient{
+			name:                "cursor",
+			displayName:         "Cursor",
+			installInstructions: "Download from https://cursor.sh",
+			checkInstalled: func() bool {
+				return commandExists("cursor") || appExists("Cursor")
+			},
+		},
+	}
 }
 
 func (c *cursorClient) Configure(ctx context.Context, fsys afero.Fs) error {
@@ -291,5 +316,44 @@ func appExists(appName string) bool {
 	}
 	return false
 }
+
+// Example: Adding a new client
+//
+// 1. Create a struct that embeds baseClient:
+//
+//    type myNewClient struct {
+//        baseClient
+//    }
+//
+// 2. Create a constructor function:
+//
+//    func newMyNewClient() *myNewClient {
+//        return &myNewClient{
+//            baseClient: baseClient{
+//                name:                "my-client",
+//                displayName:         "My Client",
+//                installInstructions: "Installation command or URL",
+//                checkInstalled: func() bool {
+//                    return commandExists("my-cli") || appExists("MyApp")
+//                },
+//            },
+//        }
+//    }
+//
+// 3. Implement the Configure method:
+//
+//    func (c *myNewClient) Configure(ctx context.Context, fsys afero.Fs) error {
+//        // Your configuration logic here
+//        // See claudeCodeClient or cursorClient for examples
+//        return nil
+//    }
+//
+// 4. Add to clientRegistry:
+//
+//    var clientRegistry = []Client{
+//        newClaudeCodeClient(),
+//        newCursorClient(),
+//        newMyNewClient(),  // Add here
+//    }
 
 
