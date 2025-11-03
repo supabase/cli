@@ -5,8 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/h2non/gock"
@@ -61,7 +65,7 @@ func TestDownloadCommand(t *testing.T) {
 			Get("/v1/projects/" + project + "/functions/" + slug + "/body").
 			Reply(http.StatusOK)
 		// Run test
-		err = Run(context.Background(), slug, project, true, fsys)
+		err = Run(context.Background(), slug, project, true, false, false, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -73,7 +77,7 @@ func TestDownloadCommand(t *testing.T) {
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Run test
-		err := Run(context.Background(), "@", project, true, fsys)
+		err := Run(context.Background(), "@", project, true, false, false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Invalid Function name.")
 	})
@@ -84,7 +88,7 @@ func TestDownloadCommand(t *testing.T) {
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Run test
-		err := Run(context.Background(), slug, project, true, fsys)
+		err := Run(context.Background(), slug, project, true, false, false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 	})
@@ -98,7 +102,7 @@ func TestDownloadCommand(t *testing.T) {
 		_, err := fsys.Create(utils.DenoPathOverride)
 		require.NoError(t, err)
 		// Run test
-		err = Run(context.Background(), slug, project, true, afero.NewReadOnlyFs(fsys))
+		err = Run(context.Background(), slug, project, true, false, false, afero.NewReadOnlyFs(fsys))
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 	})
@@ -121,7 +125,7 @@ func TestDownloadCommand(t *testing.T) {
 			Reply(http.StatusNotFound).
 			JSON(map[string]string{"message": "Function not found"})
 		// Run test
-		err = Run(context.Background(), slug, project, true, fsys)
+		err = Run(context.Background(), slug, project, true, false, false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Function test-func does not exist on the Supabase project.")
 	})
@@ -233,5 +237,134 @@ func TestGetMetadata(t *testing.T) {
 		// Check error
 		assert.ErrorContains(t, err, "Failed to download Function test-func on the Supabase project:")
 		assert.Nil(t, meta)
+	})
+}
+
+func TestNormalizeRelativePath(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns cleaned relative path", func(t *testing.T) {
+		got := normalizeRelativePath("test-func", "src/index.ts")
+		assert.Equal(t, filepath.Join("src", "index.ts"), got)
+	})
+
+	t.Run("strips slug prefix", func(t *testing.T) {
+		got := normalizeRelativePath("test-func", "test-func/index.ts")
+		assert.Equal(t, "index.ts", got)
+	})
+
+	t.Run("strips source prefix", func(t *testing.T) {
+		got := normalizeRelativePath("test-func", "source/index.ts")
+		assert.Equal(t, "index.ts", got)
+	})
+
+	t.Run("skips slug directory itself", func(t *testing.T) {
+		got := normalizeRelativePath("test-func", "test-func")
+		assert.Equal(t, "", got)
+	})
+}
+
+func TestResolvedPartPath(t *testing.T) {
+	t.Parallel()
+
+	newPart := func(headers map[string]string) *multipart.Part {
+		mh := make(textproto.MIMEHeader, len(headers))
+		for k, v := range headers {
+			mh.Set(k, v)
+		}
+		return &multipart.Part{Header: mh}
+	}
+
+	t.Run("returns path from Supabase header", func(t *testing.T) {
+		part := newPart(map[string]string{
+			"Supabase-Path": "dir/file.ts",
+		})
+		got, err := resolvedPartPath("test-func", part)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join("dir", "file.ts"), got)
+	})
+
+	t.Run("returns filename from content disposition", func(t *testing.T) {
+		part := newPart(map[string]string{
+			"Content-Disposition": `form-data; name="file"; filename="test-func/index.ts"`,
+		})
+		got, err := resolvedPartPath("test-func", part)
+		require.NoError(t, err)
+		assert.Equal(t, "index.ts", got)
+	})
+
+	t.Run("returns filename from editor-originated content disposition", func(t *testing.T) {
+		part := newPart(map[string]string{
+			"Content-Disposition": `form-data; name="file"; filename="source/index.ts"`,
+		})
+		got, err := resolvedPartPath("test-func", part)
+		require.NoError(t, err)
+		assert.Equal(t, "index.ts", got)
+	})
+
+	t.Run("writes file of arbitrary depth to slug directory", func(t *testing.T) {
+		part := newPart(map[string]string{
+			"Content-Disposition": `form-data; name="file"; filename="test-func/dir/subdir/file.ts"`,
+		})
+		got, err := resolvedPartPath("test-func", part)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join("dir", "subdir", "file.ts"), got)
+	})
+
+	t.Run("returns empty when no filename provided", func(t *testing.T) {
+		part := newPart(map[string]string{
+			"Content-Disposition": `form-data; name="file"`,
+		})
+		got, err := resolvedPartPath("test-func", part)
+		require.NoError(t, err)
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("returns error on invalid content disposition", func(t *testing.T) {
+		part := newPart(map[string]string{
+			"Content-Disposition": `form-data; filename="unterminated`,
+		})
+		got, err := resolvedPartPath("test-func", part)
+		require.ErrorContains(t, err, "failed to parse content disposition")
+		assert.Equal(t, "", got)
+	})
+}
+
+func TestJoinWithinDir(t *testing.T) {
+	t.Parallel()
+
+	base := filepath.Join(os.TempDir(), "base-dir")
+
+	t.Run("joins path within base directory", func(t *testing.T) {
+		got, err := joinWithinDir(base, filepath.Join("sub", "file.ts"))
+		require.NoError(t, err)
+		assert.True(t, strings.HasPrefix(filepath.Clean(got), filepath.Clean(base)+"/") || filepath.Clean(got) == filepath.Clean(base))
+	})
+
+	t.Run("treats leading slash as relative to base", func(t *testing.T) {
+		got, err := joinWithinDir(base, "/foo/bar.ts")
+		require.NoError(t, err)
+		assert.True(t, strings.HasPrefix(filepath.Clean(got), filepath.Clean(base)+"/"))
+		assert.Equal(t, filepath.Join(filepath.Clean(base), "foo", "bar.ts"), filepath.Clean(got))
+	})
+
+	t.Run("rejects absolute path", func(t *testing.T) {
+		abs := "/" + filepath.Join("etc", "passwd")
+		got, err := joinWithinDir(base, abs)
+		require.NoError(t, err)
+		assert.True(t, strings.HasPrefix(filepath.Clean(got), filepath.Clean(base)+"/"))
+	})
+
+	t.Run("rejects parent directory traversal", func(t *testing.T) {
+		got, err := joinWithinDir(base, filepath.Join("..", "escape"))
+		require.Error(t, err)
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("accepts traversal within base directory", func(t *testing.T) {
+		base = os.TempDir()
+		got, err := joinWithinDir(base, filepath.Join("some", "..", "file.ts"))
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(base, "file.ts"), got)
 	})
 }
