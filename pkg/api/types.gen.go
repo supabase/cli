@@ -1366,6 +1366,7 @@ const (
 // Defines values for V1RestorePointResponseStatus.
 const (
 	AVAILABLE V1RestorePointResponseStatus = "AVAILABLE"
+	FAILED    V1RestorePointResponseStatus = "FAILED"
 	PENDING   V1RestorePointResponseStatus = "PENDING"
 	REMOVED   V1RestorePointResponseStatus = "REMOVED"
 )
@@ -2333,6 +2334,9 @@ type DeleteRolesResponse struct {
 // DeleteRolesResponseMessage defines model for DeleteRolesResponse.Message.
 type DeleteRolesResponseMessage string
 
+// DeleteSecretsBody defines model for DeleteSecretsBody.
+type DeleteSecretsBody = []string
+
 // DeployFunctionResponse defines model for DeployFunctionResponse.
 type DeployFunctionResponse struct {
 	CreatedAt      *int64                       `json:"created_at,omitempty"`
@@ -3219,7 +3223,8 @@ type StorageConfigResponse struct {
 		IcebergCatalog bool `json:"iceberg_catalog"`
 		ListV2         bool `json:"list_v2"`
 	} `json:"capabilities"`
-	External struct {
+	DatabasePoolMode string `json:"databasePoolMode"`
+	External         struct {
 		UpstreamTarget StorageConfigResponseExternalUpstreamTarget `json:"upstreamTarget"`
 	} `json:"external"`
 	Features struct {
@@ -3233,7 +3238,8 @@ type StorageConfigResponse struct {
 			Enabled bool `json:"enabled"`
 		} `json:"s3Protocol"`
 	} `json:"features"`
-	FileSizeLimit int64 `json:"fileSizeLimit"`
+	FileSizeLimit    int64  `json:"fileSizeLimit"`
+	MigrationVersion string `json:"migrationVersion"`
 }
 
 // StorageConfigResponseExternalUpstreamTarget defines model for StorageConfigResponse.External.UpstreamTarget.
@@ -4488,9 +4494,6 @@ type V1GetServicesHealthParams struct {
 // V1GetServicesHealthParamsServices defines parameters for V1GetServicesHealth.
 type V1GetServicesHealthParamsServices string
 
-// V1BulkDeleteSecretsJSONBody defines parameters for V1BulkDeleteSecrets.
-type V1BulkDeleteSecretsJSONBody = []string
-
 // V1GenerateTypescriptTypesParams defines parameters for V1GenerateTypescriptTypes.
 type V1GenerateTypescriptTypesParams struct {
 	IncludedSchemas *string `form:"included_schemas,omitempty" json:"included_schemas,omitempty"`
@@ -4647,7 +4650,7 @@ type V1RemoveAReadReplicaJSONRequestBody = RemoveReadReplicaBody
 type V1SetupAReadReplicaJSONRequestBody = SetUpReadReplicaBody
 
 // V1BulkDeleteSecretsJSONRequestBody defines body for V1BulkDeleteSecrets for application/json ContentType.
-type V1BulkDeleteSecretsJSONRequestBody = V1BulkDeleteSecretsJSONBody
+type V1BulkDeleteSecretsJSONRequestBody = DeleteSecretsBody
 
 // V1BulkCreateSecretsJSONRequestBody defines body for V1BulkCreateSecrets for application/json ContentType.
 type V1BulkCreateSecretsJSONRequestBody = CreateSecretBody
