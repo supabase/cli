@@ -438,7 +438,7 @@ func pullSingleImageWithProgress(ctx context.Context, imageName, resource string
 		}
 		isRetry = true
 		return utils.DockerImagePullWithProgress(ctx, imageUrl, resource, writer)
-	}, maxRetries, func(attempt int, backoff time.Duration) {
+	}, maxRetries, func(attempt uint, backoff time.Duration) {
 		writer.Event(progress.Event{
 			ID:         resource,
 			Status:     progress.Warning,
