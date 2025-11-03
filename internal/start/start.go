@@ -17,6 +17,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/containerd/errdefs"
 	"github.com/docker/cli/cli/streams"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
@@ -326,7 +327,7 @@ func pullImagesWithProgress(ctx context.Context, images []string) error {
 		isCached := false
 		if _, err := utils.Docker.ImageInspect(ctx, imageUrl); err == nil {
 			isCached = true
-		} else if !client.IsErrNotFound(err) {
+		} else if !errdefs.IsNotFound(err) {
 			// Error inspecting image, but not a "not found" error - still need to pull
 			isCached = false
 		}
@@ -418,7 +419,7 @@ func pullSingleImageWithProgress(ctx context.Context, imageName, resource string
 	// Check if already cached
 	if _, err := utils.Docker.ImageInspect(ctx, imageUrl); err == nil {
 		return nil
-	} else if !client.IsErrNotFound(err) {
+	} else if !errdefs.IsNotFound(err) {
 		return errors.Errorf("failed to inspect docker image: %w", err)
 	}
 

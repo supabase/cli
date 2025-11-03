@@ -60,7 +60,8 @@ func RetryWithExponentialBackoff(ctx context.Context, fn func() error, maxRetrie
 		}
 
 		// Calculate exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s
-		backoff := time.Duration(1<<uint(attempt)) * time.Second
+		// Use uint64 to avoid integer overflow, then convert to time.Duration
+		backoff := time.Duration(1<<uint64(attempt)) * time.Second
 		if onRetry != nil {
 			onRetry(attempt, backoff)
 		}
