@@ -354,9 +354,9 @@ func DockerPullImageIfNotCachedWithWriter(ctx context.Context, imageName string,
 	}
 	// Pull with retry using the provided writer
 	// Increased retries to 5 to handle rate limiting better
-	var onRetry func(int, time.Duration)
+	var onRetry func(uint, time.Duration)
 	if w != io.Discard {
-		onRetry = func(attempt int, backoff time.Duration) {
+		onRetry = func(attempt uint, backoff time.Duration) {
 			fmt.Fprintf(w, "Retrying after %v: %s\n", backoff, imageUrl)
 		}
 	}

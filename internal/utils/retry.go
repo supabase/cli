@@ -40,9 +40,10 @@ func NewErrorCallback(callbacks ...func(attempt uint) error) backoff.Notify {
 // onRetry is called before each retry with the retry attempt number (0-indexed) and backoff duration.
 // If onRetry is nil, no retry notification is sent.
 // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s for retries 0-5.
-func RetryWithExponentialBackoff(ctx context.Context, fn func() error, maxRetries int, onRetry func(attempt int, backoff time.Duration)) error {
+func RetryWithExponentialBackoff(ctx context.Context, fn func() error, maxRetries int, onRetry func(attempt uint, backoff time.Duration)) error {
 	var lastErr error
-	for attempt := 0; attempt <= maxRetries; attempt++ {
+	maxRetriesUint := uint(maxRetries)
+	for attempt := uint(0); attempt <= maxRetriesUint; attempt++ {
 		err := fn()
 		if err == nil {
 			return nil
@@ -55,13 +56,12 @@ func RetryWithExponentialBackoff(ctx context.Context, fn func() error, maxRetrie
 		}
 
 		// Don't retry if we've exhausted all retries
-		if attempt >= maxRetries {
+		if attempt >= maxRetriesUint {
 			break
 		}
 
 		// Calculate exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s
-		// Use uint64 to avoid integer overflow, then convert to time.Duration
-		backoff := time.Duration(1<<uint64(attempt)) * time.Second
+		backoff := time.Duration(1<<attempt) * time.Second
 		if onRetry != nil {
 			onRetry(attempt, backoff)
 		}
