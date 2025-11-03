@@ -17,6 +17,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/docker/cli/cli/streams"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
@@ -25,6 +26,9 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"golang.org/x/sync/errgroup"
+
+	"github.com/docker/compose/v2/pkg/progress"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/functions/serve"
 	"github.com/supabase/cli/internal/seed/buckets"
@@ -277,97 +281,177 @@ func collectRequiredImages(excluded map[string]bool, isStorageEnabled, isImgProx
 	return result
 }
 
-// pullImagesInParallel pulls all provided images in parallel using goroutines.
+// pullImagesInParallel pulls all provided images in parallel using docker-compose style progress bars.
 // Returns an error if any image pull fails.
 func pullImagesInParallel(ctx context.Context, images []string) error {
 	if len(images) == 0 {
 		return nil
 	}
 
+	// Use docker-compose's progress bar system
+	out := streams.NewOut(os.Stderr)
+
+	return progress.Run(ctx, func(ctx context.Context) error {
+		return pullImagesWithProgress(ctx, images)
+	}, out)
+}
+
+func pullImagesWithProgress(ctx context.Context, images []string) error {
+	eg, ctx := errgroup.WithContext(ctx)
+	eg.SetLimit(10) // Limit concurrent pulls
+
 	type pullResult struct {
 		image string
 		err   error
 	}
 
-	return utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
-		p.Send(utils.StatusMsg(fmt.Sprintf("Pulling images in parallel (%d images)...", len(images))))
+	resultChan := make(chan pullResult, len(images))
+	var imagesBeingPulled sync.Map
 
-		var wg sync.WaitGroup
-		resultChan := make(chan pullResult, len(images))
-		var completedMutex sync.Mutex
-		var completedCount int
-
-		// Update status as images complete
-		updateStatus := func() {
-			completedMutex.Lock()
-			current := completedCount
-			completedMutex.Unlock()
-			p.Send(utils.StatusMsg(fmt.Sprintf("Pulling images (%d/%d)...", current, len(images))))
+	// Start pulling images in parallel
+	// Note: images are already sorted by priority (heavier images first) from collectRequiredImages
+	// Add 1 second delay between each image pull initiation to avoid rate limit errors
+	// Only delay for images that actually need to be pulled (not cached)
+	firstPull := true
+	for _, img := range images {
+		// Deduplicate images being pulled (pattern from docker-compose)
+		if _, alreadyPulling := imagesBeingPulled.LoadOrStore(img, true); alreadyPulling {
+			continue
 		}
 
-		// Start pulling images in parallel
-		for _, image := range images {
-			wg.Add(1)
-			go func(img string) {
-				defer wg.Done()
-				// Show detailed output in debug mode, otherwise suppress to avoid interleaving
-				err := utils.DockerPullImageIfNotCachedWithWriter(ctx, img, utils.GetDebugLogger(), 5)
-				completedMutex.Lock()
-				completedCount++
-				current := completedCount
-				completedMutex.Unlock()
-				resultChan <- pullResult{image: img, err: err}
-				// Update status when each image completes
-				if current < len(images) {
-					updateStatus()
+		imageName := img // capture loop variable
+		imageUrl := utils.GetRegistryImageUrl(imageName)
+
+		// Check if image is already cached before adding delay
+		isCached := false
+		if _, err := utils.Docker.ImageInspect(ctx, imageUrl); err == nil {
+			isCached = true
+		} else if !client.IsErrNotFound(err) {
+			// Error inspecting image, but not a "not found" error - still need to pull
+			isCached = false
+		}
+
+		// If image needs to be pulled, add 1 second delay between initiating each pull
+		// (skip delay for first image that needs to be pulled)
+		if !isCached {
+			if !firstPull {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(1 * time.Second):
 				}
-			}(image)
-		}
-
-		wg.Wait()
-		close(resultChan)
-
-		// Collect results and display clean summary
-		var successCount int
-		var errs []error
-		var failedImages []string
-
-		// Collect all results first, then display in sorted order for consistency
-		var results []pullResult
-		for result := range resultChan {
-			results = append(results, result)
-		}
-
-		// Sort by image name for consistent output
-		slices.SortFunc(results, func(a, b pullResult) int {
-			return strings.Compare(a.image, b.image)
-		})
-
-		// Display results
-		var statusLines []string
-		for _, result := range results {
-			shortName := utils.ShortContainerImageName(result.image)
-			if result.err != nil {
-				errs = append(errs, errors.Errorf("failed to pull image %s: %w", result.image, result.err))
-				failedImages = append(failedImages, result.image)
-				statusLines = append(statusLines, fmt.Sprintf("  ✗ %s", shortName))
-			} else {
-				successCount++
-				statusLines = append(statusLines, fmt.Sprintf("  ✓ %s", shortName))
 			}
+			firstPull = false
 		}
 
-		// Send final status
-		if len(errs) > 0 {
-			statusLines = append(statusLines, fmt.Sprintf("\nFailed to pull %d image(s).", len(errs)))
-			p.Send(utils.StatusMsg(strings.Join(statusLines, "\n")))
-			return errors.Errorf("failed to pull images:\n%s", strings.Join(failedImages, "\n"))
-		}
+		eg.Go(func() error {
+			defer imagesBeingPulled.Delete(imageName)
 
-		statusLines = append(statusLines, fmt.Sprintf("Successfully pulled %d image(s).", successCount))
-		p.Send(utils.StatusMsg(strings.Join(statusLines, "\n")))
+			resource := "Image " + imageName
+			writer := progress.ContextWriter(ctx)
+
+			// If cached, mark as done immediately without pulling
+			if isCached {
+				writer.Event(progress.Event{
+					ID:         resource,
+					Status:     progress.Done,
+					StatusText: "Already cached",
+				})
+				resultChan <- pullResult{image: imageName, err: nil}
+				return nil
+			}
+
+			writer.Event(progress.Event{
+				ID:         resource,
+				Status:     progress.Working,
+				StatusText: "Pulling",
+			})
+
+			err := pullSingleImageWithProgress(ctx, imageName, resource)
+
+			if err != nil {
+				writer.Event(progress.Event{
+					ID:         resource,
+					Status:     progress.Error,
+					StatusText: getUnwrappedErrorMessage(err),
+				})
+				resultChan <- pullResult{image: imageName, err: err}
+				return nil // Don't fail fast - collect all errors
+			}
+
+			writer.Event(progress.Event{
+				ID:         resource,
+				Status:     progress.Done,
+				StatusText: "Pulled",
+			})
+			resultChan <- pullResult{image: imageName, err: nil}
+			return nil
+		})
+	}
+
+	// Wait for all pulls to complete
+	_ = eg.Wait()
+	close(resultChan)
+
+	// Collect results
+	var errs []error
+	var failedImages []string
+
+	for result := range resultChan {
+		if result.err != nil {
+			errs = append(errs, errors.Errorf("failed to pull image %s: %w", result.image, result.err))
+			failedImages = append(failedImages, result.image)
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.Errorf("failed to pull images:\n%s", strings.Join(failedImages, "\n"))
+	}
+
+	return nil
+}
+
+// pullSingleImageWithProgress pulls a single image with retry logic and reports progress using docker-compose style events
+func pullSingleImageWithProgress(ctx context.Context, imageName, resource string) error {
+	imageUrl := utils.GetRegistryImageUrl(imageName)
+
+	// Check if already cached
+	if _, err := utils.Docker.ImageInspect(ctx, imageUrl); err == nil {
 		return nil
+	} else if !client.IsErrNotFound(err) {
+		return errors.Errorf("failed to inspect docker image: %w", err)
+	}
+
+	// Pull with retry (same retry logic as DockerPullImageIfNotCachedWithWriter)
+	const maxRetries = 5
+	writer := progress.ContextWriter(ctx)
+	isRetry := false
+	return utils.RetryWithExponentialBackoff(ctx, func() error {
+		// Reset status to "Pulling" on retry attempts (not the first attempt)
+		if isRetry {
+			writer.Event(progress.Event{
+				ID:         resource,
+				Status:     progress.Working,
+				StatusText: "Pulling",
+			})
+		}
+		isRetry = true
+		return utils.DockerImagePullWithProgress(ctx, imageUrl, resource, writer)
+	}, maxRetries, func(attempt int, backoff time.Duration) {
+		writer.Event(progress.Event{
+			ID:         resource,
+			Status:     progress.Warning,
+			StatusText: fmt.Sprintf("Retrying after %v...", backoff),
+		})
 	})
+}
+
+func getUnwrappedErrorMessage(err error) string {
+	derr := errors.Unwrap(err)
+	if derr != nil {
+		return getUnwrappedErrorMessage(derr)
+	}
+	return err.Error()
 }
 
 func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, options ...func(*pgx.ConnConfig)) error {
