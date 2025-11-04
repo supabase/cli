@@ -116,6 +116,17 @@ async function verifyJWT(jwt: string): Promise<boolean> {
   return true;
 }
 
+async function shouldUsePackageJsonDiscovery(absDir: string): Promise<boolean> {
+  const [a, b, c, d] = (await Promise.allSettled([
+    Deno.stat(posix.join(absDir, "deno.json")),
+    Deno.stat(posix.join(absDir, "deno.jsonc")),
+    Deno.stat(posix.join(absDir, "import_map.json")),
+    Deno.stat(posix.join(absDir, "package.json")),
+  ])).map(v => v.status === "fulfilled");
+
+  return !a && !b && !c && d;
+}
+
 Deno.serve({
   handler: async (req: Request) => {
     const url = new URL(req.url);
@@ -178,6 +189,7 @@ Deno.serve({
 
     const absEntrypoint = posix.join(Deno.cwd(), functionsConfig[functionName].entrypointPath);
     const maybeEntrypoint = posix.toFileUrl(absEntrypoint).href;
+    const usePackageJsonDiscovery = await shouldUsePackageJsonDiscovery(absEntrypoint);
 
     const staticPatterns = functionsConfig[functionName].staticFiles;
 
@@ -187,6 +199,7 @@ Deno.serve({
         memoryLimitMb,
         workerTimeoutMs,
         noModuleCache,
+        noNpm: !usePackageJsonDiscovery,
         importMapPath: functionsConfig[functionName].importMapPath,
         envVars,
         forceCreate,
