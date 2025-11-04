@@ -34,8 +34,6 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/viper"
 	"go.opentelemetry.io/otel"
-
-	"github.com/docker/compose/v2/pkg/progress"
 )
 
 var Docker = NewDocker()
@@ -221,135 +219,8 @@ func DockerImagePull(ctx context.Context, imageTag string, w io.Writer) error {
 	return nil
 }
 
-// DockerImagePullWithProgress pulls an image and reports progress using docker-compose style progress events.
-// The progress writer is used to emit progress events for each layer being pulled.
-func DockerImagePullWithProgress(ctx context.Context, imageUrl string, resource string, writer progress.Writer) error {
-	stream, err := Docker.ImagePull(ctx, imageUrl, image.PullOptions{
-		RegistryAuth: GetRegistryAuth(),
-	})
-	if err != nil {
-		return errors.Errorf("failed to pull docker image: %w", err)
-	}
-
-	// Parse and report progress (same as docker-compose)
-	dec := json.NewDecoder(stream)
-	for {
-		var jm jsonmessage.JSONMessage
-		if err := dec.Decode(&jm); err != nil {
-			if err == io.EOF {
-				break
-			}
-			stream.Close()
-			return err
-		}
-		if jm.Error != nil {
-			stream.Close()
-			return errors.New(jm.Error.Message)
-		}
-		// Convert Docker JSON message to progress event (same logic as docker-compose)
-		ToPullProgressEvent(resource, jm, writer)
-	}
-	stream.Close()
-	return nil
-}
-
-// ToPullProgressEvent converts Docker JSON messages to progress events (same as docker-compose).
-// This function is used to provide consistent progress reporting across the CLI.
-func ToPullProgressEvent(parent string, jm jsonmessage.JSONMessage, writer progress.Writer) {
-	if jm.ID == "" || jm.Progress == nil {
-		return
-	}
-
-	const (
-		PreparingPhase         = "Preparing"
-		WaitingPhase           = "Waiting"
-		PullingFsPhase         = "Pulling fs layer"
-		DownloadingPhase       = "Downloading"
-		DownloadCompletePhase  = "Download complete"
-		ExtractingPhase        = "Extracting"
-		VerifyingChecksumPhase = "Verifying Checksum"
-		AlreadyExistsPhase     = "Already exists"
-		PullCompletePhase      = "Pull complete"
-	)
-
-	var (
-		text    string
-		total   int64
-		percent int
-		current int64
-		status  = progress.Working
-	)
-
-	text = jm.Progress.String()
-
-	switch jm.Status {
-	case PreparingPhase, WaitingPhase, PullingFsPhase:
-		percent = 0
-	case DownloadingPhase, ExtractingPhase, VerifyingChecksumPhase:
-		if jm.Progress != nil {
-			current = jm.Progress.Current
-			total = jm.Progress.Total
-			if jm.Progress.Total > 0 {
-				percent = int(jm.Progress.Current * 100 / jm.Progress.Total)
-			}
-		}
-	case DownloadCompletePhase, AlreadyExistsPhase, PullCompletePhase:
-		status = progress.Done
-		percent = 100
-	}
-
-	if strings.Contains(jm.Status, "Image is up to date") ||
-		strings.Contains(jm.Status, "Downloaded newer image") {
-		status = progress.Done
-		percent = 100
-	}
-
-	if jm.Error != nil {
-		status = progress.Error
-		text = jm.Error.Message
-	}
-
-	writer.Event(progress.Event{
-		ID:         jm.ID,
-		ParentID:   parent,
-		Current:    current,
-		Total:      total,
-		Percent:    percent,
-		Text:       jm.Status,
-		Status:     status,
-		StatusText: text,
-	})
-}
-
 // Used by unit tests
 var timeUnit = time.Second
-
-// IsRetryablePullError checks if an error is retryable.
-// Only transient errors like rate limits and network issues should be retried.
-func IsRetryablePullError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := err.Error()
-	// Check for retryable error messages that indicate transient failures
-	retryableErrors := []string{
-		"toomanyrequests",
-		"too many requests",
-		"rate limit",
-		"service unavailable",
-		"503",
-		"temporary failure",
-		"connection refused",
-		"timeout",
-	}
-	errStrLower := strings.ToLower(errStr)
-	for _, retryableErr := range retryableErrors {
-		if strings.Contains(errStrLower, retryableErr) {
-			return true
-		}
-	}
-	return false
-}
 
 func DockerImagePullWithRetry(ctx context.Context, image string, retries int) error {
 	err := DockerImagePull(ctx, image, os.Stderr)
@@ -367,33 +238,13 @@ func DockerImagePullWithRetry(ctx context.Context, image string, retries int) er
 }
 
 func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
-	return DockerPullImageIfNotCachedWithWriter(ctx, imageName, os.Stderr, uint(5))
-}
-
-// DockerPullImageIfNotCachedWithWriter pulls an image if not cached, using the provided writer for output.
-// Use io.Discard to suppress output.
-func DockerPullImageIfNotCachedWithWriter(ctx context.Context, imageName string, w io.Writer, retries uint) error {
 	imageUrl := GetRegistryImageUrl(imageName)
 	if _, err := Docker.ImageInspect(ctx, imageUrl); err == nil {
 		return nil
 	} else if !errdefs.IsNotFound(err) {
 		return errors.Errorf("failed to inspect docker image: %w", err)
 	}
-	// Pull with retry using the provided writer
-	// Increased retries to 5 to handle rate limiting better
-	var onRetry func(uint, time.Duration)
-	if w != io.Discard {
-		onRetry = func(attempt uint, backoff time.Duration) {
-			fmt.Fprintf(w, "Retrying after %v: %s\n", backoff, imageUrl)
-		}
-	}
-	return RetryWithExponentialBackoff(ctx, func() error {
-		err := DockerImagePull(ctx, imageUrl, w)
-		if err != nil && w != io.Discard {
-			fmt.Fprintln(w, err)
-		}
-		return err
-	}, retries, onRetry, IsRetryablePullError)
+	return DockerImagePullWithRetry(ctx, imageUrl, 2)
 }
 
 var suggestDockerInstall = "Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop"

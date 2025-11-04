@@ -80,20 +80,18 @@ func TestPullImage(t *testing.T) {
 		gock.New(Docker.DaemonHost()).
 			Get("/v" + Docker.ClientVersion() + "/images/" + imageId + "/json").
 			Reply(http.StatusNotFound)
-		// First attempt: 503 Service Unavailable (retryable)
+		// Total 3 tries
 		gock.New(Docker.DaemonHost()).
 			Post("/v"+Docker.ClientVersion()+"/images/create").
 			MatchParam("fromImage", imageId).
 			MatchParam("tag", "latest").
 			Reply(http.StatusServiceUnavailable)
-		// Second attempt: toomanyrequests (retryable)
 		gock.New(Docker.DaemonHost()).
 			Post("/v"+Docker.ClientVersion()+"/images/create").
 			MatchParam("fromImage", imageId).
 			MatchParam("tag", "latest").
 			Reply(http.StatusAccepted).
 			JSON(jsonmessage.JSONMessage{Error: &jsonmessage.JSONError{Message: "toomanyrequests"}})
-		// Third attempt: no space left on device (fatal - should not retry)
 		gock.New(Docker.DaemonHost()).
 			Post("/v"+Docker.ClientVersion()+"/images/create").
 			MatchParam("fromImage", imageId).

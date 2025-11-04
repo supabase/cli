@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -13,13 +14,17 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"text/template"
 	"time"
 
-	"github.com/containerd/errdefs"
-	"github.com/docker/cli/cli/streams"
+	"github.com/cenkalti/backoff/v4"
+	"github.com/compose-spec/compose-go/v2/types"
+	"github.com/docker/cli/cli/command"
+	dockerFlags "github.com/docker/cli/cli/flags"
+	"github.com/docker/compose/v2/pkg/api"
+	"github.com/docker/compose/v2/pkg/compose"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
@@ -27,9 +32,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"golang.org/x/sync/errgroup"
 
-	"github.com/docker/compose/v2/pkg/progress"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/functions/serve"
 	"github.com/supabase/cli/internal/seed/buckets"
@@ -147,312 +150,145 @@ var (
 
 var serviceTimeout = 30 * time.Second
 
-// getImageBaseName extracts the base image name from a full image string.
-// For example: "supabase/postgres:17.6" -> "postgres", "library/kong:2.8.1" -> "kong"
-func getImageBaseName(fullImage string) string {
-	// Remove tag if present (everything after ':')
-	baseWithTag := strings.Split(fullImage, ":")[0]
-	// Extract the last part after '/'
-	parts := strings.Split(baseWithTag, "/")
-	return parts[len(parts)-1]
+// RetryClient wraps a Docker client to add retry logic for image pulls
+type RetryClient struct {
+	*client.Client
 }
 
-// imagePullPriority returns a priority value for an image based on its base name.
-// Lower values indicate higher priority (heavier images should be pulled first).
-// Priority is based on approximate image sizes from largest to smallest.
-func imagePullPriority(imageName string) int {
-	baseName := getImageBaseName(imageName)
-
-	// Priority map: lower number = higher priority (starts first)
-	// Based on approximate sizes: postgres (2.95GB) > studio (819MB) > edge-runtime (680MB) > ...
-	priorityMap := map[string]int{
-		"postgres":      1,  // 2.95 GB - highest priority
-		"studio":        2,  // 819.8 MB
-		"edge-runtime":  3,  // 680.6 MB
-		"logflare":      4,  // 670 MB
-		"storage-api":   5,  // 626.2 MB
-		"realtime":      6,  // 463.1 MB
-		"postgrest":     7,  // 436.6 MB
-		"postgres-meta": 8,  // 405.2 MB
-		"kong":          9,  // 149 MB
-		"vector":        10, // 111.3 MB
-		"gotrue":        11, // 48.3 MB
-		"mailpit":       12, // 28.9 MB
-		"supavisor":     13, // pooler - similar size to gotrue
-		"imgproxy":      14, // image proxy - typically smaller
+// ImagePull wraps the Docker client's ImagePull with retry logic and registry auth
+func (cli *RetryClient) ImagePull(ctx context.Context, refStr string, options image.PullOptions) (io.ReadCloser, error) {
+	if len(options.RegistryAuth) == 0 {
+		options.RegistryAuth = utils.GetRegistryAuth()
 	}
-
-	if priority, ok := priorityMap[baseName]; ok {
-		return priority
+	pull := func() (io.ReadCloser, error) {
+		return cli.Client.ImagePull(ctx, refStr, options)
 	}
-	// Unknown images get lowest priority (highest number)
-	return 100
+	policy := utils.NewBackoffPolicy(ctx)
+	return backoff.RetryWithData(pull, policy)
 }
 
 // collectRequiredImages collects all Docker images that need to be pulled
 // based on the current configuration and excluded containers.
 // includeDb indicates whether the database will be started and should have its image pulled.
-// Images are returned sorted by priority (heavier images first).
-func collectRequiredImages(excluded map[string]bool, isStorageEnabled, isImgProxyEnabled bool, includeDb bool) []string {
-	images := make(map[string]bool)
+// Returns a map of service names to their image URLs.
+func collectRequiredImages(excluded map[string]bool, isStorageEnabled, isImgProxyEnabled bool, includeDb bool) map[string]string {
+	images := make(map[string]string)
 
 	// Analytics services
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.Image, excluded) {
-		images[utils.Config.Analytics.Image] = true
+		images["analytics"] = utils.GetRegistryImageUrl(utils.Config.Analytics.Image)
 	}
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.VectorImage, excluded) {
-		images[utils.Config.Analytics.VectorImage] = true
+		images["vector"] = utils.GetRegistryImageUrl(utils.Config.Analytics.VectorImage)
 	}
 
 	// API Gateway
 	if !isContainerExcluded(utils.Config.Api.KongImage, excluded) {
-		images[utils.Config.Api.KongImage] = true
+		images["kong"] = utils.GetRegistryImageUrl(utils.Config.Api.KongImage)
 	}
 
 	// Auth service
 	if utils.Config.Auth.Enabled && !isContainerExcluded(utils.Config.Auth.Image, excluded) {
-		images[utils.Config.Auth.Image] = true
+		images["auth"] = utils.GetRegistryImageUrl(utils.Config.Auth.Image)
 	}
 
 	// Mailpit/Inbucket
 	if utils.Config.Inbucket.Enabled && !isContainerExcluded(utils.Config.Inbucket.Image, excluded) {
-		images[utils.Config.Inbucket.Image] = true
+		images["inbucket"] = utils.GetRegistryImageUrl(utils.Config.Inbucket.Image)
 	}
 
 	// Realtime
 	if utils.Config.Realtime.Enabled && !isContainerExcluded(utils.Config.Realtime.Image, excluded) {
-		images[utils.Config.Realtime.Image] = true
+		images["realtime"] = utils.GetRegistryImageUrl(utils.Config.Realtime.Image)
 	}
 
 	// PostgREST
 	if utils.Config.Api.Enabled && !isContainerExcluded(utils.Config.Api.Image, excluded) {
-		images[utils.Config.Api.Image] = true
+		images["rest"] = utils.GetRegistryImageUrl(utils.Config.Api.Image)
 	}
 
 	// Storage
 	if isStorageEnabled {
-		images[utils.Config.Storage.Image] = true
+		images["storage"] = utils.GetRegistryImageUrl(utils.Config.Storage.Image)
 	}
 	if isImgProxyEnabled {
-		images[utils.Config.Storage.ImgProxyImage] = true
+		images["imgproxy"] = utils.GetRegistryImageUrl(utils.Config.Storage.ImgProxyImage)
 	}
 
 	// Edge Runtime
 	if utils.Config.EdgeRuntime.Enabled && !isContainerExcluded(utils.Config.EdgeRuntime.Image, excluded) {
-		images[utils.Config.EdgeRuntime.Image] = true
+		images["edge-runtime"] = utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image)
 	}
 
 	// Studio services
 	if utils.Config.Studio.Enabled {
 		if !isContainerExcluded(utils.Config.Studio.PgmetaImage, excluded) {
-			images[utils.Config.Studio.PgmetaImage] = true
+			images["pgmeta"] = utils.GetRegistryImageUrl(utils.Config.Studio.PgmetaImage)
 		}
 		if !isContainerExcluded(utils.Config.Studio.Image, excluded) {
-			images[utils.Config.Studio.Image] = true
+			images["studio"] = utils.GetRegistryImageUrl(utils.Config.Studio.Image)
 		}
 	}
 
 	// Pooler
 	if utils.Config.Db.Pooler.Enabled && !isContainerExcluded(utils.Config.Db.Pooler.Image, excluded) {
-		images[utils.Config.Db.Pooler.Image] = true
+		images["pooler"] = utils.GetRegistryImageUrl(utils.Config.Db.Pooler.Image)
 	}
 
 	// Database (if it will be started)
 	if includeDb {
-		images[utils.Config.Db.Image] = true
+		images["db"] = utils.GetRegistryImageUrl(utils.Config.Db.Image)
 	}
 
-	// Convert map to slice
-	result := make([]string, 0, len(images))
-	for img := range images {
-		result = append(result, img)
-	}
-
-	// Sort by priority (heavier images first)
-	slices.SortFunc(result, func(a, b string) int {
-		priorityA := imagePullPriority(a)
-		priorityB := imagePullPriority(b)
-		if priorityA != priorityB {
-			return priorityA - priorityB
-		}
-		// If priorities are equal, sort alphabetically for consistency
-		return strings.Compare(a, b)
-	})
-
-	return result
+	return images
 }
 
-// pullImagesInParallel pulls all provided images in parallel using docker-compose style progress bars.
-// Returns an error if any image pull fails.
-func pullImagesInParallel(ctx context.Context, images []string) error {
-	if len(images) == 0 {
+// pullImagesUsingCompose pulls all required images using docker-compose service
+func pullImagesUsingCompose(ctx context.Context, serviceImages map[string]string) error {
+	if len(serviceImages) == 0 {
 		return nil
 	}
 
-	// Use docker-compose's progress bar system
-	out := streams.NewOut(os.Stderr)
-
-	return progress.Run(ctx, func(ctx context.Context) error {
-		return pullImagesWithProgress(ctx, images)
-	}, out)
-}
-
-func pullImagesWithProgress(ctx context.Context, images []string) error {
-	eg, ctx := errgroup.WithContext(ctx)
-	eg.SetLimit(10) // Limit concurrent pulls
-
-	type pullResult struct {
-		image string
-		err   error
+	// Create Docker CLI
+	cli, err := command.NewDockerCli()
+	if err != nil {
+		return errors.Errorf("failed to create Docker CLI: %w", err)
 	}
 
-	resultChan := make(chan pullResult, len(images))
-	var imagesBeingPulled sync.Map
-
-	// Start pulling images in parallel
-	// Note: images are already sorted by priority (heavier images first) from collectRequiredImages
-	// Add 1 second delay between each image pull initiation to avoid rate limit errors
-	// Only delay for images that actually need to be pulled (not cached)
-	firstPull := true
-	for _, img := range images {
-		// Deduplicate images being pulled (pattern from docker-compose)
-		if _, alreadyPulling := imagesBeingPulled.LoadOrStore(img, true); alreadyPulling {
-			continue
-		}
-
-		imageName := img // capture loop variable
-		imageUrl := utils.GetRegistryImageUrl(imageName)
-
-		// Check if image is already cached before adding delay
-		isCached := false
-		if _, err := utils.Docker.ImageInspect(ctx, imageUrl); err == nil {
-			isCached = true
-		} else if !errdefs.IsNotFound(err) {
-			// Error inspecting image, but not a "not found" error - still need to pull
-			isCached = false
-		}
-
-		// If image needs to be pulled, add 1 second delay between initiating each pull
-		// (skip delay for first image that needs to be pulled)
-		if !isCached {
-			if !firstPull {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(1 * time.Second):
-				}
-			}
-			firstPull = false
-		}
-
-		eg.Go(func() error {
-			defer imagesBeingPulled.Delete(imageName)
-
-			resource := "Image " + imageName
-			writer := progress.ContextWriter(ctx)
-
-			// If cached, mark as done immediately without pulling
-			if isCached {
-				writer.Event(progress.Event{
-					ID:         resource,
-					Status:     progress.Done,
-					StatusText: "Already cached",
-				})
-				resultChan <- pullResult{image: imageName, err: nil}
-				return nil
-			}
-
-			writer.Event(progress.Event{
-				ID:         resource,
-				Status:     progress.Working,
-				StatusText: "Pulling",
-			})
-
-			err := pullSingleImageWithProgress(ctx, imageName, resource)
-
-			if err != nil {
-				writer.Event(progress.Event{
-					ID:         resource,
-					Status:     progress.Error,
-					StatusText: getUnwrappedErrorMessage(err),
-				})
-				resultChan <- pullResult{image: imageName, err: err}
-				return nil // Don't fail fast - collect all errors
-			}
-
-			writer.Event(progress.Event{
-				ID:         resource,
-				Status:     progress.Done,
-				StatusText: "Pulled",
-			})
-			resultChan <- pullResult{image: imageName, err: nil}
-			return nil
-		})
+	// Create API client with retry wrapper
+	apiClient, err := command.NewAPIClientFromFlags(&dockerFlags.ClientOptions{}, cli.ConfigFile())
+	if err != nil {
+		return errors.Errorf("failed to create Docker API client: %w", err)
 	}
 
-	// Wait for all pulls to complete
-	_ = eg.Wait()
-	close(resultChan)
+	// Wrap with retry client
+	retryClient := &RetryClient{Client: apiClient.(*client.Client)}
+	opt := command.WithAPIClient(retryClient)
 
-	// Collect results
-	var errs []error
-	var failedImages []string
+	// Initialize Docker CLI
+	if err := cli.Initialize(&dockerFlags.ClientOptions{}, opt); err != nil {
+		return errors.Errorf("failed to initialize Docker CLI: %w", err)
+	}
 
-	for result := range resultChan {
-		if result.err != nil {
-			errs = append(errs, errors.Errorf("failed to pull image %s: %w", result.image, result.err))
-			failedImages = append(failedImages, result.image)
+	// Create compose service
+	service := compose.NewComposeService(cli)
+
+	// Build compose project
+	project := types.Project{
+		Name:     "supabase-cli",
+		Services: make(map[string]types.ServiceConfig, len(serviceImages)),
+	}
+
+	// Add services to project
+	for serviceName, imageUrl := range serviceImages {
+		project.Services[serviceName] = types.ServiceConfig{
+			Name:  serviceName,
+			Image: imageUrl,
 		}
 	}
 
-	if len(errs) > 0 {
-		return errors.Errorf("failed to pull images:\n%s", strings.Join(failedImages, "\n"))
-	}
-
-	return nil
-}
-
-// pullSingleImageWithProgress pulls a single image with retry logic and reports progress using docker-compose style events
-func pullSingleImageWithProgress(ctx context.Context, imageName, resource string) error {
-	imageUrl := utils.GetRegistryImageUrl(imageName)
-
-	// Check if already cached
-	if _, err := utils.Docker.ImageInspect(ctx, imageUrl); err == nil {
-		return nil
-	} else if !errdefs.IsNotFound(err) {
-		return errors.Errorf("failed to inspect docker image: %w", err)
-	}
-
-	// Pull with retry (same retry logic as DockerPullImageIfNotCachedWithWriter)
-	const maxRetries uint = 5
-	writer := progress.ContextWriter(ctx)
-	isRetry := false
-	return utils.RetryWithExponentialBackoff(ctx, func() error {
-		// Reset status to "Pulling" on retry attempts (not the first attempt)
-		if isRetry {
-			writer.Event(progress.Event{
-				ID:         resource,
-				Status:     progress.Working,
-				StatusText: "Pulling",
-			})
-		}
-		isRetry = true
-		return utils.DockerImagePullWithProgress(ctx, imageUrl, resource, writer)
-	}, maxRetries, func(attempt uint, backoff time.Duration) {
-		writer.Event(progress.Event{
-			ID:         resource,
-			Status:     progress.Warning,
-			StatusText: fmt.Sprintf("Retrying after %v...", backoff),
-		})
-	}, utils.IsRetryablePullError)
-}
-
-func getUnwrappedErrorMessage(err error) string {
-	derr := errors.Unwrap(err)
-	if derr != nil {
-		return getUnwrappedErrorMessage(derr)
-	}
-	return err.Error()
+	// Pull images using compose service
+	return service.Pull(ctx, &project, api.PullOptions{})
 }
 
 func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, options ...func(*pgx.ConnConfig)) error {
@@ -471,10 +307,10 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 	var isImgProxyEnabled = utils.Config.Storage.ImageTransformation != nil &&
 		utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImgProxyImage, excluded)
 
-	// Collect and pull all required images in parallel before starting containers
+	// Collect and pull all required images using docker-compose before starting containers
 	includeDb := dbConfig.Host == utils.DbId
 	requiredImages := collectRequiredImages(excluded, isStorageEnabled, isImgProxyEnabled, includeDb)
-	if err := pullImagesInParallel(ctx, requiredImages); err != nil {
+	if err := pullImagesUsingCompose(ctx, requiredImages); err != nil {
 		return err
 	}
 
