@@ -49,7 +49,10 @@ var (
 		Long:  "Download the source code for a Function from the linked Supabase project.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return download.Run(cmd.Context(), args[0], flags.ProjectRef, useLegacyBundle, useApi, useDocker, afero.NewOsFs())
+			if useApi {
+				useDocker = false
+			}
+			return download.Run(cmd.Context(), args[0], flags.ProjectRef, useLegacyBundle, useDocker, afero.NewOsFs())
 		},
 	}
 
@@ -155,7 +158,7 @@ func init() {
 	functionsDownloadCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsDownloadCmd.Flags().BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
 	functionsDownloadCmd.Flags().BoolVar(&useApi, "use-api", false, "Use Management API to unbundle functions server-side.")
-	functionsDownloadCmd.Flags().BoolVar(&useDocker, "use-docker", false, "Use Docker to unbundle functions client-side.")
+	functionsDownloadCmd.Flags().BoolVar(&useDocker, "use-docker", true, "Use Docker to unbundle functions client-side.")
 	functionsDownloadCmd.MarkFlagsMutuallyExclusive("use-api", "use-docker", "legacy-bundle")
 	functionsCmd.AddCommand(functionsListCmd)
 	functionsCmd.AddCommand(functionsDeleteCmd)
