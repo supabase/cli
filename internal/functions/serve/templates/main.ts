@@ -189,7 +189,7 @@ Deno.serve({
 
     const absEntrypoint = posix.join(Deno.cwd(), functionsConfig[functionName].entrypointPath);
     const maybeEntrypoint = posix.toFileUrl(absEntrypoint).href;
-    const usePackageJsonDiscovery = await shouldUsePackageJsonDiscovery(absEntrypoint);
+    const usePackageJsonDiscovery = await shouldUsePackageJsonDiscovery(posix.dirname(absEntrypoint));
 
     const staticPatterns = functionsConfig[functionName].staticFiles;
 
