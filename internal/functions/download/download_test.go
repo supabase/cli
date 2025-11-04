@@ -367,4 +367,12 @@ func TestJoinWithinDir(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, filepath.Join(base, "file.ts"), got)
 	})
+
+	t.Run("rejects traversal beginning with './../'", func(t *testing.T) {
+		base = os.TempDir()
+		badpath := "./../.."
+		got, err := joinWithinDir(base, badpath)
+		require.Error(t, err)
+		assert.Equal(t, "", got)
+	})
 }
