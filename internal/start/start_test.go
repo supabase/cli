@@ -117,10 +117,15 @@ func TestDatabaseStart(t *testing.T) {
 		}
 		// Mock image pull requests that compose might make (even if images exist, compose may still try to pull)
 		// Since compose creates its own client, we mock on the mocked Docker host
+		// Return StatusAccepted with a JSON stream response that indicates success
+		// Persist() allows this mock to match multiple times with any query parameters
+		// We need to mock this before any compose client is created to ensure it intercepts requests
 		gock.New(utils.Docker.DaemonHost()).
-			Post("/v" + utils.Docker.ClientVersion() + "/images/create").
+			Post("/v"+utils.Docker.ClientVersion()+"/images/create").
 			Persist().
-			Reply(http.StatusOK)
+			Reply(http.StatusAccepted).
+			SetHeader("Content-Type", "application/json").
+			BodyString(`{"status":"Pull complete","progressDetail":{},"id":""}\n`)
 		// Start postgres
 		utils.DbId = "test-postgres"
 		utils.ConfigId = "test-config"

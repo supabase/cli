@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -116,39 +115,47 @@ func TestFileWatcher(t *testing.T) {
 	})
 
 	t.Run("ignores editor temporary files", func(t *testing.T) {
+		setup := NewWatcherIntegrationSetup(t)
+		defer setup.Cleanup()
+
+		tempDir := setup.TempDir
 		watcher, err := NewDebounceFileWatcher()
 		require.NoError(t, err)
+
+		// Set up watch paths
+		fsys := afero.NewOsFs()
+		watchPaths := []string{tempDir}
+		require.NoError(t, watcher.SetWatchPaths(watchPaths, fsys))
 
 		// Create various temporary/editor files that should be ignored
 		go func() {
 			defer watcher.Close()
 			tempFiles := []string{
-				filepath.Join("/tmp", "test.txt~"),       // Backup file
-				filepath.Join("/tmp", ".test.swp"),       // Vim swap
-				filepath.Join("/tmp", ".#test.ts"),       // Emacs lock
-				filepath.Join("/tmp", "test.tmp"),        // Temp file
-				filepath.Join("/tmp", "___deno_temp___"), // Deno temp
+				filepath.Join(tempDir, "test.txt~"),       // Backup file
+				filepath.Join(tempDir, ".test.swp"),       // Vim swap
+				filepath.Join(tempDir, ".#test.ts"),       // Emacs lock
+				filepath.Join(tempDir, "test.tmp"),        // Temp file
+				filepath.Join(tempDir, "___deno_temp___"), // Deno temp
 			}
 			for _, tempFile := range tempFiles {
-				// Fire events directly since we only care about ignore files
-				watcher.watcher.Events <- fsnotify.Event{
-					Name: tempFile,
-					Op:   fsnotify.Create,
-				}
+				// Create actual files to trigger real events
+				require.NoError(t, os.WriteFile(tempFile, []byte("temp"), 0600))
+				// https://github.com/fsnotify/fsnotify/blob/main/fsnotify_test.go#L181
+				time.Sleep(50 * time.Millisecond)
 			}
 		}()
 
 		// Run watcher on main thread to avoid sleeping
 		watcher.Start()
 
-		// Wait multiple times for out of order events
-		for range 3 {
-			select {
-			case <-watcher.RestartCh:
-				assert.Fail(t, "should not receive any restart signals from ignored files")
-			case err := <-watcher.ErrCh:
-				assert.NoError(t, err)
-			}
+		// Wait for potential events, but should not receive any restart signals
+		select {
+		case <-watcher.RestartCh:
+			assert.Fail(t, "should not receive any restart signals from ignored files")
+		case err := <-watcher.ErrCh:
+			assert.NoError(t, err)
+		case <-time.After(2 * time.Second):
+			// Expected: no restart signal received
 		}
 	})
 
@@ -187,17 +194,30 @@ func TestFileWatcher(t *testing.T) {
 	})
 
 	t.Run("debounces rapid file changes", func(t *testing.T) {
+		setup := NewWatcherIntegrationSetup(t)
+		defer setup.Cleanup()
+
+		tempDir := setup.TempDir
 		watcher, err := NewDebounceFileWatcher()
 		require.NoError(t, err)
+
+		// Set up watch paths
+		fsys := afero.NewOsFs()
+		watchPaths := []string{tempDir}
+		require.NoError(t, watcher.SetWatchPaths(watchPaths, fsys))
+
+		testFile := filepath.Join(tempDir, "index.ts")
+		// Create the file first
+		require.NoError(t, os.WriteFile(testFile, []byte("initial"), 0600))
+		time.Sleep(50 * time.Millisecond)
 
 		// Make rapid changes to a file
 		go func() {
 			defer watcher.Close()
 			for range 5 {
-				watcher.watcher.Events <- fsnotify.Event{
-					Name: filepath.Join("/tmp", "index.ts"),
-					Op:   fsnotify.Write,
-				}
+				require.NoError(t, os.WriteFile(testFile, []byte("modified"), 0600))
+				// https://github.com/fsnotify/fsnotify/blob/main/fsnotify_test.go#L181
+				time.Sleep(50 * time.Millisecond)
 			}
 		}()
 
@@ -209,15 +229,14 @@ func TestFileWatcher(t *testing.T) {
 		case ts, ok := <-watcher.RestartCh:
 			assert.NotZero(t, ts)
 			assert.True(t, ok)
-		case <-time.After(debounceDuration):
+		case <-time.After(debounceDuration + 500*time.Millisecond):
 			assert.Fail(t, "missing restart signal after rapid file changes")
 		}
 		select {
 		case <-watcher.RestartCh:
 			assert.Fail(t, "should only get one restart signal due to debouncing")
-		case ts, ok := <-time.After(debounceDuration):
-			assert.NotZero(t, ts)
-			assert.True(t, ok)
+		case <-time.After(debounceDuration + 500*time.Millisecond):
+			// Expected: no additional restart signal received
 		}
 	})
 
