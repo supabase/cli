@@ -208,9 +208,9 @@ subject = "You have been invited"
 content_path = "./supabase/templates/invite.html"
 
 # Uncomment to customize notification email template
-[auth.email.template.password_changed_notification]
+[auth.email.notification_template.password_changed]
 enabled = true
-subject = "Your password has been changed!"
+subject = "Your password has been changed"
 content_path = "./supabase/templates/password_changed_notification.html"
 
 [auth.sms]

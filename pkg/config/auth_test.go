@@ -551,38 +551,39 @@ func TestEmailDiff(t *testing.T) {
 					Subject: cast.Ptr("reauthentication-subject"),
 					Content: cast.Ptr("reauthentication-content"),
 				},
-				// Notifications
-				"password_changed_notification": {
+			},
+			NotificationTemplate: map[string]emailNotificationTemplate{
+				"password_changed": {
 					Enabled: cast.Ptr(true),
 					Subject: cast.Ptr("password-changed-subject"),
 					Content: cast.Ptr("password-changed-content"),
 				},
-				"email_changed_notification": {
+				"email_changed": {
 					Enabled: cast.Ptr(true),
 					Subject: cast.Ptr("email-changed-subject"),
 					Content: cast.Ptr("email-changed-content"),
 				},
-				"phone_changed_notification": {
+				"phone_changed": {
 					Enabled: cast.Ptr(true),
 					Subject: cast.Ptr("phone-changed-subject"),
 					Content: cast.Ptr("phone-changed-content"),
 				},
-				"identity_linked_notification": {
+				"identity_linked": {
 					Enabled: cast.Ptr(true),
 					Subject: cast.Ptr("identity-linked-subject"),
 					Content: cast.Ptr("identity-linked-content"),
 				},
-				"identity_unlinked_notification": {
+				"identity_unlinked": {
 					Enabled: cast.Ptr(true),
 					Subject: cast.Ptr("identity-unlinked-subject"),
 					Content: cast.Ptr("identity-unlinked-content"),
 				},
-				"mfa_factor_enrolled_notification": {
+				"mfa_factor_enrolled": {
 					Enabled: cast.Ptr(true),
 					Subject: cast.Ptr("mfa-enrolled-subject"),
 					Content: cast.Ptr("mfa-enrolled-content"),
 				},
-				"mfa_factor_unenrolled_notification": {
+				"mfa_factor_unenrolled": {
 					Enabled: cast.Ptr(true),
 					Subject: cast.Ptr("mfa-unenrolled-subject"),
 					Content: cast.Ptr("mfa-unenrolled-content"),
@@ -633,27 +634,27 @@ func TestEmailDiff(t *testing.T) {
 			MailerSubjectsReauthentication:         nullable.NewNullableWithValue("reauthentication-subject"),
 			MailerTemplatesReauthenticationContent: nullable.NewNullableWithValue("reauthentication-content"),
 			// Notifications
-			MailerNotificationsPasswordChangedEnabled:                  nullable.NewNullableWithValue(true),
-			MailerSubjectsPasswordChangedNotification:                  nullable.NewNullableWithValue("password-changed-subject"),
-			MailerTemplatesPasswordChangedNotificationContent:          nullable.NewNullableWithValue("password-changed-content"),
-			MailerNotificationsEmailChangedEnabled:                     nullable.NewNullableWithValue(true),
-			MailerSubjectsEmailChangedNotification:                     nullable.NewNullableWithValue("email-changed-subject"),
-			MailerTemplatesEmailChangedNotificationContent:             nullable.NewNullableWithValue("email-changed-content"),
-			MailerNotificationsPhoneChangedEnabled:                     nullable.NewNullableWithValue(true),
-			MailerSubjectsPhoneChangedNotification:                     nullable.NewNullableWithValue("phone-changed-subject"),
-			MailerTemplatesPhoneChangedNotificationContent:             nullable.NewNullableWithValue("phone-changed-content"),
-			MailerNotificationsIdentityLinkedEnabled:                   nullable.NewNullableWithValue(true),
-			MailerSubjectsIdentityLinkedNotification:                   nullable.NewNullableWithValue("identity-linked-subject"),
-			MailerTemplatesIdentityLinkedNotificationContent:           nullable.NewNullableWithValue("identity-linked-content"),
-			MailerNotificationsIdentityUnlinkedEnabled:                 nullable.NewNullableWithValue(true),
-			MailerSubjectsIdentityUnlinkedNotification:                 nullable.NewNullableWithValue("identity-unlinked-subject"),
-			MailerTemplatesIdentityUnlinkedNotificationContent:         nullable.NewNullableWithValue("identity-unlinked-content"),
-			MailerNotificationsMfaFactorEnrolledEnabled:                nullable.NewNullableWithValue(true),
-			MailerSubjectsMfaFactorEnrolledNotification:                nullable.NewNullableWithValue("mfa-enrolled-subject"),
-			MailerTemplatesMfaFactorEnrolledNotificationContent:        nullable.NewNullableWithValue("mfa-enrolled-content"),
-			MailerNotificationsMfaFactorUnenrolledEnabled:              nullable.NewNullableWithValue(true),
-			MailerSubjectsMfaFactorUnenrolledNotification:              nullable.NewNullableWithValue("mfa-unenrolled-subject"),
-			MailerTemplatesMfaFactorUnenrolledNotificationContent:      nullable.NewNullableWithValue("mfa-unenrolled-content"),
+			MailerNotificationsPasswordChangedEnabled:             nullable.NewNullableWithValue(true),
+			MailerSubjectsPasswordChangedNotification:             nullable.NewNullableWithValue("password-changed-subject"),
+			MailerTemplatesPasswordChangedNotificationContent:     nullable.NewNullableWithValue("password-changed-content"),
+			MailerNotificationsEmailChangedEnabled:                nullable.NewNullableWithValue(true),
+			MailerSubjectsEmailChangedNotification:                nullable.NewNullableWithValue("email-changed-subject"),
+			MailerTemplatesEmailChangedNotificationContent:        nullable.NewNullableWithValue("email-changed-content"),
+			MailerNotificationsPhoneChangedEnabled:                nullable.NewNullableWithValue(true),
+			MailerSubjectsPhoneChangedNotification:                nullable.NewNullableWithValue("phone-changed-subject"),
+			MailerTemplatesPhoneChangedNotificationContent:        nullable.NewNullableWithValue("phone-changed-content"),
+			MailerNotificationsIdentityLinkedEnabled:              nullable.NewNullableWithValue(true),
+			MailerSubjectsIdentityLinkedNotification:              nullable.NewNullableWithValue("identity-linked-subject"),
+			MailerTemplatesIdentityLinkedNotificationContent:      nullable.NewNullableWithValue("identity-linked-content"),
+			MailerNotificationsIdentityUnlinkedEnabled:            nullable.NewNullableWithValue(true),
+			MailerSubjectsIdentityUnlinkedNotification:            nullable.NewNullableWithValue("identity-unlinked-subject"),
+			MailerTemplatesIdentityUnlinkedNotificationContent:    nullable.NewNullableWithValue("identity-unlinked-content"),
+			MailerNotificationsMfaFactorEnrolledEnabled:           nullable.NewNullableWithValue(true),
+			MailerSubjectsMfaFactorEnrolledNotification:           nullable.NewNullableWithValue("mfa-enrolled-subject"),
+			MailerTemplatesMfaFactorEnrolledNotificationContent:   nullable.NewNullableWithValue("mfa-enrolled-content"),
+			MailerNotificationsMfaFactorUnenrolledEnabled:         nullable.NewNullableWithValue(true),
+			MailerSubjectsMfaFactorUnenrolledNotification:         nullable.NewNullableWithValue("mfa-unenrolled-subject"),
+			MailerTemplatesMfaFactorUnenrolledNotificationContent: nullable.NewNullableWithValue("mfa-unenrolled-content"),
 		})
 		// Check error
 		assert.NoError(t, err)

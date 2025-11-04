@@ -259,6 +259,7 @@ func (a *auth) Clone() auth {
 		copy.Email.Smtp = &mailer
 	}
 	copy.Email.Template = maps.Clone(a.Email.Template)
+	copy.Email.NotificationTemplate = maps.Clone(a.Email.NotificationTemplate)
 	if a.Hook.MFAVerificationAttempt != nil {
 		hook := *a.Hook.MFAVerificationAttempt
 		copy.Hook.MFAVerificationAttempt = &hook
@@ -372,7 +373,8 @@ func NewConfig(editors ...ConfigEditor) config {
 		Auth: auth{
 			Image: Images.Gotrue,
 			Email: email{
-				Template: map[string]emailTemplate{},
+				Template:             map[string]emailTemplate{},
+				NotificationTemplate: map[string]emailNotificationTemplate{},
 			},
 			Sms: sms{
 				TestOTP: map[string]string{},
@@ -668,6 +670,14 @@ func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 			tmpl.ContentPath = filepath.Join(cwd, tmpl.ContentPath)
 		}
 		c.Auth.Email.Template[name] = tmpl
+	}
+	for name, tmpl := range c.Auth.Email.NotificationTemplate {
+		// FIXME: only email template is relative to repo directory
+		cwd := filepath.Dir(builder.SupabaseDirPath)
+		if len(tmpl.ContentPath) > 0 && !filepath.IsAbs(tmpl.ContentPath) {
+			tmpl.ContentPath = filepath.Join(cwd, tmpl.ContentPath)
+		}
+		c.Auth.Email.NotificationTemplate[name] = tmpl
 	}
 	// Update fallback configs
 	for name, bucket := range c.Storage.Buckets {
@@ -1022,16 +1032,30 @@ func (e *email) validate(fsys fs.FS) (err error) {
 	for name, tmpl := range e.Template {
 		if len(tmpl.ContentPath) == 0 {
 			if tmpl.Content != nil {
-				return errors.Errorf("Invalid config for auth.email.%s.content: please use content_path instead", name)
+				return errors.Errorf("Invalid config for auth.email.template.%s.content: please use content_path instead", name)
 			}
 			continue
 		}
 		if content, err := fs.ReadFile(fsys, tmpl.ContentPath); err != nil {
-			return errors.Errorf("Invalid config for auth.email.%s.content_path: %w", name, err)
+			return errors.Errorf("Invalid config for auth.email.template.%s.content_path: %w", name, err)
 		} else {
 			tmpl.Content = cast.Ptr(string(content))
 		}
 		e.Template[name] = tmpl
+	}
+	for name, tmpl := range e.NotificationTemplate {
+		if len(tmpl.ContentPath) == 0 {
+			if tmpl.Content != nil {
+				return errors.Errorf("Invalid config for auth.email.notification_template.%s.content: please use content_path instead", name)
+			}
+			continue
+		}
+		if content, err := fs.ReadFile(fsys, tmpl.ContentPath); err != nil {
+			return errors.Errorf("Invalid config for auth.email.notification_template.%s.content_path: %w", name, err)
+		} else {
+			tmpl.Content = cast.Ptr(string(content))
+		}
+		e.NotificationTemplate[name] = tmpl
 	}
 	if e.Smtp != nil && e.Smtp.Enabled {
 		if len(e.Smtp.Host) == 0 {
