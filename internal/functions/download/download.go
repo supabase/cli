@@ -124,17 +124,16 @@ func Run(ctx context.Context, slug, projectRef string, useLegacyBundle, useDocke
 		return RunLegacy(ctx, slug, projectRef, fsys)
 	}
 
-	if !useDocker {
-		// Use server-side unbundling with multipart/form-data
-		return downloadWithServerSideUnbundle(ctx, slug, projectRef, fsys)
+	if useDocker {
+		if utils.IsDockerRunning(ctx) {
+			// download eszip file for client-side unbundling with edge-runtime
+			return downloadWithDockerUnbundle(ctx, slug, projectRef, fsys)
+		} else {
+			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Docker is not running")
+		}
 	}
 
-	if utils.IsDockerRunning(ctx) {
-		// download eszip file for client-side unbundling with edge-runtime
-		return downloadWithDockerUnbundle(ctx, slug, projectRef, fsys)
-	}
-
-	fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Docker is not running, falling back to server-side unbundling")
+	// Use server-side unbundling with multipart/form-data
 	return downloadWithServerSideUnbundle(ctx, slug, projectRef, fsys)
 }
 
@@ -323,9 +322,6 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 			return err
 		}
 
-		if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(filePath)); err != nil {
-			return err
-		}
 		if err := afero.WriteReader(fsys, filePath, part); err != nil {
 			return errors.Errorf("failed to write file: %w", err)
 		}
