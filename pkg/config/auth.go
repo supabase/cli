@@ -242,6 +242,7 @@ type (
 		EnableConfirmations  bool                     `toml:"enable_confirmations"`
 		SecurePasswordChange bool                     `toml:"secure_password_change"`
 		Template             map[string]emailTemplate `toml:"template"`
+		Notification         map[string]notification  `toml:"notification"`
 		Smtp                 *smtp                    `toml:"smtp"`
 		MaxFrequency         time.Duration            `toml:"max_frequency"`
 		OtpLength            uint                     `toml:"otp_length"`
@@ -263,6 +264,11 @@ type (
 		Content *string `toml:"content"`
 		// Only content path is accepted in config.toml
 		ContentPath string `toml:"content_path"`
+	}
+
+	notification struct {
+		Enabled bool `toml:"enabled"`
+		emailTemplate
 	}
 
 	sms struct {
@@ -644,51 +650,116 @@ func (e email) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	if e.Smtp != nil {
 		e.Smtp.toAuthConfigBody(body)
 	}
-	if len(e.Template) == 0 {
-		return
+	if len(e.Template) > 0 {
+		var tmpl *emailTemplate
+		tmpl = cast.Ptr(e.Template["invite"])
+		if tmpl.Subject != nil {
+			body.MailerSubjectsInvite = nullable.NewNullableWithValue(*tmpl.Subject)
+		}
+		if tmpl.Content != nil {
+			body.MailerTemplatesInviteContent = nullable.NewNullableWithValue(*tmpl.Content)
+		}
+		tmpl = cast.Ptr(e.Template["confirmation"])
+		if tmpl.Subject != nil {
+			body.MailerSubjectsConfirmation = nullable.NewNullableWithValue(*tmpl.Subject)
+		}
+		if tmpl.Content != nil {
+			body.MailerTemplatesConfirmationContent = nullable.NewNullableWithValue(*tmpl.Content)
+		}
+		tmpl = cast.Ptr(e.Template["recovery"])
+		if tmpl.Subject != nil {
+			body.MailerSubjectsRecovery = nullable.NewNullableWithValue(*tmpl.Subject)
+		}
+		if tmpl.Content != nil {
+			body.MailerTemplatesRecoveryContent = nullable.NewNullableWithValue(*tmpl.Content)
+		}
+		tmpl = cast.Ptr(e.Template["magic_link"])
+		if tmpl.Subject != nil {
+			body.MailerSubjectsMagicLink = nullable.NewNullableWithValue(*tmpl.Subject)
+		}
+		if tmpl.Content != nil {
+			body.MailerTemplatesMagicLinkContent = nullable.NewNullableWithValue(*tmpl.Content)
+		}
+		tmpl = cast.Ptr(e.Template["email_change"])
+		if tmpl.Subject != nil {
+			body.MailerSubjectsEmailChange = nullable.NewNullableWithValue(*tmpl.Subject)
+		}
+		if tmpl.Content != nil {
+			body.MailerTemplatesEmailChangeContent = nullable.NewNullableWithValue(*tmpl.Content)
+		}
+		tmpl = cast.Ptr(e.Template["reauthentication"])
+		if tmpl.Subject != nil {
+			body.MailerSubjectsReauthentication = nullable.NewNullableWithValue(*tmpl.Subject)
+		}
+		if tmpl.Content != nil {
+			body.MailerTemplatesReauthenticationContent = nullable.NewNullableWithValue(*tmpl.Content)
+		}
 	}
-	var tmpl *emailTemplate
-	tmpl = cast.Ptr(e.Template["invite"])
-	if tmpl.Subject != nil {
-		body.MailerSubjectsInvite = nullable.NewNullableWithValue(*tmpl.Subject)
-	}
-	if tmpl.Content != nil {
-		body.MailerTemplatesInviteContent = nullable.NewNullableWithValue(*tmpl.Content)
-	}
-	tmpl = cast.Ptr(e.Template["confirmation"])
-	if tmpl.Subject != nil {
-		body.MailerSubjectsConfirmation = nullable.NewNullableWithValue(*tmpl.Subject)
-	}
-	if tmpl.Content != nil {
-		body.MailerTemplatesConfirmationContent = nullable.NewNullableWithValue(*tmpl.Content)
-	}
-	tmpl = cast.Ptr(e.Template["recovery"])
-	if tmpl.Subject != nil {
-		body.MailerSubjectsRecovery = nullable.NewNullableWithValue(*tmpl.Subject)
-	}
-	if tmpl.Content != nil {
-		body.MailerTemplatesRecoveryContent = nullable.NewNullableWithValue(*tmpl.Content)
-	}
-	tmpl = cast.Ptr(e.Template["magic_link"])
-	if tmpl.Subject != nil {
-		body.MailerSubjectsMagicLink = nullable.NewNullableWithValue(*tmpl.Subject)
-	}
-	if tmpl.Content != nil {
-		body.MailerTemplatesMagicLinkContent = nullable.NewNullableWithValue(*tmpl.Content)
-	}
-	tmpl = cast.Ptr(e.Template["email_change"])
-	if tmpl.Subject != nil {
-		body.MailerSubjectsEmailChange = nullable.NewNullableWithValue(*tmpl.Subject)
-	}
-	if tmpl.Content != nil {
-		body.MailerTemplatesEmailChangeContent = nullable.NewNullableWithValue(*tmpl.Content)
-	}
-	tmpl = cast.Ptr(e.Template["reauthentication"])
-	if tmpl.Subject != nil {
-		body.MailerSubjectsReauthentication = nullable.NewNullableWithValue(*tmpl.Subject)
-	}
-	if tmpl.Content != nil {
-		body.MailerTemplatesReauthenticationContent = nullable.NewNullableWithValue(*tmpl.Content)
+	// Notifications
+	if len(e.Notification) > 0 {
+		if n, ok := e.Notification["password_changed"]; ok {
+			body.MailerNotificationsPasswordChangedEnabled = nullable.NewNullableWithValue(n.Enabled)
+			if n.Subject != nil {
+				body.MailerSubjectsPasswordChangedNotification = nullable.NewNullableWithValue(*n.Subject)
+			}
+			if n.Content != nil {
+				body.MailerTemplatesPasswordChangedNotificationContent = nullable.NewNullableWithValue(*n.Content)
+			}
+		}
+		if n, ok := e.Notification["email_changed"]; ok {
+			body.MailerNotificationsEmailChangedEnabled = nullable.NewNullableWithValue(n.Enabled)
+			if n.Subject != nil {
+				body.MailerSubjectsEmailChangedNotification = nullable.NewNullableWithValue(*n.Subject)
+			}
+			if n.Content != nil {
+				body.MailerTemplatesEmailChangedNotificationContent = nullable.NewNullableWithValue(*n.Content)
+			}
+		}
+		if n, ok := e.Notification["phone_changed"]; ok {
+			body.MailerNotificationsPhoneChangedEnabled = nullable.NewNullableWithValue(n.Enabled)
+			if n.Subject != nil {
+				body.MailerSubjectsPhoneChangedNotification = nullable.NewNullableWithValue(*n.Subject)
+			}
+			if n.Content != nil {
+				body.MailerTemplatesPhoneChangedNotificationContent = nullable.NewNullableWithValue(*n.Content)
+			}
+		}
+		if n, ok := e.Notification["identity_linked"]; ok {
+			body.MailerNotificationsIdentityLinkedEnabled = nullable.NewNullableWithValue(n.Enabled)
+			if n.Subject != nil {
+				body.MailerSubjectsIdentityLinkedNotification = nullable.NewNullableWithValue(*n.Subject)
+			}
+			if n.Content != nil {
+				body.MailerTemplatesIdentityLinkedNotificationContent = nullable.NewNullableWithValue(*n.Content)
+			}
+		}
+		if n, ok := e.Notification["identity_unlinked"]; ok {
+			body.MailerNotificationsIdentityUnlinkedEnabled = nullable.NewNullableWithValue(n.Enabled)
+			if n.Subject != nil {
+				body.MailerSubjectsIdentityUnlinkedNotification = nullable.NewNullableWithValue(*n.Subject)
+			}
+			if n.Content != nil {
+				body.MailerTemplatesIdentityUnlinkedNotificationContent = nullable.NewNullableWithValue(*n.Content)
+			}
+		}
+		if n, ok := e.Notification["mfa_factor_enrolled"]; ok {
+			body.MailerNotificationsMfaFactorEnrolledEnabled = nullable.NewNullableWithValue(n.Enabled)
+			if n.Subject != nil {
+				body.MailerSubjectsMfaFactorEnrolledNotification = nullable.NewNullableWithValue(*n.Subject)
+			}
+			if n.Content != nil {
+				body.MailerTemplatesMfaFactorEnrolledNotificationContent = nullable.NewNullableWithValue(*n.Content)
+			}
+		}
+		if n, ok := e.Notification["mfa_factor_unenrolled"]; ok {
+			body.MailerNotificationsMfaFactorUnenrolledEnabled = nullable.NewNullableWithValue(n.Enabled)
+			if n.Subject != nil {
+				body.MailerSubjectsMfaFactorUnenrolledNotification = nullable.NewNullableWithValue(*n.Subject)
+			}
+			if n.Content != nil {
+				body.MailerTemplatesMfaFactorUnenrolledNotificationContent = nullable.NewNullableWithValue(*n.Content)
+			}
+		}
 	}
 }
 
@@ -701,110 +772,252 @@ func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	e.SecurePasswordChange = ValOrDefault(remoteConfig.SecurityUpdatePasswordRequireReauthentication, false)
 	e.MaxFrequency = time.Duration(ValOrDefault(remoteConfig.SmtpMaxFrequency, 0)) * time.Second
 	e.Smtp.fromAuthConfig(remoteConfig)
-	if len(e.Template) == 0 {
-		return
+	if len(e.Template) > 0 {
+		if t, ok := e.Template["invite"]; ok {
+			if t.Subject != nil {
+				if value, err := remoteConfig.MailerSubjectsInvite.Get(); err == nil {
+					t.Subject = &value
+				} else {
+					t.Subject = nil
+				}
+			}
+			if t.Content != nil {
+				if value, err := remoteConfig.MailerTemplatesInviteContent.Get(); err == nil {
+					t.Content = &value
+				} else {
+					t.Content = nil
+				}
+			}
+			e.Template["invite"] = t
+		}
+		if t, ok := e.Template["confirmation"]; ok {
+			if t.Subject != nil {
+				if value, err := remoteConfig.MailerSubjectsConfirmation.Get(); err == nil {
+					t.Subject = &value
+				} else {
+					t.Subject = nil
+				}
+			}
+			if t.Content != nil {
+				if value, err := remoteConfig.MailerTemplatesConfirmationContent.Get(); err == nil {
+					t.Content = &value
+				} else {
+					t.Content = nil
+				}
+			}
+			e.Template["confirmation"] = t
+		}
+		if t, ok := e.Template["recovery"]; ok {
+			if t.Subject != nil {
+				if value, err := remoteConfig.MailerSubjectsRecovery.Get(); err == nil {
+					t.Subject = &value
+				} else {
+					t.Subject = nil
+				}
+			}
+			if t.Content != nil {
+				if value, err := remoteConfig.MailerTemplatesRecoveryContent.Get(); err == nil {
+					t.Content = &value
+				} else {
+					t.Content = nil
+				}
+			}
+			e.Template["recovery"] = t
+		}
+		if t, ok := e.Template["magic_link"]; ok {
+			if t.Subject != nil {
+				if value, err := remoteConfig.MailerSubjectsMagicLink.Get(); err == nil {
+					t.Subject = &value
+				} else {
+					t.Subject = nil
+				}
+			}
+			if t.Content != nil {
+				if value, err := remoteConfig.MailerTemplatesMagicLinkContent.Get(); err == nil {
+					t.Content = &value
+				} else {
+					t.Content = nil
+				}
+			}
+			e.Template["magic_link"] = t
+		}
+		if t, ok := e.Template["email_change"]; ok {
+			if t.Subject != nil {
+				if value, err := remoteConfig.MailerSubjectsEmailChange.Get(); err == nil {
+					t.Subject = &value
+				} else {
+					t.Subject = nil
+				}
+			}
+			if t.Content != nil {
+				if value, err := remoteConfig.MailerTemplatesEmailChangeContent.Get(); err == nil {
+					t.Content = &value
+				} else {
+					t.Content = nil
+				}
+			}
+			e.Template["email_change"] = t
+		}
+		if t, ok := e.Template["reauthentication"]; ok {
+			if t.Subject != nil {
+				if value, err := remoteConfig.MailerSubjectsReauthentication.Get(); err == nil {
+					t.Subject = &value
+				} else {
+					t.Subject = nil
+				}
+			}
+			if t.Content != nil {
+				if value, err := remoteConfig.MailerTemplatesReauthenticationContent.Get(); err == nil {
+					t.Content = &value
+				} else {
+					t.Content = nil
+				}
+			}
+			e.Template["reauthentication"] = t
+		}
 	}
-	if t, ok := e.Template["invite"]; ok {
-		if t.Subject != nil {
-			if value, err := remoteConfig.MailerSubjectsInvite.Get(); err == nil {
-				t.Subject = &value
-			} else {
-				t.Subject = nil
+	// Notifications
+	if len(e.Notification) > 0 {
+		if n, ok := e.Notification["password_changed"]; ok {
+			if value, err := remoteConfig.MailerNotificationsPasswordChangedEnabled.Get(); err == nil {
+				n.Enabled = value
 			}
-		}
-		if t.Content != nil {
-			if value, err := remoteConfig.MailerTemplatesInviteContent.Get(); err == nil {
-				t.Content = &value
-			} else {
-				t.Content = nil
+			if n.Subject != nil {
+				if value, err := remoteConfig.MailerSubjectsPasswordChangedNotification.Get(); err == nil {
+					n.Subject = &value
+				} else {
+					n.Subject = nil
+				}
 			}
-		}
-		e.Template["invite"] = t
-	}
-	if t, ok := e.Template["confirmation"]; ok {
-		if t.Subject != nil {
-			if value, err := remoteConfig.MailerSubjectsConfirmation.Get(); err == nil {
-				t.Subject = &value
-			} else {
-				t.Subject = nil
+			if n.Content != nil {
+				if value, err := remoteConfig.MailerTemplatesPasswordChangedNotificationContent.Get(); err == nil {
+					n.Content = &value
+				} else {
+					n.Content = nil
+				}
 			}
+			e.Notification["password_changed"] = n
 		}
-		if t.Content != nil {
-			if value, err := remoteConfig.MailerTemplatesConfirmationContent.Get(); err == nil {
-				t.Content = &value
-			} else {
-				t.Content = nil
+		if n, ok := e.Notification["email_changed"]; ok {
+			if value, err := remoteConfig.MailerNotificationsEmailChangedEnabled.Get(); err == nil {
+				n.Enabled = value
 			}
-		}
-		e.Template["confirmation"] = t
-	}
-	if t, ok := e.Template["recovery"]; ok {
-		if t.Subject != nil {
-			if value, err := remoteConfig.MailerSubjectsRecovery.Get(); err == nil {
-				t.Subject = &value
-			} else {
-				t.Subject = nil
+			if n.Subject != nil {
+				if value, err := remoteConfig.MailerSubjectsEmailChangedNotification.Get(); err == nil {
+					n.Subject = &value
+				} else {
+					n.Subject = nil
+				}
 			}
-		}
-		if t.Content != nil {
-			if value, err := remoteConfig.MailerTemplatesRecoveryContent.Get(); err == nil {
-				t.Content = &value
-			} else {
-				t.Content = nil
+			if n.Content != nil {
+				if value, err := remoteConfig.MailerTemplatesEmailChangedNotificationContent.Get(); err == nil {
+					n.Content = &value
+				} else {
+					n.Content = nil
+				}
 			}
+			e.Notification["email_changed"] = n
 		}
-		e.Template["recovery"] = t
-	}
-	if t, ok := e.Template["magic_link"]; ok {
-		if t.Subject != nil {
-			if value, err := remoteConfig.MailerSubjectsMagicLink.Get(); err == nil {
-				t.Subject = &value
-			} else {
-				t.Subject = nil
+		if n, ok := e.Notification["phone_changed"]; ok {
+			if value, err := remoteConfig.MailerNotificationsPhoneChangedEnabled.Get(); err == nil {
+				n.Enabled = value
 			}
-		}
-		if t.Content != nil {
-			if value, err := remoteConfig.MailerTemplatesMagicLinkContent.Get(); err == nil {
-				t.Content = &value
-			} else {
-				t.Content = nil
+			if n.Subject != nil {
+				if value, err := remoteConfig.MailerSubjectsPhoneChangedNotification.Get(); err == nil {
+					n.Subject = &value
+				} else {
+					n.Subject = nil
+				}
 			}
-		}
-		e.Template["magic_link"] = t
-	}
-	if t, ok := e.Template["email_change"]; ok {
-		if t.Subject != nil {
-			if value, err := remoteConfig.MailerSubjectsEmailChange.Get(); err == nil {
-				t.Subject = &value
-			} else {
-				t.Subject = nil
+			if n.Content != nil {
+				if value, err := remoteConfig.MailerTemplatesPhoneChangedNotificationContent.Get(); err == nil {
+					n.Content = &value
+				} else {
+					n.Content = nil
+				}
 			}
+			e.Notification["phone_changed"] = n
 		}
-		if t.Content != nil {
-			if value, err := remoteConfig.MailerTemplatesEmailChangeContent.Get(); err == nil {
-				t.Content = &value
-			} else {
-				t.Content = nil
+		if n, ok := e.Notification["identity_linked"]; ok {
+			if value, err := remoteConfig.MailerNotificationsIdentityLinkedEnabled.Get(); err == nil {
+				n.Enabled = value
 			}
-		}
-		e.Template["email_change"] = t
-	}
-	if t, ok := e.Template["reauthentication"]; ok {
-		if t.Subject != nil {
-			if value, err := remoteConfig.MailerSubjectsReauthentication.Get(); err == nil {
-				t.Subject = &value
-			} else {
-				t.Subject = nil
+			if n.Subject != nil {
+				if value, err := remoteConfig.MailerSubjectsIdentityLinkedNotification.Get(); err == nil {
+					n.Subject = &value
+				} else {
+					n.Subject = nil
+				}
 			}
-		}
-		if t.Content != nil {
-			if value, err := remoteConfig.MailerTemplatesReauthenticationContent.Get(); err == nil {
-				t.Content = &value
-			} else {
-				t.Content = nil
+			if n.Content != nil {
+				if value, err := remoteConfig.MailerTemplatesIdentityLinkedNotificationContent.Get(); err == nil {
+					n.Content = &value
+				} else {
+					n.Content = nil
+				}
 			}
+			e.Notification["identity_linked"] = n
 		}
-		e.Template["reauthentication"] = t
+		if n, ok := e.Notification["identity_unlinked"]; ok {
+			if value, err := remoteConfig.MailerNotificationsIdentityUnlinkedEnabled.Get(); err == nil {
+				n.Enabled = value
+			}
+			if n.Subject != nil {
+				if value, err := remoteConfig.MailerSubjectsIdentityUnlinkedNotification.Get(); err == nil {
+					n.Subject = &value
+				} else {
+					n.Subject = nil
+				}
+			}
+			if n.Content != nil {
+				if value, err := remoteConfig.MailerTemplatesIdentityUnlinkedNotificationContent.Get(); err == nil {
+					n.Content = &value
+				} else {
+					n.Content = nil
+				}
+			}
+			e.Notification["identity_unlinked"] = n
+		}
+		if n, ok := e.Notification["mfa_factor_enrolled"]; ok {
+			if value, err := remoteConfig.MailerNotificationsMfaFactorEnrolledEnabled.Get(); err == nil {
+				n.Enabled = value
+			}
+			if n.Subject != nil {
+				if value, err := remoteConfig.MailerSubjectsMfaFactorEnrolledNotification.Get(); err == nil {
+					n.Subject = &value
+				} else {
+					n.Subject = nil
+				}
+			}
+			if n.Content != nil {
+				if value, err := remoteConfig.MailerTemplatesMfaFactorEnrolledNotificationContent.Get(); err == nil {
+					n.Content = &value
+				} else {
+					n.Content = nil
+				}
+			}
+			e.Notification["mfa_factor_enrolled"] = n
+		}
+		if n, ok := e.Notification["mfa_factor_unenrolled"]; ok {
+			if value, err := remoteConfig.MailerNotificationsMfaFactorUnenrolledEnabled.Get(); err == nil {
+				n.Enabled = value
+			}
+			if n.Subject != nil {
+				if value, err := remoteConfig.MailerSubjectsMfaFactorUnenrolledNotification.Get(); err == nil {
+					n.Subject = &value
+				} else {
+					n.Subject = nil
+				}
+			}
+			if n.Content != nil {
+				if value, err := remoteConfig.MailerTemplatesMfaFactorUnenrolledNotificationContent.Get(); err == nil {
+					n.Content = &value
+				} else {
+					n.Content = nil
+				}
+			}
+			e.Notification["mfa_factor_unenrolled"] = n
+		}
 	}
 }
 
