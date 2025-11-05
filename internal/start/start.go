@@ -699,7 +699,7 @@ EOF
 
 			redirectUri := config.RedirectUri
 			if redirectUri == "" {
-				redirectUri = utils.GetApiUrl("/auth/v1/callback")
+				redirectUri = utils.Config.Auth.JwtIssuer + "/callback"
 			}
 			env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=%s", strings.ToUpper(name), redirectUri))
 
