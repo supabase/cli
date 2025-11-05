@@ -60,7 +60,7 @@ func Run(ctx context.Context, fsys afero.Fs, clientFlag string) error {
 	for _, client := range installedClients {
 		fmt.Printf("  supabase mcp init --client %s\n", client.Name())
 	}
-	
+
 	return nil
 }
 

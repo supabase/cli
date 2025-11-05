@@ -35,29 +35,29 @@ var (
 			}
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-				fsys := afero.NewOsFs()
-				if !cmd.Flags().Changed("with-vscode-settings") && !cmd.Flags().Changed("with-vscode-workspace") {
-					createVscodeSettings = nil
-				}
+			fsys := afero.NewOsFs()
+			if !cmd.Flags().Changed("with-vscode-settings") && !cmd.Flags().Changed("with-vscode-workspace") {
+				createVscodeSettings = nil
+			}
 
-				if !cmd.Flags().Changed("with-intellij-settings") {
-					createIntellijSettings = nil
-				}
-				ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			if !cmd.Flags().Changed("with-intellij-settings") {
+				createIntellijSettings = nil
+			}
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 
-				// Run core project init first
-				if err := _init.Run(ctx, fsys, createVscodeSettings, createIntellijSettings, initParams); err != nil {
+			// Run core project init first
+			if err := _init.Run(ctx, fsys, createVscodeSettings, createIntellijSettings, initParams); err != nil {
+				return err
+			}
+
+			// Optionally configure MCP client if flag is provided
+			mcpClient, _ := cmd.Flags().GetString("mcp-client")
+			if mcpClient != "" {
+				if err := mcpinit.Run(ctx, fsys, mcpClient); err != nil {
 					return err
 				}
-
-				// Optionally configure MCP client if flag is provided
-				mcpClient, _ := cmd.Flags().GetString("mcp-client")
-				if mcpClient != "" {
-					if err := mcpinit.Run(ctx, fsys, mcpClient); err != nil {
-						return err
-					}
-				}
-				return nil
+			}
+			return nil
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Finished " + utils.Aqua("supabase init") + ".")
