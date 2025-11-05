@@ -152,6 +152,7 @@ type (
 		SiteUrl                    string               `toml:"site_url"`
 		AdditionalRedirectUrls     []string             `toml:"additional_redirect_urls"`
 		JwtExpiry                  uint                 `toml:"jwt_expiry"`
+		JwtIssuer                  string               `toml:"jwt_issuer"`
 		EnableRefreshTokenRotation bool                 `toml:"enable_refresh_token_rotation"`
 		RefreshTokenReuseInterval  uint                 `toml:"refresh_token_reuse_interval"`
 		EnableManualLinking        bool                 `toml:"enable_manual_linking"`

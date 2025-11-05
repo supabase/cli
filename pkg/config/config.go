@@ -585,6 +585,10 @@ func (c *config) Load(path string, fsys fs.FS, overrides ...ConfigEditor) error 
 		}
 		c.Api.ExternalUrl = apiUrl.String()
 	}
+	// Set default JWT issuer if not configured
+	if len(c.Auth.JwtIssuer) == 0 {
+		c.Auth.JwtIssuer = c.Api.ExternalUrl + "/auth/v1"
+	}
 	// Update image versions
 	switch c.Db.MajorVersion {
 	case 13:
