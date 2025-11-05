@@ -494,10 +494,10 @@ EOF
 
 			fmt.Sprintf("GOTRUE_SMTP_MAX_FREQUENCY=%v", utils.Config.Auth.Email.MaxFrequency),
 
-			"GOTRUE_MAILER_URLPATHS_INVITE=" + utils.GetApiUrl("/auth/v1/verify"),
-			"GOTRUE_MAILER_URLPATHS_CONFIRMATION=" + utils.GetApiUrl("/auth/v1/verify"),
-			"GOTRUE_MAILER_URLPATHS_RECOVERY=" + utils.GetApiUrl("/auth/v1/verify"),
-			"GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=" + utils.GetApiUrl("/auth/v1/verify"),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_INVITE=%s/verify", utils.Config.Auth.JwtIssuer),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_CONFIRMATION=%s/verify", utils.Config.Auth.JwtIssuer),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_RECOVERY=%s/verify", utils.Config.Auth.JwtIssuer),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=%s/verify", utils.Config.Auth.JwtIssuer),
 			"GOTRUE_RATE_LIMIT_EMAIL_SENT=360000",
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
