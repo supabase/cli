@@ -881,15 +881,19 @@ func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if value, err := remoteConfig.MailerNotificationsPasswordChangedEnabled.Get(); err == nil {
 				n.Enabled = value
 			}
-			if value, err := remoteConfig.MailerSubjectsPasswordChangedNotification.Get(); err == nil {
-				n.Subject = &value
-			} else {
-				n.Subject = nil
+			if n.Subject != nil {
+				if value, err := remoteConfig.MailerSubjectsPasswordChangedNotification.Get(); err == nil {
+					n.Subject = &value
+				} else {
+					n.Subject = nil
+				}
 			}
-			if value, err := remoteConfig.MailerTemplatesPasswordChangedNotificationContent.Get(); err == nil {
-				n.Content = &value
-			} else {
-				n.Content = nil
+			if n.Content != nil {
+				if value, err := remoteConfig.MailerTemplatesPasswordChangedNotificationContent.Get(); err == nil {
+					n.Content = &value
+				} else {
+					n.Content = nil
+				}
 			}
 			e.Notification["password_changed"] = n
 		}
@@ -897,15 +901,19 @@ func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if value, err := remoteConfig.MailerNotificationsEmailChangedEnabled.Get(); err == nil {
 				n.Enabled = value
 			}
-			if value, err := remoteConfig.MailerSubjectsEmailChangedNotification.Get(); err == nil {
-				n.Subject = &value
-			} else {
-				n.Subject = nil
+			if n.Subject != nil {
+				if value, err := remoteConfig.MailerSubjectsEmailChangedNotification.Get(); err == nil {
+					n.Subject = &value
+				} else {
+					n.Subject = nil
+				}
 			}
-			if value, err := remoteConfig.MailerTemplatesEmailChangedNotificationContent.Get(); err == nil {
-				n.Content = &value
-			} else {
-				n.Content = nil
+			if n.Content != nil {
+				if value, err := remoteConfig.MailerTemplatesEmailChangedNotificationContent.Get(); err == nil {
+					n.Content = &value
+				} else {
+					n.Content = nil
+				}
 			}
 			e.Notification["email_changed"] = n
 		}
@@ -913,15 +921,19 @@ func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if value, err := remoteConfig.MailerNotificationsPhoneChangedEnabled.Get(); err == nil {
 				n.Enabled = value
 			}
-			if value, err := remoteConfig.MailerSubjectsPhoneChangedNotification.Get(); err == nil {
-				n.Subject = &value
-			} else {
-				n.Subject = nil
+			if n.Subject != nil {
+				if value, err := remoteConfig.MailerSubjectsPhoneChangedNotification.Get(); err == nil {
+					n.Subject = &value
+				} else {
+					n.Subject = nil
+				}
 			}
-			if value, err := remoteConfig.MailerTemplatesPhoneChangedNotificationContent.Get(); err == nil {
-				n.Content = &value
-			} else {
-				n.Content = nil
+			if n.Content != nil {
+				if value, err := remoteConfig.MailerTemplatesPhoneChangedNotificationContent.Get(); err == nil {
+					n.Content = &value
+				} else {
+					n.Content = nil
+				}
 			}
 			e.Notification["phone_changed"] = n
 		}
@@ -929,15 +941,19 @@ func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if value, err := remoteConfig.MailerNotificationsIdentityLinkedEnabled.Get(); err == nil {
 				n.Enabled = value
 			}
-			if value, err := remoteConfig.MailerSubjectsIdentityLinkedNotification.Get(); err == nil {
-				n.Subject = &value
-			} else {
-				n.Subject = nil
+			if n.Subject != nil {
+				if value, err := remoteConfig.MailerSubjectsIdentityLinkedNotification.Get(); err == nil {
+					n.Subject = &value
+				} else {
+					n.Subject = nil
+				}
 			}
-			if value, err := remoteConfig.MailerTemplatesIdentityLinkedNotificationContent.Get(); err == nil {
-				n.Content = &value
-			} else {
-				n.Content = nil
+			if n.Content != nil {
+				if value, err := remoteConfig.MailerTemplatesIdentityLinkedNotificationContent.Get(); err == nil {
+					n.Content = &value
+				} else {
+					n.Content = nil
+				}
 			}
 			e.Notification["identity_linked"] = n
 		}
@@ -945,15 +961,19 @@ func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if value, err := remoteConfig.MailerNotificationsIdentityUnlinkedEnabled.Get(); err == nil {
 				n.Enabled = value
 			}
-			if value, err := remoteConfig.MailerSubjectsIdentityUnlinkedNotification.Get(); err == nil {
-				n.Subject = &value
-			} else {
-				n.Subject = nil
+			if n.Subject != nil {
+				if value, err := remoteConfig.MailerSubjectsIdentityUnlinkedNotification.Get(); err == nil {
+					n.Subject = &value
+				} else {
+					n.Subject = nil
+				}
 			}
-			if value, err := remoteConfig.MailerTemplatesIdentityUnlinkedNotificationContent.Get(); err == nil {
-				n.Content = &value
-			} else {
-				n.Content = nil
+			if n.Content != nil {
+				if value, err := remoteConfig.MailerTemplatesIdentityUnlinkedNotificationContent.Get(); err == nil {
+					n.Content = &value
+				} else {
+					n.Content = nil
+				}
 			}
 			e.Notification["identity_unlinked"] = n
 		}
@@ -961,15 +981,19 @@ func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if value, err := remoteConfig.MailerNotificationsMfaFactorEnrolledEnabled.Get(); err == nil {
 				n.Enabled = value
 			}
-			if value, err := remoteConfig.MailerSubjectsMfaFactorEnrolledNotification.Get(); err == nil {
-				n.Subject = &value
-			} else {
-				n.Subject = nil
+			if n.Subject != nil {
+				if value, err := remoteConfig.MailerSubjectsMfaFactorEnrolledNotification.Get(); err == nil {
+					n.Subject = &value
+				} else {
+					n.Subject = nil
+				}
 			}
-			if value, err := remoteConfig.MailerTemplatesMfaFactorEnrolledNotificationContent.Get(); err == nil {
-				n.Content = &value
-			} else {
-				n.Content = nil
+			if n.Content != nil {
+				if value, err := remoteConfig.MailerTemplatesMfaFactorEnrolledNotificationContent.Get(); err == nil {
+					n.Content = &value
+				} else {
+					n.Content = nil
+				}
 			}
 			e.Notification["mfa_factor_enrolled"] = n
 		}
@@ -977,15 +1001,19 @@ func (e *email) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 			if value, err := remoteConfig.MailerNotificationsMfaFactorUnenrolledEnabled.Get(); err == nil {
 				n.Enabled = value
 			}
-			if value, err := remoteConfig.MailerSubjectsMfaFactorUnenrolledNotification.Get(); err == nil {
-				n.Subject = &value
-			} else {
-				n.Subject = nil
+			if n.Subject != nil {
+				if value, err := remoteConfig.MailerSubjectsMfaFactorUnenrolledNotification.Get(); err == nil {
+					n.Subject = &value
+				} else {
+					n.Subject = nil
+				}
 			}
-			if value, err := remoteConfig.MailerTemplatesMfaFactorUnenrolledNotificationContent.Get(); err == nil {
-				n.Content = &value
-			} else {
-				n.Content = nil
+			if n.Content != nil {
+				if value, err := remoteConfig.MailerTemplatesMfaFactorUnenrolledNotificationContent.Get(); err == nil {
+					n.Content = &value
+				} else {
+					n.Content = nil
+				}
 			}
 			e.Notification["mfa_factor_unenrolled"] = n
 		}
