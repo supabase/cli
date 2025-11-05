@@ -1,7 +1,7 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -44,36 +44,44 @@
+@@ -47,65 +47,74 @@
  inactivity_timeout = "0s"
  
  [email]
@@ -41,6 +41,46 @@ diff remote[auth] local[auth]
  content_path = ""
  [email.template.recovery]
 +content = "recovery-content"
+ content_path = ""
+ [email.notification]
+ [email.notification.email_changed]
+-enabled = false
++enabled = true
+ subject = "email-changed-subject"
++content = "email-changed-content"
+ content_path = ""
+ [email.notification.identity_linked]
+-enabled = false
++enabled = true
++subject = "identity-linked-subject"
++content = "identity-linked-content"
+ content_path = ""
+ [email.notification.identity_unlinked]
+-enabled = false
+-subject = "identity-unlinked-subject"
+-content = "identity-unlinked-content"
++enabled = true
+ content_path = ""
+ [email.notification.mfa_factor_enrolled]
+-enabled = false
+-subject = "mfa-enrolled-subject"
++enabled = true
+ content_path = ""
+ [email.notification.mfa_factor_unenrolled]
+-enabled = false
++enabled = true
+ content_path = ""
+ [email.notification.password_changed]
+-enabled = false
++enabled = true
+ subject = "password-changed-subject"
+ content = "password-changed-content"
+ content_path = ""
+ [email.notification.phone_changed]
+-enabled = false
++enabled = true
++subject = "phone-changed-subject"
+ content = "phone-changed-content"
  content_path = ""
  [email.smtp]
 -enabled = false

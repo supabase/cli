@@ -552,41 +552,55 @@ func TestEmailDiff(t *testing.T) {
 					Content: cast.Ptr("reauthentication-content"),
 				},
 			},
-			NotificationTemplate: map[string]emailNotificationTemplate{
+			Notification: map[string]notification{
 				"password_changed": {
-					Enabled: cast.Ptr(true),
-					Subject: cast.Ptr("password-changed-subject"),
-					Content: cast.Ptr("password-changed-content"),
+					Enabled: true,
+					emailTemplate: emailTemplate{
+						Subject: cast.Ptr("password-changed-subject"),
+						Content: cast.Ptr("password-changed-content"),
+					},
 				},
 				"email_changed": {
-					Enabled: cast.Ptr(true),
-					Subject: cast.Ptr("email-changed-subject"),
-					Content: cast.Ptr("email-changed-content"),
+					Enabled: true,
+					emailTemplate: emailTemplate{
+						Subject: cast.Ptr("email-changed-subject"),
+						Content: cast.Ptr("email-changed-content"),
+					},
 				},
 				"phone_changed": {
-					Enabled: cast.Ptr(true),
-					Subject: cast.Ptr("phone-changed-subject"),
-					Content: cast.Ptr("phone-changed-content"),
+					Enabled: true,
+					emailTemplate: emailTemplate{
+						Subject: cast.Ptr("phone-changed-subject"),
+						Content: cast.Ptr("phone-changed-content"),
+					},
 				},
 				"identity_linked": {
-					Enabled: cast.Ptr(true),
-					Subject: cast.Ptr("identity-linked-subject"),
-					Content: cast.Ptr("identity-linked-content"),
+					Enabled: true,
+					emailTemplate: emailTemplate{
+						Subject: cast.Ptr("identity-linked-subject"),
+						Content: cast.Ptr("identity-linked-content"),
+					},
 				},
 				"identity_unlinked": {
-					Enabled: cast.Ptr(true),
-					Subject: cast.Ptr("identity-unlinked-subject"),
-					Content: cast.Ptr("identity-unlinked-content"),
+					Enabled: true,
+					emailTemplate: emailTemplate{
+						Subject: cast.Ptr("identity-unlinked-subject"),
+						Content: cast.Ptr("identity-unlinked-content"),
+					},
 				},
 				"mfa_factor_enrolled": {
-					Enabled: cast.Ptr(true),
-					Subject: cast.Ptr("mfa-enrolled-subject"),
-					Content: cast.Ptr("mfa-enrolled-content"),
+					Enabled: true,
+					emailTemplate: emailTemplate{
+						Subject: cast.Ptr("mfa-enrolled-subject"),
+						Content: cast.Ptr("mfa-enrolled-content"),
+					},
 				},
 				"mfa_factor_unenrolled": {
-					Enabled: cast.Ptr(true),
-					Subject: cast.Ptr("mfa-unenrolled-subject"),
-					Content: cast.Ptr("mfa-unenrolled-content"),
+					Enabled: true,
+					emailTemplate: emailTemplate{
+						Subject: cast.Ptr("mfa-unenrolled-subject"),
+						Content: cast.Ptr("mfa-unenrolled-content"),
+					},
 				},
 			},
 			Smtp: &smtp{
@@ -692,6 +706,45 @@ func TestEmailDiff(t *testing.T) {
 					Content: cast.Ptr(""),
 				},
 			},
+			Notification: map[string]notification{
+				"password_changed": {
+					Enabled: true,
+					emailTemplate: emailTemplate{
+						Subject: cast.Ptr("password-changed-subject"),
+						Content: cast.Ptr("password-changed-content"),
+					},
+				},
+				"email_changed": {
+					Enabled: true,
+					emailTemplate: emailTemplate{
+						Subject: cast.Ptr("email-changed-subject"),
+						Content: cast.Ptr("email-changed-content"),
+					},
+				},
+				"phone_changed": {
+					Enabled: true,
+					emailTemplate: emailTemplate{
+						Subject: cast.Ptr("phone-changed-subject"),
+						Content: cast.Ptr("phone-changed-content"),
+					},
+				},
+				"identity_linked": {
+					Enabled: true,
+					emailTemplate: emailTemplate{
+						Subject: cast.Ptr("identity-linked-subject"),
+						Content: cast.Ptr("identity-linked-content"),
+					},
+				},
+				"identity_unlinked": {
+					Enabled: true,
+				},
+				"mfa_factor_enrolled": {
+					Enabled: true,
+				},
+				"mfa_factor_unenrolled": {
+					Enabled: true,
+				},
+			},
 			Smtp: &smtp{
 				Enabled: true,
 				Host:    "smtp.sendgrid.net",
@@ -722,6 +775,21 @@ func TestEmailDiff(t *testing.T) {
 			MailerSubjectsRecovery:             nullable.NewNullableWithValue("recovery-subject"),
 			MailerSubjectsMagicLink:            nullable.NewNullableWithValue("magic-link-subject"),
 			MailerTemplatesEmailChangeContent:  nullable.NewNullableWithValue("email-change-content"),
+			// Notifications
+			MailerNotificationsPasswordChangedEnabled:          nullable.NewNullableWithValue(false),
+			MailerSubjectsPasswordChangedNotification:          nullable.NewNullableWithValue("password-changed-subject"),
+			MailerTemplatesPasswordChangedNotificationContent:  nullable.NewNullableWithValue("password-changed-content"),
+			MailerNotificationsEmailChangedEnabled:             nullable.NewNullableWithValue(false),
+			MailerSubjectsEmailChangedNotification:             nullable.NewNullableWithValue("email-changed-subject"),
+			MailerNotificationsPhoneChangedEnabled:             nullable.NewNullableWithValue(false),
+			MailerTemplatesPhoneChangedNotificationContent:     nullable.NewNullableWithValue("phone-changed-content"),
+			MailerNotificationsIdentityLinkedEnabled:           nullable.NewNullableWithValue(false),
+			MailerNotificationsIdentityUnlinkedEnabled:         nullable.NewNullableWithValue(false),
+			MailerSubjectsIdentityUnlinkedNotification:         nullable.NewNullableWithValue("identity-unlinked-subject"),
+			MailerTemplatesIdentityUnlinkedNotificationContent: nullable.NewNullableWithValue("identity-unlinked-content"),
+			MailerNotificationsMfaFactorEnrolledEnabled:        nullable.NewNullableWithValue(false),
+			MailerSubjectsMfaFactorEnrolledNotification:        nullable.NewNullableWithValue("mfa-enrolled-subject"),
+			MailerNotificationsMfaFactorUnenrolledEnabled:      nullable.NewNullableWithValue(false),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -739,6 +807,15 @@ func TestEmailDiff(t *testing.T) {
 				"magic_link":       {},
 				"email_change":     {},
 				"reauthentication": {},
+			},
+			Notification: map[string]notification{
+				"password_changed":      {},
+				"email_changed":         {},
+				"phone_changed":         {},
+				"identity_linked":       {},
+				"identity_unlinked":     {},
+				"mfa_factor_enrolled":   {},
+				"mfa_factor_unenrolled": {},
 			},
 			MaxFrequency: time.Minute,
 			OtpLength:    8,
@@ -772,6 +849,24 @@ func TestEmailDiff(t *testing.T) {
 			MailerTemplatesEmailChangeContent:      nullable.NewNullableWithValue("email-change-content"),
 			MailerSubjectsReauthentication:         nullable.NewNullableWithValue("reauthentication-subject"),
 			MailerTemplatesReauthenticationContent: nullable.NewNullableWithValue("reauthentication-content"),
+			// Notifications
+			MailerNotificationsPasswordChangedEnabled:             nullable.NewNullableWithValue(true),
+			MailerSubjectsPasswordChangedNotification:             nullable.NewNullableWithValue("password-changed-subject"),
+			MailerTemplatesPasswordChangedNotificationContent:     nullable.NewNullableWithValue("password-changed-content"),
+			MailerNotificationsEmailChangedEnabled:                nullable.NewNullableWithValue(true),
+			MailerSubjectsEmailChangedNotification:                nullable.NewNullableWithValue("email-changed-subject"),
+			MailerNotificationsPhoneChangedEnabled:                nullable.NewNullableWithValue(true),
+			MailerTemplatesPhoneChangedNotificationContent:        nullable.NewNullableWithValue("phone-changed-content"),
+			MailerNotificationsIdentityLinkedEnabled:              nullable.NewNullableWithValue(true),
+			MailerNotificationsIdentityUnlinkedEnabled:            nullable.NewNullableWithValue(true),
+			MailerSubjectsIdentityUnlinkedNotification:            nullable.NewNullableWithValue("identity-unlinked-subject"),
+			MailerTemplatesIdentityUnlinkedNotificationContent:    nullable.NewNullableWithValue("identity-unlinked-content"),
+			MailerNotificationsMfaFactorEnrolledEnabled:           nullable.NewNullableWithValue(true),
+			MailerSubjectsMfaFactorEnrolledNotification:           nullable.NewNullableWithValue("mfa-enrolled-subject"),
+			MailerTemplatesMfaFactorEnrolledNotificationContent:   nullable.NewNullableWithValue("mfa-enrolled-content"),
+			MailerNotificationsMfaFactorUnenrolledEnabled:         nullable.NewNullableWithValue(true),
+			MailerSubjectsMfaFactorUnenrolledNotification:         nullable.NewNullableWithValue("mfa-unenrolled-subject"),
+			MailerTemplatesMfaFactorUnenrolledNotificationContent: nullable.NewNullableWithValue("mfa-unenrolled-content"),
 		})
 		// Check error
 		assert.NoError(t, err)
@@ -789,6 +884,15 @@ func TestEmailDiff(t *testing.T) {
 				"magic_link":       {},
 				"email_change":     {},
 				"reauthentication": {},
+			},
+			Notification: map[string]notification{
+				"password_changed":      {},
+				"email_changed":         {},
+				"phone_changed":         {},
+				"identity_linked":       {},
+				"identity_unlinked":     {},
+				"mfa_factor_enrolled":   {},
+				"mfa_factor_unenrolled": {},
 			},
 			Smtp: &smtp{
 				Enabled: false,
