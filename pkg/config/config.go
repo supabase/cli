@@ -1042,6 +1042,9 @@ func (e *email) validate(fsys fs.FS) (err error) {
 		e.Template[name] = tmpl
 	}
 	for name, tmpl := range e.Notification {
+		if !tmpl.Enabled {
+			continue
+		}
 		if len(tmpl.ContentPath) == 0 {
 			if tmpl.Content != nil {
 				return errors.Errorf("Invalid config for auth.email.notification.%s.content: please use content_path instead", name)
