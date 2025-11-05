@@ -32,10 +32,13 @@ func TestVacuumCommand(t *testing.T) {
 				Name:                 "test_schema.test_table",
 				Last_vacuum:          "2021-01-01 00:00:00",
 				Last_autovacuum:      "2021-01-01 00:00:00",
+				Last_analyze:         "2021-01-01 00:00:00",
+				Last_autoanalyze:     "2021-01-01 00:00:00",
 				Rowcount:             "1000",
 				Dead_rowcount:        "100",
 				Autovacuum_threshold: "100",
 				Expect_autovacuum:    "yes",
+				Expect_autoanalyze:   "yes",
 			})
 		// Run test
 		err := Run(context.Background(), dbConfig, fsys, conn.Intercept)
