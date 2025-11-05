@@ -22,12 +22,11 @@ diff remote[auth] local[auth]
  [email.template]
  [email.template.confirmation]
  content_path = ""
-@@ -69,35 +69,25 @@
+@@ -69,25 +69,25 @@
  content_path = ""
  [email.notification]
  [email.notification.email_changed]
 -enabled = true
--subject = "email-changed-subject"
 +enabled = false
  content_path = ""
  [email.notification.identity_linked]
@@ -36,31 +35,22 @@ diff remote[auth] local[auth]
  content_path = ""
  [email.notification.identity_unlinked]
 -enabled = true
--subject = "identity-unlinked-subject"
--content = "identity-unlinked-content"
 +enabled = false
  content_path = ""
  [email.notification.mfa_factor_enrolled]
 -enabled = true
--subject = "mfa-enrolled-subject"
--content = "mfa-enrolled-content"
 +enabled = false
  content_path = ""
  [email.notification.mfa_factor_unenrolled]
 -enabled = true
--subject = "mfa-unenrolled-subject"
--content = "mfa-unenrolled-content"
 +enabled = false
  content_path = ""
  [email.notification.password_changed]
 -enabled = true
--subject = "password-changed-subject"
--content = "password-changed-content"
 +enabled = false
  content_path = ""
  [email.notification.phone_changed]
 -enabled = true
--content = "phone-changed-content"
 +enabled = false
  content_path = ""
  
