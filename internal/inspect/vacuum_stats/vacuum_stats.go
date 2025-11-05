@@ -19,17 +19,17 @@ import (
 var VacuumStatsQuery string
 
 type Result struct {
-	Name                   string
-	Last_vacuum            string
-	Last_autovacuum        string
-	Last_analyze           string
-	Last_autoanalyze       string
-	Rowcount               string
-	Dead_rowcount          string
-	Autovacuum_threshold   string
-	Autoanalyze_threshold  string
-	Expect_autovacuum      string
-	Expect_autoanalyze     string
+	Name                  string
+	Last_vacuum           string
+	Last_autovacuum       string
+	Last_analyze          string
+	Last_autoanalyze      string
+	Rowcount              string
+	Dead_rowcount         string
+	Autovacuum_threshold  string
+	Autoanalyze_threshold string
+	Expect_autovacuum     string
+	Expect_autoanalyze    string
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
