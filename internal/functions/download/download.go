@@ -9,6 +9,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -256,8 +257,20 @@ func suggestLegacyBundle(slug string) string {
 	return fmt.Sprintf("\nIf your function is deployed using CLI < 1.120.0, trying running %s instead.", utils.Aqua("supabase functions download --legacy-bundle "+slug))
 }
 
+// New server-side unbundle implementation that mirrors Studio's entrypoint-based
+// base-dir + relative path behaviour.
 func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string, fsys afero.Fs) error {
 	fmt.Fprintln(os.Stderr, "Downloading "+utils.Bold(slug))
+
+	metadata, err := getFunctionMetadata(ctx, projectRef, slug)
+	if err != nil {
+		return errors.Errorf("failed to get function metadata: %w", err)
+	}
+
+	entrypointUrl, err := url.Parse(*metadata.EntrypointPath)
+	if err != nil {
+		return errors.Errorf("failed to parse entrypoint URL: %w", err)
+	}
 
 	// Request multipart/form-data response using RequestEditorFn
 	resp, err := utils.GetSupabase().V1GetAFunctionBody(ctx, projectRef, slug, func(ctx context.Context, req *http.Request) error {
@@ -287,14 +300,20 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 		return errors.Errorf("expected multipart response, got %s", mediaType)
 	}
 
-	// Create function directory
+	// Root directory on disk: supabase/functions/<slug>
 	funcDir := filepath.Join(utils.FunctionsDir, slug)
-
 	if err := utils.MkdirIfNotExistFS(fsys, funcDir); err != nil {
 		return err
 	}
 
-	// Parse multipart form
+	type partEntry struct {
+		path string
+		data []byte
+	}
+
+	var parts []partEntry
+
+	// Parse multipart form and buffer parts in memory.
 	mr := multipart.NewReader(resp.Body, params["boundary"])
 	for {
 		part, err := mr.NextPart()
@@ -305,24 +324,52 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 			return errors.Errorf("failed to read multipart: %w", err)
 		}
 
-		// Determine the relative path from headers to preserve directory structure.
-		relPath, err := resolvedPartPath(slug, part) // always starts with :slug
+		partPath, err := getPartPath(part)
 		if err != nil {
 			return err
 		}
 
-		// result of invalid or missing filename but we're letting it slide
-		if relPath == "" {
+		data, err := io.ReadAll(part)
+		if err != nil {
+			return errors.Errorf("failed to read part data: %w", err)
+		}
+
+		if partPath == "" {
 			fmt.Fprintln(utils.GetDebugLogger(), "Skipping part without filename")
+		} else {
+			parts = append(parts, partEntry{path: partPath, data: data})
+		}
+	}
+
+	// Collect file paths (excluding empty ones) to infer the base directory.
+	var filepaths []string
+	for _, p := range parts {
+		if p.path != "" {
+			filepaths = append(filepaths, p.path)
+		}
+	}
+
+	baseDir := getBaseDirFromEntrypoint(entrypointUrl, filepaths)
+	fmt.Println("Function base directory: " + utils.Aqua(baseDir))
+
+	// Place each file under funcDir using a path relative to baseDir,
+	// mirroring Studio's getBasePath + relative() behavior.
+	for _, p := range parts {
+		if p.path == "" {
 			continue
 		}
 
+		relPath := getRelativePathFromBase(baseDir, p.path)
 		filePath, err := joinWithinDir(funcDir, relPath)
 		if err != nil {
 			return err
 		}
 
-		if err := afero.WriteReader(fsys, filePath, part); err != nil {
+		if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(filePath)); err != nil {
+			return err
+		}
+
+		if err := afero.WriteReader(fsys, filePath, bytes.NewReader(p.data)); err != nil {
 			return errors.Errorf("failed to write file: %w", err)
 		}
 	}
@@ -331,11 +378,12 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 	return nil
 }
 
-// parse multipart part headers to read and sanitize relative file path for writing
-func resolvedPartPath(slug string, part *multipart.Part) (string, error) {
+// getPartPath extracts the filename for a multipart part, allowing for
+// relative paths via the custom Supabase-Path header.
+func getPartPath(part *multipart.Part) (string, error) {
 	// dedicated header to specify relative path, not expected to be used
 	if relPath := part.Header.Get("Supabase-Path"); relPath != "" {
-		return normalizeRelativePath(slug, relPath), nil
+		return relPath, nil
 	}
 
 	// part.FileName() does not allow us to handle relative paths, so we parse Content-Disposition manually
@@ -350,23 +398,9 @@ func resolvedPartPath(slug string, part *multipart.Part) (string, error) {
 	}
 
 	if filename := params["filename"]; filename != "" {
-		return normalizeRelativePath(slug, filename), nil
+		return filename, nil
 	}
 	return "", nil
-}
-
-// remove leading source/ or :slug/
-func normalizeRelativePath(slug, raw string) string {
-	cleaned := path.Clean(raw)
-	if after, ok := strings.CutPrefix(cleaned, "source/"); ok {
-		cleaned = after
-	} else if after, ok := strings.CutPrefix(cleaned, slug+"/"); ok {
-		cleaned = after
-	} else if cleaned == slug {
-		// If the path is exactly :slug, skip it
-		cleaned = ""
-	}
-	return cleaned
 }
 
 // joinWithinDir safely joins base and rel ensuring the result stays within base directory
@@ -386,4 +420,89 @@ func joinWithinDir(base, rel string) (string, error) {
 		return "", errors.Errorf("refusing to write outside function directory: %s", rel)
 	}
 	return joined, nil
+}
+
+// getBaseDirFromEntrypoint tries to infer the "base" directory for function
+// files from the entrypoint URL and the list of filenames, similar to Studio's
+// getBasePath logic.
+func getBaseDirFromEntrypoint(entrypointUrl *url.URL, filenames []string) string {
+	if entrypointUrl.Path == "" {
+		return "/"
+	}
+
+	entryPath := filepath.ToSlash(entrypointUrl.Path)
+
+	// First, prefer relative filenames (no leading slash) when matching the entrypoint.
+	var baseDir string
+	for _, filename := range filenames {
+		if filename == "" {
+			continue
+		}
+		clean := filepath.ToSlash(filename)
+		if strings.HasPrefix(clean, "/") {
+			// Skip absolute paths like /tmp/...
+			continue
+		}
+		if strings.HasSuffix(entryPath, clean) {
+			baseDir = filepath.Dir(clean)
+			break
+		}
+	}
+
+	// If nothing matched among relative paths, fall back to any filename.
+	if baseDir == "" {
+		for _, filename := range filenames {
+			if filename == "" {
+				continue
+			}
+			clean := filepath.ToSlash(filename)
+			if strings.HasSuffix(entryPath, clean) {
+				baseDir = filepath.Dir(clean)
+				break
+			}
+		}
+	}
+
+	if baseDir != "" {
+		return baseDir
+	}
+
+	// Final fallback: derive from the entrypoint URL path itself.
+	baseDir = filepath.Dir(entrypointUrl.Path)
+	if baseDir != "" && baseDir != "." {
+		return baseDir
+	}
+	return "/"
+}
+
+// getRelativePathFromBase mirrors the Studio behaviour of making file paths
+// relative to the "base" directory inferred from the entrypoint.
+func getRelativePathFromBase(baseDir, filename string) string {
+	if filename == "" {
+		return ""
+	}
+
+	cleanBase := filepath.ToSlash(filepath.Clean(baseDir))
+	cleanFile := filepath.ToSlash(filepath.Clean(filename))
+
+	// If we don't have a meaningful base, just normalize to a relative path.
+	if cleanBase == "" || cleanBase == "/" || cleanBase == "." {
+		return strings.TrimLeft(cleanFile, "/")
+	}
+
+	// Try a straightforward relative path first (e.g. source/index.ts -> index.ts).
+	if rel, err := filepath.Rel(cleanBase, cleanFile); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+		return filepath.ToSlash(rel)
+	}
+
+	// If the file path contains "/<baseDir>/" somewhere (e.g. /tmp/.../source/index.ts),
+	// strip everything up to and including that segment so we get a stable relative path
+	// like "index.ts" or "dir/file.ts".
+	segment := "/" + cleanBase + "/"
+	if idx := strings.Index(cleanFile, segment); idx >= 0 {
+		return cleanFile[idx+len(segment):]
+	}
+
+	// Last resort: return a normalized, slash-stripped path.
+	return strings.TrimLeft(cleanFile, "/")
 }
