@@ -482,7 +482,7 @@ EOF
 			"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
 			fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
 			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
-			"GOTRUE_JWT_ISSUER=" + utils.GetApiUrl("/auth/v1"),
+			"GOTRUE_JWT_ISSUER=" + utils.Config.Auth.JwtIssuer,
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", utils.Config.Auth.Email.EnableSignup),
 			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", utils.Config.Auth.Email.DoubleConfirmChanges),
@@ -494,10 +494,10 @@ EOF
 
 			fmt.Sprintf("GOTRUE_SMTP_MAX_FREQUENCY=%v", utils.Config.Auth.Email.MaxFrequency),
 
-			"GOTRUE_MAILER_URLPATHS_INVITE=" + utils.GetApiUrl("/auth/v1/verify"),
-			"GOTRUE_MAILER_URLPATHS_CONFIRMATION=" + utils.GetApiUrl("/auth/v1/verify"),
-			"GOTRUE_MAILER_URLPATHS_RECOVERY=" + utils.GetApiUrl("/auth/v1/verify"),
-			"GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=" + utils.GetApiUrl("/auth/v1/verify"),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_INVITE=%s/verify", utils.Config.Auth.JwtIssuer),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_CONFIRMATION=%s/verify", utils.Config.Auth.JwtIssuer),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_RECOVERY=%s/verify", utils.Config.Auth.JwtIssuer),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=%s/verify", utils.Config.Auth.JwtIssuer),
 			"GOTRUE_RATE_LIMIT_EMAIL_SENT=360000",
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
@@ -699,7 +699,7 @@ EOF
 
 			redirectUri := config.RedirectUri
 			if redirectUri == "" {
-				redirectUri = utils.GetApiUrl("/auth/v1/callback")
+				redirectUri = utils.Config.Auth.JwtIssuer + "/callback"
 			}
 			env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=%s", strings.ToUpper(name), redirectUri))
 
