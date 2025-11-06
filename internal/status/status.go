@@ -67,13 +67,9 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 	if authEnabled {
 		values[c.PublishableKey] = utils.Config.Auth.PublishableKey.Value
 		values[c.SecretKey] = utils.Config.Auth.SecretKey.Value
-		values[c.JWTSecret] = utils.Config.Auth.JwtSecret.Value
-		values[c.AnonKey] = utils.Config.Auth.AnonKey.Value
-		values[c.ServiceRoleKey] = utils.Config.Auth.ServiceRoleKey.Value
 	}
 	if inbucketEnabled {
 		values[c.MailpitURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Inbucket.Port)
-		values[c.InbucketURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Inbucket.Port)
 	}
 	if storageEnabled {
 		values[c.StorageS3URL] = utils.GetApiUrl("/storage/v1/s3")
@@ -220,13 +216,9 @@ func PrettyPrint(w io.Writer, exclude ...string) {
 		McpURL:                   "         " + utils.Aqua("MCP URL"),
 		DbURL:                    "    " + utils.Aqua("Database URL"),
 		StudioURL:                "      " + utils.Aqua("Studio URL"),
-		InbucketURL:              "    " + utils.Aqua("Inbucket URL"),
 		MailpitURL:               "     " + utils.Aqua("Mailpit URL"),
 		PublishableKey:           " " + utils.Aqua("Publishable key"),
 		SecretKey:                "      " + utils.Aqua("Secret key"),
-		JWTSecret:                "      " + utils.Aqua("JWT secret"),
-		AnonKey:                  "        " + utils.Aqua("anon key"),
-		ServiceRoleKey:           "" + utils.Aqua("service_role key"),
 		StorageS3AccessKeyId:     "   " + utils.Aqua("S3 Access Key"),
 		StorageS3SecretAccessKey: "   " + utils.Aqua("S3 Secret Key"),
 		StorageS3Region:          "       " + utils.Aqua("S3 Region"),
