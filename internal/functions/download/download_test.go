@@ -200,6 +200,93 @@ func TestRun(t *testing.T) {
 		assert.ErrorContains(t, err, "Function test-func does not exist on the Supabase project.")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
+
+	t.Run("downloads bundle with docker when available", func(t *testing.T) {
+		const slugDocker = "demo"
+		fsys := afero.NewMemMapFs()
+		writeConfig(t, fsys)
+		project := apitest.RandomProjectRef()
+		flags.ProjectRef = project
+		t.Cleanup(func() { flags.ProjectRef = "" })
+		require.NoError(t, flags.LoadConfig(fsys))
+
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		dockerHost := utils.Docker.DaemonHost()
+
+		defer func() {
+			gock.OffAll()
+			utils.CmdSuggestion = ""
+		}()
+
+		gock.New(dockerHost).
+			Head("/_ping").
+			Reply(http.StatusOK)
+
+		imageURL := utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image)
+		containerID := "docker-unbundle-test"
+		apitest.MockDockerStart(utils.Docker, imageURL, containerID)
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerID, "unbundle ok"))
+
+		gock.New(utils.DefaultApiHost).
+			Get(fmt.Sprintf("/v1/projects/%s/functions/%s/body", project, slugDocker)).
+			Reply(http.StatusOK).
+			BodyString("fake eszip payload")
+
+		err := Run(context.Background(), slugDocker, project, false, true, fsys)
+		require.NoError(t, err)
+
+		eszipPath := filepath.Join(utils.TempDir, fmt.Sprintf("output_%s.eszip", slugDocker))
+		exists, err := afero.Exists(fsys, eszipPath)
+		require.NoError(t, err)
+		assert.False(t, exists, "temporary eszip file should be removed after extraction")
+
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("falls back to server-side unbundle when docker unavailable", func(t *testing.T) {
+		const slugDocker = "demo-fallback"
+		fsys := afero.NewMemMapFs()
+		writeConfig(t, fsys)
+		project := apitest.RandomProjectRef()
+		flags.ProjectRef = project
+		t.Cleanup(func() { flags.ProjectRef = "" })
+		require.NoError(t, flags.LoadConfig(fsys))
+
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		dockerHost := utils.Docker.DaemonHost()
+
+		defer func() {
+			gock.OffAll()
+			utils.CmdSuggestion = ""
+		}()
+
+		gock.New(dockerHost).
+			Head("/_ping").
+			ReplyError(errors.New("docker unavailable"))
+
+		meta := newFunctionMetadata(slugDocker)
+		entrypoint := "file:///source/index.ts"
+		meta.EntrypointPath = &entrypoint
+		mockFunctionMetadata(project, slugDocker, meta)
+		mockMultipartBody(t, project, slugDocker, []multipartPart{
+			{filename: "source/index.ts", contents: "console.log('hello')"},
+		})
+
+		err := Run(context.Background(), slugDocker, project, false, true, fsys)
+		require.NoError(t, err)
+
+		data, err := afero.ReadFile(fsys, filepath.Join(utils.FunctionsDir, slugDocker, "index.ts"))
+		require.NoError(t, err)
+		assert.Equal(t, "console.log('hello')", string(data))
+
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
 }
 
 func TestDownloadFunction(t *testing.T) {
