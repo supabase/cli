@@ -31,12 +31,12 @@ func PromptMCPClient(ctx context.Context, opts ...tea.ProgramOption) (string, er
 		Summary: "other",
 		Details: "Configure it manually",
 	}
-	
+
 	choice, err := utils.PromptChoice(ctx, "Which client do you want to configure?", items, opts...)
 	if err != nil {
 		return "", err
 	}
-	
+
 	return choice.Summary, nil
 }
 

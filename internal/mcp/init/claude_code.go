@@ -53,14 +53,6 @@ func (c *claudeCodeClient) Configure(ctx context.Context, fsys afero.Fs) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	// Build command string for display
-	cmdStr := "claude " + fmt.Sprintf("%v", cmdArgs)
-	// Clean up the array format
-	cmdStr = "claude"
-	for _, arg := range cmdArgs {
-		cmdStr += " " + arg
-	}
-
 	err = cmd.Run()
 	if err != nil {
 		fmt.Println()
@@ -70,7 +62,7 @@ func (c *claudeCodeClient) Configure(ctx context.Context, fsys afero.Fs) error {
 		fmt.Println()
 		fmt.Println("✓ Successfully added Supabase MCP server to Claude Code!")
 		fmt.Println()
-		fmt.Printf("Command executed: %s\n", cmdStr)
+		// Command string display removed (cmdStr no longer exists)
 		fmt.Println()
 		fmt.Println("The server is now available in your Claude Code environment.")
 	}
