@@ -91,7 +91,7 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 	// V1DeleteABranch request
-	V1DeleteABranch(ctx context.Context, branchIdOrRef string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1DeleteABranch(ctx context.Context, branchIdOrRef string, params *V1DeleteABranchParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1GetABranchConfig request
 	V1GetABranchConfig(ctx context.Context, branchIdOrRef string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -118,6 +118,9 @@ type ClientInterface interface {
 	V1ResetABranchWithBody(ctx context.Context, branchIdOrRef string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	V1ResetABranch(ctx context.Context, branchIdOrRef string, body V1ResetABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1RestoreABranch request
+	V1RestoreABranch(ctx context.Context, branchIdOrRef string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1AuthorizeUser request
 	V1AuthorizeUser(ctx context.Context, params *V1AuthorizeUserParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -615,8 +618,8 @@ type ClientInterface interface {
 	V1GetASnippet(ctx context.Context, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
-func (c *Client) V1DeleteABranch(ctx context.Context, branchIdOrRef string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1DeleteABranchRequest(c.Server, branchIdOrRef)
+func (c *Client) V1DeleteABranch(ctx context.Context, branchIdOrRef string, params *V1DeleteABranchParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1DeleteABranchRequest(c.Server, branchIdOrRef, params)
 	if err != nil {
 		return nil, err
 	}
@@ -737,6 +740,18 @@ func (c *Client) V1ResetABranchWithBody(ctx context.Context, branchIdOrRef strin
 
 func (c *Client) V1ResetABranch(ctx context.Context, branchIdOrRef string, body V1ResetABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1ResetABranchRequest(c.Server, branchIdOrRef, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1RestoreABranch(ctx context.Context, branchIdOrRef string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1RestoreABranchRequest(c.Server, branchIdOrRef)
 	if err != nil {
 		return nil, err
 	}
@@ -2898,7 +2913,7 @@ func (c *Client) V1GetASnippet(ctx context.Context, id openapi_types.UUID, reqEd
 }
 
 // NewV1DeleteABranchRequest generates requests for V1DeleteABranch
-func NewV1DeleteABranchRequest(server string, branchIdOrRef string) (*http.Request, error) {
+func NewV1DeleteABranchRequest(server string, branchIdOrRef string, params *V1DeleteABranchParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -2921,6 +2936,28 @@ func NewV1DeleteABranchRequest(server string, branchIdOrRef string) (*http.Reque
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Force != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "force", runtime.ParamLocationQuery, *params.Force); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
@@ -3205,6 +3242,40 @@ func NewV1ResetABranchRequestWithBody(server string, branchIdOrRef string, conte
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1RestoreABranchRequest generates requests for V1RestoreABranch
+func NewV1RestoreABranchRequest(server string, branchIdOrRef string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "branch_id_or_ref", runtime.ParamLocationPath, branchIdOrRef)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/branches/%s/restore", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -9734,7 +9805,7 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 	// V1DeleteABranchWithResponse request
-	V1DeleteABranchWithResponse(ctx context.Context, branchIdOrRef string, reqEditors ...RequestEditorFn) (*V1DeleteABranchResponse, error)
+	V1DeleteABranchWithResponse(ctx context.Context, branchIdOrRef string, params *V1DeleteABranchParams, reqEditors ...RequestEditorFn) (*V1DeleteABranchResponse, error)
 
 	// V1GetABranchConfigWithResponse request
 	V1GetABranchConfigWithResponse(ctx context.Context, branchIdOrRef string, reqEditors ...RequestEditorFn) (*V1GetABranchConfigResponse, error)
@@ -9761,6 +9832,9 @@ type ClientWithResponsesInterface interface {
 	V1ResetABranchWithBodyWithResponse(ctx context.Context, branchIdOrRef string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ResetABranchResponse, error)
 
 	V1ResetABranchWithResponse(ctx context.Context, branchIdOrRef string, body V1ResetABranchJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ResetABranchResponse, error)
+
+	// V1RestoreABranchWithResponse request
+	V1RestoreABranchWithResponse(ctx context.Context, branchIdOrRef string, reqEditors ...RequestEditorFn) (*V1RestoreABranchResponse, error)
 
 	// V1AuthorizeUserWithResponse request
 	V1AuthorizeUserWithResponse(ctx context.Context, params *V1AuthorizeUserParams, reqEditors ...RequestEditorFn) (*V1AuthorizeUserResponse, error)
@@ -10405,6 +10479,28 @@ func (r V1ResetABranchResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1ResetABranchResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1RestoreABranchResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *BranchRestoreResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1RestoreABranchResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1RestoreABranchResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -13352,8 +13448,8 @@ func (r V1GetASnippetResponse) StatusCode() int {
 }
 
 // V1DeleteABranchWithResponse request returning *V1DeleteABranchResponse
-func (c *ClientWithResponses) V1DeleteABranchWithResponse(ctx context.Context, branchIdOrRef string, reqEditors ...RequestEditorFn) (*V1DeleteABranchResponse, error) {
-	rsp, err := c.V1DeleteABranch(ctx, branchIdOrRef, reqEditors...)
+func (c *ClientWithResponses) V1DeleteABranchWithResponse(ctx context.Context, branchIdOrRef string, params *V1DeleteABranchParams, reqEditors ...RequestEditorFn) (*V1DeleteABranchResponse, error) {
+	rsp, err := c.V1DeleteABranch(ctx, branchIdOrRef, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -13444,6 +13540,15 @@ func (c *ClientWithResponses) V1ResetABranchWithResponse(ctx context.Context, br
 		return nil, err
 	}
 	return ParseV1ResetABranchResponse(rsp)
+}
+
+// V1RestoreABranchWithResponse request returning *V1RestoreABranchResponse
+func (c *ClientWithResponses) V1RestoreABranchWithResponse(ctx context.Context, branchIdOrRef string, reqEditors ...RequestEditorFn) (*V1RestoreABranchResponse, error) {
+	rsp, err := c.V1RestoreABranch(ctx, branchIdOrRef, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1RestoreABranchResponse(rsp)
 }
 
 // V1AuthorizeUserWithResponse request returning *V1AuthorizeUserResponse
@@ -15181,6 +15286,32 @@ func ParseV1ResetABranchResponse(rsp *http.Response) (*V1ResetABranchResponse, e
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1RestoreABranchResponse parses an HTTP response from a V1RestoreABranchWithResponse call
+func ParseV1RestoreABranchResponse(rsp *http.Response) (*V1RestoreABranchResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1RestoreABranchResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BranchRestoreResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	}
 
