@@ -29,8 +29,7 @@ var (
 	projectName string
 	orgId       string
 	dbPassword  string
-
-	region = utils.EnumFlag{
+	region      = utils.EnumFlag{
 		Allowed: awsRegions(),
 	}
 	size = utils.EnumFlag{
