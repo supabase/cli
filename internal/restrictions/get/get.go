@@ -19,6 +19,5 @@ func Run(ctx context.Context, projectRef string) error {
 
 	fmt.Printf("DB Allowed IPv4 CIDRs: %+v\n", resp.JSON200.Config.DbAllowedCidrs)
 	fmt.Printf("DB Allowed IPv6 CIDRs: %+v\n", resp.JSON200.Config.DbAllowedCidrsV6)
-	fmt.Printf("Restrictions applied successfully: %+v\n", resp.JSON200.Status == "applied")
 	return nil
 }
