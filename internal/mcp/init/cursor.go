@@ -59,7 +59,7 @@ func (c *cursorClient) Configure(ctx context.Context, fsys afero.Fs) error {
 
 	// Prepare the Supabase MCP server config
 	supabaseConfig := map[string]interface{}{
-		"url": "https://mcp.supabase.com/mcp",
+		"url": "http://localhost:54321/mcp",
 	}
 
 	// Read existing config if it exists
@@ -107,7 +107,7 @@ func (c *cursorClient) Configure(ctx context.Context, fsys afero.Fs) error {
 	fmt.Println(`{
   "mcpServers": {
     "supabase": {
-      "url": "https://mcp.supabase.com/mcp"
+      "url": "http://localhost:54321/mcp"
     }
   }
 }`)

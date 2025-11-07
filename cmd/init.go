@@ -50,13 +50,23 @@ var (
 				return err
 			}
 
-			// Optionally configure MCP client if flag is provided
-			mcpClient, _ := cmd.Flags().GetString("mcp-client")
-			if mcpClient != "" {
-				if err := mcpinit.Run(ctx, fsys, mcpClient); err != nil {
+			// Prompt for MCP configuration if in interactive mode
+			console := utils.NewConsole()
+			if configureMCP, err := console.PromptYesNo(ctx, "Configure Supabase MCP server locally?", false); err != nil {
+				return err
+			} else if configureMCP {
+				clientName, err := mcpinit.PromptMCPClient(ctx)
+				if err != nil {
 					return err
 				}
+				// Skip configuration if user selected "other"
+				if clientName != "other" {
+					if err := mcpinit.Run(ctx, fsys, clientName); err != nil {
+						return err
+					}
+				}
 			}
+
 			return nil
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
@@ -73,6 +83,5 @@ func init() {
 	flags.BoolVar(createIntellijSettings, "with-intellij-settings", false, "Generate IntelliJ IDEA settings for Deno.")
 	flags.BoolVar(&initParams.UseOrioleDB, "use-orioledb", false, "Use OrioleDB storage engine for Postgres.")
 	flags.BoolVar(&initParams.Overwrite, "force", false, "Overwrite existing "+utils.ConfigPath+".")
-	flags.String("mcp-client", "", "Configure Supabase MCP for a client (e.g., claude-code, cursor, vscode). Runs after project init if provided.")
 	rootCmd.AddCommand(initCmd)
 }

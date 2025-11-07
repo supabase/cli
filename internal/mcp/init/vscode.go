@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/utils"
 )
 
 // vscodeClient implements the Client interface for VS Code
@@ -32,22 +34,25 @@ func (c *vscodeClient) Configure(ctx context.Context, fsys afero.Fs) error {
 	fmt.Println("Configuring VS Code...")
 	fmt.Println()
 
-	// Prompt for config scope
-	fmt.Println("Where would you like to add the configuration?")
-	fmt.Println("  1. Project-local (in .vscode/mcp.json)")
-	fmt.Println("  2. Global (in your home directory)")
-	fmt.Print("Choice [1]: ")
-
-	var choice string
-	if _, err := fmt.Scanln(&choice); err != nil && err.Error() != "unexpected newline" {
-		return fmt.Errorf("failed to read choice: %w", err)
+	// Prompt for config scope using dropdown
+	items := []utils.PromptItem{
+		{
+			Summary: "project",
+			Details: "Project-local (in .vscode/mcp.json)",
+		},
+		{
+			Summary: "global",
+			Details: "Global (in your home directory)",
+		},
 	}
-	if choice == "" {
-		choice = "1"
+
+	choice, err := utils.PromptChoice(ctx, "Where would you like to add the configuration?", items, tea.WithOutput(os.Stderr))
+	if err != nil {
+		return err
 	}
 
 	var configPath string
-	if choice == "2" {
+	if choice.Summary == "global" {
 		// Global config
 		homeDir, _ := os.UserHomeDir()
 		configPath = filepath.Join(homeDir, ".vscode", "mcp.json")
@@ -60,7 +65,7 @@ func (c *vscodeClient) Configure(ctx context.Context, fsys afero.Fs) error {
 	// Prepare the Supabase MCP server config
 	supabaseConfig := map[string]interface{}{
 		"type": "http",
-		"url":  "https://mcp.supabase.com/mcp",
+		"url":  "http://localhost:54321/mcp",
 	}
 
 	// Read existing config if it exists
@@ -75,15 +80,15 @@ func (c *vscodeClient) Configure(ctx context.Context, fsys afero.Fs) error {
 		config = make(map[string]interface{})
 	}
 
-	// Ensure mcpServers exists
-	mcpServers, ok := config["mcpServers"].(map[string]interface{})
+	// Ensure servers exists
+	servers, ok := config["servers"].(map[string]interface{})
 	if !ok {
-		mcpServers = make(map[string]interface{})
-		config["mcpServers"] = mcpServers
+		servers = make(map[string]interface{})
+		config["servers"] = servers
 	}
 
 	// Add or update Supabase server
-	mcpServers["supabase"] = supabaseConfig
+	servers["supabase"] = supabaseConfig
 
 	// Ensure directory exists
 	configDir := filepath.Dir(configPath)
@@ -106,10 +111,10 @@ func (c *vscodeClient) Configure(ctx context.Context, fsys afero.Fs) error {
 	fmt.Println()
 	fmt.Println("Configuration added:")
 	fmt.Println(`{
-  "mcpServers": {
+  "servers": {
     "supabase": {
       "type": "http",
-      "url": "https://mcp.supabase.com/mcp"
+      "url": "http://localhost:54321/mcp"
     }
   }
 }`)

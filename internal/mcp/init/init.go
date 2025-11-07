@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/utils"
 )
 
 // clientRegistry holds all supported clients
@@ -12,6 +14,30 @@ var clientRegistry = []Client{
 	newClaudeCodeClient(),
 	newCursorClient(),
 	newVSCodeClient(),
+}
+
+// PromptMCPClient prompts the user to select an MCP client from the available options
+func PromptMCPClient(ctx context.Context, opts ...tea.ProgramOption) (string, error) {
+	// Add all clients plus "Other" option
+	items := make([]utils.PromptItem, len(clientRegistry)+1)
+	for i, client := range clientRegistry {
+		items[i] = utils.PromptItem{
+			Summary: client.Name(),
+			Details: client.DisplayName(),
+		}
+	}
+	// Add "Other" option at the end
+	items[len(clientRegistry)] = utils.PromptItem{
+		Summary: "other",
+		Details: "Configure it manually",
+	}
+	
+	choice, err := utils.PromptChoice(ctx, "Which client do you want to configure?", items, opts...)
+	if err != nil {
+		return "", err
+	}
+	
+	return choice.Summary, nil
 }
 
 func Run(ctx context.Context, fsys afero.Fs, clientFlag string) error {

@@ -28,12 +28,11 @@ func newClaudeCodeClient() *claudeCodeClient {
 }
 
 func (c *claudeCodeClient) Configure(ctx context.Context, fsys afero.Fs) error {
-	fmt.Println("Adding Supabase MCP server to Claude Code...")
+	fmt.Println("Configuring Claude Code...")
 	fmt.Println()
 
-	// Build the claude mcp add command
-	// #nosec G204 -- command and URL are controlled constants
-	cmd := exec.CommandContext(ctx, "claude", "mcp", "add", "--transport", "http", "supabase", "https://mcp.supabase.com/mcp")
+	// Run the 'claude mcp add' command
+	cmd := exec.CommandContext(ctx, "claude", "mcp", "add", "--transport", "http", "supabase", "http://localhost:54321/mcp")
 
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
