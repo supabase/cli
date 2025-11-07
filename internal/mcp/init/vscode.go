@@ -106,18 +106,18 @@ func (c *vscodeClient) Configure(ctx context.Context, fsys afero.Fs) error {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
+	// Generate example for display
+	configExample, _ := json.MarshalIndent(map[string]interface{}{
+		"servers": map[string]interface{}{
+			"supabase": supabaseConfig,
+		},
+	}, "", "  ")
+
 	fmt.Println()
 	fmt.Printf("✓ Successfully configured VS Code at: %s\n", configPath)
 	fmt.Println()
 	fmt.Println("Configuration added:")
-	fmt.Println(`{
-  "servers": {
-    "supabase": {
-      "type": "http",
-      "url": "http://localhost:54321/mcp"
-    }
-  }
-}`)
+	fmt.Println(string(configExample))
 	fmt.Println()
 	fmt.Println("The Supabase MCP server is now available in VS Code!")
 	return nil

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/utils"
 )
 
 // cursorClient implements the Client interface for Cursor
@@ -32,22 +33,16 @@ func (c *cursorClient) Configure(ctx context.Context, fsys afero.Fs) error {
 	fmt.Println("Configuring Cursor...")
 	fmt.Println()
 
-	// Prompt for config scope
-	fmt.Println("Where would you like to add the configuration?")
-	fmt.Println("  1. Project-local (in .cursor/mcp.json)")
-	fmt.Println("  2. Global (in your home directory)")
-	fmt.Print("Choice [1]: ")
-
-	var choice string
-	if _, err := fmt.Scanln(&choice); err != nil && err.Error() != "unexpected newline" {
-		return fmt.Errorf("failed to read choice: %w", err)
-	}
-	if choice == "" {
-		choice = "1"
+	choice, err := utils.PromptChoice(ctx, "Where would you like to add the configuration?", []utils.PromptItem{
+		{Summary: "project", Details: "Project-local (in .cursor/mcp.json)"},
+		{Summary: "global", Details: "Global (in your home directory)"},
+	})
+	if err != nil {
+		return err
 	}
 
 	var configPath string
-	if choice == "2" {
+	if choice.Summary == "global" {
 		// Global config
 		homeDir, _ := os.UserHomeDir()
 		configPath = filepath.Join(homeDir, ".cursor", "mcp.json")
@@ -59,7 +54,8 @@ func (c *cursorClient) Configure(ctx context.Context, fsys afero.Fs) error {
 
 	// Prepare the Supabase MCP server config
 	supabaseConfig := map[string]interface{}{
-		"url": "http://localhost:54321/mcp",
+		"type": "http",
+		"url":  "http://localhost:54321/mcp",
 	}
 
 	// Read existing config if it exists
@@ -100,18 +96,24 @@ func (c *cursorClient) Configure(ctx context.Context, fsys afero.Fs) error {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
+	// Generate example for display
+	configExample, _ := json.MarshalIndent(map[string]interface{}{
+		"mcpServers": map[string]interface{}{
+			"supabase": supabaseConfig,
+		},
+	}, "", "  ")
+
 	fmt.Println()
 	fmt.Printf("✓ Successfully configured Cursor at: %s\n", configPath)
 	fmt.Println()
 	fmt.Println("Configuration added:")
-	fmt.Println(`{
-  "mcpServers": {
-    "supabase": {
-      "url": "http://localhost:54321/mcp"
-    }
-  }
-}`)
+	fmt.Println(string(configExample))
 	fmt.Println()
-	fmt.Println("The Supabase MCP server is now available in Cursor!")
+	fmt.Println("Next steps:")
+	fmt.Println("  1. Open Cursor")
+	fmt.Println("  2. Navigate to Cursor Settings > Tools & MCP")
+	fmt.Println("  3. Enable the 'supabase' MCP server")
+	fmt.Println()
+	fmt.Println("The Supabase MCP server will then be available in Cursor!")
 	return nil
 }
