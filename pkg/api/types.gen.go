@@ -3856,8 +3856,9 @@ type V1CreateFunctionBody struct {
 
 // V1CreateMigrationBody defines model for V1CreateMigrationBody.
 type V1CreateMigrationBody struct {
-	Name  *string `json:"name,omitempty"`
-	Query string  `json:"query"`
+	Name     *string `json:"name,omitempty"`
+	Query    string  `json:"query"`
+	Rollback *string `json:"rollback,omitempty"`
 }
 
 // V1CreateProjectBody defines model for V1CreateProjectBody.
@@ -3944,6 +3945,16 @@ type V1CreateProjectBody_RegionSelection struct {
 
 // V1CreateProjectBodyReleaseChannel Release channel. If not provided, GA will be used.
 type V1CreateProjectBodyReleaseChannel string
+
+// V1GetMigrationResponse defines model for V1GetMigrationResponse.
+type V1GetMigrationResponse struct {
+	CreatedBy      *string   `json:"created_by,omitempty"`
+	IdempotencyKey *string   `json:"idempotency_key,omitempty"`
+	Name           *string   `json:"name,omitempty"`
+	Rollback       *[]string `json:"rollback,omitempty"`
+	Statements     *[]string `json:"statements,omitempty"`
+	Version        string    `json:"version"`
+}
 
 // V1GetUsageApiCountResponse defines model for V1GetUsageApiCountResponse.
 type V1GetUsageApiCountResponse struct {
@@ -4041,6 +4052,12 @@ type V1OrganizationSlugResponseOptInTags string
 
 // V1OrganizationSlugResponsePlan defines model for V1OrganizationSlugResponse.Plan.
 type V1OrganizationSlugResponsePlan string
+
+// V1PatchMigrationBody defines model for V1PatchMigrationBody.
+type V1PatchMigrationBody struct {
+	Name     *string `json:"name,omitempty"`
+	Rollback *string `json:"rollback,omitempty"`
+}
 
 // V1PgbouncerConfigResponse defines model for V1PgbouncerConfigResponse.
 type V1PgbouncerConfigResponse struct {
@@ -4270,8 +4287,9 @@ type V1UpdatePostgrestConfigBody struct {
 
 // V1UpsertMigrationBody defines model for V1UpsertMigrationBody.
 type V1UpsertMigrationBody struct {
-	Name  *string `json:"name,omitempty"`
-	Query string  `json:"query"`
+	Name     *string `json:"name,omitempty"`
+	Query    string  `json:"query"`
+	Rollback *string `json:"rollback,omitempty"`
 }
 
 // VanitySubdomainBody defines model for VanitySubdomainBody.
@@ -4479,6 +4497,12 @@ type V1GetRestorePointParams struct {
 	Name *string `form:"name,omitempty" json:"name,omitempty"`
 }
 
+// V1RollbackMigrationsParams defines parameters for V1RollbackMigrations.
+type V1RollbackMigrationsParams struct {
+	// Gte Rollback migrations greater or equal to this version
+	Gte string `form:"gte" json:"gte"`
+}
+
 // V1ApplyAMigrationParams defines parameters for V1ApplyAMigration.
 type V1ApplyAMigrationParams struct {
 	// IdempotencyKey A unique key to ensure the same migration is tracked only once.
@@ -4656,6 +4680,9 @@ type V1ApplyAMigrationJSONRequestBody = V1CreateMigrationBody
 
 // V1UpsertAMigrationJSONRequestBody defines body for V1UpsertAMigration for application/json ContentType.
 type V1UpsertAMigrationJSONRequestBody = V1UpsertMigrationBody
+
+// V1PatchAMigrationJSONRequestBody defines body for V1PatchAMigration for application/json ContentType.
+type V1PatchAMigrationJSONRequestBody = V1PatchMigrationBody
 
 // V1RunAQueryJSONRequestBody defines body for V1RunAQuery for application/json ContentType.
 type V1RunAQueryJSONRequestBody = V1RunQueryBody

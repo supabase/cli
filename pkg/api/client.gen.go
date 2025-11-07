@@ -435,6 +435,9 @@ type ClientInterface interface {
 	// V1DeleteJitAccess request
 	V1DeleteJitAccess(ctx context.Context, ref string, userId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1RollbackMigrations request
+	V1RollbackMigrations(ctx context.Context, ref string, params *V1RollbackMigrationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1ListMigrationHistory request
 	V1ListMigrationHistory(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -447,6 +450,14 @@ type ClientInterface interface {
 	V1UpsertAMigrationWithBody(ctx context.Context, ref string, params *V1UpsertAMigrationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	V1UpsertAMigration(ctx context.Context, ref string, params *V1UpsertAMigrationParams, body V1UpsertAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetAMigration request
+	V1GetAMigration(ctx context.Context, ref string, version string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1PatchAMigrationWithBody request with any body
+	V1PatchAMigrationWithBody(ctx context.Context, ref string, version string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1PatchAMigration(ctx context.Context, ref string, version string, body V1PatchAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1RunAQueryWithBody request with any body
 	V1RunAQueryWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2108,6 +2119,18 @@ func (c *Client) V1DeleteJitAccess(ctx context.Context, ref string, userId opena
 	return c.Client.Do(req)
 }
 
+func (c *Client) V1RollbackMigrations(ctx context.Context, ref string, params *V1RollbackMigrationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1RollbackMigrationsRequest(c.Server, ref, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) V1ListMigrationHistory(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1ListMigrationHistoryRequest(c.Server, ref)
 	if err != nil {
@@ -2158,6 +2181,42 @@ func (c *Client) V1UpsertAMigrationWithBody(ctx context.Context, ref string, par
 
 func (c *Client) V1UpsertAMigration(ctx context.Context, ref string, params *V1UpsertAMigrationParams, body V1UpsertAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1UpsertAMigrationRequest(c.Server, ref, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetAMigration(ctx context.Context, ref string, version string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetAMigrationRequest(c.Server, ref, version)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1PatchAMigrationWithBody(ctx context.Context, ref string, version string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1PatchAMigrationRequestWithBody(c.Server, ref, version, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1PatchAMigration(ctx context.Context, ref string, version string, body V1PatchAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1PatchAMigrationRequest(c.Server, ref, version, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7391,6 +7450,58 @@ func NewV1DeleteJitAccessRequest(server string, ref string, userId openapi_types
 	return req, nil
 }
 
+// NewV1RollbackMigrationsRequest generates requests for V1RollbackMigrations
+func NewV1RollbackMigrationsRequest(server string, ref string, params *V1RollbackMigrationsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/migrations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "gte", runtime.ParamLocationQuery, params.Gte); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewV1ListMigrationHistoryRequest generates requests for V1ListMigrationHistory
 func NewV1ListMigrationHistoryRequest(server string, ref string) (*http.Request, error) {
 	var err error
@@ -7545,6 +7656,101 @@ func NewV1UpsertAMigrationRequestWithBody(server string, ref string, params *V1U
 		}
 
 	}
+
+	return req, nil
+}
+
+// NewV1GetAMigrationRequest generates requests for V1GetAMigration
+func NewV1GetAMigrationRequest(server string, ref string, version string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "version", runtime.ParamLocationPath, version)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/migrations/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1PatchAMigrationRequest calls the generic V1PatchAMigration builder with application/json body
+func NewV1PatchAMigrationRequest(server string, ref string, version string, body V1PatchAMigrationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1PatchAMigrationRequestWithBody(server, ref, version, "application/json", bodyReader)
+}
+
+// NewV1PatchAMigrationRequestWithBody generates requests for V1PatchAMigration with any type of body
+func NewV1PatchAMigrationRequestWithBody(server string, ref string, version string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "version", runtime.ParamLocationPath, version)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/migrations/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -10149,6 +10355,9 @@ type ClientWithResponsesInterface interface {
 	// V1DeleteJitAccessWithResponse request
 	V1DeleteJitAccessWithResponse(ctx context.Context, ref string, userId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1DeleteJitAccessResponse, error)
 
+	// V1RollbackMigrationsWithResponse request
+	V1RollbackMigrationsWithResponse(ctx context.Context, ref string, params *V1RollbackMigrationsParams, reqEditors ...RequestEditorFn) (*V1RollbackMigrationsResponse, error)
+
 	// V1ListMigrationHistoryWithResponse request
 	V1ListMigrationHistoryWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListMigrationHistoryResponse, error)
 
@@ -10161,6 +10370,14 @@ type ClientWithResponsesInterface interface {
 	V1UpsertAMigrationWithBodyWithResponse(ctx context.Context, ref string, params *V1UpsertAMigrationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpsertAMigrationResponse, error)
 
 	V1UpsertAMigrationWithResponse(ctx context.Context, ref string, params *V1UpsertAMigrationParams, body V1UpsertAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpsertAMigrationResponse, error)
+
+	// V1GetAMigrationWithResponse request
+	V1GetAMigrationWithResponse(ctx context.Context, ref string, version string, reqEditors ...RequestEditorFn) (*V1GetAMigrationResponse, error)
+
+	// V1PatchAMigrationWithBodyWithResponse request with any body
+	V1PatchAMigrationWithBodyWithResponse(ctx context.Context, ref string, version string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1PatchAMigrationResponse, error)
+
+	V1PatchAMigrationWithResponse(ctx context.Context, ref string, version string, body V1PatchAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*V1PatchAMigrationResponse, error)
 
 	// V1RunAQueryWithBodyWithResponse request with any body
 	V1RunAQueryWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RunAQueryResponse, error)
@@ -12406,6 +12623,27 @@ func (r V1DeleteJitAccessResponse) StatusCode() int {
 	return 0
 }
 
+type V1RollbackMigrationsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1RollbackMigrationsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1RollbackMigrationsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1ListMigrationHistoryResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -12464,6 +12702,49 @@ func (r V1UpsertAMigrationResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1UpsertAMigrationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetAMigrationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *V1GetMigrationResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetAMigrationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetAMigrationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1PatchAMigrationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1PatchAMigrationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1PatchAMigrationResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -14536,6 +14817,15 @@ func (c *ClientWithResponses) V1DeleteJitAccessWithResponse(ctx context.Context,
 	return ParseV1DeleteJitAccessResponse(rsp)
 }
 
+// V1RollbackMigrationsWithResponse request returning *V1RollbackMigrationsResponse
+func (c *ClientWithResponses) V1RollbackMigrationsWithResponse(ctx context.Context, ref string, params *V1RollbackMigrationsParams, reqEditors ...RequestEditorFn) (*V1RollbackMigrationsResponse, error) {
+	rsp, err := c.V1RollbackMigrations(ctx, ref, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1RollbackMigrationsResponse(rsp)
+}
+
 // V1ListMigrationHistoryWithResponse request returning *V1ListMigrationHistoryResponse
 func (c *ClientWithResponses) V1ListMigrationHistoryWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListMigrationHistoryResponse, error) {
 	rsp, err := c.V1ListMigrationHistory(ctx, ref, reqEditors...)
@@ -14577,6 +14867,32 @@ func (c *ClientWithResponses) V1UpsertAMigrationWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseV1UpsertAMigrationResponse(rsp)
+}
+
+// V1GetAMigrationWithResponse request returning *V1GetAMigrationResponse
+func (c *ClientWithResponses) V1GetAMigrationWithResponse(ctx context.Context, ref string, version string, reqEditors ...RequestEditorFn) (*V1GetAMigrationResponse, error) {
+	rsp, err := c.V1GetAMigration(ctx, ref, version, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetAMigrationResponse(rsp)
+}
+
+// V1PatchAMigrationWithBodyWithResponse request with arbitrary body returning *V1PatchAMigrationResponse
+func (c *ClientWithResponses) V1PatchAMigrationWithBodyWithResponse(ctx context.Context, ref string, version string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1PatchAMigrationResponse, error) {
+	rsp, err := c.V1PatchAMigrationWithBody(ctx, ref, version, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1PatchAMigrationResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1PatchAMigrationWithResponse(ctx context.Context, ref string, version string, body V1PatchAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*V1PatchAMigrationResponse, error) {
+	rsp, err := c.V1PatchAMigration(ctx, ref, version, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1PatchAMigrationResponse(rsp)
 }
 
 // V1RunAQueryWithBodyWithResponse request with arbitrary body returning *V1RunAQueryResponse
@@ -17430,6 +17746,22 @@ func ParseV1DeleteJitAccessResponse(rsp *http.Response) (*V1DeleteJitAccessRespo
 	return response, nil
 }
 
+// ParseV1RollbackMigrationsResponse parses an HTTP response from a V1RollbackMigrationsWithResponse call
+func ParseV1RollbackMigrationsResponse(rsp *http.Response) (*V1RollbackMigrationsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1RollbackMigrationsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
 // ParseV1ListMigrationHistoryResponse parses an HTTP response from a V1ListMigrationHistoryWithResponse call
 func ParseV1ListMigrationHistoryResponse(rsp *http.Response) (*V1ListMigrationHistoryResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -17481,6 +17813,48 @@ func ParseV1UpsertAMigrationResponse(rsp *http.Response) (*V1UpsertAMigrationRes
 	}
 
 	response := &V1UpsertAMigrationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1GetAMigrationResponse parses an HTTP response from a V1GetAMigrationWithResponse call
+func ParseV1GetAMigrationResponse(rsp *http.Response) (*V1GetAMigrationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetAMigrationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest V1GetMigrationResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1PatchAMigrationResponse parses an HTTP response from a V1PatchAMigrationWithResponse call
+func ParseV1PatchAMigrationResponse(rsp *http.Response) (*V1PatchAMigrationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1PatchAMigrationResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
