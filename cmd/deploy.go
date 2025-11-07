@@ -27,7 +27,7 @@ var (
 	deployIncludeSeed  bool
 
 	deployCmd = &cobra.Command{
-		GroupID: groupLocalDev,
+		GroupID: groupQuickStart,
 		Use:     "deploy",
 		Short:   "Push all local changes to a Supabase project",
 		Long: `Deploy local changes to a remote Supabase project.
