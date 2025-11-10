@@ -38,7 +38,7 @@ func Run(ctx context.Context, projectRef string, skipPooler bool, fsys afero.Fs,
 	// 2. Check database connection
 	config := flags.NewDbConfigWithPassword(ctx, projectRef)
 	if err := linkDatabase(ctx, config, fsys, options...); err != nil {
-		return err
+		fmt.Fprintln(os.Stderr, utils.Yellow("WARN:"), err)
 	}
 
 	// 3. Save project ref
