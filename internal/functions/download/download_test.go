@@ -49,6 +49,12 @@ func writeConfig(t *testing.T, fsys afero.Fs) {
 	require.NoError(t, utils.WriteConfig(fsys, false))
 }
 
+func withProjectRef(t *testing.T, project string) {
+	t.Helper()
+	flags.ProjectRef = project
+	t.Cleanup(func() { flags.ProjectRef = "" })
+}
+
 func newFunctionMetadata(slug string) api.FunctionSlugResponse {
 	entrypoint := "file:///src/index.ts"
 	status := api.FunctionSlugResponseStatus("ACTIVE")
@@ -108,7 +114,15 @@ func mustParseURL(t *testing.T, raw string) *url.URL {
 	return u
 }
 
-func TestDownloadCommand(t *testing.T) {
+func cleanupHTTP(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() {
+		gock.OffAll()
+		utils.CmdSuggestion = ""
+	})
+}
+
+func TestRunLegacyUnbundle(t *testing.T) {
 	const slug = "test-func"
 
 	t.Run("downloads eszip bundle", func(t *testing.T) {
@@ -123,7 +137,7 @@ func TestDownloadCommand(t *testing.T) {
 		_, err := fsys.Create(utils.DenoPathOverride)
 		require.NoError(t, err)
 		// Setup mock api
-		defer gock.OffAll()
+		cleanupHTTP(t)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
@@ -186,7 +200,7 @@ func TestDownloadCommand(t *testing.T) {
 		_, err := fsys.Create(utils.DenoPathOverride)
 		require.NoError(t, err)
 		// Setup mock api
-		defer gock.OffAll()
+		cleanupHTTP(t)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusNotFound).
@@ -208,7 +222,7 @@ func TestDownloadFunction(t *testing.T) {
 
 	t.Run("throws error on network error", func(t *testing.T) {
 		// Setup mock api
-		defer gock.OffAll()
+		cleanupHTTP(t)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
@@ -224,7 +238,7 @@ func TestDownloadFunction(t *testing.T) {
 
 	t.Run("throws error on service unavailable", func(t *testing.T) {
 		// Setup mock api
-		defer gock.OffAll()
+		cleanupHTTP(t)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
@@ -242,7 +256,7 @@ func TestDownloadFunction(t *testing.T) {
 		// Setup deno error
 		t.Setenv("TEST_DENO_ERROR", "extract failed")
 		// Setup mock api
-		defer gock.OffAll()
+		cleanupHTTP(t)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
@@ -267,7 +281,7 @@ func TestGetMetadata(t *testing.T) {
 
 	t.Run("fallback to default paths", func(t *testing.T) {
 		// Setup mock api
-		defer gock.OffAll()
+		cleanupHTTP(t)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
@@ -282,7 +296,7 @@ func TestGetMetadata(t *testing.T) {
 
 	t.Run("throws error on network error", func(t *testing.T) {
 		// Setup mock api
-		defer gock.OffAll()
+		cleanupHTTP(t)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			ReplyError(errors.New("network error"))
@@ -295,7 +309,7 @@ func TestGetMetadata(t *testing.T) {
 
 	t.Run("throws error on service unavailable", func(t *testing.T) {
 		// Setup mock api
-		defer gock.OffAll()
+		cleanupHTTP(t)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusServiceUnavailable)
@@ -307,14 +321,13 @@ func TestGetMetadata(t *testing.T) {
 	})
 }
 
-func TestRunNewUnbundleModes(t *testing.T) {
+func TestRunDockerUnbundle(t *testing.T) {
 	t.Run("downloads bundle with docker when available", func(t *testing.T) {
 		const slugDocker = "demo"
 		fsys := afero.NewMemMapFs()
 		writeConfig(t, fsys)
 		project := apitest.RandomProjectRef()
-		flags.ProjectRef = project
-		t.Cleanup(func() { flags.ProjectRef = "" })
+		withProjectRef(t, project)
 		require.NoError(t, flags.LoadConfig(fsys))
 
 		token := apitest.RandomAccessToken(t)
@@ -323,10 +336,7 @@ func TestRunNewUnbundleModes(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		dockerHost := utils.Docker.DaemonHost()
 
-		defer func() {
-			gock.OffAll()
-			utils.CmdSuggestion = ""
-		}()
+		cleanupHTTP(t)
 
 		gock.New(dockerHost).
 			Head("/_ping").
@@ -358,8 +368,7 @@ func TestRunNewUnbundleModes(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		writeConfig(t, fsys)
 		project := apitest.RandomProjectRef()
-		flags.ProjectRef = project
-		t.Cleanup(func() { flags.ProjectRef = "" })
+		withProjectRef(t, project)
 		require.NoError(t, flags.LoadConfig(fsys))
 
 		token := apitest.RandomAccessToken(t)
@@ -368,10 +377,7 @@ func TestRunNewUnbundleModes(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		dockerHost := utils.Docker.DaemonHost()
 
-		defer func() {
-			gock.OffAll()
-			utils.CmdSuggestion = ""
-		}()
+		cleanupHTTP(t)
 
 		gock.New(dockerHost).
 			Head("/_ping").
@@ -396,18 +402,17 @@ func TestRunNewUnbundleModes(t *testing.T) {
 	})
 }
 
-func TestDownloadWithServerSideUnbundle(t *testing.T) {
+func TestRunServerSideUnbundle(t *testing.T) {
 	const slug = "test-func"
 	token := apitest.RandomAccessToken(t)
 	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 
 	t.Run("writes files using inferred base directory", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
+		writeConfig(t, fsys)
 		project := apitest.RandomProjectRef()
-		t.Cleanup(func() {
-			gock.OffAll()
-			utils.CmdSuggestion = ""
-		})
+		withProjectRef(t, project)
+		cleanupHTTP(t)
 
 		meta := newFunctionMetadata(slug)
 		entrypoint := "file:///source/index.ts"
@@ -418,7 +423,7 @@ func TestDownloadWithServerSideUnbundle(t *testing.T) {
 			{filename: "source/utils.ts", contents: "export const value = 1;"},
 		})
 
-		err := downloadWithServerSideUnbundle(context.Background(), slug, project, fsys)
+		err := Run(context.Background(), slug, project, false, false, fsys)
 		require.NoError(t, err)
 
 		data, err := afero.ReadFile(fsys, filepath.Join(utils.FunctionsDir, slug, "index.ts"))
@@ -441,11 +446,10 @@ func TestDownloadWithServerSideUnbundle(t *testing.T) {
 
 	t.Run("derives base directory from absolute filenames", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
+		writeConfig(t, fsys)
 		project := apitest.RandomProjectRef()
-		t.Cleanup(func() {
-			gock.OffAll()
-			utils.CmdSuggestion = ""
-		})
+		withProjectRef(t, project)
+		cleanupHTTP(t)
 
 		meta := newFunctionMetadata(slug)
 		entrypoint := "file:///source/index.ts"
@@ -461,7 +465,7 @@ func TestDownloadWithServerSideUnbundle(t *testing.T) {
 			{filename: utilsPath, contents: "export const util = 2;"},
 		})
 
-		err := downloadWithServerSideUnbundle(context.Background(), slug, project, fsys)
+		err := Run(context.Background(), slug, project, false, false, fsys)
 		require.NoError(t, err)
 
 		root := filepath.Join(utils.FunctionsDir, slug)
@@ -478,11 +482,10 @@ func TestDownloadWithServerSideUnbundle(t *testing.T) {
 
 	t.Run("fails when response not multipart", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
+		writeConfig(t, fsys)
 		project := apitest.RandomProjectRef()
-		t.Cleanup(func() {
-			gock.OffAll()
-			utils.CmdSuggestion = ""
-		})
+		withProjectRef(t, project)
+		cleanupHTTP(t)
 		mockFunctionMetadata(project, slug, newFunctionMetadata(slug))
 		gock.New(utils.DefaultApiHost).
 			Get(fmt.Sprintf("/v1/projects/%s/functions/%s/body", project, slug)).
@@ -490,17 +493,16 @@ func TestDownloadWithServerSideUnbundle(t *testing.T) {
 			SetHeader("Content-Type", "application/json").
 			BodyString(`{"error":"no multipart"}`)
 
-		err := downloadWithServerSideUnbundle(context.Background(), slug, project, fsys)
+		err := Run(context.Background(), slug, project, false, false, fsys)
 		assert.ErrorContains(t, err, "expected multipart response")
 	})
 
 	t.Run("fails when part escapes base dir", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
+		writeConfig(t, fsys)
 		project := apitest.RandomProjectRef()
-		t.Cleanup(func() {
-			gock.OffAll()
-			utils.CmdSuggestion = ""
-		})
+		withProjectRef(t, project)
+		cleanupHTTP(t)
 
 		meta := newFunctionMetadata(slug)
 		entrypoint := "file:///source/index.ts"
@@ -511,7 +513,7 @@ func TestDownloadWithServerSideUnbundle(t *testing.T) {
 			{filename: "source/secret.env", supabasePath: "../secret.env", contents: "SECRET=1"},
 		})
 
-		err := downloadWithServerSideUnbundle(context.Background(), slug, project, fsys)
+		err := Run(context.Background(), slug, project, false, false, fsys)
 		assert.ErrorContains(t, err, "invalid file path outside function directory")
 	})
 }
