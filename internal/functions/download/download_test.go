@@ -114,11 +114,11 @@ func mustParseURL(t *testing.T, raw string) *url.URL {
 	return u
 }
 
-func cleanupHTTP(t *testing.T) {
+func cleanupTestData(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
 		gock.OffAll()
-		utils.CmdSuggestion = ""
+		utils.CmdSuggestion = "" // fmt.Sprintf("try turning it off and on again")
 	})
 }
 
@@ -137,7 +137,7 @@ func TestRunLegacyUnbundle(t *testing.T) {
 		_, err := fsys.Create(utils.DenoPathOverride)
 		require.NoError(t, err)
 		// Setup mock api
-		cleanupHTTP(t)
+		cleanupTestData(t)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
@@ -200,7 +200,7 @@ func TestRunLegacyUnbundle(t *testing.T) {
 		_, err := fsys.Create(utils.DenoPathOverride)
 		require.NoError(t, err)
 		// Setup mock api
-		cleanupHTTP(t)
+		cleanupTestData(t)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusNotFound).
@@ -222,7 +222,7 @@ func TestDownloadFunction(t *testing.T) {
 
 	t.Run("throws error on network error", func(t *testing.T) {
 		// Setup mock api
-		cleanupHTTP(t)
+		cleanupTestData(t)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
@@ -238,7 +238,7 @@ func TestDownloadFunction(t *testing.T) {
 
 	t.Run("throws error on service unavailable", func(t *testing.T) {
 		// Setup mock api
-		cleanupHTTP(t)
+		cleanupTestData(t)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
@@ -256,7 +256,7 @@ func TestDownloadFunction(t *testing.T) {
 		// Setup deno error
 		t.Setenv("TEST_DENO_ERROR", "extract failed")
 		// Setup mock api
-		cleanupHTTP(t)
+		cleanupTestData(t)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
@@ -281,7 +281,7 @@ func TestGetMetadata(t *testing.T) {
 
 	t.Run("fallback to default paths", func(t *testing.T) {
 		// Setup mock api
-		cleanupHTTP(t)
+		cleanupTestData(t)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
@@ -296,7 +296,7 @@ func TestGetMetadata(t *testing.T) {
 
 	t.Run("throws error on network error", func(t *testing.T) {
 		// Setup mock api
-		cleanupHTTP(t)
+		cleanupTestData(t)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			ReplyError(errors.New("network error"))
@@ -309,7 +309,7 @@ func TestGetMetadata(t *testing.T) {
 
 	t.Run("throws error on service unavailable", func(t *testing.T) {
 		// Setup mock api
-		cleanupHTTP(t)
+		cleanupTestData(t)
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusServiceUnavailable)
@@ -336,7 +336,7 @@ func TestRunDockerUnbundle(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		dockerHost := utils.Docker.DaemonHost()
 
-		cleanupHTTP(t)
+		cleanupTestData(t)
 
 		gock.New(dockerHost).
 			Head("/_ping").
@@ -377,7 +377,7 @@ func TestRunDockerUnbundle(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		dockerHost := utils.Docker.DaemonHost()
 
-		cleanupHTTP(t)
+		cleanupTestData(t)
 
 		gock.New(dockerHost).
 			Head("/_ping").
@@ -412,7 +412,7 @@ func TestRunServerSideUnbundle(t *testing.T) {
 		writeConfig(t, fsys)
 		project := apitest.RandomProjectRef()
 		withProjectRef(t, project)
-		cleanupHTTP(t)
+		cleanupTestData(t)
 
 		meta := newFunctionMetadata(slug)
 		entrypoint := "file:///source/index.ts"
@@ -449,7 +449,7 @@ func TestRunServerSideUnbundle(t *testing.T) {
 		writeConfig(t, fsys)
 		project := apitest.RandomProjectRef()
 		withProjectRef(t, project)
-		cleanupHTTP(t)
+		cleanupTestData(t)
 
 		meta := newFunctionMetadata(slug)
 		entrypoint := "file:///source/index.ts"
@@ -485,7 +485,7 @@ func TestRunServerSideUnbundle(t *testing.T) {
 		writeConfig(t, fsys)
 		project := apitest.RandomProjectRef()
 		withProjectRef(t, project)
-		cleanupHTTP(t)
+		cleanupTestData(t)
 		mockFunctionMetadata(project, slug, newFunctionMetadata(slug))
 		gock.New(utils.DefaultApiHost).
 			Get(fmt.Sprintf("/v1/projects/%s/functions/%s/body", project, slug)).
@@ -502,7 +502,7 @@ func TestRunServerSideUnbundle(t *testing.T) {
 		writeConfig(t, fsys)
 		project := apitest.RandomProjectRef()
 		withProjectRef(t, project)
-		cleanupHTTP(t)
+		cleanupTestData(t)
 
 		meta := newFunctionMetadata(slug)
 		entrypoint := "file:///source/index.ts"
