@@ -311,9 +311,7 @@ func TestGetMetadata(t *testing.T) {
 	})
 }
 
-// new tests
-
-func TestRun_NewUnbundleModes(t *testing.T) {
+func TestRunNewUnbundleModes(t *testing.T) {
 	const slug = "test-func"
 
 	t.Run("downloads bundle with docker when available", func(t *testing.T) {
