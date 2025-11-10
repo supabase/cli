@@ -308,8 +308,6 @@ func TestGetMetadata(t *testing.T) {
 }
 
 func TestRunNewUnbundleModes(t *testing.T) {
-	const slug = "test-func"
-
 	t.Run("downloads bundle with docker when available", func(t *testing.T) {
 		const slugDocker = "demo"
 		fsys := afero.NewMemMapFs()
