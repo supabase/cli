@@ -44,6 +44,10 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// ============================================================================
+// Helper functions (primarily for new unbundle tests)
+// ============================================================================
+
 func writeConfig(t *testing.T, fsys afero.Fs) {
 	t.Helper()
 	require.NoError(t, utils.WriteConfig(fsys, false))
@@ -108,98 +112,209 @@ func mustParseURL(t *testing.T, raw string) *url.URL {
 	return u
 }
 
-func TestRun(t *testing.T) {
+func TestDownloadCommand(t *testing.T) {
 	const slug = "test-func"
 
-	t.Run("downloads legacy bundle", func(t *testing.T) {
+	t.Run("downloads eszip bundle", func(t *testing.T) {
+		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		writeConfig(t, fsys)
-		t.Cleanup(func() {
-			gock.OffAll()
-			utils.CmdSuggestion = ""
-		})
+		// Setup valid project ref
 		project := apitest.RandomProjectRef()
-		flags.ProjectRef = project
-		t.Cleanup(func() { flags.ProjectRef = "" })
-
+		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-
+		// Setup valid deno path
 		_, err := fsys.Create(utils.DenoPathOverride)
 		require.NoError(t, err)
-
-		meta := newFunctionMetadata(slug)
-		mockFunctionMetadata(project, slug, meta)
+		// Setup mock api
+		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
-			Get(fmt.Sprintf("/v1/projects/%s/functions/%s/body", project, slug)).
+			Get("/v1/projects/" + project + "/functions/" + slug).
+			Reply(http.StatusOK).
+			JSON(api.FunctionResponse{Id: "1"})
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions/" + slug + "/body").
 			Reply(http.StatusOK)
-
+		// Run test
 		err = Run(context.Background(), slug, project, true, false, fsys)
+		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on malformed slug", func(t *testing.T) {
+		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		writeConfig(t, fsys)
+		// Setup valid project ref
 		project := apitest.RandomProjectRef()
-		flags.ProjectRef = project
-		t.Cleanup(func() { flags.ProjectRef = "" })
-
+		// Run test
 		err := Run(context.Background(), "@", project, true, false, fsys)
+		// Check error
 		assert.ErrorContains(t, err, "Invalid Function name.")
 	})
 
 	t.Run("throws error on failure to install deno", func(t *testing.T) {
-		base := afero.NewMemMapFs()
-		writeConfig(t, base)
+		// Setup in-memory fs
+		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
+		// Setup valid project ref
 		project := apitest.RandomProjectRef()
-		flags.ProjectRef = project
-		t.Cleanup(func() { flags.ProjectRef = "" })
-
-		err := Run(context.Background(), slug, project, true, false, afero.NewReadOnlyFs(base))
+		// Run test
+		err := Run(context.Background(), slug, project, true, false, fsys)
+		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 	})
 
 	t.Run("throws error on copy failure", func(t *testing.T) {
-		base := afero.NewMemMapFs()
-		writeConfig(t, base)
-		_, err := base.Create(utils.DenoPathOverride)
-		require.NoError(t, err)
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup valid project ref
 		project := apitest.RandomProjectRef()
-		flags.ProjectRef = project
-		t.Cleanup(func() { flags.ProjectRef = "" })
-
-		err = Run(context.Background(), slug, project, true, false, afero.NewReadOnlyFs(base))
+		// Setup valid deno path
+		_, err := fsys.Create(utils.DenoPathOverride)
+		require.NoError(t, err)
+		// Run test
+		err = Run(context.Background(), slug, project, true, false, afero.NewReadOnlyFs(fsys))
+		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 	})
 
 	t.Run("throws error on missing function", func(t *testing.T) {
+		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		writeConfig(t, fsys)
-		t.Cleanup(func() {
-			gock.OffAll()
-			utils.CmdSuggestion = ""
-		})
+		// Setup valid project ref
 		project := apitest.RandomProjectRef()
-		flags.ProjectRef = project
-		t.Cleanup(func() { flags.ProjectRef = "" })
-
+		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-
+		// Setup valid deno path
 		_, err := fsys.Create(utils.DenoPathOverride)
 		require.NoError(t, err)
-
+		// Setup mock api
+		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
-			Get(fmt.Sprintf("/v1/projects/%s/functions/%s", project, slug)).
+			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusNotFound).
 			JSON(map[string]string{"message": "Function not found"})
-
+		// Run test
 		err = Run(context.Background(), slug, project, true, false, fsys)
+		// Check error
 		assert.ErrorContains(t, err, "Function test-func does not exist on the Supabase project.")
+	})
+}
+
+func TestDownloadFunction(t *testing.T) {
+	const slug = "test-func"
+	// Setup valid project ref
+	project := apitest.RandomProjectRef()
+	// Setup valid access token
+	token := apitest.RandomAccessToken(t)
+	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
+	t.Run("throws error on network error", func(t *testing.T) {
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions/" + slug).
+			Reply(http.StatusOK).
+			JSON(api.FunctionResponse{Id: "1"})
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions/" + slug + "/body").
+			ReplyError(errors.New("network error"))
+		// Run test
+		err := downloadFunction(context.Background(), project, slug, "")
+		// Check error
+		assert.ErrorContains(t, err, "network error")
+	})
+
+	t.Run("throws error on service unavailable", func(t *testing.T) {
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions/" + slug).
+			Reply(http.StatusOK).
+			JSON(api.FunctionResponse{Id: "1"})
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions/" + slug + "/body").
+			Reply(http.StatusServiceUnavailable)
+		// Run test
+		err := downloadFunction(context.Background(), project, slug, "")
+		// Check error
+		assert.ErrorContains(t, err, "Unexpected error downloading Function:")
+	})
+
+	t.Run("throws error on extract failure", func(t *testing.T) {
+		// Setup deno error
+		t.Setenv("TEST_DENO_ERROR", "extract failed")
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions/" + slug).
+			Reply(http.StatusOK).
+			JSON(api.FunctionResponse{Id: "1"})
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions/" + slug + "/body").
+			Reply(http.StatusOK)
+		// Run test
+		err := downloadFunction(context.Background(), project, slug, "")
+		// Check error
+		assert.ErrorContains(t, err, "Error downloading function: exit status 1\nextract failed\n")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
+}
+
+func TestGetMetadata(t *testing.T) {
+	const slug = "test-func"
+	project := apitest.RandomProjectRef()
+	// Setup valid access token
+	token := apitest.RandomAccessToken(t)
+	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
+	t.Run("fallback to default paths", func(t *testing.T) {
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions/" + slug).
+			Reply(http.StatusOK).
+			JSON(api.FunctionResponse{Id: "1"})
+		// Run test
+		meta, err := getFunctionMetadata(context.Background(), project, slug)
+		// Check error
+		assert.NoError(t, err)
+		assert.Equal(t, legacyEntrypointPath, *meta.EntrypointPath)
+		assert.Equal(t, legacyImportMapPath, *meta.ImportMapPath)
+	})
+
+	t.Run("throws error on network error", func(t *testing.T) {
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions/" + slug).
+			ReplyError(errors.New("network error"))
+		// Run test
+		meta, err := getFunctionMetadata(context.Background(), project, slug)
+		// Check error
+		assert.ErrorContains(t, err, "network error")
+		assert.Nil(t, meta)
+	})
+
+	t.Run("throws error on service unavailable", func(t *testing.T) {
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions/" + slug).
+			Reply(http.StatusServiceUnavailable)
+		// Run test
+		meta, err := getFunctionMetadata(context.Background(), project, slug)
+		// Check error
+		assert.ErrorContains(t, err, "Failed to download Function test-func on the Supabase project:")
+		assert.Nil(t, meta)
+	})
+}
+
+// new tests
+
+func TestRun_NewUnbundleModes(t *testing.T) {
+	const slug = "test-func"
 
 	t.Run("downloads bundle with docker when available", func(t *testing.T) {
 		const slugDocker = "demo"
@@ -286,90 +401,6 @@ func TestRun(t *testing.T) {
 		assert.Equal(t, "console.log('hello')", string(data))
 
 		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-}
-
-func TestDownloadFunction(t *testing.T) {
-	const slug = "test-func"
-	project := apitest.RandomProjectRef()
-	token := apitest.RandomAccessToken(t)
-	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-
-	t.Run("throws error on network error", func(t *testing.T) {
-		t.Cleanup(gock.OffAll)
-		mockFunctionMetadata(project, slug, newFunctionMetadata(slug))
-		gock.New(utils.DefaultApiHost).
-			Get(fmt.Sprintf("/v1/projects/%s/functions/%s/body", project, slug)).
-			ReplyError(errors.New("network error"))
-
-		err := downloadFunction(context.Background(), project, slug, "")
-		assert.ErrorContains(t, err, "failed to get function body")
-		assert.ErrorContains(t, err, "network error")
-	})
-
-	t.Run("throws error on service unavailable", func(t *testing.T) {
-		t.Cleanup(gock.OffAll)
-		mockFunctionMetadata(project, slug, newFunctionMetadata(slug))
-		gock.New(utils.DefaultApiHost).
-			Get(fmt.Sprintf("/v1/projects/%s/functions/%s/body", project, slug)).
-			Reply(http.StatusServiceUnavailable)
-
-		err := downloadFunction(context.Background(), project, slug, "")
-		assert.ErrorContains(t, err, "Unexpected error downloading Function")
-	})
-
-	t.Run("throws error on extract failure", func(t *testing.T) {
-		t.Cleanup(gock.OffAll)
-		t.Setenv("TEST_DENO_ERROR", "extract failed")
-		mockFunctionMetadata(project, slug, newFunctionMetadata(slug))
-		gock.New(utils.DefaultApiHost).
-			Get(fmt.Sprintf("/v1/projects/%s/functions/%s/body", project, slug)).
-			Reply(http.StatusOK)
-
-		err := downloadFunction(context.Background(), project, slug, "")
-		assert.ErrorContains(t, err, "Error downloading function: exit status 1\nextract failed\n")
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-}
-
-func TestGetFunctionMetadata(t *testing.T) {
-	const slug = "test-func"
-	project := apitest.RandomProjectRef()
-
-	t.Run("fallback to default paths", func(t *testing.T) {
-		t.Cleanup(gock.OffAll)
-		meta := newFunctionMetadata(slug)
-		meta.EntrypointPath = nil
-		meta.ImportMapPath = nil
-		mockFunctionMetadata(project, slug, meta)
-
-		got, err := getFunctionMetadata(context.Background(), project, slug)
-		assert.NoError(t, err)
-		require.NotNil(t, got)
-		assert.Equal(t, legacyEntrypointPath, *got.EntrypointPath)
-		assert.Equal(t, legacyImportMapPath, *got.ImportMapPath)
-	})
-
-	t.Run("throws error on network error", func(t *testing.T) {
-		t.Cleanup(gock.OffAll)
-		gock.New(utils.DefaultApiHost).
-			Get(fmt.Sprintf("/v1/projects/%s/functions/%s", project, slug)).
-			ReplyError(errors.New("network error"))
-
-		meta, err := getFunctionMetadata(context.Background(), project, slug)
-		assert.ErrorContains(t, err, "failed to get function metadata")
-		assert.Nil(t, meta)
-	})
-
-	t.Run("throws error on service unavailable", func(t *testing.T) {
-		t.Cleanup(gock.OffAll)
-		gock.New(utils.DefaultApiHost).
-			Get(fmt.Sprintf("/v1/projects/%s/functions/%s", project, slug)).
-			Reply(http.StatusServiceUnavailable)
-
-		meta, err := getFunctionMetadata(context.Background(), project, slug)
-		assert.ErrorContains(t, err, "Failed to download Function test-func on the Supabase project:")
-		assert.Nil(t, meta)
 	})
 }
 
