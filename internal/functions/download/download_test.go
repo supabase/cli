@@ -416,6 +416,43 @@ func TestDownloadWithServerSideUnbundle(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
+	t.Run("derives base directory from absolute filenames", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		project := apitest.RandomProjectRef()
+		t.Cleanup(func() {
+			gock.OffAll()
+			utils.CmdSuggestion = ""
+		})
+
+		meta := newFunctionMetadata(slug)
+		entrypoint := "file:///source/index.ts"
+		meta.EntrypointPath = &entrypoint
+		mockFunctionMetadata(project, slug, meta)
+
+		// eg. /tmp/functions-download-abs/source/
+		tempBase := filepath.Join(os.TempDir(), "functions-download-abs", "source")
+		indexPath := filepath.Join(tempBase, "index.ts")
+		utilsPath := filepath.Join(tempBase, "lib", "utils.ts")
+		mockMultipartBody(t, project, slug, []multipartPart{
+			{filename: indexPath, contents: "console.log('abs')"},
+			{filename: utilsPath, contents: "export const util = 2;"},
+		})
+
+		err := downloadWithServerSideUnbundle(context.Background(), slug, project, fsys)
+		require.NoError(t, err)
+
+		root := filepath.Join(utils.FunctionsDir, slug)
+		data, err := afero.ReadFile(fsys, filepath.Join(root, "index.ts"))
+		require.NoError(t, err)
+		assert.Equal(t, "console.log('abs')", string(data))
+
+		data, err = afero.ReadFile(fsys, filepath.Join(root, "lib", "utils.ts"))
+		require.NoError(t, err)
+		assert.Equal(t, "export const util = 2;", string(data))
+
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
 	t.Run("fails when response not multipart", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		project := apitest.RandomProjectRef()

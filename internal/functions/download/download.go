@@ -322,8 +322,8 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 		}
 	}
 
+	// infer baseDir using a number of heuristics, in the simple case just Path.Dir(entrypoint)
 	baseDir := getBaseDirFromEntrypoint(entrypointUrl, filepaths)
-	fmt.Println("Function base directory: " + utils.Aqua(baseDir))
 
 	// Place each file under funcDir using a path relative to baseDir,
 	// mirroring Studio's getBasePath + relative() behavior.
@@ -517,7 +517,12 @@ func getBaseDirFromEntrypoint(entrypointUrl *url.URL, filenames []string) string
 				continue
 			}
 			clean := filepath.ToSlash(filename)
-			if strings.HasSuffix(entryPath, clean) || strings.HasSuffix(clean, entryPath) {
+			// entrypoint has the same suffix as the sanitized filename
+			matchRelative := strings.HasSuffix(entryPath, clean)
+
+			// prevents long absolute paths being used as subdirectories
+			matchAbsolute := strings.HasSuffix(clean, entryPath)
+			if matchRelative || matchAbsolute {
 				baseDir = filepath.Dir(clean)
 				break
 			}
