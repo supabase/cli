@@ -306,44 +306,17 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 		return err
 	}
 
-	type partEntry struct {
-		path string
-		data []byte
+	bufferedParts, cleanupTemp, err := bufferMultipartParts(resp.Body, params["boundary"], slug, fsys)
+	if cleanupTemp != nil {
+		defer cleanupTemp()
 	}
-
-	var parts []partEntry
-
-	// Parse multipart form and buffer parts in memory.
-	mr := multipart.NewReader(resp.Body, params["boundary"])
-	for {
-		part, err := mr.NextPart()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return errors.Errorf("failed to read multipart: %w", err)
-		}
-
-		partPath, err := getPartPath(part)
-		if err != nil {
-			return err
-		}
-
-		data, err := io.ReadAll(part)
-		if err != nil {
-			return errors.Errorf("failed to read part data: %w", err)
-		}
-
-		if partPath == "" {
-			fmt.Fprintln(utils.GetDebugLogger(), "Skipping part without filename")
-		} else {
-			parts = append(parts, partEntry{path: partPath, data: data})
-		}
+	if err != nil {
+		return err
 	}
 
 	// Collect file paths (excluding empty ones) to infer the base directory.
 	var filepaths []string
-	for _, p := range parts {
+	for _, p := range bufferedParts {
 		if p.path != "" {
 			filepaths = append(filepaths, p.path)
 		}
@@ -354,7 +327,7 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 
 	// Place each file under funcDir using a path relative to baseDir,
 	// mirroring Studio's getBasePath + relative() behavior.
-	for _, p := range parts {
+	for _, p := range bufferedParts {
 		if p.path == "" {
 			continue
 		}
@@ -369,13 +342,90 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 			return err
 		}
 
-		if err := afero.WriteReader(fsys, filePath, bytes.NewReader(p.data)); err != nil {
-			return errors.Errorf("failed to write file: %w", err)
+		if err := copyFileFromTemp(fsys, p.tempPath, filePath); err != nil {
+			return err
 		}
 	}
 
 	fmt.Println("Downloaded Function " + utils.Aqua(slug) + " from project " + utils.Aqua(projectRef) + ".")
 	return nil
+}
+
+type bufferedPart struct {
+	path     string
+	tempPath string
+}
+
+// write multipart parts to temp files and return their corresponding path pairs
+func bufferMultipartParts(body io.Reader, boundary, slug string, fsys afero.Fs) ([]bufferedPart, func(), error) {
+	if boundary == "" {
+		return nil, nil, errors.New("multipart boundary missing")
+	}
+	if err := utils.MkdirIfNotExistFS(fsys, utils.TempDir); err != nil {
+		return nil, nil, err
+	}
+	tempDir, err := afero.TempDir(fsys, utils.TempDir, fmt.Sprintf("functions-download-%s-", slug))
+	if err != nil {
+		return nil, nil, errors.Errorf("failed to create temp directory: %w", err)
+	}
+	afs := afero.Afero{Fs: fsys}
+	cleanup := func() {
+		if err := afs.RemoveAll(tempDir); err != nil {
+			fmt.Fprintln(utils.GetDebugLogger(), "failed to clean up temp dir:", err)
+		}
+	}
+
+	mr := multipart.NewReader(body, boundary)
+	var parts []bufferedPart
+	for {
+		part, err := mr.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			cleanup()
+			return nil, nil, errors.Errorf("failed to read multipart: %w", err)
+		}
+
+		if err := func() error {
+			defer part.Close()
+			partPath, err := getPartPath(part)
+			if err != nil {
+				return err
+			}
+
+			if partPath == "" {
+				fmt.Fprintln(utils.GetDebugLogger(), "Skipping part without filename")
+				if _, err := io.Copy(io.Discard, part); err != nil {
+					return errors.Errorf("failed to discard unnamed part: %w", err)
+				}
+				return nil
+			}
+
+			tmpFile, err := afero.TempFile(fsys, tempDir, "part-*")
+			if err != nil {
+				return errors.Errorf("failed to create temp file: %w", err)
+			}
+
+			if _, err := io.Copy(tmpFile, part); err != nil {
+				tmpFile.Close()
+				fsys.Remove(tmpFile.Name())
+				return errors.Errorf("failed to buffer part data: %w", err)
+			}
+			if err := tmpFile.Close(); err != nil {
+				fsys.Remove(tmpFile.Name())
+				return errors.Errorf("failed to close temp file: %w", err)
+			}
+
+			parts = append(parts, bufferedPart{path: partPath, tempPath: tmpFile.Name()})
+			return nil
+		}(); err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+	}
+
+	return parts, cleanup, nil
 }
 
 // getPartPath extracts the filename for a multipart part, allowing for
@@ -405,18 +455,29 @@ func getPartPath(part *multipart.Part) (string, error) {
 
 // joinWithinDir safely joins base and rel ensuring the result stays within base directory
 func joinWithinDir(base, rel string) (string, error) {
+	cleanBase := filepath.Clean(base)
 	cleanRel := filepath.Clean(rel)
-	// Be forgiving: treat a rooted path as relative to base (e.g. "/foo" -> "foo")
+	// Treat absolute inputs as relative by stripping leading separators ("/foo" -> "foo").
 	if filepath.IsAbs(cleanRel) {
 		cleanRel = strings.TrimLeft(cleanRel, "/\\")
 	}
-	if cleanRel == ".." || strings.HasPrefix(cleanRel, "../") {
+
+	// Reject direct attempts to escape (e.g. "../secret.env" or "..\secret.env").
+	if cleanRel == ".." || strings.HasPrefix(cleanRel, "..") {
 		return "", errors.Errorf("invalid file path outside function directory: %s", rel)
 	}
-	joined := filepath.Join(base, cleanRel)
+
+	// Join the sanitized components and normalize the result to remove any "." segments.
+	joined := filepath.Join(cleanBase, cleanRel)
 	cleanJoined := filepath.Clean(joined)
-	cleanBase := filepath.Clean(base)
-	if cleanJoined != cleanBase && !strings.HasPrefix(cleanJoined, cleanBase+"/") {
+
+	// Compute the final relative path. If it still points outside the base (starts with ".."),
+	// refuse to write the file.
+	relPath, err := filepath.Rel(cleanBase, cleanJoined)
+	if err != nil {
+		return "", errors.Errorf("failed to resolve relative path: %w", err)
+	}
+	if relPath == ".." || strings.HasPrefix(relPath, "..") {
 		return "", errors.Errorf("refusing to write outside function directory: %s", rel)
 	}
 	return joined, nil
@@ -456,7 +517,7 @@ func getBaseDirFromEntrypoint(entrypointUrl *url.URL, filenames []string) string
 				continue
 			}
 			clean := filepath.ToSlash(filename)
-			if strings.HasSuffix(entryPath, clean) {
+			if strings.HasSuffix(entryPath, clean) || strings.HasSuffix(clean, entryPath) {
 				baseDir = filepath.Dir(clean)
 				break
 			}
@@ -505,4 +566,23 @@ func getRelativePathFromBase(baseDir, filename string) string {
 
 	// Last resort: return a normalized, slash-stripped path.
 	return strings.TrimLeft(cleanFile, "/")
+}
+
+func copyFileFromTemp(fsys afero.Fs, src, dst string) error {
+	tempFile, err := fsys.Open(src)
+	if err != nil {
+		return errors.Errorf("failed to open temp file: %w", err)
+	}
+	defer tempFile.Close()
+
+	destFile, err := fsys.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return errors.Errorf("failed to create file: %w", err)
+	}
+	defer destFile.Close()
+
+	if _, err := io.Copy(destFile, tempFile); err != nil {
+		return errors.Errorf("failed to write file: %w", err)
+	}
+	return nil
 }

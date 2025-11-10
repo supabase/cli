@@ -406,6 +406,13 @@ func TestDownloadWithServerSideUnbundle(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "export const value = 1;", string(data))
 
+		entries, err := afero.ReadDir(fsys, utils.TempDir)
+		if err == nil {
+			assert.Len(t, entries, 0, "expected temporary directory to be cleaned up")
+		} else {
+			assert.ErrorIs(t, err, os.ErrNotExist)
+		}
+
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
@@ -533,7 +540,7 @@ func TestGetBaseDirFromEntrypoint(t *testing.T) {
 		{
 			name:       "falls back to absolute match",
 			entrypoint: "file:///src/index.ts",
-			filenames:  []string{"/tmp/project/src/index.ts"},
+			filenames:  []string{filepath.FromSlash("/tmp/project/src/index.ts")},
 			want:       "/tmp/project/src",
 		},
 		{
@@ -650,6 +657,13 @@ func TestJoinWithinDir(t *testing.T) {
 
 	t.Run("rejects traversal beginning with ../", func(t *testing.T) {
 		got, err := joinWithinDir(base, filepath.Join("..", "..", "file.ts"))
+		require.Error(t, err)
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("rejects traversal prefixed with os separator", func(t *testing.T) {
+		escape := ".." + string(os.PathSeparator) + "escape"
+		got, err := joinWithinDir(base, escape)
 		require.Error(t, err)
 		assert.Equal(t, "", got)
 	})
