@@ -44,10 +44,6 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// ============================================================================
-// Helper functions (primarily for new unbundle tests)
-// ============================================================================
-
 func writeConfig(t *testing.T, fsys afero.Fs) {
 	t.Helper()
 	require.NoError(t, utils.WriteConfig(fsys, false))
