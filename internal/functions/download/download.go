@@ -409,11 +409,15 @@ func bufferMultipartParts(body io.Reader, boundary, slug string, fsys afero.Fs) 
 
 			if _, err := io.Copy(tmpFile, part); err != nil {
 				tmpFile.Close()
-				fsys.Remove(tmpFile.Name())
+				if rmErr := fsys.Remove(tmpFile.Name()); rmErr != nil {
+					fmt.Fprintln(utils.GetDebugLogger(), "failed to remove temp file:", rmErr)
+				}
 				return errors.Errorf("failed to buffer part data: %w", err)
 			}
 			if err := tmpFile.Close(); err != nil {
-				fsys.Remove(tmpFile.Name())
+				if rmErr := fsys.Remove(tmpFile.Name()); rmErr != nil {
+					fmt.Fprintln(utils.GetDebugLogger(), "failed to remove temp file:", rmErr)
+				}
 				return errors.Errorf("failed to close temp file: %w", err)
 			}
 
