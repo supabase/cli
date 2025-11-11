@@ -144,6 +144,25 @@ const (
 	BranchDetailResponseStatusUPGRADING       BranchDetailResponseStatus = "UPGRADING"
 )
 
+// Defines values for BranchResponsePreviewProjectStatus.
+const (
+	BranchResponsePreviewProjectStatusACTIVEHEALTHY   BranchResponsePreviewProjectStatus = "ACTIVE_HEALTHY"
+	BranchResponsePreviewProjectStatusACTIVEUNHEALTHY BranchResponsePreviewProjectStatus = "ACTIVE_UNHEALTHY"
+	BranchResponsePreviewProjectStatusCOMINGUP        BranchResponsePreviewProjectStatus = "COMING_UP"
+	BranchResponsePreviewProjectStatusGOINGDOWN       BranchResponsePreviewProjectStatus = "GOING_DOWN"
+	BranchResponsePreviewProjectStatusINACTIVE        BranchResponsePreviewProjectStatus = "INACTIVE"
+	BranchResponsePreviewProjectStatusINITFAILED      BranchResponsePreviewProjectStatus = "INIT_FAILED"
+	BranchResponsePreviewProjectStatusPAUSEFAILED     BranchResponsePreviewProjectStatus = "PAUSE_FAILED"
+	BranchResponsePreviewProjectStatusPAUSING         BranchResponsePreviewProjectStatus = "PAUSING"
+	BranchResponsePreviewProjectStatusREMOVED         BranchResponsePreviewProjectStatus = "REMOVED"
+	BranchResponsePreviewProjectStatusRESIZING        BranchResponsePreviewProjectStatus = "RESIZING"
+	BranchResponsePreviewProjectStatusRESTARTING      BranchResponsePreviewProjectStatus = "RESTARTING"
+	BranchResponsePreviewProjectStatusRESTOREFAILED   BranchResponsePreviewProjectStatus = "RESTORE_FAILED"
+	BranchResponsePreviewProjectStatusRESTORING       BranchResponsePreviewProjectStatus = "RESTORING"
+	BranchResponsePreviewProjectStatusUNKNOWN         BranchResponsePreviewProjectStatus = "UNKNOWN"
+	BranchResponsePreviewProjectStatusUPGRADING       BranchResponsePreviewProjectStatus = "UPGRADING"
+)
+
 // Defines values for BranchResponseStatus.
 const (
 	BranchResponseStatusCREATINGPROJECT   BranchResponseStatus = "CREATING_PROJECT"
@@ -152,6 +171,11 @@ const (
 	BranchResponseStatusMIGRATIONSFAILED  BranchResponseStatus = "MIGRATIONS_FAILED"
 	BranchResponseStatusMIGRATIONSPASSED  BranchResponseStatus = "MIGRATIONS_PASSED"
 	BranchResponseStatusRUNNINGMIGRATIONS BranchResponseStatus = "RUNNING_MIGRATIONS"
+)
+
+// Defines values for BranchRestoreResponseMessage.
+const (
+	BranchRestorationInitiated BranchRestoreResponseMessage = "Branch restoration initiated"
 )
 
 // Defines values for BranchUpdateResponseMessage.
@@ -1365,10 +1389,10 @@ const (
 
 // Defines values for V1RestorePointResponseStatus.
 const (
-	AVAILABLE V1RestorePointResponseStatus = "AVAILABLE"
-	FAILED    V1RestorePointResponseStatus = "FAILED"
-	PENDING   V1RestorePointResponseStatus = "PENDING"
-	REMOVED   V1RestorePointResponseStatus = "REMOVED"
+	V1RestorePointResponseStatusAVAILABLE V1RestorePointResponseStatus = "AVAILABLE"
+	V1RestorePointResponseStatusFAILED    V1RestorePointResponseStatus = "FAILED"
+	V1RestorePointResponseStatusPENDING   V1RestorePointResponseStatus = "PENDING"
+	V1RestorePointResponseStatusREMOVED   V1RestorePointResponseStatus = "REMOVED"
 )
 
 // Defines values for V1ServiceHealthResponseInfo0Name.
@@ -1932,28 +1956,41 @@ type BranchDetailResponseStatus string
 
 // BranchResponse defines model for BranchResponse.
 type BranchResponse struct {
-	CreatedAt time.Time          `json:"created_at"`
-	GitBranch *string            `json:"git_branch,omitempty"`
-	Id        openapi_types.UUID `json:"id"`
-	IsDefault bool               `json:"is_default"`
+	CreatedAt           time.Time          `json:"created_at"`
+	DeletionScheduledAt *time.Time         `json:"deletion_scheduled_at,omitempty"`
+	GitBranch           *string            `json:"git_branch,omitempty"`
+	Id                  openapi_types.UUID `json:"id"`
+	IsDefault           bool               `json:"is_default"`
 
 	// LatestCheckRunId This field is deprecated and will not be populated.
 	// Deprecated:
-	LatestCheckRunId  *float32             `json:"latest_check_run_id,omitempty"`
-	Name              string               `json:"name"`
-	NotifyUrl         *string              `json:"notify_url,omitempty"`
-	ParentProjectRef  string               `json:"parent_project_ref"`
-	Persistent        bool                 `json:"persistent"`
-	PrNumber          *int32               `json:"pr_number,omitempty"`
-	ProjectRef        string               `json:"project_ref"`
-	ReviewRequestedAt *time.Time           `json:"review_requested_at,omitempty"`
-	Status            BranchResponseStatus `json:"status"`
-	UpdatedAt         time.Time            `json:"updated_at"`
-	WithData          bool                 `json:"with_data"`
+	LatestCheckRunId     *float32                            `json:"latest_check_run_id,omitempty"`
+	Name                 string                              `json:"name"`
+	NotifyUrl            *string                             `json:"notify_url,omitempty"`
+	ParentProjectRef     string                              `json:"parent_project_ref"`
+	Persistent           bool                                `json:"persistent"`
+	PrNumber             *int32                              `json:"pr_number,omitempty"`
+	PreviewProjectStatus *BranchResponsePreviewProjectStatus `json:"preview_project_status,omitempty"`
+	ProjectRef           string                              `json:"project_ref"`
+	ReviewRequestedAt    *time.Time                          `json:"review_requested_at,omitempty"`
+	Status               BranchResponseStatus                `json:"status"`
+	UpdatedAt            time.Time                           `json:"updated_at"`
+	WithData             bool                                `json:"with_data"`
 }
+
+// BranchResponsePreviewProjectStatus defines model for BranchResponse.PreviewProjectStatus.
+type BranchResponsePreviewProjectStatus string
 
 // BranchResponseStatus defines model for BranchResponse.Status.
 type BranchResponseStatus string
+
+// BranchRestoreResponse defines model for BranchRestoreResponse.
+type BranchRestoreResponse struct {
+	Message BranchRestoreResponseMessage `json:"message"`
+}
+
+// BranchRestoreResponseMessage defines model for BranchRestoreResponse.Message.
+type BranchRestoreResponseMessage string
 
 // BranchUpdateResponse defines model for BranchUpdateResponse.
 type BranchUpdateResponse struct {
@@ -3819,8 +3856,9 @@ type V1CreateFunctionBody struct {
 
 // V1CreateMigrationBody defines model for V1CreateMigrationBody.
 type V1CreateMigrationBody struct {
-	Name  *string `json:"name,omitempty"`
-	Query string  `json:"query"`
+	Name     *string `json:"name,omitempty"`
+	Query    string  `json:"query"`
+	Rollback *string `json:"rollback,omitempty"`
 }
 
 // V1CreateProjectBody defines model for V1CreateProjectBody.
@@ -3907,6 +3945,16 @@ type V1CreateProjectBody_RegionSelection struct {
 
 // V1CreateProjectBodyReleaseChannel Release channel. If not provided, GA will be used.
 type V1CreateProjectBodyReleaseChannel string
+
+// V1GetMigrationResponse defines model for V1GetMigrationResponse.
+type V1GetMigrationResponse struct {
+	CreatedBy      *string   `json:"created_by,omitempty"`
+	IdempotencyKey *string   `json:"idempotency_key,omitempty"`
+	Name           *string   `json:"name,omitempty"`
+	Rollback       *[]string `json:"rollback,omitempty"`
+	Statements     *[]string `json:"statements,omitempty"`
+	Version        string    `json:"version"`
+}
 
 // V1GetUsageApiCountResponse defines model for V1GetUsageApiCountResponse.
 type V1GetUsageApiCountResponse struct {
@@ -4004,6 +4052,12 @@ type V1OrganizationSlugResponseOptInTags string
 
 // V1OrganizationSlugResponsePlan defines model for V1OrganizationSlugResponse.Plan.
 type V1OrganizationSlugResponsePlan string
+
+// V1PatchMigrationBody defines model for V1PatchMigrationBody.
+type V1PatchMigrationBody struct {
+	Name     *string `json:"name,omitempty"`
+	Rollback *string `json:"rollback,omitempty"`
+}
 
 // V1PgbouncerConfigResponse defines model for V1PgbouncerConfigResponse.
 type V1PgbouncerConfigResponse struct {
@@ -4233,8 +4287,9 @@ type V1UpdatePostgrestConfigBody struct {
 
 // V1UpsertMigrationBody defines model for V1UpsertMigrationBody.
 type V1UpsertMigrationBody struct {
-	Name  *string `json:"name,omitempty"`
-	Query string  `json:"query"`
+	Name     *string `json:"name,omitempty"`
+	Query    string  `json:"query"`
+	Rollback *string `json:"rollback,omitempty"`
 }
 
 // VanitySubdomainBody defines model for VanitySubdomainBody.
@@ -4250,6 +4305,12 @@ type VanitySubdomainConfigResponse struct {
 
 // VanitySubdomainConfigResponseStatus defines model for VanitySubdomainConfigResponse.Status.
 type VanitySubdomainConfigResponseStatus string
+
+// V1DeleteABranchParams defines parameters for V1DeleteABranch.
+type V1DeleteABranchParams struct {
+	// Force If set to false, schedule deletion with 1-hour grace period (only when soft deletion is enabled).
+	Force *bool `form:"force,omitempty" json:"force,omitempty"`
+}
 
 // V1DiffABranchParams defines parameters for V1DiffABranch.
 type V1DiffABranchParams struct {
@@ -4436,6 +4497,12 @@ type V1GetRestorePointParams struct {
 	Name *string `form:"name,omitempty" json:"name,omitempty"`
 }
 
+// V1RollbackMigrationsParams defines parameters for V1RollbackMigrations.
+type V1RollbackMigrationsParams struct {
+	// Gte Rollback migrations greater or equal to this version
+	Gte string `form:"gte" json:"gte"`
+}
+
 // V1ApplyAMigrationParams defines parameters for V1ApplyAMigration.
 type V1ApplyAMigrationParams struct {
 	// IdempotencyKey A unique key to ensure the same migration is tracked only once.
@@ -4613,6 +4680,9 @@ type V1ApplyAMigrationJSONRequestBody = V1CreateMigrationBody
 
 // V1UpsertAMigrationJSONRequestBody defines body for V1UpsertAMigration for application/json ContentType.
 type V1UpsertAMigrationJSONRequestBody = V1UpsertMigrationBody
+
+// V1PatchAMigrationJSONRequestBody defines body for V1PatchAMigration for application/json ContentType.
+type V1PatchAMigrationJSONRequestBody = V1PatchMigrationBody
 
 // V1RunAQueryJSONRequestBody defines body for V1RunAQuery for application/json ContentType.
 type V1RunAQueryJSONRequestBody = V1RunQueryBody
