@@ -12,40 +12,47 @@ import (
 )
 
 // Run updates the network restriction lists using the provided CIDRs.
-func Run(ctx context.Context, projectRef string, dbCidrsToAllow []string, bypassCidrChecks bool) error {
+func Run(ctx context.Context, projectRef string, dbCidrsToAllow []string, bypassCidrChecks bool, appendMode bool) error {
 	newCidrsBody, err := buildRequestBody(dbCidrsToAllow, bypassCidrChecks)
 	if err != nil {
 		return err
 	}
 
-	resp, err := utils.GetSupabase().V1GetNetworkRestrictionsWithResponse(ctx, projectRef)
-	if err != nil {
-		return errors.Errorf("failed to retrieve network restrictions: %w", err)
-	}
-	if resp.JSON200 == nil {
-		return errors.New("failed to retrieve network restrictions: " + string(resp.Body))
+	var body api.V1UpdateNetworkRestrictionsJSONRequestBody
+
+	if appendMode {
+		resp, err := utils.GetSupabase().V1GetNetworkRestrictionsWithResponse(ctx, projectRef)
+		if err != nil {
+			return errors.Errorf("failed to retrieve network restrictions: %w", err)
+		}
+		if resp.JSON200 == nil {
+			return errors.New("failed to retrieve network restrictions: " + string(resp.Body))
+		}
+
+		currentV4 := []string{}
+		if resp.JSON200.Config.DbAllowedCidrs != nil {
+			currentV4 = append(currentV4, *resp.JSON200.Config.DbAllowedCidrs...)
+		}
+		currentV6 := []string{}
+		if resp.JSON200.Config.DbAllowedCidrsV6 != nil {
+			currentV6 = append(currentV6, *resp.JSON200.Config.DbAllowedCidrsV6...)
+		}
+
+		if newCidrsBody.DbAllowedCidrs != nil {
+			currentV4 = appendUnique(currentV4, *newCidrsBody.DbAllowedCidrs...)
+		}
+		if newCidrsBody.DbAllowedCidrsV6 != nil {
+			currentV6 = appendUnique(currentV6, *newCidrsBody.DbAllowedCidrsV6...)
+		}
+
+		body = api.V1UpdateNetworkRestrictionsJSONRequestBody{
+			DbAllowedCidrs:   &currentV4,
+			DbAllowedCidrsV6: &currentV6,
+		}
+	} else {
+		body = newCidrsBody
 	}
 
-	currentV4 := []string{}
-	if resp.JSON200.Config.DbAllowedCidrs != nil {
-		currentV4 = append(currentV4, *resp.JSON200.Config.DbAllowedCidrs...)
-	}
-	currentV6 := []string{}
-	if resp.JSON200.Config.DbAllowedCidrsV6 != nil {
-		currentV6 = append(currentV6, *resp.JSON200.Config.DbAllowedCidrsV6...)
-	}
-
-	if newCidrsBody.DbAllowedCidrs != nil {
-		currentV4 = appendUnique(currentV4, *newCidrsBody.DbAllowedCidrs...)
-	}
-	if newCidrsBody.DbAllowedCidrsV6 != nil {
-		currentV6 = appendUnique(currentV6, *newCidrsBody.DbAllowedCidrsV6...)
-	}
-
-	body := api.V1UpdateNetworkRestrictionsJSONRequestBody{
-		DbAllowedCidrs:   &currentV4,
-		DbAllowedCidrsV6: &currentV6,
-	}
 	return Apply(ctx, projectRef, body)
 }
 
@@ -69,7 +76,7 @@ func Apply(ctx context.Context, projectRef string, body api.V1UpdateNetworkRestr
 	} else {
 		fmt.Println("DB Allowed IPv6 CIDRs: []")
 	}
-	fmt.Printf("Restrictions applied successfully")
+	fmt.Printf("Restrictions applied successfully \n")
 	return nil
 }
 

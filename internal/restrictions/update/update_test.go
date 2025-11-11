@@ -48,7 +48,7 @@ func TestUpdateRestrictionsCommand(t *testing.T) {
 			})
 		// Run test
 		// Include duplicates and an existing CIDR to verify deduplication
-		err := Run(context.Background(), projectRef, []string{"12.3.4.5/32", "12.3.4.5/32", "1.2.3.1/24", "2.2.2.2/32", "2001:db8:abcd:0012::0/64", "2001:db8:abcd:0012::0/64"}, false)
+		err := Run(context.Background(), projectRef, []string{"12.3.4.5/32", "12.3.4.5/32", "1.2.3.1/24", "2.2.2.2/32", "2001:db8:abcd:0012::0/64", "2001:db8:abcd:0012::0/64"}, false, true)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -58,13 +58,6 @@ func TestUpdateRestrictionsCommand(t *testing.T) {
 		errNetwork := errors.New("network error")
 		// Setup mock api
 		defer gock.OffAll()
-		respBody := api.NetworkRestrictionsResponse{}
-		respBody.Config.DbAllowedCidrs = &[]string{}
-		respBody.Config.DbAllowedCidrsV6 = &[]string{}
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/network-restrictions").
-			Reply(http.StatusOK).
-			JSON(respBody)
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + projectRef + "/network-restrictions/apply").
 			MatchType("json").
@@ -74,7 +67,7 @@ func TestUpdateRestrictionsCommand(t *testing.T) {
 			}).
 			ReplyError(errNetwork)
 		// Run test
-		err := Run(context.Background(), projectRef, []string{}, true)
+		err := Run(context.Background(), projectRef, []string{}, true, false)
 		// Check error
 		assert.ErrorIs(t, err, errNetwork)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -83,13 +76,6 @@ func TestUpdateRestrictionsCommand(t *testing.T) {
 	t.Run("throws error on server unavailable", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
-		respBody := api.NetworkRestrictionsResponse{}
-		respBody.Config.DbAllowedCidrs = &[]string{}
-		respBody.Config.DbAllowedCidrsV6 = &[]string{}
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/network-restrictions").
-			Reply(http.StatusOK).
-			JSON(respBody)
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + projectRef + "/network-restrictions/apply").
 			MatchType("json").
@@ -99,7 +85,7 @@ func TestUpdateRestrictionsCommand(t *testing.T) {
 			}).
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := Run(context.Background(), projectRef, []string{}, true)
+		err := Run(context.Background(), projectRef, []string{}, true, false)
 		// Check error
 		assert.ErrorContains(t, err, "failed to apply network restrictions:")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -116,13 +102,6 @@ func TestValidateCIDR(t *testing.T) {
 	t.Run("bypasses private subnet checks", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
-		respBody := api.NetworkRestrictionsResponse{}
-		respBody.Config.DbAllowedCidrs = &[]string{}
-		respBody.Config.DbAllowedCidrsV6 = &[]string{}
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/network-restrictions").
-			Reply(http.StatusOK).
-			JSON(respBody)
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + projectRef + "/network-restrictions/apply").
 			MatchType("json").
@@ -135,7 +114,7 @@ func TestValidateCIDR(t *testing.T) {
 				Status: api.NetworkRestrictionsResponseStatus("applied"),
 			})
 		// Run test
-		err := Run(context.Background(), projectRef, []string{"10.0.0.0/8"}, true)
+		err := Run(context.Background(), projectRef, []string{"10.0.0.0/8"}, true, false)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -143,14 +122,14 @@ func TestValidateCIDR(t *testing.T) {
 
 	t.Run("throws error on private subnet", func(t *testing.T) {
 		// Run test
-		err := Run(context.Background(), projectRef, []string{"12.3.4.5/32", "10.0.0.0/8", "1.2.3.1/24"}, false)
+		err := Run(context.Background(), projectRef, []string{"12.3.4.5/32", "10.0.0.0/8", "1.2.3.1/24"}, false, false)
 		// Check error
 		assert.ErrorContains(t, err, "private IP provided: 10.0.0.0/8")
 	})
 
 	t.Run("throws error on invalid subnet", func(t *testing.T) {
 		// Run test
-		err := Run(context.Background(), projectRef, []string{"12.3.4.5", "10.0.0.0/8", "1.2.3.1/24"}, false)
+		err := Run(context.Background(), projectRef, []string{"12.3.4.5", "10.0.0.0/8", "1.2.3.1/24"}, false, false)
 		// Check error
 		assert.ErrorContains(t, err, "failed to parse IP: 12.3.4.5")
 	})
