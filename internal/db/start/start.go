@@ -354,7 +354,7 @@ func initSchema15(ctx context.Context, host string) error {
 	}
 	logger := utils.GetDebugLogger()
 	for _, job := range initJobs {
-		if err := utils.DockerRunJob(ctx, job, logger, logger); err != nil {
+		if err := utils.DockerRunJob(ctx, job, io.Discard, logger); err != nil {
 			return err
 		}
 	}

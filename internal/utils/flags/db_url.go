@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -82,7 +83,10 @@ func ParseDatabaseConfig(ctx context.Context, flagSet *pflag.FlagSet, fsys afero
 		if err := LoadConfig(fsys); err != nil {
 			return err
 		}
-		DbConfig = NewDbConfigWithPassword(ctx, ProjectRef)
+		var err error
+		if DbConfig, err = NewDbConfigWithPassword(ctx, ProjectRef); err != nil {
+			return err
+		}
 	case proxy:
 		token, err := utils.LoadAccessTokenFS(fsys)
 		if err != nil {
@@ -115,67 +119,88 @@ func RandomString(size int) (string, error) {
 	return string(data), nil
 }
 
-func NewDbConfigWithPassword(ctx context.Context, projectRef string) pgconn.Config {
-	config := getDbConfig(projectRef)
-	config.Password = viper.GetString("DB_PASSWORD")
+const suggestPasswordEnv = "Connect to your database by setting the env var: SUPABASE_DB_PASSWORD"
+
+func NewDbConfigWithPassword(ctx context.Context, projectRef string) (pgconn.Config, error) {
+	config := pgconn.Config{
+		Host:     utils.GetSupabaseDbHost(projectRef),
+		Port:     5432,
+		User:     "postgres",
+		Password: viper.GetString("DB_PASSWORD"),
+		Database: "postgres",
+	}
+	logger := utils.GetDebugLogger()
+	// Use pooler if host is not reachable directly
+	if _, err := net.DefaultResolver.LookupIPAddr(ctx, config.Host); err != nil {
+		if poolerConfig := utils.GetPoolerConfig(projectRef); poolerConfig != nil {
+			if len(config.Password) > 0 {
+				fmt.Fprintln(logger, "Using database password from env var...")
+				poolerConfig.Password = config.Password
+			} else if err := initPoolerLogin(ctx, projectRef, poolerConfig); err != nil {
+				utils.CmdSuggestion = suggestPasswordEnv
+				return *poolerConfig, err
+			}
+			return *poolerConfig, nil
+		}
+		utils.CmdSuggestion = fmt.Sprintf("Run %s to setup IPv4 connection.", utils.Aqua("supabase link --project-ref "+projectRef))
+		return config, errors.Errorf("IPv6 is not supported on your current network: %w", err)
+	}
+	// Connect via direct connection
 	if len(config.Password) > 0 {
-		return config
+		fmt.Fprintln(logger, "Using database password from env var...")
+	} else if err := initLoginRole(ctx, projectRef, &config); err != nil {
+		// Do not prompt because reading masked input is buggy on windows
+		utils.CmdSuggestion = suggestPasswordEnv
+		return config, err
 	}
-	loginRole, err := initLoginRole(ctx, projectRef, config)
-	if err == nil {
-		return loginRole
-	} else if errors.Is(err, context.Canceled) {
-		return config
-	}
-	// Proceed with password prompt
-	fmt.Fprintln(utils.GetDebugLogger(), err)
-	if config.Password, err = credentials.StoreProvider.Get(projectRef); err == nil {
-		return config
-	}
-	resetUrl := fmt.Sprintf("%s/project/%s/settings/database", utils.GetSupabaseDashboardURL(), projectRef)
-	fmt.Fprintln(os.Stderr, "Forgot your password? Reset it from the Dashboard:", utils.Bold(resetUrl))
-	fmt.Fprint(os.Stderr, "Enter your database password: ")
-	config.Password = credentials.PromptMasked(os.Stdin)
-	return config
+	return config, nil
 }
 
-func initLoginRole(ctx context.Context, projectRef string, config pgconn.Config) (pgconn.Config, error) {
+func initLoginRole(ctx context.Context, projectRef string, config *pgconn.Config) error {
 	fmt.Fprintln(os.Stderr, "Initialising login role...")
 	body := api.CreateRoleBody{ReadOnly: false}
 	resp, err := utils.GetSupabase().V1CreateLoginRoleWithResponse(ctx, projectRef, body)
 	if err != nil {
-		return pgconn.Config{}, errors.Errorf("failed to initialise login role: %w", err)
+		return errors.Errorf("failed to initialise login role: %w", err)
 	} else if resp.JSON201 == nil {
-		return pgconn.Config{}, errors.Errorf("unexpected login role status %d: %s", resp.StatusCode(), string(resp.Body))
+		return errors.Errorf("unexpected login role status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
-	// Direct connection can be tried immediately
+	config.User = resp.JSON201.Role
+	config.Password = resp.JSON201.Password
+	return nil
+}
+
+func initPoolerLogin(ctx context.Context, projectRef string, poolerConfig *pgconn.Config) error {
+	// Prefer password prompt because temp login is unstable using pooler
+	resetUrl := fmt.Sprintf("%s/project/%s/settings/database", utils.GetSupabaseDashboardURL(), projectRef)
+	fmt.Fprintln(os.Stderr, "Forgot your password? Reset it from the Dashboard:", utils.Bold(resetUrl))
+	fmt.Fprint(os.Stderr, "Enter your database password (or leave blank to use temporary login): ")
+	if poolerConfig.Password = credentials.PromptMasked(os.Stdin); len(poolerConfig.Password) > 0 {
+		return nil
+	}
+	poolerUser := poolerConfig.User
+	if err := initLoginRole(ctx, projectRef, poolerConfig); err != nil {
+		return err
+	}
 	suffix := "." + projectRef
-	if !strings.HasSuffix(config.User, suffix) {
-		config.User = resp.JSON201.Role
-		config.Password = resp.JSON201.Password
-		return config, nil
+	if strings.HasSuffix(poolerUser, suffix) {
+		poolerConfig.User += suffix
 	}
 	// Wait for pooler to refresh password
-	config.User = resp.JSON201.Role + suffix
-	config.Password = resp.JSON201.Password
 	login := func() error {
-		conn, err := pgconn.ConnectConfig(ctx, &config)
+		conn, err := pgconn.ConnectConfig(ctx, poolerConfig)
 		if err != nil {
 			return errors.Errorf("failed to connect as temp role: %w", err)
 		}
 		return conn.Close(ctx)
 	}
-	// Fallback to password prompt on error
 	notify := utils.NewErrorCallback(func(attempt uint) error {
 		if attempt%3 > 0 {
 			return nil
 		}
 		return UnbanIP(ctx, projectRef)
 	})
-	if err := backoff.RetryNotify(login, utils.NewBackoffPolicy(ctx), notify); err != nil {
-		return pgconn.Config{}, err
-	}
-	return config, nil
+	return backoff.RetryNotify(login, utils.NewBackoffPolicy(ctx), notify)
 }
 
 func UnbanIP(ctx context.Context, projectRef string, addrs ...string) error {
@@ -213,16 +238,4 @@ func PromptPassword(stdin *os.File) string {
 		password = append(password, charset[random.Int64()])
 	}
 	return string(password)
-}
-
-func getDbConfig(projectRef string) pgconn.Config {
-	if poolerConfig := utils.GetPoolerConfig(projectRef); poolerConfig != nil {
-		return *poolerConfig
-	}
-	return pgconn.Config{
-		Host:     utils.GetSupabaseDbHost(projectRef),
-		Port:     5432,
-		User:     "postgres",
-		Database: "postgres",
-	}
 }

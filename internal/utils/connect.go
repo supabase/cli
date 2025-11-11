@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/debug"
+	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/pgxv5"
 	"golang.org/x/net/publicsuffix"
 )
@@ -41,6 +42,22 @@ func ToPostgresURL(config pgconn.Config) string {
 		url.PathEscape(config.Database),
 		queryParams,
 	)
+}
+
+func GetPoolerConfigPrimary(ctx context.Context, ref string) (api.SupavisorConfigResponse, error) {
+	var result api.SupavisorConfigResponse
+	resp, err := GetSupabase().V1GetPoolerConfigWithResponse(ctx, ref)
+	if err != nil {
+		return result, errors.Errorf("failed to get pooler: %w", err)
+	} else if resp.JSON200 == nil {
+		return result, errors.Errorf("unexpected get pooler status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+	for _, config := range *resp.JSON200 {
+		if config.DatabaseType == api.SupavisorConfigResponseDatabaseTypePRIMARY {
+			return config, nil
+		}
+	}
+	return result, errors.Errorf("primary database not found: %s", ref)
 }
 
 func GetPoolerConfig(projectRef string) *pgconn.Config {

@@ -18,7 +18,6 @@ import (
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
 	cliConfig "github.com/supabase/cli/pkg/config"
-	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/queue"
 )
 
@@ -36,8 +35,9 @@ func Run(ctx context.Context, projectRef string, skipPooler bool, fsys afero.Fs,
 	LinkServices(ctx, projectRef, keys.ServiceRole, skipPooler, fsys)
 
 	// 2. Check database connection
-	config := flags.NewDbConfigWithPassword(ctx, projectRef)
-	if err := linkDatabase(ctx, config, fsys, options...); err != nil {
+	if config, err := flags.NewDbConfigWithPassword(ctx, projectRef); err != nil {
+		fmt.Fprintln(os.Stderr, utils.Yellow("WARN:"), err)
+	} else if err := linkDatabase(ctx, config, fsys, options...); err != nil {
 		fmt.Fprintln(os.Stderr, utils.Yellow("WARN:"), err)
 	}
 
@@ -186,14 +186,7 @@ func linkDatabase(ctx context.Context, config pgconn.Config, fsys afero.Fs, opti
 	}
 	defer conn.Close(context.Background())
 	updatePostgresConfig(conn)
-	if err := linkStorageMigration(ctx, conn, fsys); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-	}
-	// If `schema_migrations` doesn't exist on the remote database, create it.
-	if err := migration.CreateMigrationTable(ctx, conn); err != nil {
-		return err
-	}
-	return migration.CreateSeedTable(ctx, conn)
+	return linkStorageMigration(ctx, conn, fsys)
 }
 
 func updatePostgresConfig(conn *pgx.Conn) {
@@ -207,18 +200,11 @@ func updatePostgresConfig(conn *pgx.Conn) {
 }
 
 func linkPooler(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	resp, err := utils.GetSupabase().V1GetPoolerConfigWithResponse(ctx, projectRef)
+	primary, err := utils.GetPoolerConfigPrimary(ctx, projectRef)
 	if err != nil {
-		return errors.Errorf("failed to get pooler config: %w", err)
+		return err
 	}
-	if resp.JSON200 == nil {
-		return errors.Errorf("%w: %s", tenant.ErrAuthToken, string(resp.Body))
-	}
-	for _, config := range *resp.JSON200 {
-		if config.DatabaseType == api.SupavisorConfigResponseDatabaseTypePRIMARY {
-			updatePoolerConfig(config)
-		}
-	}
+	updatePoolerConfig(primary)
 	return utils.WriteFile(utils.PoolerUrlPath, []byte(utils.Config.Db.Pooler.ConnectionString), fsys)
 }
 
