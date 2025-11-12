@@ -439,8 +439,8 @@ EOF
 			container.HostConfig{
 				Binds: binds,
 				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
-					HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)},
-				}},
+					HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}},
+				},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			network.NetworkingConfig{
@@ -763,6 +763,10 @@ EOF
 			ctx,
 			container.Config{
 				Image: utils.Config.Inbucket.Image,
+				Env: []string{
+					// Disable reverse DNS lookups in Mailpit to avoid slow/delayed DNS resolution
+					"MP_SMTP_DISABLE_RDNS=true",
+				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "/mailpit", "readyz"},
 					Interval: 10 * time.Second,
@@ -846,6 +850,7 @@ EOF
 		started = append(started, utils.RealtimeId)
 	}
 
+	// ... remainder of file unchanged
 	// Start PostgREST.
 	if utils.Config.Api.Enabled && !isContainerExcluded(utils.Config.Api.Image, excluded) {
 		if _, err := utils.DockerStart(
@@ -1134,8 +1139,8 @@ EOF
 			},
 			container.HostConfig{
 				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
-					HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10)},
-				}},
+					HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10)}},
+				},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			network.NetworkingConfig{
