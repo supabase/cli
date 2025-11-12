@@ -19,22 +19,11 @@ func TestUpdateRestrictionsCommand(t *testing.T) {
 	token := apitest.RandomAccessToken(t)
 	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 
-	t.Run("updates v4 and v6 CIDR", func(t *testing.T) {
+	t.Run("replaces v4 and v6 CIDRs when append mode is false", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
-		currentV4 := []string{"2.2.2.2/32"}
-		currentV6 := []string{"2001:db8:ffff::0/64"}
-		respBody := api.NetworkRestrictionsResponse{}
-		respBody.Config.DbAllowedCidrs = &currentV4
-		respBody.Config.DbAllowedCidrsV6 = &currentV6
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + projectRef + "/network-restrictions").
-			Reply(http.StatusOK).
-			JSON(respBody)
-		expectedV4 := append([]string{}, currentV4...)
-		expectedV4 = append(expectedV4, "12.3.4.5/32", "1.2.3.1/24")
-		expectedV6 := append([]string{}, currentV6...)
-		expectedV6 = append(expectedV6, "2001:db8:abcd:0012::0/64")
+		expectedV4 := []string{"12.3.4.5/32", "1.2.3.1/24"}
+		expectedV6 := []string{"2001:db8:abcd:0012::0/64"}
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + projectRef + "/network-restrictions/apply").
 			MatchType("json").
@@ -47,8 +36,35 @@ func TestUpdateRestrictionsCommand(t *testing.T) {
 				Status: api.NetworkRestrictionsResponseStatus("applied"),
 			})
 		// Run test
-		// Include duplicates and an existing CIDR to verify deduplication
-		err := Run(context.Background(), projectRef, []string{"12.3.4.5/32", "12.3.4.5/32", "1.2.3.1/24", "2.2.2.2/32", "2001:db8:abcd:0012::0/64", "2001:db8:abcd:0012::0/64"}, false, true)
+		err := Run(context.Background(), projectRef, []string{"12.3.4.5/32", "1.2.3.1/24", "2001:db8:abcd:0012::0/64"}, false, false)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("appends v4 and v6 CIDRs using PATCH when append mode is true", func(t *testing.T) {
+		// Setup mock api
+		defer gock.OffAll()
+		addV4 := []string{"12.3.4.5/32", "1.2.3.1/24"}
+		addV6 := []string{"2001:db8:abcd:0012::0/64"}
+		gock.New(utils.DefaultApiHost).
+			Patch("/v1/projects/" + projectRef + "/network-restrictions").
+			MatchType("json").
+			JSON(api.NetworkRestrictionsPatchRequest{
+				Add: &struct {
+					DbAllowedCidrs   *[]string `json:"dbAllowedCidrs,omitempty"`
+					DbAllowedCidrsV6 *[]string `json:"dbAllowedCidrsV6,omitempty"`
+				}{
+					DbAllowedCidrs:   &addV4,
+					DbAllowedCidrsV6: &addV6,
+				},
+			}).
+			Reply(http.StatusOK).
+			JSON(api.NetworkRestrictionsV2Response{
+				Status: api.NetworkRestrictionsV2ResponseStatus("applied"),
+			})
+		// Run test
+		err := Run(context.Background(), projectRef, []string{"12.3.4.5/32", "1.2.3.1/24", "2001:db8:abcd:0012::0/64"}, false, true)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
