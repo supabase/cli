@@ -171,13 +171,6 @@ func initLoginRole(ctx context.Context, projectRef string, config *pgconn.Config
 }
 
 func initPoolerLogin(ctx context.Context, projectRef string, poolerConfig *pgconn.Config) error {
-	// Prefer password prompt because temp login is unstable using pooler
-	resetUrl := fmt.Sprintf("%s/project/%s/settings/database", utils.GetSupabaseDashboardURL(), projectRef)
-	fmt.Fprintln(os.Stderr, "Forgot your password? Reset it from the Dashboard:", utils.Bold(resetUrl))
-	fmt.Fprint(os.Stderr, "Enter your database password (or leave blank to use temporary login): ")
-	if poolerConfig.Password = credentials.PromptMasked(os.Stdin); len(poolerConfig.Password) > 0 {
-		return nil
-	}
 	poolerUser := poolerConfig.User
 	if err := initLoginRole(ctx, projectRef, poolerConfig); err != nil {
 		return err
@@ -195,12 +188,27 @@ func initPoolerLogin(ctx context.Context, projectRef string, poolerConfig *pgcon
 		return conn.Close(ctx)
 	}
 	notify := utils.NewErrorCallback(func(attempt uint) error {
-		if attempt%3 > 0 {
+		if attempt < 3 {
 			return nil
 		}
-		return UnbanIP(ctx, projectRef)
+		if ips, err := ListNetworkBans(ctx, projectRef); err != nil {
+			return err
+		} else if len(ips) > 0 {
+			return UnbanIP(ctx, projectRef, ips...)
+		}
+		return nil
 	})
 	return backoff.RetryNotify(login, utils.NewBackoffPolicy(ctx), notify)
+}
+
+func ListNetworkBans(ctx context.Context, projectRef string) ([]string, error) {
+	resp, err := utils.GetSupabase().V1ListAllNetworkBansWithResponse(ctx, projectRef)
+	if err != nil {
+		return nil, errors.Errorf("failed to list network bans: %w", err)
+	} else if resp.JSON201 == nil {
+		return nil, errors.Errorf("unexpected list bans status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+	return resp.JSON201.BannedIpv4Addresses, nil
 }
 
 func UnbanIP(ctx context.Context, projectRef string, addrs ...string) error {
