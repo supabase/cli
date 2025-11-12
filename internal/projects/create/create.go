@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -30,9 +29,6 @@ func Run(ctx context.Context, params api.V1CreateProjectBody, fsys afero.Fs) err
 
 	flags.ProjectRef = resp.JSON201.Id
 	viper.Set("DB_PASSWORD", params.DbPass)
-	if err := credentials.StoreProvider.Set(flags.ProjectRef, params.DbPass); err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to save database password:", err)
-	}
 
 	projectUrl := fmt.Sprintf("%s/project/%s", utils.GetSupabaseDashboardURL(), resp.JSON201.Id)
 	fmt.Fprintf(os.Stderr, "Created a new project at %s\n", utils.Bold(projectUrl))
