@@ -90,7 +90,6 @@ func TestUpdateRestrictionsCommand(t *testing.T) {
 		assert.ErrorContains(t, err, "failed to apply network restrictions:")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
-
 }
 
 func TestValidateCIDR(t *testing.T) {
@@ -134,3 +133,4 @@ func TestValidateCIDR(t *testing.T) {
 		assert.ErrorContains(t, err, "failed to parse IP: 12.3.4.5")
 	})
 }
+
