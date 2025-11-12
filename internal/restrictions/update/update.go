@@ -91,8 +91,6 @@ func ApplyPatch(ctx context.Context, projectRef string, body api.V1PatchNetworkR
 	return nil
 }
 
-
-
 func buildRequestBody(dbCidrsToAllow []string, bypassCidrChecks bool) (api.V1UpdateNetworkRestrictionsJSONRequestBody, error) {
 	body := api.V1UpdateNetworkRestrictionsJSONRequestBody{
 		DbAllowedCidrs:   &[]string{},
