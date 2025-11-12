@@ -112,7 +112,10 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 		return err
 	}
 	// 6. Push migrations
-	config := flags.NewDbConfigWithPassword(ctx, flags.ProjectRef)
+	config, err := flags.NewDbConfigWithPassword(ctx, flags.ProjectRef)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
 	if err := writeDotEnv(keys, config, fsys); err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to create .env file:", err)
 	}
