@@ -133,4 +133,3 @@ func TestValidateCIDR(t *testing.T) {
 		assert.ErrorContains(t, err, "failed to parse IP: 12.3.4.5")
 	})
 }
-
