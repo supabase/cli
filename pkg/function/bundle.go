@@ -48,7 +48,7 @@ var (
 	}
 )
 
-func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, usePackageJson bool, output io.Writer) (FunctionDeployMetadata, error) {
+func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) (FunctionDeployMetadata, error) {
 	meta := NewMetadata(slug, entrypoint, importMap, staticFiles)
 	outputPath := filepath.Join(b.tempDir, slug+".eszip")
 	// TODO: make edge runtime write to stdout
@@ -65,16 +65,14 @@ func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 		defer cancel() // release resources if command exits before timeout
 		ctx = timeoutCtx
 	}
-	denoNoPackageJsonValue := "1"
-	if usePackageJson {
-		denoNoPackageJsonValue = "0"
-	}
-
 	cmd := exec.CommandContext(ctx, edgeRuntimeBin, args...)
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
-	if deno_no_package_json := os.Getenv("DENO_NO_PACKAGE_JSON"); deno_no_package_json != "" {
-		cmd.Env = append(os.Environ(), "DENO_NO_PACKAGE_JSON="+denoNoPackageJsonValue)
+	if fsys, ok := b.fsys.(fs.StatFS); ok {
+		packageJsonPath := filepath.Join(filepath.Dir(entrypoint), "package.json")
+		if _, err := fsys.Stat(packageJsonPath); errors.Is(err, os.ErrNotExist) {
+			cmd.Env = append(cmd.Environ(), "DENO_NO_PACKAGE_JSON=1")
+		}
 	}
 	if err := cmd.Run(); err != nil {
 		return meta, errors.Errorf("failed to bundle function: %w", err)

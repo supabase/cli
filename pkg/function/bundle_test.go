@@ -48,7 +48,6 @@ func TestBundleFunction(t *testing.T) {
 			"hello/index.ts",
 			"hello/deno.json",
 			[]string{"hello/data.pdf"},
-			true,
 			&body,
 		)
 		// Check error
@@ -79,7 +78,6 @@ func TestBundleFunction(t *testing.T) {
 			"hello/index.ts",
 			"",
 			nil,
-			true,
 			&body,
 		)
 		// Check error

@@ -24,7 +24,7 @@ type FunctionDeployMetadata struct {
 }
 
 type EszipBundler interface {
-	Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, usePackageJson bool, output io.Writer) (FunctionDeployMetadata, error)
+	Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) (FunctionDeployMetadata, error)
 }
 
 func NewEdgeRuntimeAPI(project string, client api.ClientWithResponses, opts ...withOption) EdgeRuntimeAPI {

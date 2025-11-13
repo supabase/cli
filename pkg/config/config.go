@@ -200,12 +200,11 @@ type (
 	FunctionConfig map[string]function
 
 	function struct {
-		Enabled        bool   `toml:"enabled" json:"-"`
-		UsePackageJson bool   `toml:"-" json:"-"`
-		VerifyJWT      bool   `toml:"verify_jwt" json:"verifyJWT"`
-		ImportMap      string `toml:"import_map" json:"importMapPath,omitempty"`
-		Entrypoint     string `toml:"entrypoint" json:"entrypointPath,omitempty"`
-		StaticFiles    Glob   `toml:"static_files" json:"staticFiles,omitempty"`
+		Enabled     bool   `toml:"enabled" json:"-"`
+		VerifyJWT   bool   `toml:"verify_jwt" json:"verifyJWT"`
+		ImportMap   string `toml:"import_map" json:"importMapPath,omitempty"`
+		Entrypoint  string `toml:"entrypoint" json:"entrypointPath,omitempty"`
+		StaticFiles Glob   `toml:"static_files" json:"staticFiles,omitempty"`
 	}
 
 	analytics struct {
