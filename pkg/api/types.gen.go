@@ -4135,7 +4135,8 @@ type V1ProjectResponse struct {
 	// CreatedAt Creation timestamp
 	CreatedAt string `json:"created_at"`
 
-	// Id Id of your project
+	// Id Deprecated: Use `ref` instead.
+	// Deprecated:
 	Id string `json:"id"`
 
 	// Name Name of your project
@@ -4143,6 +4144,9 @@ type V1ProjectResponse struct {
 
 	// OrganizationId Slug of your organization
 	OrganizationId string `json:"organization_id"`
+
+	// Ref Project ref
+	Ref string `json:"ref"`
 
 	// Region Region of your project
 	Region string                  `json:"region"`
@@ -4170,7 +4174,8 @@ type V1ProjectWithDatabaseResponse struct {
 		Version string `json:"version"`
 	} `json:"database"`
 
-	// Id Id of your project
+	// Id Deprecated: Use `ref` instead.
+	// Deprecated:
 	Id string `json:"id"`
 
 	// Name Name of your project
@@ -4178,6 +4183,9 @@ type V1ProjectWithDatabaseResponse struct {
 
 	// OrganizationId Slug of your organization
 	OrganizationId string `json:"organization_id"`
+
+	// Ref Project ref
+	Ref string `json:"ref"`
 
 	// Region Region of your project
 	Region string                              `json:"region"`
