@@ -4,9 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -16,6 +21,7 @@ import (
 	"github.com/andybalholm/brotli"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/go-units"
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
@@ -112,15 +118,30 @@ func downloadFunction(ctx context.Context, projectRef, slug, extractScriptPath s
 	return nil
 }
 
-func Run(ctx context.Context, slug string, projectRef string, useLegacyBundle bool, fsys afero.Fs) error {
-	if useLegacyBundle {
-		return RunLegacy(ctx, slug, projectRef, fsys)
-	}
-	// 1. Sanity check
+func Run(ctx context.Context, slug, projectRef string, useLegacyBundle, useDocker bool, fsys afero.Fs) error {
+	// Sanity check
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
-	// 2. Download eszip to temp file
+
+	if useLegacyBundle {
+		return RunLegacy(ctx, slug, projectRef, fsys)
+	}
+
+	if useDocker {
+		if utils.IsDockerRunning(ctx) {
+			// download eszip file for client-side unbundling with edge-runtime
+			return downloadWithDockerUnbundle(ctx, slug, projectRef, fsys)
+		} else {
+			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Docker is not running")
+		}
+	}
+
+	// Use server-side unbundling with multipart/form-data
+	return downloadWithServerSideUnbundle(ctx, slug, projectRef, fsys)
+}
+
+func downloadWithDockerUnbundle(ctx context.Context, slug string, projectRef string, fsys afero.Fs) error {
 	eszipPath, err := downloadOne(ctx, slug, projectRef, fsys)
 	if err != nil {
 		return err
@@ -237,4 +258,155 @@ deno_version = 2
 
 func suggestLegacyBundle(slug string) string {
 	return fmt.Sprintf("\nIf your function is deployed using CLI < 1.120.0, trying running %s instead.", utils.Aqua("supabase functions download --legacy-bundle "+slug))
+}
+
+type bundleMetadata struct {
+	EntrypointPath string `json:"deno2_entrypoint_path,omitempty"`
+}
+
+// New server-side unbundle implementation that mirrors Studio's entrypoint-based
+// base-dir + relative path behaviour.
+func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string, fsys afero.Fs) error {
+	fmt.Fprintln(os.Stderr, "Downloading Function:", utils.Bold(slug))
+
+	form, err := readForm(ctx, projectRef, slug)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := form.RemoveAll(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
+
+	// Read entrypoint path from deno2 bundles
+	metadata := bundleMetadata{}
+	if data, ok := form.Value["metadata"]; ok {
+		for _, part := range data {
+			if err := json.Unmarshal([]byte(part), &metadata); err != nil {
+				return errors.Errorf("failed to unmarshal metadata: %w", err)
+			}
+		}
+	}
+
+	// Fallback to function metadata from upstash
+	if len(metadata.EntrypointPath) == 0 {
+		upstash, err := getFunctionMetadata(ctx, projectRef, slug)
+		if err != nil {
+			return errors.Errorf("failed to get function metadata: %w", err)
+		}
+		entrypointUrl, err := url.Parse(*upstash.EntrypointPath)
+		if err != nil {
+			return errors.Errorf("failed to parse entrypoint URL: %w", err)
+		}
+		metadata.EntrypointPath = entrypointUrl.Path
+	}
+	fmt.Fprintln(utils.GetDebugLogger(), "Using entrypoint path:", metadata.EntrypointPath)
+
+	// Root directory on disk: supabase/functions/<slug>
+	funcDir := filepath.Join(utils.FunctionsDir, slug)
+	for _, data := range form.File {
+		for _, file := range data {
+			if err := saveFile(file, metadata.EntrypointPath, funcDir, fsys); err != nil {
+				return err
+			}
+		}
+	}
+
+	fmt.Println("Downloaded Function " + utils.Aqua(slug) + " from project " + utils.Aqua(projectRef) + ".")
+	return nil
+}
+
+func readForm(ctx context.Context, projectRef, slug string) (*multipart.Form, error) {
+	// Request multipart/form-data response using RequestEditorFn
+	resp, err := utils.GetSupabase().V1GetAFunctionBody(ctx, projectRef, slug, func(ctx context.Context, req *http.Request) error {
+		req.Header.Set("Accept", "multipart/form-data")
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Errorf("failed to download function: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, errors.Errorf("Error status %d: %w", resp.StatusCode, err)
+		}
+		return nil, errors.Errorf("Error status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse the multipart response
+	mediaType, params, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil {
+		return nil, errors.Errorf("failed to parse content type: %w", err)
+	}
+	if !strings.HasPrefix(mediaType, "multipart/") {
+		return nil, errors.Errorf("expected multipart response, got %s", mediaType)
+	}
+
+	// Read entire response with caching to disk
+	mr := multipart.NewReader(resp.Body, params["boundary"])
+	form, err := mr.ReadForm(units.MiB)
+	if err != nil {
+		return nil, errors.Errorf("failed to read form: %w", err)
+	}
+
+	return form, nil
+}
+
+func saveFile(file *multipart.FileHeader, entrypointPath, funcDir string, fsys afero.Fs) error {
+	part, err := file.Open()
+	if err != nil {
+		return errors.Errorf("failed to open file: %w", err)
+	}
+	defer part.Close()
+
+	logger := utils.GetDebugLogger()
+	partPath, err := getPartPath(file.Header)
+	if len(partPath) == 0 {
+		fmt.Fprintln(logger, "Skipping file with empty path:", file.Filename)
+		return err
+	}
+	fmt.Fprintln(logger, "Resolving file path:", partPath)
+
+	relPath, err := filepath.Rel(filepath.FromSlash(entrypointPath), filepath.FromSlash(partPath))
+	if err != nil {
+		// Continue extracting without entrypoint
+		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), err)
+		relPath = filepath.FromSlash(path.Join("..", partPath))
+	}
+
+	dstPath := filepath.Join(funcDir, path.Base(entrypointPath), relPath)
+	fmt.Fprintln(os.Stderr, "Extracting file:", dstPath)
+	if err := afero.WriteReader(fsys, dstPath, part); err != nil {
+		return errors.Errorf("failed to save file: %w", err)
+	}
+
+	return nil
+}
+
+// getPartPath extracts the filename for a multipart part, allowing for
+// relative paths via the custom Supabase-Path header.
+func getPartPath(header textproto.MIMEHeader) (string, error) {
+	// dedicated header to specify relative path, not expected to be used
+	if relPath := header.Get("Supabase-Path"); relPath != "" {
+		return relPath, nil
+	}
+
+	// part.FileName() does not allow us to handle relative paths, so we parse Content-Disposition manually
+	cd := header.Get("Content-Disposition")
+	if cd == "" {
+		return "", nil
+	}
+
+	_, params, err := mime.ParseMediaType(cd)
+	if err != nil {
+		return "", errors.Errorf("failed to parse content disposition: %w", err)
+	}
+
+	if filename := params["filename"]; filename != "" {
+		return filename, nil
+	}
+	return "", nil
 }
