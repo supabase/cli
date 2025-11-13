@@ -116,6 +116,22 @@ async function verifyJWT(jwt: string): Promise<boolean> {
   return true;
 }
 
+// Ref: https://docs.deno.com/examples/checking_file_existence/
+async function shouldUsePackageJsonDiscovery({ entrypointPath, importMapPath }: FunctionConfig): Promise<boolean> {
+  if (importMapPath) {
+    return false
+  }
+  const packageJsonPath = posix.join(posix.dirname(entrypointPath), "package.json")
+  try {
+    await Deno.lstat(packageJsonPath);
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) {
+      return false
+    }
+  }
+  return true
+}
+
 Deno.serve({
   handler: async (req: Request) => {
     const url = new URL(req.url);
@@ -178,6 +194,7 @@ Deno.serve({
 
     const absEntrypoint = posix.join(Deno.cwd(), functionsConfig[functionName].entrypointPath);
     const maybeEntrypoint = posix.toFileUrl(absEntrypoint).href;
+    const usePackageJson = await shouldUsePackageJsonDiscovery(functionsConfig[functionName]);
 
     const staticPatterns = functionsConfig[functionName].staticFiles;
 
@@ -187,6 +204,7 @@ Deno.serve({
         memoryLimitMb,
         workerTimeoutMs,
         noModuleCache,
+        noNpm: !usePackageJson,
         importMapPath: functionsConfig[functionName].importMapPath,
         envVars,
         forceCreate,
