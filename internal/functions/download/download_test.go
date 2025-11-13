@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"os"
+	"path"
 	"path/filepath"
 	"testing"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
 )
 
 func TestMain(m *testing.M) {
@@ -41,39 +43,6 @@ func TestMain(m *testing.M) {
 	utils.DenoPathOverride = denoPath
 	// Run test suite
 	os.Exit(m.Run())
-}
-
-func writeConfig(t *testing.T, fsys afero.Fs) {
-	t.Helper()
-	require.NoError(t, utils.WriteConfig(fsys, false))
-}
-
-func withProjectRef(t *testing.T, project string) {
-	t.Helper()
-	flags.ProjectRef = project
-	t.Cleanup(func() { flags.ProjectRef = "" })
-}
-
-func newFunctionMetadata(slug string) api.FunctionSlugResponse {
-	entrypoint := "file:///src/index.ts"
-	status := api.FunctionSlugResponseStatus("ACTIVE")
-	return api.FunctionSlugResponse{
-		Id:             "1",
-		Name:           slug,
-		Slug:           slug,
-		Status:         status,
-		Version:        1,
-		CreatedAt:      0,
-		UpdatedAt:      0,
-		EntrypointPath: &entrypoint,
-	}
-}
-
-func mockFunctionMetadata(projectRef, slug string, meta api.FunctionSlugResponse) {
-	gock.New(utils.DefaultApiHost).
-		Get(fmt.Sprintf("/v1/projects/%s/functions/%s", projectRef, slug)).
-		Reply(http.StatusOK).
-		JSON(meta)
 }
 
 type multipartPart struct {
@@ -115,14 +84,6 @@ func mockMultipartBody(t *testing.T, projectRef, slug string, metadata bundleMet
 		Body(&buf)
 }
 
-func cleanupTestData(t *testing.T) {
-	t.Helper()
-	t.Cleanup(func() {
-		gock.OffAll()
-		utils.CmdSuggestion = "" // fmt.Sprintf("try turning it off and on again")
-	})
-}
-
 func TestRunLegacyUnbundle(t *testing.T) {
 	const slug = "test-func"
 
@@ -138,7 +99,7 @@ func TestRunLegacyUnbundle(t *testing.T) {
 		_, err := fsys.Create(utils.DenoPathOverride)
 		require.NoError(t, err)
 		// Setup mock api
-		cleanupTestData(t)
+		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
@@ -201,7 +162,7 @@ func TestRunLegacyUnbundle(t *testing.T) {
 		_, err := fsys.Create(utils.DenoPathOverride)
 		require.NoError(t, err)
 		// Setup mock api
-		cleanupTestData(t)
+		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusNotFound).
@@ -223,7 +184,7 @@ func TestDownloadFunction(t *testing.T) {
 
 	t.Run("throws error on network error", func(t *testing.T) {
 		// Setup mock api
-		cleanupTestData(t)
+		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
@@ -239,7 +200,7 @@ func TestDownloadFunction(t *testing.T) {
 
 	t.Run("throws error on service unavailable", func(t *testing.T) {
 		// Setup mock api
-		cleanupTestData(t)
+		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
@@ -257,7 +218,7 @@ func TestDownloadFunction(t *testing.T) {
 		// Setup deno error
 		t.Setenv("TEST_DENO_ERROR", "extract failed")
 		// Setup mock api
-		cleanupTestData(t)
+		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
@@ -282,7 +243,7 @@ func TestGetMetadata(t *testing.T) {
 
 	t.Run("fallback to default paths", func(t *testing.T) {
 		// Setup mock api
-		cleanupTestData(t)
+		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusOK).
@@ -297,7 +258,7 @@ func TestGetMetadata(t *testing.T) {
 
 	t.Run("throws error on network error", func(t *testing.T) {
 		// Setup mock api
-		cleanupTestData(t)
+		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			ReplyError(errors.New("network error"))
@@ -310,7 +271,7 @@ func TestGetMetadata(t *testing.T) {
 
 	t.Run("throws error on service unavailable", func(t *testing.T) {
 		// Setup mock api
-		cleanupTestData(t)
+		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/functions/" + slug).
 			Reply(http.StatusServiceUnavailable)
@@ -326,9 +287,8 @@ func TestRunDockerUnbundle(t *testing.T) {
 	t.Run("downloads bundle with docker when available", func(t *testing.T) {
 		const slugDocker = "demo"
 		fsys := afero.NewMemMapFs()
-		writeConfig(t, fsys)
+		require.NoError(t, utils.WriteConfig(fsys, false))
 		project := apitest.RandomProjectRef()
-		withProjectRef(t, project)
 		require.NoError(t, flags.LoadConfig(fsys))
 
 		token := apitest.RandomAccessToken(t)
@@ -337,7 +297,8 @@ func TestRunDockerUnbundle(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		dockerHost := utils.Docker.DaemonHost()
 
-		cleanupTestData(t)
+		// Setup mock api
+		defer gock.OffAll()
 
 		gock.New(dockerHost).
 			Head("/_ping").
@@ -367,9 +328,8 @@ func TestRunDockerUnbundle(t *testing.T) {
 	t.Run("falls back to server-side unbundle when docker unavailable", func(t *testing.T) {
 		const slugDocker = "demo-fallback"
 		fsys := afero.NewMemMapFs()
-		writeConfig(t, fsys)
+		require.NoError(t, utils.WriteConfig(fsys, false))
 		project := apitest.RandomProjectRef()
-		withProjectRef(t, project)
 		require.NoError(t, flags.LoadConfig(fsys))
 
 		token := apitest.RandomAccessToken(t)
@@ -378,7 +338,8 @@ func TestRunDockerUnbundle(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		dockerHost := utils.Docker.DaemonHost()
 
-		cleanupTestData(t)
+		// Setup mock api
+		defer gock.OffAll()
 
 		gock.New(dockerHost).
 			Head("/_ping").
@@ -403,14 +364,13 @@ func TestRunServerSideUnbundle(t *testing.T) {
 	const slug = "test-func"
 	token := apitest.RandomAccessToken(t)
 	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+	project := apitest.RandomProjectRef()
 
 	t.Run("writes files using inferred base directory", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
-		writeConfig(t, fsys)
-		project := apitest.RandomProjectRef()
-		withProjectRef(t, project)
-		cleanupTestData(t)
+		require.NoError(t, utils.WriteConfig(fsys, false))
 
+		defer gock.OffAll()
 		mockMultipartBody(t, project, slug, bundleMetadata{EntrypointPath: "source/index.ts"}, []multipartPart{
 			{filename: "source/index.ts", contents: "console.log('hello')"},
 			{filename: "source/utils.ts", contents: "export const value = 1;"},
@@ -439,24 +399,29 @@ func TestRunServerSideUnbundle(t *testing.T) {
 
 	t.Run("derives base directory from absolute filenames", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
-		writeConfig(t, fsys)
-		project := apitest.RandomProjectRef()
-		withProjectRef(t, project)
-		cleanupTestData(t)
+		require.NoError(t, utils.WriteConfig(fsys, false))
 
-		// eg. /tmp/functions-download-abs/source/
-		tempBase := filepath.Join(os.TempDir(), "functions-download-abs", "source")
-		indexPath := filepath.Join(tempBase, "index.ts")
-		utilsPath := filepath.Join(tempBase, "lib", "utils.ts")
+		defer gock.OffAll()
+		indexPath := "/tmp/functions-download-abs/source/index.ts"
+		utilsPath := path.Join(path.Dir(indexPath), "lib", "utils.ts")
 		mockMultipartBody(t, project, slug, bundleMetadata{}, []multipartPart{
 			{filename: indexPath, contents: "console.log('abs')"},
 			{filename: utilsPath, contents: "export const util = 2;"},
 		})
 
-		meta := newFunctionMetadata(slug)
-		entrypoint := "file://" + indexPath
-		meta.EntrypointPath = &entrypoint
-		mockFunctionMetadata(project, slug, meta)
+		gock.New(utils.DefaultApiHost).
+			Get(fmt.Sprintf("/v1/projects/%s/functions/%s", project, slug)).
+			Reply(http.StatusOK).
+			JSON(api.FunctionSlugResponse{
+				Id:             "1",
+				Name:           slug,
+				Slug:           slug,
+				Status:         api.FunctionSlugResponseStatus("ACTIVE"),
+				Version:        1,
+				CreatedAt:      0,
+				UpdatedAt:      0,
+				EntrypointPath: cast.Ptr("file://" + indexPath),
+			})
 
 		err := Run(context.Background(), slug, project, false, false, fsys)
 		require.NoError(t, err)
@@ -475,11 +440,23 @@ func TestRunServerSideUnbundle(t *testing.T) {
 
 	t.Run("fails when response not multipart", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
-		writeConfig(t, fsys)
-		project := apitest.RandomProjectRef()
-		withProjectRef(t, project)
-		cleanupTestData(t)
-		mockFunctionMetadata(project, slug, newFunctionMetadata(slug))
+		require.NoError(t, utils.WriteConfig(fsys, false))
+
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get(fmt.Sprintf("/v1/projects/%s/functions/%s", project, slug)).
+			Reply(http.StatusOK).
+			JSON(api.FunctionSlugResponse{
+				Id:             "1",
+				Name:           slug,
+				Slug:           slug,
+				Status:         api.FunctionSlugResponseStatus("ACTIVE"),
+				Version:        1,
+				CreatedAt:      0,
+				UpdatedAt:      0,
+				EntrypointPath: cast.Ptr(legacyEntrypointPath),
+			})
+
 		gock.New(utils.DefaultApiHost).
 			Get(fmt.Sprintf("/v1/projects/%s/functions/%s/body", project, slug)).
 			Reply(http.StatusOK).
@@ -492,19 +469,27 @@ func TestRunServerSideUnbundle(t *testing.T) {
 
 	t.Run("ignores unresolvable entrypoint path", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
-		writeConfig(t, fsys)
-		project := apitest.RandomProjectRef()
-		withProjectRef(t, project)
-		cleanupTestData(t)
+		require.NoError(t, utils.WriteConfig(fsys, false))
 
+		defer gock.OffAll()
 		mockMultipartBody(t, project, slug, bundleMetadata{}, []multipartPart{
 			{filename: "source/index.ts", contents: "console.log('hello')"},
 			{filename: "source/secret.env", supabasePath: "../secret.env", contents: "SECRET=1"},
 		})
-		meta := newFunctionMetadata(slug)
-		entrypoint := "file:///source/index.ts"
-		meta.EntrypointPath = &entrypoint
-		mockFunctionMetadata(project, slug, meta)
+
+		gock.New(utils.DefaultApiHost).
+			Get(fmt.Sprintf("/v1/projects/%s/functions/%s", project, slug)).
+			Reply(http.StatusOK).
+			JSON(api.FunctionSlugResponse{
+				Id:             "1",
+				Name:           slug,
+				Slug:           slug,
+				Status:         api.FunctionSlugResponseStatus("ACTIVE"),
+				Version:        1,
+				CreatedAt:      0,
+				UpdatedAt:      0,
+				EntrypointPath: cast.Ptr("file:///source/index.ts"),
+			})
 
 		err := Run(context.Background(), slug, project, false, false, fsys)
 		assert.NoError(t, err)
