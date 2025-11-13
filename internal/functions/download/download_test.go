@@ -174,115 +174,6 @@ func TestRunLegacyUnbundle(t *testing.T) {
 	})
 }
 
-func TestDownloadFunction(t *testing.T) {
-	const slug = "test-func"
-	// Setup valid project ref
-	project := apitest.RandomProjectRef()
-	// Setup valid access token
-	token := apitest.RandomAccessToken(t)
-	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-
-	t.Run("throws error on network error", func(t *testing.T) {
-		// Setup mock api
-		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/functions/" + slug).
-			Reply(http.StatusOK).
-			JSON(api.FunctionResponse{Id: "1"})
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/functions/" + slug + "/body").
-			ReplyError(errors.New("network error"))
-		// Run test
-		err := downloadFunction(context.Background(), project, slug, "")
-		// Check error
-		assert.ErrorContains(t, err, "network error")
-	})
-
-	t.Run("throws error on service unavailable", func(t *testing.T) {
-		// Setup mock api
-		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/functions/" + slug).
-			Reply(http.StatusOK).
-			JSON(api.FunctionResponse{Id: "1"})
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/functions/" + slug + "/body").
-			Reply(http.StatusServiceUnavailable)
-		// Run test
-		err := downloadFunction(context.Background(), project, slug, "")
-		// Check error
-		assert.ErrorContains(t, err, "Unexpected error downloading Function:")
-	})
-
-	t.Run("throws error on extract failure", func(t *testing.T) {
-		// Setup deno error
-		t.Setenv("TEST_DENO_ERROR", "extract failed")
-		// Setup mock api
-		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/functions/" + slug).
-			Reply(http.StatusOK).
-			JSON(api.FunctionResponse{Id: "1"})
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/functions/" + slug + "/body").
-			Reply(http.StatusOK)
-		// Run test
-		err := downloadFunction(context.Background(), project, slug, "")
-		// Check error
-		assert.ErrorContains(t, err, "Error downloading function: exit status 1\nextract failed\n")
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-}
-
-func TestGetMetadata(t *testing.T) {
-	const slug = "test-func"
-	project := apitest.RandomProjectRef()
-	// Setup valid access token
-	token := apitest.RandomAccessToken(t)
-	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-
-	t.Run("fallback to default paths", func(t *testing.T) {
-		// Setup mock api
-		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/functions/" + slug).
-			Reply(http.StatusOK).
-			JSON(api.FunctionResponse{Id: "1"})
-		// Run test
-		meta, err := getFunctionMetadata(context.Background(), project, slug)
-		// Check error
-		assert.NoError(t, err)
-		assert.Equal(t, legacyEntrypointPath, *meta.EntrypointPath)
-		assert.Equal(t, legacyImportMapPath, *meta.ImportMapPath)
-	})
-
-	t.Run("throws error on network error", func(t *testing.T) {
-		// Setup mock api
-		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/functions/" + slug).
-			ReplyError(errors.New("network error"))
-		// Run test
-		meta, err := getFunctionMetadata(context.Background(), project, slug)
-		// Check error
-		assert.ErrorContains(t, err, "network error")
-		assert.Nil(t, meta)
-	})
-
-	t.Run("throws error on service unavailable", func(t *testing.T) {
-		// Setup mock api
-		defer gock.OffAll()
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/functions/" + slug).
-			Reply(http.StatusServiceUnavailable)
-		// Run test
-		meta, err := getFunctionMetadata(context.Background(), project, slug)
-		// Check error
-		assert.ErrorContains(t, err, "Failed to download Function test-func on the Supabase project:")
-		assert.Nil(t, meta)
-	})
-}
-
 func TestRunDockerUnbundle(t *testing.T) {
 	t.Run("downloads bundle with docker when available", func(t *testing.T) {
 		const slugDocker = "demo"
@@ -504,6 +395,115 @@ func TestRunServerSideUnbundle(t *testing.T) {
 		assert.Equal(t, "SECRET=1", string(data))
 
 		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+}
+
+func TestDownloadFunction(t *testing.T) {
+	const slug = "test-func"
+	// Setup valid project ref
+	project := apitest.RandomProjectRef()
+	// Setup valid access token
+	token := apitest.RandomAccessToken(t)
+	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
+	t.Run("throws error on network error", func(t *testing.T) {
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions/" + slug).
+			Reply(http.StatusOK).
+			JSON(api.FunctionResponse{Id: "1"})
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions/" + slug + "/body").
+			ReplyError(errors.New("network error"))
+		// Run test
+		err := downloadFunction(context.Background(), project, slug, "")
+		// Check error
+		assert.ErrorContains(t, err, "network error")
+	})
+
+	t.Run("throws error on service unavailable", func(t *testing.T) {
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions/" + slug).
+			Reply(http.StatusOK).
+			JSON(api.FunctionResponse{Id: "1"})
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions/" + slug + "/body").
+			Reply(http.StatusServiceUnavailable)
+		// Run test
+		err := downloadFunction(context.Background(), project, slug, "")
+		// Check error
+		assert.ErrorContains(t, err, "Unexpected error downloading Function:")
+	})
+
+	t.Run("throws error on extract failure", func(t *testing.T) {
+		// Setup deno error
+		t.Setenv("TEST_DENO_ERROR", "extract failed")
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions/" + slug).
+			Reply(http.StatusOK).
+			JSON(api.FunctionResponse{Id: "1"})
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions/" + slug + "/body").
+			Reply(http.StatusOK)
+		// Run test
+		err := downloadFunction(context.Background(), project, slug, "")
+		// Check error
+		assert.ErrorContains(t, err, "Error downloading function: exit status 1\nextract failed\n")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+}
+
+func TestGetMetadata(t *testing.T) {
+	const slug = "test-func"
+	project := apitest.RandomProjectRef()
+	// Setup valid access token
+	token := apitest.RandomAccessToken(t)
+	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
+	t.Run("fallback to default paths", func(t *testing.T) {
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions/" + slug).
+			Reply(http.StatusOK).
+			JSON(api.FunctionResponse{Id: "1"})
+		// Run test
+		meta, err := getFunctionMetadata(context.Background(), project, slug)
+		// Check error
+		assert.NoError(t, err)
+		assert.Equal(t, legacyEntrypointPath, *meta.EntrypointPath)
+		assert.Equal(t, legacyImportMapPath, *meta.ImportMapPath)
+	})
+
+	t.Run("throws error on network error", func(t *testing.T) {
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions/" + slug).
+			ReplyError(errors.New("network error"))
+		// Run test
+		meta, err := getFunctionMetadata(context.Background(), project, slug)
+		// Check error
+		assert.ErrorContains(t, err, "network error")
+		assert.Nil(t, meta)
+	})
+
+	t.Run("throws error on service unavailable", func(t *testing.T) {
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/functions/" + slug).
+			Reply(http.StatusServiceUnavailable)
+		// Run test
+		meta, err := getFunctionMetadata(context.Background(), project, slug)
+		// Check error
+		assert.ErrorContains(t, err, "Failed to download Function test-func on the Supabase project:")
+		assert.Nil(t, meta)
 	})
 }
 

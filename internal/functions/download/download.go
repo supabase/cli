@@ -273,7 +273,11 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 	if err != nil {
 		return err
 	}
-	defer form.RemoveAll()
+	defer func() {
+		if err := form.RemoveAll(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}()
 
 	// Read entrypoint path from deno2 bundles
 	metadata := bundleMetadata{}
