@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"os"
 	"os/exec"
@@ -19,6 +21,7 @@ import (
 	"github.com/andybalholm/brotli"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/go-units"
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
@@ -257,93 +260,52 @@ func suggestLegacyBundle(slug string) string {
 	return fmt.Sprintf("\nIf your function is deployed using CLI < 1.120.0, trying running %s instead.", utils.Aqua("supabase functions download --legacy-bundle "+slug))
 }
 
+type bundleMetadata struct {
+	EntrypointPath string `json:"deno2_entrypoint_path,omitempty"`
+}
+
 // New server-side unbundle implementation that mirrors Studio's entrypoint-based
 // base-dir + relative path behaviour.
 func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string, fsys afero.Fs) error {
-	fmt.Fprintln(os.Stderr, "Downloading "+utils.Bold(slug))
+	fmt.Fprintln(os.Stderr, "Downloading Function:", utils.Bold(slug))
 
-	metadata, err := getFunctionMetadata(ctx, projectRef, slug)
+	form, err := readForm(ctx, projectRef, slug)
 	if err != nil {
-		return errors.Errorf("failed to get function metadata: %w", err)
+		return err
 	}
+	defer form.RemoveAll()
 
-	entrypointUrl, err := url.Parse(*metadata.EntrypointPath)
-	if err != nil {
-		return errors.Errorf("failed to parse entrypoint URL: %w", err)
-	}
-
-	// Request multipart/form-data response using RequestEditorFn
-	resp, err := utils.GetSupabase().V1GetAFunctionBody(ctx, projectRef, slug, func(ctx context.Context, req *http.Request) error {
-		req.Header.Set("Accept", "multipart/form-data")
-		return nil
-	})
-	if err != nil {
-		return errors.Errorf("failed to download function: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return errors.Errorf("Error status %d: %w", resp.StatusCode, err)
+	// Read entrypoint path from deno2 bundles
+	metadata := bundleMetadata{}
+	if data, ok := form.Value["metadata"]; ok {
+		for _, part := range data {
+			if err := json.Unmarshal([]byte(part), &metadata); err != nil {
+				return errors.Errorf("failed to unmarshal metadata: %w", err)
+			}
 		}
-		return errors.Errorf("Error status %d: %s", resp.StatusCode, string(body))
 	}
 
-	// Parse the multipart response
-	mediaType, params, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	if err != nil {
-		return errors.Errorf("failed to parse content type: %w", err)
+	// Fallback to function metadata from upstash
+	if len(metadata.EntrypointPath) == 0 {
+		upstash, err := getFunctionMetadata(ctx, projectRef, slug)
+		if err != nil {
+			return errors.Errorf("failed to get function metadata: %w", err)
+		}
+		entrypointUrl, err := url.Parse(*upstash.EntrypointPath)
+		if err != nil {
+			return errors.Errorf("failed to parse entrypoint URL: %w", err)
+		}
+		metadata.EntrypointPath = entrypointUrl.Path
 	}
-
-	if !strings.HasPrefix(mediaType, "multipart/") {
-		return errors.Errorf("expected multipart response, got %s", mediaType)
-	}
+	fmt.Fprintln(utils.GetDebugLogger(), "Using entrypoint path:", metadata.EntrypointPath)
 
 	// Root directory on disk: supabase/functions/<slug>
 	funcDir := filepath.Join(utils.FunctionsDir, slug)
-	if err := utils.MkdirIfNotExistFS(fsys, funcDir); err != nil {
-		return err
-	}
-
-	bufferedParts, cleanupTemp, err := bufferMultipartParts(resp.Body, params["boundary"], slug, fsys)
-	if cleanupTemp != nil {
-		defer cleanupTemp()
-	}
-	if err != nil {
-		return err
-	}
-
-	// Collect file paths (excluding empty ones) to infer the base directory.
-	var filepaths []string
-	for _, p := range bufferedParts {
-		if p.path != "" {
-			filepaths = append(filepaths, p.path)
-		}
-	}
-
-	// infer baseDir using a number of heuristics, in the simple case just Path.Dir(entrypoint)
-	baseDir := getBaseDirFromEntrypoint(entrypointUrl, filepaths)
-
-	// Place each file under funcDir using a path relative to baseDir,
-	// mirroring Studio's getBasePath + relative() behavior.
-	for _, p := range bufferedParts {
-		if p.path == "" {
-			continue
-		}
-
-		relPath := getRelativePathFromBase(baseDir, p.path)
-		filePath, err := joinWithinDir(funcDir, relPath)
-		if err != nil {
-			return err
-		}
-
-		if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(filePath)); err != nil {
-			return err
-		}
-
-		if err := copyFileFromTemp(fsys, p.tempPath, filePath); err != nil {
-			return err
+	for _, data := range form.File {
+		for _, file := range data {
+			if err := saveFile(file, metadata.EntrypointPath, funcDir, fsys); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -351,97 +313,85 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 	return nil
 }
 
-type bufferedPart struct {
-	path     string
-	tempPath string
+func readForm(ctx context.Context, projectRef, slug string) (*multipart.Form, error) {
+	// Request multipart/form-data response using RequestEditorFn
+	resp, err := utils.GetSupabase().V1GetAFunctionBody(ctx, projectRef, slug, func(ctx context.Context, req *http.Request) error {
+		req.Header.Set("Accept", "multipart/form-data")
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Errorf("failed to download function: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, errors.Errorf("Error status %d: %w", resp.StatusCode, err)
+		}
+		return nil, errors.Errorf("Error status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse the multipart response
+	mediaType, params, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil {
+		return nil, errors.Errorf("failed to parse content type: %w", err)
+	}
+	if !strings.HasPrefix(mediaType, "multipart/") {
+		return nil, errors.Errorf("expected multipart response, got %s", mediaType)
+	}
+
+	// Read entire response with caching to disk
+	mr := multipart.NewReader(resp.Body, params["boundary"])
+	form, err := mr.ReadForm(units.MiB)
+	if err != nil {
+		return nil, errors.Errorf("failed to read form: %w", err)
+	}
+
+	return form, nil
 }
 
-// write multipart parts to temp files and return their corresponding path pairs
-func bufferMultipartParts(body io.Reader, boundary, slug string, fsys afero.Fs) ([]bufferedPart, func(), error) {
-	if boundary == "" {
-		return nil, nil, errors.New("multipart boundary missing")
-	}
-	if err := utils.MkdirIfNotExistFS(fsys, utils.TempDir); err != nil {
-		return nil, nil, err
-	}
-	tempDir, err := afero.TempDir(fsys, utils.TempDir, fmt.Sprintf("functions-download-%s-", slug))
+func saveFile(file *multipart.FileHeader, entrypointPath, funcDir string, fsys afero.Fs) error {
+	part, err := file.Open()
 	if err != nil {
-		return nil, nil, errors.Errorf("failed to create temp directory: %w", err)
+		return errors.Errorf("failed to open file: %w", err)
 	}
-	afs := afero.Afero{Fs: fsys}
-	cleanup := func() {
-		if err := afs.RemoveAll(tempDir); err != nil {
-			fmt.Fprintln(utils.GetDebugLogger(), "failed to clean up temp dir:", err)
-		}
+	defer part.Close()
+
+	logger := utils.GetDebugLogger()
+	partPath, err := getPartPath(file.Header)
+	if len(partPath) == 0 {
+		fmt.Fprintln(logger, "Skipping file with empty path:", file.Filename)
+		return err
 	}
+	fmt.Fprintln(logger, "Resolving file path:", partPath)
 
-	mr := multipart.NewReader(body, boundary)
-	var parts []bufferedPart
-	for {
-		part, err := mr.NextPart()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			cleanup()
-			return nil, nil, errors.Errorf("failed to read multipart: %w", err)
-		}
-
-		if err := func() error {
-			defer part.Close()
-			partPath, err := getPartPath(part)
-			if err != nil {
-				return err
-			}
-
-			if partPath == "" {
-				fmt.Fprintln(utils.GetDebugLogger(), "Skipping part without filename")
-				if _, err := io.Copy(io.Discard, part); err != nil {
-					return errors.Errorf("failed to discard unnamed part: %w", err)
-				}
-				return nil
-			}
-
-			tmpFile, err := afero.TempFile(fsys, tempDir, "part-*")
-			if err != nil {
-				return errors.Errorf("failed to create temp file: %w", err)
-			}
-
-			if _, err := io.Copy(tmpFile, part); err != nil {
-				tmpFile.Close()
-				if rmErr := fsys.Remove(tmpFile.Name()); rmErr != nil {
-					fmt.Fprintln(utils.GetDebugLogger(), "failed to remove temp file:", rmErr)
-				}
-				return errors.Errorf("failed to buffer part data: %w", err)
-			}
-			if err := tmpFile.Close(); err != nil {
-				if rmErr := fsys.Remove(tmpFile.Name()); rmErr != nil {
-					fmt.Fprintln(utils.GetDebugLogger(), "failed to remove temp file:", rmErr)
-				}
-				return errors.Errorf("failed to close temp file: %w", err)
-			}
-
-			parts = append(parts, bufferedPart{path: partPath, tempPath: tmpFile.Name()})
-			return nil
-		}(); err != nil {
-			cleanup()
-			return nil, nil, err
-		}
+	relPath, err := filepath.Rel(filepath.FromSlash(entrypointPath), filepath.FromSlash(partPath))
+	if err != nil {
+		// Continue extracting without entrypoint
+		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), err)
+		relPath = filepath.FromSlash(path.Join("..", partPath))
 	}
 
-	return parts, cleanup, nil
+	dstPath := filepath.Join(funcDir, path.Base(entrypointPath), relPath)
+	fmt.Fprintln(os.Stderr, "Extracting file:", dstPath)
+	if err := afero.WriteReader(fsys, dstPath, part); err != nil {
+		return errors.Errorf("failed to save file: %w", err)
+	}
+
+	return nil
 }
 
 // getPartPath extracts the filename for a multipart part, allowing for
 // relative paths via the custom Supabase-Path header.
-func getPartPath(part *multipart.Part) (string, error) {
+func getPartPath(header textproto.MIMEHeader) (string, error) {
 	// dedicated header to specify relative path, not expected to be used
-	if relPath := part.Header.Get("Supabase-Path"); relPath != "" {
+	if relPath := header.Get("Supabase-Path"); relPath != "" {
 		return relPath, nil
 	}
 
 	// part.FileName() does not allow us to handle relative paths, so we parse Content-Disposition manually
-	cd := part.Header.Get("Content-Disposition")
+	cd := header.Get("Content-Disposition")
 	if cd == "" {
 		return "", nil
 	}
@@ -455,143 +405,4 @@ func getPartPath(part *multipart.Part) (string, error) {
 		return filename, nil
 	}
 	return "", nil
-}
-
-// joinWithinDir safely joins base and rel ensuring the result stays within base directory
-func joinWithinDir(base, rel string) (string, error) {
-	cleanBase := filepath.Clean(base)
-	cleanRel := filepath.Clean(rel)
-	// Treat absolute inputs as relative by stripping leading separators ("/foo" -> "foo").
-	if filepath.IsAbs(cleanRel) {
-		cleanRel = strings.TrimLeft(cleanRel, "/\\")
-	}
-
-	// Reject direct attempts to escape (e.g. "../secret.env" or "..\secret.env").
-	if cleanRel == ".." || strings.HasPrefix(cleanRel, "..") {
-		return "", errors.Errorf("invalid file path outside function directory: %s", rel)
-	}
-
-	// Join the sanitized components and normalize the result to remove any "." segments.
-	joined := filepath.Join(cleanBase, cleanRel)
-	cleanJoined := filepath.Clean(joined)
-
-	// Compute the final relative path. If it still points outside the base (starts with ".."),
-	// refuse to write the file.
-	relPath, err := filepath.Rel(cleanBase, cleanJoined)
-	if err != nil {
-		return "", errors.Errorf("failed to resolve relative path: %w", err)
-	}
-	if relPath == ".." || strings.HasPrefix(relPath, "..") {
-		return "", errors.Errorf("refusing to write outside function directory: %s", rel)
-	}
-	return joined, nil
-}
-
-// getBaseDirFromEntrypoint tries to infer the "base" directory for function
-// files from the entrypoint URL and the list of filenames, similar to Studio's
-// getBasePath logic.
-func getBaseDirFromEntrypoint(entrypointUrl *url.URL, filenames []string) string {
-	if entrypointUrl.Path == "" {
-		return "/"
-	}
-
-	entryPath := filepath.ToSlash(entrypointUrl.Path)
-
-	// First, prefer relative filenames (no leading slash) when matching the entrypoint.
-	var baseDir string
-	for _, filename := range filenames {
-		if filename == "" {
-			continue
-		}
-		clean := filepath.ToSlash(filename)
-		if strings.HasPrefix(clean, "/") {
-			// Skip absolute paths like /tmp/...
-			continue
-		}
-		if strings.HasSuffix(entryPath, clean) {
-			baseDir = filepath.Dir(clean)
-			break
-		}
-	}
-
-	// If nothing matched among relative paths, fall back to any filename.
-	if baseDir == "" {
-		for _, filename := range filenames {
-			if filename == "" {
-				continue
-			}
-			clean := filepath.ToSlash(filename)
-			// entrypoint has the same suffix as the sanitized filename
-			matchRelative := strings.HasSuffix(entryPath, clean)
-
-			// prevents long absolute paths being used as subdirectories
-			matchAbsolute := strings.HasSuffix(clean, entryPath)
-			if matchRelative || matchAbsolute {
-				baseDir = filepath.Dir(clean)
-				break
-			}
-		}
-	}
-
-	if baseDir != "" {
-		return baseDir
-	}
-
-	// Final fallback: derive from the entrypoint URL path itself.
-	baseDir = filepath.Dir(entrypointUrl.Path)
-	if baseDir != "" && baseDir != "." {
-		return baseDir
-	}
-	return "/"
-}
-
-// getRelativePathFromBase mirrors the Studio behaviour of making file paths
-// relative to the "base" directory inferred from the entrypoint.
-func getRelativePathFromBase(baseDir, filename string) string {
-	if filename == "" {
-		return ""
-	}
-
-	cleanBase := filepath.ToSlash(filepath.Clean(baseDir))
-	cleanFile := filepath.ToSlash(filepath.Clean(filename))
-
-	// If we don't have a meaningful base, just normalize to a relative path.
-	if cleanBase == "" || cleanBase == "/" || cleanBase == "." {
-		return strings.TrimLeft(cleanFile, "/")
-	}
-
-	// Try a straightforward relative path first (e.g. source/index.ts -> index.ts).
-	if rel, err := filepath.Rel(cleanBase, cleanFile); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-		return filepath.ToSlash(rel)
-	}
-
-	// If the file path contains "/<baseDir>/" somewhere (e.g. /tmp/.../source/index.ts),
-	// strip everything up to and including that segment so we get a stable relative path
-	// like "index.ts" or "dir/file.ts".
-	segment := "/" + cleanBase + "/"
-	if idx := strings.Index(cleanFile, segment); idx >= 0 {
-		return cleanFile[idx+len(segment):]
-	}
-
-	// Last resort: return a normalized, slash-stripped path.
-	return strings.TrimLeft(cleanFile, "/")
-}
-
-func copyFileFromTemp(fsys afero.Fs, src, dst string) error {
-	tempFile, err := fsys.Open(src)
-	if err != nil {
-		return errors.Errorf("failed to open temp file: %w", err)
-	}
-	defer tempFile.Close()
-
-	destFile, err := fsys.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-	if err != nil {
-		return errors.Errorf("failed to create file: %w", err)
-	}
-	defer destFile.Close()
-
-	if _, err := io.Copy(destFile, tempFile); err != nil {
-		return errors.Errorf("failed to write file: %w", err)
-	}
-	return nil
 }

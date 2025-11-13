@@ -3,16 +3,15 @@ package download
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
-	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/h2non/gock"
@@ -83,10 +82,19 @@ type multipartPart struct {
 	contents     string
 }
 
-func mockMultipartBody(t *testing.T, projectRef, slug string, parts []multipartPart) {
+func mockMultipartBody(t *testing.T, projectRef, slug string, metadata bundleMetadata, parts []multipartPart) {
 	t.Helper()
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
+	// Write metadata
+	headers := textproto.MIMEHeader{}
+	headers.Set("Content-Disposition", `form-data; name="metadata"`)
+	headers.Set("Content-Type", "application/json")
+	pw, err := writer.CreatePart(headers)
+	require.NoError(t, err)
+	enc := json.NewEncoder(pw)
+	require.NoError(t, enc.Encode(metadata))
+	// Write files
 	for _, part := range parts {
 		headers := textproto.MIMEHeader{}
 		headers.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, part.filename))
@@ -105,13 +113,6 @@ func mockMultipartBody(t *testing.T, projectRef, slug string, parts []multipartP
 		Reply(http.StatusOK).
 		SetHeader("Content-Type", writer.FormDataContentType()).
 		Body(&buf)
-}
-
-func mustParseURL(t *testing.T, raw string) *url.URL {
-	t.Helper()
-	u, err := url.Parse(raw)
-	require.NoError(t, err)
-	return u
 }
 
 func cleanupTestData(t *testing.T) {
@@ -383,12 +384,8 @@ func TestRunDockerUnbundle(t *testing.T) {
 			Head("/_ping").
 			ReplyError(errors.New("docker unavailable"))
 
-		meta := newFunctionMetadata(slugDocker)
-		entrypoint := "file:///source/index.ts"
-		meta.EntrypointPath = &entrypoint
-		mockFunctionMetadata(project, slugDocker, meta)
-		mockMultipartBody(t, project, slugDocker, []multipartPart{
-			{filename: "source/index.ts", contents: "console.log('hello')"},
+		mockMultipartBody(t, project, slugDocker, bundleMetadata{"/source/index.ts"}, []multipartPart{
+			{filename: "/source/index.ts", contents: "console.log('hello')"},
 		})
 
 		err := Run(context.Background(), slugDocker, project, false, true, fsys)
@@ -414,11 +411,7 @@ func TestRunServerSideUnbundle(t *testing.T) {
 		withProjectRef(t, project)
 		cleanupTestData(t)
 
-		meta := newFunctionMetadata(slug)
-		entrypoint := "file:///source/index.ts"
-		meta.EntrypointPath = &entrypoint
-		mockFunctionMetadata(project, slug, meta)
-		mockMultipartBody(t, project, slug, []multipartPart{
+		mockMultipartBody(t, project, slug, bundleMetadata{EntrypointPath: "source/index.ts"}, []multipartPart{
 			{filename: "source/index.ts", contents: "console.log('hello')"},
 			{filename: "source/utils.ts", contents: "export const value = 1;"},
 		})
@@ -451,19 +444,19 @@ func TestRunServerSideUnbundle(t *testing.T) {
 		withProjectRef(t, project)
 		cleanupTestData(t)
 
-		meta := newFunctionMetadata(slug)
-		entrypoint := "file:///source/index.ts"
-		meta.EntrypointPath = &entrypoint
-		mockFunctionMetadata(project, slug, meta)
-
 		// eg. /tmp/functions-download-abs/source/
 		tempBase := filepath.Join(os.TempDir(), "functions-download-abs", "source")
 		indexPath := filepath.Join(tempBase, "index.ts")
 		utilsPath := filepath.Join(tempBase, "lib", "utils.ts")
-		mockMultipartBody(t, project, slug, []multipartPart{
+		mockMultipartBody(t, project, slug, bundleMetadata{}, []multipartPart{
 			{filename: indexPath, contents: "console.log('abs')"},
 			{filename: utilsPath, contents: "export const util = 2;"},
 		})
+
+		meta := newFunctionMetadata(slug)
+		entrypoint := "file://" + indexPath
+		meta.EntrypointPath = &entrypoint
+		mockFunctionMetadata(project, slug, meta)
 
 		err := Run(context.Background(), slug, project, false, false, fsys)
 		require.NoError(t, err)
@@ -497,236 +490,86 @@ func TestRunServerSideUnbundle(t *testing.T) {
 		assert.ErrorContains(t, err, "expected multipart response")
 	})
 
-	t.Run("fails when part escapes base dir", func(t *testing.T) {
+	t.Run("ignores unresolvable entrypoint path", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		writeConfig(t, fsys)
 		project := apitest.RandomProjectRef()
 		withProjectRef(t, project)
 		cleanupTestData(t)
 
+		mockMultipartBody(t, project, slug, bundleMetadata{}, []multipartPart{
+			{filename: "source/index.ts", contents: "console.log('hello')"},
+			{filename: "source/secret.env", supabasePath: "../secret.env", contents: "SECRET=1"},
+		})
 		meta := newFunctionMetadata(slug)
 		entrypoint := "file:///source/index.ts"
 		meta.EntrypointPath = &entrypoint
 		mockFunctionMetadata(project, slug, meta)
-		mockMultipartBody(t, project, slug, []multipartPart{
-			{filename: "source/index.ts", contents: "console.log('hello')"},
-			{filename: "source/secret.env", supabasePath: "../secret.env", contents: "SECRET=1"},
-		})
 
 		err := Run(context.Background(), slug, project, false, false, fsys)
-		assert.ErrorContains(t, err, "invalid file path outside function directory")
+		assert.NoError(t, err)
+
+		root := filepath.Join(utils.FunctionsDir, slug)
+		data, err := afero.ReadFile(fsys, filepath.Join(root, "source", "index.ts"))
+		require.NoError(t, err)
+		assert.Equal(t, "console.log('hello')", string(data))
+
+		data, err = afero.ReadFile(fsys, filepath.Join(utils.FunctionsDir, "secret.env"))
+		require.NoError(t, err)
+		assert.Equal(t, "SECRET=1", string(data))
+
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
 
 func TestGetPartPath(t *testing.T) {
 	t.Parallel()
 
-	newPart := func(headers map[string]string) *multipart.Part {
-		mh := make(textproto.MIMEHeader, len(headers))
-		for k, v := range headers {
-			mh.Set(k, v)
-		}
-		return &multipart.Part{Header: mh}
-	}
-
 	t.Run("returns path from Supabase header", func(t *testing.T) {
-		part := newPart(map[string]string{
-			"Supabase-Path": "dir/file.ts",
-		})
-		got, err := getPartPath(part)
+		header := textproto.MIMEHeader{}
+		header.Set("Supabase-Path", "dir/file.ts")
+		got, err := getPartPath(header)
 		require.NoError(t, err)
 		assert.Equal(t, "dir/file.ts", got)
 	})
 
 	t.Run("returns filename from content disposition", func(t *testing.T) {
-		part := newPart(map[string]string{
-			"Content-Disposition": `form-data; name="file"; filename="test-func/index.ts"`,
-		})
-		got, err := getPartPath(part)
+		header := textproto.MIMEHeader{}
+		header.Set("Content-Disposition", `form-data; name="file"; filename="test-func/index.ts"`)
+		got, err := getPartPath(header)
 		require.NoError(t, err)
 		assert.Equal(t, "test-func/index.ts", got)
 	})
 
 	t.Run("returns filename from editor-originated content disposition", func(t *testing.T) {
-		part := newPart(map[string]string{
-			"Content-Disposition": `form-data; name="file"; filename="source/index.ts"`,
-		})
-		got, err := getPartPath(part)
+		header := textproto.MIMEHeader{}
+		header.Set("Content-Disposition", `form-data; name="file"; filename="source/index.ts"`)
+		got, err := getPartPath(header)
 		require.NoError(t, err)
 		assert.Equal(t, "source/index.ts", got)
 	})
 
 	t.Run("writes file of arbitrary depth", func(t *testing.T) {
-		part := newPart(map[string]string{
-			"Content-Disposition": `form-data; name="file"; filename="test-func/dir/subdir/file.ts"`,
-		})
-		got, err := getPartPath(part)
+		header := textproto.MIMEHeader{}
+		header.Set("Content-Disposition", `form-data; name="file"; filename="test-func/dir/subdir/file.ts"`)
+		got, err := getPartPath(header)
 		require.NoError(t, err)
 		assert.Equal(t, "test-func/dir/subdir/file.ts", got)
 	})
 
 	t.Run("returns empty when no filename provided", func(t *testing.T) {
-		part := newPart(map[string]string{
-			"Content-Disposition": `form-data; name="file"`,
-		})
-		got, err := getPartPath(part)
+		header := textproto.MIMEHeader{}
+		header.Set("Content-Disposition", `form-data; name="file"`)
+		got, err := getPartPath(header)
 		require.NoError(t, err)
 		assert.Equal(t, "", got)
 	})
 
 	t.Run("returns error on invalid content disposition", func(t *testing.T) {
-		part := newPart(map[string]string{
-			"Content-Disposition": `form-data; filename="unterminated`,
-		})
-		got, err := getPartPath(part)
+		header := textproto.MIMEHeader{}
+		header.Set("Content-Disposition", `form-data; filename="unterminated`)
+		got, err := getPartPath(header)
 		require.ErrorContains(t, err, "failed to parse content disposition")
-		assert.Equal(t, "", got)
-	})
-}
-
-func TestGetBaseDirFromEntrypoint(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name       string
-		entrypoint string
-		filenames  []string
-		want       string
-	}{
-		{
-			name:       "prefers relative match",
-			entrypoint: "file:///source/index.ts",
-			filenames:  []string{"source/index.ts", "source/utils.ts"},
-			want:       "source",
-		},
-		{
-			name:       "falls back to absolute match",
-			entrypoint: "file:///src/index.ts",
-			filenames:  []string{filepath.FromSlash("/tmp/project/src/index.ts")},
-			want:       "/tmp/project/src",
-		},
-		{
-			name:       "falls back to entrypoint directory",
-			entrypoint: "file:///dir/api/index.ts",
-			filenames:  []string{"/tmp/project/api/index.ts"},
-			want:       "/dir/api",
-		},
-		{
-			name:       "empty entrypoint returns root",
-			entrypoint: "file:///",
-			filenames:  nil,
-			want:       "/",
-		},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := getBaseDirFromEntrypoint(mustParseURL(t, tt.entrypoint), tt.filenames)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
-func TestGetRelativePathFromBase(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		base     string
-		filename string
-		want     string
-	}{
-		{
-			name:     "strips relative base",
-			base:     "source",
-			filename: "source/index.ts",
-			want:     "index.ts",
-		},
-		{
-			name:     "trims leading slash when base empty",
-			base:     "",
-			filename: "/tmp/source/index.ts",
-			want:     "tmp/source/index.ts",
-		},
-		{
-			name:     "trims leading slash when base root",
-			base:     "/",
-			filename: "/index.ts",
-			want:     "index.ts",
-		},
-		{
-			name:     "handles absolute base prefix",
-			base:     "/tmp/source",
-			filename: "/tmp/source/dir/file.ts",
-			want:     "dir/file.ts",
-		},
-		{
-			name:     "strips embedded base segment",
-			base:     "source",
-			filename: "/Users/foo/project/source/utils.ts",
-			want:     "utils.ts",
-		},
-		{
-			name:     "preserves escaping path when outside base",
-			base:     "source",
-			filename: "../secret.ts",
-			want:     "../secret.ts",
-		},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := getRelativePathFromBase(tt.base, tt.filename)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
-func TestJoinWithinDir(t *testing.T) {
-	t.Parallel()
-
-	base := filepath.Join(os.TempDir(), "base-dir")
-
-	t.Run("joins path within base directory", func(t *testing.T) {
-		got, err := joinWithinDir(base, filepath.Join("sub", "file.ts"))
-		require.NoError(t, err)
-		cleanBase := filepath.Clean(base)
-		cleanGot := filepath.Clean(got)
-		assert.True(t, cleanGot == cleanBase || strings.HasPrefix(cleanGot, cleanBase+string(os.PathSeparator)))
-	})
-
-	t.Run("normalizes leading slash", func(t *testing.T) {
-		got, err := joinWithinDir(base, "/foo/bar.ts")
-		require.NoError(t, err)
-		assert.Equal(t, filepath.Join(filepath.Clean(base), "foo", "bar.ts"), filepath.Clean(got))
-	})
-
-	t.Run("rejects parent directory traversal", func(t *testing.T) {
-		got, err := joinWithinDir(base, filepath.Join("..", "escape"))
-		require.Error(t, err)
-		assert.Equal(t, "", got)
-	})
-
-	t.Run("accepts internal traversal", func(t *testing.T) {
-		got, err := joinWithinDir(base, filepath.Join("dir", "..", "file.ts"))
-		require.NoError(t, err)
-		assert.Equal(t, filepath.Join(filepath.Clean(base), "file.ts"), filepath.Clean(got))
-	})
-
-	t.Run("rejects traversal beginning with ../", func(t *testing.T) {
-		got, err := joinWithinDir(base, filepath.Join("..", "..", "file.ts"))
-		require.Error(t, err)
-		assert.Equal(t, "", got)
-	})
-
-	t.Run("rejects traversal prefixed with os separator", func(t *testing.T) {
-		escape := ".." + string(os.PathSeparator) + "escape"
-		got, err := joinWithinDir(base, escape)
-		require.Error(t, err)
 		assert.Equal(t, "", got)
 	})
 }
