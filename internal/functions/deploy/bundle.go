@@ -61,13 +61,10 @@ func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	}
 	cmd = append(cmd, function.BundleFlags...)
 
-	env := []string{}
+	usePackageJson := function.ShouldUsePackageJsonDiscovery(entrypoint, importMap, afero.NewIOFS(b.fsys))
+	env := []string{fmt.Sprintf("DENO_NO_PACKAGE_JSON=%t", !usePackageJson)}
 	if custom_registry := os.Getenv("NPM_CONFIG_REGISTRY"); custom_registry != "" {
 		env = append(env, "NPM_CONFIG_REGISTRY="+custom_registry)
-	}
-	packageJsonPath := filepath.Join(filepath.Dir(entrypoint), "package.json")
-	if exists, _ := afero.Exists(b.fsys, packageJsonPath); !exists {
-		env = append(env, "DENO_NO_PACKAGE_JSON=1")
 	}
 	// Run bundle
 	if err := utils.DockerRunOnceWithConfig(

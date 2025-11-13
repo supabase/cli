@@ -116,15 +116,20 @@ async function verifyJWT(jwt: string): Promise<boolean> {
   return true;
 }
 
-async function shouldUsePackageJsonDiscovery(absDir: string): Promise<boolean> {
-  const [a, b, c, d] = (await Promise.allSettled([
-    Deno.stat(posix.join(absDir, "deno.json")),
-    Deno.stat(posix.join(absDir, "deno.jsonc")),
-    Deno.stat(posix.join(absDir, "import_map.json")),
-    Deno.stat(posix.join(absDir, "package.json")),
-  ])).map(v => v.status === "fulfilled");
-
-  return !a && !b && !c && d;
+// Ref: https://docs.deno.com/examples/checking_file_existence/
+async function shouldUsePackageJsonDiscovery({ entrypointPath, importMapPath }: FunctionConfig): Promise<boolean> {
+  if (importMapPath) {
+    return false
+  }
+  const packageJsonPath = posix.join(posix.dirname(entrypointPath), "package.json")
+  try {
+    await Deno.lstat(packageJsonPath);
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) {
+      return false
+    }
+  }
+  return true
 }
 
 Deno.serve({
@@ -189,7 +194,7 @@ Deno.serve({
 
     const absEntrypoint = posix.join(Deno.cwd(), functionsConfig[functionName].entrypointPath);
     const maybeEntrypoint = posix.toFileUrl(absEntrypoint).href;
-    const usePackageJsonDiscovery = await shouldUsePackageJsonDiscovery(posix.dirname(absEntrypoint));
+    const usePackageJson = await shouldUsePackageJsonDiscovery(functionsConfig[functionName]);
 
     const staticPatterns = functionsConfig[functionName].staticFiles;
 
@@ -199,7 +204,7 @@ Deno.serve({
         memoryLimitMb,
         workerTimeoutMs,
         noModuleCache,
-        noNpm: !usePackageJsonDiscovery,
+        noNpm: !usePackageJson,
         importMapPath: functionsConfig[functionName].importMapPath,
         envVars,
         forceCreate,
