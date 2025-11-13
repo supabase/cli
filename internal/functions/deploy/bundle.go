@@ -62,6 +62,9 @@ func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	cmd = append(cmd, function.BundleFlags...)
 
 	env := []string{}
+	if !function.ShouldUsePackageJsonDiscovery(entrypoint, importMap, afero.NewIOFS(b.fsys)) {
+		env = append(env, "DENO_NO_PACKAGE_JSON=1")
+	}
 	if custom_registry := os.Getenv("NPM_CONFIG_REGISTRY"); custom_registry != "" {
 		env = append(env, "NPM_CONFIG_REGISTRY="+custom_registry)
 	}

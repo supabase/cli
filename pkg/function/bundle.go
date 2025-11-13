@@ -68,6 +68,9 @@ func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	cmd := exec.CommandContext(ctx, edgeRuntimeBin, args...)
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
+	if fsys, ok := b.fsys.(fs.StatFS); ok && !ShouldUsePackageJsonDiscovery(entrypoint, importMap, fsys) {
+		cmd.Env = append(cmd.Environ(), "DENO_NO_PACKAGE_JSON=1")
+	}
 	if err := cmd.Run(); err != nil {
 		return meta, errors.Errorf("failed to bundle function: %w", err)
 	}
@@ -79,6 +82,17 @@ func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	}
 	defer eszipBytes.Close()
 	return meta, Compress(eszipBytes, output)
+}
+
+func ShouldUsePackageJsonDiscovery(entrypoint, importMap string, fsys fs.StatFS) bool {
+	if len(importMap) > 0 {
+		return false
+	}
+	packageJsonPath := filepath.Join(filepath.Dir(entrypoint), "package.json")
+	if _, err := fsys.Stat(packageJsonPath); errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	return true
 }
 
 const compressedEszipMagicID = "EZBR"
