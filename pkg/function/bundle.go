@@ -68,9 +68,8 @@ func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	cmd := exec.CommandContext(ctx, edgeRuntimeBin, args...)
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
-	if fsys, ok := b.fsys.(fs.StatFS); ok {
-		usePackageJson := ShouldUsePackageJsonDiscovery(entrypoint, importMap, fsys)
-		cmd.Env = append(cmd.Environ(), fmt.Sprintf("DENO_NO_PACKAGE_JSON=%t", !usePackageJson))
+	if fsys, ok := b.fsys.(fs.StatFS); ok && !ShouldUsePackageJsonDiscovery(entrypoint, importMap, fsys) {
+		cmd.Env = append(cmd.Environ(), "DENO_NO_PACKAGE_JSON=1")
 	}
 	if err := cmd.Run(); err != nil {
 		return meta, errors.Errorf("failed to bundle function: %w", err)
