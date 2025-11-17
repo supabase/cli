@@ -3,7 +3,8 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "daily"
+      interval: "cron"
+      cronjob: "0 0 * * *"
     groups:
       action-minor:
         update-types:
@@ -14,7 +15,8 @@ updates:
       - "/"
       - "pkg"
     schedule:
-      interval: "daily"
+      interval: "cron"
+      cronjob: "0 0 * * *"
     groups:
       go-minor:
         update-types:
@@ -23,7 +25,8 @@ updates:
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
-      interval: "daily"
+      interval: "cron"
+      cronjob: "0 0 * * *"
     groups:
       npm-minor:
         update-types:
@@ -32,7 +35,8 @@ updates:
   - package-ecosystem: "docker"
     directory: "pkg/config/templates"
     schedule:
-      interval: "daily"
+      interval: "cron"
+      cronjob: "0 0 * * *"
     commit-message:
       prefix: "fix(docker): "
     groups:
