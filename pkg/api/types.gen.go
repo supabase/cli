@@ -2942,8 +2942,13 @@ type OrganizationProjectsResponseProjectsStatus string
 
 // OrganizationResponseV1 defines model for OrganizationResponseV1.
 type OrganizationResponseV1 struct {
+	// Id Deprecated: Use `slug` instead.
+	// Deprecated:
 	Id   string `json:"id"`
 	Name string `json:"name"`
+
+	// Slug Organization slug
+	Slug string `json:"slug"`
 }
 
 // PgsodiumConfigResponse defines model for PgsodiumConfigResponse.
@@ -3874,8 +3879,12 @@ type V1CreateProjectBody struct {
 	// Name Name of your project
 	Name string `json:"name"`
 
-	// OrganizationId Slug of your organization
-	OrganizationId string `json:"organization_id"`
+	// OrganizationId Deprecated: Use `organization_slug` instead.
+	// Deprecated:
+	OrganizationId *string `json:"organization_id,omitempty"`
+
+	// OrganizationSlug Organization slug
+	OrganizationSlug string `json:"organization_slug"`
 
 	// Plan Subscription Plan is now set on organization level and is ignored in this request
 	// Deprecated:
@@ -4142,8 +4151,12 @@ type V1ProjectResponse struct {
 	// Name Name of your project
 	Name string `json:"name"`
 
-	// OrganizationId Slug of your organization
+	// OrganizationId Deprecated: Use `organization_slug` instead.
+	// Deprecated:
 	OrganizationId string `json:"organization_id"`
+
+	// OrganizationSlug Organization slug
+	OrganizationSlug string `json:"organization_slug"`
 
 	// Ref Project ref
 	Ref string `json:"ref"`
@@ -4181,8 +4194,12 @@ type V1ProjectWithDatabaseResponse struct {
 	// Name Name of your project
 	Name string `json:"name"`
 
-	// OrganizationId Slug of your organization
+	// OrganizationId Deprecated: Use `organization_slug` instead.
+	// Deprecated:
 	OrganizationId string `json:"organization_id"`
+
+	// OrganizationSlug Organization slug
+	OrganizationSlug string `json:"organization_slug"`
 
 	// Ref Project ref
 	Ref string `json:"ref"`

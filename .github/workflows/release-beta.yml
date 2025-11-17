@@ -74,20 +74,89 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
-  publish:
-    name: Publish NPM
+  publish-binaries:
+    name: Publish ${{ matrix.platform }}
     needs:
       - release
       - goreleaser
+    if: needs.release.outputs.new-release-published == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - platform: darwin-amd64
+            os: darwin
+            arch: amd64
+          - platform: darwin-arm64
+            os: darwin
+            arch: arm64
+          - platform: linux-amd64
+            os: linux
+            arch: amd64
+          - platform: linux-arm64
+            os: linux
+            arch: arm64
+          - platform: windows-amd64
+            os: windows
+            arch: amd64
+            ext: .exe
+          - platform: windows-arm64
+            os: windows
+            arch: arm64
+            ext: .exe
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '16.x'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Download binary from release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "v${{ needs.release.outputs.new-release-version }}" \
+            --pattern "supabase_${{ matrix.os }}_${{ matrix.arch }}.tar.gz" \
+            --repo ${{ github.repository }}
+          tar -xzf supabase_${{ matrix.os }}_${{ matrix.arch }}.tar.gz supabase${{ matrix.ext || '' }}
+          mv supabase${{ matrix.ext || '' }} npm/${{ matrix.platform }}/
+          chmod +x npm/${{ matrix.platform }}/supabase${{ matrix.ext || '' }}
+          rm supabase_${{ matrix.os }}_${{ matrix.arch }}.tar.gz
+      - name: Update package version
+        working-directory: npm/${{ matrix.platform }}
+        run: npm version ${{ needs.release.outputs.new-release-version }} --no-git-tag-version
+      - name: Publish to NPM
+        working-directory: npm/${{ matrix.platform }}
+        run: npm publish --tag ${{ needs.release.outputs.new-release-channel }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish:
+    name: Publish main package
+    needs:
+      - release
+      - goreleaser
+      - publish-binaries
     if: needs.release.outputs.new-release-published == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v6
         with:
-          node-version: "16.x"
-          registry-url: "https://registry.npmjs.org"
-      - run: npm --git-tag-version=false version ${{ needs.release.outputs.new-release-version }}
-      - run: npm publish --tag ${{ needs.release.outputs.new-release-channel }}
+          node-version: '16.x'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Update package versions
+        run: |
+          npm version ${{ needs.release.outputs.new-release-version }} --no-git-tag-version
+          node -e "
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const version = '${{ needs.release.outputs.new-release-version }}';
+          for (const dep in pkg.optionalDependencies) {
+            pkg.optionalDependencies[dep] = version;
+          }
+          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+      - name: Publish to NPM
+        run: npm publish --tag ${{ needs.release.outputs.new-release-channel }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,0 +1,14 @@
+{
+  "name": "supabase-darwin-amd64",
+  "version": "0.0.0-automated",
+  "license": "MIT",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "supabase"
+  ]
+}

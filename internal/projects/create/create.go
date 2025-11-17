@@ -64,11 +64,13 @@ func promptMissingParams(ctx context.Context, body *api.V1CreateProjectBody) err
 	} else {
 		fmt.Fprintln(os.Stderr, printKeyValue("Creating project", body.Name))
 	}
-	if len(body.OrganizationId) == 0 {
-		if body.OrganizationId, err = promptOrgId(ctx); err != nil {
+	if body.OrganizationId == nil || len(*body.OrganizationId) == 0 {
+		orgId, err := promptOrgId(ctx)
+		if err != nil {
 			return err
 		}
-		fmt.Fprintln(os.Stderr, printKeyValue("Selected org-id", body.OrganizationId))
+		body.OrganizationId = &orgId
+		fmt.Fprintln(os.Stderr, printKeyValue("Selected org-id", *body.OrganizationId))
 	}
 	if body.Region == nil || len(*body.Region) == 0 {
 		region, err := promptProjectRegion(ctx)
