@@ -76,7 +76,7 @@ var (
 			}
 			body := api.V1CreateProjectBody{
 				Name:           projectName,
-				OrganizationId: orgId,
+				OrganizationId: &orgId,
 				DbPass:         dbPassword,
 				Region:         cast.Ptr(api.V1CreateProjectBodyRegion(region.Value)),
 			}
