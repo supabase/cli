@@ -1,0 +1,17 @@
+{
+  "name": "supabase-linux-arm64",
+  "version": "0.0.0-automated",
+  "license": "MIT",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "libc": [
+    "glibc"
+  ],
+  "files": [
+    "supabase"
+  ]
+}

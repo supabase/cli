@@ -1,0 +1,14 @@
+{
+  "name": "supabase-windows-amd64",
+  "version": "0.0.0-automated",
+  "license": "MIT",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "supabase.exe"
+  ]
+}

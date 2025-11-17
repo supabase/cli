@@ -14,17 +14,16 @@
   "files": [
     "scripts"
   ],
-  "scripts": {
-    "postinstall": "node scripts/postinstall.js"
-  },
   "bin": {
-    "supabase": "bin/supabase"
+    "supabase": "scripts/bin.js"
   },
-  "dependencies": {
-    "bin-links": "^6.0.0",
-    "https-proxy-agent": "^7.0.2",
-    "node-fetch": "^3.3.2",
-    "tar": "7.5.2"
+  "optionalDependencies": {
+    "supabase-darwin-amd64": "0.0.0-automated",
+    "supabase-darwin-arm64": "0.0.0-automated",
+    "supabase-linux-amd64": "0.0.0-automated",
+    "supabase-linux-arm64": "0.0.0-automated",
+    "supabase-windows-amd64": "0.0.0-automated",
+    "supabase-windows-arm64": "0.0.0-automated"
   },
   "release": {
     "branches": [

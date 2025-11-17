@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: "v1.0.0"
+        description: 'v1.0.0'
         required: true
         type: string
 
@@ -17,15 +17,38 @@ permissions:
   contents: read
 
 jobs:
+  tag-binaries:
+    name: Tag ${{ matrix.platform }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform:
+          - darwin-amd64
+          - darwin-arm64
+          - linux-amd64
+          - linux-arm64
+          - windows-amd64
+          - windows-arm64
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '16.x'
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm dist-tag add "supabase-${{ matrix.platform }}@${RELEASE_TAG#v}" latest
+        env:
+          RELEASE_TAG: ${{ inputs.release }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
   tag:
-    name: Move latest tag
+    name: Tag main package
+    needs: tag-binaries
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v6
         with:
-          node-version: "16.x"
-          registry-url: "https://registry.npmjs.org"
+          node-version: '16.x'
+          registry-url: 'https://registry.npmjs.org'
       - run: npm dist-tag add "supabase@${RELEASE_TAG#v}" latest
         env:
           RELEASE_TAG: ${{ inputs.release }}
