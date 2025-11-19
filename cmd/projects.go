@@ -75,10 +75,10 @@ var (
 				projectName = args[0]
 			}
 			body := api.V1CreateProjectBody{
-				Name:           projectName,
-				OrganizationId: orgId,
-				DbPass:         dbPassword,
-				Region:         cast.Ptr(api.V1CreateProjectBodyRegion(region.Value)),
+				Name:             projectName,
+				OrganizationSlug: orgId,
+				DbPass:           dbPassword,
+				Region:           cast.Ptr(api.V1CreateProjectBodyRegion(region.Value)),
 			}
 			if cmd.Flags().Changed("size") {
 				body.DesiredInstanceSize = (*api.V1CreateProjectBodyDesiredInstanceSize)(&size.Value)
