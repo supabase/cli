@@ -439,8 +439,8 @@ EOF
 			container.HostConfig{
 				Binds: binds,
 				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
-					HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)}},
-				},
+					HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)},
+				}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			network.NetworkingConfig{
@@ -1139,8 +1139,8 @@ EOF
 			},
 			container.HostConfig{
 				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
-					HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10)}},
-				},
+					HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10)},
+				}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			network.NetworkingConfig{
