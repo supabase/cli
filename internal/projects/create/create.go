@@ -38,7 +38,7 @@ func Run(ctx context.Context, params api.V1CreateProjectBody, fsys afero.Fs) err
 `
 		table += fmt.Sprintf(
 			"|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
-			resp.JSON201.OrganizationId,
+			resp.JSON201.OrganizationSlug,
 			resp.JSON201.Id,
 			strings.ReplaceAll(resp.JSON201.Name, "|", "\\|"),
 			utils.FormatRegion(resp.JSON201.Region),
@@ -64,11 +64,11 @@ func promptMissingParams(ctx context.Context, body *api.V1CreateProjectBody) err
 	} else {
 		fmt.Fprintln(os.Stderr, printKeyValue("Creating project", body.Name))
 	}
-	if len(body.OrganizationId) == 0 {
-		if body.OrganizationId, err = promptOrgId(ctx); err != nil {
+	if len(body.OrganizationSlug) == 0 {
+		if body.OrganizationSlug, err = promptOrgId(ctx); err != nil {
 			return err
 		}
-		fmt.Fprintln(os.Stderr, printKeyValue("Selected org-id", body.OrganizationId))
+		fmt.Fprintln(os.Stderr, printKeyValue("Selected org-id", body.OrganizationSlug))
 	}
 	if body.Region == nil || len(*body.Region) == 0 {
 		region, err := promptProjectRegion(ctx)
