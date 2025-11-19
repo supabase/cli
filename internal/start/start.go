@@ -850,7 +850,6 @@ EOF
 		started = append(started, utils.RealtimeId)
 	}
 
-	// ... remainder of file unchanged
 	// Start PostgREST.
 	if utils.Config.Api.Enabled && !isContainerExcluded(utils.Config.Api.Image, excluded) {
 		if _, err := utils.DockerStart(
