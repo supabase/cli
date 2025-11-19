@@ -27,11 +27,11 @@ func TestProjectListCommand(t *testing.T) {
 			Reply(200).
 			JSON([]api.V1ProjectResponse{
 				{
-					Id:             apitest.RandomProjectRef(),
-					OrganizationId: "combined-fuchsia-lion",
-					Name:           "Test Project",
-					Region:         "us-west-1",
-					CreatedAt:      "2022-04-25T02:14:55.906498Z",
+					Id:               apitest.RandomProjectRef(),
+					OrganizationSlug: "combined-fuchsia-lion",
+					Name:             "Test Project",
+					Region:           "us-west-1",
+					CreatedAt:        "2022-04-25T02:14:55.906498Z",
 				},
 			})
 		// Run test

@@ -39,7 +39,7 @@ func PromptProjectRef(ctx context.Context, title string, opts ...tea.ProgramOpti
 	for i, project := range *resp.JSON200 {
 		items[i] = utils.PromptItem{
 			Summary: project.Id,
-			Details: fmt.Sprintf("name: %s, org: %s, region: %s", project.Name, project.OrganizationId, project.Region),
+			Details: fmt.Sprintf("name: %s, org: %s, region: %s", project.Name, project.OrganizationSlug, project.Region),
 		}
 	}
 	choice, err := utils.PromptChoice(ctx, title, items, opts...)
