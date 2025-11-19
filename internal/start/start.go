@@ -763,6 +763,10 @@ EOF
 			ctx,
 			container.Config{
 				Image: utils.Config.Inbucket.Image,
+				Env: []string{
+					// Disable reverse DNS lookups in Mailpit to avoid slow/delayed DNS resolution
+					"MP_SMTP_DISABLE_RDNS=true",
+				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "/mailpit", "readyz"},
 					Interval: 10 * time.Second,
@@ -1115,6 +1119,7 @@ EOF
 					"REGION=local",
 					"RUN_JANITOR=true",
 					"ERL_AFLAGS=-proto_dist inet_tcp",
+					"RLIMIT_NOFILE=",
 				},
 				Cmd: []string{
 					"/bin/sh", "-c",

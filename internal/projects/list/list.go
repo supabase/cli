@@ -49,7 +49,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 			table += fmt.Sprintf(
 				"|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
 				formatBullet(project.Linked),
-				project.OrganizationId,
+				project.OrganizationSlug,
 				project.Id,
 				strings.ReplaceAll(project.Name, "|", "\\|"),
 				utils.FormatRegion(project.Region),

@@ -16,12 +16,13 @@ var (
 
 	dbCidrsToAllow   []string
 	bypassCidrChecks bool
+	appendMode       bool
 
 	restrictionsUpdateCmd = &cobra.Command{
 		Use:   "update",
 		Short: "Update network restrictions",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return update.Run(cmd.Context(), flags.ProjectRef, dbCidrsToAllow, bypassCidrChecks)
+			return update.Run(cmd.Context(), flags.ProjectRef, dbCidrsToAllow, bypassCidrChecks, appendMode)
 		},
 	}
 
@@ -38,6 +39,7 @@ func init() {
 	restrictionsCmd.PersistentFlags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	restrictionsUpdateCmd.Flags().StringSliceVar(&dbCidrsToAllow, "db-allow-cidr", []string{}, "CIDR to allow DB connections from.")
 	restrictionsUpdateCmd.Flags().BoolVar(&bypassCidrChecks, "bypass-cidr-checks", false, "Bypass some of the CIDR validation checks.")
+	restrictionsUpdateCmd.Flags().BoolVar(&appendMode, "append", false, "Append to existing restrictions instead of replacing them.")
 	restrictionsCmd.AddCommand(restrictionsGetCmd)
 	restrictionsCmd.AddCommand(restrictionsUpdateCmd)
 	rootCmd.AddCommand(restrictionsCmd)
