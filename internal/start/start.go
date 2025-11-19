@@ -484,7 +484,7 @@ EOF
 			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
 			"GOTRUE_JWT_ISSUER=" + utils.Config.Auth.JwtIssuer,
 
-			"GOTRUE_EXTERNAL_EMAIL_ENABLED=true",
+			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", utils.Config.Auth.Email.EnableSignup),
 			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", utils.Config.Auth.Email.DoubleConfirmChanges),
 			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !utils.Config.Auth.Email.EnableConfirmations),
 			fmt.Sprintf("GOTRUE_MAILER_OTP_LENGTH=%v", utils.Config.Auth.Email.OtpLength),
@@ -500,7 +500,7 @@ EOF
 			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=%s/verify", utils.Config.Auth.JwtIssuer),
 			"GOTRUE_RATE_LIMIT_EMAIL_SENT=360000",
 
-			"GOTRUE_EXTERNAL_PHONE_ENABLED=true",
+			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
 			fmt.Sprintf("GOTRUE_SMS_AUTOCONFIRM=%v", !utils.Config.Auth.Sms.EnableConfirmations),
 			fmt.Sprintf("GOTRUE_SMS_MAX_FREQUENCY=%v", utils.Config.Auth.Sms.MaxFrequency),
 			"GOTRUE_SMS_OTP_EXP=6000",
