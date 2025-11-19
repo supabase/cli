@@ -19,7 +19,7 @@ func TestUpdateRestrictionsCommand(t *testing.T) {
 	token := apitest.RandomAccessToken(t)
 	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 
-	t.Run("replaces v4 and v6 CIDRs when append mode is false", func(t *testing.T) {
+	t.Run("replaces v4 and v6 CIDR", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
 		expectedV4 := []string{"12.3.4.5/32", "1.2.3.1/24"}
@@ -36,13 +36,13 @@ func TestUpdateRestrictionsCommand(t *testing.T) {
 				Status: api.NetworkRestrictionsResponseStatus("applied"),
 			})
 		// Run test
-		err := Run(context.Background(), projectRef, []string{"12.3.4.5/32", "1.2.3.1/24", "2001:db8:abcd:0012::0/64"}, false, false)
+		err := Run(context.Background(), projectRef, []string{"12.3.4.5/32", "2001:db8:abcd:0012::0/64", "1.2.3.1/24"}, false, false)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("appends v4 and v6 CIDRs using PATCH when append mode is true", func(t *testing.T) {
+	t.Run("appends v4 and v6 CIDR", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
 		addV4 := []string{"12.3.4.5/32", "1.2.3.1/24"}
