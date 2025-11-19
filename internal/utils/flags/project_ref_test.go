@@ -78,9 +78,9 @@ func TestProjectPrompt(t *testing.T) {
 			Get("/v1/projects").
 			Reply(http.StatusOK).
 			JSON([]api.V1ProjectResponse{{
-				Id:             "test-project",
-				Name:           "My Project",
-				OrganizationId: "test-org",
+				Id:               "test-project",
+				Name:             "My Project",
+				OrganizationSlug: "test-org",
 			}})
 		// Run test
 		err := PromptProjectRef(context.Background(), "", input)
