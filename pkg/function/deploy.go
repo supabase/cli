@@ -49,7 +49,6 @@ func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.Funct
 			}
 		}
 		if !shouldDeploy {
-			fmt.Fprintln(os.Stderr, "Would deploy:", slug)
 			continue
 		}
 		toDeploy = append(toDeploy, meta)

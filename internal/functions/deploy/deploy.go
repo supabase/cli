@@ -66,7 +66,7 @@ func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool,
 	// Deploy new and updated functions
 	if err := api.Deploy(ctx, functionConfig, afero.NewIOFS(fsys), filter...); errors.Is(err, function.ErrNoDeploy) {
 		fmt.Fprintln(os.Stderr, err)
-		return err
+		return nil
 	} else if err != nil {
 		return err
 	}
