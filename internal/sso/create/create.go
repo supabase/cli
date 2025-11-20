@@ -25,6 +25,7 @@ type RunParams struct {
 	MetadataURL       string
 	SkipURLValidation bool
 	AttributeMapping  string
+	NameIDFormat      string
 }
 
 func Run(ctx context.Context, params RunParams) error {
@@ -64,6 +65,22 @@ func Run(ctx context.Context, params RunParams) error {
 
 	if params.Domains != nil {
 		body.Domains = &params.Domains
+	}
+
+	nameIDFormat := api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatEmailAddress
+	switch params.NameIDFormat {
+	case string(api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatEmailAddress):
+		nameIDFormat = api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatEmailAddress
+	case string(api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatUnspecified):
+		nameIDFormat = api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatUnspecified
+	case string(api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatPersistent):
+		nameIDFormat = api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatPersistent
+	case string(api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatTransient):
+		nameIDFormat = api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatTransient
+	}
+
+	if params.NameIDFormat != "" {
+		body.NameIdFormat = &nameIDFormat
 	}
 
 	resp, err := utils.GetSupabase().V1CreateASsoProviderWithResponse(ctx, params.ProjectRef, body)

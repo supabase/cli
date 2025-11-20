@@ -25,6 +25,18 @@ var (
 		Allowed: []string{"saml"},
 		// intentionally no default value so users have to specify --type saml explicitly
 	}
+
+	ssoNameIDFormat = utils.EnumFlag{
+		Allowed: []string{
+			"",
+			"urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+			"urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
+			"urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+			"urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+		},
+		Value: "",
+	}
+
 	ssoMetadataFile         string
 	ssoMetadataURL          string
 	ssoSkipURLValidation    bool
@@ -48,6 +60,7 @@ var (
 				MetadataURL:       ssoMetadataURL,
 				SkipURLValidation: ssoSkipURLValidation,
 				AttributeMapping:  ssoAttributeMappingFile,
+				NameIDFormat:      ssoNameIDFormat.String(),
 				Domains:           ssoDomains,
 			})
 		},
@@ -88,6 +101,7 @@ var (
 				MetadataURL:       ssoMetadataURL,
 				SkipURLValidation: ssoSkipURLValidation,
 				AttributeMapping:  ssoAttributeMappingFile,
+				NameIDFormat:      ssoNameIDFormat.String(),
 				Domains:           ssoDomains,
 				AddDomains:        ssoAddDomains,
 				RemoveDomains:     ssoRemoveDomains,

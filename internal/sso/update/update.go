@@ -25,6 +25,7 @@ type RunParams struct {
 	MetadataURL       string
 	SkipURLValidation bool
 	AttributeMapping  string
+	NameIDFormat      string
 
 	Domains       []string
 	AddDomains    []string
@@ -109,6 +110,22 @@ func Run(ctx context.Context, params RunParams) error {
 		}
 
 		body.Domains = &domains
+	}
+
+	nameIDFormat := api.UpdateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatEmailAddress
+	switch params.NameIDFormat {
+	case string(api.UpdateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatEmailAddress):
+		nameIDFormat = api.UpdateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatEmailAddress
+	case string(api.UpdateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatUnspecified):
+		nameIDFormat = api.UpdateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatUnspecified
+	case string(api.UpdateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatPersistent):
+		nameIDFormat = api.UpdateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatPersistent
+	case string(api.UpdateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatTransient):
+		nameIDFormat = api.UpdateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatTransient
+	}
+
+	if params.NameIDFormat != "" {
+		body.NameIdFormat = &nameIDFormat
 	}
 
 	putResp, err := utils.GetSupabase().V1UpdateASsoProviderWithResponse(ctx, params.ProjectRef, parsed, body)
