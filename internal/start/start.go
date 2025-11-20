@@ -167,128 +167,21 @@ func (cli *RetryClient) ImagePull(ctx context.Context, refStr string, options im
 	return backoff.RetryWithData(pull, policy)
 }
 
-// collectRequiredImages collects all Docker images that need to be pulled
-// based on the current configuration and excluded containers.
-// includeDb indicates whether the database will be started and should have its image pulled.
-// Returns a map of service names to their image URLs.
-func collectRequiredImages(excluded map[string]bool, isStorageEnabled, isImgProxyEnabled bool, includeDb bool) map[string]string {
-	images := make(map[string]string)
-
-	// Analytics services
-	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.Image, excluded) {
-		images["analytics"] = utils.GetRegistryImageUrl(utils.Config.Analytics.Image)
-	}
-	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.VectorImage, excluded) {
-		images["vector"] = utils.GetRegistryImageUrl(utils.Config.Analytics.VectorImage)
-	}
-
-	// API Gateway
-	if !isContainerExcluded(utils.Config.Api.KongImage, excluded) {
-		images["kong"] = utils.GetRegistryImageUrl(utils.Config.Api.KongImage)
-	}
-
-	// Auth service
-	if utils.Config.Auth.Enabled && !isContainerExcluded(utils.Config.Auth.Image, excluded) {
-		images["auth"] = utils.GetRegistryImageUrl(utils.Config.Auth.Image)
-	}
-
-	// Mailpit/Inbucket
-	if utils.Config.Inbucket.Enabled && !isContainerExcluded(utils.Config.Inbucket.Image, excluded) {
-		images["inbucket"] = utils.GetRegistryImageUrl(utils.Config.Inbucket.Image)
-	}
-
-	// Realtime
-	if utils.Config.Realtime.Enabled && !isContainerExcluded(utils.Config.Realtime.Image, excluded) {
-		images["realtime"] = utils.GetRegistryImageUrl(utils.Config.Realtime.Image)
-	}
-
-	// PostgREST
-	if utils.Config.Api.Enabled && !isContainerExcluded(utils.Config.Api.Image, excluded) {
-		images["rest"] = utils.GetRegistryImageUrl(utils.Config.Api.Image)
-	}
-
-	// Storage
-	if isStorageEnabled {
-		images["storage"] = utils.GetRegistryImageUrl(utils.Config.Storage.Image)
-	}
-	if isImgProxyEnabled {
-		images["imgproxy"] = utils.GetRegistryImageUrl(utils.Config.Storage.ImgProxyImage)
-	}
-
-	// Edge Runtime
-	if utils.Config.EdgeRuntime.Enabled && !isContainerExcluded(utils.Config.EdgeRuntime.Image, excluded) {
-		images["edge-runtime"] = utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image)
-	}
-
-	// Studio services
-	if utils.Config.Studio.Enabled {
-		if !isContainerExcluded(utils.Config.Studio.PgmetaImage, excluded) {
-			images["pgmeta"] = utils.GetRegistryImageUrl(utils.Config.Studio.PgmetaImage)
-		}
-		if !isContainerExcluded(utils.Config.Studio.Image, excluded) {
-			images["studio"] = utils.GetRegistryImageUrl(utils.Config.Studio.Image)
-		}
-	}
-
-	// Pooler
-	if utils.Config.Db.Pooler.Enabled && !isContainerExcluded(utils.Config.Db.Pooler.Image, excluded) {
-		images["pooler"] = utils.GetRegistryImageUrl(utils.Config.Db.Pooler.Image)
-	}
-
-	// Database (if it will be started)
-	if includeDb {
-		images["db"] = utils.GetRegistryImageUrl(utils.Config.Db.Image)
-	}
-
-	return images
-}
-
 // pullImagesUsingCompose pulls all required images using docker-compose service
-func pullImagesUsingCompose(ctx context.Context, serviceImages map[string]string) error {
-	if len(serviceImages) == 0 {
-		return nil
-	}
-
+func pullImagesUsingCompose(ctx context.Context, project types.Project) error {
 	// Create Docker CLI
 	cli, err := command.NewDockerCli()
 	if err != nil {
 		return errors.Errorf("failed to create Docker CLI: %w", err)
 	}
-
-	// Create API client with retry wrapper
-	apiClient, err := command.NewAPIClientFromFlags(&dockerFlags.ClientOptions{}, cli.ConfigFile())
-	if err != nil {
-		return errors.Errorf("failed to create Docker API client: %w", err)
-	}
-
-	// Wrap with retry client
-	retryClient := &RetryClient{Client: apiClient.(*client.Client)}
-	opt := command.WithAPIClient(retryClient)
-
 	// Initialize Docker CLI
+	opt := command.WithAPIClient(&RetryClient{Client: utils.Docker})
 	if err := cli.Initialize(&dockerFlags.ClientOptions{}, opt); err != nil {
 		return errors.Errorf("failed to initialize Docker CLI: %w", err)
 	}
-
-	// Create compose service
 	service := compose.NewComposeService(cli)
-
-	// Build compose project
-	project := types.Project{
-		Name:     "supabase-cli",
-		Services: make(map[string]types.ServiceConfig, len(serviceImages)),
-	}
-
-	// Add services to project
-	for serviceName, imageUrl := range serviceImages {
-		project.Services[serviceName] = types.ServiceConfig{
-			Name:  serviceName,
-			Image: imageUrl,
-		}
-	}
-
-	// Pull images using compose service
-	return service.Pull(ctx, &project, api.PullOptions{})
+	// Fallback to regular image pull by ignoring failures
+	return service.Pull(ctx, &project, api.PullOptions{IgnoreFailures: true})
 }
 
 func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, options ...func(*pgx.ConnConfig)) error {
@@ -296,31 +189,36 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 	for _, name := range excludedContainers {
 		excluded[name] = true
 	}
+	notExcluded := func(sc types.ServiceConfig) bool {
+		val, ok := excluded[sc.Name]
+		return !val || !ok
+	}
 
 	jwks, err := utils.Config.Auth.ResolveJWKS(ctx)
 	if err != nil {
 		return err
 	}
 
-	var started []string
-	var isStorageEnabled = utils.Config.Storage.Enabled && !isContainerExcluded(utils.Config.Storage.Image, excluded)
-	var isImgProxyEnabled = utils.Config.Storage.ImageTransformation != nil &&
-		utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImgProxyImage, excluded)
-
-	// Collect and pull all required images using docker-compose before starting containers
-	includeDb := dbConfig.Host == utils.DbId
-	requiredImages := collectRequiredImages(excluded, isStorageEnabled, isImgProxyEnabled, includeDb)
-	if err := pullImagesUsingCompose(ctx, requiredImages); err != nil {
+	// TODO: start services using compose up
+	project := types.Project{
+		Name:     "supabase-cli",
+		Services: utils.GetServices().Filter(notExcluded),
+	}
+	if err := pullImagesUsingCompose(ctx, project); err != nil {
 		return err
 	}
 
 	// Start Postgres.
-	if includeDb {
+	if dbConfig.Host == utils.DbId {
 		if err := start.StartDatabase(ctx, "", fsys, os.Stderr, options...); err != nil {
 			return err
 		}
 	}
 
+	var started []string
+	var isStorageEnabled = utils.Config.Storage.Enabled && !isContainerExcluded(utils.Config.Storage.Image, excluded)
+	var isImgProxyEnabled = utils.Config.Storage.ImageTransformation != nil &&
+		utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImgProxyImage, excluded)
 	fmt.Fprintln(os.Stderr, "Starting containers...")
 
 	// Start Logflare
