@@ -61,10 +61,6 @@ func Run(ctx context.Context, fromBackup string, fsys afero.Fs) error {
 }
 
 func NewContainerConfig(args ...string) container.Config {
-	if utils.Config.Db.MajorVersion >= 14 {
-		// Extensions schema does not exist on PG13 and below
-		args = append(args, "-c", "search_path='$user,public,extensions'")
-	}
 	env := []string{
 		"POSTGRES_PASSWORD=" + utils.Config.Db.Password,
 		"POSTGRES_HOST=/var/run/postgresql",

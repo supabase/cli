@@ -49,7 +49,10 @@ var (
 		Long:  "Download the source code for a Function from the linked Supabase project.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return download.Run(cmd.Context(), args[0], flags.ProjectRef, useLegacyBundle, afero.NewOsFs())
+			if useApi {
+				useDocker = false
+			}
+			return download.Run(cmd.Context(), args[0], flags.ProjectRef, useLegacyBundle, useDocker, afero.NewOsFs())
 		},
 	}
 
@@ -133,11 +136,12 @@ func init() {
 	functionsListCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	functionsDeleteCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	deployFlags := functionsDeployCmd.Flags()
-	deployFlags.BoolVar(&useApi, "use-api", false, "Use Management API to bundle functions.")
+	deployFlags.BoolVar(&useApi, "use-api", false, "Bundle functions server-side without using Docker.")
 	deployFlags.BoolVar(&useDocker, "use-docker", true, "Use Docker to bundle functions.")
 	deployFlags.BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
 	functionsDeployCmd.MarkFlagsMutuallyExclusive("use-api", "use-docker", "legacy-bundle")
 	cobra.CheckErr(deployFlags.MarkHidden("legacy-bundle"))
+	cobra.CheckErr(deployFlags.MarkHidden("use-docker"))
 	deployFlags.UintVarP(&maxJobs, "jobs", "j", 1, "Maximum number of parallel jobs.")
 	deployFlags.BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	deployFlags.BoolVar(&prune, "prune", false, "Delete Functions that exist in Supabase project but not locally.")
@@ -152,8 +156,14 @@ func init() {
 	functionsServeCmd.MarkFlagsMutuallyExclusive("inspect", "inspect-mode")
 	functionsServeCmd.Flags().Bool("all", true, "Serve all Functions.")
 	cobra.CheckErr(functionsServeCmd.Flags().MarkHidden("all"))
-	functionsDownloadCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
-	functionsDownloadCmd.Flags().BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
+	downloadFlags := functionsDownloadCmd.Flags()
+	downloadFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
+	downloadFlags.BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
+	downloadFlags.BoolVar(&useApi, "use-api", false, "Unbundle functions server-side without using Docker.")
+	downloadFlags.BoolVar(&useDocker, "use-docker", true, "Use Docker to unbundle functions client-side.")
+	functionsDownloadCmd.MarkFlagsMutuallyExclusive("use-api", "use-docker", "legacy-bundle")
+	cobra.CheckErr(downloadFlags.MarkHidden("legacy-bundle"))
+	cobra.CheckErr(downloadFlags.MarkHidden("use-docker"))
 	functionsCmd.AddCommand(functionsListCmd)
 	functionsCmd.AddCommand(functionsDeleteCmd)
 	functionsCmd.AddCommand(functionsDeployCmd)

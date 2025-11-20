@@ -15,11 +15,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
-	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
-	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/pgtest"
 	"github.com/zalando/go-keyring"
 )
@@ -44,15 +42,6 @@ func TestLinkCommand(t *testing.T) {
 		t.Cleanup(fstest.MockStdin(t, "\n"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(utils.SET_SESSION_ROLE).
-			Reply("SET ROLE").
-			Query(GET_LATEST_STORAGE_MIGRATION).
-			Reply("SELECT 1", []any{"custom-metadata"})
-		helper.MockMigrationHistory(conn)
-		helper.MockSeedHistory(conn)
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		// Mock project status
@@ -119,7 +108,7 @@ func TestLinkCommand(t *testing.T) {
 			Reply(200).
 			BodyString(storage)
 		// Run test
-		err := Run(context.Background(), project, false, fsys, conn.Intercept)
+		err := Run(context.Background(), project, false, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -198,22 +187,13 @@ func TestLinkCommand(t *testing.T) {
 			}
 		})
 		// Check error
-		assert.ErrorContains(t, err, "hostname resolving error")
+		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("throws error on write failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(utils.SET_SESSION_ROLE).
-			Reply("SET ROLE").
-			Query(GET_LATEST_STORAGE_MIGRATION).
-			Reply("SELECT 1", []any{"custom-metadata"})
-		helper.MockMigrationHistory(conn)
-		helper.MockSeedHistory(conn)
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		// Mock project status
@@ -269,7 +249,7 @@ func TestLinkCommand(t *testing.T) {
 			Get("/v1/projects").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), project, false, fsys, conn.Intercept)
+		err := Run(context.Background(), project, false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -419,6 +399,23 @@ func TestLinkPostgrest(t *testing.T) {
 }
 
 func TestLinkDatabase(t *testing.T) {
+	t.Run("syncs storage migration", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(GET_LATEST_STORAGE_MIGRATION).
+			Reply("SELECT 1", []any{"custom-metadata"})
+		// Run test
+		err := linkDatabase(context.Background(), dbConfig, fsys, conn.Intercept)
+		// Check error
+		assert.NoError(t, err)
+		storage, err := afero.ReadFile(fsys, utils.StorageMigrationPath)
+		assert.NoError(t, err)
+		assert.Equal(t, []byte("custom-metadata"), storage)
+	})
+
 	t.Run("throws error on connect failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -438,8 +435,6 @@ func TestLinkDatabase(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(GET_LATEST_STORAGE_MIGRATION).
 			Reply("SELECT 1", []any{"custom-metadata"})
-		helper.MockMigrationHistory(conn)
-		helper.MockSeedHistory(conn)
 		// Run test
 		err := linkDatabase(context.Background(), dbConfig, fsys, conn.Intercept)
 		// Check error
@@ -461,8 +456,6 @@ func TestLinkDatabase(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(GET_LATEST_STORAGE_MIGRATION).
 			Reply("SELECT 1", []any{"custom-metadata"})
-		helper.MockMigrationHistory(conn)
-		helper.MockSeedHistory(conn)
 		// Run test
 		err := linkDatabase(context.Background(), dbConfig, fsys, conn.Intercept)
 		// Check error
@@ -481,18 +474,11 @@ func TestLinkDatabase(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(GET_LATEST_STORAGE_MIGRATION).
-			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation migrations").
-			Query(migration.SET_LOCK_TIMEOUT).
-			Query(migration.CREATE_VERSION_SCHEMA).
-			Reply("CREATE SCHEMA").
-			Query(migration.CREATE_VERSION_TABLE).
-			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations").
-			Query(migration.ADD_STATEMENTS_COLUMN).
-			Query(migration.ADD_NAME_COLUMN)
+			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation migrations")
 		// Run test
 		err := linkDatabase(context.Background(), dbConfig, fsys, conn.Intercept)
 		// Check error
-		assert.ErrorContains(t, err, "ERROR: permission denied for relation supabase_migrations (SQLSTATE 42501)")
+		assert.ErrorContains(t, err, "ERROR: permission denied for relation migrations (SQLSTATE 42501)")
 		exists, err := afero.Exists(fsys, utils.StorageMigrationPath)
 		assert.NoError(t, err)
 		assert.False(t, exists)

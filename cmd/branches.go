@@ -187,7 +187,7 @@ var (
 			} else if err := promptBranchId(ctx, fsys); err != nil {
 				return err
 			}
-			return delete.Run(ctx, branchId)
+			return delete.Run(ctx, branchId, nil)
 		},
 	}
 
