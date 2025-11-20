@@ -155,13 +155,41 @@ type RetryClient struct {
 	*client.Client
 }
 
+func isPermanentError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Rate limited errors can be recovered by retry
+	if msg := err.Error(); strings.Contains(msg, "toomanyrequests:") {
+		return false
+	}
+	return true
+}
+
 // ImagePull wraps the Docker client's ImagePull with retry logic and registry auth
 func (cli *RetryClient) ImagePull(ctx context.Context, refStr string, options image.PullOptions) (io.ReadCloser, error) {
 	if len(options.RegistryAuth) == 0 {
 		options.RegistryAuth = utils.GetRegistryAuth()
 	}
 	pull := func() (io.ReadCloser, error) {
-		return cli.Client.ImagePull(ctx, refStr, options)
+		resp, err := cli.Client.ImagePull(ctx, refStr, options)
+		if isPermanentError(err) {
+			return resp, &backoff.PermanentError{Err: err}
+		}
+		return resp, err
+	}
+	policy := utils.NewBackoffPolicy(ctx)
+	return backoff.RetryWithData(pull, policy)
+}
+
+// Also retry ImageInspect: https://github.com/docker/compose/blob/main/pkg/compose/pull.go#L174
+func (cli *RetryClient) ImageInspect(ctx context.Context, refStr string, options ...client.ImageInspectOption) (image.InspectResponse, error) {
+	pull := func() (image.InspectResponse, error) {
+		resp, err := cli.Client.ImageInspect(ctx, refStr, options...)
+		if isPermanentError(err) {
+			return resp, &backoff.PermanentError{Err: err}
+		}
+		return resp, err
 	}
 	policy := utils.NewBackoffPolicy(ctx)
 	return backoff.RetryWithData(pull, policy)
