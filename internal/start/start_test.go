@@ -216,6 +216,9 @@ func TestDatabaseStart(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
+			Head("/_ping").
+			Reply(http.StatusOK)
+		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/networks/create").
 			Reply(http.StatusCreated).
 			JSON(network.CreateResponse{})
