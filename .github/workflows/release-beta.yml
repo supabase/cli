@@ -20,7 +20,7 @@ jobs:
       new-release-version: ${{ steps.semantic-release.outputs.new_release_version }}
       new-release-channel: ${{ steps.semantic-release.outputs.new_release_channel }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - id: semantic-release
         uses: cycjimmy/semantic-release-action@v6
         env:
@@ -35,7 +35,7 @@ jobs:
       contents: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -65,7 +65,7 @@ jobs:
     if: needs.release.outputs.new-release-published == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -82,7 +82,7 @@ jobs:
     if: needs.release.outputs.new-release-published == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: "16.x"
