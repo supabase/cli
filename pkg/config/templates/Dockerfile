@@ -1,5 +1,5 @@
 # Exposed for updates by .github/dependabot.yml
-FROM supabase/postgres:17.6.1.052 AS pg
+FROM supabase/postgres:17.6.1.054 AS pg
 # Append to ServiceImages when adding new dependencies below
 FROM library/kong:2.8.1 AS kong
 FROM axllent/mailpit:v1.22.3 AS mailpit
@@ -11,9 +11,9 @@ FROM supabase/edge-runtime:v1.69.24 AS edgeruntime
 FROM timberio/vector:0.28.1-alpine AS vector
 FROM supabase/supavisor:2.7.4 AS supavisor
 FROM supabase/gotrue:v2.182.1 AS gotrue
-FROM supabase/realtime:v2.64.0 AS realtime
-FROM supabase/storage-api:v1.31.1 AS storage
-FROM supabase/logflare:1.26.6 AS logflare
+FROM supabase/realtime:v2.65.0 AS realtime
+FROM supabase/storage-api:v1.32.0 AS storage
+FROM supabase/logflare:1.26.12 AS logflare
 # Append to JobImages when adding new dependencies below
 FROM supabase/pgadmin-schema-diff:cli-0.0.5 AS differ
 FROM supabase/migra:3.0.1663481299 AS migra
