@@ -253,38 +253,33 @@ func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys
 		return err
 	}
 	defer conn.Close(context.Background())
+	if err := resetPgmqExtension(ctx, conn); err != nil {
+		return err
+	}
+	return down.ResetAll(ctx, version, conn, fsys)
+}
 
-	// Check whether pgmq extension exists
+func resetPgmqExtension(ctx context.Context, conn *pgx.Conn) error {
 	var exists bool
 	if err := conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pgmq')").Scan(&exists); err != nil {
 		return errors.Errorf("failed to check pgmq extension: %w", err)
 	}
-
-	if exists {
-		if _, err := conn.Exec(ctx, "DROP EXTENSION IF EXISTS pgmq CASCADE"); err != nil {
-			return errors.Errorf("failed to drop pgmq extension: %w", err)
-		}
-	}
-
-	// Retry creation in case of transient lock/contention
-	bo := backoff.NewExponentialBackOff()
-	bo.InitialInterval = 200 * time.Millisecond
-	bo.MaxInterval = 2 * time.Second
-	bo.MaxElapsedTime = 10 * time.Second
-
-	createOp := func() error {
-		if _, err := conn.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS pgmq"); err != nil {
-			return err
-		}
+	if !exists {
 		return nil
 	}
-	if err := backoff.Retry(createOp, bo); err != nil {
-		return errors.Errorf("timed out creating pgmq extension: %w", err)
+	if _, err := conn.Exec(ctx, "DROP EXTENSION IF EXISTS pgmq CASCADE"); err != nil {
+		return errors.Errorf("failed to drop pgmq extension: %w", err)
 	}
-
-	return down.ResetAll(ctx, version, conn, fsys)
+	policy := start.NewBackoffPolicy(ctx, 10*time.Second)
+	createExtension := func() error {
+		_, err := conn.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS pgmq")
+		return err
+	}
+	if err := backoff.Retry(createExtension, policy); err != nil {
+		return errors.Errorf("failed to recreate pgmq extension: %w", err)
+	}
+	return nil
 }
-
 
 func LikeEscapeSchema(schemas []string) (result []string) {
 	// Treat _ as literal, * as any character
