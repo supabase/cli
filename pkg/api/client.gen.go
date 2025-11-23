@@ -464,6 +464,11 @@ type ClientInterface interface {
 
 	V1RunAQuery(ctx context.Context, ref string, body V1RunAQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1ReadOnlyQueryWithBody request with any body
+	V1ReadOnlyQueryWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1ReadOnlyQuery(ctx context.Context, ref string, body V1ReadOnlyQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1EnableDatabaseWebhook request
 	V1EnableDatabaseWebhook(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2241,6 +2246,30 @@ func (c *Client) V1RunAQueryWithBody(ctx context.Context, ref string, contentTyp
 
 func (c *Client) V1RunAQuery(ctx context.Context, ref string, body V1RunAQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1RunAQueryRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ReadOnlyQueryWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ReadOnlyQueryRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ReadOnlyQuery(ctx context.Context, ref string, body V1ReadOnlyQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ReadOnlyQueryRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7802,6 +7831,53 @@ func NewV1RunAQueryRequestWithBody(server string, ref string, contentType string
 	return req, nil
 }
 
+// NewV1ReadOnlyQueryRequest calls the generic V1ReadOnlyQuery builder with application/json body
+func NewV1ReadOnlyQueryRequest(server string, ref string, body V1ReadOnlyQueryJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1ReadOnlyQueryRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1ReadOnlyQueryRequestWithBody generates requests for V1ReadOnlyQuery with any type of body
+func NewV1ReadOnlyQueryRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/query/read-only", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewV1EnableDatabaseWebhookRequest generates requests for V1EnableDatabaseWebhook
 func NewV1EnableDatabaseWebhookRequest(server string, ref string) (*http.Request, error) {
 	var err error
@@ -10384,6 +10460,11 @@ type ClientWithResponsesInterface interface {
 
 	V1RunAQueryWithResponse(ctx context.Context, ref string, body V1RunAQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*V1RunAQueryResponse, error)
 
+	// V1ReadOnlyQueryWithBodyWithResponse request with any body
+	V1ReadOnlyQueryWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ReadOnlyQueryResponse, error)
+
+	V1ReadOnlyQueryWithResponse(ctx context.Context, ref string, body V1ReadOnlyQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ReadOnlyQueryResponse, error)
+
 	// V1EnableDatabaseWebhookWithResponse request
 	V1EnableDatabaseWebhookWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1EnableDatabaseWebhookResponse, error)
 
@@ -12772,6 +12853,27 @@ func (r V1RunAQueryResponse) StatusCode() int {
 	return 0
 }
 
+type V1ReadOnlyQueryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1ReadOnlyQueryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1ReadOnlyQueryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1EnableDatabaseWebhookResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -14910,6 +15012,23 @@ func (c *ClientWithResponses) V1RunAQueryWithResponse(ctx context.Context, ref s
 		return nil, err
 	}
 	return ParseV1RunAQueryResponse(rsp)
+}
+
+// V1ReadOnlyQueryWithBodyWithResponse request with arbitrary body returning *V1ReadOnlyQueryResponse
+func (c *ClientWithResponses) V1ReadOnlyQueryWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ReadOnlyQueryResponse, error) {
+	rsp, err := c.V1ReadOnlyQueryWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ReadOnlyQueryResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1ReadOnlyQueryWithResponse(ctx context.Context, ref string, body V1ReadOnlyQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ReadOnlyQueryResponse, error) {
+	rsp, err := c.V1ReadOnlyQuery(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ReadOnlyQueryResponse(rsp)
 }
 
 // V1EnableDatabaseWebhookWithResponse request returning *V1EnableDatabaseWebhookResponse
@@ -17871,6 +17990,22 @@ func ParseV1RunAQueryResponse(rsp *http.Response) (*V1RunAQueryResponse, error) 
 	}
 
 	response := &V1RunAQueryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1ReadOnlyQueryResponse parses an HTTP response from a V1ReadOnlyQueryWithResponse call
+func ParseV1ReadOnlyQueryResponse(rsp *http.Response) (*V1ReadOnlyQueryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1ReadOnlyQueryResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
