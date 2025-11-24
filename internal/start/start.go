@@ -533,20 +533,10 @@ EOF
 
 		if keys, err := afero.ReadFile(fsys, utils.Config.Auth.SigningKeysPath); err == nil && len(keys) > 0 {
 			env = append(env, "GOTRUE_JWT_KEYS="+string(keys))
-			algSet := map[string]bool{"HS256": true}
-			for _, key := range utils.Config.Auth.SigningKeys {
-				switch key.Algorithm {
-				case config.AlgRS256:
-					algSet["RS256"] = true
-				case config.AlgES256:
-					algSet["ES256"] = true
-				}
+			// TODO: deprecate HS256 when it's no longer supported
+			if len(utils.Config.Auth.SigningKeys) > 0 {
+				env = append(env, "GOTRUE_JWT_VALID_METHODS=HS256,RS256,ES256")
 			}
-			algorithms := make([]string, 0, len(algSet))
-			for alg := range algSet {
-				algorithms = append(algorithms, alg)
-			}
-			env = append(env, "GOTRUE_JWT_VALID_METHODS="+strings.Join(algorithms, ","))
 		}
 
 		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.Enabled {
