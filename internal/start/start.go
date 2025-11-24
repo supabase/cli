@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -16,7 +17,14 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
+	"github.com/compose-spec/compose-go/v2/types"
+	"github.com/docker/cli/cli/command"
+	dockerFlags "github.com/docker/cli/cli/flags"
+	"github.com/docker/compose/v2/pkg/api"
+	"github.com/docker/compose/v2/pkg/compose"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
@@ -24,6 +32,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/functions/serve"
 	"github.com/supabase/cli/internal/seed/buckets"
@@ -141,14 +150,89 @@ var (
 
 var serviceTimeout = 30 * time.Second
 
+// RetryClient wraps a Docker client to add retry logic for image pulls
+type RetryClient struct {
+	*client.Client
+}
+
+func isPermanentError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Rate limited errors can be recovered by retry
+	if msg := err.Error(); strings.Contains(msg, "toomanyrequests:") {
+		return false
+	}
+	return true
+}
+
+// ImagePull wraps the Docker client's ImagePull with retry logic and registry auth
+func (cli *RetryClient) ImagePull(ctx context.Context, refStr string, options image.PullOptions) (io.ReadCloser, error) {
+	if len(options.RegistryAuth) == 0 {
+		options.RegistryAuth = utils.GetRegistryAuth()
+	}
+	pull := func() (io.ReadCloser, error) {
+		resp, err := cli.Client.ImagePull(ctx, refStr, options)
+		if isPermanentError(err) {
+			return resp, &backoff.PermanentError{Err: err}
+		}
+		return resp, err
+	}
+	policy := utils.NewBackoffPolicy(ctx)
+	return backoff.RetryWithData(pull, policy)
+}
+
+// Also retry ImageInspect: https://github.com/docker/compose/blob/main/pkg/compose/pull.go#L174
+func (cli *RetryClient) ImageInspect(ctx context.Context, refStr string, options ...client.ImageInspectOption) (image.InspectResponse, error) {
+	pull := func() (image.InspectResponse, error) {
+		resp, err := cli.Client.ImageInspect(ctx, refStr, options...)
+		if isPermanentError(err) {
+			return resp, &backoff.PermanentError{Err: err}
+		}
+		return resp, err
+	}
+	policy := utils.NewBackoffPolicy(ctx)
+	return backoff.RetryWithData(pull, policy)
+}
+
+// pullImagesUsingCompose pulls all required images using docker-compose service
+func pullImagesUsingCompose(ctx context.Context, project types.Project) error {
+	// Create Docker CLI
+	cli, err := command.NewDockerCli()
+	if err != nil {
+		return errors.Errorf("failed to create Docker CLI: %w", err)
+	}
+	// Initialize Docker CLI
+	opt := command.WithAPIClient(&RetryClient{Client: utils.Docker})
+	if err := cli.Initialize(&dockerFlags.ClientOptions{}, opt); err != nil {
+		return errors.Errorf("failed to initialize Docker CLI: %w", err)
+	}
+	service := compose.NewComposeService(cli)
+	// Fallback to regular image pull by ignoring failures
+	return service.Pull(ctx, &project, api.PullOptions{IgnoreFailures: true})
+}
+
 func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, options ...func(*pgx.ConnConfig)) error {
 	excluded := make(map[string]bool)
 	for _, name := range excludedContainers {
 		excluded[name] = true
 	}
+	notExcluded := func(sc types.ServiceConfig) bool {
+		val, ok := excluded[sc.Name]
+		return !val || !ok
+	}
 
 	jwks, err := utils.Config.Auth.ResolveJWKS(ctx)
 	if err != nil {
+		return err
+	}
+
+	// TODO: start services using compose up
+	project := types.Project{
+		Name:     "supabase-cli",
+		Services: utils.GetServices().Filter(notExcluded),
+	}
+	if err := pullImagesUsingCompose(ctx, project); err != nil {
 		return err
 	}
 
