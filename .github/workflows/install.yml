@@ -21,7 +21,7 @@ jobs:
   pack:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - run: |
           jq -c '.version = "1.28.0"' package.json > tmp.$$.json
