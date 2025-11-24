@@ -4222,6 +4222,12 @@ type V1ProjectWithDatabaseResponse struct {
 // V1ProjectWithDatabaseResponseStatus defines model for V1ProjectWithDatabaseResponse.Status.
 type V1ProjectWithDatabaseResponseStatus string
 
+// V1ReadOnlyQueryBody defines model for V1ReadOnlyQueryBody.
+type V1ReadOnlyQueryBody struct {
+	Parameters *[]interface{} `json:"parameters,omitempty"`
+	Query      string         `json:"query"`
+}
+
 // V1RestorePitrBody defines model for V1RestorePitrBody.
 type V1RestorePitrBody struct {
 	RecoveryTimeTargetUnix int64 `json:"recovery_time_target_unix"`
@@ -4721,6 +4727,9 @@ type V1PatchAMigrationJSONRequestBody = V1PatchMigrationBody
 
 // V1RunAQueryJSONRequestBody defines body for V1RunAQuery for application/json ContentType.
 type V1RunAQueryJSONRequestBody = V1RunQueryBody
+
+// V1ReadOnlyQueryJSONRequestBody defines body for V1ReadOnlyQuery for application/json ContentType.
+type V1ReadOnlyQueryJSONRequestBody = V1ReadOnlyQueryBody
 
 // V1CreateAFunctionJSONRequestBody defines body for V1CreateAFunction for application/json ContentType.
 type V1CreateAFunctionJSONRequestBody = V1CreateFunctionBody
