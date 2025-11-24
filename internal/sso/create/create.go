@@ -11,6 +11,7 @@ import (
 	"github.com/supabase/cli/internal/sso/internal/saml"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
 )
 
 var Fs = afero.NewOsFs()
@@ -67,20 +68,8 @@ func Run(ctx context.Context, params RunParams) error {
 		body.Domains = &params.Domains
 	}
 
-	nameIDFormat := api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatEmailAddress
-	switch params.NameIDFormat {
-	case string(api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatEmailAddress):
-		nameIDFormat = api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatEmailAddress
-	case string(api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatUnspecified):
-		nameIDFormat = api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatUnspecified
-	case string(api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatPersistent):
-		nameIDFormat = api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatPersistent
-	case string(api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatTransient):
-		nameIDFormat = api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatTransient
-	}
-
 	if params.NameIDFormat != "" {
-		body.NameIdFormat = &nameIDFormat
+		body.NameIdFormat = cast.Ptr(api.CreateProviderBodyNameIdFormat(params.NameIDFormat))
 	}
 
 	resp, err := utils.GetSupabase().V1CreateASsoProviderWithResponse(ctx, params.ProjectRef, body)

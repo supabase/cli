@@ -12,6 +12,7 @@ import (
 	"github.com/supabase/cli/internal/sso/update"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/api"
 )
 
 var (
@@ -28,13 +29,11 @@ var (
 
 	ssoNameIDFormat = utils.EnumFlag{
 		Allowed: []string{
-			"",
-			"urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
-			"urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
-			"urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
-			"urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+			string(api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatEmailAddress),
+			string(api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatUnspecified),
+			string(api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatPersistent),
+			string(api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatTransient),
 		},
-		Value: "",
 	}
 
 	ssoMetadataFile         string
@@ -160,6 +159,7 @@ func init() {
 	ssoAddFlags.StringVar(&ssoMetadataURL, "metadata-url", "", "URL pointing to a SAML 2.0 Metadata XML document describing the identity provider.")
 	ssoAddFlags.BoolVar(&ssoSkipURLValidation, "skip-url-validation", false, "Whether local validation of the SAML 2.0 Metadata URL should not be performed.")
 	ssoAddFlags.StringVar(&ssoAttributeMappingFile, "attribute-mapping-file", "", "File containing a JSON mapping between SAML attributes to custom JWT claims.")
+	ssoAddFlags.Var(&ssoNameIDFormat, "name-id-format", "URI reference representing the classification of string-based identifier information.")
 	ssoAddCmd.MarkFlagsMutuallyExclusive("metadata-file", "metadata-url")
 	cobra.CheckErr(ssoAddCmd.MarkFlagRequired("type"))
 	cobra.CheckErr(ssoAddCmd.MarkFlagFilename("metadata-file", "xml"))
@@ -173,6 +173,7 @@ func init() {
 	ssoUpdateFlags.StringVar(&ssoMetadataURL, "metadata-url", "", "URL pointing to a SAML 2.0 Metadata XML document describing the identity provider.")
 	ssoUpdateFlags.BoolVar(&ssoSkipURLValidation, "skip-url-validation", false, "Whether local validation of the SAML 2.0 Metadata URL should not be performed.")
 	ssoUpdateFlags.StringVar(&ssoAttributeMappingFile, "attribute-mapping-file", "", "File containing a JSON mapping between SAML attributes to custom JWT claims.")
+	ssoUpdateFlags.Var(&ssoNameIDFormat, "name-id-format", "URI reference representing the classification of string-based identifier information.")
 	ssoUpdateCmd.MarkFlagsMutuallyExclusive("metadata-file", "metadata-url")
 	ssoUpdateCmd.MarkFlagsMutuallyExclusive("domains", "add-domains")
 	ssoUpdateCmd.MarkFlagsMutuallyExclusive("domains", "remove-domains")
