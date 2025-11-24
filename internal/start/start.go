@@ -534,9 +534,7 @@ EOF
 		if keys, err := afero.ReadFile(fsys, utils.Config.Auth.SigningKeysPath); err == nil && len(keys) > 0 {
 			env = append(env, "GOTRUE_JWT_KEYS="+string(keys))
 			// TODO: deprecate HS256 when it's no longer supported
-			if len(utils.Config.Auth.SigningKeys) > 0 {
-				env = append(env, "GOTRUE_JWT_VALID_METHODS=HS256,RS256,ES256")
-			}
+			env = append(env, "GOTRUE_JWT_VALID_METHODS=HS256,RS256,ES256")
 		}
 
 		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.Enabled {
