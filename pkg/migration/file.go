@@ -69,7 +69,7 @@ func NewMigrationFromReader(sql io.Reader) (*MigrationFile, error) {
 }
 
 // -----------------------------------------------------------------------------
-// ExecBatch (fixed to handle pgx v5 return values correctly)
+// ExecBatch
 // -----------------------------------------------------------------------------
 
 func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
@@ -126,7 +126,7 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 }
 
 // -----------------------------------------------------------------------------
-// Error formatter identical to Supabase CLI behavior
+// Error Formatting
 // -----------------------------------------------------------------------------
 
 func formatStatementError(idx int, stmt string, err error) error {
@@ -162,7 +162,7 @@ func markError(stat string, pos int) string {
 }
 
 // -----------------------------------------------------------------------------
-// insertVersionExec — FULLY FIXED FOR PGX V5 ExecParams
+// ⭐ insertVersionExec — FIXED FOR PGX V5 ⭐
 // -----------------------------------------------------------------------------
 
 func (m *MigrationFile) insertVersionExec(ctx context.Context, conn *pgx.Conn) error {
@@ -177,10 +177,10 @@ func (m *MigrationFile) insertVersionExec(ctx context.Context, conn *pgx.Conn) e
 	var valueFormat int16
 
 	if conn.Config().PreferSimpleProtocol {
-		encoded, err = value.EncodeText(ci, encoded)
+		encoded, err = value.EncodeText(ci, nil)
 		valueFormat = pgtype.TextFormatCode
 	} else {
-		encoded, err = value.EncodeBinary(ci, encoded)
+		encoded, err = value.EncodeBinary(ci, nil)
 		valueFormat = pgtype.BinaryFormatCode
 	}
 
@@ -188,8 +188,9 @@ func (m *MigrationFile) insertVersionExec(ctx context.Context, conn *pgx.Conn) e
 		return errors.Errorf("failed to encode binary: %w", err)
 	}
 
-	// pgconn.ExecParams RETURNS ONLY ONE VALUE (MultiResultReader)
-	res := conn.PgConn().ExecParams(ctx,
+	// ExecParams returns a MultiResultReader WITHOUT Err() in pgx v5
+	mrr := conn.PgConn().ExecParams(
+		ctx,
 		INSERT_MIGRATION_VERSION,
 		[][]byte{[]byte(m.Version), []byte(m.Name), encoded},
 		[]uint32{pgtype.TextOID, pgtype.TextOID, pgtype.TextArrayOID},
@@ -197,8 +198,18 @@ func (m *MigrationFile) insertVersionExec(ctx context.Context, conn *pgx.Conn) e
 		nil,
 	)
 
-	if res.Err() != nil {
-		return errors.Errorf("failed to insert migration version: %w", res.Err())
+	for {
+		_, readErr := mrr.Read()
+		if readErr == pgconn.ErrNoMoreResults {
+			break
+		}
+		if readErr != nil {
+			return errors.Errorf("failed to insert migration version: %w", readErr)
+		}
+	}
+
+	if err := mrr.Close(); err != nil {
+		return errors.Errorf("failed to insert migration version: %w", err)
 	}
 
 	return nil
