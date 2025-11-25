@@ -1,6 +1,6 @@
 module github.com/supabase/cli
 
-go 1.24.9
+go 1.24.10
 
 require (
 	github.com/BurntSushi/toml v1.5.0
@@ -454,6 +454,8 @@ require (
 )
 
 replace github.com/supabase/cli/pkg v1.0.0 => ./pkg
+
+replace github.com/fsnotify/fsevents v0.2.0 => ./fsevents
 
 tool (
 	github.com/golangci/golangci-lint/v2/cmd/golangci-lint
