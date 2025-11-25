@@ -12,7 +12,6 @@ import (
 	"os"
 	"reflect"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -68,13 +67,9 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 	if authEnabled {
 		values[c.PublishableKey] = utils.Config.Auth.PublishableKey.Value
 		values[c.SecretKey] = utils.Config.Auth.SecretKey.Value
-		values[c.JWTSecret] = utils.Config.Auth.JwtSecret.Value
-		values[c.AnonKey] = utils.Config.Auth.AnonKey.Value
-		values[c.ServiceRoleKey] = utils.Config.Auth.ServiceRoleKey.Value
 	}
 	if inbucketEnabled {
 		values[c.MailpitURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Inbucket.Port)
-		values[c.InbucketURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Inbucket.Port)
 	}
 	if storageEnabled {
 		values[c.StorageS3URL] = utils.GetApiUrl("/storage/v1/s3")
@@ -99,6 +94,10 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 	}
 	if len(stopped) > 0 {
 		fmt.Fprintln(os.Stderr, "Stopped services:", stopped)
+	}
+	// Set suggestion to use new keys instead of deprecated ones
+	if utils.Config.Auth.Enabled && !slices.Contains(stopped, utils.GotrueId) && !slices.Contains(stopped, utils.ShortContainerImageName(utils.Config.Auth.Image)) {
+		utils.CmdSuggestion = utils.Orange("Please use publishable and secret key instead of anon and service role key.")
 	}
 	if format == utils.OutputPretty {
 		fmt.Fprintf(os.Stderr, "%s local development setup is running.\n\n", utils.Aqua("supabase"))
@@ -217,37 +216,20 @@ func PrettyPrint(w io.Writer, exclude ...string) {
 		McpURL:                   "         " + utils.Aqua("MCP URL"),
 		DbURL:                    "    " + utils.Aqua("Database URL"),
 		StudioURL:                "      " + utils.Aqua("Studio URL"),
-		InbucketURL:              "    " + utils.Aqua("Inbucket URL"),
 		MailpitURL:               "     " + utils.Aqua("Mailpit URL"),
 		PublishableKey:           " " + utils.Aqua("Publishable key"),
 		SecretKey:                "      " + utils.Aqua("Secret key"),
-		JWTSecret:                "      " + utils.Aqua("JWT secret"),
-		AnonKey:                  "        " + utils.Aqua("anon key"),
-		ServiceRoleKey:           "" + utils.Aqua("service_role key"),
 		StorageS3AccessKeyId:     "   " + utils.Aqua("S3 Access Key"),
 		StorageS3SecretAccessKey: "   " + utils.Aqua("S3 Secret Key"),
 		StorageS3Region:          "       " + utils.Aqua("S3 Region"),
 	}
 	values := names.toValues(exclude...)
 	// Iterate through map in order of declared struct fields
-	t := reflect.TypeOf(names)
 	val := reflect.ValueOf(names)
 	for i := 0; i < val.NumField(); i++ {
 		k := val.Field(i).String()
-		if tag := t.Field(i).Tag.Get("env"); isDeprecated(tag) {
-			continue
-		}
 		if v, ok := values[k]; ok {
 			fmt.Fprintf(w, "%s: %s\n", k, v)
 		}
 	}
-}
-
-func isDeprecated(tag string) bool {
-	for part := range strings.SplitSeq(tag, ",") {
-		if strings.EqualFold(part, "deprecated") {
-			return true
-		}
-	}
-	return false
 }
