@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/go-errors/errors"
@@ -131,17 +132,22 @@ func NewDbConfigWithPassword(ctx context.Context, projectRef string) (pgconn.Con
 	}
 	logger := utils.GetDebugLogger()
 	// Use pooler if host is not reachable directly
-	if _, err := net.DefaultResolver.LookupIPAddr(ctx, config.Host); err != nil {
-		if poolerConfig := utils.GetPoolerConfig(projectRef); poolerConfig != nil {
-			if len(config.Password) > 0 {
-				fmt.Fprintln(logger, "Using database password from env var...")
-				poolerConfig.Password = config.Password
-			} else if err := initPoolerLogin(ctx, projectRef, poolerConfig); err != nil {
-				utils.CmdSuggestion = suggestEnvVar
-				return *poolerConfig, err
-			}
-			return *poolerConfig, nil
+	d := net.Dialer{Timeout: 5 * time.Second}
+	if conn, err := d.DialContext(ctx, "udp", config.Host+":53"); err == nil {
+		if err := conn.Close(); err != nil {
+			fmt.Fprintln(logger, err)
 		}
+		fmt.Fprintf(logger, "Resolved DNS: %v\n", conn.RemoteAddr())
+	} else if poolerConfig := utils.GetPoolerConfig(projectRef); poolerConfig != nil {
+		if len(config.Password) > 0 {
+			fmt.Fprintln(logger, "Using database password from env var...")
+			poolerConfig.Password = config.Password
+		} else if err := initPoolerLogin(ctx, projectRef, poolerConfig); err != nil {
+			utils.CmdSuggestion = suggestEnvVar
+			return *poolerConfig, err
+		}
+		return *poolerConfig, nil
+	} else {
 		utils.CmdSuggestion = fmt.Sprintf("Run %s to setup IPv4 connection.", utils.Aqua("supabase link --project-ref "+projectRef))
 		return config, errors.Errorf("IPv6 is not supported on your current network: %w", err)
 	}
