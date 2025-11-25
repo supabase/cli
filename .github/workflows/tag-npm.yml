@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   tag:
@@ -26,7 +27,11 @@ jobs:
         with:
           node-version: "16.x"
           registry-url: "https://registry.npmjs.org"
+
+      # Ensure npm 11.5.1 or later is installed for trusted publishing support
+      - name: Update npm
+        run: npm install -g npm@latest
+
       - run: npm dist-tag add "supabase@${RELEASE_TAG#v}" latest
         env:
           RELEASE_TAG: ${{ inputs.release }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

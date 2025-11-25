@@ -41,7 +41,6 @@ jobs:
         id: cpr
         uses: peter-evans/create-pull-request@v7
         with:
-          token: ${{ secrets.GH_PAT }}
           commit-message: "chore: sync API types from infrastructure"
           title: "chore: sync API types from infrastructure"
           body: |
@@ -58,4 +57,4 @@ jobs:
         if: steps.check.outputs.has_changes == 'true'
         run: gh pr merge --auto --squash "${{ steps.cpr.outputs.pull-request-number }}"
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
