@@ -4318,12 +4318,27 @@ type V1UpdateFunctionBody struct {
 	VerifyJwt *bool   `json:"verify_jwt,omitempty"`
 }
 
+// V1UpdatePasswordBody defines model for V1UpdatePasswordBody.
+type V1UpdatePasswordBody struct {
+	Password string `json:"password"`
+}
+
+// V1UpdatePasswordResponse defines model for V1UpdatePasswordResponse.
+type V1UpdatePasswordResponse struct {
+	Message string `json:"message"`
+}
+
 // V1UpdatePostgrestConfigBody defines model for V1UpdatePostgrestConfigBody.
 type V1UpdatePostgrestConfigBody struct {
 	DbExtraSearchPath *string `json:"db_extra_search_path,omitempty"`
 	DbPool            *int    `json:"db_pool,omitempty"`
 	DbSchema          *string `json:"db_schema,omitempty"`
 	MaxRows           *int    `json:"max_rows,omitempty"`
+}
+
+// V1UpdateProjectBody defines model for V1UpdateProjectBody.
+type V1UpdateProjectBody struct {
+	Name string `json:"name"`
 }
 
 // V1UpsertMigrationBody defines model for V1UpsertMigrationBody.
@@ -4653,6 +4668,9 @@ type V1CreateAnOrganizationJSONRequestBody = CreateOrganizationV1
 // V1CreateAProjectJSONRequestBody defines body for V1CreateAProject for application/json ContentType.
 type V1CreateAProjectJSONRequestBody = V1CreateProjectBody
 
+// V1UpdateAProjectJSONRequestBody defines body for V1UpdateAProject for application/json ContentType.
+type V1UpdateAProjectJSONRequestBody = V1UpdateProjectBody
+
 // V1UpdateActionRunStatusJSONRequestBody defines body for V1UpdateActionRunStatus for application/json ContentType.
 type V1UpdateActionRunStatusJSONRequestBody = UpdateRunStatusBody
 
@@ -4724,6 +4742,9 @@ type V1UpsertAMigrationJSONRequestBody = V1UpsertMigrationBody
 
 // V1PatchAMigrationJSONRequestBody defines body for V1PatchAMigration for application/json ContentType.
 type V1PatchAMigrationJSONRequestBody = V1PatchMigrationBody
+
+// V1UpdateDatabasePasswordJSONRequestBody defines body for V1UpdateDatabasePassword for application/json ContentType.
+type V1UpdateDatabasePasswordJSONRequestBody = V1UpdatePasswordBody
 
 // V1RunAQueryJSONRequestBody defines body for V1RunAQuery for application/json ContentType.
 type V1RunAQueryJSONRequestBody = V1RunQueryBody

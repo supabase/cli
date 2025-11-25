@@ -178,6 +178,11 @@ type ClientInterface interface {
 	// V1GetProject request
 	V1GetProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1UpdateAProjectWithBody request with any body
+	V1UpdateAProjectWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1UpdateAProject(ctx context.Context, ref string, body V1UpdateAProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1ListActionRuns request
 	V1ListActionRuns(ctx context.Context, ref string, params *V1ListActionRunsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -458,6 +463,11 @@ type ClientInterface interface {
 	V1PatchAMigrationWithBody(ctx context.Context, ref string, version string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	V1PatchAMigration(ctx context.Context, ref string, version string, body V1PatchAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1UpdateDatabasePasswordWithBody request with any body
+	V1UpdateDatabasePasswordWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1UpdateDatabasePassword(ctx context.Context, ref string, body V1UpdateDatabasePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1RunAQueryWithBody request with any body
 	V1RunAQueryWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1008,6 +1018,30 @@ func (c *Client) V1DeleteAProject(ctx context.Context, ref string, reqEditors ..
 
 func (c *Client) V1GetProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1GetProjectRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateAProjectWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateAProjectRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateAProject(ctx context.Context, ref string, body V1UpdateAProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateAProjectRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2222,6 +2256,30 @@ func (c *Client) V1PatchAMigrationWithBody(ctx context.Context, ref string, vers
 
 func (c *Client) V1PatchAMigration(ctx context.Context, ref string, version string, body V1PatchAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1PatchAMigrationRequest(c.Server, ref, version, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateDatabasePasswordWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateDatabasePasswordRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateDatabasePassword(ctx context.Context, ref string, body V1UpdateDatabasePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateDatabasePasswordRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4319,6 +4377,53 @@ func NewV1GetProjectRequest(server string, ref string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewV1UpdateAProjectRequest calls the generic V1UpdateAProject builder with application/json body
+func NewV1UpdateAProjectRequest(server string, ref string, body V1UpdateAProjectJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1UpdateAProjectRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1UpdateAProjectRequestWithBody generates requests for V1UpdateAProject with any type of body
+func NewV1UpdateAProjectRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -7784,6 +7889,53 @@ func NewV1PatchAMigrationRequestWithBody(server string, ref string, version stri
 	return req, nil
 }
 
+// NewV1UpdateDatabasePasswordRequest calls the generic V1UpdateDatabasePassword builder with application/json body
+func NewV1UpdateDatabasePasswordRequest(server string, ref string, body V1UpdateDatabasePasswordJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1UpdateDatabasePasswordRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1UpdateDatabasePasswordRequestWithBody generates requests for V1UpdateDatabasePassword with any type of body
+func NewV1UpdateDatabasePasswordRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/password", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewV1RunAQueryRequest calls the generic V1RunAQuery builder with application/json body
 func NewV1RunAQueryRequest(server string, ref string, body V1RunAQueryJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -10174,6 +10326,11 @@ type ClientWithResponsesInterface interface {
 	// V1GetProjectWithResponse request
 	V1GetProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectResponse, error)
 
+	// V1UpdateAProjectWithBodyWithResponse request with any body
+	V1UpdateAProjectWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateAProjectResponse, error)
+
+	V1UpdateAProjectWithResponse(ctx context.Context, ref string, body V1UpdateAProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateAProjectResponse, error)
+
 	// V1ListActionRunsWithResponse request
 	V1ListActionRunsWithResponse(ctx context.Context, ref string, params *V1ListActionRunsParams, reqEditors ...RequestEditorFn) (*V1ListActionRunsResponse, error)
 
@@ -10454,6 +10611,11 @@ type ClientWithResponsesInterface interface {
 	V1PatchAMigrationWithBodyWithResponse(ctx context.Context, ref string, version string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1PatchAMigrationResponse, error)
 
 	V1PatchAMigrationWithResponse(ctx context.Context, ref string, version string, body V1PatchAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*V1PatchAMigrationResponse, error)
+
+	// V1UpdateDatabasePasswordWithBodyWithResponse request with any body
+	V1UpdateDatabasePasswordWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateDatabasePasswordResponse, error)
+
+	V1UpdateDatabasePasswordWithResponse(ctx context.Context, ref string, body V1UpdateDatabasePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateDatabasePasswordResponse, error)
 
 	// V1RunAQueryWithBodyWithResponse request with any body
 	V1RunAQueryWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RunAQueryResponse, error)
@@ -11147,6 +11309,28 @@ func (r V1GetProjectResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1GetProjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1UpdateAProjectResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *V1ProjectRefResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1UpdateAProjectResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1UpdateAProjectResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -12832,6 +13016,28 @@ func (r V1PatchAMigrationResponse) StatusCode() int {
 	return 0
 }
 
+type V1UpdateDatabasePasswordResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *V1UpdatePasswordResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1UpdateDatabasePasswordResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1UpdateDatabasePasswordResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1RunAQueryResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -14110,6 +14316,23 @@ func (c *ClientWithResponses) V1GetProjectWithResponse(ctx context.Context, ref 
 	return ParseV1GetProjectResponse(rsp)
 }
 
+// V1UpdateAProjectWithBodyWithResponse request with arbitrary body returning *V1UpdateAProjectResponse
+func (c *ClientWithResponses) V1UpdateAProjectWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateAProjectResponse, error) {
+	rsp, err := c.V1UpdateAProjectWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateAProjectResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1UpdateAProjectWithResponse(ctx context.Context, ref string, body V1UpdateAProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateAProjectResponse, error) {
+	rsp, err := c.V1UpdateAProject(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateAProjectResponse(rsp)
+}
+
 // V1ListActionRunsWithResponse request returning *V1ListActionRunsResponse
 func (c *ClientWithResponses) V1ListActionRunsWithResponse(ctx context.Context, ref string, params *V1ListActionRunsParams, reqEditors ...RequestEditorFn) (*V1ListActionRunsResponse, error) {
 	rsp, err := c.V1ListActionRuns(ctx, ref, params, reqEditors...)
@@ -14995,6 +15218,23 @@ func (c *ClientWithResponses) V1PatchAMigrationWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseV1PatchAMigrationResponse(rsp)
+}
+
+// V1UpdateDatabasePasswordWithBodyWithResponse request with arbitrary body returning *V1UpdateDatabasePasswordResponse
+func (c *ClientWithResponses) V1UpdateDatabasePasswordWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateDatabasePasswordResponse, error) {
+	rsp, err := c.V1UpdateDatabasePasswordWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateDatabasePasswordResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1UpdateDatabasePasswordWithResponse(ctx context.Context, ref string, body V1UpdateDatabasePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateDatabasePasswordResponse, error) {
+	rsp, err := c.V1UpdateDatabasePassword(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateDatabasePasswordResponse(rsp)
 }
 
 // V1RunAQueryWithBodyWithResponse request with arbitrary body returning *V1RunAQueryResponse
@@ -16119,6 +16359,32 @@ func ParseV1GetProjectResponse(rsp *http.Response) (*V1GetProjectResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest V1ProjectWithDatabaseResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1UpdateAProjectResponse parses an HTTP response from a V1UpdateAProjectWithResponse call
+func ParseV1UpdateAProjectResponse(rsp *http.Response) (*V1UpdateAProjectResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1UpdateAProjectResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest V1ProjectRefResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -17976,6 +18242,32 @@ func ParseV1PatchAMigrationResponse(rsp *http.Response) (*V1PatchAMigrationRespo
 	response := &V1PatchAMigrationResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1UpdateDatabasePasswordResponse parses an HTTP response from a V1UpdateDatabasePasswordWithResponse call
+func ParseV1UpdateDatabasePasswordResponse(rsp *http.Response) (*V1UpdateDatabasePasswordResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1UpdateDatabasePasswordResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest V1UpdatePasswordResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	}
 
 	return response, nil
