@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: write
-  id-token: write
 
 jobs:
   release:
@@ -66,6 +65,11 @@ jobs:
     if: needs.release.outputs.new-release-published == 'true'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
       # use GitHub app to create a release token that can publish to homebrew-tap and scoop
       - name: Generate token
         id: app-token
@@ -73,11 +77,6 @@ jobs:
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
       - run: go run tools/publish/main.go --beta "${{ needs.release.outputs.new-release-version }}"
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
