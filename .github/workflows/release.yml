@@ -9,6 +9,8 @@ on:
 permissions:
   contents: write
   packages: write
+  # Required for npm OIDC
+  id-token: write
 
 jobs:
   settings:
