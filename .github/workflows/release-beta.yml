@@ -93,12 +93,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: "16.x"
-          registry-url: "https://registry.npmjs.org"
-
-      # Ensure npm 11.5.1 or later is installed for trusted publishing support
-      - name: Update npm
-        run: npm install -g npm@latest
-
+          node-version: latest
+          registry-url: https://registry.npmjs.org
       - run: npm --git-tag-version=false version ${{ needs.release.outputs.new-release-version }}
       - run: npm publish --tag ${{ needs.release.outputs.new-release-channel }}
