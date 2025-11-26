@@ -35,6 +35,7 @@ jobs:
             cli
             homebrew-tap
             scoop-bucket
+            supabase
 
   commit:
     name: Publish Brew and Scoop
