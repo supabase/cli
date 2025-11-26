@@ -30,6 +30,8 @@ jobs:
     permissions:
       contents: write
       packages: write
+      # Required for npm OIDC
+      id-token: write
     # Call workflow explicitly because events from actions cannot trigger more actions
     uses: ./.github/workflows/release.yml
     secrets: inherit

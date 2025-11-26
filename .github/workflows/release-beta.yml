@@ -8,8 +8,6 @@ on:
 
 permissions:
   contents: write
-  # Required for npm OIDC
-  id-token: write
 
 jobs:
   release:
@@ -94,6 +92,9 @@ jobs:
       - release
       - goreleaser
     if: needs.release.outputs.new-release-published == 'true'
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

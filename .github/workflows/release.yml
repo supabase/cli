@@ -58,6 +58,9 @@ jobs:
     name: Publish NPM
     needs:
       - settings
+    permissions:
+      contents: read
+      id-token: write
     uses: ./.github/workflows/tag-npm.yml
     with:
       release: ${{ needs.settings.outputs.release_tag }}
