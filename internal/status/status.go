@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Netflix/go-env"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/go-errors/errors"
@@ -44,25 +45,6 @@ type CustomName struct {
 	StorageS3AccessKeyId     string `env:"storage.s3_access_key_id,default=S3_PROTOCOL_ACCESS_KEY_ID"`
 	StorageS3SecretAccessKey string `env:"storage.s3_secret_access_key,default=S3_PROTOCOL_ACCESS_KEY_SECRET"`
 	StorageS3Region          string `env:"storage.s3_region,default=S3_PROTOCOL_REGION"`
-}
-
-type OutputType string
-
-const (
-	Text OutputType = "text"
-	Link OutputType = "link"
-	Key  OutputType = "key"
-)
-
-type OutputItem struct {
-	Label string
-	Value string
-	Type  OutputType
-}
-
-type OutputGroup struct {
-	Name  string
-	Items []OutputItem
 }
 
 func (c *CustomName) toValues(exclude ...string) map[string]string {
@@ -236,25 +218,11 @@ func printStatus(names CustomName, format string, w io.Writer, exclude ...string
 }
 
 func PrettyPrint(w io.Writer, exclude ...string) {
-	names := CustomName{
-		ApiURL:                   "API_URL",
-		RestURL:                  "REST_URL",
-		GraphqlURL:               "GRAPHQL_URL",
-		FunctionsURL:             "FUNCTIONS_URL",
-		StorageS3URL:             "STORAGE_S3_URL",
-		McpURL:                   "MCP_URL",
-		DbURL:                    "DB_URL",
-		StudioURL:                "STUDIO_URL",
-		InbucketURL:              "INBUCKET_URL",
-		MailpitURL:               "MAILPIT_URL",
-		PublishableKey:           "PUBLISHABLE_KEY",
-		SecretKey:                "SECRET_KEY",
-		JWTSecret:                "JWT_SECRET",
-		AnonKey:                  "ANON_KEY",
-		ServiceRoleKey:           "SERVICE_ROLE_KEY",
-		StorageS3AccessKeyId:     "S3_PROTOCOL_ACCESS_KEY_ID",
-		StorageS3SecretAccessKey: "S3_PROTOCOL_SECRET_ACCESS_KEY",
-		StorageS3Region:          "S3_PROTOCOL_REGION",
+	logger := utils.GetDebugLogger()
+
+	names := CustomName{}
+	if err := env.Unmarshal(env.EnvSet{}, &names); err != nil {
+		fmt.Fprintln(logger, err)
 	}
 	values := names.toValues(exclude...)
 
@@ -301,22 +269,34 @@ func PrettyPrint(w io.Writer, exclude ...string) {
 	}
 
 	for _, group := range groups {
-		// ensure at least one item in the group is non-empty
-		shouldPrint := false
-		for _, item := range group.Items {
-			if item.Value != "" {
-				shouldPrint = true
-				break
-			}
-		}
-		if shouldPrint {
-			printTable(w, group.Name, group.Items)
+		if err := group.printTable(w); err != nil {
+			fmt.Fprintln(logger, err)
+		} else {
 			fmt.Fprintln(w)
 		}
 	}
 }
 
-func printTable(w io.Writer, title string, rows []OutputItem) {
+type OutputType string
+
+const (
+	Text OutputType = "text"
+	Link OutputType = "link"
+	Key  OutputType = "key"
+)
+
+type OutputItem struct {
+	Label string
+	Value string
+	Type  OutputType
+}
+
+type OutputGroup struct {
+	Name  string
+	Items []OutputItem
+}
+
+func (g *OutputGroup) printTable(w io.Writer) error {
 	table := tablewriter.NewTable(w,
 		// Rounded corners
 		tablewriter.WithSymbols(tw.NewSymbols(tw.StyleRounded)),
@@ -361,33 +341,36 @@ func printTable(w io.Writer, title string, rows []OutputItem) {
 				},
 			},
 		}),
+
+		// Set title as header (merged across all columns)
+		tablewriter.WithHeader([]string{g.Name, g.Name}),
 	)
 
-	// Set title as header (merged across all columns)
-	table.Header(title, title)
-
-	var appendError error
-
 	// Add data rows with values colored based on type
-	for _, row := range rows {
-		if row.Value != "" {
-			switch row.Type {
-			case Link:
-				appendError = table.Append(row.Label, utils.Aqua(row.Value))
-			case Key:
-				appendError = table.Append(row.Label, utils.Yellow(row.Value))
-			case Text:
-				appendError = table.Append(row.Label, row.Value)
-			}
+	shouldRender := false
+	for _, row := range g.Items {
+		if row.Value == "" {
+			continue
+		}
+		value := row.Value
+		switch row.Type {
+		case Link:
+			value = utils.Aqua(row.Value)
+		case Key:
+			value = utils.Yellow(row.Value)
+		}
+		if err := table.Append(row.Label, value); err != nil {
+			return errors.Errorf("failed to append row: %w", err)
+		}
+		shouldRender = true
+	}
+
+	// Ensure at least one item in the group is non-empty
+	if shouldRender {
+		if err := table.Render(); err != nil {
+			return errors.Errorf("failed to render table: %w", err)
 		}
 	}
 
-	if appendError != nil {
-		fmt.Fprintln(utils.GetDebugLogger(), appendError)
-	}
-
-	renderError := table.Render()
-	if renderError != nil {
-		fmt.Fprintln(utils.GetDebugLogger(), renderError)
-	}
+	return nil
 }
