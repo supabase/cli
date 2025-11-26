@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: write
+  # Required for npm OIDC
+  id-token: write
 
 jobs:
   release:
