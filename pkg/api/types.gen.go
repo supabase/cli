@@ -3407,7 +3407,7 @@ type UpdateApiKeyBody struct {
 type UpdateAuthConfigBody struct {
 	ApiMaxRequestDuration                                 nullable.Nullable[int]                                            `json:"api_max_request_duration,omitempty"`
 	DbMaxPoolSize                                         nullable.Nullable[int]                                            `json:"db_max_pool_size,omitempty"`
-	DbMaxPoolSizeUnit                                     nullable.Nullable[UpdateAuthConfigBodyDbMaxPoolSizeUnit]          `json:"db_max_pool_size_unit"`
+	DbMaxPoolSizeUnit                                     nullable.Nullable[UpdateAuthConfigBodyDbMaxPoolSizeUnit]          `json:"db_max_pool_size_unit,omitempty"`
 	DisableSignup                                         nullable.Nullable[bool]                                           `json:"disable_signup,omitempty"`
 	ExternalAnonymousUsersEnabled                         nullable.Nullable[bool]                                           `json:"external_anonymous_users_enabled,omitempty"`
 	ExternalAppleAdditionalClientIds                      nullable.Nullable[string]                                         `json:"external_apple_additional_client_ids,omitempty"`
