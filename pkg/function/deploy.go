@@ -25,10 +25,16 @@ func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.Funct
 	}
 	// Convert all paths in functions config to relative when using api deploy
 	var toDeploy []FunctionDeployMetadata
+OUTER:
 	for slug, fc := range functionConfig {
 		if !fc.Enabled {
 			fmt.Fprintln(os.Stderr, "Skipping disabled Function:", slug)
 			continue
+		}
+		for _, keep := range filter {
+			if !keep(slug) {
+				continue OUTER
+			}
 		}
 		meta := FunctionDeployMetadata{
 			Name:           &slug,
@@ -41,16 +47,6 @@ func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.Funct
 			files[i] = toRelPath(sf)
 		}
 		meta.StaticPatterns = &files
-		shouldDeploy := true
-		for _, keep := range filter {
-			if !keep(slug) {
-				shouldDeploy = false
-				break
-			}
-		}
-		if !shouldDeploy {
-			continue
-		}
 		toDeploy = append(toDeploy, meta)
 	}
 	if len(toDeploy) == 0 {
