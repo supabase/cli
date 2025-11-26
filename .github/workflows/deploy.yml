@@ -17,6 +17,6 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - run: gh pr create -B main -H develop --title 'Prod deploy' --fill
+      - run: gh pr create -B main -H develop --title 'Prod deploy' --label 'do not merge' --fill
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
