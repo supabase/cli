@@ -7,19 +7,18 @@ on:
   workflow_call:
 
 permissions:
-  contents: write
-  packages: write
-  # Required for npm OIDC
-  id-token: write
+  contents: read
 
 jobs:
   settings:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     outputs:
       release_tag: ${{ steps.prerelease.outputs.tagName }}
-      app_token: ${{ steps.app-token.outputs.token }}
     steps:
       - uses: actions/checkout@v6
       - id: prerelease
@@ -27,17 +26,6 @@ jobs:
           gh release list --limit 1 --json tagName --jq \
           '.[]|to_entries|map("\(.key)=\(.value|tostring)")|.[]' >> $GITHUB_OUTPUT
       - run: gh release edit ${{ steps.prerelease.outputs.tagName }} --latest --prerelease=false
-      - id: app-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.APP_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: |
-            cli
-            homebrew-tap
-            scoop-bucket
-            supabase
 
   commit:
     name: Publish Brew and Scoop
@@ -50,9 +38,18 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            homebrew-tap
+            scoop-bucket
       - run: go run tools/publish/main.go ${{ needs.settings.outputs.release_tag }}
         env:
-          GITHUB_TOKEN: ${{ needs.settings.outputs.app_token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
   publish:
     name: Publish NPM
@@ -77,9 +74,17 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            supabase
       - run: go run tools/selfhost/main.go
         env:
-          GITHUB_TOKEN: ${{ needs.settings.outputs.app_token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
   changelog:
     name: Publish changelog
@@ -94,9 +99,17 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            supabase
       - run: go run tools/changelog/main.go ${{ secrets.SLACK_CHANNEL }}
         env:
-          GITHUB_TOKEN: ${{ needs.settings.outputs.app_token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
 
   docs:
@@ -110,6 +123,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            supabase
       - run: go run docs/main.go ${{ needs.settings.outputs.release_tag }} | go run tools/bumpdoc/main.go apps/docs/spec/cli_v1_commands.yaml
         env:
-          GITHUB_TOKEN: ${{ needs.settings.outputs.app_token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
