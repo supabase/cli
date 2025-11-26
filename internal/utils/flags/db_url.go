@@ -133,7 +133,8 @@ func NewDbConfigWithPassword(ctx context.Context, projectRef string) (pgconn.Con
 	logger := utils.GetDebugLogger()
 	// Use pooler if host is not reachable directly
 	d := net.Dialer{Timeout: 5 * time.Second}
-	if conn, err := d.DialContext(ctx, "udp", config.Host+":53"); err == nil {
+	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
+	if conn, err := d.DialContext(ctx, "tcp", addr); err == nil {
 		if err := conn.Close(); err != nil {
 			fmt.Fprintln(logger, err)
 		}
