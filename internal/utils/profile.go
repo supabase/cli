@@ -15,8 +15,10 @@ type Profile struct {
 	Name         string `mapstructure:"name" validate:"required"`
 	APIURL       string `mapstructure:"api_url" validate:"required,http_url"`
 	DashboardURL string `mapstructure:"dashboard_url" validate:"required,http_url"`
-	ProjectHost  string `mapstructure:"project_host" validate:"required,hostname_rfc1123"`
 	DocsURL      string `mapstructure:"docs_url" validate:"omitempty,http_url"`
+	ProjectHost  string `mapstructure:"project_host" validate:"required,hostname_rfc1123"`
+	PoolerHost   string `mapstructure:"pooler_host" validate:"omitempty,hostname_rfc1123"`
+	AuthClientID string `mapstructure:"client_id" validate:"omitempty,uuid4"`
 	StudioImage  string `mapstructure:"studio_image"`
 }
 
@@ -26,12 +28,14 @@ var allProfiles = []Profile{{
 	DashboardURL: "https://supabase.com/dashboard",
 	DocsURL:      "https://supabase.com/docs",
 	ProjectHost:  "supabase.co",
+	PoolerHost:   "supabase.com",
 }, {
 	Name:         "supabase-staging",
 	APIURL:       "https://api.supabase.green",
 	DashboardURL: "https://supabase.green/dashboard",
 	DocsURL:      "https://supabase.com/docs",
 	ProjectHost:  "supabase.red",
+	PoolerHost:   "supabase.green",
 }, {
 	Name:         "supabase-local",
 	APIURL:       "http://localhost:8080",
@@ -44,6 +48,8 @@ var allProfiles = []Profile{{
 	DashboardURL: "https://cloud.snap.com/dashboard",
 	DocsURL:      "https://cloud.snap.com/docs",
 	ProjectHost:  "snapcloud.dev",
+	PoolerHost:   "snapcloud.co",
+	AuthClientID: "f7573b20-df47-48f1-b606-e8db4ec16252",
 }}
 
 var CurrentProfile Profile

@@ -27,7 +27,7 @@ func Run(ctx context.Context, branchId string, fsys afero.Fs) error {
 		if err != nil {
 			return err
 		}
-		pooler, err := getPoolerConfig(ctx, detail.Ref)
+		pooler, err := utils.GetPoolerConfigPrimary(ctx, detail.Ref)
 		if err != nil {
 			return err
 		}
@@ -79,22 +79,6 @@ func getBranchDetail(ctx context.Context, branchId string) (api.BranchDetailResp
 		resp.JSON200.JwtSecret = &masked
 	}
 	return *resp.JSON200, nil
-}
-
-func getPoolerConfig(ctx context.Context, ref string) (api.SupavisorConfigResponse, error) {
-	var result api.SupavisorConfigResponse
-	resp, err := utils.GetSupabase().V1GetPoolerConfigWithResponse(ctx, ref)
-	if err != nil {
-		return result, errors.Errorf("failed to get pooler: %w", err)
-	} else if resp.JSON200 == nil {
-		return result, errors.Errorf("unexpected get pooler status %d: %s", resp.StatusCode(), string(resp.Body))
-	}
-	for _, config := range *resp.JSON200 {
-		if config.DatabaseType == api.PRIMARY {
-			return config, nil
-		}
-	}
-	return result, errors.Errorf("primary database not found: %s", ref)
 }
 
 func toStandardEnvs(detail api.BranchDetailResponse, pooler api.SupavisorConfigResponse, keys []api.ApiKeyResponse) map[string]string {

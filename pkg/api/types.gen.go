@@ -97,6 +97,12 @@ const (
 	ApplyProjectAddonBodyAddonVariant3Ipv4Default ApplyProjectAddonBodyAddonVariant3 = "ipv4_default"
 )
 
+// Defines values for AuthConfigResponseDbMaxPoolSizeUnit.
+const (
+	AuthConfigResponseDbMaxPoolSizeUnitConnections AuthConfigResponseDbMaxPoolSizeUnit = "connections"
+	AuthConfigResponseDbMaxPoolSizeUnitPercent     AuthConfigResponseDbMaxPoolSizeUnit = "percent"
+)
+
 // Defines values for AuthConfigResponsePasswordRequiredCharacters.
 const (
 	AuthConfigResponsePasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789  AuthConfigResponsePasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"
@@ -144,6 +150,25 @@ const (
 	BranchDetailResponseStatusUPGRADING       BranchDetailResponseStatus = "UPGRADING"
 )
 
+// Defines values for BranchResponsePreviewProjectStatus.
+const (
+	BranchResponsePreviewProjectStatusACTIVEHEALTHY   BranchResponsePreviewProjectStatus = "ACTIVE_HEALTHY"
+	BranchResponsePreviewProjectStatusACTIVEUNHEALTHY BranchResponsePreviewProjectStatus = "ACTIVE_UNHEALTHY"
+	BranchResponsePreviewProjectStatusCOMINGUP        BranchResponsePreviewProjectStatus = "COMING_UP"
+	BranchResponsePreviewProjectStatusGOINGDOWN       BranchResponsePreviewProjectStatus = "GOING_DOWN"
+	BranchResponsePreviewProjectStatusINACTIVE        BranchResponsePreviewProjectStatus = "INACTIVE"
+	BranchResponsePreviewProjectStatusINITFAILED      BranchResponsePreviewProjectStatus = "INIT_FAILED"
+	BranchResponsePreviewProjectStatusPAUSEFAILED     BranchResponsePreviewProjectStatus = "PAUSE_FAILED"
+	BranchResponsePreviewProjectStatusPAUSING         BranchResponsePreviewProjectStatus = "PAUSING"
+	BranchResponsePreviewProjectStatusREMOVED         BranchResponsePreviewProjectStatus = "REMOVED"
+	BranchResponsePreviewProjectStatusRESIZING        BranchResponsePreviewProjectStatus = "RESIZING"
+	BranchResponsePreviewProjectStatusRESTARTING      BranchResponsePreviewProjectStatus = "RESTARTING"
+	BranchResponsePreviewProjectStatusRESTOREFAILED   BranchResponsePreviewProjectStatus = "RESTORE_FAILED"
+	BranchResponsePreviewProjectStatusRESTORING       BranchResponsePreviewProjectStatus = "RESTORING"
+	BranchResponsePreviewProjectStatusUNKNOWN         BranchResponsePreviewProjectStatus = "UNKNOWN"
+	BranchResponsePreviewProjectStatusUPGRADING       BranchResponsePreviewProjectStatus = "UPGRADING"
+)
+
 // Defines values for BranchResponseStatus.
 const (
 	BranchResponseStatusCREATINGPROJECT   BranchResponseStatus = "CREATING_PROJECT"
@@ -152,6 +177,11 @@ const (
 	BranchResponseStatusMIGRATIONSFAILED  BranchResponseStatus = "MIGRATIONS_FAILED"
 	BranchResponseStatusMIGRATIONSPASSED  BranchResponseStatus = "MIGRATIONS_PASSED"
 	BranchResponseStatusRUNNINGMIGRATIONS BranchResponseStatus = "RUNNING_MIGRATIONS"
+)
+
+// Defines values for BranchRestoreResponseMessage.
+const (
+	BranchRestorationInitiated BranchRestoreResponseMessage = "Branch restoration initiated"
 )
 
 // Defines values for BranchUpdateResponseMessage.
@@ -678,6 +708,77 @@ const (
 	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanTeam       OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "team"
 )
 
+// Defines values for OrganizationProjectsResponseProjectsDatabasesDiskType.
+const (
+	Gp3 OrganizationProjectsResponseProjectsDatabasesDiskType = "gp3"
+	Io2 OrganizationProjectsResponseProjectsDatabasesDiskType = "io2"
+)
+
+// Defines values for OrganizationProjectsResponseProjectsDatabasesInfraComputeSize.
+const (
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeLarge                    OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "large"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeMedium                   OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "medium"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeMicro                    OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "micro"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN12xlarge                OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "12xlarge"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN16xlarge                OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "16xlarge"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN24xlarge                OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "24xlarge"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN24xlargeHighMemory      OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "24xlarge_high_memory"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN24xlargeOptimizedCpu    OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "24xlarge_optimized_cpu"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN24xlargeOptimizedMemory OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "24xlarge_optimized_memory"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN2xlarge                 OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "2xlarge"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN48xlarge                OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "48xlarge"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN48xlargeHighMemory      OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "48xlarge_high_memory"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN48xlargeOptimizedCpu    OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "48xlarge_optimized_cpu"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN48xlargeOptimizedMemory OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "48xlarge_optimized_memory"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN4xlarge                 OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "4xlarge"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeN8xlarge                 OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "8xlarge"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeNano                     OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "nano"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizePico                     OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "pico"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeSmall                    OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "small"
+	OrganizationProjectsResponseProjectsDatabasesInfraComputeSizeXlarge                   OrganizationProjectsResponseProjectsDatabasesInfraComputeSize = "xlarge"
+)
+
+// Defines values for OrganizationProjectsResponseProjectsDatabasesStatus.
+const (
+	OrganizationProjectsResponseProjectsDatabasesStatusACTIVEHEALTHY         OrganizationProjectsResponseProjectsDatabasesStatus = "ACTIVE_HEALTHY"
+	OrganizationProjectsResponseProjectsDatabasesStatusACTIVEUNHEALTHY       OrganizationProjectsResponseProjectsDatabasesStatus = "ACTIVE_UNHEALTHY"
+	OrganizationProjectsResponseProjectsDatabasesStatusCOMINGUP              OrganizationProjectsResponseProjectsDatabasesStatus = "COMING_UP"
+	OrganizationProjectsResponseProjectsDatabasesStatusGOINGDOWN             OrganizationProjectsResponseProjectsDatabasesStatus = "GOING_DOWN"
+	OrganizationProjectsResponseProjectsDatabasesStatusINITFAILED            OrganizationProjectsResponseProjectsDatabasesStatus = "INIT_FAILED"
+	OrganizationProjectsResponseProjectsDatabasesStatusINITREADREPLICA       OrganizationProjectsResponseProjectsDatabasesStatus = "INIT_READ_REPLICA"
+	OrganizationProjectsResponseProjectsDatabasesStatusINITREADREPLICAFAILED OrganizationProjectsResponseProjectsDatabasesStatus = "INIT_READ_REPLICA_FAILED"
+	OrganizationProjectsResponseProjectsDatabasesStatusREMOVED               OrganizationProjectsResponseProjectsDatabasesStatus = "REMOVED"
+	OrganizationProjectsResponseProjectsDatabasesStatusRESIZING              OrganizationProjectsResponseProjectsDatabasesStatus = "RESIZING"
+	OrganizationProjectsResponseProjectsDatabasesStatusRESTARTING            OrganizationProjectsResponseProjectsDatabasesStatus = "RESTARTING"
+	OrganizationProjectsResponseProjectsDatabasesStatusRESTORING             OrganizationProjectsResponseProjectsDatabasesStatus = "RESTORING"
+	OrganizationProjectsResponseProjectsDatabasesStatusUNKNOWN               OrganizationProjectsResponseProjectsDatabasesStatus = "UNKNOWN"
+)
+
+// Defines values for OrganizationProjectsResponseProjectsDatabasesType.
+const (
+	OrganizationProjectsResponseProjectsDatabasesTypePRIMARY     OrganizationProjectsResponseProjectsDatabasesType = "PRIMARY"
+	OrganizationProjectsResponseProjectsDatabasesTypeREADREPLICA OrganizationProjectsResponseProjectsDatabasesType = "READ_REPLICA"
+)
+
+// Defines values for OrganizationProjectsResponseProjectsStatus.
+const (
+	OrganizationProjectsResponseProjectsStatusACTIVEHEALTHY   OrganizationProjectsResponseProjectsStatus = "ACTIVE_HEALTHY"
+	OrganizationProjectsResponseProjectsStatusACTIVEUNHEALTHY OrganizationProjectsResponseProjectsStatus = "ACTIVE_UNHEALTHY"
+	OrganizationProjectsResponseProjectsStatusCOMINGUP        OrganizationProjectsResponseProjectsStatus = "COMING_UP"
+	OrganizationProjectsResponseProjectsStatusGOINGDOWN       OrganizationProjectsResponseProjectsStatus = "GOING_DOWN"
+	OrganizationProjectsResponseProjectsStatusINACTIVE        OrganizationProjectsResponseProjectsStatus = "INACTIVE"
+	OrganizationProjectsResponseProjectsStatusINITFAILED      OrganizationProjectsResponseProjectsStatus = "INIT_FAILED"
+	OrganizationProjectsResponseProjectsStatusPAUSEFAILED     OrganizationProjectsResponseProjectsStatus = "PAUSE_FAILED"
+	OrganizationProjectsResponseProjectsStatusPAUSING         OrganizationProjectsResponseProjectsStatus = "PAUSING"
+	OrganizationProjectsResponseProjectsStatusREMOVED         OrganizationProjectsResponseProjectsStatus = "REMOVED"
+	OrganizationProjectsResponseProjectsStatusRESIZING        OrganizationProjectsResponseProjectsStatus = "RESIZING"
+	OrganizationProjectsResponseProjectsStatusRESTARTING      OrganizationProjectsResponseProjectsStatus = "RESTARTING"
+	OrganizationProjectsResponseProjectsStatusRESTOREFAILED   OrganizationProjectsResponseProjectsStatus = "RESTORE_FAILED"
+	OrganizationProjectsResponseProjectsStatusRESTORING       OrganizationProjectsResponseProjectsStatus = "RESTORING"
+	OrganizationProjectsResponseProjectsStatusUNKNOWN         OrganizationProjectsResponseProjectsStatus = "UNKNOWN"
+	OrganizationProjectsResponseProjectsStatusUPGRADING       OrganizationProjectsResponseProjectsStatus = "UPGRADING"
+)
+
 // Defines values for PostgresConfigResponseSessionReplicationRole.
 const (
 	PostgresConfigResponseSessionReplicationRoleLocal   PostgresConfigResponseSessionReplicationRole = "local"
@@ -864,14 +965,20 @@ const (
 
 // Defines values for SupavisorConfigResponseDatabaseType.
 const (
-	PRIMARY     SupavisorConfigResponseDatabaseType = "PRIMARY"
-	READREPLICA SupavisorConfigResponseDatabaseType = "READ_REPLICA"
+	SupavisorConfigResponseDatabaseTypePRIMARY     SupavisorConfigResponseDatabaseType = "PRIMARY"
+	SupavisorConfigResponseDatabaseTypeREADREPLICA SupavisorConfigResponseDatabaseType = "READ_REPLICA"
 )
 
 // Defines values for SupavisorConfigResponsePoolMode.
 const (
 	SupavisorConfigResponsePoolModeSession     SupavisorConfigResponsePoolMode = "session"
 	SupavisorConfigResponsePoolModeTransaction SupavisorConfigResponsePoolMode = "transaction"
+)
+
+// Defines values for UpdateAuthConfigBodyDbMaxPoolSizeUnit.
+const (
+	UpdateAuthConfigBodyDbMaxPoolSizeUnitConnections UpdateAuthConfigBodyDbMaxPoolSizeUnit = "connections"
+	UpdateAuthConfigBodyDbMaxPoolSizeUnitPercent     UpdateAuthConfigBodyDbMaxPoolSizeUnit = "percent"
 )
 
 // Defines values for UpdateAuthConfigBodyPasswordRequiredCharacters.
@@ -1294,9 +1401,10 @@ const (
 
 // Defines values for V1RestorePointResponseStatus.
 const (
-	AVAILABLE V1RestorePointResponseStatus = "AVAILABLE"
-	PENDING   V1RestorePointResponseStatus = "PENDING"
-	REMOVED   V1RestorePointResponseStatus = "REMOVED"
+	V1RestorePointResponseStatusAVAILABLE V1RestorePointResponseStatus = "AVAILABLE"
+	V1RestorePointResponseStatusFAILED    V1RestorePointResponseStatus = "FAILED"
+	V1RestorePointResponseStatusPENDING   V1RestorePointResponseStatus = "PENDING"
+	V1RestorePointResponseStatusREMOVED   V1RestorePointResponseStatus = "REMOVED"
 )
 
 // Defines values for V1ServiceHealthResponseInfo0Name.
@@ -1358,6 +1466,14 @@ const (
 	V1OauthAuthorizeProjectClaimParamsCodeChallengeMethodSha256 V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod = "sha256"
 )
 
+// Defines values for V1GetAllProjectsForOrganizationParamsSort.
+const (
+	CreatedAsc  V1GetAllProjectsForOrganizationParamsSort = "created_asc"
+	CreatedDesc V1GetAllProjectsForOrganizationParamsSort = "created_desc"
+	NameAsc     V1GetAllProjectsForOrganizationParamsSort = "name_asc"
+	NameDesc    V1GetAllProjectsForOrganizationParamsSort = "name_desc"
+)
+
 // Defines values for V1GetAvailableRegionsParamsContinent.
 const (
 	AF V1GetAvailableRegionsParamsContinent = "AF"
@@ -1367,6 +1483,30 @@ const (
 	NA V1GetAvailableRegionsParamsContinent = "NA"
 	OC V1GetAvailableRegionsParamsContinent = "OC"
 	SA V1GetAvailableRegionsParamsContinent = "SA"
+)
+
+// Defines values for V1GetAvailableRegionsParamsDesiredInstanceSize.
+const (
+	V1GetAvailableRegionsParamsDesiredInstanceSizeLarge                    V1GetAvailableRegionsParamsDesiredInstanceSize = "large"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeMedium                   V1GetAvailableRegionsParamsDesiredInstanceSize = "medium"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeMicro                    V1GetAvailableRegionsParamsDesiredInstanceSize = "micro"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN12xlarge                V1GetAvailableRegionsParamsDesiredInstanceSize = "12xlarge"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN16xlarge                V1GetAvailableRegionsParamsDesiredInstanceSize = "16xlarge"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN24xlarge                V1GetAvailableRegionsParamsDesiredInstanceSize = "24xlarge"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN24xlargeHighMemory      V1GetAvailableRegionsParamsDesiredInstanceSize = "24xlarge_high_memory"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN24xlargeOptimizedCpu    V1GetAvailableRegionsParamsDesiredInstanceSize = "24xlarge_optimized_cpu"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN24xlargeOptimizedMemory V1GetAvailableRegionsParamsDesiredInstanceSize = "24xlarge_optimized_memory"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN2xlarge                 V1GetAvailableRegionsParamsDesiredInstanceSize = "2xlarge"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN48xlarge                V1GetAvailableRegionsParamsDesiredInstanceSize = "48xlarge"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN48xlargeHighMemory      V1GetAvailableRegionsParamsDesiredInstanceSize = "48xlarge_high_memory"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN48xlargeOptimizedCpu    V1GetAvailableRegionsParamsDesiredInstanceSize = "48xlarge_optimized_cpu"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN48xlargeOptimizedMemory V1GetAvailableRegionsParamsDesiredInstanceSize = "48xlarge_optimized_memory"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN4xlarge                 V1GetAvailableRegionsParamsDesiredInstanceSize = "4xlarge"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeN8xlarge                 V1GetAvailableRegionsParamsDesiredInstanceSize = "8xlarge"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeNano                     V1GetAvailableRegionsParamsDesiredInstanceSize = "nano"
+	V1GetAvailableRegionsParamsDesiredInstanceSizePico                     V1GetAvailableRegionsParamsDesiredInstanceSize = "pico"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeSmall                    V1GetAvailableRegionsParamsDesiredInstanceSize = "small"
+	V1GetAvailableRegionsParamsDesiredInstanceSizeXlarge                   V1GetAvailableRegionsParamsDesiredInstanceSize = "xlarge"
 )
 
 // Defines values for V1GetSecurityAdvisorsParamsLintType.
@@ -1559,6 +1699,7 @@ type ApplyProjectAddonBody_AddonVariant struct {
 type AuthConfigResponse struct {
 	ApiMaxRequestDuration                                 nullable.Nullable[int]                                          `json:"api_max_request_duration"`
 	DbMaxPoolSize                                         nullable.Nullable[int]                                          `json:"db_max_pool_size"`
+	DbMaxPoolSizeUnit                                     nullable.Nullable[AuthConfigResponseDbMaxPoolSizeUnit]          `json:"db_max_pool_size_unit"`
 	DisableSignup                                         nullable.Nullable[bool]                                         `json:"disable_signup"`
 	ExternalAnonymousUsersEnabled                         nullable.Nullable[bool]                                         `json:"external_anonymous_users_enabled"`
 	ExternalAppleAdditionalClientIds                      nullable.Nullable[string]                                       `json:"external_apple_additional_client_ids"`
@@ -1781,6 +1922,9 @@ type AuthConfigResponse struct {
 	UriAllowList                                          nullable.Nullable[string]                                       `json:"uri_allow_list"`
 }
 
+// AuthConfigResponseDbMaxPoolSizeUnit defines model for AuthConfigResponse.DbMaxPoolSizeUnit.
+type AuthConfigResponseDbMaxPoolSizeUnit string
+
 // AuthConfigResponsePasswordRequiredCharacters defines model for AuthConfigResponse.PasswordRequiredCharacters.
 type AuthConfigResponsePasswordRequiredCharacters string
 
@@ -1828,28 +1972,41 @@ type BranchDetailResponseStatus string
 
 // BranchResponse defines model for BranchResponse.
 type BranchResponse struct {
-	CreatedAt time.Time          `json:"created_at"`
-	GitBranch *string            `json:"git_branch,omitempty"`
-	Id        openapi_types.UUID `json:"id"`
-	IsDefault bool               `json:"is_default"`
+	CreatedAt           time.Time          `json:"created_at"`
+	DeletionScheduledAt *time.Time         `json:"deletion_scheduled_at,omitempty"`
+	GitBranch           *string            `json:"git_branch,omitempty"`
+	Id                  openapi_types.UUID `json:"id"`
+	IsDefault           bool               `json:"is_default"`
 
 	// LatestCheckRunId This field is deprecated and will not be populated.
 	// Deprecated:
-	LatestCheckRunId  *float32             `json:"latest_check_run_id,omitempty"`
-	Name              string               `json:"name"`
-	NotifyUrl         *string              `json:"notify_url,omitempty"`
-	ParentProjectRef  string               `json:"parent_project_ref"`
-	Persistent        bool                 `json:"persistent"`
-	PrNumber          *int32               `json:"pr_number,omitempty"`
-	ProjectRef        string               `json:"project_ref"`
-	ReviewRequestedAt *time.Time           `json:"review_requested_at,omitempty"`
-	Status            BranchResponseStatus `json:"status"`
-	UpdatedAt         time.Time            `json:"updated_at"`
-	WithData          bool                 `json:"with_data"`
+	LatestCheckRunId     *float32                            `json:"latest_check_run_id,omitempty"`
+	Name                 string                              `json:"name"`
+	NotifyUrl            *string                             `json:"notify_url,omitempty"`
+	ParentProjectRef     string                              `json:"parent_project_ref"`
+	Persistent           bool                                `json:"persistent"`
+	PrNumber             *int32                              `json:"pr_number,omitempty"`
+	PreviewProjectStatus *BranchResponsePreviewProjectStatus `json:"preview_project_status,omitempty"`
+	ProjectRef           string                              `json:"project_ref"`
+	ReviewRequestedAt    *time.Time                          `json:"review_requested_at,omitempty"`
+	Status               BranchResponseStatus                `json:"status"`
+	UpdatedAt            time.Time                           `json:"updated_at"`
+	WithData             bool                                `json:"with_data"`
 }
+
+// BranchResponsePreviewProjectStatus defines model for BranchResponse.PreviewProjectStatus.
+type BranchResponsePreviewProjectStatus string
 
 // BranchResponseStatus defines model for BranchResponse.Status.
 type BranchResponseStatus string
+
+// BranchRestoreResponse defines model for BranchRestoreResponse.
+type BranchRestoreResponse struct {
+	Message BranchRestoreResponseMessage `json:"message"`
+}
+
+// BranchRestoreResponseMessage defines model for BranchRestoreResponse.Message.
+type BranchRestoreResponseMessage string
 
 // BranchUpdateResponse defines model for BranchUpdateResponse.
 type BranchUpdateResponse struct {
@@ -2229,6 +2386,9 @@ type DeleteRolesResponse struct {
 
 // DeleteRolesResponseMessage defines model for DeleteRolesResponse.Message.
 type DeleteRolesResponseMessage string
+
+// DeleteSecretsBody defines model for DeleteSecretsBody.
+type DeleteSecretsBody = []string
 
 // DeployFunctionResponse defines model for DeployFunctionResponse.
 type DeployFunctionResponse struct {
@@ -2746,10 +2906,65 @@ type OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan string
 // OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan defines model for OrganizationProjectClaimResponse.Preview.TargetSubscriptionPlan.
 type OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan string
 
+// OrganizationProjectsResponse defines model for OrganizationProjectsResponse.
+type OrganizationProjectsResponse struct {
+	Pagination struct {
+		// Count Total number of projects. Use this to calculate the total number of pages.
+		Count float32 `json:"count"`
+
+		// Limit Maximum number of projects per page
+		Limit float32 `json:"limit"`
+
+		// Offset Number of projects skipped in this response
+		Offset float32 `json:"offset"`
+	} `json:"pagination"`
+	Projects []struct {
+		CloudProvider string `json:"cloud_provider"`
+		Databases     []struct {
+			CloudProvider      string                                                         `json:"cloud_provider"`
+			DiskLastModifiedAt *string                                                        `json:"disk_last_modified_at,omitempty"`
+			DiskThroughputMbps *float32                                                       `json:"disk_throughput_mbps,omitempty"`
+			DiskType           *OrganizationProjectsResponseProjectsDatabasesDiskType         `json:"disk_type,omitempty"`
+			DiskVolumeSizeGb   *float32                                                       `json:"disk_volume_size_gb,omitempty"`
+			Identifier         string                                                         `json:"identifier"`
+			InfraComputeSize   *OrganizationProjectsResponseProjectsDatabasesInfraComputeSize `json:"infra_compute_size,omitempty"`
+			Region             string                                                         `json:"region"`
+			Status             OrganizationProjectsResponseProjectsDatabasesStatus            `json:"status"`
+			Type               OrganizationProjectsResponseProjectsDatabasesType              `json:"type"`
+		} `json:"databases"`
+		InsertedAt string                                     `json:"inserted_at"`
+		IsBranch   bool                                       `json:"is_branch"`
+		Name       string                                     `json:"name"`
+		Ref        string                                     `json:"ref"`
+		Region     string                                     `json:"region"`
+		Status     OrganizationProjectsResponseProjectsStatus `json:"status"`
+	} `json:"projects"`
+}
+
+// OrganizationProjectsResponseProjectsDatabasesDiskType defines model for OrganizationProjectsResponse.Projects.Databases.DiskType.
+type OrganizationProjectsResponseProjectsDatabasesDiskType string
+
+// OrganizationProjectsResponseProjectsDatabasesInfraComputeSize defines model for OrganizationProjectsResponse.Projects.Databases.InfraComputeSize.
+type OrganizationProjectsResponseProjectsDatabasesInfraComputeSize string
+
+// OrganizationProjectsResponseProjectsDatabasesStatus defines model for OrganizationProjectsResponse.Projects.Databases.Status.
+type OrganizationProjectsResponseProjectsDatabasesStatus string
+
+// OrganizationProjectsResponseProjectsDatabasesType defines model for OrganizationProjectsResponse.Projects.Databases.Type.
+type OrganizationProjectsResponseProjectsDatabasesType string
+
+// OrganizationProjectsResponseProjectsStatus defines model for OrganizationProjectsResponse.Projects.Status.
+type OrganizationProjectsResponseProjectsStatus string
+
 // OrganizationResponseV1 defines model for OrganizationResponseV1.
 type OrganizationResponseV1 struct {
+	// Id Deprecated: Use `slug` instead.
+	// Deprecated:
 	Id   string `json:"id"`
 	Name string `json:"name"`
+
+	// Slug Organization slug
+	Slug string `json:"slug"`
 }
 
 // PgsodiumConfigResponse defines model for PgsodiumConfigResponse.
@@ -2759,7 +2974,10 @@ type PgsodiumConfigResponse struct {
 
 // PostgresConfigResponse defines model for PostgresConfigResponse.
 type PostgresConfigResponse struct {
+	// CheckpointTimeout Default unit: s
+	CheckpointTimeout             *string                                       `json:"checkpoint_timeout,omitempty"`
 	EffectiveCacheSize            *string                                       `json:"effective_cache_size,omitempty"`
+	HotStandbyFeedback            *bool                                         `json:"hot_standby_feedback,omitempty"`
 	LogicalDecodingWorkMem        *string                                       `json:"logical_decoding_work_mem,omitempty"`
 	MaintenanceWorkMem            *string                                       `json:"maintenance_work_mem,omitempty"`
 	MaxConnections                *int                                          `json:"max_connections,omitempty"`
@@ -2776,12 +2994,16 @@ type PostgresConfigResponse struct {
 	MaxWorkerProcesses            *int                                          `json:"max_worker_processes,omitempty"`
 	SessionReplicationRole        *PostgresConfigResponseSessionReplicationRole `json:"session_replication_role,omitempty"`
 	SharedBuffers                 *string                                       `json:"shared_buffers,omitempty"`
-	StatementTimeout              *string                                       `json:"statement_timeout,omitempty"`
-	TrackActivityQuerySize        *string                                       `json:"track_activity_query_size,omitempty"`
-	TrackCommitTimestamp          *bool                                         `json:"track_commit_timestamp,omitempty"`
-	WalKeepSize                   *string                                       `json:"wal_keep_size,omitempty"`
-	WalSenderTimeout              *string                                       `json:"wal_sender_timeout,omitempty"`
-	WorkMem                       *string                                       `json:"work_mem,omitempty"`
+
+	// StatementTimeout Default unit: ms
+	StatementTimeout       *string `json:"statement_timeout,omitempty"`
+	TrackActivityQuerySize *string `json:"track_activity_query_size,omitempty"`
+	TrackCommitTimestamp   *bool   `json:"track_commit_timestamp,omitempty"`
+	WalKeepSize            *string `json:"wal_keep_size,omitempty"`
+
+	// WalSenderTimeout Default unit: ms
+	WalSenderTimeout *string `json:"wal_sender_timeout,omitempty"`
+	WorkMem          *string `json:"work_mem,omitempty"`
 }
 
 // PostgresConfigResponseSessionReplicationRole defines model for PostgresConfigResponse.SessionReplicationRole.
@@ -2843,6 +3065,39 @@ type ReadOnlyStatusResponse struct {
 	Enabled             bool   `json:"enabled"`
 	OverrideActiveUntil string `json:"override_active_until"`
 	OverrideEnabled     bool   `json:"override_enabled"`
+}
+
+// RealtimeConfigResponse defines model for RealtimeConfigResponse.
+type RealtimeConfigResponse struct {
+	// ConnectionPool Sets connection pool size for Realtime Authorization
+	ConnectionPool nullable.Nullable[int] `json:"connection_pool"`
+
+	// MaxBytesPerSecond Sets maximum number of bytes per second rate per channel limit
+	MaxBytesPerSecond nullable.Nullable[int] `json:"max_bytes_per_second"`
+
+	// MaxChannelsPerClient Sets maximum number of channels per client rate limit
+	MaxChannelsPerClient nullable.Nullable[int] `json:"max_channels_per_client"`
+
+	// MaxConcurrentUsers Sets maximum number of concurrent users rate limit
+	MaxConcurrentUsers nullable.Nullable[int] `json:"max_concurrent_users"`
+
+	// MaxEventsPerSecond Sets maximum number of events per second rate per channel limit
+	MaxEventsPerSecond nullable.Nullable[int] `json:"max_events_per_second"`
+
+	// MaxJoinsPerSecond Sets maximum number of joins per second rate limit
+	MaxJoinsPerSecond nullable.Nullable[int] `json:"max_joins_per_second"`
+
+	// MaxPayloadSizeInKb Sets maximum number of payload size in KB rate limit
+	MaxPayloadSizeInKb nullable.Nullable[int] `json:"max_payload_size_in_kb"`
+
+	// MaxPresenceEventsPerSecond Sets maximum number of presence events per second rate limit
+	MaxPresenceEventsPerSecond nullable.Nullable[int] `json:"max_presence_events_per_second"`
+
+	// PrivateOnly Whether to only allow private channels
+	PrivateOnly nullable.Nullable[bool] `json:"private_only"`
+
+	// Suspend Whether to suspend realtime
+	Suspend nullable.Nullable[bool] `json:"suspend"`
 }
 
 // RegionsInfo defines model for RegionsInfo.
@@ -3064,12 +3319,16 @@ type StorageConfigResponse struct {
 		IcebergCatalog bool `json:"iceberg_catalog"`
 		ListV2         bool `json:"list_v2"`
 	} `json:"capabilities"`
-	External struct {
+	DatabasePoolMode string `json:"databasePoolMode"`
+	External         struct {
 		UpstreamTarget StorageConfigResponseExternalUpstreamTarget `json:"upstreamTarget"`
 	} `json:"external"`
 	Features struct {
 		IcebergCatalog *struct {
-			Enabled bool `json:"enabled"`
+			Enabled       bool `json:"enabled"`
+			MaxCatalogs   int  `json:"maxCatalogs"`
+			MaxNamespaces int  `json:"maxNamespaces"`
+			MaxTables     int  `json:"maxTables"`
 		} `json:"icebergCatalog,omitempty"`
 		ImageTransformation struct {
 			Enabled bool `json:"enabled"`
@@ -3077,8 +3336,14 @@ type StorageConfigResponse struct {
 		S3Protocol struct {
 			Enabled bool `json:"enabled"`
 		} `json:"s3Protocol"`
+		VectorBuckets *struct {
+			Enabled    bool `json:"enabled"`
+			MaxBuckets int  `json:"maxBuckets"`
+			MaxIndexes int  `json:"maxIndexes"`
+		} `json:"vectorBuckets,omitempty"`
 	} `json:"features"`
-	FileSizeLimit int64 `json:"fileSizeLimit"`
+	FileSizeLimit    int64  `json:"fileSizeLimit"`
+	MigrationVersion string `json:"migrationVersion"`
 }
 
 // StorageConfigResponseExternalUpstreamTarget defines model for StorageConfigResponse.External.UpstreamTarget.
@@ -3142,6 +3407,7 @@ type UpdateApiKeyBody struct {
 type UpdateAuthConfigBody struct {
 	ApiMaxRequestDuration                                 nullable.Nullable[int]                                            `json:"api_max_request_duration,omitempty"`
 	DbMaxPoolSize                                         nullable.Nullable[int]                                            `json:"db_max_pool_size,omitempty"`
+	DbMaxPoolSizeUnit                                     nullable.Nullable[UpdateAuthConfigBodyDbMaxPoolSizeUnit]          `json:"db_max_pool_size_unit"`
 	DisableSignup                                         nullable.Nullable[bool]                                           `json:"disable_signup,omitempty"`
 	ExternalAnonymousUsersEnabled                         nullable.Nullable[bool]                                           `json:"external_anonymous_users_enabled,omitempty"`
 	ExternalAppleAdditionalClientIds                      nullable.Nullable[string]                                         `json:"external_apple_additional_client_ids,omitempty"`
@@ -3362,6 +3628,9 @@ type UpdateAuthConfigBody struct {
 	UriAllowList                                          nullable.Nullable[string]                                         `json:"uri_allow_list,omitempty"`
 }
 
+// UpdateAuthConfigBodyDbMaxPoolSizeUnit defines model for UpdateAuthConfigBody.DbMaxPoolSizeUnit.
+type UpdateAuthConfigBodyDbMaxPoolSizeUnit string
+
 // UpdateAuthConfigBodyPasswordRequiredCharacters defines model for UpdateAuthConfigBody.PasswordRequiredCharacters.
 type UpdateAuthConfigBodyPasswordRequiredCharacters string
 
@@ -3455,7 +3724,10 @@ type UpdatePgsodiumConfigBody struct {
 
 // UpdatePostgresConfigBody defines model for UpdatePostgresConfigBody.
 type UpdatePostgresConfigBody struct {
+	// CheckpointTimeout Default unit: s
+	CheckpointTimeout             *string                                         `json:"checkpoint_timeout,omitempty"`
 	EffectiveCacheSize            *string                                         `json:"effective_cache_size,omitempty"`
+	HotStandbyFeedback            *bool                                           `json:"hot_standby_feedback,omitempty"`
 	LogicalDecodingWorkMem        *string                                         `json:"logical_decoding_work_mem,omitempty"`
 	MaintenanceWorkMem            *string                                         `json:"maintenance_work_mem,omitempty"`
 	MaxConnections                *int                                            `json:"max_connections,omitempty"`
@@ -3473,12 +3745,16 @@ type UpdatePostgresConfigBody struct {
 	RestartDatabase               *bool                                           `json:"restart_database,omitempty"`
 	SessionReplicationRole        *UpdatePostgresConfigBodySessionReplicationRole `json:"session_replication_role,omitempty"`
 	SharedBuffers                 *string                                         `json:"shared_buffers,omitempty"`
-	StatementTimeout              *string                                         `json:"statement_timeout,omitempty"`
-	TrackActivityQuerySize        *string                                         `json:"track_activity_query_size,omitempty"`
-	TrackCommitTimestamp          *bool                                           `json:"track_commit_timestamp,omitempty"`
-	WalKeepSize                   *string                                         `json:"wal_keep_size,omitempty"`
-	WalSenderTimeout              *string                                         `json:"wal_sender_timeout,omitempty"`
-	WorkMem                       *string                                         `json:"work_mem,omitempty"`
+
+	// StatementTimeout Default unit: ms
+	StatementTimeout       *string `json:"statement_timeout,omitempty"`
+	TrackActivityQuerySize *string `json:"track_activity_query_size,omitempty"`
+	TrackCommitTimestamp   *bool   `json:"track_commit_timestamp,omitempty"`
+	WalKeepSize            *string `json:"wal_keep_size,omitempty"`
+
+	// WalSenderTimeout Default unit: ms
+	WalSenderTimeout *string `json:"wal_sender_timeout,omitempty"`
+	WorkMem          *string `json:"work_mem,omitempty"`
 }
 
 // UpdatePostgresConfigBodySessionReplicationRole defines model for UpdatePostgresConfigBody.SessionReplicationRole.
@@ -3529,6 +3805,39 @@ type UpdateProviderResponse struct {
 		NameIdFormat *string `json:"name_id_format,omitempty"`
 	} `json:"saml,omitempty"`
 	UpdatedAt *string `json:"updated_at,omitempty"`
+}
+
+// UpdateRealtimeConfigBody defines model for UpdateRealtimeConfigBody.
+type UpdateRealtimeConfigBody struct {
+	// ConnectionPool Sets connection pool size for Realtime Authorization
+	ConnectionPool *int `json:"connection_pool,omitempty"`
+
+	// MaxBytesPerSecond Sets maximum number of bytes per second rate per channel limit
+	MaxBytesPerSecond *int `json:"max_bytes_per_second,omitempty"`
+
+	// MaxChannelsPerClient Sets maximum number of channels per client rate limit
+	MaxChannelsPerClient *int `json:"max_channels_per_client,omitempty"`
+
+	// MaxConcurrentUsers Sets maximum number of concurrent users rate limit
+	MaxConcurrentUsers *int `json:"max_concurrent_users,omitempty"`
+
+	// MaxEventsPerSecond Sets maximum number of events per second rate per channel limit
+	MaxEventsPerSecond *int `json:"max_events_per_second,omitempty"`
+
+	// MaxJoinsPerSecond Sets maximum number of joins per second rate limit
+	MaxJoinsPerSecond *int `json:"max_joins_per_second,omitempty"`
+
+	// MaxPayloadSizeInKb Sets maximum number of payload size in KB rate limit
+	MaxPayloadSizeInKb *int `json:"max_payload_size_in_kb,omitempty"`
+
+	// MaxPresenceEventsPerSecond Sets maximum number of presence events per second rate limit
+	MaxPresenceEventsPerSecond *int `json:"max_presence_events_per_second,omitempty"`
+
+	// PrivateOnly Whether to only allow private channels
+	PrivateOnly *bool `json:"private_only,omitempty"`
+
+	// Suspend Whether to suspend realtime
+	Suspend *bool `json:"suspend,omitempty"`
 }
 
 // UpdateRunStatusBody defines model for UpdateRunStatusBody.
@@ -3586,7 +3895,10 @@ type UpdateStorageConfigBody struct {
 	} `json:"external,omitempty"`
 	Features *struct {
 		IcebergCatalog *struct {
-			Enabled bool `json:"enabled"`
+			Enabled       bool `json:"enabled"`
+			MaxCatalogs   int  `json:"maxCatalogs"`
+			MaxNamespaces int  `json:"maxNamespaces"`
+			MaxTables     int  `json:"maxTables"`
 		} `json:"icebergCatalog,omitempty"`
 		ImageTransformation struct {
 			Enabled bool `json:"enabled"`
@@ -3594,6 +3906,11 @@ type UpdateStorageConfigBody struct {
 		S3Protocol struct {
 			Enabled bool `json:"enabled"`
 		} `json:"s3Protocol"`
+		VectorBuckets *struct {
+			Enabled    bool `json:"enabled"`
+			MaxBuckets int  `json:"maxBuckets"`
+			MaxIndexes int  `json:"maxIndexes"`
+		} `json:"vectorBuckets,omitempty"`
 	} `json:"features,omitempty"`
 	FileSizeLimit *int64 `json:"fileSizeLimit,omitempty"`
 }
@@ -3656,8 +3973,9 @@ type V1CreateFunctionBody struct {
 
 // V1CreateMigrationBody defines model for V1CreateMigrationBody.
 type V1CreateMigrationBody struct {
-	Name  *string `json:"name,omitempty"`
-	Query string  `json:"query"`
+	Name     *string `json:"name,omitempty"`
+	Query    string  `json:"query"`
+	Rollback *string `json:"rollback,omitempty"`
 }
 
 // V1CreateProjectBody defines model for V1CreateProjectBody.
@@ -3673,8 +3991,12 @@ type V1CreateProjectBody struct {
 	// Name Name of your project
 	Name string `json:"name"`
 
-	// OrganizationId Slug of your organization
-	OrganizationId string `json:"organization_id"`
+	// OrganizationId Deprecated: Use `organization_slug` instead.
+	// Deprecated:
+	OrganizationId *string `json:"organization_id,omitempty"`
+
+	// OrganizationSlug Organization slug
+	OrganizationSlug string `json:"organization_slug"`
 
 	// Plan Subscription Plan is now set on organization level and is ignored in this request
 	// Deprecated:
@@ -3744,6 +4066,16 @@ type V1CreateProjectBody_RegionSelection struct {
 
 // V1CreateProjectBodyReleaseChannel Release channel. If not provided, GA will be used.
 type V1CreateProjectBodyReleaseChannel string
+
+// V1GetMigrationResponse defines model for V1GetMigrationResponse.
+type V1GetMigrationResponse struct {
+	CreatedBy      *string   `json:"created_by,omitempty"`
+	IdempotencyKey *string   `json:"idempotency_key,omitempty"`
+	Name           *string   `json:"name,omitempty"`
+	Rollback       *[]string `json:"rollback,omitempty"`
+	Statements     *[]string `json:"statements,omitempty"`
+	Version        string    `json:"version"`
+}
 
 // V1GetUsageApiCountResponse defines model for V1GetUsageApiCountResponse.
 type V1GetUsageApiCountResponse struct {
@@ -3842,6 +4174,12 @@ type V1OrganizationSlugResponseOptInTags string
 // V1OrganizationSlugResponsePlan defines model for V1OrganizationSlugResponse.Plan.
 type V1OrganizationSlugResponsePlan string
 
+// V1PatchMigrationBody defines model for V1PatchMigrationBody.
+type V1PatchMigrationBody struct {
+	Name     *string `json:"name,omitempty"`
+	Rollback *string `json:"rollback,omitempty"`
+}
+
 // V1PgbouncerConfigResponse defines model for V1PgbouncerConfigResponse.
 type V1PgbouncerConfigResponse struct {
 	ConnectionString        *string                            `json:"connection_string,omitempty"`
@@ -3918,14 +4256,22 @@ type V1ProjectResponse struct {
 	// CreatedAt Creation timestamp
 	CreatedAt string `json:"created_at"`
 
-	// Id Id of your project
+	// Id Deprecated: Use `ref` instead.
+	// Deprecated:
 	Id string `json:"id"`
 
 	// Name Name of your project
 	Name string `json:"name"`
 
-	// OrganizationId Slug of your organization
+	// OrganizationId Deprecated: Use `organization_slug` instead.
+	// Deprecated:
 	OrganizationId string `json:"organization_id"`
+
+	// OrganizationSlug Organization slug
+	OrganizationSlug string `json:"organization_slug"`
+
+	// Ref Project ref
+	Ref string `json:"ref"`
 
 	// Region Region of your project
 	Region string                  `json:"region"`
@@ -3953,14 +4299,22 @@ type V1ProjectWithDatabaseResponse struct {
 		Version string `json:"version"`
 	} `json:"database"`
 
-	// Id Id of your project
+	// Id Deprecated: Use `ref` instead.
+	// Deprecated:
 	Id string `json:"id"`
 
 	// Name Name of your project
 	Name string `json:"name"`
 
-	// OrganizationId Slug of your organization
+	// OrganizationId Deprecated: Use `organization_slug` instead.
+	// Deprecated:
 	OrganizationId string `json:"organization_id"`
+
+	// OrganizationSlug Organization slug
+	OrganizationSlug string `json:"organization_slug"`
+
+	// Ref Project ref
+	Ref string `json:"ref"`
 
 	// Region Region of your project
 	Region string                              `json:"region"`
@@ -3969,6 +4323,12 @@ type V1ProjectWithDatabaseResponse struct {
 
 // V1ProjectWithDatabaseResponseStatus defines model for V1ProjectWithDatabaseResponse.Status.
 type V1ProjectWithDatabaseResponseStatus string
+
+// V1ReadOnlyQueryBody defines model for V1ReadOnlyQueryBody.
+type V1ReadOnlyQueryBody struct {
+	Parameters *[]interface{} `json:"parameters,omitempty"`
+	Query      string         `json:"query"`
+}
 
 // V1RestorePitrBody defines model for V1RestorePitrBody.
 type V1RestorePitrBody struct {
@@ -3991,8 +4351,9 @@ type V1RestorePointResponseStatus string
 
 // V1RunQueryBody defines model for V1RunQueryBody.
 type V1RunQueryBody struct {
-	Query    string `json:"query"`
-	ReadOnly *bool  `json:"read_only,omitempty"`
+	Parameters *[]interface{} `json:"parameters,omitempty"`
+	Query      string         `json:"query"`
+	ReadOnly   *bool          `json:"read_only,omitempty"`
 }
 
 // V1ServiceHealthResponse defines model for V1ServiceHealthResponse.
@@ -4019,6 +4380,11 @@ type V1ServiceHealthResponseInfo1 struct {
 	ConnectedCluster int  `json:"connected_cluster"`
 	DbConnected      bool `json:"db_connected"`
 	Healthy          bool `json:"healthy"`
+}
+
+// V1ServiceHealthResponseInfo2 defines model for .
+type V1ServiceHealthResponseInfo2 struct {
+	DbSchema string `json:"db_schema"`
 }
 
 // V1ServiceHealthResponse_Info defines model for V1ServiceHealthResponse.Info.
@@ -4054,6 +4420,16 @@ type V1UpdateFunctionBody struct {
 	VerifyJwt *bool   `json:"verify_jwt,omitempty"`
 }
 
+// V1UpdatePasswordBody defines model for V1UpdatePasswordBody.
+type V1UpdatePasswordBody struct {
+	Password string `json:"password"`
+}
+
+// V1UpdatePasswordResponse defines model for V1UpdatePasswordResponse.
+type V1UpdatePasswordResponse struct {
+	Message string `json:"message"`
+}
+
 // V1UpdatePostgrestConfigBody defines model for V1UpdatePostgrestConfigBody.
 type V1UpdatePostgrestConfigBody struct {
 	DbExtraSearchPath *string `json:"db_extra_search_path,omitempty"`
@@ -4062,10 +4438,16 @@ type V1UpdatePostgrestConfigBody struct {
 	MaxRows           *int    `json:"max_rows,omitempty"`
 }
 
+// V1UpdateProjectBody defines model for V1UpdateProjectBody.
+type V1UpdateProjectBody struct {
+	Name string `json:"name"`
+}
+
 // V1UpsertMigrationBody defines model for V1UpsertMigrationBody.
 type V1UpsertMigrationBody struct {
-	Name  *string `json:"name,omitempty"`
-	Query string  `json:"query"`
+	Name     *string `json:"name,omitempty"`
+	Query    string  `json:"query"`
+	Rollback *string `json:"rollback,omitempty"`
 }
 
 // VanitySubdomainBody defines model for VanitySubdomainBody.
@@ -4081,6 +4463,12 @@ type VanitySubdomainConfigResponse struct {
 
 // VanitySubdomainConfigResponseStatus defines model for VanitySubdomainConfigResponse.Status.
 type VanitySubdomainConfigResponseStatus string
+
+// V1DeleteABranchParams defines parameters for V1DeleteABranch.
+type V1DeleteABranchParams struct {
+	// Force If set to false, schedule deletion with 1-hour grace period (only when soft deletion is enabled).
+	Force *bool `form:"force,omitempty" json:"force,omitempty"`
+}
 
 // V1DiffABranchParams defines parameters for V1DiffABranch.
 type V1DiffABranchParams struct {
@@ -4130,6 +4518,29 @@ type V1OauthAuthorizeProjectClaimParamsResponseType string
 // V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod defines parameters for V1OauthAuthorizeProjectClaim.
 type V1OauthAuthorizeProjectClaimParamsCodeChallengeMethod string
 
+// V1GetAllProjectsForOrganizationParams defines parameters for V1GetAllProjectsForOrganization.
+type V1GetAllProjectsForOrganizationParams struct {
+	// Offset Number of projects to skip
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+
+	// Limit Number of projects to return per page
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Search Search projects by name
+	Search *string `form:"search,omitempty" json:"search,omitempty"`
+
+	// Sort Sort order for projects
+	Sort *V1GetAllProjectsForOrganizationParamsSort `form:"sort,omitempty" json:"sort,omitempty"`
+
+	// Statuses A comma-separated list of project statuses to filter by.
+	//
+	// The following values are supported: `ACTIVE_HEALTHY`, `INACTIVE`.
+	Statuses *string `form:"statuses,omitempty" json:"statuses,omitempty"`
+}
+
+// V1GetAllProjectsForOrganizationParamsSort defines parameters for V1GetAllProjectsForOrganization.
+type V1GetAllProjectsForOrganizationParamsSort string
+
 // V1GetAvailableRegionsParams defines parameters for V1GetAvailableRegions.
 type V1GetAvailableRegionsParams struct {
 	// OrganizationSlug Slug of your organization
@@ -4137,10 +4548,16 @@ type V1GetAvailableRegionsParams struct {
 
 	// Continent Continent code to determine regional recommendations: NA (North America), SA (South America), EU (Europe), AF (Africa), AS (Asia), OC (Oceania), AN (Antarctica)
 	Continent *V1GetAvailableRegionsParamsContinent `form:"continent,omitempty" json:"continent,omitempty"`
+
+	// DesiredInstanceSize Desired instance size
+	DesiredInstanceSize *V1GetAvailableRegionsParamsDesiredInstanceSize `form:"desired_instance_size,omitempty" json:"desired_instance_size,omitempty"`
 }
 
 // V1GetAvailableRegionsParamsContinent defines parameters for V1GetAvailableRegions.
 type V1GetAvailableRegionsParamsContinent string
+
+// V1GetAvailableRegionsParamsDesiredInstanceSize defines parameters for V1GetAvailableRegions.
+type V1GetAvailableRegionsParamsDesiredInstanceSize string
 
 // V1ListActionRunsParams defines parameters for V1ListActionRuns.
 type V1ListActionRunsParams struct {
@@ -4167,6 +4584,7 @@ type V1GetProjectFunctionCombinedStatsParamsInterval string
 
 // V1GetProjectLogsParams defines parameters for V1GetProjectLogs.
 type V1GetProjectLogsParams struct {
+	// Sql Custom SQL query to execute on the logs. See [querying logs](/docs/guides/telemetry/logs?queryGroups=product&product=postgres&queryGroups=source&source=edge_logs#querying-with-the-logs-explorer) for more details.
 	Sql               *string    `form:"sql,omitempty" json:"sql,omitempty"`
 	IsoTimestampStart *time.Time `form:"iso_timestamp_start,omitempty" json:"iso_timestamp_start,omitempty"`
 	IsoTimestampEnd   *time.Time `form:"iso_timestamp_end,omitempty" json:"iso_timestamp_end,omitempty"`
@@ -4237,6 +4655,12 @@ type V1GetRestorePointParams struct {
 	Name *string `form:"name,omitempty" json:"name,omitempty"`
 }
 
+// V1RollbackMigrationsParams defines parameters for V1RollbackMigrations.
+type V1RollbackMigrationsParams struct {
+	// Gte Rollback migrations greater or equal to this version
+	Gte string `form:"gte" json:"gte"`
+}
+
 // V1ApplyAMigrationParams defines parameters for V1ApplyAMigration.
 type V1ApplyAMigrationParams struct {
 	// IdempotencyKey A unique key to ensure the same migration is tracked only once.
@@ -4296,9 +4720,6 @@ type V1GetServicesHealthParams struct {
 // V1GetServicesHealthParamsServices defines parameters for V1GetServicesHealth.
 type V1GetServicesHealthParamsServices string
 
-// V1BulkDeleteSecretsJSONBody defines parameters for V1BulkDeleteSecrets.
-type V1BulkDeleteSecretsJSONBody = []string
-
 // V1GenerateTypescriptTypesParams defines parameters for V1GenerateTypescriptTypes.
 type V1GenerateTypescriptTypesParams struct {
 	IncludedSchemas *string `form:"included_schemas,omitempty" json:"included_schemas,omitempty"`
@@ -4349,6 +4770,9 @@ type V1CreateAnOrganizationJSONRequestBody = CreateOrganizationV1
 // V1CreateAProjectJSONRequestBody defines body for V1CreateAProject for application/json ContentType.
 type V1CreateAProjectJSONRequestBody = V1CreateProjectBody
 
+// V1UpdateAProjectJSONRequestBody defines body for V1UpdateAProject for application/json ContentType.
+type V1UpdateAProjectJSONRequestBody = V1UpdateProjectBody
+
 // V1UpdateActionRunStatusJSONRequestBody defines body for V1UpdateActionRunStatus for application/json ContentType.
 type V1UpdateActionRunStatusJSONRequestBody = UpdateRunStatusBody
 
@@ -4391,6 +4815,9 @@ type V1UpdatePoolerConfigJSONRequestBody = UpdateSupavisorConfigBody
 // V1UpdatePostgresConfigJSONRequestBody defines body for V1UpdatePostgresConfig for application/json ContentType.
 type V1UpdatePostgresConfigJSONRequestBody = UpdatePostgresConfigBody
 
+// V1UpdateRealtimeConfigJSONRequestBody defines body for V1UpdateRealtimeConfig for application/json ContentType.
+type V1UpdateRealtimeConfigJSONRequestBody = UpdateRealtimeConfigBody
+
 // V1UpdateStorageConfigJSONRequestBody defines body for V1UpdateStorageConfig for application/json ContentType.
 type V1UpdateStorageConfigJSONRequestBody = UpdateStorageConfigBody
 
@@ -4418,8 +4845,17 @@ type V1ApplyAMigrationJSONRequestBody = V1CreateMigrationBody
 // V1UpsertAMigrationJSONRequestBody defines body for V1UpsertAMigration for application/json ContentType.
 type V1UpsertAMigrationJSONRequestBody = V1UpsertMigrationBody
 
+// V1PatchAMigrationJSONRequestBody defines body for V1PatchAMigration for application/json ContentType.
+type V1PatchAMigrationJSONRequestBody = V1PatchMigrationBody
+
+// V1UpdateDatabasePasswordJSONRequestBody defines body for V1UpdateDatabasePassword for application/json ContentType.
+type V1UpdateDatabasePasswordJSONRequestBody = V1UpdatePasswordBody
+
 // V1RunAQueryJSONRequestBody defines body for V1RunAQuery for application/json ContentType.
 type V1RunAQueryJSONRequestBody = V1RunQueryBody
+
+// V1ReadOnlyQueryJSONRequestBody defines body for V1ReadOnlyQuery for application/json ContentType.
+type V1ReadOnlyQueryJSONRequestBody = V1ReadOnlyQueryBody
 
 // V1CreateAFunctionJSONRequestBody defines body for V1CreateAFunction for application/json ContentType.
 type V1CreateAFunctionJSONRequestBody = V1CreateFunctionBody
@@ -4455,7 +4891,7 @@ type V1RemoveAReadReplicaJSONRequestBody = RemoveReadReplicaBody
 type V1SetupAReadReplicaJSONRequestBody = SetUpReadReplicaBody
 
 // V1BulkDeleteSecretsJSONRequestBody defines body for V1BulkDeleteSecrets for application/json ContentType.
-type V1BulkDeleteSecretsJSONRequestBody = V1BulkDeleteSecretsJSONBody
+type V1BulkDeleteSecretsJSONRequestBody = DeleteSecretsBody
 
 // V1BulkCreateSecretsJSONRequestBody defines body for V1BulkCreateSecrets for application/json ContentType.
 type V1BulkCreateSecretsJSONRequestBody = CreateSecretBody
@@ -5519,6 +5955,32 @@ func (t *V1ServiceHealthResponse_Info) FromV1ServiceHealthResponseInfo1(v V1Serv
 
 // MergeV1ServiceHealthResponseInfo1 performs a merge with any union data inside the V1ServiceHealthResponse_Info, using the provided V1ServiceHealthResponseInfo1
 func (t *V1ServiceHealthResponse_Info) MergeV1ServiceHealthResponseInfo1(v V1ServiceHealthResponseInfo1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsV1ServiceHealthResponseInfo2 returns the union data inside the V1ServiceHealthResponse_Info as a V1ServiceHealthResponseInfo2
+func (t V1ServiceHealthResponse_Info) AsV1ServiceHealthResponseInfo2() (V1ServiceHealthResponseInfo2, error) {
+	var body V1ServiceHealthResponseInfo2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromV1ServiceHealthResponseInfo2 overwrites any union data inside the V1ServiceHealthResponse_Info as the provided V1ServiceHealthResponseInfo2
+func (t *V1ServiceHealthResponse_Info) FromV1ServiceHealthResponseInfo2(v V1ServiceHealthResponseInfo2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeV1ServiceHealthResponseInfo2 performs a merge with any union data inside the V1ServiceHealthResponse_Info, using the provided V1ServiceHealthResponseInfo2
+func (t *V1ServiceHealthResponse_Info) MergeV1ServiceHealthResponseInfo2(v V1ServiceHealthResponseInfo2) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err

@@ -11,6 +11,7 @@ import (
 	"github.com/supabase/cli/internal/sso/internal/saml"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/cast"
 )
 
 var Fs = afero.NewOsFs()
@@ -25,6 +26,7 @@ type RunParams struct {
 	MetadataURL       string
 	SkipURLValidation bool
 	AttributeMapping  string
+	NameIDFormat      string
 }
 
 func Run(ctx context.Context, params RunParams) error {
@@ -64,6 +66,10 @@ func Run(ctx context.Context, params RunParams) error {
 
 	if params.Domains != nil {
 		body.Domains = &params.Domains
+	}
+
+	if params.NameIDFormat != "" {
+		body.NameIdFormat = cast.Ptr(api.CreateProviderBodyNameIdFormat(params.NameIDFormat))
 	}
 
 	resp, err := utils.GetSupabase().V1CreateASsoProviderWithResponse(ctx, params.ProjectRef, body)

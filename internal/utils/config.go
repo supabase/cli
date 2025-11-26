@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
@@ -99,6 +100,100 @@ func GetDockerIds() []string {
 }
 
 var Config = config.NewConfig(config.WithHostname(GetHostname()))
+
+func GetServices() types.Services {
+	services := types.Services{
+		"db": {
+			Name:       ShortContainerImageName(Config.Db.Image),
+			Image:      GetRegistryImageUrl(Config.Db.Image),
+			PullPolicy: types.PullPolicyMissing,
+		},
+	}
+	if Config.Api.Enabled {
+		services["gateway"] = types.ServiceConfig{
+			Name:       ShortContainerImageName(Config.Api.KongImage),
+			Image:      GetRegistryImageUrl(Config.Api.KongImage),
+			PullPolicy: types.PullPolicyMissing,
+		}
+		services["api"] = types.ServiceConfig{
+			Name:       ShortContainerImageName(Config.Api.Image),
+			Image:      GetRegistryImageUrl(Config.Api.Image),
+			PullPolicy: types.PullPolicyMissing,
+		}
+	}
+	if Config.Auth.Enabled {
+		services["auth"] = types.ServiceConfig{
+			Name:       ShortContainerImageName(Config.Auth.Image),
+			Image:      GetRegistryImageUrl(Config.Auth.Image),
+			PullPolicy: types.PullPolicyMissing,
+		}
+	}
+	if Config.Inbucket.Enabled {
+		services["mailpit"] = types.ServiceConfig{
+			Name:       ShortContainerImageName(Config.Inbucket.Image),
+			Image:      GetRegistryImageUrl(Config.Inbucket.Image),
+			PullPolicy: types.PullPolicyMissing,
+		}
+	}
+	if Config.Realtime.Enabled {
+		services["realtime"] = types.ServiceConfig{
+			Name:       ShortContainerImageName(Config.Realtime.Image),
+			Image:      GetRegistryImageUrl(Config.Realtime.Image),
+			PullPolicy: types.PullPolicyMissing,
+		}
+	}
+	if Config.Storage.Enabled {
+		services["storage"] = types.ServiceConfig{
+			Name:       ShortContainerImageName(Config.Storage.Image),
+			Image:      GetRegistryImageUrl(Config.Storage.Image),
+			PullPolicy: types.PullPolicyMissing,
+		}
+		services["imgProxy"] = types.ServiceConfig{
+			Name:       ShortContainerImageName(Config.Storage.ImgProxyImage),
+			Image:      GetRegistryImageUrl(Config.Storage.ImgProxyImage),
+			PullPolicy: types.PullPolicyMissing,
+		}
+	}
+	if Config.EdgeRuntime.Enabled {
+		services["edgeRuntime"] = types.ServiceConfig{
+			Name:       ShortContainerImageName(Config.EdgeRuntime.Image),
+			Image:      GetRegistryImageUrl(Config.EdgeRuntime.Image),
+			PullPolicy: types.PullPolicyMissing,
+		}
+	}
+	if Config.Studio.Enabled {
+		services["studio"] = types.ServiceConfig{
+			Name:       ShortContainerImageName(Config.Studio.Image),
+			Image:      GetRegistryImageUrl(Config.Studio.Image),
+			PullPolicy: types.PullPolicyMissing,
+		}
+		services["pgmeta"] = types.ServiceConfig{
+			Name:       ShortContainerImageName(Config.Studio.PgmetaImage),
+			Image:      GetRegistryImageUrl(Config.Studio.PgmetaImage),
+			PullPolicy: types.PullPolicyMissing,
+		}
+	}
+	if Config.Analytics.Enabled {
+		services["analytics"] = types.ServiceConfig{
+			Name:       ShortContainerImageName(Config.Analytics.Image),
+			Image:      GetRegistryImageUrl(Config.Analytics.Image),
+			PullPolicy: types.PullPolicyMissing,
+		}
+		services["vector"] = types.ServiceConfig{
+			Name:       ShortContainerImageName(Config.Analytics.VectorImage),
+			Image:      GetRegistryImageUrl(Config.Analytics.VectorImage),
+			PullPolicy: types.PullPolicyMissing,
+		}
+	}
+	if Config.Db.Pooler.Enabled {
+		services["pooler"] = types.ServiceConfig{
+			Name:       ShortContainerImageName(Config.Db.Pooler.Image),
+			Image:      GetRegistryImageUrl(Config.Db.Pooler.Image),
+			PullPolicy: types.PullPolicyMissing,
+		}
+	}
+	return services
+}
 
 // Adapts fs.FS to support absolute paths
 type rootFS struct {

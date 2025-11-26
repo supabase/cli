@@ -1,4 +1,4 @@
-import { createClient } from "npm:@pgkit/client";
+import { createClient, sql } from "npm:@pgkit/client";
 import { Migration } from "npm:@pgkit/migra";
 
 // Avoids error on self-signed certificate
@@ -20,7 +20,12 @@ const extensionSchemas = [
 ];
 
 try {
-  let sql = "";
+  // Step down from login role to postgres
+  await clientHead.query(sql`set role postgres`);
+  // Force schema qualified references for pg_get_expr
+  await clientHead.query(sql`set search_path = ''`);
+  await clientBase.query(sql`set search_path = ''`);
+  let result = "";
   for (const schema of includedSchemas) {
     const m = await Migration.create(clientBase, clientHead, {
       schema,
@@ -35,7 +40,7 @@ try {
     } else {
       m.add_all_changes(true);
     }
-    sql += m.sql;
+    result += m.sql;
   }
   if (includedSchemas.length === 0) {
     // Migra does not ignore custom types and triggers created by extensions, so we diff
@@ -48,7 +53,7 @@ try {
       e.set_safety(false);
       e.add(e.changes.schemas({ creations_only: true }));
       e.add_extension_changes();
-      sql += e.sql;
+      result += e.sql;
     }
     // Diff user defined entities in non-managed schemas, including extensions.
     const m = await Migration.create(clientBase, clientHead, {
@@ -61,7 +66,7 @@ try {
     });
     m.set_safety(false);
     m.add_all_changes(true);
-    sql += m.sql;
+    result += m.sql;
     // For managed schemas, we want to include triggers and RLS policies only.
     for (const schema of managedSchemas) {
       const s = await Migration.create(clientBase, clientHead, {
@@ -73,10 +78,10 @@ try {
       s.add(s.changes.rlspolicies({ drops_only: true }));
       s.add(s.changes.rlspolicies({ creations_only: true }));
       s.add(s.changes.triggers({ creations_only: true }));
-      sql += s.sql;
+      result += s.sql;
     }
   }
-  console.log(sql);
+  console.log(result);
 } catch (e) {
   console.error(e);
 } finally {

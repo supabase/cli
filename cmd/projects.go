@@ -29,8 +29,7 @@ var (
 	projectName string
 	orgId       string
 	dbPassword  string
-
-	region = utils.EnumFlag{
+	region      = utils.EnumFlag{
 		Allowed: awsRegions(),
 	}
 	size = utils.EnumFlag{
@@ -76,10 +75,10 @@ var (
 				projectName = args[0]
 			}
 			body := api.V1CreateProjectBody{
-				Name:           projectName,
-				OrganizationId: orgId,
-				DbPass:         dbPassword,
-				Region:         cast.Ptr(api.V1CreateProjectBodyRegion(region.Value)),
+				Name:             projectName,
+				OrganizationSlug: orgId,
+				DbPass:           dbPassword,
+				Region:           cast.Ptr(api.V1CreateProjectBodyRegion(region.Value)),
 			}
 			if cmd.Flags().Changed("size") {
 				body.DesiredInstanceSize = (*api.V1CreateProjectBodyDesiredInstanceSize)(&size.Value)

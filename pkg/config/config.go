@@ -259,6 +259,7 @@ func (a *auth) Clone() auth {
 		copy.Email.Smtp = &mailer
 	}
 	copy.Email.Template = maps.Clone(a.Email.Template)
+	copy.Email.Notification = maps.Clone(a.Email.Notification)
 	if a.Hook.MFAVerificationAttempt != nil {
 		hook := *a.Hook.MFAVerificationAttempt
 		copy.Hook.MFAVerificationAttempt = &hook
@@ -372,7 +373,8 @@ func NewConfig(editors ...ConfigEditor) config {
 		Auth: auth{
 			Image: Images.Gotrue,
 			Email: email{
-				Template: map[string]emailTemplate{},
+				Template:     map[string]emailTemplate{},
+				Notification: map[string]notification{},
 			},
 			Sms: sms{
 				TestOTP: map[string]string{},
@@ -558,7 +560,7 @@ func (c *config) newDecodeHook(fs ...mapstructure.DecodeHookFunc) mapstructure.D
 	return mapstructure.ComposeDecodeHookFunc(fs...)
 }
 
-func (c *config) Load(path string, fsys fs.FS) error {
+func (c *config) Load(path string, fsys fs.FS, overrides ...ConfigEditor) error {
 	builder := NewPathBuilder(path)
 	// Load secrets from .env file
 	if err := loadNestedEnv(builder.SupabaseDirPath); err != nil {
@@ -582,6 +584,10 @@ func (c *config) Load(path string, fsys fs.FS) error {
 			apiUrl.Scheme = "http"
 		}
 		c.Api.ExternalUrl = apiUrl.String()
+	}
+	// Set default JWT issuer if not configured
+	if len(c.Auth.JwtIssuer) == 0 {
+		c.Auth.JwtIssuer = c.Api.ExternalUrl + "/auth/v1"
 	}
 	// Update image versions
 	switch c.Db.MajorVersion {
@@ -608,7 +614,7 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	}
 	if version, err := fs.ReadFile(fsys, builder.StorageVersionPath); err == nil && len(version) > 0 {
 		// Only replace image if local storage version is newer
-		if i := strings.IndexByte(Images.Storage, ':'); VersionCompare(string(version), Images.Storage[i+1:]) > 0 {
+		if i := strings.IndexByte(Images.Storage, ':'); semver.Compare(string(version), Images.Storage[i+1:]) > 0 {
 			c.Storage.Image = replaceImageTag(Images.Storage, string(version))
 		}
 	}
@@ -630,9 +636,15 @@ func (c *config) Load(path string, fsys fs.FS) error {
 	if version, err := fs.ReadFile(fsys, builder.PgmetaVersionPath); err == nil && len(version) > 0 {
 		c.Studio.PgmetaImage = replaceImageTag(Images.Pgmeta, string(version))
 	}
+	if version, err := fs.ReadFile(fsys, builder.LogflareVersionPath); err == nil && len(version) > 0 {
+		c.Analytics.Image = replaceImageTag(Images.Logflare, string(version))
+	}
 	// TODO: replace derived config resolution with viper decode hooks
 	if err := c.resolve(builder, fsys); err != nil {
 		return err
+	}
+	for _, apply := range overrides {
+		apply(c)
 	}
 	return c.Validate(fsys)
 }
@@ -662,6 +674,12 @@ func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 			tmpl.ContentPath = filepath.Join(cwd, tmpl.ContentPath)
 		}
 		c.Auth.Email.Template[name] = tmpl
+	}
+	for name, tmpl := range c.Auth.Email.Notification {
+		if len(tmpl.ContentPath) > 0 && !filepath.IsAbs(tmpl.ContentPath) {
+			tmpl.ContentPath = filepath.Join(builder.SupabaseDirPath, tmpl.ContentPath)
+		}
+		c.Auth.Email.Notification[name] = tmpl
 	}
 	// Update fallback configs
 	for name, bucket := range c.Storage.Buckets {
@@ -849,9 +867,7 @@ func (c *config) Validate(fsys fs.FS) error {
 			}
 		}
 		if len(c.Auth.SigningKeysPath) > 0 {
-			if f, err := fsys.Open(c.Auth.SigningKeysPath); errors.Is(err, os.ErrNotExist) {
-				// Ignore missing signing key path on CI
-			} else if err != nil {
+			if f, err := fsys.Open(c.Auth.SigningKeysPath); err != nil {
 				return errors.Errorf("failed to read signing keys: %w", err)
 			} else if c.Auth.SigningKeys, err = fetcher.ParseJSON[[]JWK](f); err != nil {
 				return errors.Errorf("failed to decode signing keys: %w", err)
@@ -1018,16 +1034,33 @@ func (e *email) validate(fsys fs.FS) (err error) {
 	for name, tmpl := range e.Template {
 		if len(tmpl.ContentPath) == 0 {
 			if tmpl.Content != nil {
-				return errors.Errorf("Invalid config for auth.email.%s.content: please use content_path instead", name)
+				return errors.Errorf("Invalid config for auth.email.template.%s.content: please use content_path instead", name)
 			}
 			continue
 		}
 		if content, err := fs.ReadFile(fsys, tmpl.ContentPath); err != nil {
-			return errors.Errorf("Invalid config for auth.email.%s.content_path: %w", name, err)
+			return errors.Errorf("Invalid config for auth.email.template.%s.content_path: %w", name, err)
 		} else {
 			tmpl.Content = cast.Ptr(string(content))
 		}
 		e.Template[name] = tmpl
+	}
+	for name, tmpl := range e.Notification {
+		if !tmpl.Enabled {
+			continue
+		}
+		if len(tmpl.ContentPath) == 0 {
+			if tmpl.Content != nil {
+				return errors.Errorf("Invalid config for auth.email.notification.%s.content: please use content_path instead", name)
+			}
+			continue
+		}
+		if content, err := fs.ReadFile(fsys, tmpl.ContentPath); err != nil {
+			return errors.Errorf("Invalid config for auth.email.notification.%s.content_path: %w", name, err)
+		} else {
+			tmpl.Content = cast.Ptr(string(content))
+		}
+		e.Notification[name] = tmpl
 	}
 	if e.Smtp != nil && e.Smtp.Enabled {
 		if len(e.Smtp.Host) == 0 {
@@ -1212,7 +1245,7 @@ func (h *hookConfig) validate(hookType string) (err error) {
 		} else if err := assertEnvLoaded(h.Secrets.Value); err != nil {
 			return err
 		}
-		for _, secret := range strings.Split(h.Secrets.Value, "|") {
+		for secret := range strings.SplitSeq(h.Secrets.Value, "|") {
 			if !hookSecretPattern.MatchString(secret) {
 				return errors.Errorf(`Invalid hook config: auth.hook.%s.secrets must be formatted as "v1,whsec_<base64_encoded_secret>" with a minimum length of 32 characters.`, hookType)
 			}

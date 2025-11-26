@@ -15,7 +15,17 @@ WITH table_opts AS (
       WHEN relopts LIKE '%autovacuum_vacuum_scale_factor%'
         THEN substring(relopts, '.*autovacuum_vacuum_scale_factor=([0-9.]+).*')::real
         ELSE current_setting('autovacuum_vacuum_scale_factor')::real
-      END AS autovacuum_vacuum_scale_factor
+      END AS autovacuum_vacuum_scale_factor,
+    CASE
+      WHEN relopts LIKE '%autovacuum_analyze_threshold%'
+        THEN substring(relopts, '.*autovacuum_analyze_threshold=([0-9.]+).*')::integer
+        ELSE current_setting('autovacuum_analyze_threshold')::integer
+      END AS autovacuum_analyze_threshold,
+    CASE
+      WHEN relopts LIKE '%autovacuum_analyze_scale_factor%'
+        THEN substring(relopts, '.*autovacuum_analyze_scale_factor=([0-9.]+).*')::real
+        ELSE current_setting('autovacuum_analyze_scale_factor')::real
+      END AS autovacuum_analyze_scale_factor
   FROM
     table_opts
 )
@@ -23,6 +33,8 @@ SELECT
   FORMAT('%I.%I', vacuum_settings.nspname, vacuum_settings.relname) AS name,
   coalesce(to_char(psut.last_vacuum, 'YYYY-MM-DD HH24:MI'), '') AS last_vacuum,
   coalesce(to_char(psut.last_autovacuum, 'YYYY-MM-DD HH24:MI'), '') AS last_autovacuum,
+  coalesce(to_char(psut.last_analyze, 'YYYY-MM-DD HH24:MI'), '') AS last_analyze,
+  coalesce(to_char(psut.last_autoanalyze, 'YYYY-MM-DD HH24:MI'), '') AS last_autoanalyze,
   to_char(pg_class.reltuples, '9G999G999G999') AS rowcount,
   to_char(psut.n_dead_tup, '9G999G999G999') AS dead_rowcount,
   to_char(autovacuum_vacuum_threshold
@@ -31,7 +43,14 @@ SELECT
     WHEN autovacuum_vacuum_threshold + (autovacuum_vacuum_scale_factor::numeric * pg_class.reltuples) < psut.n_dead_tup
     THEN 'yes'
     ELSE 'no'
-  END AS expect_autovacuum
+  END AS expect_autovacuum,
+  to_char(autovacuum_analyze_threshold
+       + (autovacuum_analyze_scale_factor::numeric * pg_class.reltuples), '9G999G999G999') AS autoanalyze_threshold,
+  CASE
+    WHEN autovacuum_analyze_threshold + (autovacuum_analyze_scale_factor::numeric * pg_class.reltuples) < psut.n_dead_tup
+    THEN 'yes'
+    ELSE 'no'
+  END AS expect_autoanalyze
 FROM
   pg_stat_user_tables psut INNER JOIN pg_class ON psut.relid = pg_class.oid
 INNER JOIN vacuum_settings ON pg_class.oid = vacuum_settings.oid
