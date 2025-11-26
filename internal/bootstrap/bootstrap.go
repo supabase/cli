@@ -99,7 +99,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
-	link.LinkServices(ctx, flags.ProjectRef, tenant.NewApiKey(keys).Anon, fsys)
+	link.LinkServices(ctx, flags.ProjectRef, tenant.NewApiKey(keys).Anon, false, fsys)
 	if err := utils.WriteFile(utils.ProjectRefPath, []byte(flags.ProjectRef), fsys); err != nil {
 		return err
 	}
@@ -112,7 +112,10 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 		return err
 	}
 	// 6. Push migrations
-	config := flags.NewDbConfigWithPassword(ctx, flags.ProjectRef)
+	config, err := flags.NewDbConfigWithPassword(ctx, flags.ProjectRef)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
 	if err := writeDotEnv(keys, config, fsys); err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to create .env file:", err)
 	}

@@ -41,7 +41,14 @@ services:
           - /auth/v1/
     plugins:
       - name: cors
-      # TODO: validate apikey
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Authorization: {{ .BearerToken }}"
+          replace:
+            headers:
+              - "Authorization: {{ .BearerToken }}"
   - name: rest-v1
     _comment: "PostgREST: /rest/v1/* -> http://rest:3000/*"
     url: http://{{ .RestId }}:3000/
@@ -106,25 +113,6 @@ services:
           replace:
             querystring:
               - "apikey:{{ .QueryToken }}"
-  - name: realtime-v1-longpoll-not-working
-    _comment: "Realtime: /realtime/v1/* -> ws://realtime:4000/socket/longpoll"
-    url: http://{{ .RealtimeId }}:4000/socket
-    protocol: http
-    routes:
-      - name: realtime-v1-longpoll
-        strip_path: true
-        paths:
-          - /realtime/v1/
-    plugins:
-      - name: cors
-      - name: request-transformer
-        config:
-          add:
-            headers:
-              - "Authorization: {{ .BearerToken }}"
-          replace:
-            headers:
-              - "Authorization: {{ .BearerToken }}"
   - name: realtime-v1-rest
     _comment: "Realtime: /realtime/v1/* -> http://realtime:4000/api/*"
     url: http://{{ .RealtimeId }}:4000/api
@@ -144,8 +132,23 @@ services:
           replace:
             headers:
               - "Authorization: {{ .BearerToken }}"
+  # S3-compatible storage endpoint (no Authorization header transformation)
+  - name: storage-v1-s3
+    _comment: "Storage S3: /storage/v1/s3/* -> http://storage-api:5000/s3/*"
+    url: http://{{ .StorageId }}:5000/s3
+    routes:
+      - name: storage-v1-s3-all
+        strip_path: true
+        paths:
+          - /storage/v1/s3/
+    plugins:
+      - name: cors
+      # Note: No request-transformer plugin for Authorization header
+      # S3 presigned URLs require the original AWS signature in the Authorization header
+      # Adding/replacing with Bearer token would break S3 signature validation
+  # Regular storage API endpoint (with Authorization header transformation)
   - name: storage-v1
-    _comment: "Storage: /storage/v1/* -> http://storage-api:5000/*"
+    _comment: "Storage API: /storage/v1/* -> http://storage-api:5000/*"
     url: http://{{ .StorageId }}:5000/
     routes:
       - name: storage-v1-all

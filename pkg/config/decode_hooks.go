@@ -12,7 +12,7 @@ var envPattern = regexp.MustCompile(`^env\((.*)\)$`)
 
 // LoadEnvHook is a mapstructure decode hook that loads environment variables
 // from strings formatted as env(VAR_NAME).
-func LoadEnvHook(f reflect.Kind, t reflect.Kind, data interface{}) (interface{}, error) {
+func LoadEnvHook(f reflect.Kind, t reflect.Kind, data any) (any, error) {
 	if f != reflect.String {
 		return data, nil
 	}
@@ -35,7 +35,7 @@ Example:
 verify_jwt = true`
 
 // ValidateFunctionsHook is a mapstructure decode hook that validates the functions config format.
-func ValidateFunctionsHook(f reflect.Type, t reflect.Type, data interface{}) (interface{}, error) {
+func ValidateFunctionsHook(f reflect.Type, t reflect.Type, data any) (any, error) {
 	// Only handle FunctionConfig type
 	if t != reflect.TypeOf(FunctionConfig{}) {
 		return data, nil

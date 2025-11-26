@@ -21,11 +21,13 @@ type pathBuilder struct {
 	GotrueVersionPath      string
 	RestVersionPath        string
 	StorageVersionPath     string
+	StorageMigrationPath   string
 	StudioVersionPath      string
 	PgmetaVersionPath      string
 	PoolerVersionPath      string
 	RealtimeVersionPath    string
 	EdgeRuntimeVersionPath string
+	LogflareVersionPath    string
 	CliVersionPath         string
 	CurrBranchPath         string
 	SchemasDir             string
@@ -55,11 +57,13 @@ func NewPathBuilder(configPath string) pathBuilder {
 		GotrueVersionPath:      filepath.Join(base, ".temp", "gotrue-version"),
 		RestVersionPath:        filepath.Join(base, ".temp", "rest-version"),
 		StorageVersionPath:     filepath.Join(base, ".temp", "storage-version"),
+		StorageMigrationPath:   filepath.Join(base, ".temp", "storage-migration"),
 		EdgeRuntimeVersionPath: filepath.Join(base, ".temp", "edge-runtime-version"),
 		StudioVersionPath:      filepath.Join(base, ".temp", "studio-version"),
 		PgmetaVersionPath:      filepath.Join(base, ".temp", "pgmeta-version"),
 		PoolerVersionPath:      filepath.Join(base, ".temp", "pooler-version"),
 		RealtimeVersionPath:    filepath.Join(base, ".temp", "realtime-version"),
+		LogflareVersionPath:    filepath.Join(base, ".temp", "logflare-version"),
 		CliVersionPath:         filepath.Join(base, ".temp", "cli-latest"),
 		CurrBranchPath:         filepath.Join(base, ".branches", "_current_branch"),
 		SchemasDir:             filepath.Join(base, "schemas"),
@@ -70,15 +74,6 @@ func NewPathBuilder(configPath string) pathBuilder {
 		DbTestsDir:             filepath.Join(base, "tests"),
 		CustomRolesPath:        filepath.Join(base, "roles.sql"),
 	}
-}
-
-func sliceContains[T comparable](s []T, e T) bool {
-	for _, a := range s {
-		if a == e {
-			return true
-		}
-	}
-	return false
 }
 
 func replaceImageTag(image string, tag string) string {

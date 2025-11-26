@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -178,12 +179,7 @@ func ProcessDiffOutput(diffBytes []byte) ([]byte, error) {
 		}
 
 		isSchemaIgnored := func(schema string) bool {
-			for _, s := range InternalSchemas {
-				if s == schema {
-					return true
-				}
-			}
-			return false
+			return slices.Contains(InternalSchemas, schema)
 		}
 
 		if isSchemaIgnored(diffEntry.GroupName) ||

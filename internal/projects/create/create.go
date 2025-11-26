@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -30,9 +29,6 @@ func Run(ctx context.Context, params api.V1CreateProjectBody, fsys afero.Fs) err
 
 	flags.ProjectRef = resp.JSON201.Id
 	viper.Set("DB_PASSWORD", params.DbPass)
-	if err := credentials.StoreProvider.Set(flags.ProjectRef, params.DbPass); err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to save database password:", err)
-	}
 
 	projectUrl := fmt.Sprintf("%s/project/%s", utils.GetSupabaseDashboardURL(), resp.JSON201.Id)
 	fmt.Fprintf(os.Stderr, "Created a new project at %s\n", utils.Bold(projectUrl))
@@ -42,7 +38,7 @@ func Run(ctx context.Context, params api.V1CreateProjectBody, fsys afero.Fs) err
 `
 		table += fmt.Sprintf(
 			"|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
-			resp.JSON201.OrganizationId,
+			resp.JSON201.OrganizationSlug,
 			resp.JSON201.Id,
 			strings.ReplaceAll(resp.JSON201.Name, "|", "\\|"),
 			utils.FormatRegion(resp.JSON201.Region),
@@ -68,17 +64,19 @@ func promptMissingParams(ctx context.Context, body *api.V1CreateProjectBody) err
 	} else {
 		fmt.Fprintln(os.Stderr, printKeyValue("Creating project", body.Name))
 	}
-	if len(body.OrganizationId) == 0 {
-		if body.OrganizationId, err = promptOrgId(ctx); err != nil {
+	if len(body.OrganizationSlug) == 0 {
+		if body.OrganizationSlug, err = promptOrgId(ctx); err != nil {
 			return err
 		}
-		fmt.Fprintln(os.Stderr, printKeyValue("Selected org-id", body.OrganizationId))
+		fmt.Fprintln(os.Stderr, printKeyValue("Selected org-id", body.OrganizationSlug))
 	}
-	if len(body.Region) == 0 {
-		if body.Region, err = promptProjectRegion(ctx); err != nil {
+	if body.Region == nil || len(*body.Region) == 0 {
+		region, err := promptProjectRegion(ctx)
+		if err != nil {
 			return err
 		}
-		fmt.Fprintln(os.Stderr, printKeyValue("Selected region", string(body.Region)))
+		body.Region = &region
+		fmt.Fprintln(os.Stderr, printKeyValue("Selected region", string(region)))
 	}
 	if len(body.DbPass) == 0 {
 		body.DbPass = flags.PromptPassword(os.Stdin)

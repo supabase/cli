@@ -19,13 +19,17 @@ import (
 var VacuumStatsQuery string
 
 type Result struct {
-	Name                 string
-	Last_vacuum          string
-	Last_autovacuum      string
-	Rowcount             string
-	Dead_rowcount        string
-	Autovacuum_threshold string
-	Expect_autovacuum    string
+	Name                  string
+	Last_vacuum           string
+	Last_autovacuum       string
+	Last_analyze          string
+	Last_autoanalyze      string
+	Rowcount              string
+	Dead_rowcount         string
+	Autovacuum_threshold  string
+	Autoanalyze_threshold string
+	Expect_autovacuum     string
+	Expect_autoanalyze    string
 }
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -43,10 +47,10 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "|Table|Last Vacuum|Last Auto Vacuum|Row count|Dead row count|Expect autovacuum?\n|-|-|-|-|-|-|\n"
+	table := "|Table|Last Vacuum|Last Auto Vacuum|Last Analyze|Last Auto Analyze|Row count|Dead row count|Expect autovacuum?|Expect autoanalyze?|\n|-|-|-|-|-|-|-|-|-|\n"
 	for _, r := range result {
 		rowcount := strings.Replace(r.Rowcount, "-1", "No stats", 1)
-		table += fmt.Sprintf("|`%s`|%s|%s|`%s`|`%s`|`%s`|\n", r.Name, r.Last_vacuum, r.Last_autovacuum, rowcount, r.Dead_rowcount, r.Expect_autovacuum)
+		table += fmt.Sprintf("|`%s`|%s|%s|%s|%s|`%s`|`%s`|`%s`|`%s`|\n", r.Name, r.Last_vacuum, r.Last_autovacuum, r.Last_analyze, r.Last_autoanalyze, rowcount, r.Dead_rowcount, r.Expect_autovacuum, r.Expect_autoanalyze)
 	}
 	return utils.RenderTable(table)
 }

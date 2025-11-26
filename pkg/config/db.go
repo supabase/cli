@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"slices"
 
 	"github.com/go-errors/errors"
 	v1API "github.com/supabase/cli/pkg/api"
@@ -18,7 +19,7 @@ const (
 
 func (m *PoolMode) UnmarshalText(text []byte) error {
 	allowed := []PoolMode{TransactionMode, SessionMode}
-	if *m = PoolMode(text); !sliceContains(allowed, *m) {
+	if *m = PoolMode(text); !slices.Contains(allowed, *m) {
 		return errors.Errorf("must be one of %v", allowed)
 	}
 	return nil
@@ -34,7 +35,7 @@ const (
 
 func (r *SessionReplicationRole) UnmarshalText(text []byte) error {
 	allowed := []SessionReplicationRole{SessionReplicationRoleOrigin, SessionReplicationRoleReplica, SessionReplicationRoleLocal}
-	if *r = SessionReplicationRole(text); !sliceContains(allowed, *r) {
+	if *r = SessionReplicationRole(text); !slices.Contains(allowed, *r) {
 		return errors.Errorf("must be one of %v", allowed)
 	}
 	return nil

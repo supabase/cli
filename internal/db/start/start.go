@@ -61,10 +61,6 @@ func Run(ctx context.Context, fromBackup string, fsys afero.Fs) error {
 }
 
 func NewContainerConfig(args ...string) container.Config {
-	if utils.Config.Db.MajorVersion >= 14 {
-		// Extensions schema does not exist on PG13 and below
-		args = append(args, "-c", "search_path='$user,public,extensions'")
-	}
 	env := []string{
 		"POSTGRES_PASSWORD=" + utils.Config.Db.Password,
 		"POSTGRES_HOST=/var/run/postgresql",
@@ -160,6 +156,7 @@ EOF
 ` + utils.Config.Db.RootKey.Value + `
 EOF
 ` + utils.Config.Db.Settings.ToPostgresConfig() + `
+cron.launch_active_jobs = off
 EOF`}
 		if !filepath.IsAbs(fromBackup) {
 			fromBackup = filepath.Join(utils.CurrentDirAbs, fromBackup)
@@ -180,15 +177,12 @@ EOF`}
 	if _, err := utils.DockerStart(ctx, config, hostConfig, networkingConfig, utils.DbId); err != nil {
 		return err
 	}
-	if err := WaitForHealthyService(ctx, HealthTimeout, utils.DbId); err != nil {
+	// Ignore health check because restoring a large backup may take longer than 2 minutes
+	if err := WaitForHealthyService(ctx, HealthTimeout, utils.DbId); err != nil && len(fromBackup) == 0 {
 		return err
 	}
 	// Initialize if we are on PG14 and there's no existing db volume
-	if len(fromBackup) > 0 {
-		if err := initSchema15(ctx, utils.DbId); err != nil {
-			return err
-		}
-	} else if utils.NoBackupVolume {
+	if utils.NoBackupVolume && len(fromBackup) == 0 {
 		if err := SetupLocalDatabase(ctx, "", fsys, w, options...); err != nil {
 			return err
 		}

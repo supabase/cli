@@ -19,7 +19,7 @@ func TestVerifyCNAME(t *testing.T) {
 		MatchParam("type", "5").
 		MatchHeader("accept", "application/dns-json").
 		Reply(http.StatusOK).
-		JSON(&map[string]interface{}{"Answer": []map[string]interface{}{
+		JSON(&map[string]any{"Answer": []map[string]any{
 			{
 				"Type": 5, "Data": "foobarbaz.supabase.co.",
 			},
@@ -36,7 +36,7 @@ func TestVerifyCNAMEFailures(t *testing.T) {
 		MatchParam("type", "5").
 		MatchHeader("accept", "application/dns-json").
 		Reply(http.StatusOK).
-		JSON(&map[string]interface{}{"Answer": []map[string]interface{}{
+		JSON(&map[string]any{"Answer": []map[string]any{
 			{
 				"Type": 28, "Data": "127.0.0.1",
 			},

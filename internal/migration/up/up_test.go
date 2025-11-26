@@ -32,7 +32,7 @@ func TestPendingMigrations(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
-			Reply("SELECT 2", []interface{}{"20221201000000"}, []interface{}{"20221201000001"})
+			Reply("SELECT 2", []any{"20221201000000"}, []any{"20221201000001"})
 		// Run test
 		pending, err := GetPendingMigrations(context.Background(), false, conn.MockClient(t), fsys)
 		// Check error
@@ -61,7 +61,7 @@ func TestPendingMigrations(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
-			Reply("SELECT 1", []interface{}{"0"})
+			Reply("SELECT 1", []any{"0"})
 		// Run test
 		_, err := GetPendingMigrations(context.Background(), false, conn.MockClient(t), fsys)
 		// Check error
@@ -81,7 +81,7 @@ func TestPendingMigrations(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
-			Reply("SELECT 1", []interface{}{"1"})
+			Reply("SELECT 1", []any{"1"})
 		// Run test
 		_, err := GetPendingMigrations(context.Background(), false, conn.MockClient(t), fsys)
 		// Check error
@@ -106,7 +106,7 @@ func TestIgnoreVersionMismatch(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
-			Reply("SELECT 2", []interface{}{"20221201000000"}, []interface{}{"20221201000002"})
+			Reply("SELECT 2", []any{"20221201000000"}, []any{"20221201000002"})
 		// Run test
 		pending, err := GetPendingMigrations(context.Background(), true, conn.MockClient(t), fsys)
 		// Check error
@@ -130,7 +130,7 @@ func TestIgnoreVersionMismatch(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
-			Reply("SELECT 2", []interface{}{"20221201000002"}, []interface{}{"20221201000004"})
+			Reply("SELECT 2", []any{"20221201000002"}, []any{"20221201000004"})
 		// Run test
 		_, err := GetPendingMigrations(context.Background(), true, conn.MockClient(t), fsys)
 		// Check error
@@ -153,11 +153,11 @@ func TestIgnoreVersionMismatch(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 5",
-				[]interface{}{"20221201000000"},
-				[]interface{}{"20221201000001"},
-				[]interface{}{"20221201000002"},
-				[]interface{}{"20221201000003"},
-				[]interface{}{"20221201000004"},
+				[]any{"20221201000000"},
+				[]any{"20221201000001"},
+				[]any{"20221201000002"},
+				[]any{"20221201000003"},
+				[]any{"20221201000004"},
 			)
 		// Run test
 		_, err := GetPendingMigrations(context.Background(), true, conn.MockClient(t), fsys)

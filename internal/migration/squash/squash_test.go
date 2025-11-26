@@ -85,10 +85,14 @@ func TestSquashCommand(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		helper.MockMigrationHistory(conn).
+			Query("RESET ALL").
+			Reply("RESET").
 			Query(sql).
 			Reply("CREATE SCHEMA").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "init", []string{sql}).
 			Reply("INSERT 0 1").
+			Query("RESET ALL").
+			Reply("RESET").
 			Query(migration.INSERT_MIGRATION_VERSION, "1", "target", nil).
 			Reply("INSERT 0 1")
 		// Run test
@@ -308,6 +312,8 @@ func TestSquashMigrations(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		helper.MockMigrationHistory(conn).
+			Query("RESET ALL").
+			Reply("RESET").
 			Query(sql).
 			Reply("CREATE SCHEMA").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "init", []string{sql}).

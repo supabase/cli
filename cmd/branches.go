@@ -35,6 +35,7 @@ var (
 	}
 	persistent bool
 	withData   bool
+	notifyURL  string
 
 	branchCreateCmd = &cobra.Command{
 		Use:   "create [name]",
@@ -58,6 +59,9 @@ var (
 			}
 			if cmdFlags.Changed("with-data") {
 				body.WithData = &withData
+			}
+			if cmdFlags.Changed("notify-url") {
+				body.NotifyUrl = &notifyURL
 			}
 			return create.Run(cmd.Context(), body, afero.NewOsFs())
 		},
@@ -124,6 +128,9 @@ var (
 			if cmdFlags.Changed("status") {
 				body.Status = (*api.UpdateBranchBodyStatus)(&branchStatus.Value)
 			}
+			if cmdFlags.Changed("notify-url") {
+				body.NotifyUrl = &notifyURL
+			}
 			ctx := cmd.Context()
 			fsys := afero.NewOsFs()
 			if len(args) > 0 {
@@ -180,7 +187,7 @@ var (
 			} else if err := promptBranchId(ctx, fsys); err != nil {
 				return err
 			}
-			return delete.Run(ctx, branchId)
+			return delete.Run(ctx, branchId, nil)
 		},
 	}
 
@@ -203,6 +210,7 @@ func init() {
 	createFlags.Var(&size, "size", "Select a desired instance size for the branch database.")
 	createFlags.BoolVar(&persistent, "persistent", false, "Whether to create a persistent branch.")
 	createFlags.BoolVar(&withData, "with-data", false, "Whether to clone production data to the branch database.")
+	createFlags.StringVar(&notifyURL, "notify-url", "", "URL to notify when branch is active healthy.")
 	branchesCmd.AddCommand(branchCreateCmd)
 	branchesCmd.AddCommand(branchListCmd)
 	branchesCmd.AddCommand(branchGetCmd)
@@ -211,6 +219,7 @@ func init() {
 	updateFlags.StringVar(&gitBranch, "git-branch", "", "Change the associated git branch.")
 	updateFlags.BoolVar(&persistent, "persistent", false, "Switch between ephemeral and persistent branch.")
 	updateFlags.Var(&branchStatus, "status", "Override the current branch status.")
+	updateFlags.StringVar(&notifyURL, "notify-url", "", "URL to notify when branch is active healthy.")
 	branchesCmd.AddCommand(branchUpdateCmd)
 	branchesCmd.AddCommand(branchDeleteCmd)
 	branchesCmd.AddCommand(branchDisableCmd)

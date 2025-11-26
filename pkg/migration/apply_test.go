@@ -108,6 +108,8 @@ func TestApplyMigrations(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		mockMigrationHistory(conn).
+			Query("RESET ALL").
+			Reply("RESET").
 			Query(testSchema).
 			Reply("CREATE SCHEMA").
 			Query(INSERT_MIGRATION_VERSION, "0", "schema", []string{testSchema}).
@@ -143,7 +145,9 @@ func TestApplyMigrations(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		mockMigrationHistory(conn)
+		mockMigrationHistory(conn).
+			Query("RESET ALL").
+			Reply("RESET")
 		// Run test
 		err := ApplyMigrations(context.Background(), pending, conn.MockClient(t), fsys)
 		// Check error
@@ -155,6 +159,8 @@ func TestApplyMigrations(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		mockMigrationHistory(conn).
+			Query("RESET ALL").
+			Reply("RESET").
 			Query(testSchema).
 			ReplyError(pgerrcode.UndefinedTable, `relation "supabase_migrations.schema_migrations" does not exist`).
 			Query(INSERT_MIGRATION_VERSION, "0", "schema", []string{testSchema}).
@@ -163,6 +169,20 @@ func TestApplyMigrations(t *testing.T) {
 		err := ApplyMigrations(context.Background(), pending, conn.MockClient(t), testMigrations)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: relation "supabase_migrations.schema_migrations" does not exist (SQLSTATE 42P01)`)
+	})
+
+	t.Run("throws error when RESET ALL fails", func(t *testing.T) {
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		mockMigrationHistory(conn).
+			Query("RESET ALL").
+			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for RESET ALL")
+		// Run test
+		err := ApplyMigrations(context.Background(), pending, conn.MockClient(t), testMigrations)
+		// Check error
+		assert.ErrorContains(t, err, "failed to reset connection state")
+		assert.ErrorContains(t, err, "ERROR: permission denied for RESET ALL (SQLSTATE 42501)")
 	})
 }
 

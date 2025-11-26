@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/debug"
+	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/pgxv5"
 	"golang.org/x/net/publicsuffix"
 )
@@ -43,6 +44,22 @@ func ToPostgresURL(config pgconn.Config) string {
 	)
 }
 
+func GetPoolerConfigPrimary(ctx context.Context, ref string) (api.SupavisorConfigResponse, error) {
+	var result api.SupavisorConfigResponse
+	resp, err := GetSupabase().V1GetPoolerConfigWithResponse(ctx, ref)
+	if err != nil {
+		return result, errors.Errorf("failed to get pooler: %w", err)
+	} else if resp.JSON200 == nil {
+		return result, errors.Errorf("unexpected get pooler status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+	for _, config := range *resp.JSON200 {
+		if config.DatabaseType == api.SupavisorConfigResponseDatabaseTypePRIMARY {
+			return config, nil
+		}
+	}
+	return result, errors.Errorf("primary database not found: %s", ref)
+}
+
 func GetPoolerConfig(projectRef string) *pgconn.Config {
 	logger := GetDebugLogger()
 	if len(Config.Db.Pooler.ConnectionString) == 0 {
@@ -59,7 +76,7 @@ func GetPoolerConfig(projectRef string) *pgconn.Config {
 	}
 	// Verify that the pooler username matches the database host being connected to
 	if _, ref, found := strings.Cut(poolerConfig.User, "."); !found {
-		for _, option := range strings.Split(poolerConfig.RuntimeParams["options"], ",") {
+		for option := range strings.SplitSeq(poolerConfig.RuntimeParams["options"], ",") {
 			key, value, found := strings.Cut(option, "=")
 			if found && key == "reference" && value != projectRef {
 				fmt.Fprintln(logger, "Pooler options does not match project ref:", projectRef)
@@ -98,7 +115,7 @@ func assertDomainInProfile(host string) error {
 	if err != nil {
 		return errors.Errorf("failed to parse pooler TLD: %w", err)
 	}
-	if !strings.HasSuffix(CurrentProfile.APIURL, "."+domain) {
+	if len(CurrentProfile.PoolerHost) > 0 && !strings.EqualFold(CurrentProfile.PoolerHost, domain) {
 		return errors.Errorf("Pooler domain does not belong to current profile: %s", domain)
 	}
 	return nil
@@ -182,5 +199,5 @@ func ConnectByConfig(ctx context.Context, config pgconn.Config, options ...func(
 }
 
 func IsLocalDatabase(config pgconn.Config) bool {
-	return config.Host == Config.Hostname && config.Port == Config.Db.Port
+	return config.Host == Config.Hostname && (config.Port == Config.Db.Port || config.Port == Config.Db.ShadowPort)
 }

@@ -185,7 +185,7 @@ func TestListStoragePaths(t *testing.T) {
 		defer gock.OffAll()
 		expected := make([]string, storage.PAGE_LIMIT)
 		resp := make([]storage.ObjectResponse, storage.PAGE_LIMIT)
-		for i := 0; i < len(resp); i++ {
+		for i := range resp {
 			resp[i] = storage.ObjectResponse{Name: fmt.Sprintf("dir_%d", i)}
 			expected[i] = resp[i].Name + "/"
 		}

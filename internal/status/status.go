@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -44,6 +45,7 @@ type CustomName struct {
 	StorageS3SecretAccessKey string `env:"storage.s3_secret_access_key,default=S3_PROTOCOL_ACCESS_KEY_SECRET"`
 	StorageS3Region          string `env:"storage.s3_region,default=S3_PROTOCOL_REGION"`
 }
+
 type OutputType string
 
 const (
@@ -68,11 +70,11 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 		c.DbURL: fmt.Sprintf("postgresql://%s@%s:%d/postgres", url.UserPassword("postgres", utils.Config.Db.Password), utils.Config.Hostname, utils.Config.Db.Port),
 	}
 
-	apiEnabled := utils.Config.Api.Enabled && !utils.SliceContains(exclude, utils.RestId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Api.Image))
-	studioEnabled := utils.Config.Studio.Enabled && !utils.SliceContains(exclude, utils.StudioId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Studio.Image))
-	authEnabled := utils.Config.Auth.Enabled && !utils.SliceContains(exclude, utils.GotrueId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Auth.Image))
-	inbucketEnabled := utils.Config.Inbucket.Enabled && !utils.SliceContains(exclude, utils.InbucketId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Inbucket.Image))
-	storageEnabled := utils.Config.Storage.Enabled && !utils.SliceContains(exclude, utils.StorageId) && !utils.SliceContains(exclude, utils.ShortContainerImageName(utils.Config.Storage.Image))
+	apiEnabled := utils.Config.Api.Enabled && !slices.Contains(exclude, utils.RestId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.Api.Image))
+	studioEnabled := utils.Config.Studio.Enabled && !slices.Contains(exclude, utils.StudioId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.Studio.Image))
+	authEnabled := utils.Config.Auth.Enabled && !slices.Contains(exclude, utils.GotrueId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.Auth.Image))
+	inbucketEnabled := utils.Config.Inbucket.Enabled && !slices.Contains(exclude, utils.InbucketId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.Inbucket.Image))
+	storageEnabled := utils.Config.Storage.Enabled && !slices.Contains(exclude, utils.StorageId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.Storage.Image))
 
 	if apiEnabled {
 		values[c.ApiURL] = utils.Config.Api.ExternalUrl

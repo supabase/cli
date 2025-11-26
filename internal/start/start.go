@@ -5,17 +5,26 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"text/template"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
+	"github.com/compose-spec/compose-go/v2/types"
+	"github.com/docker/cli/cli/command"
+	dockerFlags "github.com/docker/cli/cli/flags"
+	"github.com/docker/compose/v2/pkg/api"
+	"github.com/docker/compose/v2/pkg/compose"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
@@ -23,6 +32,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/functions/serve"
 	"github.com/supabase/cli/internal/seed/buckets"
@@ -140,14 +150,89 @@ var (
 
 var serviceTimeout = 30 * time.Second
 
+// RetryClient wraps a Docker client to add retry logic for image pulls
+type RetryClient struct {
+	*client.Client
+}
+
+func isPermanentError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Rate limited errors can be recovered by retry
+	if msg := err.Error(); strings.Contains(msg, "toomanyrequests:") {
+		return false
+	}
+	return true
+}
+
+// ImagePull wraps the Docker client's ImagePull with retry logic and registry auth
+func (cli *RetryClient) ImagePull(ctx context.Context, refStr string, options image.PullOptions) (io.ReadCloser, error) {
+	if len(options.RegistryAuth) == 0 {
+		options.RegistryAuth = utils.GetRegistryAuth()
+	}
+	pull := func() (io.ReadCloser, error) {
+		resp, err := cli.Client.ImagePull(ctx, refStr, options)
+		if isPermanentError(err) {
+			return resp, &backoff.PermanentError{Err: err}
+		}
+		return resp, err
+	}
+	policy := utils.NewBackoffPolicy(ctx)
+	return backoff.RetryWithData(pull, policy)
+}
+
+// Also retry ImageInspect: https://github.com/docker/compose/blob/main/pkg/compose/pull.go#L174
+func (cli *RetryClient) ImageInspect(ctx context.Context, refStr string, options ...client.ImageInspectOption) (image.InspectResponse, error) {
+	pull := func() (image.InspectResponse, error) {
+		resp, err := cli.Client.ImageInspect(ctx, refStr, options...)
+		if isPermanentError(err) {
+			return resp, &backoff.PermanentError{Err: err}
+		}
+		return resp, err
+	}
+	policy := utils.NewBackoffPolicy(ctx)
+	return backoff.RetryWithData(pull, policy)
+}
+
+// pullImagesUsingCompose pulls all required images using docker-compose service
+func pullImagesUsingCompose(ctx context.Context, project types.Project) error {
+	// Create Docker CLI
+	cli, err := command.NewDockerCli()
+	if err != nil {
+		return errors.Errorf("failed to create Docker CLI: %w", err)
+	}
+	// Initialize Docker CLI
+	opt := command.WithAPIClient(&RetryClient{Client: utils.Docker})
+	if err := cli.Initialize(&dockerFlags.ClientOptions{}, opt); err != nil {
+		return errors.Errorf("failed to initialize Docker CLI: %w", err)
+	}
+	service := compose.NewComposeService(cli)
+	// Fallback to regular image pull by ignoring failures
+	return service.Pull(ctx, &project, api.PullOptions{IgnoreFailures: true})
+}
+
 func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, options ...func(*pgx.ConnConfig)) error {
 	excluded := make(map[string]bool)
 	for _, name := range excludedContainers {
 		excluded[name] = true
 	}
+	notExcluded := func(sc types.ServiceConfig) bool {
+		val, ok := excluded[sc.Name]
+		return !val || !ok
+	}
 
 	jwks, err := utils.Config.Auth.ResolveJWKS(ctx)
 	if err != nil {
+		return err
+	}
+
+	// TODO: start services using compose up
+	project := types.Project{
+		Name:     "supabase-cli",
+		Services: utils.GetServices().Filter(notExcluded),
+	}
+	if err := pullImagesUsingCompose(ctx, project); err != nil {
 		return err
 	}
 
@@ -357,14 +442,14 @@ EOF
 				// default JWT for downstream services.
 				// Finally, the apikey header may be set to a legacy JWT. In that case, we want to copy
 				// it to Authorization header for backwards compatibility.
-				`$((function() return (headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) or (headers.apikey == '%s' and 'Bearer %s') or (headers.apikey == '%s' and 'Bearer %s') or headers.apikey end)())`,
+				`$((headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) or (headers.apikey == '%s' and 'Bearer %s') or (headers.apikey == '%s' and 'Bearer %s') or headers.apikey)`,
 				utils.Config.Auth.SecretKey.Value,
 				utils.Config.Auth.ServiceRoleKey.Value,
 				utils.Config.Auth.PublishableKey.Value,
 				utils.Config.Auth.AnonKey.Value,
 			),
 			QueryToken: fmt.Sprintf(
-				`$((function() return (query_params.apikey == '%s' and '%s') or (query_params.apikey == '%s' and '%s') or query_params.apikey end)())`,
+				`$((query_params.apikey == '%s' and '%s') or (query_params.apikey == '%s' and '%s') or query_params.apikey)`,
 				utils.Config.Auth.SecretKey.Value,
 				utils.Config.Auth.ServiceRoleKey.Value,
 				utils.Config.Auth.PublishableKey.Value,
@@ -481,7 +566,7 @@ EOF
 			"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
 			fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
 			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
-			"GOTRUE_JWT_ISSUER=" + utils.GetApiUrl("/auth/v1"),
+			"GOTRUE_JWT_ISSUER=" + utils.Config.Auth.JwtIssuer,
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", utils.Config.Auth.Email.EnableSignup),
 			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", utils.Config.Auth.Email.DoubleConfirmChanges),
@@ -493,10 +578,10 @@ EOF
 
 			fmt.Sprintf("GOTRUE_SMTP_MAX_FREQUENCY=%v", utils.Config.Auth.Email.MaxFrequency),
 
-			"GOTRUE_MAILER_URLPATHS_INVITE=" + utils.GetApiUrl("/auth/v1/verify"),
-			"GOTRUE_MAILER_URLPATHS_CONFIRMATION=" + utils.GetApiUrl("/auth/v1/verify"),
-			"GOTRUE_MAILER_URLPATHS_RECOVERY=" + utils.GetApiUrl("/auth/v1/verify"),
-			"GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=" + utils.GetApiUrl("/auth/v1/verify"),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_INVITE=%s/verify", utils.Config.Auth.JwtIssuer),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_CONFIRMATION=%s/verify", utils.Config.Auth.JwtIssuer),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_RECOVERY=%s/verify", utils.Config.Auth.JwtIssuer),
+			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=%s/verify", utils.Config.Auth.JwtIssuer),
 			"GOTRUE_RATE_LIMIT_EMAIL_SENT=360000",
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
@@ -533,6 +618,8 @@ EOF
 		// Since signing key is validated by ResolveJWKS, simply read the key file.
 		if keys, err := afero.ReadFile(fsys, utils.Config.Auth.SigningKeysPath); err == nil && len(keys) > 0 {
 			env = append(env, "GOTRUE_JWT_KEYS="+string(keys))
+			// TODO: deprecate HS256 when it's no longer supported
+			env = append(env, "GOTRUE_JWT_VALID_METHODS=HS256,RS256,ES256")
 		}
 
 		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.Enabled {
@@ -698,7 +785,7 @@ EOF
 
 			redirectUri := config.RedirectUri
 			if redirectUri == "" {
-				redirectUri = utils.GetApiUrl("/auth/v1/callback")
+				redirectUri = utils.Config.Auth.JwtIssuer + "/callback"
 			}
 			env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=%s", strings.ToUpper(name), redirectUri))
 
@@ -762,6 +849,10 @@ EOF
 			ctx,
 			container.Config{
 				Image: utils.Config.Inbucket.Image,
+				Env: []string{
+					// Disable reverse DNS lookups in Mailpit to avoid slow/delayed DNS resolution
+					"MP_SMTP_DISABLE_RDNS=true",
+				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "/mailpit", "readyz"},
 					Interval: 10 * time.Second,
@@ -1114,6 +1205,7 @@ EOF
 					"REGION=local",
 					"RUN_JANITOR=true",
 					"ERL_AFLAGS=-proto_dist inet_tcp",
+					"RLIMIT_NOFILE=",
 				},
 				Cmd: []string{
 					"/bin/sh", "-c",
@@ -1152,7 +1244,7 @@ EOF
 	}
 
 	fmt.Fprintln(os.Stderr, "Waiting for health checks...")
-	if utils.NoBackupVolume && utils.SliceContains(started, utils.StorageId) {
+	if utils.NoBackupVolume && slices.Contains(started, utils.StorageId) {
 		if err := start.WaitForHealthyService(ctx, serviceTimeout, utils.StorageId); err != nil {
 			return err
 		}

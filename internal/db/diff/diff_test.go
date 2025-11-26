@@ -136,6 +136,8 @@ func TestMigrateShadow(t *testing.T) {
 			Query(CREATE_TEMPLATE).
 			Reply("CREATE DATABASE")
 		helper.MockMigrationHistory(conn).
+			Query("RESET ALL").
+			Reply("RESET").
 			Query(sql).
 			Reply("CREATE SCHEMA").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", []string{sql}).
@@ -313,6 +315,8 @@ create schema public`)
 			Query(CREATE_TEMPLATE).
 			Reply("CREATE DATABASE")
 		helper.MockMigrationHistory(conn).
+			Query("RESET ALL").
+			Reply("RESET").
 			Query(sql).
 			Reply("CREATE SCHEMA").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", []string{sql}).

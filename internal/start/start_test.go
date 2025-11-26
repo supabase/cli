@@ -99,6 +99,9 @@ func TestDatabaseStart(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
+			Head("/_ping").
+			Reply(http.StatusOK)
+		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/networks/create").
 			Reply(http.StatusCreated).
 			JSON(network.CreateResponse{})
@@ -213,6 +216,9 @@ func TestDatabaseStart(t *testing.T) {
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
+			Head("/_ping").
+			Reply(http.StatusOK)
+		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/networks/create").
 			Reply(http.StatusCreated).
 			JSON(network.CreateResponse{})
@@ -268,7 +274,7 @@ func TestFormatMapForEnvConfig(t *testing.T) {
 		if len(output.Bytes()) > 0 {
 			t.Error("No values should be expected when empty map is provided")
 		}
-		for i := 0; i < 4; i++ {
+		for i := range 4 {
 			output.Reset()
 			input[keys[i]] = values[i]
 			formatMapForEnvConfig(input, &output)

@@ -17,13 +17,19 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     outputs:
       release_tag: ${{ steps.prerelease.outputs.tagName }}
+      app_token: ${{ steps.app-token.outputs.token }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - id: prerelease
         run: |
           gh release list --limit 1 --json tagName --jq \
           '.[]|to_entries|map("\(.key)=\(.value|tostring)")|.[]' >> $GITHUB_OUTPUT
       - run: gh release edit ${{ steps.prerelease.outputs.tagName }} --latest --prerelease=false
+      - id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
 
   commit:
     name: Publish Brew and Scoop
@@ -31,14 +37,14 @@ jobs:
       - settings
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
       - run: go run tools/publish/main.go ${{ needs.settings.outputs.release_tag }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ needs.settings.outputs.app_token }}
 
   publish:
     name: Publish NPM
@@ -51,32 +57,35 @@ jobs:
 
   compose:
     name: Bump self-hosted versions
+    needs:
+      - settings
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
       - run: go run tools/selfhost/main.go
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ needs.settings.outputs.app_token }}
 
   changelog:
     name: Publish changelog
     needs:
+      - settings
       - commit
       - publish
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
       - run: go run tools/changelog/main.go ${{ secrets.SLACK_CHANNEL }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ needs.settings.outputs.app_token }}
           SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
 
   docs:
@@ -85,11 +94,11 @@ jobs:
       - settings
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
       - run: go run docs/main.go ${{ needs.settings.outputs.release_tag }} | go run tools/bumpdoc/main.go apps/docs/spec/cli_v1_commands.yaml
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ needs.settings.outputs.app_token }}

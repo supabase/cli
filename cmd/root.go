@@ -260,7 +260,7 @@ func GetRootCmd() *cobra.Command {
 
 func addSentryScope(scope *sentry.Scope) {
 	serviceImages := utils.Config.GetServiceImages()
-	imageToVersion := make(map[string]interface{}, len(serviceImages))
+	imageToVersion := make(map[string]any, len(serviceImages))
 	for _, image := range serviceImages {
 		parts := strings.Split(image, ":")
 		// Bypasses sentry's IP sanitization rule, ie. 15.1.0.147
@@ -271,7 +271,7 @@ func addSentryScope(scope *sentry.Scope) {
 		}
 	}
 	scope.SetContext("Services", imageToVersion)
-	scope.SetContext("Config", map[string]interface{}{
+	scope.SetContext("Config", map[string]any{
 		"Image Registry": utils.GetRegistry(),
 		"Project ID":     flags.ProjectRef,
 	})

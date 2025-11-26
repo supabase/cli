@@ -114,6 +114,8 @@ var (
 	caStaging string
 	//go:embed templates/prod-ca-2021.crt
 	caProd string
+	//go:embed templates/prod-ca-2025.crt
+	caSnap string
 )
 
 func GetRootCA(ctx context.Context, dbURL string, options ...func(*pgx.ConnConfig)) (string, error) {
@@ -121,7 +123,8 @@ func GetRootCA(ctx context.Context, dbURL string, options ...func(*pgx.ConnConfi
 	if require, err := isRequireSSL(ctx, dbURL, options...); !require {
 		return "", err
 	}
-	return caStaging + caProd, nil
+	// Merge all certs to support --db-url flag
+	return caStaging + caProd + caSnap, nil
 }
 
 func isRequireSSL(ctx context.Context, dbUrl string, options ...func(*pgx.ConnConfig)) (bool, error) {

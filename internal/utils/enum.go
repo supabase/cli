@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/go-errors/errors"
@@ -18,7 +19,7 @@ func (a EnumFlag) String() string {
 }
 
 func (a *EnumFlag) Set(p string) error {
-	if !SliceContains(a.Allowed, p) {
+	if !slices.Contains(a.Allowed, p) {
 		return errors.Errorf("must be one of [ %s ]", strings.Join(a.Allowed, " | "))
 	}
 	a.Value = p

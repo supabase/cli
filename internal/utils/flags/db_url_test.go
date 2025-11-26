@@ -2,11 +2,14 @@ package flags
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
@@ -70,10 +73,15 @@ func TestParseDatabaseConfig(t *testing.T) {
 		err = afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644)
 		require.NoError(t, err)
 
+		dbURL := fmt.Sprintf("postgres://postgres:postgres@db.%s.supabase.co:6543/postgres", project)
+		err = afero.WriteFile(fsys, utils.PoolerUrlPath, []byte(dbURL), 0644)
+		require.NoError(t, err)
+
+		viper.Set("DB_PASSWORD", "test")
 		err = ParseDatabaseConfig(context.Background(), flagSet, fsys)
 
 		assert.NoError(t, err)
-		assert.Equal(t, utils.GetSupabaseDbHost(project), DbConfig.Host)
+		assert.True(t, strings.HasPrefix(DbConfig.Host, utils.GetSupabaseDbHost(project)))
 	})
 }
 

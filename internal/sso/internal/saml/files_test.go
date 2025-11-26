@@ -33,10 +33,10 @@ func TestReadAttributeMappingFile(t *testing.T) {
 		body := api.CreateProviderBody{
 			AttributeMapping: &struct {
 				Keys map[string]struct {
-					Array   *bool        "json:\"array,omitempty\""
-					Default *interface{} "json:\"default,omitempty\""
-					Name    *string      "json:\"name,omitempty\""
-					Names   *[]string    "json:\"names,omitempty\""
+					Array   *bool     "json:\"array,omitempty\""
+					Default *any      "json:\"default,omitempty\""
+					Name    *string   "json:\"name,omitempty\""
+					Names   *[]string "json:\"names,omitempty\""
 				} "json:\"keys\""
 			}{},
 		}

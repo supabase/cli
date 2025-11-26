@@ -6,23 +6,22 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"sync"
+	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
 	cliConfig "github.com/supabase/cli/pkg/config"
-	"github.com/supabase/cli/pkg/migration"
+	"github.com/supabase/cli/pkg/queue"
 )
 
-func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, projectRef string, skipPooler bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	majorVersion := utils.Config.Db.MajorVersion
 	if err := checkRemoteProjectStatus(ctx, projectRef, fsys); err != nil {
 		return err
@@ -33,11 +32,12 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs, options ...func(
 	if err != nil {
 		return err
 	}
-	LinkServices(ctx, projectRef, keys.ServiceRole, fsys)
+	LinkServices(ctx, projectRef, keys.ServiceRole, skipPooler, fsys)
 
 	// 2. Check database connection
-	config := flags.NewDbConfigWithPassword(ctx, projectRef)
-	if err := linkDatabase(ctx, config, fsys, options...); err != nil {
+	if config, err := flags.NewDbConfigWithPassword(ctx, projectRef); err != nil {
+		fmt.Fprintln(os.Stderr, utils.Yellow("WARN:"), err)
+	} else if err := linkDatabase(ctx, config, fsys, options...); err != nil {
 		return err
 	}
 
@@ -58,60 +58,36 @@ major_version = %d
 	return nil
 }
 
-func LinkServices(ctx context.Context, projectRef, serviceKey string, fsys afero.Fs) {
-	// Ignore non-fatal errors linking services
-	var wg sync.WaitGroup
-	wg.Add(8)
-	go func() {
-		defer wg.Done()
-		if err := linkDatabaseSettings(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := linkNetworkRestrictions(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := linkPostgrest(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := linkGotrue(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := linkStorage(ctx, projectRef); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := linkPooler(ctx, projectRef, fsys); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
+func LinkServices(ctx context.Context, projectRef, serviceKey string, skipPooler bool, fsys afero.Fs) {
+	jq := queue.NewJobQueue(5)
 	api := tenant.NewTenantAPI(ctx, projectRef, serviceKey)
-	go func() {
-		defer wg.Done()
-		if err := linkPostgrestVersion(ctx, api, fsys); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
+	jobs := []func() error{
+		func() error { return linkDatabaseSettings(ctx, projectRef) },
+		func() error { return linkNetworkRestrictions(ctx, projectRef) },
+		func() error { return linkPostgrest(ctx, projectRef) },
+		func() error { return linkGotrue(ctx, projectRef) },
+		func() error { return linkStorage(ctx, projectRef) },
+		func() error {
+			if skipPooler {
+				utils.Config.Db.Pooler.ConnectionString = ""
+				return fsys.RemoveAll(utils.PoolerUrlPath)
+			}
+			return linkPooler(ctx, projectRef, fsys)
+		},
+		func() error { return linkPostgrestVersion(ctx, api, fsys) },
+		func() error { return linkGotrueVersion(ctx, api, fsys) },
+		func() error { return linkStorageVersion(ctx, api, fsys) },
+	}
+	// Ignore non-fatal errors linking services
+	logger := utils.GetDebugLogger()
+	for _, job := range jobs {
+		if err := jq.Put(job); err != nil {
+			fmt.Fprintln(logger, err)
 		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := linkGotrueVersion(ctx, api, fsys); err != nil && viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
-	wg.Wait()
+	}
+	if err := jq.Collect(); err != nil {
+		fmt.Fprintln(logger, err)
+	}
 }
 
 func linkPostgrest(ctx context.Context, projectRef string) error {
@@ -163,14 +139,22 @@ func linkStorage(ctx context.Context, projectRef string) error {
 	return nil
 }
 
+func linkStorageVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs) error {
+	version, err := api.GetStorageVersion(ctx)
+	if err != nil {
+		return err
+	}
+	return utils.WriteFile(utils.StorageVersionPath, []byte(version), fsys)
+}
+
 const GET_LATEST_STORAGE_MIGRATION = "SELECT name FROM storage.migrations ORDER BY id DESC LIMIT 1"
 
-func linkStorageVersion(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
+func linkStorageMigration(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 	var name string
 	if err := conn.QueryRow(ctx, GET_LATEST_STORAGE_MIGRATION).Scan(&name); err != nil {
 		return errors.Errorf("failed to fetch storage migration: %w", err)
 	}
-	return utils.WriteFile(utils.StorageVersionPath, []byte(name), fsys)
+	return utils.WriteFile(utils.StorageMigrationPath, []byte(name), fsys)
 }
 
 func linkDatabaseSettings(ctx context.Context, projectRef string) error {
@@ -202,14 +186,7 @@ func linkDatabase(ctx context.Context, config pgconn.Config, fsys afero.Fs, opti
 	}
 	defer conn.Close(context.Background())
 	updatePostgresConfig(conn)
-	if err := linkStorageVersion(ctx, conn, fsys); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-	}
-	// If `schema_migrations` doesn't exist on the remote database, create it.
-	if err := migration.CreateMigrationTable(ctx, conn); err != nil {
-		return err
-	}
-	return migration.CreateSeedTable(ctx, conn)
+	return linkStorageMigration(ctx, conn, fsys)
 }
 
 func updatePostgresConfig(conn *pgx.Conn) {
@@ -223,24 +200,23 @@ func updatePostgresConfig(conn *pgx.Conn) {
 }
 
 func linkPooler(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	resp, err := utils.GetSupabase().V1GetPoolerConfigWithResponse(ctx, projectRef)
+	primary, err := utils.GetPoolerConfigPrimary(ctx, projectRef)
 	if err != nil {
-		return errors.Errorf("failed to get pooler config: %w", err)
+		return err
 	}
-	if resp.JSON200 == nil {
-		return errors.Errorf("%w: %s", tenant.ErrAuthToken, string(resp.Body))
-	}
-	for _, config := range *resp.JSON200 {
-		if config.DatabaseType == api.PRIMARY {
-			updatePoolerConfig(config)
-		}
-	}
+	updatePoolerConfig(primary)
 	return utils.WriteFile(utils.PoolerUrlPath, []byte(utils.Config.Db.Pooler.ConnectionString), fsys)
 }
 
 func updatePoolerConfig(config api.SupavisorConfigResponse) {
-	utils.Config.Db.Pooler.ConnectionString = config.ConnectionString
-	utils.Config.Db.Pooler.PoolMode = cliConfig.PoolMode(config.PoolMode)
+	// Remove password from pooler connection string because the placeholder text
+	// [YOUR-PASSWORD] messes up pgconn.ParseConfig. The password must be percent
+	// escaped so we cannot simply call strings.Replace with actual password.
+	utils.Config.Db.Pooler.ConnectionString = strings.ReplaceAll(config.ConnectionString, ":[YOUR-PASSWORD]", "")
+	// Always use session mode for running migrations
+	if utils.Config.Db.Pooler.PoolMode = cliConfig.SessionMode; config.PoolMode != api.SupavisorConfigResponsePoolModeSession {
+		utils.Config.Db.Pooler.ConnectionString = strings.ReplaceAll(utils.Config.Db.Pooler.ConnectionString, ":6543/", ":5432/")
+	}
 	if value, err := config.DefaultPoolSize.Get(); err == nil {
 		utils.Config.Db.Pooler.DefaultPoolSize = cast.IntToUint(value)
 	}

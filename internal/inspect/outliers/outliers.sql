@@ -21,6 +21,6 @@ SELECT
     )
   )::text AS sync_io_time,
   query
-FROM pg_stat_statements s WHERE userid = (SELECT usesysid FROM pg_user WHERE usename = current_user LIMIT 1)
+FROM extensions.pg_stat_statements s WHERE userid = (SELECT usesysid FROM pg_user WHERE usename = current_user LIMIT 1)
 ORDER BY total_exec_time DESC
 LIMIT 10

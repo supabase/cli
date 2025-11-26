@@ -27,6 +27,7 @@ cat "/etc/backup.sql" \
 
 echo "$0: restoring schema"
 cat "/etc/backup.sql" \
+| sed -E 's/^\\(un)?restrict .*$/-- &/' \
 | sed -E 's/^CREATE VIEW /CREATE OR REPLACE VIEW /' \
 | sed -E 's/^CREATE FUNCTION /CREATE OR REPLACE FUNCTION /' \
 | sed -E 's/^CREATE TRIGGER /CREATE OR REPLACE TRIGGER /' \

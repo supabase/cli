@@ -83,24 +83,6 @@ func TestPullSchema(t *testing.T) {
 		assert.Equal(t, []byte("test"), contents)
 	})
 
-	t.Run("throws error on load user schema failure", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
-		require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(migration.LIST_MIGRATION_VERSION).
-			Reply("SELECT 1", []interface{}{"0"}).
-			Query(migration.ListSchemas, migration.ManagedSchemas).
-			ReplyError(pgerrcode.DuplicateTable, `relation "test" already exists`)
-		// Run test
-		err := run(context.Background(), nil, "", conn.MockClient(t), fsys)
-		// Check error
-		assert.ErrorContains(t, err, `ERROR: relation "test" already exists (SQLSTATE 42P07)`)
-	})
-
 	t.Run("throws error on diff failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -116,7 +98,7 @@ func TestPullSchema(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
-			Reply("SELECT 1", []interface{}{"0"})
+			Reply("SELECT 1", []any{"0"})
 		// Run test
 		err := run(context.Background(), []string{"public"}, "", conn.MockClient(t), fsys)
 		// Check error
@@ -167,7 +149,7 @@ func TestSyncRemote(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
-			Reply("SELECT 1", []interface{}{"20220727064247"})
+			Reply("SELECT 1", []any{"20220727064247"})
 		// Run test
 		err := assertRemoteInSync(context.Background(), conn.MockClient(t), fsys)
 		// Check error

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 
 	"github.com/go-errors/errors"
 )
@@ -93,10 +94,8 @@ func (s *Fetcher) Send(ctx context.Context, method, path string, reqBody any, re
 	if err != nil {
 		return nil, errors.Errorf("failed to execute http request: %w", err)
 	}
-	for _, expected := range s.status {
-		if resp.StatusCode == expected {
-			return resp, nil
-		}
+	if slices.Contains(s.status, resp.StatusCode) {
+		return resp, nil
 	}
 	// Reject unexpected status codes as error
 	if len(s.status) > 0 || resp.StatusCode >= http.StatusBadRequest {
