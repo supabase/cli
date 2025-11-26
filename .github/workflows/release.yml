@@ -1,24 +1,36 @@
 name: Release
 
 on:
+  push:
+    branches:
+      - main
   workflow_call:
-    inputs:
-      release:
-        required: true
-        type: string
-  workflow_dispatch:
-    inputs:
-      release:
-        description: "v1.0.0"
-        required: true
-        type: string
 
 permissions:
   contents: read
 
 jobs:
+  settings:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    outputs:
+      release_tag: ${{ steps.prerelease.outputs.tagName }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: prerelease
+        run: |
+          gh release list --limit 1 --json tagName --jq \
+          '.[]|to_entries|map("\(.key)=\(.value|tostring)")|.[]' >> $GITHUB_OUTPUT
+      - run: gh release edit ${{ steps.prerelease.outputs.tagName }} --latest --prerelease=false
+
   commit:
     name: Publish Brew and Scoop
+    needs:
+      - settings
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -35,12 +47,26 @@ jobs:
           repositories: |
             homebrew-tap
             scoop-bucket
-      - run: go run tools/publish/main.go ${{ inputs.release }}
+      - run: go run tools/publish/main.go ${{ needs.settings.outputs.release_tag }}
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
+  publish:
+    name: Publish NPM
+    needs:
+      - settings
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/tag-npm.yml
+    with:
+      release: ${{ needs.settings.outputs.release_tag }}
+    secrets: inherit
+
   compose:
     name: Bump self-hosted versions
+    needs:
+      - settings
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -63,7 +89,9 @@ jobs:
   changelog:
     name: Publish changelog
     needs:
+      - settings
       - commit
+      - publish
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -86,6 +114,8 @@ jobs:
 
   docs:
     name: Publish reference docs
+    needs:
+      - settings
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -101,6 +131,6 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: |
             supabase
-      - run: go run docs/main.go ${{ inputs.release }} | go run tools/bumpdoc/main.go apps/docs/spec/cli_v1_commands.yaml
+      - run: go run docs/main.go ${{ needs.settings.outputs.release_tag }} | go run tools/bumpdoc/main.go apps/docs/spec/cli_v1_commands.yaml
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
