@@ -30,6 +30,11 @@ jobs:
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            cli
+            homebrew-tap
+            scoop-bucket
 
   commit:
     name: Publish Brew and Scoop

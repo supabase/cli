@@ -77,6 +77,11 @@ jobs:
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            cli
+            homebrew-tap
+            scoop-bucket
       - run: go run tools/publish/main.go --beta "${{ needs.release.outputs.new-release-version }}"
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
