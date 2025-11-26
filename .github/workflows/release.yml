@@ -1,36 +1,45 @@
 name: Release
 
 on:
-  push:
-    branches:
-      - main
-  workflow_call:
+  pull_request_review:
+    types:
+      - submitted
 
 permissions:
   contents: read
 
 jobs:
-  settings:
+  fast-forward:
+    if: |
+      github.event.pull_request.head.ref == 'develop' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.review.state == 'approved'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       packages: write
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     outputs:
-      release_tag: ${{ steps.prerelease.outputs.tagName }}
+      release_tag: ${{ steps.latest-release.outputs.tagName }}
     steps:
       - uses: actions/checkout@v6
-      - id: prerelease
+        with:
+          fetch-depth: 0
+      - run: |
+          git checkout main
+          git merge --ff-only "${{ github.event.pull_request.head.sha }}"
+          git push origin main
+      - id: latest-release
         run: |
-          gh release list --limit 1 --json tagName --jq \
-          '.[]|to_entries|map("\(.key)=\(.value|tostring)")|.[]' >> $GITHUB_OUTPUT
-      - run: gh release edit ${{ steps.prerelease.outputs.tagName }} --latest --prerelease=false
+          latest=$(gh release list --limit 1 --json tagName --jq '.[].tagName')
+          gh release edit $latest --latest --prerelease=false
+          echo "tagName=$latest" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   commit:
     name: Publish Brew and Scoop
     needs:
-      - settings
+      - fast-forward
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -47,26 +56,26 @@ jobs:
           repositories: |
             homebrew-tap
             scoop-bucket
-      - run: go run tools/publish/main.go ${{ needs.settings.outputs.release_tag }}
+      - run: go run tools/publish/main.go ${{ needs.fast-forward.outputs.release_tag }}
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
   publish:
     name: Publish NPM
     needs:
-      - settings
+      - fast-forward
     permissions:
       contents: read
       id-token: write
     uses: ./.github/workflows/tag-npm.yml
     with:
-      release: ${{ needs.settings.outputs.release_tag }}
+      release: ${{ needs.fast-forward.outputs.release_tag }}
     secrets: inherit
 
   compose:
     name: Bump self-hosted versions
     needs:
-      - settings
+      - fast-forward
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -89,7 +98,7 @@ jobs:
   changelog:
     name: Publish changelog
     needs:
-      - settings
+      - fast-forward
       - commit
       - publish
     runs-on: ubuntu-latest
@@ -115,7 +124,7 @@ jobs:
   docs:
     name: Publish reference docs
     needs:
-      - settings
+      - fast-forward
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -131,6 +140,6 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: |
             supabase
-      - run: go run docs/main.go ${{ needs.settings.outputs.release_tag }} | go run tools/bumpdoc/main.go apps/docs/spec/cli_v1_commands.yaml
+      - run: go run docs/main.go ${{ needs.fast-forward.outputs.release_tag }} | go run tools/bumpdoc/main.go apps/docs/spec/cli_v1_commands.yaml
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
