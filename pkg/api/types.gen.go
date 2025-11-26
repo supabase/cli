@@ -97,6 +97,12 @@ const (
 	ApplyProjectAddonBodyAddonVariant3Ipv4Default ApplyProjectAddonBodyAddonVariant3 = "ipv4_default"
 )
 
+// Defines values for AuthConfigResponseDbMaxPoolSizeUnit.
+const (
+	AuthConfigResponseDbMaxPoolSizeUnitConnections AuthConfigResponseDbMaxPoolSizeUnit = "connections"
+	AuthConfigResponseDbMaxPoolSizeUnitPercent     AuthConfigResponseDbMaxPoolSizeUnit = "percent"
+)
+
 // Defines values for AuthConfigResponsePasswordRequiredCharacters.
 const (
 	AuthConfigResponsePasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789  AuthConfigResponsePasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"
@@ -969,6 +975,12 @@ const (
 	SupavisorConfigResponsePoolModeTransaction SupavisorConfigResponsePoolMode = "transaction"
 )
 
+// Defines values for UpdateAuthConfigBodyDbMaxPoolSizeUnit.
+const (
+	UpdateAuthConfigBodyDbMaxPoolSizeUnitConnections UpdateAuthConfigBodyDbMaxPoolSizeUnit = "connections"
+	UpdateAuthConfigBodyDbMaxPoolSizeUnitPercent     UpdateAuthConfigBodyDbMaxPoolSizeUnit = "percent"
+)
+
 // Defines values for UpdateAuthConfigBodyPasswordRequiredCharacters.
 const (
 	UpdateAuthConfigBodyPasswordRequiredCharactersAbcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789  UpdateAuthConfigBodyPasswordRequiredCharacters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"
@@ -1687,6 +1699,7 @@ type ApplyProjectAddonBody_AddonVariant struct {
 type AuthConfigResponse struct {
 	ApiMaxRequestDuration                                 nullable.Nullable[int]                                          `json:"api_max_request_duration"`
 	DbMaxPoolSize                                         nullable.Nullable[int]                                          `json:"db_max_pool_size"`
+	DbMaxPoolSizeUnit                                     nullable.Nullable[AuthConfigResponseDbMaxPoolSizeUnit]          `json:"db_max_pool_size_unit"`
 	DisableSignup                                         nullable.Nullable[bool]                                         `json:"disable_signup"`
 	ExternalAnonymousUsersEnabled                         nullable.Nullable[bool]                                         `json:"external_anonymous_users_enabled"`
 	ExternalAppleAdditionalClientIds                      nullable.Nullable[string]                                       `json:"external_apple_additional_client_ids"`
@@ -1908,6 +1921,9 @@ type AuthConfigResponse struct {
 	SmtpUser                                              nullable.Nullable[string]                                       `json:"smtp_user"`
 	UriAllowList                                          nullable.Nullable[string]                                       `json:"uri_allow_list"`
 }
+
+// AuthConfigResponseDbMaxPoolSizeUnit defines model for AuthConfigResponse.DbMaxPoolSizeUnit.
+type AuthConfigResponseDbMaxPoolSizeUnit string
 
 // AuthConfigResponsePasswordRequiredCharacters defines model for AuthConfigResponse.PasswordRequiredCharacters.
 type AuthConfigResponsePasswordRequiredCharacters string
@@ -3051,6 +3067,39 @@ type ReadOnlyStatusResponse struct {
 	OverrideEnabled     bool   `json:"override_enabled"`
 }
 
+// RealtimeConfigResponse defines model for RealtimeConfigResponse.
+type RealtimeConfigResponse struct {
+	// ConnectionPool Sets connection pool size for Realtime Authorization
+	ConnectionPool nullable.Nullable[int] `json:"connection_pool"`
+
+	// MaxBytesPerSecond Sets maximum number of bytes per second rate per channel limit
+	MaxBytesPerSecond nullable.Nullable[int] `json:"max_bytes_per_second"`
+
+	// MaxChannelsPerClient Sets maximum number of channels per client rate limit
+	MaxChannelsPerClient nullable.Nullable[int] `json:"max_channels_per_client"`
+
+	// MaxConcurrentUsers Sets maximum number of concurrent users rate limit
+	MaxConcurrentUsers nullable.Nullable[int] `json:"max_concurrent_users"`
+
+	// MaxEventsPerSecond Sets maximum number of events per second rate per channel limit
+	MaxEventsPerSecond nullable.Nullable[int] `json:"max_events_per_second"`
+
+	// MaxJoinsPerSecond Sets maximum number of joins per second rate limit
+	MaxJoinsPerSecond nullable.Nullable[int] `json:"max_joins_per_second"`
+
+	// MaxPayloadSizeInKb Sets maximum number of payload size in KB rate limit
+	MaxPayloadSizeInKb nullable.Nullable[int] `json:"max_payload_size_in_kb"`
+
+	// MaxPresenceEventsPerSecond Sets maximum number of presence events per second rate limit
+	MaxPresenceEventsPerSecond nullable.Nullable[int] `json:"max_presence_events_per_second"`
+
+	// PrivateOnly Whether to only allow private channels
+	PrivateOnly nullable.Nullable[bool] `json:"private_only"`
+
+	// Suspend Whether to suspend realtime
+	Suspend nullable.Nullable[bool] `json:"suspend"`
+}
+
 // RegionsInfo defines model for RegionsInfo.
 type RegionsInfo struct {
 	All struct {
@@ -3276,7 +3325,10 @@ type StorageConfigResponse struct {
 	} `json:"external"`
 	Features struct {
 		IcebergCatalog *struct {
-			Enabled bool `json:"enabled"`
+			Enabled       bool `json:"enabled"`
+			MaxCatalogs   int  `json:"maxCatalogs"`
+			MaxNamespaces int  `json:"maxNamespaces"`
+			MaxTables     int  `json:"maxTables"`
 		} `json:"icebergCatalog,omitempty"`
 		ImageTransformation struct {
 			Enabled bool `json:"enabled"`
@@ -3284,6 +3336,11 @@ type StorageConfigResponse struct {
 		S3Protocol struct {
 			Enabled bool `json:"enabled"`
 		} `json:"s3Protocol"`
+		VectorBuckets *struct {
+			Enabled    bool `json:"enabled"`
+			MaxBuckets int  `json:"maxBuckets"`
+			MaxIndexes int  `json:"maxIndexes"`
+		} `json:"vectorBuckets,omitempty"`
 	} `json:"features"`
 	FileSizeLimit    int64  `json:"fileSizeLimit"`
 	MigrationVersion string `json:"migrationVersion"`
@@ -3350,6 +3407,7 @@ type UpdateApiKeyBody struct {
 type UpdateAuthConfigBody struct {
 	ApiMaxRequestDuration                                 nullable.Nullable[int]                                            `json:"api_max_request_duration,omitempty"`
 	DbMaxPoolSize                                         nullable.Nullable[int]                                            `json:"db_max_pool_size,omitempty"`
+	DbMaxPoolSizeUnit                                     nullable.Nullable[UpdateAuthConfigBodyDbMaxPoolSizeUnit]          `json:"db_max_pool_size_unit"`
 	DisableSignup                                         nullable.Nullable[bool]                                           `json:"disable_signup,omitempty"`
 	ExternalAnonymousUsersEnabled                         nullable.Nullable[bool]                                           `json:"external_anonymous_users_enabled,omitempty"`
 	ExternalAppleAdditionalClientIds                      nullable.Nullable[string]                                         `json:"external_apple_additional_client_ids,omitempty"`
@@ -3570,6 +3628,9 @@ type UpdateAuthConfigBody struct {
 	UriAllowList                                          nullable.Nullable[string]                                         `json:"uri_allow_list,omitempty"`
 }
 
+// UpdateAuthConfigBodyDbMaxPoolSizeUnit defines model for UpdateAuthConfigBody.DbMaxPoolSizeUnit.
+type UpdateAuthConfigBodyDbMaxPoolSizeUnit string
+
 // UpdateAuthConfigBodyPasswordRequiredCharacters defines model for UpdateAuthConfigBody.PasswordRequiredCharacters.
 type UpdateAuthConfigBodyPasswordRequiredCharacters string
 
@@ -3746,6 +3807,39 @@ type UpdateProviderResponse struct {
 	UpdatedAt *string `json:"updated_at,omitempty"`
 }
 
+// UpdateRealtimeConfigBody defines model for UpdateRealtimeConfigBody.
+type UpdateRealtimeConfigBody struct {
+	// ConnectionPool Sets connection pool size for Realtime Authorization
+	ConnectionPool *int `json:"connection_pool,omitempty"`
+
+	// MaxBytesPerSecond Sets maximum number of bytes per second rate per channel limit
+	MaxBytesPerSecond *int `json:"max_bytes_per_second,omitempty"`
+
+	// MaxChannelsPerClient Sets maximum number of channels per client rate limit
+	MaxChannelsPerClient *int `json:"max_channels_per_client,omitempty"`
+
+	// MaxConcurrentUsers Sets maximum number of concurrent users rate limit
+	MaxConcurrentUsers *int `json:"max_concurrent_users,omitempty"`
+
+	// MaxEventsPerSecond Sets maximum number of events per second rate per channel limit
+	MaxEventsPerSecond *int `json:"max_events_per_second,omitempty"`
+
+	// MaxJoinsPerSecond Sets maximum number of joins per second rate limit
+	MaxJoinsPerSecond *int `json:"max_joins_per_second,omitempty"`
+
+	// MaxPayloadSizeInKb Sets maximum number of payload size in KB rate limit
+	MaxPayloadSizeInKb *int `json:"max_payload_size_in_kb,omitempty"`
+
+	// MaxPresenceEventsPerSecond Sets maximum number of presence events per second rate limit
+	MaxPresenceEventsPerSecond *int `json:"max_presence_events_per_second,omitempty"`
+
+	// PrivateOnly Whether to only allow private channels
+	PrivateOnly *bool `json:"private_only,omitempty"`
+
+	// Suspend Whether to suspend realtime
+	Suspend *bool `json:"suspend,omitempty"`
+}
+
 // UpdateRunStatusBody defines model for UpdateRunStatusBody.
 type UpdateRunStatusBody struct {
 	Clone     *UpdateRunStatusBodyClone     `json:"clone,omitempty"`
@@ -3801,7 +3895,10 @@ type UpdateStorageConfigBody struct {
 	} `json:"external,omitempty"`
 	Features *struct {
 		IcebergCatalog *struct {
-			Enabled bool `json:"enabled"`
+			Enabled       bool `json:"enabled"`
+			MaxCatalogs   int  `json:"maxCatalogs"`
+			MaxNamespaces int  `json:"maxNamespaces"`
+			MaxTables     int  `json:"maxTables"`
 		} `json:"icebergCatalog,omitempty"`
 		ImageTransformation struct {
 			Enabled bool `json:"enabled"`
@@ -3809,6 +3906,11 @@ type UpdateStorageConfigBody struct {
 		S3Protocol struct {
 			Enabled bool `json:"enabled"`
 		} `json:"s3Protocol"`
+		VectorBuckets *struct {
+			Enabled    bool `json:"enabled"`
+			MaxBuckets int  `json:"maxBuckets"`
+			MaxIndexes int  `json:"maxIndexes"`
+		} `json:"vectorBuckets,omitempty"`
 	} `json:"features,omitempty"`
 	FileSizeLimit *int64 `json:"fileSizeLimit,omitempty"`
 }
@@ -4712,6 +4814,9 @@ type V1UpdatePoolerConfigJSONRequestBody = UpdateSupavisorConfigBody
 
 // V1UpdatePostgresConfigJSONRequestBody defines body for V1UpdatePostgresConfig for application/json ContentType.
 type V1UpdatePostgresConfigJSONRequestBody = UpdatePostgresConfigBody
+
+// V1UpdateRealtimeConfigJSONRequestBody defines body for V1UpdateRealtimeConfig for application/json ContentType.
+type V1UpdateRealtimeConfigJSONRequestBody = UpdateRealtimeConfigBody
 
 // V1UpdateStorageConfigJSONRequestBody defines body for V1UpdateStorageConfig for application/json ContentType.
 type V1UpdateStorageConfigJSONRequestBody = UpdateStorageConfigBody

@@ -372,6 +372,14 @@ type ClientInterface interface {
 
 	V1UpdatePostgresConfig(ctx context.Context, ref string, body V1UpdatePostgresConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1GetRealtimeConfig request
+	V1GetRealtimeConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1UpdateRealtimeConfigWithBody request with any body
+	V1UpdateRealtimeConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1UpdateRealtimeConfig(ctx context.Context, ref string, body V1UpdateRealtimeConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1GetStorageConfig request
 	V1GetStorageConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1848,6 +1856,42 @@ func (c *Client) V1UpdatePostgresConfigWithBody(ctx context.Context, ref string,
 
 func (c *Client) V1UpdatePostgresConfig(ctx context.Context, ref string, body V1UpdatePostgresConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1UpdatePostgresConfigRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetRealtimeConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetRealtimeConfigRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateRealtimeConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateRealtimeConfigRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateRealtimeConfig(ctx context.Context, ref string, body V1UpdateRealtimeConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateRealtimeConfigRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6852,6 +6896,87 @@ func NewV1UpdatePostgresConfigRequestWithBody(server string, ref string, content
 	return req, nil
 }
 
+// NewV1GetRealtimeConfigRequest generates requests for V1GetRealtimeConfig
+func NewV1GetRealtimeConfigRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/realtime", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1UpdateRealtimeConfigRequest calls the generic V1UpdateRealtimeConfig builder with application/json body
+func NewV1UpdateRealtimeConfigRequest(server string, ref string, body V1UpdateRealtimeConfigJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1UpdateRealtimeConfigRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1UpdateRealtimeConfigRequestWithBody generates requests for V1UpdateRealtimeConfig with any type of body
+func NewV1UpdateRealtimeConfigRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/realtime", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewV1GetStorageConfigRequest generates requests for V1GetStorageConfig
 func NewV1GetStorageConfigRequest(server string, ref string) (*http.Request, error) {
 	var err error
@@ -10520,6 +10645,14 @@ type ClientWithResponsesInterface interface {
 
 	V1UpdatePostgresConfigWithResponse(ctx context.Context, ref string, body V1UpdatePostgresConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdatePostgresConfigResponse, error)
 
+	// V1GetRealtimeConfigWithResponse request
+	V1GetRealtimeConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetRealtimeConfigResponse, error)
+
+	// V1UpdateRealtimeConfigWithBodyWithResponse request with any body
+	V1UpdateRealtimeConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateRealtimeConfigResponse, error)
+
+	V1UpdateRealtimeConfigWithResponse(ctx context.Context, ref string, body V1UpdateRealtimeConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateRealtimeConfigResponse, error)
+
 	// V1GetStorageConfigWithResponse request
 	V1GetStorageConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetStorageConfigResponse, error)
 
@@ -12491,6 +12624,49 @@ func (r V1UpdatePostgresConfigResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1UpdatePostgresConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetRealtimeConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *RealtimeConfigResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetRealtimeConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetRealtimeConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1UpdateRealtimeConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1UpdateRealtimeConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1UpdateRealtimeConfigResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -14922,6 +15098,32 @@ func (c *ClientWithResponses) V1UpdatePostgresConfigWithResponse(ctx context.Con
 		return nil, err
 	}
 	return ParseV1UpdatePostgresConfigResponse(rsp)
+}
+
+// V1GetRealtimeConfigWithResponse request returning *V1GetRealtimeConfigResponse
+func (c *ClientWithResponses) V1GetRealtimeConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetRealtimeConfigResponse, error) {
+	rsp, err := c.V1GetRealtimeConfig(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetRealtimeConfigResponse(rsp)
+}
+
+// V1UpdateRealtimeConfigWithBodyWithResponse request with arbitrary body returning *V1UpdateRealtimeConfigResponse
+func (c *ClientWithResponses) V1UpdateRealtimeConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateRealtimeConfigResponse, error) {
+	rsp, err := c.V1UpdateRealtimeConfigWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateRealtimeConfigResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1UpdateRealtimeConfigWithResponse(ctx context.Context, ref string, body V1UpdateRealtimeConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateRealtimeConfigResponse, error) {
+	rsp, err := c.V1UpdateRealtimeConfig(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateRealtimeConfigResponse(rsp)
 }
 
 // V1GetStorageConfigWithResponse request returning *V1GetStorageConfigResponse
@@ -17708,6 +17910,48 @@ func ParseV1UpdatePostgresConfigResponse(rsp *http.Response) (*V1UpdatePostgresC
 		}
 		response.JSON200 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseV1GetRealtimeConfigResponse parses an HTTP response from a V1GetRealtimeConfigWithResponse call
+func ParseV1GetRealtimeConfigResponse(rsp *http.Response) (*V1GetRealtimeConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetRealtimeConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RealtimeConfigResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1UpdateRealtimeConfigResponse parses an HTTP response from a V1UpdateRealtimeConfigWithResponse call
+func ParseV1UpdateRealtimeConfigResponse(rsp *http.Response) (*V1UpdateRealtimeConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1UpdateRealtimeConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
 	}
 
 	return response, nil
