@@ -9,6 +9,7 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write
 
 jobs:
   settings:
@@ -31,6 +32,13 @@ jobs:
       - settings
     runs-on: ubuntu-latest
     steps:
+      # use GitHub app to create a release token that can publish to homebrew-tap and scoop
+      - name: Generate token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
@@ -38,7 +46,7 @@ jobs:
           cache: true
       - run: go run tools/publish/main.go ${{ needs.settings.outputs.release_tag }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
   publish:
     name: Publish NPM
@@ -53,6 +61,12 @@ jobs:
     name: Bump self-hosted versions
     runs-on: ubuntu-latest
     steps:
+      - name: Generate token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
@@ -60,7 +74,7 @@ jobs:
           cache: true
       - run: go run tools/selfhost/main.go
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
   changelog:
     name: Publish changelog
@@ -69,6 +83,12 @@ jobs:
       - publish
     runs-on: ubuntu-latest
     steps:
+      - name: Generate token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
@@ -76,7 +96,7 @@ jobs:
           cache: true
       - run: go run tools/changelog/main.go ${{ secrets.SLACK_CHANNEL }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
 
   docs:
@@ -85,6 +105,12 @@ jobs:
       - settings
     runs-on: ubuntu-latest
     steps:
+      - name: Generate token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
@@ -92,4 +118,4 @@ jobs:
           cache: true
       - run: go run docs/main.go ${{ needs.settings.outputs.release_tag }} | go run tools/bumpdoc/main.go apps/docs/spec/cli_v1_commands.yaml
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

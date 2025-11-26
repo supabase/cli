@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   release:
@@ -65,6 +66,13 @@ jobs:
     if: needs.release.outputs.new-release-published == 'true'
     runs-on: ubuntu-latest
     steps:
+      # use GitHub app to create a release token that can publish to homebrew-tap and scoop
+      - name: Generate token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
@@ -72,7 +80,7 @@ jobs:
           cache: true
       - run: go run tools/publish/main.go --beta "${{ needs.release.outputs.new-release-version }}"
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
   publish:
     name: Publish NPM
@@ -87,7 +95,10 @@ jobs:
         with:
           node-version: "16.x"
           registry-url: "https://registry.npmjs.org"
+
+      # Ensure npm 11.5.1 or later is installed for trusted publishing support
+      - name: Update npm
+        run: npm install -g npm@latest
+
       - run: npm --git-tag-version=false version ${{ needs.release.outputs.new-release-version }}
       - run: npm publish --tag ${{ needs.release.outputs.new-release-channel }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
