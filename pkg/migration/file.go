@@ -96,6 +96,20 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 			if len(pgErr.Detail) > 0 {
 				msg = append(msg, pgErr.Detail)
 			}
+			// Provide helpful hint for extension type errors (SQLSTATE 42704: undefined_object)
+			if pgErr.Code == "42704" && strings.Contains(pgErr.Message, "type") && strings.Contains(pgErr.Message, "does not exist") {
+				// Extract type name from error message (e.g., 'type "ltree" does not exist')
+				typeName := extractTypeName(pgErr.Message)
+				msg = append(msg, "")
+				msg = append(msg, "Hint: This type may be defined in a schema that's not in your search_path.")
+				msg = append(msg, "      Use schema-qualified type references to avoid this error:")
+				if typeName != "" {
+					msg = append(msg, fmt.Sprintf("        CREATE TABLE example (col extensions.%s);", typeName))
+				} else {
+					msg = append(msg, "        CREATE TABLE example (col extensions.<type_name>);")
+				}
+				msg = append(msg, "      Learn more: supabase migration new --help")
+			}
 		}
 		msg = append(msg, fmt.Sprintf("At statement: %d", i), stat)
 		return errors.Errorf("%w\n%s", err, strings.Join(msg, "\n"))
@@ -118,6 +132,18 @@ func markError(stat string, pos int) string {
 		break
 	}
 	return strings.Join(lines, "\n")
+}
+
+// extractTypeName extracts the type name from PostgreSQL error messages like:
+// 'type "ltree" does not exist' -> "ltree"
+func extractTypeName(errMsg string) string {
+	// Match pattern: type "typename" does not exist
+	re := regexp.MustCompile(`type "([^"]+)" does not exist`)
+	matches := re.FindStringSubmatch(errMsg)
+	if len(matches) > 1 {
+		return matches[1]
+	}
+	return ""
 }
 
 func (m *MigrationFile) insertVersionSQL(conn *pgx.Conn, batch *pgconn.Batch) error {
