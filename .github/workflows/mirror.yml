@@ -14,9 +14,6 @@ on:
   # mirrored yet. It's a catch-22!
   #
   # TODO: Make the cli start test run *after* we mirror images (if needed).
-  pull_request_review:
-    types:
-      - submitted
   workflow_dispatch:
 
 permissions:
@@ -25,7 +22,6 @@ permissions:
 jobs:
   setup:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.review.state == 'approved' }}
     outputs:
       tags: ${{ steps.list.outputs.tags }}
       curr: ${{ steps.curr.outputs.tags }}

@@ -13,6 +13,8 @@ jobs:
     # Checking the actor will prevent your Action run failing on non-Dependabot
     # PRs but also ensures that it only does work for Dependabot PRs.
     if: ${{ github.actor == 'dependabot[bot]' }}
+    outputs:
+      docker_tags: ${{ steps.updated.outputs.dockerTags }}
     steps:
       # This first step will fail if there's no metadata and so the approval
       # will not occur.
@@ -36,3 +38,26 @@ jobs:
         run: gh pr merge --auto --squash "${{ github.event.pull_request.html_url }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: updated
+        run: |
+          dockerTags=$(echo "${{ steps.meta.outputs.updated-dependencies-json }}" | jq -c \
+          'map(select(.dependencyName == "supabase/logflare"))|map("\(.dependencyName):\(.newVersion)")')
+          echo "dockerTags=$dockerTags" >> $GITHUB_OUTPUT
+
+  mirror:
+    needs:
+      - dependabot
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    if: ${{ needs.dependabot.outputs.docker_tags != '[]' }}
+    strategy:
+      matrix:
+        src: ${{ fromJson(needs.dependabot.outputs.docker_tags) }}
+    # Call workflow explicitly because events from actions cannot trigger more actions
+    uses: ./.github/workflows/mirror-image.yml
+    with:
+      image: ${{ matrix.src }}
+    secrets: inherit
