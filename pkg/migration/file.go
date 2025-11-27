@@ -26,7 +26,10 @@ type MigrationFile struct {
 	Statements []string
 }
 
-var migrateFilePattern = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
+var (
+	migrateFilePattern = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
+	typeNamePattern    = regexp.MustCompile(`type "([^"]+)" does not exist`)
+)
 
 func NewMigrationFromFile(path string, fsys fs.FS) (*MigrationFile, error) {
 	lines, err := parseFile(path, fsys)
@@ -131,9 +134,7 @@ func markError(stat string, pos int) string {
 // extractTypeName extracts the type name from PostgreSQL error messages like:
 // 'type "ltree" does not exist' -> "ltree"
 func extractTypeName(errMsg string) string {
-	// Match pattern: type "typename" does not exist
-	re := regexp.MustCompile(`type "([^"]+)" does not exist`)
-	matches := re.FindStringSubmatch(errMsg)
+	matches := typeNamePattern.FindStringSubmatch(errMsg)
 	if len(matches) > 1 {
 		return matches[1]
 	}
