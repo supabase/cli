@@ -1,24 +1,45 @@
 name: Release
 
 on:
-  workflow_call:
-    inputs:
-      release:
-        required: true
-        type: string
-  workflow_dispatch:
-    inputs:
-      release:
-        description: "v1.0.0"
-        required: true
-        type: string
+  pull_request_review:
+    types:
+      - submitted
 
 permissions:
   contents: read
 
 jobs:
+  fast-forward:
+    if: |
+      github.event.pull_request.head.ref == 'develop' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.review.state == 'approved'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    outputs:
+      release_tag: ${{ steps.latest-release.outputs.tagName }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - run: |
+          git checkout main
+          git merge --ff-only "${{ github.event.pull_request.head.sha }}"
+          git push origin main
+      - id: latest-release
+        run: |
+          latest=$(gh release list --limit 1 --json tagName --jq '.[].tagName')
+          gh release edit $latest --latest --prerelease=false
+          echo "tagName=$latest" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   commit:
     name: Publish Brew and Scoop
+    needs:
+      - fast-forward
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -35,12 +56,14 @@ jobs:
           repositories: |
             homebrew-tap
             scoop-bucket
-      - run: go run tools/publish/main.go ${{ inputs.release }}
+      - run: go run tools/publish/main.go ${{ needs.fast-forward.outputs.release_tag }}
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
   compose:
     name: Bump self-hosted versions
+    needs:
+      - fast-forward
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -63,6 +86,7 @@ jobs:
   changelog:
     name: Publish changelog
     needs:
+      - fast-forward
       - commit
     runs-on: ubuntu-latest
     steps:
@@ -86,6 +110,8 @@ jobs:
 
   docs:
     name: Publish reference docs
+    needs:
+      - fast-forward
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -101,6 +127,6 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: |
             supabase
-      - run: go run docs/main.go ${{ inputs.release }} | go run tools/bumpdoc/main.go apps/docs/spec/cli_v1_commands.yaml
+      - run: go run docs/main.go ${{ needs.fast-forward.outputs.release_tag }} | go run tools/bumpdoc/main.go apps/docs/spec/cli_v1_commands.yaml
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
