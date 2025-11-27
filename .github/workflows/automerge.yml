@@ -41,7 +41,7 @@ jobs:
 
       - id: updated
         run: |
-          dockerTags=$(echo "${{ steps.meta.outputs.updated-dependencies-json }}" | jq -c \
+          dockerTags=$(echo '${{ steps.meta.outputs.updated-dependencies-json }}' | jq -c \
           'map(select(.dependencyName == "supabase/logflare"))|map("\(.dependencyName):\(.newVersion)")')
           echo "dockerTags=$dockerTags" >> $GITHUB_OUTPUT
 
