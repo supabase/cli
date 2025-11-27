@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   release:
@@ -79,7 +79,6 @@ jobs:
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: |
-            cli
             homebrew-tap
             scoop-bucket
       - run: go run tools/publish/main.go --beta "${{ needs.release.outputs.new-release-version }}"
@@ -92,6 +91,9 @@ jobs:
       - release
       - goreleaser
     if: needs.release.outputs.new-release-published == 'true'
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

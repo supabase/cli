@@ -2,7 +2,8 @@ name: API Sync
 
 on:
   repository_dispatch:
-    types: [api-sync]
+    types:
+      - api-sync
   workflow_dispatch: # allow manual triggering
 
 # Add explicit permissions
@@ -57,12 +58,15 @@ jobs:
             Changes were detected in the generated API code after syncing with the latest spec from infrastructure.
           branch: sync/api-types
           base: develop
-          labels: |
-            automated pr
-            api-sync
+
+      - name: Approve a PR
+        if: steps.check.outputs.has_changes == 'true'
+        run: gh pr review --approve "${{ steps.cpr.outputs.pull-request-number }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Enable Pull Request Automerge
         if: steps.check.outputs.has_changes == 'true'
         run: gh pr merge --auto --squash "${{ steps.cpr.outputs.pull-request-number }}"
         env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

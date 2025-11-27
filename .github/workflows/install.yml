@@ -3,23 +3,25 @@ name: Install
 on:
   pull_request:
     paths:
-      - '.github/workflows/install.yml'
-      - 'package.json'
-      - 'scripts/**'
+      - ".github/workflows/install.yml"
+      - "package.json"
+      - "scripts/**"
   push:
     branches:
       - develop
     paths:
-      - '.github/workflows/install.yml'
-      - 'package.json'
-      - 'scripts/**'
+      - ".github/workflows/install.yml"
+      - "package.json"
+      - "scripts/**"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   pack:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
 
