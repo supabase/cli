@@ -60,18 +60,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
-  publish:
-    name: Publish NPM
-    needs:
-      - fast-forward
-    permissions:
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/tag-npm.yml
-    with:
-      release: ${{ needs.fast-forward.outputs.release_tag }}
-    secrets: inherit
-
   compose:
     name: Bump self-hosted versions
     needs:
@@ -100,7 +88,6 @@ jobs:
     needs:
       - fast-forward
       - commit
-      - publish
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
