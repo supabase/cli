@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	_init "github.com/supabase/cli/internal/init"
+	mcpinit "github.com/supabase/cli/internal/mcp/init"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -43,7 +44,30 @@ var (
 				createIntellijSettings = nil
 			}
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return _init.Run(ctx, fsys, createVscodeSettings, createIntellijSettings, initParams)
+
+			// Run core project init first
+			if err := _init.Run(ctx, fsys, createVscodeSettings, createIntellijSettings, initParams); err != nil {
+				return err
+			}
+
+			// Prompt for MCP configuration if in interactive mode
+			console := utils.NewConsole()
+			if configureMCP, err := console.PromptYesNo(ctx, "Configure Supabase MCP server locally?", false); err != nil {
+				return err
+			} else if configureMCP {
+				clientName, err := mcpinit.PromptMCPClient(ctx)
+				if err != nil {
+					return err
+				}
+				// Skip configuration if user selected "other"
+				if clientName != "other" {
+					if err := mcpinit.Run(ctx, fsys, clientName); err != nil {
+						return err
+					}
+				}
+			}
+
+			return nil
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Finished " + utils.Aqua("supabase init") + ".")
