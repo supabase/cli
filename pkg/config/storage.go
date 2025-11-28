@@ -14,11 +14,16 @@ type (
 		ImgProxyImage       string               `toml:"-"`
 		FileSizeLimit       sizeInBytes          `toml:"file_size_limit"`
 		ImageTransformation *imageTransformation `toml:"image_transformation"`
+		S3Protocol          *s3Protocol          `toml:"s3_protocol"`
 		S3Credentials       storageS3Credentials `toml:"-"`
 		Buckets             BucketConfig         `toml:"buckets"`
 	}
 
 	imageTransformation struct {
+		Enabled bool `toml:"enabled"`
+	}
+
+	s3Protocol struct {
 		Enabled bool `toml:"enabled"`
 	}
 
@@ -41,10 +46,7 @@ type (
 func (s *storage) ToUpdateStorageConfigBody() v1API.UpdateStorageConfigBody {
 	body := v1API.UpdateStorageConfigBody{
 		FileSizeLimit: cast.Ptr(int64(s.FileSizeLimit)),
-	}
-	// When local config is not set, we assume platform defaults should not change
-	if s.ImageTransformation != nil {
-		body.Features = &struct {
+		Features: &struct {
 			IcebergCatalog *struct {
 				Enabled       bool `json:"enabled"`
 				MaxCatalogs   int  `json:"maxCatalogs"`
@@ -62,8 +64,14 @@ func (s *storage) ToUpdateStorageConfigBody() v1API.UpdateStorageConfigBody {
 				MaxBuckets int  `json:"maxBuckets"`
 				MaxIndexes int  `json:"maxIndexes"`
 			} `json:"vectorBuckets,omitempty"`
-		}{}
+		}{},
+	}
+	// When local config is not set, we assume platform defaults should not change
+	if s.ImageTransformation != nil {
 		body.Features.ImageTransformation.Enabled = s.ImageTransformation.Enabled
+	}
+	if s.S3Protocol != nil {
+		body.Features.S3Protocol.Enabled = s.S3Protocol.Enabled
 	}
 	return body
 }
@@ -74,14 +82,13 @@ func (s *storage) FromRemoteStorageConfig(remoteConfig v1API.StorageConfigRespon
 	if s.ImageTransformation != nil {
 		s.ImageTransformation.Enabled = remoteConfig.Features.ImageTransformation.Enabled
 	}
+	if s.S3Protocol != nil {
+		s.S3Protocol.Enabled = remoteConfig.Features.S3Protocol.Enabled
+	}
 }
 
 func (s *storage) DiffWithRemote(remoteConfig v1API.StorageConfigResponse) ([]byte, error) {
 	copy := s.Clone()
-	if s.ImageTransformation != nil {
-		img := *s.ImageTransformation
-		copy.ImageTransformation = &img
-	}
 	// Convert the config values into easily comparable remoteConfig values
 	currentValue, err := ToTomlBytes(copy)
 	if err != nil {

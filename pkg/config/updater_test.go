@@ -7,6 +7,7 @@ import (
 
 	"github.com/h2non/gock"
 	"github.com/oapi-codegen/nullable"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	v1API "github.com/supabase/cli/pkg/api"
@@ -243,6 +244,7 @@ func TestUpdateStorageConfig(t *testing.T) {
 			}{},
 		}
 		mockStorage.Features.ImageTransformation.Enabled = true
+		mockStorage.Features.S3Protocol.Enabled = true
 		gock.New(server).
 			Get("/v1/projects/test-project/config/storage").
 			Reply(http.StatusOK).
@@ -313,11 +315,18 @@ func TestUpdateRemoteConfig(t *testing.T) {
 			JSON(v1API.PostgresConfigResponse{
 				MaxConnections: cast.Ptr(cast.UintToInt(100)),
 			})
+		// Network config
+		gock.New(server).
+			Get("/v1/projects/test-project/network-restrictions").
+			Reply(http.StatusOK).
+			JSON(v1API.V1GetNetworkRestrictionsResponse{})
 		// Auth config
 		gock.New(server).
 			Get("/v1/projects/test-project/config/auth").
 			Reply(http.StatusOK).
-			JSON(v1API.AuthConfigResponse{})
+			JSON(v1API.AuthConfigResponse{
+				SmtpAdminEmail: nullable.NewNullableWithValue(openapi_types.Email("abc@example.com")),
+			})
 		gock.New(server).
 			Patch("/v1/projects/test-project/config/auth").
 			Reply(http.StatusOK)
@@ -355,6 +364,9 @@ func TestUpdateRemoteConfig(t *testing.T) {
 				Enabled:       true,
 				FileSizeLimit: 100,
 				ImageTransformation: &imageTransformation{
+					Enabled: true,
+				},
+				S3Protocol: &s3Protocol{
 					Enabled: true,
 				},
 			},
