@@ -25,7 +25,7 @@ func TestPushConfig(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteFile(utils.ConfigPath, []byte("malformed"), fsys))
 		// Run test
-		err := Run(context.Background(), "", fsys)
+		err := Run(context.Background(), "", false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "toml: expected = after a key, but the document ends there")
 	})
@@ -39,7 +39,7 @@ func TestPushConfig(t *testing.T) {
 			Get("/v1/projects/" + project + "/billing/addons").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := Run(context.Background(), project, fsys)
+		err := Run(context.Background(), project, false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "unexpected list addons status 503:")
 	})

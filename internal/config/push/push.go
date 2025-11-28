@@ -12,7 +12,7 @@ import (
 	"github.com/supabase/cli/pkg/config"
 )
 
-func Run(ctx context.Context, ref string, fsys afero.Fs) error {
+func Run(ctx context.Context, ref string, dryRun bool, fsys afero.Fs) error {
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
@@ -26,9 +26,12 @@ func Run(ctx context.Context, ref string, fsys afero.Fs) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, "Pushing config to project:", remote.ProjectId)
+	fmt.Fprintln(os.Stderr, "Checking config for project:", remote.ProjectId)
 	console := utils.NewConsole()
 	keep := func(name string) bool {
+		if dryRun {
+			return false
+		}
 		title := fmt.Sprintf("Do you want to push %s config to remote?", name)
 		if item, exists := cost[name]; exists {
 			title = fmt.Sprintf("Enabling %s will cost you %s. Keep it enabled?", item.Name, item.Price)
