@@ -13,6 +13,10 @@ func Yellow(str string) string {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Render(str)
 }
 
+func Green(str string) string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render(str)
+}
+
 // For errors.
 func Red(str string) string {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(str)

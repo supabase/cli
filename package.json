@@ -34,7 +34,7 @@
       },
       {
         "name": "develop",
-        "channel": "beta"
+        "channel": "latest"
       }
     ],
     "plugins": [

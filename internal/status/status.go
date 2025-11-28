@@ -10,15 +10,16 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"reflect"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/Netflix/go-env"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/go-errors/errors"
+	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/tw"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
@@ -27,9 +28,11 @@ import (
 
 type CustomName struct {
 	ApiURL                   string `env:"api.url,default=API_URL"`
+	RestURL                  string `env:"api.rest_url,default=REST_URL"`
 	GraphqlURL               string `env:"api.graphql_url,default=GRAPHQL_URL"`
 	StorageS3URL             string `env:"api.storage_s3_url,default=STORAGE_S3_URL"`
 	McpURL                   string `env:"api.mcp_url,default=MCP_URL"`
+	FunctionsURL             string `env:"api.functions_url,default=FUNCTIONS_URL"`
 	DbURL                    string `env:"db.url,default=DB_URL"`
 	StudioURL                string `env:"studio.url,default=STUDIO_URL"`
 	InbucketURL              string `env:"inbucket.url,default=INBUCKET_URL,deprecated"`
@@ -54,10 +57,15 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 	authEnabled := utils.Config.Auth.Enabled && !slices.Contains(exclude, utils.GotrueId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.Auth.Image))
 	inbucketEnabled := utils.Config.Inbucket.Enabled && !slices.Contains(exclude, utils.InbucketId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.Inbucket.Image))
 	storageEnabled := utils.Config.Storage.Enabled && !slices.Contains(exclude, utils.StorageId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.Storage.Image))
+	functionsEnabled := utils.Config.EdgeRuntime.Enabled && !slices.Contains(exclude, utils.EdgeRuntimeId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.EdgeRuntime.Image))
 
 	if apiEnabled {
 		values[c.ApiURL] = utils.Config.Api.ExternalUrl
+		values[c.RestURL] = utils.GetApiUrl("/rest/v1")
 		values[c.GraphqlURL] = utils.GetApiUrl("/graphql/v1")
+		if functionsEnabled {
+			values[c.FunctionsURL] = utils.GetApiUrl("/functions/v1")
+		}
 		if studioEnabled {
 			values[c.McpURL] = utils.GetApiUrl("/mcp")
 		}
@@ -210,44 +218,159 @@ func printStatus(names CustomName, format string, w io.Writer, exclude ...string
 }
 
 func PrettyPrint(w io.Writer, exclude ...string) {
-	names := CustomName{
-		ApiURL:                   "         " + utils.Aqua("API URL"),
-		GraphqlURL:               "     " + utils.Aqua("GraphQL URL"),
-		StorageS3URL:             "  " + utils.Aqua("S3 Storage URL"),
-		McpURL:                   "         " + utils.Aqua("MCP URL"),
-		DbURL:                    "    " + utils.Aqua("Database URL"),
-		StudioURL:                "      " + utils.Aqua("Studio URL"),
-		InbucketURL:              "    " + utils.Aqua("Inbucket URL"),
-		MailpitURL:               "     " + utils.Aqua("Mailpit URL"),
-		PublishableKey:           " " + utils.Aqua("Publishable key"),
-		SecretKey:                "      " + utils.Aqua("Secret key"),
-		JWTSecret:                "      " + utils.Aqua("JWT secret"),
-		AnonKey:                  "        " + utils.Aqua("anon key"),
-		ServiceRoleKey:           "" + utils.Aqua("service_role key"),
-		StorageS3AccessKeyId:     "   " + utils.Aqua("S3 Access Key"),
-		StorageS3SecretAccessKey: "   " + utils.Aqua("S3 Secret Key"),
-		StorageS3Region:          "       " + utils.Aqua("S3 Region"),
+	logger := utils.GetDebugLogger()
+
+	names := CustomName{}
+	if err := env.Unmarshal(env.EnvSet{}, &names); err != nil {
+		fmt.Fprintln(logger, err)
 	}
 	values := names.toValues(exclude...)
-	// Iterate through map in order of declared struct fields
-	t := reflect.TypeOf(names)
-	val := reflect.ValueOf(names)
-	for i := 0; i < val.NumField(); i++ {
-		k := val.Field(i).String()
-		if tag := t.Field(i).Tag.Get("env"); isDeprecated(tag) {
-			continue
-		}
-		if v, ok := values[k]; ok {
-			fmt.Fprintf(w, "%s: %s\n", k, v)
+
+	groups := []OutputGroup{
+		{
+			Name: "🛠️  Development Tools",
+			Items: []OutputItem{
+				{Label: "Studio", Value: values[names.StudioURL], Type: Link},
+				{Label: "Mailpit", Value: values[names.MailpitURL], Type: Link},
+				{Label: "MCP", Value: values[names.McpURL], Type: Link},
+			},
+		},
+		{
+			Name: "🌐 APIs",
+			Items: []OutputItem{
+				{Label: "Project URL", Value: values[names.ApiURL], Type: Link},
+				{Label: "REST", Value: values[names.RestURL], Type: Link},
+				{Label: "GraphQL", Value: values[names.GraphqlURL], Type: Link},
+				{Label: "Edge Functions", Value: values[names.FunctionsURL], Type: Link},
+			},
+		},
+		{
+			Name: "🗄️  Database",
+			Items: []OutputItem{
+				{Label: "URL", Value: values[names.DbURL], Type: Link},
+			},
+		},
+		{
+			Name: "🔑 Authentication Keys",
+			Items: []OutputItem{
+				{Label: "Publishable", Value: values[names.PublishableKey], Type: Key},
+				{Label: "Secret", Value: values[names.SecretKey], Type: Key},
+			},
+		},
+		{
+			Name: "📦 Storage (S3)",
+			Items: []OutputItem{
+				{Label: "URL", Value: values[names.StorageS3URL], Type: Link},
+				{Label: "Access Key", Value: values[names.StorageS3AccessKeyId], Type: Key},
+				{Label: "Secret Key", Value: values[names.StorageS3SecretAccessKey], Type: Key},
+				{Label: "Region", Value: values[names.StorageS3Region], Type: Text},
+			},
+		},
+	}
+
+	for _, group := range groups {
+		if err := group.printTable(w); err != nil {
+			fmt.Fprintln(logger, err)
+		} else {
+			fmt.Fprintln(w)
 		}
 	}
 }
 
-func isDeprecated(tag string) bool {
-	for part := range strings.SplitSeq(tag, ",") {
-		if strings.EqualFold(part, "deprecated") {
-			return true
+type OutputType string
+
+const (
+	Text OutputType = "text"
+	Link OutputType = "link"
+	Key  OutputType = "key"
+)
+
+type OutputItem struct {
+	Label string
+	Value string
+	Type  OutputType
+}
+
+type OutputGroup struct {
+	Name  string
+	Items []OutputItem
+}
+
+func (g *OutputGroup) printTable(w io.Writer) error {
+	table := tablewriter.NewTable(w,
+		// Rounded corners
+		tablewriter.WithSymbols(tw.NewSymbols(tw.StyleRounded)),
+
+		// Table content formatting
+		tablewriter.WithConfig(tablewriter.Config{
+			Header: tw.CellConfig{
+				Formatting: tw.CellFormatting{
+					AutoFormat: tw.Off,
+					MergeMode:  tw.MergeHorizontal,
+				},
+				Alignment: tw.CellAlignment{
+					Global: tw.AlignLeft,
+				},
+				Filter: tw.CellFilter{
+					Global: func(s []string) []string {
+						for i := range s {
+							s[i] = utils.Bold(s[i])
+						}
+						return s
+					},
+				},
+			},
+			Row: tw.CellConfig{
+				Alignment: tw.CellAlignment{
+					Global: tw.AlignLeft,
+				},
+				ColMaxWidths: tw.CellWidth{
+					PerColumn: map[int]int{0: 16},
+				},
+				Filter: tw.CellFilter{
+					PerColumn: []func(string) string{
+						func(s string) string {
+							return utils.Green(s)
+						},
+					},
+				},
+			},
+			Behavior: tw.Behavior{
+				Compact: tw.Compact{
+					Merge: tw.On,
+				},
+			},
+		}),
+
+		// Set title as header (merged across all columns)
+		tablewriter.WithHeader([]string{g.Name, g.Name}),
+	)
+
+	// Add data rows with values colored based on type
+	shouldRender := false
+	for _, row := range g.Items {
+		if row.Value == "" {
+			continue
+		}
+		value := row.Value
+		switch row.Type {
+		case Link:
+			value = utils.Aqua(row.Value)
+		case Key:
+			value = utils.Yellow(row.Value)
+		}
+		if err := table.Append(row.Label, value); err != nil {
+			return errors.Errorf("failed to append row: %w", err)
+		}
+		shouldRender = true
+	}
+
+	// Ensure at least one item in the group is non-empty
+	if shouldRender {
+		if err := table.Render(); err != nil {
+			return errors.Errorf("failed to render table: %w", err)
 		}
 	}
-	return false
+
+	return nil
 }

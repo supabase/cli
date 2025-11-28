@@ -6,10 +6,9 @@ updates:
       interval: "cron"
       cronjob: "0 0 * * *"
     groups:
-      action-minor:
-        update-types:
-          - minor
-          - patch
+      actions-major:
+        patterns:
+          - "*"
   - package-ecosystem: "gomod"
     directories:
       - "/"
@@ -28,10 +27,9 @@ updates:
       interval: "cron"
       cronjob: "0 0 * * *"
     groups:
-      npm-minor:
-        update-types:
-          - minor
-          - patch
+      npm-major:
+        patterns:
+          - "*"
   - package-ecosystem: "docker"
     directory: "pkg/config/templates"
     schedule:
