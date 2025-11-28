@@ -26,7 +26,10 @@ type MigrationFile struct {
 	Statements []string
 }
 
-var migrateFilePattern = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
+var (
+	migrateFilePattern = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
+	typeNamePattern    = regexp.MustCompile(`type "([^"]+)" does not exist`)
+)
 
 func NewMigrationFromFile(path string, fsys fs.FS) (*MigrationFile, error) {
 	lines, err := parseFile(path, fsys)
@@ -96,6 +99,14 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 			if len(pgErr.Detail) > 0 {
 				msg = append(msg, pgErr.Detail)
 			}
+			// Provide helpful hint for extension type errors (SQLSTATE 42704: undefined_object)
+			if typeName := extractTypeName(pgErr.Message); len(typeName) > 0 && pgErr.Code == "42704" {
+				msg = append(msg, "")
+				msg = append(msg, "Hint: This type may be defined in a schema that's not in your search_path.")
+				msg = append(msg, "      Use schema-qualified type references to avoid this error:")
+				msg = append(msg, fmt.Sprintf("        CREATE TABLE example (col extensions.%s);", typeName))
+				msg = append(msg, "      Learn more: supabase migration new --help")
+			}
 		}
 		msg = append(msg, fmt.Sprintf("At statement: %d", i), stat)
 		return errors.Errorf("%w\n%s", err, strings.Join(msg, "\n"))
@@ -118,6 +129,16 @@ func markError(stat string, pos int) string {
 		break
 	}
 	return strings.Join(lines, "\n")
+}
+
+// extractTypeName extracts the type name from PostgreSQL error messages like:
+// 'type "ltree" does not exist' -> "ltree"
+func extractTypeName(errMsg string) string {
+	matches := typeNamePattern.FindStringSubmatch(errMsg)
+	if len(matches) > 1 {
+		return matches[1]
+	}
+	return ""
 }
 
 func (m *MigrationFile) insertVersionSQL(conn *pgx.Conn, batch *pgconn.Batch) error {
