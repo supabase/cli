@@ -58,7 +58,7 @@ func LinkServices(ctx context.Context, projectRef, serviceKey string, skipPooler
 		func() error { return linkNetworkRestrictions(ctx, projectRef) },
 		func() error { return linkPostgrest(ctx, projectRef) },
 		func() error { return linkGotrue(ctx, projectRef) },
-		func() error { return linkStorage(ctx, projectRef) },
+		func() error { return linkStorage(ctx, projectRef, fsys) },
 		func() error {
 			if skipPooler {
 				utils.Config.Db.Pooler.ConnectionString = ""
@@ -78,9 +78,6 @@ func LinkServices(ctx context.Context, projectRef, serviceKey string, skipPooler
 		}
 	}
 	if err := jq.Collect(); err != nil {
-		fmt.Fprintln(logger, err)
-	}
-	if err := utils.WriteFile(utils.StorageMigrationPath, []byte(utils.Config.Storage.TargetMigration), fsys); err != nil {
 		fmt.Fprintln(logger, err)
 	}
 }
@@ -123,7 +120,7 @@ func linkGotrueVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs)
 	return utils.WriteFile(utils.GotrueVersionPath, []byte(version), fsys)
 }
 
-func linkStorage(ctx context.Context, projectRef string) error {
+func linkStorage(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().V1GetStorageConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to read Storage config: %w", err)
@@ -131,7 +128,7 @@ func linkStorage(ctx context.Context, projectRef string) error {
 		return errors.Errorf("unexpected Storage config status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 	utils.Config.Storage.FromRemoteStorageConfig(*resp.JSON200)
-	return nil
+	return utils.WriteFile(utils.StorageMigrationPath, []byte(utils.Config.Storage.TargetMigration), fsys)
 }
 
 func linkStorageVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs) error {
