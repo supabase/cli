@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
@@ -34,20 +33,13 @@ func Run(ctx context.Context, projectRef string, skipPooler bool, fsys afero.Fs,
 	}
 	LinkServices(ctx, projectRef, keys.ServiceRole, skipPooler, fsys)
 
-	// 2. Check database connection
-	if config, err := flags.NewDbConfigWithPassword(ctx, projectRef); err != nil {
-		fmt.Fprintln(os.Stderr, utils.Yellow("WARN:"), err)
-	} else if err := linkDatabase(ctx, config, fsys, options...); err != nil {
-		return err
-	}
-
-	// 3. Save project ref
+	// 2. Save project ref
 	if err := utils.WriteFile(utils.ProjectRefPath, []byte(projectRef), fsys); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stdout, "Finished "+utils.Aqua("supabase link")+".")
 
-	// 4. Suggest config update
+	// 3. Suggest config update
 	if utils.Config.Db.MajorVersion != majorVersion {
 		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Local database version differs from the linked project.")
 		fmt.Fprintf(os.Stderr, `Update your %s to fix it:
@@ -86,6 +78,9 @@ func LinkServices(ctx context.Context, projectRef, serviceKey string, skipPooler
 		}
 	}
 	if err := jq.Collect(); err != nil {
+		fmt.Fprintln(logger, err)
+	}
+	if err := utils.WriteFile(utils.StorageMigrationPath, []byte(utils.Config.Storage.TargetMigration), fsys); err != nil {
 		fmt.Fprintln(logger, err)
 	}
 }
