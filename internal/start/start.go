@@ -793,7 +793,10 @@ EOF
 				env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_%s_URL=%s", strings.ToUpper(name), config.Url))
 			}
 		}
-		env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED=%v", utils.Config.Auth.Web3.Solana.Enabled))
+		env = append(env,
+			fmt.Sprintf("GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED=%v", utils.Config.Auth.Web3.Solana.Enabled),
+			fmt.Sprintf("GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED=%v", utils.Config.Auth.Web3.Ethereum.Enabled),
+		)
 
 		// OAuth server configuration
 		if utils.Config.Auth.OAuthServer.Enabled {
