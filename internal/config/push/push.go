@@ -29,18 +29,20 @@ func Run(ctx context.Context, ref string, dryRun bool, fsys afero.Fs) error {
 	fmt.Fprintln(os.Stderr, "Checking config for project:", remote.ProjectId)
 	console := utils.NewConsole()
 	keep := func(name string) bool {
-		if dryRun {
-			return false
-		}
 		title := fmt.Sprintf("Do you want to push %s config to remote?", name)
 		if item, exists := cost[name]; exists {
 			title = fmt.Sprintf("Enabling %s will cost you %s. Keep it enabled?", item.Name, item.Price)
 		}
-		shouldPush, err := console.PromptYesNo(ctx, title, true)
-		if err != nil {
+		if shouldPush, err := console.PromptYesNo(ctx, title, true); err != nil {
 			fmt.Fprintln(os.Stderr, err)
+		} else if !shouldPush {
+			return false
 		}
-		return shouldPush
+		if dryRun {
+			fmt.Fprintln(os.Stderr, "Would update config:", name)
+			return false
+		}
+		return true
 	}
 	return client.UpdateRemoteConfig(ctx, remote, keep)
 }
