@@ -17,7 +17,7 @@ import (
 	"github.com/supabase/cli/pkg/function"
 )
 
-func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool, importMapPath string, maxJobs uint, prune bool, fsys afero.Fs, filter ...(func(string) bool)) error {
+func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool, importMapPath string, maxJobs uint, prune, dryRun bool, fsys afero.Fs) error {
 	// Load function config and project id
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
@@ -51,7 +51,6 @@ func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool,
 	if err != nil {
 		return err
 	}
-
 	// Setup API with optional bundler
 	opt := function.WithMaxJobs(maxJobs)
 	if useDocker {
@@ -62,22 +61,33 @@ func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool,
 		}
 	}
 	api := function.NewEdgeRuntimeAPI(flags.ProjectRef, *utils.GetSupabase(), opt)
-
 	// Deploy new and updated functions
-	if err := api.Deploy(ctx, functionConfig, afero.NewIOFS(fsys), filter...); errors.Is(err, function.ErrNoDeploy) {
+	var keep, drop []func(string) bool
+	if dryRun {
+		keep = append(keep, func(name string) bool {
+			fmt.Fprintln(os.Stderr, "Would deploy:", name)
+			return false
+		})
+		drop = append(keep, func(name string) bool {
+			fmt.Fprintln(os.Stderr, "Would delete:", name)
+			return false
+		})
+	}
+	if err := api.Deploy(ctx, functionConfig, afero.NewIOFS(fsys), keep...); errors.Is(err, function.ErrNoDeploy) {
 		fmt.Fprintln(os.Stderr, err)
 		return nil
 	} else if err != nil {
 		return err
 	}
-	// TODO make this message conditional e.g. only when there are changes or not in dry run
-	fmt.Printf("Deployed Functions on project %s: %s\n", utils.Aqua(flags.ProjectRef), strings.Join(slugs, ", "))
-	url := fmt.Sprintf("%s/project/%v/functions", utils.GetSupabaseDashboardURL(), flags.ProjectRef)
-	fmt.Println("You can inspect your deployment in the Dashboard: " + url)
+	if !dryRun {
+		fmt.Printf("Deployed Functions on project %s: %s\n", utils.Aqua(flags.ProjectRef), strings.Join(slugs, ", "))
+		url := fmt.Sprintf("%s/project/%v/functions", utils.GetSupabaseDashboardURL(), flags.ProjectRef)
+		fmt.Println("You can inspect your deployment in the Dashboard: " + url)
+	}
 	if !prune {
 		return nil
 	}
-	return pruneFunctions(ctx, functionConfig)
+	return pruneFunctions(ctx, functionConfig, drop...)
 }
 
 func GetFunctionSlugs(fsys afero.Fs) (slugs []string, err error) {
@@ -167,7 +177,7 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 }
 
 // pruneFunctions deletes functions that exist remotely but not locally
-func pruneFunctions(ctx context.Context, functionConfig config.FunctionConfig) error {
+func pruneFunctions(ctx context.Context, functionConfig config.FunctionConfig, filter ...func(string) bool) error {
 	resp, err := utils.GetSupabase().V1ListAllFunctionsWithResponse(ctx, flags.ProjectRef)
 	if err != nil {
 		return errors.Errorf("failed to list functions: %w", err)
@@ -195,7 +205,13 @@ func pruneFunctions(ctx context.Context, functionConfig config.FunctionConfig) e
 	} else if !shouldDelete {
 		return errors.New(context.Canceled)
 	}
+OUTER:
 	for _, slug := range toDelete {
+		for _, keep := range filter {
+			if !keep(slug) {
+				continue OUTER
+			}
+		}
 		fmt.Fprintln(os.Stderr, "Deleting Function:", slug)
 		if err := delete.Undeploy(ctx, flags.ProjectRef, slug); errors.Is(err, delete.ErrNoDelete) {
 			fmt.Fprintln(utils.GetDebugLogger(), err)

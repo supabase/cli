@@ -42,14 +42,7 @@ func Run(ctx context.Context, dryRun bool, fsys afero.Fs) error {
 
 	// Maybe deploy edge functions
 	fmt.Fprintln(os.Stderr, utils.Aqua(">>>"), "Deploying edge functions...")
-	keep := func(name string) bool {
-		if dryRun {
-			fmt.Fprintln(os.Stderr, utils.Yellow("⏭ ")+"Would deploy:", name)
-			return false
-		}
-		return true
-	}
-	if err := funcDeploy.Run(ctx, []string{}, true, nil, "", 1, false, fsys, keep); err != nil && !errors.Is(err, function.ErrNoDeploy) {
+	if err := funcDeploy.Run(ctx, []string{}, true, nil, "", 1, false, dryRun, fsys); err != nil && !errors.Is(err, function.ErrNoDeploy) {
 		deployErrors = append(deployErrors, errors.Errorf("functions deploy failed: %w", err))
 		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:")+" Functions deployment failed:", err)
 	} else if errors.Is(err, function.ErrNoDeploy) {
