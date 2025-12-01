@@ -84,7 +84,7 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 		values[c.MailpitURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Inbucket.Port)
 		values[c.InbucketURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.Inbucket.Port)
 	}
-	if storageEnabled {
+	if storageEnabled && utils.Config.Storage.S3Protocol != nil && utils.Config.Storage.S3Protocol.Enabled {
 		values[c.StorageS3URL] = utils.GetApiUrl("/storage/v1/s3")
 		values[c.StorageS3AccessKeyId] = utils.Config.Storage.S3Credentials.AccessKeyId
 		values[c.StorageS3SecretAccessKey] = utils.Config.Storage.S3Credentials.SecretAccessKey

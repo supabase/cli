@@ -295,6 +295,10 @@ func (s *storage) Clone() storage {
 		img := *s.ImageTransformation
 		copy.ImageTransformation = &img
 	}
+	if s.S3Protocol != nil {
+		s3 := *s.S3Protocol
+		copy.S3Protocol = &s3
+	}
 	return copy
 }
 
