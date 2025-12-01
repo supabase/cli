@@ -223,25 +223,6 @@ func TestUpdateStorageConfig(t *testing.T) {
 		defer gock.Off()
 		mockStorage := v1API.StorageConfigResponse{
 			FileSizeLimit: 100,
-			Features: struct {
-				IcebergCatalog *struct {
-					Enabled       bool `json:"enabled"`
-					MaxCatalogs   int  `json:"maxCatalogs"`
-					MaxNamespaces int  `json:"maxNamespaces"`
-					MaxTables     int  `json:"maxTables"`
-				} `json:"icebergCatalog,omitempty"`
-				ImageTransformation struct {
-					Enabled bool `json:"enabled"`
-				} `json:"imageTransformation"`
-				S3Protocol struct {
-					Enabled bool `json:"enabled"`
-				} `json:"s3Protocol"`
-				VectorBuckets *struct {
-					Enabled    bool `json:"enabled"`
-					MaxBuckets int  `json:"maxBuckets"`
-					MaxIndexes int  `json:"maxIndexes"`
-				} `json:"vectorBuckets,omitempty"`
-			}{},
 		}
 		mockStorage.Features.ImageTransformation.Enabled = true
 		mockStorage.Features.S3Protocol.Enabled = true
