@@ -105,12 +105,25 @@ enabled = true
 # The maximum file size allowed (e.g. "5MB", "500KB").
 file_size_limit = "50MiB"
 
+[storage.s3_protocol]
+enabled = true
+
 # Image transformation API is available to Supabase Pro plan.
 [storage.image_transformation]
 enabled = true
 
-[storage.s3_protocol]
+# Iceberge Catalog is available to Supabase Pro plan.
+[storage.iceberg_catalog]
 enabled = true
+max_namespaces = 5
+max_tables = 10
+max_catalogs = 2
+
+# Vector Buckets is available to Supabase Pro plan.
+[storage.vector_buckets]
+enabled = true
+max_buckets = 10
+max_indexes = 5
 
 # Uncomment to configure local storage buckets
 [storage.buckets.images]

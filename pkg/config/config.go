@@ -295,6 +295,14 @@ func (s *storage) Clone() storage {
 		img := *s.ImageTransformation
 		copy.ImageTransformation = &img
 	}
+	if s.IcebergCatalog != nil {
+		iceberg := *s.IcebergCatalog
+		copy.IcebergCatalog = &iceberg
+	}
+	if s.VectorBuckets != nil {
+		vector := *s.VectorBuckets
+		copy.VectorBuckets = &vector
+	}
 	if s.S3Protocol != nil {
 		s3 := *s.S3Protocol
 		copy.S3Protocol = &s3
