@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 	"os/signal"
 
@@ -13,14 +12,13 @@ import (
 )
 
 var (
-	override         []string
-	names            status.CustomName
-	useRemoteProject bool
+	override []string
+	names    status.CustomName
 
 	statusCmd = &cobra.Command{
 		GroupID: groupLocalDev,
 		Use:     "status",
-		Short:   "Show status of local Supabase containers or remote project",
+		Short:   "Show status of local Supabase containers",
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			es, err := env.EnvironToEnvSet(override)
 			if err != nil {
@@ -30,21 +28,15 @@ var (
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			if useRemoteProject {
-				fmt.Fprintf(os.Stderr, "Project health check:\n")
-				return status.RunRemote(ctx, utils.OutputFormat.Value, afero.NewOsFs())
-			}
 			return status.Run(ctx, names, utils.OutputFormat.Value, afero.NewOsFs())
 		},
 		Example: `  supabase status -o env --override-name api.url=NEXT_PUBLIC_SUPABASE_URL
-  supabase status -o json
-  supabase status --remote`,
+  supabase status -o json`,
 	}
 )
 
 func init() {
 	flags := statusCmd.Flags()
 	flags.StringSliceVar(&override, "override-name", []string{}, "Override specific variable names.")
-	flags.BoolVar(&useRemoteProject, "remote", false, "Check health of remote project.")
 	rootCmd.AddCommand(statusCmd)
 }

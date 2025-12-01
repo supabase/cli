@@ -113,6 +113,7 @@ var (
 					}
 				}
 			}
+			fmt.Println("Parsing database config from ROOT")
 			if err := flags.ParseDatabaseConfig(ctx, cmd.Flags(), fsys); err != nil {
 				return err
 			}
