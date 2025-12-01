@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/link"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"golang.org/x/term"
 )
@@ -38,6 +40,9 @@ var (
 			// TODO: move this to root cmd
 			cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", cmd.Flags().Lookup("password")))
 			return link.Run(ctx, flags.ProjectRef, skipPooler, fsys)
+		},
+		PostRun: func(cmd *cobra.Command, args []string) {
+			fmt.Fprintln(os.Stdout, "Finished "+utils.Aqua("supabase link")+".")
 		},
 	}
 )
