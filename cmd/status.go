@@ -18,7 +18,7 @@ var (
 	statusCmd = &cobra.Command{
 		GroupID: groupLocalDev,
 		Use:     "status",
-		Short:   "Show status of local Supabase containers",
+		Short:   "Show status of your Supabase project",
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			es, err := env.EnvironToEnvSet(override)
 			if err != nil {
@@ -38,5 +38,9 @@ var (
 func init() {
 	flags := statusCmd.Flags()
 	flags.StringSliceVar(&override, "override-name", []string{}, "Override specific variable names.")
+	flags.String("db-url", "", "Shows the database status specified by the connection string (must be percent-encoded).")
+	flags.Bool("linked", false, "Shows status of the linked project.")
+	flags.Bool("local", true, "Shows status of the local database.")
+	statusCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	rootCmd.AddCommand(statusCmd)
 }

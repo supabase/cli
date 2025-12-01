@@ -21,8 +21,10 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/olekukonko/tablewriter/tw"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/projects/apiKeys"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/fetcher"
 )
 
@@ -49,7 +51,7 @@ type CustomName struct {
 
 func (c *CustomName) toValues(exclude ...string) map[string]string {
 	values := map[string]string{
-		c.DbURL: fmt.Sprintf("postgresql://%s@%s:%d/postgres", url.UserPassword("postgres", utils.Config.Db.Password), utils.Config.Hostname, utils.Config.Db.Port),
+		c.DbURL: utils.ToPostgresURL(flags.DbConfig),
 	}
 
 	apiEnabled := utils.Config.Api.Enabled && !slices.Contains(exclude, utils.RestId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.Api.Image))
@@ -98,7 +100,18 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
-	if err := assertContainerHealthy(ctx, utils.DbId); err != nil {
+	if !utils.IsLocalDatabase(flags.DbConfig) {
+		apiUrl := url.URL{Scheme: "https", Host: utils.GetSupabaseHost(flags.ProjectRef)}
+		utils.Config.Api.ExternalUrl = apiUrl.String()
+		if err := updateApiKey(ctx); err != nil {
+			return err
+		}
+		if format == utils.OutputPretty {
+			PrettyPrint(os.Stdout)
+			return nil
+		}
+		return printStatus(names, format, os.Stdout)
+	} else if err := assertContainerHealthy(ctx, utils.DbId); err != nil {
 		return err
 	}
 	stopped, err := checkServiceHealth(ctx)
@@ -114,6 +127,37 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 		return nil
 	}
 	return printStatus(names, format, os.Stdout, stopped...)
+}
+
+func updateApiKey(ctx context.Context) error {
+	keys, err := apiKeys.RunGetApiKeys(ctx, flags.ProjectRef)
+	if err != nil {
+		return err
+	}
+	for _, k := range keys {
+		kt, err := k.Type.Get()
+		if err != nil {
+			continue
+		}
+		kv, err := k.ApiKey.Get()
+		if err != nil {
+			continue
+		}
+		switch kt {
+		case api.ApiKeyResponseTypePublishable:
+			utils.Config.Auth.PublishableKey.Value = kv
+		case api.ApiKeyResponseTypeSecret:
+			utils.Config.Auth.SecretKey.Value = kv
+		case api.ApiKeyResponseTypeLegacy:
+			switch k.Name {
+			case "anon":
+				utils.Config.Auth.AnonKey.Value = kv
+			case "service_role":
+				utils.Config.Auth.ServiceRoleKey.Value = kv
+			}
+		}
+	}
+	return nil
 }
 
 func checkServiceHealth(ctx context.Context) ([]string, error) {
