@@ -244,9 +244,10 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 	}
 
 	var started []string
-	var isStorageEnabled = utils.Config.Storage.Enabled && !isContainerExcluded(utils.Config.Storage.Image, excluded)
-	var isImgProxyEnabled = utils.Config.Storage.ImageTransformation != nil &&
+	isStorageEnabled := utils.Config.Storage.Enabled && !isContainerExcluded(utils.Config.Storage.Image, excluded)
+	isImgProxyEnabled := utils.Config.Storage.ImageTransformation != nil &&
 		utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImgProxyImage, excluded)
+	isS3ProtocolEnabled := utils.Config.Storage.S3Protocol != nil && utils.Config.Storage.S3Protocol.Enabled
 	fmt.Fprintln(os.Stderr, "Starting containers...")
 
 	// Start Logflare
@@ -793,7 +794,10 @@ EOF
 				env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_%s_URL=%s", strings.ToUpper(name), config.Url))
 			}
 		}
-		env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED=%v", utils.Config.Auth.Web3.Solana.Enabled))
+		env = append(env,
+			fmt.Sprintf("GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED=%v", utils.Config.Auth.Web3.Solana.Enabled),
+			fmt.Sprintf("GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED=%v", utils.Config.Auth.Web3.Ethereum.Enabled),
+		)
 
 		// OAuth server configuration
 		if utils.Config.Auth.OAuthServer.Enabled {
@@ -994,6 +998,7 @@ EOF
 					fmt.Sprintf("ENABLE_IMAGE_TRANSFORMATION=%t", isImgProxyEnabled),
 					fmt.Sprintf("IMGPROXY_URL=http://%s:5001", utils.ImgProxyId),
 					"TUS_URL_PATH=/storage/v1/upload/resumable",
+					fmt.Sprintf("S3_PROTOCOL_ENABLED=%t", isS3ProtocolEnabled),
 					"S3_PROTOCOL_ACCESS_KEY_ID=" + utils.Config.Storage.S3Credentials.AccessKeyId,
 					"S3_PROTOCOL_ACCESS_KEY_SECRET=" + utils.Config.Storage.S3Credentials.SecretAccessKey,
 					"S3_PROTOCOL_PREFIX=/storage/v1",
