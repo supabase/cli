@@ -4,8 +4,7 @@ Pulls schema changes from a remote database. A new migration file will be create
 
 Requires your local project to be linked to a remote database by running `supabase link`. For self-hosted databases, you can pass in the connection parameters using `--db-url` flag.
 
-> **Note**  
-> This command requires Docker Desktop (or a running Docker daemon), as it starts a local Postgres container to diff your remote schema.
+> Note this command requires Docker Desktop (or a running Docker daemon), as it starts a local Postgres container to diff your remote schema.
 
 Optionally, a new row can be inserted into the migration history table to reflect the current state of the remote database.
 
