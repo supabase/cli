@@ -7,11 +7,11 @@ FROM postgrest/postgrest:v13.0.7 AS postgrest
 FROM supabase/postgres-meta:v0.93.1 AS pgmeta
 FROM supabase/studio:2025.11.26-sha-8f096b5 AS studio
 FROM darthsim/imgproxy:v3.8.0 AS imgproxy
-FROM supabase/edge-runtime:v1.69.26 AS edgeruntime
+FROM supabase/edge-runtime:v1.69.27 AS edgeruntime
 FROM timberio/vector:0.28.1-alpine AS vector
 FROM supabase/supavisor:2.7.4 AS supavisor
 FROM supabase/gotrue:v2.183.0 AS gotrue
-FROM supabase/realtime:v2.66.1 AS realtime
+FROM supabase/realtime:v2.66.2 AS realtime
 FROM supabase/storage-api:v1.32.0 AS storage
 FROM supabase/logflare:1.26.14 AS logflare
 # Append to JobImages when adding new dependencies below
