@@ -68,12 +68,12 @@ func (s *storage) ToUpdateStorageConfigBody() v1API.UpdateStorageConfigBody {
 				MaxNamespaces int  `json:"maxNamespaces"`
 				MaxTables     int  `json:"maxTables"`
 			} `json:"icebergCatalog,omitempty"`
-			ImageTransformation struct {
+			ImageTransformation *struct {
 				Enabled bool `json:"enabled"`
-			} `json:"imageTransformation"`
-			S3Protocol struct {
+			} `json:"imageTransformation,omitempty"`
+			S3Protocol *struct {
 				Enabled bool `json:"enabled"`
-			} `json:"s3Protocol"`
+			} `json:"s3Protocol,omitempty"`
 			VectorBuckets *struct {
 				Enabled    bool `json:"enabled"`
 				MaxBuckets int  `json:"maxBuckets"`

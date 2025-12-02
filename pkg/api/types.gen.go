@@ -3324,23 +3324,23 @@ type StorageConfigResponse struct {
 		UpstreamTarget StorageConfigResponseExternalUpstreamTarget `json:"upstreamTarget"`
 	} `json:"external"`
 	Features struct {
-		IcebergCatalog *struct {
+		IcebergCatalog struct {
 			Enabled       bool `json:"enabled"`
 			MaxCatalogs   int  `json:"maxCatalogs"`
 			MaxNamespaces int  `json:"maxNamespaces"`
 			MaxTables     int  `json:"maxTables"`
-		} `json:"icebergCatalog,omitempty"`
+		} `json:"icebergCatalog"`
 		ImageTransformation struct {
 			Enabled bool `json:"enabled"`
 		} `json:"imageTransformation"`
 		S3Protocol struct {
 			Enabled bool `json:"enabled"`
 		} `json:"s3Protocol"`
-		VectorBuckets *struct {
+		VectorBuckets struct {
 			Enabled    bool `json:"enabled"`
 			MaxBuckets int  `json:"maxBuckets"`
 			MaxIndexes int  `json:"maxIndexes"`
-		} `json:"vectorBuckets,omitempty"`
+		} `json:"vectorBuckets"`
 	} `json:"features"`
 	FileSizeLimit    int64  `json:"fileSizeLimit"`
 	MigrationVersion string `json:"migrationVersion"`
@@ -3900,12 +3900,12 @@ type UpdateStorageConfigBody struct {
 			MaxNamespaces int  `json:"maxNamespaces"`
 			MaxTables     int  `json:"maxTables"`
 		} `json:"icebergCatalog,omitempty"`
-		ImageTransformation struct {
+		ImageTransformation *struct {
 			Enabled bool `json:"enabled"`
-		} `json:"imageTransformation"`
-		S3Protocol struct {
+		} `json:"imageTransformation,omitempty"`
+		S3Protocol *struct {
 			Enabled bool `json:"enabled"`
-		} `json:"s3Protocol"`
+		} `json:"s3Protocol,omitempty"`
 		VectorBuckets *struct {
 			Enabled    bool `json:"enabled"`
 			MaxBuckets int  `json:"maxBuckets"`
