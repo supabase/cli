@@ -121,6 +121,7 @@ file_size_limit = "50MiB"
 # enabled = true
 
 # Store analytical data in S3 for running ETL jobs over Iceberg Catalog
+# This feature is only available on the hosted platform.
 [storage.analytics]
 enabled = false
 max_namespaces = 5
@@ -131,6 +132,7 @@ max_catalogs = 2
 # [storage.analytics.buckets.my-warehouse]
 
 # Store vector embeddings in S3 for large and durable datasets
+# This feature is only available on the hosted platform.
 [storage.vector]
 enabled = false
 max_buckets = 10

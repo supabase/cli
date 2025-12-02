@@ -38,13 +38,13 @@ func Run(ctx context.Context, projectRef string, interactive bool, fsys afero.Fs
 		}
 		return shouldPrune
 	}
-	if utils.Config.Storage.AnalyticsBuckets.Enabled {
+	if utils.Config.Storage.AnalyticsBuckets.Enabled && len(projectRef) > 0 {
 		fmt.Fprintln(os.Stderr, "Updating analytics buckets...")
 		if err := api.UpsertAnalyticsBuckets(ctx, utils.Config.Storage.AnalyticsBuckets.Buckets, prune); err != nil {
 			return err
 		}
 	}
-	if utils.Config.Storage.VectorBuckets.Enabled {
+	if utils.Config.Storage.VectorBuckets.Enabled && len(projectRef) > 0 {
 		fmt.Fprintln(os.Stderr, "Updating vector buckets...")
 		if err := api.UpsertVectorBuckets(ctx, utils.Config.Storage.VectorBuckets.Buckets, prune); err != nil {
 			return err
