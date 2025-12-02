@@ -546,6 +546,15 @@ func (c *config) load(v *viper.Viper) error {
 	}); err != nil {
 		return errors.Errorf("failed to parse config: %w", err)
 	}
+	// Manually parse config to map
+	c.Storage.AnalyticsBuckets.Buckets = map[string]struct{}{}
+	for key := range v.GetStringMap("storage.analytics.buckets") {
+		c.Storage.AnalyticsBuckets.Buckets[key] = struct{}{}
+	}
+	c.Storage.VectorBuckets.Buckets = map[string]struct{}{}
+	for key := range v.GetStringMap("storage.vector.buckets") {
+		c.Storage.VectorBuckets.Buckets[key] = struct{}{}
+	}
 	// Convert keys to upper case: https://github.com/spf13/viper/issues/1014
 	secrets := make(SecretsConfig, len(c.EdgeRuntime.Secrets))
 	for k, v := range c.EdgeRuntime.Secrets {
