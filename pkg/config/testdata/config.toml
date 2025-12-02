@@ -105,6 +105,14 @@ enabled = true
 # The maximum file size allowed (e.g. "5MB", "500KB").
 file_size_limit = "50MiB"
 
+# Uncomment to configure local storage buckets
+[storage.buckets.images]
+public = false
+file_size_limit = "50MiB"
+allowed_mime_types = ["image/png", "image/jpeg"]
+objects_path = "./images"
+
+# Uncomment to allow connections via S3 compatible clients
 [storage.s3_protocol]
 enabled = true
 
@@ -112,25 +120,24 @@ enabled = true
 [storage.image_transformation]
 enabled = true
 
-# Iceberge Catalog is available to Supabase Pro plan.
-[storage.iceberg_catalog]
+# Store analytical data in S3 for running ETL jobs over Iceberg Catalog
+[storage.analytics]
 enabled = true
 max_namespaces = 5
 max_tables = 10
 max_catalogs = 2
 
-# Vector Buckets is available to Supabase Pro plan.
-[storage.vector_buckets]
+# Analytics Buckets is available to Supabase Pro plan.
+[storage.analytics.buckets.my-warehouse]
+
+# Store vector embeddings in S3 for large and durable datasets
+[storage.vector]
 enabled = true
 max_buckets = 10
 max_indexes = 5
 
-# Uncomment to configure local storage buckets
-[storage.buckets.images]
-public = false
-file_size_limit = "50MiB"
-allowed_mime_types = ["image/png", "image/jpeg"]
-objects_path = "./images"
+# Vector Buckets is available to Supabase Pro plan.
+# [storage.vector.buckets.documents-openai]
 
 [auth]
 enabled = true

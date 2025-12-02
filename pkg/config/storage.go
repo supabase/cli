@@ -14,28 +14,30 @@ type (
 		ImgProxyImage       string               `toml:"-"`
 		FileSizeLimit       sizeInBytes          `toml:"file_size_limit"`
 		ImageTransformation *imageTransformation `toml:"image_transformation"`
-		IcebergCatalog      *icebergCatalog      `toml:"iceberg_catalog"`
-		VectorBuckets       *vectorBuckets       `toml:"vector_buckets"`
 		S3Protocol          *s3Protocol          `toml:"s3_protocol"`
 		S3Credentials       storageS3Credentials `toml:"-"`
 		Buckets             BucketConfig         `toml:"buckets"`
+		AnalyticsBuckets    analyticsBuckets     `toml:"analytics"`
+		VectorBuckets       vectorBuckets        `toml:"vector"`
 	}
 
 	imageTransformation struct {
 		Enabled bool `toml:"enabled"`
 	}
 
-	icebergCatalog struct {
-		Enabled       bool `toml:"enabled"`
-		MaxNamespaces uint `toml:"max_namespaces"`
-		MaxTables     uint `toml:"max_tables"`
-		MaxCatalogs   uint `toml:"max_catalogs"`
+	analyticsBuckets struct {
+		Enabled       bool                `toml:"enabled"`
+		MaxNamespaces uint                `toml:"max_namespaces"`
+		MaxTables     uint                `toml:"max_tables"`
+		MaxCatalogs   uint                `toml:"max_catalogs"`
+		Buckets       map[string]struct{} `toml:"buckets"`
 	}
 
 	vectorBuckets struct {
-		Enabled    bool `toml:"enabled"`
-		MaxBuckets uint `toml:"max_buckets"`
-		MaxIndexes uint `toml:"max_indexes"`
+		Enabled    bool                `toml:"enabled"`
+		MaxBuckets uint                `toml:"max_buckets"`
+		MaxIndexes uint                `toml:"max_indexes"`
+		Buckets    map[string]struct{} `toml:"buckets"`
 	}
 
 	s3Protocol struct {
@@ -83,21 +85,43 @@ func (s *storage) ToUpdateStorageConfigBody() v1API.UpdateStorageConfigBody {
 	}
 	// When local config is not set, we assume platform defaults should not change
 	if s.ImageTransformation != nil {
-		body.Features.ImageTransformation.Enabled = s.ImageTransformation.Enabled
+		body.Features.ImageTransformation = &struct {
+			Enabled bool `json:"enabled"`
+		}{
+			Enabled: s.ImageTransformation.Enabled,
+		}
 	}
-	if s.IcebergCatalog != nil {
-		body.Features.IcebergCatalog.Enabled = s.IcebergCatalog.Enabled
-		body.Features.IcebergCatalog.MaxNamespaces = cast.UintToInt(s.IcebergCatalog.MaxNamespaces)
-		body.Features.IcebergCatalog.MaxTables = cast.UintToInt(s.IcebergCatalog.MaxTables)
-		body.Features.IcebergCatalog.MaxCatalogs = cast.UintToInt(s.IcebergCatalog.MaxCatalogs)
+	// Disabling analytics and vector buckets means leaving platform values unchanged
+	if s.AnalyticsBuckets.Enabled {
+		body.Features.IcebergCatalog = &struct {
+			Enabled       bool `json:"enabled"`
+			MaxCatalogs   int  `json:"maxCatalogs"`
+			MaxNamespaces int  `json:"maxNamespaces"`
+			MaxTables     int  `json:"maxTables"`
+		}{
+			Enabled:       true,
+			MaxNamespaces: cast.UintToInt(s.AnalyticsBuckets.MaxNamespaces),
+			MaxTables:     cast.UintToInt(s.AnalyticsBuckets.MaxTables),
+			MaxCatalogs:   cast.UintToInt(s.AnalyticsBuckets.MaxCatalogs),
+		}
 	}
-	if s.VectorBuckets != nil {
-		body.Features.VectorBuckets.Enabled = s.VectorBuckets.Enabled
-		body.Features.VectorBuckets.MaxBuckets = cast.UintToInt(s.VectorBuckets.MaxBuckets)
-		body.Features.VectorBuckets.MaxIndexes = cast.UintToInt(s.VectorBuckets.MaxIndexes)
+	if s.VectorBuckets.Enabled {
+		body.Features.VectorBuckets = &struct {
+			Enabled    bool `json:"enabled"`
+			MaxBuckets int  `json:"maxBuckets"`
+			MaxIndexes int  `json:"maxIndexes"`
+		}{
+			Enabled:    true,
+			MaxBuckets: cast.UintToInt(s.VectorBuckets.MaxBuckets),
+			MaxIndexes: cast.UintToInt(s.VectorBuckets.MaxIndexes),
+		}
 	}
 	if s.S3Protocol != nil {
-		body.Features.S3Protocol.Enabled = s.S3Protocol.Enabled
+		body.Features.S3Protocol = &struct {
+			Enabled bool `json:"enabled"`
+		}{
+			Enabled: s.S3Protocol.Enabled,
+		}
 	}
 	return body
 }
@@ -109,13 +133,13 @@ func (s *storage) FromRemoteStorageConfig(remoteConfig v1API.StorageConfigRespon
 	if s.ImageTransformation != nil {
 		s.ImageTransformation.Enabled = remoteConfig.Features.ImageTransformation.Enabled
 	}
-	if s.IcebergCatalog != nil {
-		s.IcebergCatalog.Enabled = remoteConfig.Features.IcebergCatalog.Enabled
-		s.IcebergCatalog.MaxNamespaces = cast.IntToUint(remoteConfig.Features.IcebergCatalog.MaxNamespaces)
-		s.IcebergCatalog.MaxTables = cast.IntToUint(remoteConfig.Features.IcebergCatalog.MaxTables)
-		s.IcebergCatalog.MaxCatalogs = cast.IntToUint(remoteConfig.Features.IcebergCatalog.MaxCatalogs)
+	if s.AnalyticsBuckets.Enabled {
+		s.AnalyticsBuckets.Enabled = remoteConfig.Features.IcebergCatalog.Enabled
+		s.AnalyticsBuckets.MaxNamespaces = cast.IntToUint(remoteConfig.Features.IcebergCatalog.MaxNamespaces)
+		s.AnalyticsBuckets.MaxTables = cast.IntToUint(remoteConfig.Features.IcebergCatalog.MaxTables)
+		s.AnalyticsBuckets.MaxCatalogs = cast.IntToUint(remoteConfig.Features.IcebergCatalog.MaxCatalogs)
 	}
-	if s.VectorBuckets != nil {
+	if s.VectorBuckets.Enabled {
 		s.VectorBuckets.Enabled = remoteConfig.Features.VectorBuckets.Enabled
 		s.VectorBuckets.MaxBuckets = cast.IntToUint(remoteConfig.Features.VectorBuckets.MaxBuckets)
 		s.VectorBuckets.MaxIndexes = cast.IntToUint(remoteConfig.Features.VectorBuckets.MaxIndexes)
