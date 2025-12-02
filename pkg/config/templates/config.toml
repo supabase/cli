@@ -105,19 +105,41 @@ enabled = true
 # The maximum file size allowed (e.g. "5MB", "500KB").
 file_size_limit = "50MiB"
 
-# Image transformation API is available to Supabase Pro plan.
-# [storage.image_transformation]
-# enabled = true
-
-# [storage.s3_protocol]
-# enabled = false
-
 # Uncomment to configure local storage buckets
 # [storage.buckets.images]
 # public = false
 # file_size_limit = "50MiB"
 # allowed_mime_types = ["image/png", "image/jpeg"]
 # objects_path = "./images"
+
+# Uncomment to allow connections via S3 compatible clients
+# [storage.s3_protocol]
+# enabled = true
+
+# Image transformation API is available to Supabase Pro plan.
+# [storage.image_transformation]
+# enabled = true
+
+# Store analytical data in S3 for running ETL jobs over Iceberg Catalog
+# This feature is only available on the hosted platform.
+[storage.analytics]
+enabled = false
+max_namespaces = 5
+max_tables = 10
+max_catalogs = 2
+
+# Analytics Buckets is available to Supabase Pro plan.
+# [storage.analytics.buckets.my-warehouse]
+
+# Store vector embeddings in S3 for large and durable datasets
+# This feature is only available on the hosted platform.
+[storage.vector]
+enabled = false
+max_buckets = 10
+max_indexes = 5
+
+# Vector Buckets is available to Supabase Pro plan.
+# [storage.vector.buckets.documents-openai]
 
 [auth]
 enabled = true

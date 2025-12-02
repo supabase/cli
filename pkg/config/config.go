@@ -291,6 +291,8 @@ func (a *auth) Clone() auth {
 func (s *storage) Clone() storage {
 	copy := *s
 	copy.Buckets = maps.Clone(s.Buckets)
+	copy.AnalyticsBuckets.Buckets = maps.Clone(s.AnalyticsBuckets.Buckets)
+	copy.VectorBuckets.Buckets = maps.Clone(s.VectorBuckets.Buckets)
 	if s.ImageTransformation != nil {
 		img := *s.ImageTransformation
 		copy.ImageTransformation = &img
@@ -543,6 +545,15 @@ func (c *config) load(v *viper.Viper) error {
 		dc.DecodeHook = c.newDecodeHook(LoadEnvHook, ValidateFunctionsHook)
 	}); err != nil {
 		return errors.Errorf("failed to parse config: %w", err)
+	}
+	// Manually parse config to map
+	c.Storage.AnalyticsBuckets.Buckets = map[string]struct{}{}
+	for key := range v.GetStringMap("storage.analytics.buckets") {
+		c.Storage.AnalyticsBuckets.Buckets[key] = struct{}{}
+	}
+	c.Storage.VectorBuckets.Buckets = map[string]struct{}{}
+	for key := range v.GetStringMap("storage.vector.buckets") {
+		c.Storage.VectorBuckets.Buckets[key] = struct{}{}
 	}
 	// Convert keys to upper case: https://github.com/spf13/viper/issues/1014
 	secrets := make(SecretsConfig, len(c.EdgeRuntime.Secrets))
