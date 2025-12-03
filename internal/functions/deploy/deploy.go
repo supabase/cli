@@ -57,6 +57,11 @@ func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool,
 		if utils.IsDockerRunning(ctx) {
 			opt = function.WithBundler(NewDockerBundler(fsys))
 		} else {
+			for slug, fc := range functionConfig {
+				if len(fc.StaticFiles) > 0 {
+					return errors.Errorf("--use-docker was specified but Docker is not running. Function %s requires Docker to bundle static files. Please start Docker or omit the flag.", slug)
+				}
+			}
 			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Docker is not running")
 		}
 	}
