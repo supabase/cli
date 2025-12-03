@@ -100,24 +100,29 @@ func TestMigrationFile(t *testing.T) {
 		assert.ErrorContains(t, err, "At statement: 0")
 	})
 
-	t.Run("provides generic hint when type name cannot be extracted", func(t *testing.T) {
+	t.Run("skips hint for schema-qualified type errors", func(t *testing.T) {
 		migration := MigrationFile{
-			Statements: []string{"CREATE TABLE test (id custom_type)"},
+			Statements: []string{"CREATE TABLE test (path extensions.ltree NOT NULL)"},
 			Version:    "0",
 		}
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.Statements[0]).
-			ReplyError("42704", `type does not exist`).
+			ReplyError("42704", `type "extensions.ltree" does not exist`).
 			Query(INSERT_MIGRATION_VERSION, "0", "", migration.Statements).
 			Reply("INSERT 0 1")
 		// Run test
 		err := migration.ExecBatch(context.Background(), conn.MockClient(t))
-		// Check error
-		assert.ErrorContains(t, err, "type does not exist")
-		assert.ErrorContains(t, err, "Hint: This type may be defined in a schema")
-		assert.ErrorContains(t, err, "extensions.<type_name>")
-		assert.ErrorContains(t, err, "supabase migration new --help")
+		// Check error - should NOT contain hint since type is already schema-qualified
+		assert.ErrorContains(t, err, `type "extensions.ltree" does not exist`)
+		assert.NotContains(t, err.Error(), "Hint: This type may be defined in a schema")
 	})
+}
+
+func TestIsSchemaQualified(t *testing.T) {
+	assert.True(t, IsSchemaQualified("extensions.ltree"))
+	assert.True(t, IsSchemaQualified("public.my_type"))
+	assert.False(t, IsSchemaQualified("ltree"))
+	assert.False(t, IsSchemaQualified(""))
 }
