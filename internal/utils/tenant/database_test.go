@@ -22,9 +22,9 @@ func TestGetDatabaseVersion(t *testing.T) {
 		mockPostgres := api.V1ProjectWithDatabaseResponse{Id: projectRef}
 		mockPostgres.Database.Version = "14.1.0.99"
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects").
+			Get("/v1/projects/" + projectRef).
 			Reply(http.StatusOK).
-			JSON([]api.V1ProjectWithDatabaseResponse{mockPostgres})
+			JSON(mockPostgres)
 
 		version, err := GetDatabaseVersion(context.Background(), projectRef)
 
@@ -39,16 +39,13 @@ func TestGetDatabaseVersion(t *testing.T) {
 
 		defer gock.OffAll()
 		projectRef := apitest.RandomProjectRef()
-		mockPostgres := api.V1ProjectWithDatabaseResponse{Id: "different-project"}
-		mockPostgres.Database.Version = "14.1.0.99"
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects").
-			Reply(http.StatusOK).
-			JSON([]api.V1ProjectWithDatabaseResponse{mockPostgres})
+			Get("/v1/projects/" + projectRef).
+			Reply(http.StatusNotFound)
 
 		version, err := GetDatabaseVersion(context.Background(), projectRef)
 
-		assert.ErrorIs(t, err, errDatabaseVersion)
+		assert.ErrorContains(t, err, "unexpected retrieve project status 404:")
 		assert.Empty(t, version)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -60,11 +57,9 @@ func TestGetDatabaseVersion(t *testing.T) {
 		defer gock.OffAll()
 		projectRef := apitest.RandomProjectRef()
 		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects").
+			Get("/v1/projects/" + projectRef).
 			Reply(http.StatusOK).
-			JSON([]api.V1ProjectWithDatabaseResponse{{
-				Id: projectRef,
-			}})
+			JSON(api.V1ProjectWithDatabaseResponse{Id: projectRef})
 
 		version, err := GetDatabaseVersion(context.Background(), projectRef)
 

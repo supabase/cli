@@ -5,14 +5,13 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
-	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
+	"github.com/supabase/cli/pkg/queue"
 )
 
 func Run(ctx context.Context, fsys afero.Fs) error {
@@ -77,39 +76,53 @@ func CheckVersions(ctx context.Context, fsys afero.Fs) []imageVersion {
 }
 
 func listRemoteImages(ctx context.Context, projectRef string) map[string]string {
-	linked := make(map[string]string, 4)
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		if version, err := tenant.GetDatabaseVersion(ctx, projectRef); err == nil {
-			linked[utils.Config.Db.Image] = version
-		}
-	}()
+	linked := map[string]string{}
 	keys, err := tenant.GetApiKeys(ctx, projectRef)
 	if err != nil {
-		wg.Wait()
 		return linked
 	}
+	jq := queue.NewJobQueue(5)
 	api := tenant.NewTenantAPI(ctx, projectRef, keys.ServiceRole)
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		if version, err := api.GetGotrueVersion(ctx); err == nil {
-			linked[utils.Config.Auth.Image] = version
-		} else if viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
+	jobs := []func() error{
+		func() error {
+			version, err := tenant.GetDatabaseVersion(ctx, projectRef)
+			if err == nil {
+				linked[utils.Config.Db.Image] = version
+			}
+			return nil
+		},
+		func() error {
+			version, err := api.GetGotrueVersion(ctx)
+			if err == nil {
+				linked[utils.Config.Auth.Image] = version
+			}
+			return nil
+		},
+		func() error {
+			version, err := api.GetPostgrestVersion(ctx)
+			if err == nil {
+				linked[utils.Config.Api.Image] = version
+			}
+			return nil
+		},
+		func() error {
+			version, err := api.GetStorageVersion(ctx)
+			if err == nil {
+				linked[utils.Config.Storage.Image] = version
+			}
+			return err
+		},
+	}
+	// Ignore non-fatal errors linking services
+	logger := utils.GetDebugLogger()
+	for _, job := range jobs {
+		if err := jq.Put(job); err != nil {
+			fmt.Fprintln(logger, err)
 		}
-	}()
-	go func() {
-		defer wg.Done()
-		if version, err := api.GetPostgrestVersion(ctx); err == nil {
-			linked[utils.Config.Api.Image] = version
-		} else if viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, err)
-		}
-	}()
-	wg.Wait()
+	}
+	if err := jq.Collect(); err != nil {
+		fmt.Fprintln(logger, err)
+	}
 	return linked
 }
 
