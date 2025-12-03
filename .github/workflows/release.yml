@@ -103,6 +103,7 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: |
             supabase
+            cli
       - run: go run tools/changelog/main.go ${{ secrets.SLACK_CHANNEL }}
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
