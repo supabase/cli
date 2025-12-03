@@ -89,6 +89,7 @@ func NewContainerConfig(args ...string) container.Config {
 			Retries:  3,
 		},
 		Entrypoint: []string{"sh", "-c", `
+mkdir -p /etc/postgresql-custom/conf.d && \
 cat <<'EOF' > /etc/postgresql.schema.sql && \
 cat <<'EOF' > /etc/postgresql-custom/pgsodium_root.key && \
 cat <<'EOF' >> /etc/postgresql/postgresql.conf && \
@@ -143,6 +144,7 @@ func StartDatabase(ctx context.Context, fromBackup string, fsys afero.Fs, w io.W
 	}
 	if len(fromBackup) > 0 {
 		config.Entrypoint = []string{"sh", "-c", `
+mkdir -p /etc/postgresql-custom/conf.d && \
 cat <<'EOF' > /etc/postgresql.schema.sql && \
 cat <<'EOF' > /docker-entrypoint-initdb.d/migrate.sh && \
 cat <<'EOF' > /etc/postgresql-custom/pgsodium_root.key && \
