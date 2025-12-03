@@ -46,7 +46,7 @@ func TestServicesCommand(t *testing.T) {
 		// Run test
 		err := Run(context.Background(), afero.NewMemMapFs())
 		// Check error
-		assert.ErrorIs(t, err, ErrEnvNotSupported)
+		assert.ErrorIs(t, err, utils.ErrEnvNotSupported)
 	})
 }
 

@@ -64,7 +64,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 			Projects: projects,
 		})
 	case utils.OutputEnv:
-		return errors.Errorf("--output env flag is not supported")
+		return errors.New(utils.ErrEnvNotSupported)
 	}
 
 	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, projects)
