@@ -26,7 +26,10 @@ type MigrationFile struct {
 	Statements []string
 }
 
-var migrateFilePattern = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
+var (
+	migrateFilePattern = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
+	typeNamePattern    = regexp.MustCompile(`type "([^"]+)" does not exist`)
+)
 
 func NewMigrationFromFile(path string, fsys fs.FS) (*MigrationFile, error) {
 	lines, err := parseFile(path, fsys)
@@ -97,17 +100,11 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 				msg = append(msg, pgErr.Detail)
 			}
 			// Provide helpful hint for extension type errors (SQLSTATE 42704: undefined_object)
-			if pgErr.Code == "42704" && strings.Contains(pgErr.Message, "type") && strings.Contains(pgErr.Message, "does not exist") {
-				// Extract type name from error message (e.g., 'type "ltree" does not exist')
-				typeName := extractTypeName(pgErr.Message)
+			if typeName := extractTypeName(pgErr.Message); len(typeName) > 0 && pgErr.Code == "42704" && !IsSchemaQualified(typeName) {
 				msg = append(msg, "")
 				msg = append(msg, "Hint: This type may be defined in a schema that's not in your search_path.")
 				msg = append(msg, "      Use schema-qualified type references to avoid this error:")
-				if typeName != "" {
-					msg = append(msg, fmt.Sprintf("        CREATE TABLE example (col extensions.%s);", typeName))
-				} else {
-					msg = append(msg, "        CREATE TABLE example (col extensions.<type_name>);")
-				}
+				msg = append(msg, fmt.Sprintf("        CREATE TABLE example (col extensions.%s);", typeName))
 				msg = append(msg, "      Learn more: supabase migration new --help")
 			}
 		}
@@ -137,13 +134,16 @@ func markError(stat string, pos int) string {
 // extractTypeName extracts the type name from PostgreSQL error messages like:
 // 'type "ltree" does not exist' -> "ltree"
 func extractTypeName(errMsg string) string {
-	// Match pattern: type "typename" does not exist
-	re := regexp.MustCompile(`type "([^"]+)" does not exist`)
-	matches := re.FindStringSubmatch(errMsg)
+	matches := typeNamePattern.FindStringSubmatch(errMsg)
 	if len(matches) > 1 {
 		return matches[1]
 	}
 	return ""
+}
+
+// IsSchemaQualified checks if a type name already contains a schema qualifier (e.g., "extensions.ltree")
+func IsSchemaQualified(typeName string) bool {
+	return strings.Contains(typeName, ".")
 }
 
 func (m *MigrationFile) insertVersionSQL(conn *pgx.Conn, batch *pgconn.Batch) error {
