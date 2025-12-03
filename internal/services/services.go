@@ -11,8 +11,11 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
+	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/queue"
 )
+
+var ErrEnvNotSupported = errors.New("--output env flag is not supported")
 
 func Run(ctx context.Context, fsys afero.Fs) error {
 	if err := flags.LoadProjectRef(fsys); err != nil && !errors.Is(err, utils.ErrNotLinked) {
@@ -43,7 +46,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 			Services: serviceImages,
 		})
 	case utils.OutputEnv:
-		return errors.Errorf("--output env flag is not supported")
+		return errors.New(ErrEnvNotSupported)
 	}
 
 	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, serviceImages)
@@ -76,39 +79,39 @@ func CheckVersions(ctx context.Context, fsys afero.Fs) []imageVersion {
 }
 
 func listRemoteImages(ctx context.Context, projectRef string) map[string]string {
-	linked := map[string]string{}
 	keys, err := tenant.GetApiKeys(ctx, projectRef)
 	if err != nil {
-		return linked
+		return nil
 	}
+	linked := config.NewConfig()
 	jq := queue.NewJobQueue(5)
 	api := tenant.NewTenantAPI(ctx, projectRef, keys.ServiceRole)
 	jobs := []func() error{
 		func() error {
 			version, err := tenant.GetDatabaseVersion(ctx, projectRef)
 			if err == nil {
-				linked[utils.Config.Db.Image] = version
+				linked.Db.Image = version
 			}
 			return nil
 		},
 		func() error {
 			version, err := api.GetGotrueVersion(ctx)
 			if err == nil {
-				linked[utils.Config.Auth.Image] = version
+				linked.Auth.Image = version
 			}
 			return nil
 		},
 		func() error {
 			version, err := api.GetPostgrestVersion(ctx)
 			if err == nil {
-				linked[utils.Config.Api.Image] = version
+				linked.Api.Image = version
 			}
 			return nil
 		},
 		func() error {
 			version, err := api.GetStorageVersion(ctx)
 			if err == nil {
-				linked[utils.Config.Storage.Image] = version
+				linked.Storage.Image = version
 			}
 			return err
 		},
@@ -123,7 +126,13 @@ func listRemoteImages(ctx context.Context, projectRef string) map[string]string 
 	if err := jq.Collect(); err != nil {
 		fmt.Fprintln(logger, err)
 	}
-	return linked
+	// Convert to map last to avoid race condition
+	return map[string]string{
+		utils.Config.Db.Image:      linked.Db.Image,
+		utils.Config.Auth.Image:    linked.Auth.Image,
+		utils.Config.Api.Image:     linked.Api.Image,
+		utils.Config.Storage.Image: linked.Storage.Image,
+	}
 }
 
 func suggestUpdateCmd(serviceImages map[string]string) string {
