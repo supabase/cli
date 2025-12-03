@@ -634,7 +634,7 @@ func (c *config) Load(path string, fsys fs.FS, overrides ...ConfigEditor) error 
 		}
 	}
 	if version, err := fs.ReadFile(fsys, builder.StorageMigrationPath); err == nil && len(version) > 0 {
-		c.Storage.TargetMigration = string(version)
+		c.Storage.TargetMigration = strings.TrimSpace(string(version))
 	}
 	if version, err := fs.ReadFile(fsys, builder.EdgeRuntimeVersionPath); err == nil && len(version) > 0 {
 		c.EdgeRuntime.Image = replaceImageTag(Images.EdgeRuntime, string(version))
