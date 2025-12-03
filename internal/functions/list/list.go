@@ -45,7 +45,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 			Functions: *resp.JSON200,
 		})
 	case utils.OutputEnv:
-		return errors.Errorf("--output env flag is not supported")
+		return errors.New(utils.ErrEnvNotSupported)
 	}
 
 	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, *resp.JSON200)

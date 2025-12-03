@@ -30,7 +30,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 			Branches: branches,
 		})
 	case utils.OutputEnv:
-		return errors.Errorf("--output env flag is not supported")
+		return errors.New(utils.ErrEnvNotSupported)
 	}
 
 	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, branches)

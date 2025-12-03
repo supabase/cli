@@ -37,7 +37,7 @@ func Run(ctx context.Context, ref, providerId, format string) error {
 	case utils.OutputPretty:
 		return render.SingleMarkdown(*resp.JSON200)
 	case utils.OutputEnv:
-		return errors.Errorf("--output env flag is not supported")
+		return errors.New(utils.ErrEnvNotSupported)
 	default:
 		return utils.EncodeOutput(format, os.Stdout, resp.JSON200)
 	}

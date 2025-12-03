@@ -15,8 +15,6 @@ import (
 	"github.com/supabase/cli/pkg/queue"
 )
 
-var ErrEnvNotSupported = errors.New("--output env flag is not supported")
-
 func Run(ctx context.Context, fsys afero.Fs) error {
 	if err := flags.LoadProjectRef(fsys); err != nil && !errors.Is(err, utils.ErrNotLinked) {
 		fmt.Fprintln(os.Stderr, err)
@@ -46,7 +44,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 			Services: serviceImages,
 		})
 	case utils.OutputEnv:
-		return errors.New(ErrEnvNotSupported)
+		return errors.New(utils.ErrEnvNotSupported)
 	}
 
 	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, serviceImages)

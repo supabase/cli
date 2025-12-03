@@ -38,6 +38,8 @@ var OutputFormat = EnumFlag{
 	Value: OutputPretty,
 }
 
+var ErrEnvNotSupported = errors.New("--output env flag is not supported")
+
 func EncodeOutput(format string, w io.Writer, value any) error {
 	switch format {
 	case OutputEnv:
