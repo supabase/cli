@@ -19,16 +19,22 @@ import (
 
 var ErrNoDeploy = errors.New("All Functions are up to date.")
 
-func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.FunctionConfig, fsys fs.FS) error {
+func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.FunctionConfig, fsys fs.FS, filter ...func(string) bool) error {
 	if s.eszip != nil {
-		return s.UpsertFunctions(ctx, functionConfig)
+		return s.UpsertFunctions(ctx, functionConfig, filter...)
 	}
 	// Convert all paths in functions config to relative when using api deploy
 	var toDeploy []FunctionDeployMetadata
+OUTER:
 	for slug, fc := range functionConfig {
 		if !fc.Enabled {
 			fmt.Fprintln(os.Stderr, "Skipping disabled Function:", slug)
 			continue
+		}
+		for _, keep := range filter {
+			if !keep(slug) {
+				continue OUTER
+			}
 		}
 		meta := FunctionDeployMetadata{
 			Name:           &slug,

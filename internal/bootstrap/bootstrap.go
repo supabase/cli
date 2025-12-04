@@ -107,7 +107,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 	policy.Reset()
 	if err := backoff.RetryNotify(func() error {
 		fmt.Fprintln(os.Stderr, "Checking project health...")
-		return checkProjectHealth(ctx)
+		return CheckProjectHealth(ctx, flags.ProjectRef, api.Db)
 	}, policy, utils.NewErrorCallback()); err != nil {
 		return err
 	}
@@ -154,23 +154,26 @@ func suggestAppStart(cwd, command string) string {
 	return suggestion
 }
 
-func checkProjectHealth(ctx context.Context) error {
-	params := api.V1GetServicesHealthParams{
-		Services: []api.V1GetServicesHealthParamsServices{api.Db},
-	}
-	resp, err := utils.GetSupabase().V1GetServicesHealthWithResponse(ctx, flags.ProjectRef, &params)
+func CheckProjectHealth(ctx context.Context, projectRef string, services ...api.V1GetServicesHealthParamsServices) error {
+	params := api.V1GetServicesHealthParams{Services: services}
+	resp, err := utils.GetSupabase().V1GetServicesHealthWithResponse(ctx, projectRef, &params)
 	if err != nil {
-		return err
+		return errors.Errorf("failed to check health: %w", err)
+	} else if resp.JSON200 == nil {
+		return errors.Errorf("unexpected health check status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
-	if resp.JSON200 == nil {
-		return errors.Errorf("Error status %d: %s", resp.StatusCode(), resp.Body)
-	}
+	var allErrors []error
 	for _, service := range *resp.JSON200 {
 		if !service.Healthy {
-			return errors.Errorf("Service not healthy: %s (%s)", service.Name, service.Status)
+			msg := string(service.Status)
+			if service.Error != nil {
+				msg = *service.Error
+			}
+			err := errors.Errorf("%s service not healthy: %s", service.Name, msg)
+			allErrors = append(allErrors, err)
 		}
 	}
-	return nil
+	return errors.Join(allErrors...)
 }
 
 const (
