@@ -696,6 +696,7 @@ const (
 const (
 	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanEnterprise OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "enterprise"
 	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanFree       OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "free"
+	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanPlatform   OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "platform"
 	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanPro        OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "pro"
 	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanTeam       OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "team"
 )
@@ -704,6 +705,7 @@ const (
 const (
 	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanEnterprise OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "enterprise"
 	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanFree       OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "free"
+	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanPlatform   OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "platform"
 	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanPro        OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "pro"
 	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanTeam       OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "team"
 )
@@ -1289,6 +1291,7 @@ const (
 const (
 	V1OrganizationSlugResponsePlanEnterprise V1OrganizationSlugResponsePlan = "enterprise"
 	V1OrganizationSlugResponsePlanFree       V1OrganizationSlugResponsePlan = "free"
+	V1OrganizationSlugResponsePlanPlatform   V1OrganizationSlugResponsePlan = "platform"
 	V1OrganizationSlugResponsePlanPro        V1OrganizationSlugResponsePlan = "pro"
 	V1OrganizationSlugResponsePlanTeam       V1OrganizationSlugResponsePlan = "team"
 )
