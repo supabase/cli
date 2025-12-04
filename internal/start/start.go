@@ -250,6 +250,11 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 	isS3ProtocolEnabled := utils.Config.Storage.S3Protocol != nil && utils.Config.Storage.S3Protocol.Enabled
 	fmt.Fprintln(os.Stderr, "Starting containers...")
 
+	workdir, err := os.Getwd()
+	if err != nil {
+		return errors.Errorf("failed to get working directory: %w", err)
+	}
+
 	// Start Logflare
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.Image, excluded) {
 		env := []string{
@@ -272,10 +277,6 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 
 		switch utils.Config.Analytics.Backend {
 		case config.LogflareBigQuery:
-			workdir, err := os.Getwd()
-			if err != nil {
-				return errors.Errorf("failed to get working directory: %w", err)
-			}
 			hostJwtPath := filepath.Join(workdir, utils.Config.Analytics.GcpJwtPath)
 			bind = append(bind, hostJwtPath+":/opt/app/rel/logflare/bin/gcloud.json")
 			// This is hardcoded in studio frontend
@@ -305,7 +306,8 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 EOF
 `},
 				Healthcheck: &container.HealthConfig{
-					Test: []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null",
+					Test: []string{
+						"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null",
 						"http://127.0.0.1:4000/health",
 					},
 					Interval:    10 * time.Second,
@@ -391,7 +393,8 @@ EOF
 EOF
 `},
 				Healthcheck: &container.HealthConfig{
-					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+					Test: []string{
+						"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
 						"http://127.0.0.1:9001/health",
 					},
 					Interval: 10 * time.Second,
@@ -523,8 +526,10 @@ EOF
 			},
 			container.HostConfig{
 				Binds: binds,
-				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
-					HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)},
+				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{
+					{
+						HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10),
+					},
 				}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
@@ -815,7 +820,8 @@ EOF
 				Env:          env,
 				ExposedPorts: nat.PortSet{"9999/tcp": {}},
 				Healthcheck: &container.HealthConfig{
-					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+					Test: []string{
+						"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
 						"http://127.0.0.1:9999/health",
 					},
 					Interval: 10 * time.Second,
@@ -914,7 +920,8 @@ EOF
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 				Healthcheck: &container.HealthConfig{
 					// Podman splits command by spaces unless it's quoted, but curl header can't be quoted.
-					Test: []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null",
+					Test: []string{
+						"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null",
 						"-H", "Host:" + utils.Config.Realtime.TenantId,
 						"http://127.0.0.1:4000/api/ping",
 					},
@@ -1008,7 +1015,8 @@ EOF
 				},
 				Healthcheck: &container.HealthConfig{
 					// For some reason, localhost resolves to IPv6 address on GitPod which breaks healthcheck.
-					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+					Test: []string{
+						"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
 						"http://127.0.0.1:5000/status",
 					},
 					Interval: 10 * time.Second,
@@ -1125,10 +1133,6 @@ EOF
 
 	// Start Studio.
 	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.Config.Studio.Image, excluded) {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return errors.Errorf("failed to get working directory: %w", err)
-		}
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -1159,7 +1163,7 @@ EOF
 				},
 			},
 			container.HostConfig{
-				Binds: []string{filepath.Join(cwd, utils.FunctionsDir) + ":/app/edge-functions:ro"},
+				Binds:         []string{filepath.Join(workdir, utils.FunctionsDir) + ":/app/edge-functions:ro"},
 				PortBindings:  nat.PortMap{"3000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Studio.Port), 10)}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
@@ -1235,8 +1239,10 @@ EOF
 				},
 			},
 			container.HostConfig{
-				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
-					HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10)},
+				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{
+					{
+						HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10),
+					},
 				}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
