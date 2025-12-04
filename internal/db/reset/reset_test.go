@@ -38,7 +38,6 @@ func TestResetCommand(t *testing.T) {
 
 	t.Run("seeds storage after reset", func(t *testing.T) {
 		utils.DbId = "test-reset"
-		utils.ConfigId = "test-config"
 		utils.Config.Db.MajorVersion = 15
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()

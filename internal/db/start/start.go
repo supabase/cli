@@ -122,7 +122,6 @@ func NewHostConfig() container.HostConfig {
 		RestartPolicy: container.RestartPolicy{Name: "always"},
 		Binds: []string{
 			utils.DbId + ":/var/lib/postgresql/data",
-			utils.ConfigId + ":/etc/postgresql-custom",
 		},
 	}
 	if utils.Config.Db.MajorVersion <= 14 {

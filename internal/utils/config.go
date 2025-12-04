@@ -18,7 +18,6 @@ import (
 var (
 	NetId         string
 	DbId          string
-	ConfigId      string
 	KongId        string
 	GotrueId      string
 	InbucketId    string
@@ -64,7 +63,6 @@ func UpdateDockerIds() {
 		NetId = GetId("network")
 	}
 	DbId = GetId(DbAliases[0])
-	ConfigId = GetId("config")
 	KongId = GetId(KongAliases[0])
 	GotrueId = GetId(GotrueAliases[0])
 	InbucketId = GetId(InbucketAliases[0])
