@@ -120,7 +120,6 @@ func TestDatabaseStart(t *testing.T) {
 		}
 		// Start postgres
 		utils.DbId = "test-postgres"
-		utils.ConfigId = "test-config"
 		utils.Config.Db.Port = 54322
 		utils.Config.Db.MajorVersion = 15
 		gock.New(utils.Docker.DaemonHost()).
@@ -230,7 +229,6 @@ func TestDatabaseStart(t *testing.T) {
 			JSON(image.InspectResponse{})
 		// Start postgres
 		utils.DbId = "test-postgres"
-		utils.ConfigId = "test-config"
 		utils.Config.Db.Port = 54322
 		utils.Config.Db.MajorVersion = 15
 		gock.New(utils.Docker.DaemonHost()).

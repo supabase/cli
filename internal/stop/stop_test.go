@@ -191,7 +191,6 @@ func TestStopServices(t *testing.T) {
 
 	t.Run("removes data volumes", func(t *testing.T) {
 		utils.DbId = "test-db"
-		utils.ConfigId = "test-config"
 		utils.StorageId = "test-storage"
 		utils.EdgeRuntimeId = "test-functions"
 		utils.InbucketId = "test-inbucket"
@@ -208,7 +207,6 @@ func TestStopServices(t *testing.T) {
 
 	t.Run("skips all filter when removing data volumes with Docker version pre-v1.42", func(t *testing.T) {
 		utils.DbId = "test-db"
-		utils.ConfigId = "test-config"
 		utils.StorageId = "test-storage"
 		utils.EdgeRuntimeId = "test-functions"
 		utils.InbucketId = "test-inbucket"
