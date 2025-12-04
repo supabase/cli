@@ -228,7 +228,7 @@ func PrettyPrint(w io.Writer, exclude ...string) {
 
 	groups := []OutputGroup{
 		{
-			Name: "🛠️  Development Tools",
+			Name: "🔧 Development Tools",
 			Items: []OutputItem{
 				{Label: "Studio", Value: values[names.StudioURL], Type: Link},
 				{Label: "Mailpit", Value: values[names.MailpitURL], Type: Link},
@@ -245,7 +245,7 @@ func PrettyPrint(w io.Writer, exclude ...string) {
 			},
 		},
 		{
-			Name: "🗄️  Database",
+			Name: "⛁ Database",
 			Items: []OutputItem{
 				{Label: "URL", Value: values[names.DbURL], Type: Link},
 			},
