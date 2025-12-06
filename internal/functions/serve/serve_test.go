@@ -161,7 +161,7 @@ func TestServeFunctions(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.FromIOFS{FS: testdata}
 		// Run test
-		binds, configString, err := populatePerFunctionConfigs("/", "", nil, fsys)
+		binds, configString, err := PopulatePerFunctionConfigs("/", "", nil, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.ElementsMatch(t, []string{
