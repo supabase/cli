@@ -35,6 +35,7 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 	if err != nil {
 		return err
 	}
+	out = filterInheritedConstraints(out)
 	branch := keys.GetGitBranch(fsys)
 	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db diff")+" on branch "+utils.Aqua(branch)+".\n")
 	if err := SaveDiff(out, file, fsys); err != nil {
@@ -87,6 +88,29 @@ func findDropStatements(out string) []string {
 		}
 	}
 	return drops
+}
+
+var inheritedConstraintPattern = regexp.MustCompile(`(?i)alter\s+table\s+[^;]+\s+(drop|add)\s+constraint\s+"[^"]*fkey\d+"`)
+
+func filterInheritedConstraints(out string) string {
+	lines, err := parser.SplitAndTrim(strings.NewReader(out))
+	if err != nil {
+		return out
+	}
+	var filtered []string
+	for _, line := range lines {
+		if !inheritedConstraintPattern.MatchString(line) {
+			filtered = append(filtered, line)
+		}
+	}
+	if len(filtered) == 0 {
+		return ""
+	}
+	result := strings.Join(filtered, ";\n\n") + ";"
+	if strings.HasSuffix(out, "\n") {
+		result += "\n"
+	}
+	return result
 }
 
 func CreateShadowDatabase(ctx context.Context, port uint16) (string, error) {
