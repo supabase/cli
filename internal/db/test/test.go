@@ -27,8 +27,16 @@ const (
 func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// Build test command
 	cmd := []string{"pg_prove", "--ext", ".pg", "--ext", ".sql", "-r"}
+	absTestsDir, err := filepath.Abs(utils.DbTestsDir)
+	if err != nil {
+		return errors.Errorf("failed to resolve absolute path: %w", err)
+	}
 	for _, fp := range testFiles {
-		relPath, err := filepath.Rel(utils.DbTestsDir, fp)
+		absPath, err := filepath.Abs(fp)
+		if err != nil {
+			return errors.Errorf("failed to resolve absolute path: %w", err)
+		}
+		relPath, err := filepath.Rel(absTestsDir, absPath)
 		if err != nil {
 			return errors.Errorf("failed to resolve relative path: %w", err)
 		}
@@ -38,10 +46,7 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 		cmd = append(cmd, "--verbose")
 	}
 	// Mount tests directory into container as working directory
-	srcPath, err := filepath.Abs(utils.DbTestsDir)
-	if err != nil {
-		return errors.Errorf("failed to resolve absolute path: %w", err)
-	}
+	srcPath := absTestsDir
 	dstPath := "/tmp"
 	binds := []string{fmt.Sprintf("%s:%s:ro", srcPath, dstPath)}
 	// Enable pgTAP if not already exists
