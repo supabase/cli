@@ -345,6 +345,68 @@ func TestDropStatements(t *testing.T) {
 	assert.Equal(t, []string{"drop table t", "alter table t drop column c"}, drops)
 }
 
+func TestFilterInheritedConstraints(t *testing.T) {
+	t.Run("filters inherited fkey constraints", func(t *testing.T) {
+		input := `alter table "public"."users" drop constraint "users_avatar_id_fkey1";
+alter table "public"."users" drop constraint "users_avatar_id_fkey2";
+alter table "public"."users" add constraint "users_avatar_id_fkey1" FOREIGN KEY (avatar_id) REFERENCES photos_avatars(id);
+create table test();`
+		result := filterInheritedConstraints(input)
+		assert.Equal(t, "create table test();", result)
+	})
+
+	t.Run("preserves non-inherited constraints", func(t *testing.T) {
+		input := `alter table "public"."users" drop constraint "users_avatar_id_fkey";
+alter table "public"."users" add constraint "users_avatar_id_fkey" FOREIGN KEY (avatar_id) REFERENCES photos(id);`
+		result := filterInheritedConstraints(input)
+		assert.Contains(t, result, `alter table "public"."users" drop constraint "users_avatar_id_fkey"`)
+		assert.Contains(t, result, `alter table "public"."users" add constraint "users_avatar_id_fkey" FOREIGN KEY (avatar_id) REFERENCES photos(id)`)
+	})
+
+	t.Run("returns empty string when all statements filtered", func(t *testing.T) {
+		input := `alter table "public"."users" drop constraint "users_fkey1";
+alter table "public"."users" drop constraint "users_fkey2";`
+		result := filterInheritedConstraints(input)
+		assert.Equal(t, "", result)
+	})
+
+	t.Run("handles empty input", func(t *testing.T) {
+		result := filterInheritedConstraints("")
+		assert.Equal(t, "", result)
+	})
+
+	t.Run("handles mixed statements with partitioned table constraints", func(t *testing.T) {
+		input := `create table accounts(id text primary key);
+alter table "public"."users" drop constraint "users_avatar_id_avatar_bucket_fkey1";
+alter table "public"."users" drop constraint "users_avatar_id_avatar_bucket_fkey14";
+alter table "public"."companies" drop constraint "companies_logo_id_fkey1";
+create index idx_test on test(id);`
+		result := filterInheritedConstraints(input)
+		assert.Contains(t, result, "create table accounts(id text primary key)")
+		assert.Contains(t, result, "create index idx_test on test(id)")
+		assert.NotContains(t, result, "fkey1")
+		assert.NotContains(t, result, "fkey14")
+	})
+
+	t.Run("filters exact bug report pattern", func(t *testing.T) {
+		input := `alter table "public"."users" drop constraint "users_avatar_id_avatar_bucket_fkey1";
+alter table "public"."users" drop constraint "users_avatar_id_avatar_bucket_fkey2";
+alter table "public"."users" drop constraint "users_avatar_id_avatar_bucket_fkey3";
+alter table "public"."users" add constraint "users_avatar_id_avatar_bucket_fkey1" FOREIGN KEY (avatar_id, avatar_bucket) REFERENCES photos_avatars(id, bucket) ON DELETE SET NULL;
+alter table "public"."users" add constraint "users_avatar_id_avatar_bucket_fkey2" FOREIGN KEY (avatar_id, avatar_bucket) REFERENCES photos_brands(id, bucket) ON DELETE SET NULL;`
+		result := filterInheritedConstraints(input)
+		assert.Equal(t, "", result)
+	})
+
+	t.Run("preserves legitimate constraint operations", func(t *testing.T) {
+		input := `alter table "public"."users" drop constraint "users_avatar_id_avatar_bucket_fkey";
+alter table "public"."users" add constraint "users_avatar_id_avatar_bucket_fkey" FOREIGN KEY (avatar_id, avatar_bucket) REFERENCES photos(id, bucket) ON DELETE SET NULL;`
+		result := filterInheritedConstraints(input)
+		assert.Contains(t, result, "users_avatar_id_avatar_bucket_fkey")
+		assert.NotContains(t, result, "fkey1")
+	})
+}
+
 func TestLoadSchemas(t *testing.T) {
 	expected := []string{
 		filepath.Join(utils.SchemasDir, "comment", "model.sql"),

@@ -44,7 +44,7 @@ func RunPgAdmin(ctx context.Context, schema []string, file string, config pgconn
 		return err
 	}
 
-	return SaveDiff(output, file, fsys)
+	return SaveDiff(filterInheritedConstraints(output), file, fsys)
 }
 
 var output string
