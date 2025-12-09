@@ -130,7 +130,6 @@ func updateJsonFile(path string, template string, fsys afero.Fs) error {
 	return saveUserSettings(path, userSettings, fsys)
 }
 
-// WriteVscodeConfig creates VS Code settings for Deno Edge Functions development.
 func WriteVscodeConfig(fsys afero.Fs) error {
 	// Create VS Code settings for Deno.
 	if err := utils.MkdirIfNotExistFS(fsys, vscodeDir); err != nil {
@@ -147,7 +146,6 @@ func WriteVscodeConfig(fsys afero.Fs) error {
 	return nil
 }
 
-// WriteIntelliJConfig creates IntelliJ IDEA settings for Deno Edge Functions development.
 func WriteIntelliJConfig(fsys afero.Fs) error {
 	if err := utils.WriteFile(denoPath, []byte(intelliJDeno), fsys); err != nil {
 		return err

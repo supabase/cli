@@ -39,7 +39,6 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 	if err := utils.ValidateFunctionSlug(slug); err != nil {
 		return err
 	}
-	// Check if this is the first function before creating the new one
 	isFirstFunction := isFirstFunctionCreation(fsys)
 
 	// 2. Create new function.
@@ -66,7 +65,6 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 	}
 	fmt.Println("Created new Function at " + utils.Bold(funcDir))
 
-	// 4. If this is the first function, prompt for IDE settings
 	if isFirstFunction {
 		if err := promptForIDESettings(ctx, fsys); err != nil {
 			return err
@@ -75,7 +73,7 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 	return nil
 }
 
-// isFirstFunctionCreation checks if this is the first function being created.
+// Checks if this is the first function being created.
 // Returns true if the functions directory doesn't exist or is empty.
 func isFirstFunctionCreation(fsys afero.Fs) bool {
 	entries, err := afero.ReadDir(fsys, utils.FunctionsDir)
@@ -92,7 +90,6 @@ func isFirstFunctionCreation(fsys afero.Fs) bool {
 	return true
 }
 
-// promptForIDESettings prompts the user to generate IDE settings for Deno development.
 func promptForIDESettings(ctx context.Context, fsys afero.Fs) error {
 	console := utils.NewConsole()
 	if isVscode, err := console.PromptYesNo(ctx, "Generate VS Code settings for Deno?", true); err != nil {
