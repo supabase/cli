@@ -43,17 +43,27 @@ func WithTimeout(timeout time.Duration) func(*nativeBundler) {
 var (
 	// Use a package private variable to allow testing without gosec complaining about G204
 	edgeRuntimeBin = "edge-runtime"
-	BundleFlags    = []string{
-		"--decorator", "tc39",
-	}
+	BundleFlags    = []string{}
 )
+
+// IsDenoJsonImportMap checks if the import map is a deno.json/deno.jsonc file
+// that Deno 2 can auto-discover, vs a legacy import_map.json that needs explicit flag
+func IsDenoJsonImportMap(importMap string) bool {
+	if len(importMap) == 0 {
+		return false
+	}
+	base := filepath.Base(importMap)
+	return base == "deno.json" || base == "deno.jsonc"
+}
 
 func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) (FunctionDeployMetadata, error) {
 	meta := NewMetadata(slug, entrypoint, importMap, staticFiles)
 	outputPath := filepath.Join(b.tempDir, slug+".eszip")
 	// TODO: make edge runtime write to stdout
 	args := []string{"bundle", "--entrypoint", entrypoint, "--output", outputPath}
-	if len(importMap) > 0 {
+	// Only pass --import-map for legacy import map files (not deno.json/deno.jsonc)
+	// Deno 2 auto-discovers deno.json files, so the flag is not needed and triggers deprecation warnings
+	if len(importMap) > 0 && !IsDenoJsonImportMap(importMap) {
 		args = append(args, "--import-map", importMap)
 	}
 	for _, staticFile := range staticFiles {

@@ -27,6 +27,30 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+func TestIsDenoJsonImportMap(t *testing.T) {
+	tests := []struct {
+		name      string
+		importMap string
+		expected  bool
+	}{
+		{"empty string", "", false},
+		{"deno.json", "deno.json", true},
+		{"deno.jsonc", "deno.jsonc", true},
+		{"path with deno.json", "hello/deno.json", true},
+		{"path with deno.jsonc", "functions/hello/deno.jsonc", true},
+		{"import_map.json", "import_map.json", false},
+		{"path with import_map.json", "hello/import_map.json", false},
+		{"custom name", "my-imports.json", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsDenoJsonImportMap(tt.importMap)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func TestBundleFunction(t *testing.T) {
 	cwd, err := os.Getwd()
 	require.NoError(t, err)

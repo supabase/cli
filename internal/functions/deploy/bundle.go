@@ -50,7 +50,9 @@ func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	hostOutputPath := filepath.Join(hostOutputDir, "output.eszip")
 	// Create exec command
 	cmd := []string{"bundle", "--entrypoint", utils.ToDockerPath(entrypoint), "--output", utils.ToDockerPath(hostOutputPath)}
-	if len(importMap) > 0 {
+	// Only pass --import-map for legacy import map files (not deno.json/deno.jsonc)
+	// Deno 2 auto-discovers deno.json files, so the flag is not needed and triggers deprecation warnings
+	if len(importMap) > 0 && !function.IsDenoJsonImportMap(importMap) {
 		cmd = append(cmd, "--import-map", utils.ToDockerPath(importMap))
 	}
 	for _, sf := range staticFiles {
