@@ -2,7 +2,6 @@ package init
 
 import (
 	"bytes"
-	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -33,7 +32,7 @@ var (
 	intelliJDeno string
 )
 
-func Run(ctx context.Context, fsys afero.Fs, createVscodeSettings, createIntellijSettings *bool, params utils.InitParams) error {
+func Run(fsys afero.Fs, createVscodeSettings, createIntellijSettings *bool, params utils.InitParams) error {
 	// 1. Write `config.toml`.
 	if err := utils.InitConfig(params, fsys); err != nil {
 		if errors.Is(err, os.ErrExist) {
@@ -49,27 +48,12 @@ func Run(ctx context.Context, fsys afero.Fs, createVscodeSettings, createIntelli
 		}
 	}
 
-	// 3. Generate VS Code settings.
-	if createVscodeSettings != nil {
-		if *createVscodeSettings {
-			return writeVscodeConfig(fsys)
-		}
-	} else if createIntellijSettings != nil {
-		if *createIntellijSettings {
-			return writeIntelliJConfig(fsys)
-		}
-	} else {
-		console := utils.NewConsole()
-		if isVscode, err := console.PromptYesNo(ctx, "Generate VS Code settings for Deno?", false); err != nil {
-			return err
-		} else if isVscode {
-			return writeVscodeConfig(fsys)
-		}
-		if isIntelliJ, err := console.PromptYesNo(ctx, "Generate IntelliJ Settings for Deno?", false); err != nil {
-			return err
-		} else if isIntelliJ {
-			return writeIntelliJConfig(fsys)
-		}
+	// 3. Generate VS Code or IntelliJ settings if explicitly requested via flags.
+	if createVscodeSettings != nil && *createVscodeSettings {
+		return WriteVscodeConfig(fsys)
+	}
+	if createIntellijSettings != nil && *createIntellijSettings {
+		return WriteIntelliJConfig(fsys)
 	}
 	return nil
 }
@@ -146,7 +130,8 @@ func updateJsonFile(path string, template string, fsys afero.Fs) error {
 	return saveUserSettings(path, userSettings, fsys)
 }
 
-func writeVscodeConfig(fsys afero.Fs) error {
+// WriteVscodeConfig creates VS Code settings for Deno Edge Functions development.
+func WriteVscodeConfig(fsys afero.Fs) error {
 	// Create VS Code settings for Deno.
 	if err := utils.MkdirIfNotExistFS(fsys, vscodeDir); err != nil {
 		return err
@@ -157,14 +142,17 @@ func writeVscodeConfig(fsys afero.Fs) error {
 	if err := updateJsonFile(settingsPath, vscodeSettings, fsys); err != nil {
 		return err
 	}
-	fmt.Println("Generated VS Code settings in " + utils.Bold(settingsPath) + ". Please install the recommended extension!")
+	fmt.Println("Generated VS Code settings in " + utils.Bold(settingsPath) + ".")
+	fmt.Println("Please install the Deno extension for VS Code: " + utils.Aqua("https://marketplace.visualstudio.com/items?itemName=denoland.vscode-deno"))
 	return nil
 }
 
-func writeIntelliJConfig(fsys afero.Fs) error {
+// WriteIntelliJConfig creates IntelliJ IDEA settings for Deno Edge Functions development.
+func WriteIntelliJConfig(fsys afero.Fs) error {
 	if err := utils.WriteFile(denoPath, []byte(intelliJDeno), fsys); err != nil {
 		return err
 	}
-	fmt.Println("Generated IntelliJ settings in " + utils.Bold(denoPath) + ". Please install the Deno plugin!")
+	fmt.Println("Generated IntelliJ settings in " + utils.Bold(denoPath) + ".")
+	fmt.Println("Please install the Deno plugin for IntelliJ: " + utils.Aqua("https://plugins.jetbrains.com/plugin/14382-deno"))
 	return nil
 }

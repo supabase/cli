@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	_init "github.com/supabase/cli/internal/init"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 )
@@ -38,6 +39,9 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 	if err := utils.ValidateFunctionSlug(slug); err != nil {
 		return err
 	}
+	// Check if this is the first function before creating the new one
+	isFirstFunction := isFirstFunctionCreation(fsys)
+
 	// 2. Create new function.
 	funcDir := filepath.Join(utils.FunctionsDir, slug)
 	if err := utils.MkdirIfNotExistFS(fsys, funcDir); err != nil {
@@ -61,6 +65,46 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 		return errors.Errorf("failed to create .npmrc config: %w", err)
 	}
 	fmt.Println("Created new Function at " + utils.Bold(funcDir))
+
+	// 4. If this is the first function, prompt for IDE settings
+	if isFirstFunction {
+		if err := promptForIDESettings(ctx, fsys); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// isFirstFunctionCreation checks if this is the first function being created.
+// Returns true if the functions directory doesn't exist or is empty.
+func isFirstFunctionCreation(fsys afero.Fs) bool {
+	entries, err := afero.ReadDir(fsys, utils.FunctionsDir)
+	if err != nil {
+		// Directory doesn't exist, this is the first function
+		return true
+	}
+	// Check if there are any subdirectories (existing functions)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			return false
+		}
+	}
+	return true
+}
+
+// promptForIDESettings prompts the user to generate IDE settings for Deno development.
+func promptForIDESettings(ctx context.Context, fsys afero.Fs) error {
+	console := utils.NewConsole()
+	if isVscode, err := console.PromptYesNo(ctx, "Generate VS Code settings for Deno?", true); err != nil {
+		return err
+	} else if isVscode {
+		return _init.WriteVscodeConfig(fsys)
+	}
+	if isIntelliJ, err := console.PromptYesNo(ctx, "Generate IntelliJ IDEA settings for Deno?", false); err != nil {
+		return err
+	} else if isIntelliJ {
+		return _init.WriteIntelliJConfig(fsys)
+	}
 	return nil
 }
 
