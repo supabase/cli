@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"os/signal"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -42,8 +40,7 @@ var (
 			if !cmd.Flags().Changed("with-intellij-settings") {
 				createIntellijSettings = nil
 			}
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return _init.Run(ctx, fsys, createVscodeSettings, createIntellijSettings, initParams)
+			return _init.Run(fsys, createVscodeSettings, createIntellijSettings, initParams)
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Finished " + utils.Aqua("supabase init") + ".")
