@@ -128,6 +128,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	}
 	env = append(env,
 		fmt.Sprintf("SUPABASE_URL=http://%s:8000", utils.KongAliases[0]),
+		"SUPABASE_PUBLIC_URL="+utils.Config.Api.ExternalUrl,
 		"SUPABASE_ANON_KEY="+utils.Config.Auth.AnonKey.Value,
 		"SUPABASE_SERVICE_ROLE_KEY="+utils.Config.Auth.ServiceRoleKey.Value,
 		"SUPABASE_DB_URL="+dbUrl,
