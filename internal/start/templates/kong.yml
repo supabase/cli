@@ -234,7 +234,7 @@ services:
             headers:
               - "Authorization: {{ .BearerToken }}"
   - name: oauth-protected-resource
-    _comment: "OAuth Protected Resource: /.well-known/oauth-protected-resource/functions/v1/<whatever> -> /functions/v1/<whatever>/.well-known/oauth-protected-resource"
+    _comment: "OAuth Protected Resource: /.well-known/oauth-protected-resource/functions/v1/<function-name>/* -> /<function-name>/.well-known/oauth-protected-resource"
     url: http://{{ .EdgeRuntimeId }}:8081/
     routes:
       - name: oauth-protected-resource
@@ -248,7 +248,9 @@ services:
           access:
             - |
               local uri = kong.request.get_path()
-              local new_uri = uri:gsub("^/.well%-known/oauth%-protected%-resource/functions/v1", "") .. "/.well-known/oauth-protected-resource"
+              local path_after_prefix = uri:gsub("^/.well%-known/oauth%-protected%-resource/functions/v1/", "")
+              local function_name = path_after_prefix:match("^([^/]+)")
+              local new_uri = "/" .. function_name .. "/.well-known/oauth-protected-resource"
               kong.service.request.set_path(new_uri)
   - name: mcp
     _comment: "MCP: /mcp -> http://studio:3000/api/mcp"
