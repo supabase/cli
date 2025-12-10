@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -15,6 +16,7 @@ import (
 	"github.com/supabase/cli/internal/inspect/locks"
 	"github.com/supabase/cli/internal/inspect/long_running_queries"
 	"github.com/supabase/cli/internal/inspect/outliers"
+	"github.com/supabase/cli/internal/inspect/replication"
 	"github.com/supabase/cli/internal/inspect/replication_slots"
 	"github.com/supabase/cli/internal/inspect/role_stats"
 	"github.com/supabase/cli/internal/inspect/table_stats"
@@ -24,6 +26,8 @@ import (
 )
 
 var (
+	replicationDuration time.Duration
+
 	inspectCmd = &cobra.Command{
 		GroupID: groupLocalDev,
 		Use:     "inspect",
@@ -141,6 +145,14 @@ var (
 		Short: "Show read/write activity ratio for tables based on block I/O operations",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return traffic_profile.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs())
+		},
+	}
+
+	inspectReplicationCmd = &cobra.Command{
+		Use:   "replication",
+		Short: "Show replication statistics and recommendations",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return replication.Run(cmd.Context(), flags.DbConfig, afero.NewOsFs(), replicationDuration)
 		},
 	}
 
@@ -280,6 +292,8 @@ func init() {
 	inspectDBCmd.AddCommand(inspectVacuumStatsCmd)
 	inspectDBCmd.AddCommand(inspectTableStatsCmd)
 	inspectDBCmd.AddCommand(inspectTrafficProfileCmd)
+	inspectReplicationCmd.Flags().DurationVar(&replicationDuration, "duration", 10*time.Second, "Duration to sample WAL generation (e.g. 30s, 1m, 5m)")
+	inspectDBCmd.AddCommand(inspectReplicationCmd)
 	inspectDBCmd.AddCommand(inspectRoleStatsCmd)
 	inspectDBCmd.AddCommand(inspectDBStatsCmd)
 	// DEPRECATED
