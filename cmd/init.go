@@ -2,18 +2,19 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	_init "github.com/supabase/cli/internal/init"
 	"github.com/supabase/cli/internal/utils"
+	"golang.org/x/term"
 )
 
 var (
-	createVscodeSettings   = new(bool)
-	createIntellijSettings = new(bool)
-	initParams             = utils.InitParams{}
+	initInteractive bool
+	initParams      = utils.InitParams{}
 
 	initCmd = &cobra.Command{
 		GroupID: groupLocalDev,
@@ -32,15 +33,10 @@ var (
 			}
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
 			fsys := afero.NewOsFs()
-			if !cmd.Flags().Changed("with-vscode-settings") && !cmd.Flags().Changed("with-vscode-workspace") {
-				createVscodeSettings = nil
-			}
-
-			if !cmd.Flags().Changed("with-intellij-settings") {
-				createIntellijSettings = nil
-			}
-			return _init.Run(fsys, createVscodeSettings, createIntellijSettings, initParams)
+			interactive := initInteractive && term.IsTerminal(int(os.Stdin.Fd()))
+			return _init.Run(ctx, fsys, interactive, initParams)
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Finished " + utils.Aqua("supabase init") + ".")
@@ -50,10 +46,7 @@ var (
 
 func init() {
 	flags := initCmd.Flags()
-	flags.BoolVar(createVscodeSettings, "with-vscode-workspace", false, "Generate VS Code workspace.")
-	cobra.CheckErr(flags.MarkHidden("with-vscode-workspace"))
-	flags.BoolVar(createVscodeSettings, "with-vscode-settings", false, "Generate VS Code settings for Deno.")
-	flags.BoolVar(createIntellijSettings, "with-intellij-settings", false, "Generate IntelliJ IDEA settings for Deno.")
+	flags.BoolVarP(&initInteractive, "interactive", "i", false, "Enables interactive mode to configure IDE settings.")
 	flags.BoolVar(&initParams.UseOrioleDB, "use-orioledb", false, "Use OrioleDB storage engine for Postgres.")
 	flags.BoolVar(&initParams.Overwrite, "force", false, "Overwrite existing "+utils.ConfigPath+".")
 	rootCmd.AddCommand(initCmd)

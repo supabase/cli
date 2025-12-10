@@ -2,6 +2,7 @@ package init
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -32,7 +33,7 @@ var (
 	intelliJDeno string
 )
 
-func Run(fsys afero.Fs, createVscodeSettings, createIntellijSettings *bool, params utils.InitParams) error {
+func Run(ctx context.Context, fsys afero.Fs, interactive bool, params utils.InitParams) error {
 	// 1. Write `config.toml`.
 	if err := utils.InitConfig(params, fsys); err != nil {
 		if errors.Is(err, os.ErrExist) {
@@ -48,11 +49,26 @@ func Run(fsys afero.Fs, createVscodeSettings, createIntellijSettings *bool, para
 		}
 	}
 
-	// 3. Generate VS Code or IntelliJ settings if explicitly requested via flags.
-	if createVscodeSettings != nil && *createVscodeSettings {
+	// 3. Prompt for IDE settings in interactive mode.
+	if interactive {
+		if err := PromptForIDESettings(ctx, fsys); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// PromptForIDESettings prompts the user to generate IDE settings for Deno.
+func PromptForIDESettings(ctx context.Context, fsys afero.Fs) error {
+	console := utils.NewConsole()
+	if isVscode, err := console.PromptYesNo(ctx, "Generate VS Code settings for Deno?", true); err != nil {
+		return err
+	} else if isVscode {
 		return WriteVscodeConfig(fsys)
 	}
-	if createIntellijSettings != nil && *createIntellijSettings {
+	if isIntelliJ, err := console.PromptYesNo(ctx, "Generate IntelliJ IDEA settings for Deno?", false); err != nil {
+		return err
+	} else if isIntelliJ {
 		return WriteIntelliJConfig(fsys)
 	}
 	return nil
@@ -142,7 +158,7 @@ func WriteVscodeConfig(fsys afero.Fs) error {
 		return err
 	}
 	fmt.Println("Generated VS Code settings in " + utils.Bold(settingsPath) + ".")
-	fmt.Println("Please install the Deno extension for VS Code: " + utils.Aqua("https://marketplace.visualstudio.com/items?itemName=denoland.vscode-deno"))
+	fmt.Println("Please install the Deno extension for VS Code: " + utils.Bold("https://marketplace.visualstudio.com/items?itemName=denoland.vscode-deno"))
 	return nil
 }
 
@@ -151,6 +167,6 @@ func WriteIntelliJConfig(fsys afero.Fs) error {
 		return err
 	}
 	fmt.Println("Generated IntelliJ settings in " + utils.Bold(denoPath) + ".")
-	fmt.Println("Please install the Deno plugin for IntelliJ: " + utils.Aqua("https://plugins.jetbrains.com/plugin/14382-deno"))
+	fmt.Println("Please install the Deno plugin for IntelliJ: " + utils.Bold("https://plugins.jetbrains.com/plugin/14382-deno"))
 	return nil
 }
