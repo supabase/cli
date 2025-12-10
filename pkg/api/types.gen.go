@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	BearerScopes = "bearer.Scopes"
-	Oauth2Scopes = "oauth2.Scopes"
+	BearerScopes          = "bearer.Scopes"
+	Fga_permissionsScopes = "fga_permissions.Scopes"
+	Oauth2Scopes          = "oauth2.Scopes"
 )
 
 // Defines values for ActionRunResponseRunStepsName.
