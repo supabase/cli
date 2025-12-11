@@ -18,9 +18,10 @@ import (
 )
 
 type nativeBundler struct {
-	tempDir string
-	fsys    fs.FS
-	timeout time.Duration
+	tempDir     string
+	fsys        fs.FS
+	timeout     time.Duration
+	denoVersion uint
 }
 
 func NewNativeBundler(tempDir string, fsys fs.FS, opts ...func(*nativeBundler)) EszipBundler {
@@ -37,6 +38,12 @@ func NewNativeBundler(tempDir string, fsys fs.FS, opts ...func(*nativeBundler)) 
 func WithTimeout(timeout time.Duration) func(*nativeBundler) {
 	return func(b *nativeBundler) {
 		b.timeout = timeout
+	}
+}
+
+func WithDenoVersion(version uint) func(*nativeBundler) {
+	return func(b *nativeBundler) {
+		b.denoVersion = version
 	}
 }
 
@@ -61,10 +68,17 @@ func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	outputPath := filepath.Join(b.tempDir, slug+".eszip")
 	// TODO: make edge runtime write to stdout
 	args := []string{"bundle", "--entrypoint", entrypoint, "--output", outputPath}
-	// Only pass --import-map for legacy import map files (not deno.json/deno.jsonc)
-	// Deno 2 auto-discovers deno.json files, so the flag is not needed and triggers deprecation warnings
-	if len(importMap) > 0 && !IsDenoJsonImportMap(importMap) {
-		args = append(args, "--import-map", importMap)
+	// Handle import map/config flags based on Deno version
+	// Deno 2: use --config for deno.json files, --import-map for legacy import_map.json
+	// Deno 1: use --import-map for all import map files
+	if len(importMap) > 0 {
+		if b.denoVersion > 1 && IsDenoJsonImportMap(importMap) {
+			// Deno 2 with deno.json: use --config flag
+			args = append(args, "--config", importMap)
+		} else {
+			// Deno 1 or legacy import_map.json: use --import-map flag
+			args = append(args, "--import-map", importMap)
+		}
 	}
 	for _, staticFile := range staticFiles {
 		args = append(args, "--static", staticFile)
