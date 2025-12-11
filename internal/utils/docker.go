@@ -147,6 +147,36 @@ func DockerRemoveAll(ctx context.Context, w io.Writer, projectId string) error {
 	return nil
 }
 
+func DockerRestartAll(ctx context.Context, w io.Writer, projectId string) error {
+	fmt.Fprintln(w, "Restarting containers...")
+	args := CliProjectFilter(projectId)
+	containers, err := Docker.ContainerList(ctx, container.ListOptions{
+		All:     true,
+		Filters: args,
+	})
+	if err != nil {
+		return errors.Errorf("failed to list containers: %w", err)
+	}
+	// Restart containers
+	var ids []string
+	for _, c := range containers {
+		if c.State == "running" {
+			ids = append(ids, c.ID)
+		}
+	}
+	result := WaitAll(ids, func(id string) error {
+		if err := Docker.ContainerRestart(ctx, id, container.StopOptions{}); err != nil {
+			return errors.Errorf("failed to stop container: %w", err)
+		}
+		return nil
+	})
+	if err := errors.Join(result...); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func CliProjectFilter(projectId string) filters.Args {
 	if len(projectId) == 0 {
 		return filters.NewArgs(
