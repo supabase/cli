@@ -112,9 +112,9 @@ file_size_limit = "50MiB"
 # allowed_mime_types = ["image/png", "image/jpeg"]
 # objects_path = "./images"
 
-# Uncomment to allow connections via S3 compatible clients
-# [storage.s3_protocol]
-# enabled = true
+# Allow connections via S3 compatible clients
+[storage.s3_protocol]
+enabled = true
 
 # Image transformation API is available to Supabase Pro plan.
 # [storage.image_transformation]
