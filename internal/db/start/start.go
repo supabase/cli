@@ -119,7 +119,7 @@ func NewHostConfig() container.HostConfig {
 	hostPort := strconv.FormatUint(uint64(utils.Config.Db.Port), 10)
 	hostConfig := container.HostConfig{
 		PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
-		RestartPolicy: container.RestartPolicy{Name: "always"},
+		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 		Binds: []string{
 			utils.DbId + ":/var/lib/postgresql/data",
 		},
