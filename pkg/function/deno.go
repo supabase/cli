@@ -28,7 +28,7 @@ func (m *ImportMap) LoadAsDeno(imPath string, fsys fs.FS, opts ...func(string, i
 	if err := m.Load(imPath, fsys, opts...); err != nil {
 		return err
 	}
-	if name := path.Base(imPath); isDeno(name) && m.IsReference() {
+	if name := path.Base(imPath); IsDeno(name) && m.IsReference() {
 		imPath = path.Join(path.Dir(imPath), m.ImportMap)
 		if err := m.Load(imPath, fsys, opts...); err != nil {
 			return err
@@ -37,7 +37,7 @@ func (m *ImportMap) LoadAsDeno(imPath string, fsys fs.FS, opts ...func(string, i
 	return nil
 }
 
-func isDeno(name string) bool {
+func IsDeno(name string) bool {
 	return strings.EqualFold(name, "deno.json") ||
 		strings.EqualFold(name, "deno.jsonc")
 }

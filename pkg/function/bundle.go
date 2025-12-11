@@ -53,7 +53,7 @@ func IsDenoJsonImportMap(importMap string) bool {
 		return false
 	}
 	base := filepath.Base(importMap)
-	return base == "deno.json" || base == "deno.jsonc"
+	return IsDeno(base)
 }
 
 func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) (FunctionDeployMetadata, error) {

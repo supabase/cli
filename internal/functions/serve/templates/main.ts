@@ -187,6 +187,12 @@ Deno.serve({
     const cpuTimeSoftLimitMs = 1000;
     const cpuTimeHardLimitMs = 2000;
 
+    // NOTE(Nyannyacha): Decorator type has been set to tc39 by Lakshan's request,
+    // but in my opinion, we should probably expose this to customers at some
+    // point, as their migration process will not be easy.
+    // This need to be kept for Deno 1 compatibility.
+    const decoratorType = "tc39";
+
     const absEntrypoint = posix.join(Deno.cwd(), functionsConfig[functionName].entrypointPath);
     const maybeEntrypoint = posix.toFileUrl(absEntrypoint).href;
     const usePackageJson = await shouldUsePackageJsonDiscovery(functionsConfig[functionName]);
@@ -206,6 +212,7 @@ Deno.serve({
         customModuleRoot,
         cpuTimeSoftLimitMs,
         cpuTimeHardLimitMs,
+        decoratorType,
         maybeEntrypoint,
         context: {
           useReadSyncFileAPI: true,
