@@ -195,6 +195,7 @@ EOF
 		dockerInspectorPort := nat.Port(fmt.Sprintf("%d/tcp", dockerRuntimeInspectorPort))
 		exposedPorts[dockerInspectorPort] = struct{}{}
 		portBindings[dockerInspectorPort] = []nat.PortBinding{{
+			HostIP:   utils.Config.EdgeRuntime.HostIP,
 			HostPort: strconv.FormatUint(uint64(utils.Config.EdgeRuntime.InspectorPort), 10),
 		}}
 	}

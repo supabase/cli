@@ -172,6 +172,7 @@ type (
 		Enabled      bool   `toml:"enabled"`
 		Image        string `toml:"-"`
 		Port         uint16 `toml:"port"`
+		HostIP       string `toml:"host_ip"`
 		ApiUrl       string `toml:"api_url"`
 		OpenaiApiKey Secret `toml:"openai_api_key"`
 		PgmetaImage  string `toml:"-"`
@@ -181,6 +182,7 @@ type (
 		Enabled    bool   `toml:"enabled"`
 		Image      string `toml:"-"`
 		Port       uint16 `toml:"port"`
+		HostIP     string `toml:"host_ip"`
 		SmtpPort   uint16 `toml:"smtp_port"`
 		Pop3Port   uint16 `toml:"pop3_port"`
 		AdminEmail string `toml:"admin_email"`
@@ -192,6 +194,7 @@ type (
 		Image         string        `toml:"-"`
 		Policy        RequestPolicy `toml:"policy"`
 		InspectorPort uint16        `toml:"inspector_port"`
+		HostIP        string        `toml:"host_ip"`
 		Secrets       SecretsConfig `toml:"secrets"`
 		DenoVersion   uint          `toml:"deno_version"`
 	}
@@ -212,6 +215,7 @@ type (
 		Image            string          `toml:"-"`
 		VectorImage      string          `toml:"-"`
 		Port             uint16          `toml:"port"`
+		HostIP           string          `toml:"host_ip"`
 		Backend          LogflareBackend `toml:"backend"`
 		GcpProjectId     string          `toml:"gcp_project_id"`
 		GcpProjectNumber string          `toml:"gcp_project_number"`
@@ -334,6 +338,7 @@ func NewConfig(editors ...ConfigEditor) config {
 		Api: api{
 			Image:     Images.Postgrest,
 			KongImage: Images.Kong,
+			HostIP:    "127.0.0.1",
 			Tls: tlsKong{
 				CertContent: kongCert,
 				KeyContent:  kongKey,
@@ -342,12 +347,14 @@ func NewConfig(editors ...ConfigEditor) config {
 		Db: db{
 			Image:    Images.Pg,
 			Password: "postgres",
+			HostIP:   "127.0.0.1",
 			RootKey: Secret{
 				Value: "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
 			},
 			Pooler: pooler{
 				Image:         Images.Supavisor,
 				TenantId:      "pooler-dev",
+				HostIP:        "127.0.0.1",
 				EncryptionKey: "12345678901234567890123456789032",
 				SecretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
 			},
@@ -389,22 +396,26 @@ func NewConfig(editors ...ConfigEditor) config {
 		},
 		Inbucket: inbucket{
 			Image:      Images.Inbucket,
+			HostIP:     "127.0.0.1",
 			AdminEmail: "admin@email.com",
 			SenderName: "Admin",
 		},
 		Studio: studio{
 			Image:       Images.Studio,
+			HostIP:      "127.0.0.1",
 			PgmetaImage: Images.Pgmeta,
 		},
 		Analytics: analytics{
 			Image:       Images.Logflare,
 			VectorImage: Images.Vector,
+			HostIP:      "127.0.0.1",
 			ApiKey:      "api-key",
 			// Defaults to bigquery for backwards compatibility with existing config.toml
 			Backend: LogflareBigQuery,
 		},
 		EdgeRuntime: edgeRuntime{
-			Image: Images.EdgeRuntime,
+			Image:  Images.EdgeRuntime,
+			HostIP: "127.0.0.1",
 		},
 	}}
 	for _, apply := range editors {

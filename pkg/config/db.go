@@ -77,6 +77,7 @@ type (
 	db struct {
 		Image               string              `toml:"-"`
 		Port                uint16              `toml:"port"`
+		HostIP              string              `toml:"host_ip"`
 		ShadowPort          uint16              `toml:"shadow_port"`
 		MajorVersion        uint                `toml:"major_version"`
 		Password            string              `toml:"-"`
@@ -103,6 +104,7 @@ type (
 		Enabled          bool     `toml:"enabled"`
 		Image            string   `toml:"-"`
 		Port             uint16   `toml:"port"`
+		HostIP           string   `toml:"host_ip"`
 		PoolMode         PoolMode `toml:"pool_mode"`
 		DefaultPoolSize  uint     `toml:"default_pool_size"`
 		MaxClientConn    uint     `toml:"max_client_conn"`

@@ -18,6 +18,7 @@ type (
 		Image     string  `toml:"-"`
 		KongImage string  `toml:"-"`
 		Port      uint16  `toml:"port"`
+		HostIP    string  `toml:"host_ip"`
 		Tls       tlsKong `toml:"tls"`
 		// TODO: replace [auth|studio].api_url
 		ExternalUrl string `toml:"external_url"`
