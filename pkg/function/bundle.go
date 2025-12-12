@@ -53,30 +53,18 @@ var (
 	BundleFlags    = []string{}
 )
 
-// IsDenoJsonImportMap checks if the import map is a deno.json/deno.jsonc file
-// that Deno 2 can auto-discover, vs a legacy import_map.json that needs explicit flag
-func IsDenoJsonImportMap(importMap string) bool {
-	if len(importMap) == 0 {
-		return false
-	}
-	base := filepath.Base(importMap)
-	return IsDeno(base)
-}
-
 func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) (FunctionDeployMetadata, error) {
 	meta := NewMetadata(slug, entrypoint, importMap, staticFiles)
 	outputPath := filepath.Join(b.tempDir, slug+".eszip")
 	// TODO: make edge runtime write to stdout
 	args := []string{"bundle", "--entrypoint", entrypoint, "--output", outputPath}
 	// Handle import map/config flags based on Deno version
-	// Deno 2: use --config for deno.json files, --import-map for legacy import_map.json
+	// Deno 2: use --config for deno.json files and legacy import_map.json
 	// Deno 1: use --import-map for all import map files
 	if len(importMap) > 0 {
-		if b.denoVersion > 1 && IsDenoJsonImportMap(importMap) {
-			// Deno 2 with deno.json: use --config flag
+		if b.denoVersion > 1 {
 			args = append(args, "--config", importMap)
 		} else {
-			// Deno 1 or legacy import_map.json: use --import-map flag
 			args = append(args, "--import-map", importMap)
 		}
 	}
