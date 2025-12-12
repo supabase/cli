@@ -26,8 +26,9 @@ type nativeBundler struct {
 
 func NewNativeBundler(tempDir string, fsys fs.FS, opts ...func(*nativeBundler)) EszipBundler {
 	b := &nativeBundler{
-		tempDir: tempDir,
-		fsys:    fsys,
+		tempDir:     tempDir,
+		fsys:        fsys,
+		denoVersion: 2,
 	}
 	for _, apply := range opts {
 		apply(b)
