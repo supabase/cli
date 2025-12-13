@@ -59,15 +59,8 @@ func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	outputPath := filepath.Join(b.tempDir, slug+".eszip")
 	// TODO: make edge runtime write to stdout
 	args := []string{"bundle", "--entrypoint", entrypoint, "--output", outputPath}
-	// Handle import map/config flags based on Deno version
-	// Deno 2: use --config for deno.json files and legacy import_map.json
-	// Deno 1: use --import-map for all import map files
-	if len(importMap) > 0 {
-		if b.denoVersion > 1 {
-			args = append(args, "--config", importMap)
-		} else {
-			args = append(args, "--import-map", importMap)
-		}
+	if len(importMap) > 0 && !ShouldUseDenoJsonDiscovery(entrypoint, importMap) {
+		args = append(args, "--import-map", importMap)
 	}
 	for _, staticFile := range staticFiles {
 		args = append(args, "--static", staticFile)
@@ -95,6 +88,10 @@ func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	}
 	defer eszipBytes.Close()
 	return meta, Compress(eszipBytes, output)
+}
+
+func ShouldUseDenoJsonDiscovery(entrypoint, importMap string) bool {
+	return isDeno(filepath.Base(importMap)) && filepath.Dir(importMap) == filepath.Dir(entrypoint)
 }
 
 func ShouldUsePackageJsonDiscovery(entrypoint, importMap string, fsys fs.StatFS) bool {
