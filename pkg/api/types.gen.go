@@ -1792,6 +1792,10 @@ type AuthConfigResponse struct {
 	ExternalWorkosEnabled                                 nullable.Nullable[bool]                                         `json:"external_workos_enabled"`
 	ExternalWorkosSecret                                  nullable.Nullable[string]                                       `json:"external_workos_secret"`
 	ExternalWorkosUrl                                     nullable.Nullable[string]                                       `json:"external_workos_url"`
+	ExternalXClientId                                     nullable.Nullable[string]                                       `json:"external_x_client_id"`
+	ExternalXEmailOptional                                nullable.Nullable[bool]                                         `json:"external_x_email_optional"`
+	ExternalXEnabled                                      nullable.Nullable[bool]                                         `json:"external_x_enabled"`
+	ExternalXSecret                                       nullable.Nullable[string]                                       `json:"external_x_secret"`
 	ExternalZoomClientId                                  nullable.Nullable[string]                                       `json:"external_zoom_client_id"`
 	ExternalZoomEmailOptional                             nullable.Nullable[bool]                                         `json:"external_zoom_email_optional"`
 	ExternalZoomEnabled                                   nullable.Nullable[bool]                                         `json:"external_zoom_enabled"`
@@ -3500,6 +3504,10 @@ type UpdateAuthConfigBody struct {
 	ExternalWorkosEnabled                                 nullable.Nullable[bool]                                           `json:"external_workos_enabled,omitempty"`
 	ExternalWorkosSecret                                  nullable.Nullable[string]                                         `json:"external_workos_secret,omitempty"`
 	ExternalWorkosUrl                                     nullable.Nullable[string]                                         `json:"external_workos_url,omitempty"`
+	ExternalXClientId                                     nullable.Nullable[string]                                         `json:"external_x_client_id,omitempty"`
+	ExternalXEmailOptional                                nullable.Nullable[bool]                                           `json:"external_x_email_optional,omitempty"`
+	ExternalXEnabled                                      nullable.Nullable[bool]                                           `json:"external_x_enabled,omitempty"`
+	ExternalXSecret                                       nullable.Nullable[string]                                         `json:"external_x_secret,omitempty"`
 	ExternalZoomClientId                                  nullable.Nullable[string]                                         `json:"external_zoom_client_id,omitempty"`
 	ExternalZoomEmailOptional                             nullable.Nullable[bool]                                           `json:"external_zoom_email_optional,omitempty"`
 	ExternalZoomEnabled                                   nullable.Nullable[bool]                                           `json:"external_zoom_enabled,omitempty"`
