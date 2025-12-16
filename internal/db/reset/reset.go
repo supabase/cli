@@ -28,6 +28,7 @@ import (
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/seed/buckets"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
 )
 
@@ -251,7 +252,7 @@ func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys
 		return err
 	}
 	defer conn.Close(context.Background())
-	return down.ResetAll(ctx, version, conn, fsys)
+	return down.ResetAll(ctx, version, flags.ProjectRef, false, conn, fsys)
 }
 
 func LikeEscapeSchema(schemas []string) (result []string) {

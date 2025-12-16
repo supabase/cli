@@ -15,6 +15,10 @@ const (
 	CREATE_VAULT_KV = "SELECT vault.create_secret($1, $2)"
 	READ_VAULT_KV   = "SELECT id, name FROM vault.secrets WHERE name = ANY($1)"
 	UPDATE_VAULT_KV = "SELECT vault.update_secret($1, $2)"
+	CHECK_VAULT     = "SELECT 1 FROM pg_namespace WHERE nspname = 'vault'"
+
+	SecretFunctionsUrl   = "supabase_functions_url"
+	SecretServiceRoleKey = "supabase_service_role_key"
 )
 
 type VaultTable struct {
@@ -33,6 +37,13 @@ func UpsertVaultSecrets(ctx context.Context, secrets map[string]config.Secret, c
 	}
 	if len(keys) == 0 {
 		return nil
+	}
+	var exists int
+	if err := conn.QueryRow(ctx, CHECK_VAULT).Scan(&exists); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return errors.Errorf("failed to check vault schema: %w", err)
 	}
 	fmt.Fprintln(os.Stderr, "Updating vault secrets...")
 	rows, err := conn.Query(ctx, READ_VAULT_KV, keys)
@@ -57,4 +68,30 @@ func UpsertVaultSecrets(ctx context.Context, secrets map[string]config.Secret, c
 		return errors.Errorf("failed to update vault: %w", err)
 	}
 	return nil
+}
+
+func WithEdgeFunctionSecrets(secrets map[string]config.Secret, projectRef, serviceRoleKey string) map[string]config.Secret {
+	result := make(map[string]config.Secret, len(secrets)+2)
+	for k, v := range secrets {
+		result[k] = v
+	}
+	if _, exists := result[SecretFunctionsUrl]; !exists {
+		var url string
+		if len(projectRef) == 0 {
+			url = "http://kong:8000/functions/v1"
+		} else {
+			url = fmt.Sprintf("https://%s.supabase.co/functions/v1", projectRef)
+		}
+		result[SecretFunctionsUrl] = config.Secret{
+			Value:  url,
+			SHA256: "default",
+		}
+	}
+	if _, exists := result[SecretServiceRoleKey]; !exists && len(projectRef) == 0 && len(serviceRoleKey) > 0 {
+		result[SecretServiceRoleKey] = config.Secret{
+			Value:  serviceRoleKey,
+			SHA256: "default",
+		}
+	}
+	return result
 }

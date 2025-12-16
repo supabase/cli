@@ -46,6 +46,9 @@ func TestSquashCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, flags.LoadConfig(fsys))
+		origServiceRoleKey := utils.Config.Auth.ServiceRoleKey.Value
+		utils.Config.Auth.ServiceRoleKey.Value = ""
+		t.Cleanup(func() { utils.Config.Auth.ServiceRoleKey.Value = origServiceRoleKey })
 		paths := []string{
 			filepath.Join(utils.MigrationsDir, "0_init.sql"),
 			filepath.Join(utils.MigrationsDir, "1_target.sql"),
@@ -84,6 +87,7 @@ func TestSquashCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
+		helper.MockVaultSetup(conn, "")
 		helper.MockMigrationHistory(conn).
 			Query("RESET ALL").
 			Reply("RESET").
@@ -282,6 +286,9 @@ func TestSquashMigrations(t *testing.T) {
 		path := filepath.Join(utils.MigrationsDir, "0_init.sql")
 		sql := "create schema test"
 		require.NoError(t, afero.WriteFile(fsys, path, []byte(sql), 0644))
+		origServiceRoleKey := utils.Config.Auth.ServiceRoleKey.Value
+		utils.Config.Auth.ServiceRoleKey.Value = ""
+		t.Cleanup(func() { utils.Config.Auth.ServiceRoleKey.Value = origServiceRoleKey })
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -311,6 +318,7 @@ func TestSquashMigrations(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
+		helper.MockVaultSetup(conn, "")
 		helper.MockMigrationHistory(conn).
 			Query("RESET ALL").
 			Reply("RESET").
