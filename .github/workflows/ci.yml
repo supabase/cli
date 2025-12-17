@@ -28,7 +28,7 @@ jobs:
           go tool gotestsum -- -race -v -count=1 ./... \
           -coverpkg="./cmd/...,./internal/...,${pkgs}" -coverprofile=coverage.out
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: code-coverage-report
           path: coverage.out
@@ -39,7 +39,7 @@ jobs:
       - test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v7
         with:
           name: code-coverage-report
       - uses: coverallsapp/github-action@v2
