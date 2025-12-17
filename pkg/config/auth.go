@@ -1319,6 +1319,15 @@ func (e external) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 			body.ExternalTwitterEmailOptional = nullable.NewNullableWithValue(p.EmailOptional)
 		}
 	}
+	if p, ok := e["x"]; ok {
+		if body.ExternalXEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
+			body.ExternalXClientId = nullable.NewNullableWithValue(p.ClientId)
+			if len(p.Secret.SHA256) > 0 {
+				body.ExternalXSecret = nullable.NewNullableWithValue(p.Secret.Value)
+			}
+			body.ExternalXEmailOptional = nullable.NewNullableWithValue(p.EmailOptional)
+		}
+	}
 	if p, ok := e["workos"]; ok {
 		if body.ExternalWorkosEnabled = nullable.NewNullableWithValue(p.Enabled); p.Enabled {
 			body.ExternalWorkosClientId = nullable.NewNullableWithValue(p.ClientId)
@@ -1556,6 +1565,18 @@ func (e external) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 		}
 		p.Enabled = ValOrDefault(remoteConfig.ExternalTwitterEnabled, false)
 		e["twitter"] = p
+	}
+
+	if p, ok := e["x"]; ok {
+		if p.Enabled {
+			p.ClientId = ValOrDefault(remoteConfig.ExternalXClientId, "")
+			if len(p.Secret.SHA256) > 0 {
+				p.Secret.SHA256 = ValOrDefault(remoteConfig.ExternalXSecret, "")
+			}
+			p.EmailOptional = ValOrDefault(remoteConfig.ExternalXEmailOptional, false)
+		}
+		p.Enabled = ValOrDefault(remoteConfig.ExternalXEnabled, false)
+		e["x"] = p
 	}
 
 	if p, ok := e["workos"]; ok {
