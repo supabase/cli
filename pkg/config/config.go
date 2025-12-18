@@ -1249,6 +1249,13 @@ func (h *hookConfig) validate(hookType string) (err error) {
 	if h.URI == "" {
 		return errors.Errorf("Missing required field in config: auth.hook.%s.uri", hookType)
 	}
+	// Skip validation if URI contains unresolved env() reference
+	// This allows users to use env(SUPABASE_PROJECT_URL)/functions/v1/...
+	// which will be resolved at deploy time by the platform
+	if strings.Contains(h.URI, "env(") {
+		fmt.Fprintf(os.Stderr, "WARN: auth.hook.%s.uri contains env() reference, skipping local validation\n", hookType)
+		return nil
+	}
 	parsed, err := url.Parse(h.URI)
 	if err != nil {
 		return errors.Errorf("failed to parse template url: %w", err)
