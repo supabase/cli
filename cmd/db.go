@@ -149,7 +149,7 @@ var (
 		Use:   "push",
 		Short: "Push new migrations to the remote database",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return push.Run(cmd.Context(), dryRun, includeAll, includeRoles, includeSeed, flags.DbConfig, afero.NewOsFs())
+			return push.Run(cmd.Context(), dryRun, includeAll, includeRoles, includeSeed, flags.ProjectRef, flags.DbConfig, afero.NewOsFs())
 		},
 	}
 

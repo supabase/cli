@@ -40,7 +40,7 @@ func TestMigrationPush(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := Run(context.Background(), true, false, true, true, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), true, false, true, true, "", dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -54,7 +54,7 @@ func TestMigrationPush(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := Run(context.Background(), false, false, false, false, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), false, false, false, false, "", dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -63,7 +63,7 @@ func TestMigrationPush(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), false, false, false, false, pgconn.Config{}, fsys)
+		err := Run(context.Background(), false, false, false, false, "", pgconn.Config{}, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
@@ -77,7 +77,7 @@ func TestMigrationPush(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			ReplyError(pgerrcode.InvalidCatalogName, `database "target" does not exist`)
 		// Run test
-		err := Run(context.Background(), false, false, false, false, pgconn.Config{
+		err := Run(context.Background(), false, false, false, false, "", pgconn.Config{
 			Host:     "db.supabase.co",
 			Port:     5432,
 			User:     "admin",
@@ -104,7 +104,7 @@ func TestMigrationPush(t *testing.T) {
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", nil).
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "version" of relation "schema_migrations"`)
 		// Run test
-		err := Run(context.Background(), false, false, false, false, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), false, false, false, false, "", dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: null value in column "version" of relation "schema_migrations" (SQLSTATE 23502)`)
 		assert.ErrorContains(t, err, "At statement: 0\n"+migration.INSERT_MIGRATION_VERSION)
@@ -128,7 +128,7 @@ func TestPushAll(t *testing.T) {
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", nil).
 			Reply("INSERT 0 1")
 		// Run test
-		err := Run(context.Background(), false, false, true, true, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), false, false, true, true, "", dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -145,7 +145,7 @@ func TestPushAll(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := Run(context.Background(), false, false, true, true, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), false, false, true, true, "", dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorIs(t, err, context.Canceled)
 	})
@@ -161,7 +161,7 @@ func TestPushAll(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := Run(context.Background(), false, false, true, false, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), false, false, true, false, "", dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})
@@ -191,7 +191,7 @@ func TestPushAll(t *testing.T) {
 			Query(migration.UPSERT_SEED_FILE, seedPath, digest).
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "hash" of relation "seed_files"`)
 		// Run test
-		err := Run(context.Background(), false, false, false, true, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), false, false, false, true, "", dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: null value in column "hash" of relation "seed_files" (SQLSTATE 23502)`)
 	})
