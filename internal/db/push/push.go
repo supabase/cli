@@ -144,6 +144,6 @@ func printProjectInfo(ctx context.Context, projectRef string) error {
 	if resp.JSON200 == nil {
 		return errors.Errorf("unexpected retrieve project status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
-	fmt.Fprintln(os.Stderr, "Pushing to project", utils.Bold(resp.JSON200.Name), "("+resp.JSON200.Ref+")")
+	fmt.Fprintf(os.Stderr, "Pushing to linked project: %s (%s)\n", utils.Aqua(resp.JSON200.Name), resp.JSON200.Ref)
 	return nil
 }
