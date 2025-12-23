@@ -1147,6 +1147,7 @@ EOF
 		// Mount snippets directory for Studio to access
 		hostSnippetsPath := filepath.Join(workdir, utils.SnippetsDir)
 		binds = append(binds, fmt.Sprintf("%s:%s:rw", hostSnippetsPath, hostSnippetsPath))
+		binds = utils.RemoveDuplicates(binds)
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
