@@ -1146,7 +1146,8 @@ EOF
 
 		// Mount snippets directory for Studio to access
 		hostSnippetsPath := filepath.Join(workdir, utils.SnippetsDir)
-		binds = append(binds, fmt.Sprintf("%s:%s:rw", hostSnippetsPath, hostSnippetsPath))
+		containerSnippetsPath := utils.ToDockerPath(hostSnippetsPath)
+		binds = append(binds, fmt.Sprintf("%s:%s:rw", hostSnippetsPath, containerSnippetsPath))
 		binds = utils.RemoveDuplicates(binds)
 		if _, err := utils.DockerStart(
 			ctx,
@@ -1167,7 +1168,7 @@ EOF
 					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
 					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
 					"EDGE_FUNCTIONS_MANAGEMENT_FOLDER=" + filepath.Join(workdir, utils.FunctionsDir),
-					"SNIPPETS_MANAGEMENT_FOLDER=" + hostSnippetsPath,
+					"SNIPPETS_MANAGEMENT_FOLDER=" + containerSnippetsPath,
 					// Ref: https://github.com/vercel/next.js/issues/51684#issuecomment-1612834913
 					"HOSTNAME=0.0.0.0",
 				},
