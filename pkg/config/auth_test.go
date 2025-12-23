@@ -1115,6 +1115,7 @@ func TestExternalDiff(t *testing.T) {
 			"spotify":       {Enabled: true},
 			"twitch":        {Enabled: true},
 			"twitter":       {Enabled: true},
+			"x":             {Enabled: true},
 			"workos":        {Enabled: true},
 			"zoom":          {Enabled: true},
 		}
@@ -1177,6 +1178,9 @@ func TestExternalDiff(t *testing.T) {
 			ExternalTwitterClientId:           nullable.NewNullableWithValue(""),
 			ExternalTwitterEnabled:            nullable.NewNullableWithValue(true),
 			ExternalTwitterSecret:             nullable.NewNullableWithValue(""),
+			ExternalXClientId:                 nullable.NewNullableWithValue(""),
+			ExternalXEnabled:                  nullable.NewNullableWithValue(true),
+			ExternalXSecret:                   nullable.NewNullableWithValue(""),
 			ExternalWorkosClientId:            nullable.NewNullableWithValue(""),
 			ExternalWorkosEnabled:             nullable.NewNullableWithValue(true),
 			ExternalWorkosSecret:              nullable.NewNullableWithValue(""),
@@ -1233,6 +1237,7 @@ func TestExternalDiff(t *testing.T) {
 			"spotify":       {},
 			"twitch":        {},
 			"twitter":       {},
+			"x":             {},
 			"workos":        {},
 			"zoom":          {},
 		}
@@ -1276,6 +1281,7 @@ func TestExternalDiff(t *testing.T) {
 			"spotify":       {},
 			"twitch":        {},
 			"twitter":       {},
+			"x":             {},
 			"workos":        {},
 			"zoom":          {},
 		}
@@ -1299,6 +1305,7 @@ func TestExternalDiff(t *testing.T) {
 			ExternalSpotifyEnabled:       nullable.NewNullableWithValue(false),
 			ExternalTwitchEnabled:        nullable.NewNullableWithValue(false),
 			ExternalTwitterEnabled:       nullable.NewNullableWithValue(false),
+			ExternalXEnabled:             nullable.NewNullableWithValue(false),
 			ExternalWorkosEnabled:        nullable.NewNullableWithValue(false),
 			ExternalZoomEnabled:          nullable.NewNullableWithValue(false),
 			// Deprecated fields should be ignored
