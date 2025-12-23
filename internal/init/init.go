@@ -12,7 +12,9 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/gen/signingkeys"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/config"
 	"github.com/tidwall/jsonc"
 )
 
@@ -34,7 +36,12 @@ var (
 )
 
 func Run(ctx context.Context, fsys afero.Fs, interactive bool, params utils.InitParams) error {
-	// 1. Write `config.toml`.
+	// 1. Generate default signing key if it doesn't exist.
+	if err := generateDefaultSigningKey(fsys); err != nil {
+		fmt.Fprintln(os.Stderr, utils.Yellow("Warning:"), "Failed to generate signing key:", err)
+	}
+
+	// 2. Write `config.toml`.
 	if err := utils.InitConfig(params, fsys); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			utils.CmdSuggestion = fmt.Sprintf("Run %s to overwrite existing config file.", utils.Aqua("supabase init --force"))
@@ -42,14 +49,14 @@ func Run(ctx context.Context, fsys afero.Fs, interactive bool, params utils.Init
 		return err
 	}
 
-	// 2. Append to `.gitignore`.
+	// 3. Append to `.gitignore`.
 	if utils.IsGitRepo() {
 		if err := updateGitIgnore(utils.GitIgnorePath, fsys); err != nil {
 			return err
 		}
 	}
 
-	// 3. Prompt for IDE settings in interactive mode.
+	// 4. Prompt for IDE settings in interactive mode.
 	if interactive {
 		if err := PromptForIDESettings(ctx, fsys); err != nil {
 			return err
@@ -168,5 +175,41 @@ func WriteIntelliJConfig(fsys afero.Fs) error {
 	}
 	fmt.Println("Generated IntelliJ settings in " + utils.Bold(denoPath) + ".")
 	fmt.Println("Please install the Deno plugin for IntelliJ: " + utils.Bold("https://plugins.jetbrains.com/plugin/14382-deno"))
+	return nil
+}
+
+func generateDefaultSigningKey(fsys afero.Fs) error {
+	signingKeysPath := filepath.Join(utils.SupabaseDirPath, "signing_keys.json")
+
+	exists, err := afero.Exists(fsys, signingKeysPath)
+	if err != nil {
+		return errors.Errorf("failed to check signing key file: %w", err)
+	}
+	if exists {
+		return nil
+	}
+
+	privateJWK, err := signingkeys.GeneratePrivateKey(config.AlgRS256)
+	if err != nil {
+		return errors.Errorf("failed to generate signing key: %w", err)
+	}
+
+	if err := utils.MkdirIfNotExistFS(fsys, utils.SupabaseDirPath); err != nil {
+		return errors.Errorf("failed to create supabase directory: %w", err)
+	}
+
+	jwkArray := []config.JWK{*privateJWK}
+	f, err := fsys.OpenFile(signingKeysPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return errors.Errorf("failed to create signing key file: %w", err)
+	}
+	defer f.Close()
+
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(jwkArray); err != nil {
+		return errors.Errorf("failed to encode signing key: %w", err)
+	}
+
 	return nil
 }

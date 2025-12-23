@@ -96,13 +96,17 @@ func TestGenerateToken(t *testing.T) {
 	})
 
 	t.Run("accepts signing key from stdin", func(t *testing.T) {
-		utils.Config.Auth.SigningKeysPath = ""
-		utils.Config.Auth.SigningKeys = nil
 		claims := config.CustomClaims{
 			Role: "service_role",
 		}
-		// Setup in-memory fs
+		// Setup in-memory fs with minimal config (explicitly set signing_keys_path to empty to override template default)
 		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteFile("supabase/config.toml", []byte(`
+project_id = "test"
+
+[auth]
+signing_keys_path = ""
+`), fsys))
 		testKey, err := json.Marshal(privateKeyRSA)
 		require.NoError(t, err)
 		t.Cleanup(fstest.MockStdin(t, string(testKey)))
@@ -128,8 +132,14 @@ func TestGenerateToken(t *testing.T) {
 
 	t.Run("throws error on invalid key", func(t *testing.T) {
 		claims := jwt.MapClaims{}
-		// Setup in-memory fs
+		// Setup in-memory fs with minimal config (explicitly set signing_keys_path to empty to override template default)
 		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteFile("supabase/config.toml", []byte(`
+project_id = "test"
+
+[auth]
+signing_keys_path = ""
+`), fsys))
 		t.Cleanup(fstest.MockStdin(t, ""))
 		// Run test
 		err = Run(context.Background(), claims, io.Discard, fsys)

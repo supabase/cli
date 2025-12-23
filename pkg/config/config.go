@@ -882,10 +882,8 @@ func (c *config) Validate(fsys fs.FS) error {
 			}
 		}
 		if len(c.Auth.SigningKeysPath) > 0 {
-			if f, err := fsys.Open(c.Auth.SigningKeysPath); err != nil {
-				return errors.Errorf("failed to read signing keys: %w", err)
-			} else if c.Auth.SigningKeys, err = fetcher.ParseJSON[[]JWK](f); err != nil {
-				return errors.Errorf("failed to decode signing keys: %w", err)
+			if err := c.loadSigningKeys(fsys); err != nil {
+				return err
 			}
 		}
 		if err := c.Auth.Hook.validate(); err != nil {
@@ -943,6 +941,26 @@ func (c *config) Validate(fsys fs.FS) error {
 	if err := c.Experimental.validate(); err != nil {
 		return err
 	}
+	return nil
+}
+
+func (c *config) loadSigningKeys(fsys fs.FS) error {
+	f, err := fsys.Open(c.Auth.SigningKeysPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, "WARN: signing keys file not found: %s - will be created during init\n", c.Auth.SigningKeysPath)
+			return nil
+		}
+		return fmt.Errorf("failed to read signing keys: %w", err)
+	}
+	defer f.Close()
+
+	signingKeys, err := fetcher.ParseJSON[[]JWK](f)
+	if err != nil {
+		return fmt.Errorf("failed to decode signing keys: %w", err)
+	}
+
+	c.Auth.SigningKeys = signingKeys
 	return nil
 }
 

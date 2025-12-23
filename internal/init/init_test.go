@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/afero"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/config"
 )
 
 func TestInitCommand(t *testing.T) {
@@ -22,6 +24,11 @@ func TestInitCommand(t *testing.T) {
 		assert.NoError(t, Run(context.Background(), fsys, false, utils.InitParams{}))
 		// Validate generated config.toml
 		exists, err := afero.Exists(fsys, utils.ConfigPath)
+		assert.NoError(t, err)
+		assert.True(t, exists)
+		// Validate generated signing key
+		signingKeysPath := filepath.Join(utils.SupabaseDirPath, "signing_keys.json")
+		exists, err = afero.Exists(fsys, signingKeysPath)
 		assert.NoError(t, err)
 		assert.True(t, exists)
 		// Validate generated .gitignore
@@ -195,5 +202,80 @@ func TestUpdateJsonFile(t *testing.T) {
 		err := updateJsonFile(settingsPath, "{}", afero.NewReadOnlyFs(fsys))
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
+	})
+}
+
+func TestGenerateDefaultSigningKey(t *testing.T) {
+	signingKeysPath := filepath.Join(utils.SupabaseDirPath, "signing_keys.json")
+
+	t.Run("generates signing key when file doesn't exist", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Run test
+		assert.NoError(t, generateDefaultSigningKey(fsys))
+		// Validate file exists
+		exists, err := afero.Exists(fsys, signingKeysPath)
+		assert.NoError(t, err)
+		assert.True(t, exists)
+		// Validate file contents
+		content, err := afero.ReadFile(fsys, signingKeysPath)
+		assert.NoError(t, err)
+		var jwkArray []config.JWK
+		assert.NoError(t, json.Unmarshal(content, &jwkArray))
+		assert.Len(t, jwkArray, 1)
+		// Validate key structure
+		key := jwkArray[0]
+		assert.Equal(t, "RSA", key.KeyType)
+		assert.Equal(t, config.Algorithm("RS256"), key.Algorithm)
+		assert.NotEmpty(t, key.KeyID)
+		assert.NotEmpty(t, key.Modulus)
+		assert.NotEmpty(t, key.Exponent)
+		assert.NotEmpty(t, key.PrivateExponent)
+	})
+
+	t.Run("skips generation when file already exists", func(t *testing.T) {
+		// Setup in-memory fs with existing key file
+		fsys := afero.NewMemMapFs()
+		existingKey := []config.JWK{
+			{
+				KeyType:   "RSA",
+				KeyID:     "existing-key-id",
+				Algorithm: config.AlgRS256,
+			},
+		}
+		existingContent, err := json.Marshal(existingKey)
+		require.NoError(t, err)
+		require.NoError(t, utils.MkdirIfNotExistFS(fsys, utils.SupabaseDirPath))
+		require.NoError(t, afero.WriteFile(fsys, signingKeysPath, existingContent, 0600))
+		// Run test
+		assert.NoError(t, generateDefaultSigningKey(fsys))
+		// Validate file wasn't modified
+		content, err := afero.ReadFile(fsys, signingKeysPath)
+		assert.NoError(t, err)
+		var jwkArray []config.JWK
+		assert.NoError(t, json.Unmarshal(content, &jwkArray))
+		assert.Len(t, jwkArray, 1)
+		assert.Equal(t, "existing-key-id", jwkArray[0].KeyID)
+	})
+
+	t.Run("throws error on failure to create directory", func(t *testing.T) {
+		// Setup read-only fs
+		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
+		// Run test
+		err := generateDefaultSigningKey(fsys)
+		// Check error
+		assert.Error(t, err)
+		assert.ErrorContains(t, err, "failed to create supabase directory")
+	})
+
+	t.Run("throws error on failure to create file", func(t *testing.T) {
+		// Setup fs that denies file creation
+		// OpenErrorFs will fail when trying to open/create the file
+		fsys := &fstest.OpenErrorFs{DenyPath: signingKeysPath}
+		// Run test
+		err := generateDefaultSigningKey(fsys)
+		// Check error - OpenErrorFs will fail on OpenFile call
+		assert.Error(t, err)
+		assert.ErrorContains(t, err, "failed to create signing key file")
 	})
 }
