@@ -10,6 +10,8 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/functions/deploy"
+	_init "github.com/supabase/cli/internal/init"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 )
@@ -38,6 +40,13 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 	if err := utils.ValidateFunctionSlug(slug); err != nil {
 		return err
 	}
+	// Check if this is the first function being created
+	existingSlugs, err := deploy.GetFunctionSlugs(fsys)
+	if err != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), err)
+	}
+	isFirstFunction := len(existingSlugs) == 0
+
 	// 2. Create new function.
 	funcDir := filepath.Join(utils.FunctionsDir, slug)
 	if err := utils.MkdirIfNotExistFS(fsys, funcDir); err != nil {
@@ -61,6 +70,12 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 		return errors.Errorf("failed to create .npmrc config: %w", err)
 	}
 	fmt.Println("Created new Function at " + utils.Bold(funcDir))
+
+	if isFirstFunction {
+		if err := _init.PromptForIDESettings(ctx, fsys); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

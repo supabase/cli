@@ -112,9 +112,9 @@ file_size_limit = "50MiB"
 # allowed_mime_types = ["image/png", "image/jpeg"]
 # objects_path = "./images"
 
-# Uncomment to allow connections via S3 compatible clients
-# [storage.s3_protocol]
-# enabled = true
+# Allow connections via S3 compatible clients
+[storage.s3_protocol]
+enabled = true
 
 # Image transformation API is available to Supabase Pro plan.
 # [storage.image_transformation]
@@ -295,7 +295,7 @@ max_frequency = "5s"
 
 # Use an external OAuth provider. The full list of providers are: `apple`, `azure`, `bitbucket`,
 # `discord`, `facebook`, `github`, `gitlab`, `google`, `keycloak`, `linkedin_oidc`, `notion`, `twitch`,
-# `twitter`, `slack`, `spotify`, `workos`, `zoom`.
+# `twitter`, `x`, `slack`, `spotify`, `workos`, `zoom`.
 [auth.external.apple]
 enabled = false
 client_id = ""

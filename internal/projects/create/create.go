@@ -116,11 +116,12 @@ func promptOrgId(ctx context.Context) (string, error) {
 
 func promptProjectRegion(ctx context.Context) (api.V1CreateProjectBodyRegion, error) {
 	title := "Which region do you want to host the project in?"
-	items := make([]utils.PromptItem, len(utils.RegionMap))
-	i := 0
-	for k, v := range utils.RegionMap {
-		items[i] = utils.PromptItem{Summary: k, Details: v}
-		i++
+	items := make([]utils.PromptItem, len(utils.CurrentProfile.ProjectRegions))
+	for i, region := range utils.CurrentProfile.ProjectRegions {
+		items[i] = utils.PromptItem{
+			Summary: string(region),
+			Details: utils.FormatRegion(string(region)),
+		}
 	}
 	choice, err := utils.PromptChoice(ctx, title, items)
 	if err != nil {

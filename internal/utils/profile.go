@@ -9,17 +9,19 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/pkg/api"
 )
 
 type Profile struct {
-	Name         string `mapstructure:"name" validate:"required"`
-	APIURL       string `mapstructure:"api_url" validate:"required,http_url"`
-	DashboardURL string `mapstructure:"dashboard_url" validate:"required,http_url"`
-	DocsURL      string `mapstructure:"docs_url" validate:"omitempty,http_url"`
-	ProjectHost  string `mapstructure:"project_host" validate:"required,hostname_rfc1123"`
-	PoolerHost   string `mapstructure:"pooler_host" validate:"omitempty,hostname_rfc1123"`
-	AuthClientID string `mapstructure:"client_id" validate:"omitempty,uuid4"`
-	StudioImage  string `mapstructure:"studio_image"`
+	Name           string                          `mapstructure:"name" validate:"required"`
+	APIURL         string                          `mapstructure:"api_url" validate:"required,http_url"`
+	DashboardURL   string                          `mapstructure:"dashboard_url" validate:"required,http_url"`
+	DocsURL        string                          `mapstructure:"docs_url" validate:"omitempty,http_url"`
+	ProjectHost    string                          `mapstructure:"project_host" validate:"required,hostname_rfc1123"`
+	PoolerHost     string                          `mapstructure:"pooler_host" validate:"omitempty,hostname_rfc1123"`
+	AuthClientID   string                          `mapstructure:"client_id" validate:"omitempty,uuid4"`
+	StudioImage    string                          `mapstructure:"studio_image"`
+	ProjectRegions []api.V1CreateProjectBodyRegion `mapstructure:"regions"`
 }
 
 var allProfiles = []Profile{{
@@ -29,6 +31,26 @@ var allProfiles = []Profile{{
 	DocsURL:      "https://supabase.com/docs",
 	ProjectHost:  "supabase.co",
 	PoolerHost:   "supabase.com",
+	ProjectRegions: []api.V1CreateProjectBodyRegion{
+		api.V1CreateProjectBodyRegionApEast1,
+		api.V1CreateProjectBodyRegionApNortheast1,
+		api.V1CreateProjectBodyRegionApNortheast2,
+		api.V1CreateProjectBodyRegionApSouth1,
+		api.V1CreateProjectBodyRegionApSoutheast1,
+		api.V1CreateProjectBodyRegionApSoutheast2,
+		api.V1CreateProjectBodyRegionCaCentral1,
+		api.V1CreateProjectBodyRegionEuCentral1,
+		api.V1CreateProjectBodyRegionEuCentral2,
+		api.V1CreateProjectBodyRegionEuNorth1,
+		api.V1CreateProjectBodyRegionEuWest1,
+		api.V1CreateProjectBodyRegionEuWest2,
+		api.V1CreateProjectBodyRegionEuWest3,
+		api.V1CreateProjectBodyRegionSaEast1,
+		api.V1CreateProjectBodyRegionUsEast1,
+		api.V1CreateProjectBodyRegionUsEast2,
+		api.V1CreateProjectBodyRegionUsWest1,
+		api.V1CreateProjectBodyRegionUsWest2,
+	},
 }, {
 	Name:         "supabase-staging",
 	APIURL:       "https://api.supabase.green",
@@ -36,12 +58,22 @@ var allProfiles = []Profile{{
 	DocsURL:      "https://supabase.com/docs",
 	ProjectHost:  "supabase.red",
 	PoolerHost:   "supabase.green",
+	ProjectRegions: []api.V1CreateProjectBodyRegion{
+		api.V1CreateProjectBodyRegionApSoutheast1,
+		api.V1CreateProjectBodyRegionUsEast1,
+		api.V1CreateProjectBodyRegionEuCentral1,
+	},
 }, {
 	Name:         "supabase-local",
 	APIURL:       "http://localhost:8080",
 	DashboardURL: "http://localhost:8082",
 	DocsURL:      "https://supabase.com/docs",
 	ProjectHost:  "supabase.red",
+	ProjectRegions: []api.V1CreateProjectBodyRegion{
+		api.V1CreateProjectBodyRegionApSoutheast1,
+		api.V1CreateProjectBodyRegionUsEast1,
+		api.V1CreateProjectBodyRegionEuCentral1,
+	},
 }, {
 	Name:         "snap",
 	APIURL:       "https://cloudapi.snap.com",
@@ -50,6 +82,9 @@ var allProfiles = []Profile{{
 	ProjectHost:  "snapcloud.dev",
 	PoolerHost:   "snapcloud.co",
 	AuthClientID: "f7573b20-df47-48f1-b606-e8db4ec16252",
+	ProjectRegions: []api.V1CreateProjectBodyRegion{
+		api.V1CreateProjectBodyRegionUsEast1,
+	},
 }}
 
 var CurrentProfile Profile
