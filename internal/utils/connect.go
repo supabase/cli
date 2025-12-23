@@ -15,7 +15,6 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/debug"
-	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/pgxv5"
 	"golang.org/x/net/publicsuffix"
@@ -169,11 +168,7 @@ func ConnectByUrl(ctx context.Context, url string, options ...func(*pgx.ConnConf
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		if strings.Contains(pgErr.Message, "connect: connection refused") {
-			ref := "_"
-			if len(flags.ProjectRef) > 0 {
-				ref = flags.ProjectRef
-			}
-			CmdSuggestion = fmt.Sprintf("Make sure your local IP is allowed in Network Restrictions and Network Bans.\n%s/project/%s/database/settings", CurrentProfile.DashboardURL, ref)
+			CmdSuggestion = fmt.Sprintf("Make sure your local IP is allowed in Network Restrictions and Network Bans.\n%s/project/_/database/settings", CurrentProfile.DashboardURL)
 		} else if strings.Contains(pgErr.Message, "SSL connection is required") && viper.GetBool("DEBUG") {
 			CmdSuggestion = "SSL connection is not supported with --debug flag"
 		} else if strings.Contains(pgErr.Message, "SCRAM exchange: Wrong password") || strings.Contains(pgErr.Message, "failed SASL auth") {
