@@ -255,11 +255,6 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 		return errors.Errorf("failed to get working directory: %w", err)
 	}
 
-	workdir, err := os.Getwd()
-	if err != nil {
-		return errors.Errorf("failed to get working directory: %w", err)
-	}
-
 	// Start Logflare
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.Image, excluded) {
 		env := []string{
