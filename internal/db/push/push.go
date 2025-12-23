@@ -17,14 +17,9 @@ import (
 	"github.com/supabase/cli/pkg/vault"
 )
 
-func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, includeSeed bool, projectRef string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, includeSeed bool, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "DRY RUN: migrations will *not* be pushed to the database.")
-	}
-	if len(projectRef) > 0 {
-		if err := printProjectInfo(ctx, projectRef); err != nil {
-			return err
-		}
 	}
 	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
@@ -134,16 +129,4 @@ func confirmSeedAll(pending []migration.SeedFile) (msg string) {
 		msg += fmt.Sprintf(" • %s\n", utils.Bold(notice))
 	}
 	return msg
-}
-
-func printProjectInfo(ctx context.Context, projectRef string) error {
-	resp, err := utils.GetSupabase().V1GetProjectWithResponse(ctx, projectRef)
-	if err != nil {
-		return errors.Errorf("failed to retrieve project: %w", err)
-	}
-	if resp.JSON200 == nil {
-		return errors.Errorf("unexpected retrieve project status %d: %s", resp.StatusCode(), string(resp.Body))
-	}
-	fmt.Fprintf(os.Stderr, "Pushing to linked project: %s (%s)\n", utils.Aqua(resp.JSON200.Name), resp.JSON200.Ref)
-	return nil
 }
