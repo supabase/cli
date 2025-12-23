@@ -318,8 +318,10 @@ EOF
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 			},
 			container.HostConfig{
-				Binds:         bind,
-				PortBindings:  nat.PortMap{"4000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.Port), 10)}}},
+				Binds: bind,
+				PortBindings: nat.PortMap{"4000/tcp": []nat.PortBinding{{
+					HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.Port), 10),
+				}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			network.NetworkingConfig{
@@ -526,11 +528,9 @@ EOF
 			},
 			container.HostConfig{
 				Binds: binds,
-				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{
-					{
-						HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10),
-					},
-				}},
+				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
+					HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10),
+				}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			network.NetworkingConfig{
@@ -848,12 +848,18 @@ EOF
 
 	// Start Mailpit
 	if utils.Config.Inbucket.Enabled && !isContainerExcluded(utils.Config.Inbucket.Image, excluded) {
-		inbucketPortBindings := nat.PortMap{"8025/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}}
+		inbucketPortBindings := nat.PortMap{"8025/tcp": []nat.PortBinding{{
+			HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10),
+		}}}
 		if utils.Config.Inbucket.SmtpPort != 0 {
-			inbucketPortBindings["1025/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10)}}
+			inbucketPortBindings["1025/tcp"] = []nat.PortBinding{{
+				HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10),
+			}}
 		}
 		if utils.Config.Inbucket.Pop3Port != 0 {
-			inbucketPortBindings["1110/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Pop3Port), 10)}}
+			inbucketPortBindings["1110/tcp"] = []nat.PortBinding{{
+				HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Pop3Port), 10),
+			}}
 		}
 		if _, err := utils.DockerStart(
 			ctx,
@@ -1168,8 +1174,9 @@ EOF
 			},
 			container.HostConfig{
 				Binds: binds,
-				// Binds:         []string{filepath.Join(workdir, utils.FunctionsDir) + ":/app/edge-functions:ro"},
-				PortBindings:  nat.PortMap{"3000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Studio.Port), 10)}}},
+				PortBindings: nat.PortMap{"3000/tcp": []nat.PortBinding{{
+					HostPort: strconv.FormatUint(uint64(utils.Config.Studio.Port), 10),
+				}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			network.NetworkingConfig{
@@ -1244,11 +1251,9 @@ EOF
 				},
 			},
 			container.HostConfig{
-				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{
-					{
-						HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10),
-					},
-				}},
+				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
+					HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10),
+				}}},
 				RestartPolicy: container.RestartPolicy{Name: "always"},
 			},
 			network.NetworkingConfig{
