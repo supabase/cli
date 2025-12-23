@@ -1167,7 +1167,7 @@ EOF
 					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
 					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
 					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
-					"EDGE_FUNCTIONS_MANAGEMENT_FOLDER=" + filepath.Join(workdir, utils.FunctionsDir),
+					"EDGE_FUNCTIONS_MANAGEMENT_FOLDER=" + utils.ToDockerPath(filepath.Join(workdir, utils.FunctionsDir)),
 					"SNIPPETS_MANAGEMENT_FOLDER=" + containerSnippetsPath,
 					// Ref: https://github.com/vercel/next.js/issues/51684#issuecomment-1612834913
 					"HOSTNAME=0.0.0.0",
