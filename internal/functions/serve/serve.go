@@ -153,7 +153,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 			return errors.Errorf("failed to resolve relative path: %w", err)
 		}
 	}
-	binds, functionsConfigString, err := populatePerFunctionConfigs(cwd, importMapPath, noVerifyJWT, fsys)
+	binds, functionsConfigString, err := PopulatePerFunctionConfigs(cwd, importMapPath, noVerifyJWT, fsys)
 	if err != nil {
 		return err
 	}
@@ -241,7 +241,7 @@ func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
 	return env, err
 }
 
-func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) ([]string, string, error) {
+func PopulatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) ([]string, string, error) {
 	slugs, err := deploy.GetFunctionSlugs(fsys)
 	if err != nil {
 		return nil, "", err
