@@ -3,7 +3,7 @@ module github.com/supabase/cli/pkg
 go 1.24.10
 
 require (
-	github.com/BurntSushi/toml v1.5.0
+	github.com/BurntSushi/toml v1.6.0
 	github.com/andybalholm/brotli v1.2.0
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/docker/go-units v0.5.0
@@ -25,7 +25,7 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	github.com/tidwall/jsonc v0.3.2
-	golang.org/x/mod v0.30.0
+	golang.org/x/mod v0.31.0
 	google.golang.org/grpc v1.77.0
 )
 

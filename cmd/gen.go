@@ -60,6 +60,7 @@ var (
 			types.LangTypescript,
 			types.LangGo,
 			types.LangSwift,
+			types.LangPython,
 		},
 		Value: types.LangTypescript,
 	}

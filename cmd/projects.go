@@ -155,11 +155,9 @@ func init() {
 }
 
 func awsRegions() []string {
-	result := make([]string, len(utils.RegionMap))
-	i := 0
-	for k := range utils.RegionMap {
-		result[i] = k
-		i++
+	result := make([]string, len(utils.CurrentProfile.ProjectRegions))
+	for i, region := range utils.CurrentProfile.ProjectRegions {
+		result[i] = string(region)
 	}
 	sort.Strings(result)
 	return result

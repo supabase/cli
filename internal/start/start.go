@@ -322,7 +322,7 @@ EOF
 				PortBindings: nat.PortMap{"4000/tcp": []nat.PortBinding{{
 					HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.Port), 10),
 				}}},
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
@@ -406,7 +406,7 @@ EOF
 			},
 			container.HostConfig{
 				Binds:         binds,
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 				SecurityOpt:   securityOpts,
 			},
 			network.NetworkingConfig{
@@ -531,7 +531,7 @@ EOF
 				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
 					HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10),
 				}}},
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
@@ -830,7 +830,7 @@ EOF
 				},
 			},
 			container.HostConfig{
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
@@ -880,7 +880,7 @@ EOF
 			},
 			container.HostConfig{
 				PortBindings:  inbucketPortBindings,
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
@@ -937,7 +937,7 @@ EOF
 				},
 			},
 			container.HostConfig{
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
@@ -971,7 +971,7 @@ EOF
 				// PostgREST does not expose a shell for health check
 			},
 			container.HostConfig{
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
@@ -1031,7 +1031,7 @@ EOF
 				},
 			},
 			container.HostConfig{
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 				Binds:         []string{utils.StorageId + ":" + dockerStoragePath},
 			},
 			network.NetworkingConfig{
@@ -1074,7 +1074,7 @@ EOF
 			},
 			container.HostConfig{
 				VolumesFrom:   []string{utils.StorageId},
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
@@ -1121,7 +1121,7 @@ EOF
 				},
 			},
 			container.HostConfig{
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
@@ -1177,7 +1177,7 @@ EOF
 				PortBindings: nat.PortMap{"3000/tcp": []nat.PortBinding{{
 					HostPort: strconv.FormatUint(uint64(utils.Config.Studio.Port), 10),
 				}}},
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
@@ -1254,7 +1254,7 @@ EOF
 				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
 					HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10),
 				}}},
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{

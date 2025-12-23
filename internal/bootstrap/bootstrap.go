@@ -60,7 +60,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 		if err := downloadSample(ctx, client, starter.Url, fsys); err != nil {
 			return err
 		}
-	} else if err := initBlank.Run(ctx, fsys, nil, nil, utils.InitParams{Overwrite: true}); err != nil {
+	} else if err := initBlank.Run(ctx, fsys, false, utils.InitParams{Overwrite: true}); err != nil {
 		return err
 	}
 	// 1. Login
