@@ -3,6 +3,7 @@ package diff
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
