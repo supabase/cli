@@ -250,6 +250,11 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 	isS3ProtocolEnabled := utils.Config.Storage.S3Protocol != nil && utils.Config.Storage.S3Protocol.Enabled
 	fmt.Fprintln(os.Stderr, "Starting containers...")
 
+	workdir, err := os.Getwd()
+	if err != nil {
+		return errors.Errorf("failed to get working directory: %w", err)
+	}
+
 	// Start Logflare
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.Image, excluded) {
 		env := []string{
@@ -272,10 +277,6 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 
 		switch utils.Config.Analytics.Backend {
 		case config.LogflareBigQuery:
-			workdir, err := os.Getwd()
-			if err != nil {
-				return errors.Errorf("failed to get working directory: %w", err)
-			}
 			hostJwtPath := filepath.Join(workdir, utils.Config.Analytics.GcpJwtPath)
 			bind = append(bind, hostJwtPath+":/opt/app/rel/logflare/bin/gcloud.json")
 			// This is hardcoded in studio frontend
@@ -305,7 +306,8 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 EOF
 `},
 				Healthcheck: &container.HealthConfig{
-					Test: []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null",
+					Test: []string{
+						"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null",
 						"http://127.0.0.1:4000/health",
 					},
 					Interval:    10 * time.Second,
@@ -316,8 +318,10 @@ EOF
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 			},
 			container.HostConfig{
-				Binds:         bind,
-				PortBindings:  nat.PortMap{"4000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.Port), 10)}}},
+				Binds: bind,
+				PortBindings: nat.PortMap{"4000/tcp": []nat.PortBinding{{
+					HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.Port), 10),
+				}}},
 				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
@@ -391,7 +395,8 @@ EOF
 EOF
 `},
 				Healthcheck: &container.HealthConfig{
-					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+					Test: []string{
+						"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
 						"http://127.0.0.1:9001/health",
 					},
 					Interval: 10 * time.Second,
@@ -524,8 +529,8 @@ EOF
 			container.HostConfig{
 				Binds: binds,
 				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
-					HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)},
-				}},
+					HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10),
+				}}},
 				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
@@ -815,7 +820,8 @@ EOF
 				Env:          env,
 				ExposedPorts: nat.PortSet{"9999/tcp": {}},
 				Healthcheck: &container.HealthConfig{
-					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+					Test: []string{
+						"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
 						"http://127.0.0.1:9999/health",
 					},
 					Interval: 10 * time.Second,
@@ -842,12 +848,18 @@ EOF
 
 	// Start Mailpit
 	if utils.Config.Inbucket.Enabled && !isContainerExcluded(utils.Config.Inbucket.Image, excluded) {
-		inbucketPortBindings := nat.PortMap{"8025/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}}
+		inbucketPortBindings := nat.PortMap{"8025/tcp": []nat.PortBinding{{
+			HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10),
+		}}}
 		if utils.Config.Inbucket.SmtpPort != 0 {
-			inbucketPortBindings["1025/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10)}}
+			inbucketPortBindings["1025/tcp"] = []nat.PortBinding{{
+				HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10),
+			}}
 		}
 		if utils.Config.Inbucket.Pop3Port != 0 {
-			inbucketPortBindings["1110/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Pop3Port), 10)}}
+			inbucketPortBindings["1110/tcp"] = []nat.PortBinding{{
+				HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Pop3Port), 10),
+			}}
 		}
 		if _, err := utils.DockerStart(
 			ctx,
@@ -914,7 +926,8 @@ EOF
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 				Healthcheck: &container.HealthConfig{
 					// Podman splits command by spaces unless it's quoted, but curl header can't be quoted.
-					Test: []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null",
+					Test: []string{
+						"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null",
 						"-H", "Host:" + utils.Config.Realtime.TenantId,
 						"http://127.0.0.1:4000/api/ping",
 					},
@@ -1008,7 +1021,8 @@ EOF
 				},
 				Healthcheck: &container.HealthConfig{
 					// For some reason, localhost resolves to IPv6 address on GitPod which breaks healthcheck.
-					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+					Test: []string{
+						"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
 						"http://127.0.0.1:5000/status",
 					},
 					Interval: 10 * time.Second,
@@ -1125,6 +1139,16 @@ EOF
 
 	// Start Studio.
 	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.Config.Studio.Image, excluded) {
+		binds, _, err := serve.PopulatePerFunctionConfigs(workdir, "", nil, fsys)
+		if err != nil {
+			return err
+		}
+
+		// Mount snippets directory for Studio to access
+		hostSnippetsPath := filepath.Join(workdir, utils.SnippetsDir)
+		containerSnippetsPath := utils.ToDockerPath(hostSnippetsPath)
+		binds = append(binds, fmt.Sprintf("%s:%s:rw", hostSnippetsPath, containerSnippetsPath))
+		binds = utils.RemoveDuplicates(binds)
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -1143,6 +1167,8 @@ EOF
 					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
 					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
 					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
+					"EDGE_FUNCTIONS_MANAGEMENT_FOLDER=" + utils.ToDockerPath(filepath.Join(workdir, utils.FunctionsDir)),
+					"SNIPPETS_MANAGEMENT_FOLDER=" + containerSnippetsPath,
 					// Ref: https://github.com/vercel/next.js/issues/51684#issuecomment-1612834913
 					"HOSTNAME=0.0.0.0",
 				},
@@ -1154,7 +1180,10 @@ EOF
 				},
 			},
 			container.HostConfig{
-				PortBindings:  nat.PortMap{"3000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Studio.Port), 10)}}},
+				Binds: binds,
+				PortBindings: nat.PortMap{"3000/tcp": []nat.PortBinding{{
+					HostPort: strconv.FormatUint(uint64(utils.Config.Studio.Port), 10),
+				}}},
 				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
@@ -1230,8 +1259,8 @@ EOF
 			},
 			container.HostConfig{
 				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
-					HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10)},
-				}},
+					HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10),
+				}}},
 				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
