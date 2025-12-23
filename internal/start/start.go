@@ -249,6 +249,11 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 		utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImgProxyImage, excluded)
 	isS3ProtocolEnabled := utils.Config.Storage.S3Protocol != nil && utils.Config.Storage.S3Protocol.Enabled
 	fmt.Fprintln(os.Stderr, "Starting containers...")
+	
+	workdir, err := os.Getwd()
+	if err != nil {
+		return errors.Errorf("failed to get working directory: %w", err)
+	}
 
 	workdir, err := os.Getwd()
 	if err != nil {
@@ -1162,6 +1167,7 @@ EOF
 					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
 					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
 					"EDGE_FUNCTIONS_MANAGEMENT_FOLDER=" + filepath.Join(workdir, utils.FunctionsDir),
+					"SNIPPETS_MANAGEMENT_FOLDER=" + filepath.Join(workdir, utils.SnippetsDir),
 					// Ref: https://github.com/vercel/next.js/issues/51684#issuecomment-1612834913
 					"HOSTNAME=0.0.0.0",
 				},
