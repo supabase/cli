@@ -1112,6 +1112,7 @@ EOF
 					"PG_META_DB_USER=" + dbConfig.User,
 					fmt.Sprintf("PG_META_DB_PORT=%d", dbConfig.Port),
 					"PG_META_DB_PASSWORD=" + dbConfig.Password,
+					"CRYPTO_KEY=" + utils.Config.Studio.PgmetaCryptoKey,
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD-SHELL", `node --eval="fetch('http://127.0.0.1:8080/health').then((r) => {if (!r.ok) throw new Error(r.status)})"`},
@@ -1164,6 +1165,7 @@ EOF
 					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
 					"LOGFLARE_PRIVATE_ACCESS_TOKEN=" + utils.Config.Analytics.ApiKey,
 					"OPENAI_API_KEY=" + utils.Config.Studio.OpenaiApiKey.Value,
+					"PG_META_CRYPTO_KEY=" + utils.Config.Studio.PgmetaCryptoKey,
 					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
 					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
 					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
