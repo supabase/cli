@@ -818,6 +818,52 @@ const (
 	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelWithdrawn ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel = "withdrawn"
 )
 
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors0Type.
+const (
+	ObjectsDependingOnPgCron ProjectUpgradeEligibilityResponseValidationErrors0Type = "objects_depending_on_pg_cron"
+)
+
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors1Type.
+const (
+	IndexesReferencingLlToEarth ProjectUpgradeEligibilityResponseValidationErrors1Type = "indexes_referencing_ll_to_earth"
+)
+
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors2Type.
+const (
+	FunctionUsingObsoleteLang ProjectUpgradeEligibilityResponseValidationErrors2Type = "function_using_obsolete_lang"
+)
+
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors3Type.
+const (
+	UnsupportedExtension ProjectUpgradeEligibilityResponseValidationErrors3Type = "unsupported_extension"
+)
+
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors4Type.
+const (
+	UnsupportedFdwHandler ProjectUpgradeEligibilityResponseValidationErrors4Type = "unsupported_fdw_handler"
+)
+
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors5Type.
+const (
+	UnloggedTableWithPersistentSequence ProjectUpgradeEligibilityResponseValidationErrors5Type = "unlogged_table_with_persistent_sequence"
+)
+
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors6ObjType.
+const (
+	ProjectUpgradeEligibilityResponseValidationErrors6ObjTypeFunction ProjectUpgradeEligibilityResponseValidationErrors6ObjType = "function"
+	ProjectUpgradeEligibilityResponseValidationErrors6ObjTypeTable    ProjectUpgradeEligibilityResponseValidationErrors6ObjType = "table"
+)
+
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors6Type.
+const (
+	UserDefinedObjectsInInternalSchemas ProjectUpgradeEligibilityResponseValidationErrors6Type = "user_defined_objects_in_internal_schemas"
+)
+
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors7Type.
+const (
+	ActiveReplicationSlot ProjectUpgradeEligibilityResponseValidationErrors7Type = "active_replication_slot"
+)
+
 // Defines values for RegionsInfoAllSmartGroupCode.
 const (
 	RegionsInfoAllSmartGroupCodeAmericas RegionsInfoAllSmartGroupCode = "americas"
@@ -1578,14 +1624,14 @@ const (
 
 // Defines values for V1GetServicesHealthParamsServices.
 const (
-	Auth           V1GetServicesHealthParamsServices = "auth"
-	Db             V1GetServicesHealthParamsServices = "db"
-	DbPostgresUser V1GetServicesHealthParamsServices = "db_postgres_user"
-	PgBouncer      V1GetServicesHealthParamsServices = "pg_bouncer"
-	Pooler         V1GetServicesHealthParamsServices = "pooler"
-	Realtime       V1GetServicesHealthParamsServices = "realtime"
-	Rest           V1GetServicesHealthParamsServices = "rest"
-	Storage        V1GetServicesHealthParamsServices = "storage"
+	V1GetServicesHealthParamsServicesAuth           V1GetServicesHealthParamsServices = "auth"
+	V1GetServicesHealthParamsServicesDb             V1GetServicesHealthParamsServices = "db"
+	V1GetServicesHealthParamsServicesDbPostgresUser V1GetServicesHealthParamsServices = "db_postgres_user"
+	V1GetServicesHealthParamsServicesPgBouncer      V1GetServicesHealthParamsServices = "pg_bouncer"
+	V1GetServicesHealthParamsServicesPooler         V1GetServicesHealthParamsServices = "pooler"
+	V1GetServicesHealthParamsServicesRealtime       V1GetServicesHealthParamsServices = "realtime"
+	V1GetServicesHealthParamsServicesRest           V1GetServicesHealthParamsServices = "rest"
+	V1GetServicesHealthParamsServicesStorage        V1GetServicesHealthParamsServices = "storage"
 )
 
 // Defines values for V1ListAllSnippetsParamsSortBy.
@@ -3044,14 +3090,24 @@ type ProjectUpgradeEligibilityResponse struct {
 	Eligible                        bool                                                             `json:"eligible"`
 	LatestAppVersion                string                                                           `json:"latest_app_version"`
 	LegacyAuthCustomRoles           []string                                                         `json:"legacy_auth_custom_roles"`
-	ObjectsToBeDropped              []string                                                         `json:"objects_to_be_dropped"`
-	TargetUpgradeVersions           []struct {
+
+	// ObjectsToBeDropped Use validation_errors instead.
+	// Deprecated:
+	ObjectsToBeDropped    []string `json:"objects_to_be_dropped"`
+	TargetUpgradeVersions []struct {
 		AppVersion      string                                                                `json:"app_version"`
 		PostgresVersion ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion `json:"postgres_version"`
 		ReleaseChannel  ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel  `json:"release_channel"`
 	} `json:"target_upgrade_versions"`
-	UnsupportedExtensions               []string `json:"unsupported_extensions"`
-	UserDefinedObjectsInInternalSchemas []string `json:"user_defined_objects_in_internal_schemas"`
+
+	// UnsupportedExtensions Use validation_errors instead.
+	// Deprecated:
+	UnsupportedExtensions []string `json:"unsupported_extensions"`
+
+	// UserDefinedObjectsInInternalSchemas Use validation_errors instead.
+	// Deprecated:
+	UserDefinedObjectsInInternalSchemas []string                                                  `json:"user_defined_objects_in_internal_schemas"`
+	ValidationErrors                    []ProjectUpgradeEligibilityResponse_ValidationErrors_Item `json:"validation_errors"`
 }
 
 // ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel defines model for ProjectUpgradeEligibilityResponse.CurrentAppVersionReleaseChannel.
@@ -3062,6 +3118,95 @@ type ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion strin
 
 // ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel defines model for ProjectUpgradeEligibilityResponse.TargetUpgradeVersions.ReleaseChannel.
 type ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel string
+
+// ProjectUpgradeEligibilityResponseValidationErrors0 defines model for .
+type ProjectUpgradeEligibilityResponseValidationErrors0 struct {
+	Dependents []string                                               `json:"dependents"`
+	Type       ProjectUpgradeEligibilityResponseValidationErrors0Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseValidationErrors0Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.0.Type.
+type ProjectUpgradeEligibilityResponseValidationErrors0Type string
+
+// ProjectUpgradeEligibilityResponseValidationErrors1 defines model for .
+type ProjectUpgradeEligibilityResponseValidationErrors1 struct {
+	IndexName  string                                                 `json:"index_name"`
+	SchemaName string                                                 `json:"schema_name"`
+	TableName  string                                                 `json:"table_name"`
+	Type       ProjectUpgradeEligibilityResponseValidationErrors1Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseValidationErrors1Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.1.Type.
+type ProjectUpgradeEligibilityResponseValidationErrors1Type string
+
+// ProjectUpgradeEligibilityResponseValidationErrors2 defines model for .
+type ProjectUpgradeEligibilityResponseValidationErrors2 struct {
+	FunctionName string                                                 `json:"function_name"`
+	LangName     string                                                 `json:"lang_name"`
+	SchemaName   string                                                 `json:"schema_name"`
+	Type         ProjectUpgradeEligibilityResponseValidationErrors2Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseValidationErrors2Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.2.Type.
+type ProjectUpgradeEligibilityResponseValidationErrors2Type string
+
+// ProjectUpgradeEligibilityResponseValidationErrors3 defines model for .
+type ProjectUpgradeEligibilityResponseValidationErrors3 struct {
+	ExtensionName string                                                 `json:"extension_name"`
+	Type          ProjectUpgradeEligibilityResponseValidationErrors3Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseValidationErrors3Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.3.Type.
+type ProjectUpgradeEligibilityResponseValidationErrors3Type string
+
+// ProjectUpgradeEligibilityResponseValidationErrors4 defines model for .
+type ProjectUpgradeEligibilityResponseValidationErrors4 struct {
+	FdwHandlerName string                                                 `json:"fdw_handler_name"`
+	FdwName        string                                                 `json:"fdw_name"`
+	Type           ProjectUpgradeEligibilityResponseValidationErrors4Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseValidationErrors4Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.4.Type.
+type ProjectUpgradeEligibilityResponseValidationErrors4Type string
+
+// ProjectUpgradeEligibilityResponseValidationErrors5 defines model for .
+type ProjectUpgradeEligibilityResponseValidationErrors5 struct {
+	SchemaName   string                                                 `json:"schema_name"`
+	SequenceName string                                                 `json:"sequence_name"`
+	TableName    string                                                 `json:"table_name"`
+	Type         ProjectUpgradeEligibilityResponseValidationErrors5Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseValidationErrors5Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.5.Type.
+type ProjectUpgradeEligibilityResponseValidationErrors5Type string
+
+// ProjectUpgradeEligibilityResponseValidationErrors6 defines model for .
+type ProjectUpgradeEligibilityResponseValidationErrors6 struct {
+	ObjName    string                                                    `json:"obj_name"`
+	ObjType    ProjectUpgradeEligibilityResponseValidationErrors6ObjType `json:"obj_type"`
+	SchemaName string                                                    `json:"schema_name"`
+	Type       ProjectUpgradeEligibilityResponseValidationErrors6Type    `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseValidationErrors6ObjType defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.6.ObjType.
+type ProjectUpgradeEligibilityResponseValidationErrors6ObjType string
+
+// ProjectUpgradeEligibilityResponseValidationErrors6Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.6.Type.
+type ProjectUpgradeEligibilityResponseValidationErrors6Type string
+
+// ProjectUpgradeEligibilityResponseValidationErrors7 defines model for .
+type ProjectUpgradeEligibilityResponseValidationErrors7 struct {
+	SlotName string                                                 `json:"slot_name"`
+	Type     ProjectUpgradeEligibilityResponseValidationErrors7Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseValidationErrors7Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.7.Type.
+type ProjectUpgradeEligibilityResponseValidationErrors7Type string
+
+// ProjectUpgradeEligibilityResponse_ValidationErrors_Item defines model for ProjectUpgradeEligibilityResponse.validation_errors.Item.
+type ProjectUpgradeEligibilityResponse_ValidationErrors_Item struct {
+	union json.RawMessage
+}
 
 // ProjectUpgradeInitiateResponse defines model for ProjectUpgradeInitiateResponse.
 type ProjectUpgradeInitiateResponse struct {
@@ -4370,7 +4515,10 @@ type V1RunQueryBody struct {
 
 // V1ServiceHealthResponse defines model for V1ServiceHealthResponse.
 type V1ServiceHealthResponse struct {
-	Error   *string                       `json:"error,omitempty"`
+	Error *string `json:"error,omitempty"`
+
+	// Healthy Deprecated. Use `status` instead.
+	// Deprecated:
 	Healthy bool                          `json:"healthy"`
 	Info    *V1ServiceHealthResponse_Info `json:"info,omitempty"`
 	Name    V1ServiceHealthResponseName   `json:"name"`
@@ -4391,7 +4539,10 @@ type V1ServiceHealthResponseInfo0Name string
 type V1ServiceHealthResponseInfo1 struct {
 	ConnectedCluster int  `json:"connected_cluster"`
 	DbConnected      bool `json:"db_connected"`
-	Healthy          bool `json:"healthy"`
+
+	// Healthy Deprecated. Use `status` instead.
+	// Deprecated:
+	Healthy bool `json:"healthy"`
 }
 
 // V1ServiceHealthResponseInfo2 defines model for .
@@ -5735,6 +5886,224 @@ func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) MarshalJSON() ([]by
 }
 
 func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseValidationErrors0 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors0
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors0() (ProjectUpgradeEligibilityResponseValidationErrors0, error) {
+	var body ProjectUpgradeEligibilityResponseValidationErrors0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseValidationErrors0 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors0
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors0(v ProjectUpgradeEligibilityResponseValidationErrors0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseValidationErrors0 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors0
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors0(v ProjectUpgradeEligibilityResponseValidationErrors0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseValidationErrors1 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors1
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors1() (ProjectUpgradeEligibilityResponseValidationErrors1, error) {
+	var body ProjectUpgradeEligibilityResponseValidationErrors1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseValidationErrors1 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors1
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors1(v ProjectUpgradeEligibilityResponseValidationErrors1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseValidationErrors1 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors1
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors1(v ProjectUpgradeEligibilityResponseValidationErrors1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseValidationErrors2 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors2
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors2() (ProjectUpgradeEligibilityResponseValidationErrors2, error) {
+	var body ProjectUpgradeEligibilityResponseValidationErrors2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseValidationErrors2 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors2
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors2(v ProjectUpgradeEligibilityResponseValidationErrors2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseValidationErrors2 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors2
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors2(v ProjectUpgradeEligibilityResponseValidationErrors2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseValidationErrors3 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors3
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors3() (ProjectUpgradeEligibilityResponseValidationErrors3, error) {
+	var body ProjectUpgradeEligibilityResponseValidationErrors3
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseValidationErrors3 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors3
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors3(v ProjectUpgradeEligibilityResponseValidationErrors3) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseValidationErrors3 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors3
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors3(v ProjectUpgradeEligibilityResponseValidationErrors3) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseValidationErrors4 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors4
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors4() (ProjectUpgradeEligibilityResponseValidationErrors4, error) {
+	var body ProjectUpgradeEligibilityResponseValidationErrors4
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseValidationErrors4 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors4
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors4(v ProjectUpgradeEligibilityResponseValidationErrors4) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseValidationErrors4 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors4
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors4(v ProjectUpgradeEligibilityResponseValidationErrors4) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseValidationErrors5 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors5
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors5() (ProjectUpgradeEligibilityResponseValidationErrors5, error) {
+	var body ProjectUpgradeEligibilityResponseValidationErrors5
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseValidationErrors5 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors5
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors5(v ProjectUpgradeEligibilityResponseValidationErrors5) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseValidationErrors5 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors5
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors5(v ProjectUpgradeEligibilityResponseValidationErrors5) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseValidationErrors6 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors6
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors6() (ProjectUpgradeEligibilityResponseValidationErrors6, error) {
+	var body ProjectUpgradeEligibilityResponseValidationErrors6
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseValidationErrors6 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors6
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors6(v ProjectUpgradeEligibilityResponseValidationErrors6) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseValidationErrors6 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors6
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors6(v ProjectUpgradeEligibilityResponseValidationErrors6) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseValidationErrors7 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors7
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors7() (ProjectUpgradeEligibilityResponseValidationErrors7, error) {
+	var body ProjectUpgradeEligibilityResponseValidationErrors7
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseValidationErrors7 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors7
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors7(v ProjectUpgradeEligibilityResponseValidationErrors7) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseValidationErrors7 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors7
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors7(v ProjectUpgradeEligibilityResponseValidationErrors7) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
