@@ -193,8 +193,9 @@ var (
 		},
 	}
 
-	noSeed      bool
-	lastVersion uint
+	noSeed           bool
+	lastVersion      uint
+	overrideSeedFile string
 
 	dbResetCmd = &cobra.Command{
 		Use:   "reset",
@@ -202,6 +203,8 @@ var (
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if noSeed {
 				utils.Config.Db.Seed.Enabled = false
+			} else if len(overrideSeedFile) > 0 {
+				utils.Config.Db.Seed.SqlPaths = []string{overrideSeedFile}
 			}
 			return reset.Run(cmd.Context(), migrationVersion, lastVersion, flags.DbConfig, afero.NewOsFs())
 		},
@@ -325,7 +328,9 @@ func init() {
 	resetFlags.Bool("linked", false, "Resets the linked project with local migrations.")
 	resetFlags.Bool("local", true, "Resets the local database with local migrations.")
 	resetFlags.BoolVar(&noSeed, "no-seed", false, "Skip running the seed script after reset.")
+	resetFlags.StringVar(&overrideSeedFile, "override-seed-file", "", "Path to a custom seed SQL file to use instead of the default.")
 	dbResetCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
+	dbResetCmd.MarkFlagsMutuallyExclusive("no-seed", "override-seed-file")
 	resetFlags.StringVar(&migrationVersion, "version", "", "Reset up to the specified version.")
 	resetFlags.UintVar(&lastVersion, "last", 0, "Reset up to the last n migration versions.")
 	dbResetCmd.MarkFlagsMutuallyExclusive("version", "last")
