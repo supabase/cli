@@ -1164,6 +1164,8 @@ func (s *sms) validate() (err error) {
 		if err := assertEnvLoaded(s.Vonage.ApiSecret.Value); err != nil {
 			return err
 		}
+	case len(s.TestOTP) > 0:
+		// No need for configuring provider if test OTP is enabled
 	case s.EnableSignup:
 		s.EnableSignup = false
 		fmt.Fprintln(os.Stderr, "WARN: no SMS provider is enabled. Disabling phone login")
