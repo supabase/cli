@@ -27,7 +27,7 @@ func DiffPgDelta(ctx context.Context, source, target pgconn.Config, schema []str
 	if ca, err := types.GetRootCA(ctx, utils.ToPostgresURL(target), options...); err != nil {
 		return "", err
 	} else if len(ca) > 0 {
-		env = append(env, "SSL_CA="+ca)
+		env = append(env, "PGDELTA_TARGET_SSLROOTCERT="+ca)
 	}
 	if len(schema) > 0 {
 		env = append(env, "INCLUDED_SCHEMAS="+strings.Join(schema, ","))
