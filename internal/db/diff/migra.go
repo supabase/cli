@@ -11,7 +11,6 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
-	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/gen/types"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/config"
@@ -119,33 +118,9 @@ func DiffSchemaMigra(ctx context.Context, source, target pgconn.Config, schema [
 	} else {
 		env = append(env, "EXCLUDED_SCHEMAS="+strings.Join(managedSchemas, ","))
 	}
-	cmd := []string{"edge-runtime", "start", "--main-service=."}
-	if viper.GetBool("DEBUG") {
-		cmd = append(cmd, "--verbose")
-	}
-	cmdString := strings.Join(cmd, " ")
-	entrypoint := []string{"sh", "-c", `cat <<'EOF' > index.ts && ` + cmdString + `
-` + diffSchemaTypeScript + `
-EOF
-`}
-	var out, stderr bytes.Buffer
-	if err := utils.DockerRunOnceWithConfig(
-		ctx,
-		container.Config{
-			Image:      utils.Config.EdgeRuntime.Image,
-			Env:        env,
-			Entrypoint: entrypoint,
-		},
-		container.HostConfig{
-			Binds:       []string{utils.EdgeRuntimeId + ":/root/.cache/deno:rw"},
-			NetworkMode: network.NetworkHost,
-		},
-		network.NetworkingConfig{},
-		"",
-		&out,
-		&stderr,
-	); err != nil && !strings.HasPrefix(stderr.String(), "main worker has been destroyed") {
-		return "", errors.Errorf("error diffing schema: %w:\n%s", err, stderr.String())
+	var out bytes.Buffer
+	if err := diffWithStream(ctx, env, diffSchemaTypeScript, &out); err != nil {
+		return "", err
 	}
 	return out.String(), nil
 }
