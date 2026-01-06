@@ -17,7 +17,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-//go:embed templates/delta.ts
+//go:embed templates/pgdelta.ts
 var pgDeltaScript string
 
 func DiffPgDelta(ctx context.Context, source, target pgconn.Config, schema []string, options ...func(*pgx.ConnConfig)) (string, error) {
