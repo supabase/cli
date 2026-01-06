@@ -9,11 +9,13 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"os/signal"
 	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"text/template"
 	"time"
 
@@ -38,12 +40,13 @@ import (
 	"github.com/supabase/cli/internal/seed/buckets"
 	"github.com/supabase/cli/internal/services"
 	"github.com/supabase/cli/internal/status"
+	"github.com/supabase/cli/internal/stop"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/config"
 )
 
-func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool) error {
+func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool, foreground bool) error {
 	// Sanity checks.
 	{
 		if err := flags.LoadConfig(fsys); err != nil {
@@ -81,6 +84,10 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 
 	fmt.Fprintf(os.Stderr, "Started %s local development setup.\n\n", utils.Aqua("supabase"))
 	status.PrettyPrint(os.Stdout, excludedContainers...)
+
+	if foreground {
+		return runForeground(ctx, fsys)
+	}
 	return nil
 }
 
@@ -1302,6 +1309,22 @@ func ExcludableContainers() []string {
 		names = append(names, utils.ShortContainerImageName(image))
 	}
 	return names
+}
+
+func runForeground(ctx context.Context, fsys afero.Fs) error {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+
+	fmt.Fprintln(os.Stderr, "Running in foreground. Press Ctrl+C to stop services.")
+
+	select {
+	case sig := <-sigChan:
+		fmt.Fprintf(os.Stderr, "\nReceived signal %v, stopping services...\n", sig)
+	case <-ctx.Done():
+		fmt.Fprintln(os.Stderr, "\nContext cancelled, stopping services...")
+	}
+
+	return stop.Run(ctx, true, "", false, fsys)  // backup=true, no specific project, not all
 }
 
 func formatMapForEnvConfig(input map[string]string, output *bytes.Buffer) {

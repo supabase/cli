@@ -40,6 +40,7 @@ var (
 	excludedContainers []string
 	ignoreHealthCheck  bool
 	preview            bool
+	foreground         bool
 
 	startCmd = &cobra.Command{
 		GroupID: groupLocalDev,
@@ -47,7 +48,7 @@ var (
 		Short:   "Start containers for Supabase local development",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			validateExcludedContainers(excludedContainers)
-			return start.Run(cmd.Context(), afero.NewOsFs(), excludedContainers, ignoreHealthCheck)
+			return start.Run(cmd.Context(), afero.NewOsFs(), excludedContainers, ignoreHealthCheck, foreground)
 		},
 	}
 )
@@ -58,6 +59,7 @@ func init() {
 	flags.StringSliceVarP(&excludedContainers, "exclude", "x", []string{}, "Names of containers to not start. ["+names+"]")
 	flags.BoolVar(&ignoreHealthCheck, "ignore-health-check", false, "Ignore unhealthy services and exit 0")
 	flags.BoolVar(&preview, "preview", false, "Connect to feature preview branch")
+	flags.BoolVarP(&foreground, "foreground", "f", false, "Run in foreground and stop services on exit")
 	cobra.CheckErr(flags.MarkHidden("preview"))
 	rootCmd.AddCommand(startCmd)
 }
