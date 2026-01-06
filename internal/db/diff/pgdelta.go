@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"io"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -31,19 +32,25 @@ func DiffPgDelta(ctx context.Context, source, target pgconn.Config, schema []str
 	}
 	if len(schema) > 0 {
 		env = append(env, "INCLUDED_SCHEMAS="+strings.Join(schema, ","))
-	} else {
-		env = append(env, "EXCLUDED_SCHEMAS="+strings.Join(managedSchemas, ","))
 	}
+	var out bytes.Buffer
+	if err := diffWithStream(ctx, env, pgDeltaScript, &out); err != nil {
+		return "", err
+	}
+	return out.String(), nil
+}
+
+func diffWithStream(ctx context.Context, env []string, script string, stdout io.Writer) error {
 	cmd := []string{"edge-runtime", "start", "--main-service=."}
 	if viper.GetBool("DEBUG") {
 		cmd = append(cmd, "--verbose")
 	}
 	cmdString := strings.Join(cmd, " ")
 	entrypoint := []string{"sh", "-c", `cat <<'EOF' > index.ts && ` + cmdString + `
-` + pgDeltaScript + `
+` + script + `
 EOF
 `}
-	var out, stderr bytes.Buffer
+	var stderr bytes.Buffer
 	if err := utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
@@ -57,10 +64,10 @@ EOF
 		},
 		network.NetworkingConfig{},
 		"",
-		&out,
+		stdout,
 		&stderr,
 	); err != nil && !strings.HasPrefix(stderr.String(), "main worker has been destroyed") {
-		return "", errors.Errorf("error diffing schema: %w:\n%s", err, stderr.String())
+		return errors.Errorf("error diffing schema: %w:\n%s", err, stderr.String())
 	}
-	return out.String(), nil
+	return nil
 }
