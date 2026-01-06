@@ -33,6 +33,10 @@ func DiffPgDelta(ctx context.Context, source, target pgconn.Config, schema []str
 	if len(schema) > 0 {
 		env = append(env, "INCLUDED_SCHEMAS="+strings.Join(schema, ","))
 	}
+	loginRole := strings.Split(target.User, ".")[0]
+	if strings.EqualFold(loginRole, "cli_login_postgres") {
+		env = append(env, "ROLE=postgres")
+	}
 	var out bytes.Buffer
 	if err := diffWithStream(ctx, env, pgDeltaScript, &out); err != nil {
 		return "", err

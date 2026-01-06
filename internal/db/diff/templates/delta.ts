@@ -8,6 +8,7 @@ const includedSchemas = Deno.env.get("INCLUDED_SCHEMAS");
 if (includedSchemas) {
   supabase.filter = { schema: includedSchemas.split(",") };
 }
+supabase.role = Deno.env.get("ROLE");
 
 try {
   const result = await createPlan(source, target, supabase);
@@ -17,4 +18,6 @@ try {
   }
 } catch (e) {
   console.error(e);
+  // Force close event loop
+  throw new Error("");
 }
