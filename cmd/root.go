@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"time"
 
@@ -71,8 +72,6 @@ func IsExperimental(cmd *cobra.Command) bool {
 }
 
 var (
-	rootFsys afero.Fs
-
 	sentryOpts = sentry.ClientOptions{
 		Dsn:        utils.SentryDsn,
 		Release:    utils.Version,
@@ -95,23 +94,23 @@ var (
 			}
 			cmd.SilenceUsage = true
 			ctx := cmd.Context()
-			// profile loaded in Execute(), can change workdir
-			if err := utils.ChangeWorkDir(rootFsys); err != nil {
+			fsys := afero.NewOsFs()
+			if err := utils.ChangeWorkDir(fsys); err != nil {
 				return err
 			}
 			// Add common flags
 			if IsManagementAPI(cmd) {
-				if err := promptLogin(rootFsys); err != nil {
+				if err := promptLogin(fsys); err != nil {
 					return err
 				}
 				ctx, _ = signal.NotifyContext(ctx, os.Interrupt)
 				if cmd.Flags().Lookup("project-ref") != nil {
-					if err := flags.ParseProjectRef(ctx, rootFsys); err != nil {
+					if err := flags.ParseProjectRef(ctx, fsys); err != nil {
 						return err
 					}
 				}
 			}
-			if err := flags.ParseDatabaseConfig(ctx, cmd.Flags(), rootFsys); err != nil {
+			if err := flags.ParseDatabaseConfig(ctx, cmd.Flags(), fsys); err != nil {
 				return err
 			}
 			// Prepare context
@@ -135,23 +134,22 @@ var (
 
 func Execute() {
 	defer recoverAndExit()
-	rootFsys = afero.NewOsFs()
+	fsys := afero.NewOsFs()
 	ctx := context.Background()
-	if err := utils.LoadProfile(ctx, rootFsys); err != nil {
+	// Load profile before changing workdir
+	if err := utils.LoadProfile(ctx, fsys); err != nil {
 		panic(err)
 	}
-	allowedRegions := awsRegions()
-	region = utils.EnumFlag{
-		Allowed: allowedRegions,
+	region.Allowed = make([]string, len(utils.CurrentProfile.ProjectRegions))
+	for i, r := range utils.CurrentProfile.ProjectRegions {
+		region.Allowed[i] = string(r)
 	}
-	branchRegion = utils.EnumFlag{
-		Allowed: allowedRegions,
-	}
+	sort.Strings(region.Allowed)
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		panic(err)
 	}
 	// Check upgrade last because --version flag is initialised after execute
-	version, err := checkUpgrade(rootCmd.Context(), afero.NewOsFs())
+	version, err := checkUpgrade(ctx, fsys)
 	if err != nil {
 		fmt.Fprintln(utils.GetDebugLogger(), err)
 	}
