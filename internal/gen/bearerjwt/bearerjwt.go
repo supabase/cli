@@ -35,10 +35,13 @@ func Run(ctx context.Context, claims jwt.Claims, w io.Writer, fsys afero.Fs) err
 func getSigningKey(ctx context.Context) (*config.JWK, error) {
 	console := utils.NewConsole()
 	if len(utils.Config.Auth.SigningKeysPath) == 0 {
-		title := "Enter your signing key in JWK format: "
+		title := "Enter your signing key in JWK format (or leave blank to use local default): "
 		kid, err := console.PromptText(ctx, title)
 		if err != nil {
 			return nil, err
+		}
+		if len(kid) == 0 && len(utils.Config.Auth.SigningKeys) > 0 {
+			return &utils.Config.Auth.SigningKeys[0], nil
 		}
 		key := config.JWK{}
 		if err := json.Unmarshal([]byte(kid), &key); err != nil {

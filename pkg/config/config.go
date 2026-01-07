@@ -386,6 +386,18 @@ func NewConfig(editors ...ConfigEditor) config {
 				TestOTP: map[string]string{},
 			},
 			External: map[string]provider{},
+			SigningKeys: []JWK{{
+				KeyType:         "EC",
+				KeyID:           "b81269f1-21d8-4f2e-b719-c2240a840d90",
+				Use:             "sig",
+				KeyOps:          []string{"sign", "verify"},
+				Algorithm:       "ES256",
+				Extractable:     cast.Ptr(true),
+				Curve:           "P-256",
+				X:               "M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4",
+				Y:               "P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ",
+				PrivateExponent: "dIhR8wywJlqlua4y_yMq2SLhlFXDZJBCvFrY1DCHyVU",
+			}},
 		},
 		Inbucket: inbucket{
 			Image:      Images.Inbucket,
@@ -1545,7 +1557,7 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 		jwks.Keys = append(jwks.Keys, json.RawMessage(publicKeyEncoded))
 	}
 	// Fallback to JWT_SECRET for backward compatibility
-	if len(a.SigningKeys) == 0 {
+	if len(a.SigningKeysPath) == 0 {
 		jwtSecret := secretJWK{
 			KeyType:      "oct",
 			KeyBase64URL: base64.RawURLEncoding.EncodeToString([]byte(a.JwtSecret.Value)),

@@ -1,6 +1,6 @@
 module github.com/supabase/cli
 
-go 1.24.10
+go 1.25.5
 
 require (
 	github.com/BurntSushi/toml v1.6.0
@@ -28,7 +28,7 @@ require (
 	github.com/go-xmlfmt/xmlfmt v1.1.3
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/go-github/v62 v62.0.0
-	github.com/google/go-querystring v1.1.0
+	github.com/google/go-querystring v1.2.0
 	github.com/google/uuid v1.6.0
 	github.com/h2non/gock v1.2.0
 	github.com/jackc/pgconn v1.14.3
@@ -46,7 +46,7 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
-	github.com/stripe/pg-schema-diff v1.0.2
+	github.com/stripe/pg-schema-diff v1.0.3
 	github.com/supabase/cli/pkg v1.0.0
 	github.com/tidwall/jsonc v0.3.2
 	github.com/withfig/autocomplete-tools/packages/cobra v1.2.0
