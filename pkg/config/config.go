@@ -1538,7 +1538,7 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 		jwks.Keys = append(jwks.Keys, json.RawMessage(publicKeyEncoded))
 	}
 	// Fallback to JWT_SECRET for backward compatibility
-	if len(a.SigningKeys) == 0 {
+	if len(a.SigningKeysPath) == 0 {
 		jwtSecret := secretJWK{
 			KeyType:      "oct",
 			KeyBase64URL: base64.RawURLEncoding.EncodeToString([]byte(a.JwtSecret.Value)),
