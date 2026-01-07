@@ -31,7 +31,7 @@ var (
 	}
 
 	branchRegion = utils.EnumFlag{
-		Allowed: awsRegions(),
+		Allowed: utils.AwsRegions(),
 	}
 	persistent bool
 	withData   bool
