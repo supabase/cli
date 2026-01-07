@@ -1919,6 +1919,9 @@ type AuthConfigResponse struct {
 	NimbusOauthClientId                                   nullable.Nullable[string]                                       `json:"nimbus_oauth_client_id"`
 	NimbusOauthClientSecret                               nullable.Nullable[string]                                       `json:"nimbus_oauth_client_secret"`
 	NimbusOauthEmailOptional                              nullable.Nullable[bool]                                         `json:"nimbus_oauth_email_optional"`
+	OauthServerAllowDynamicRegistration                   bool                                                            `json:"oauth_server_allow_dynamic_registration"`
+	OauthServerAuthorizationPath                          nullable.Nullable[string]                                       `json:"oauth_server_authorization_path"`
+	OauthServerEnabled                                    bool                                                            `json:"oauth_server_enabled"`
 	PasswordHibpEnabled                                   nullable.Nullable[bool]                                         `json:"password_hibp_enabled"`
 	PasswordMinLength                                     nullable.Nullable[int]                                          `json:"password_min_length"`
 	PasswordRequiredCharacters                            nullable.Nullable[AuthConfigResponsePasswordRequiredCharacters] `json:"password_required_characters"`
@@ -3729,6 +3732,9 @@ type UpdateAuthConfigBody struct {
 	MfaWebAuthnVerifyEnabled                              nullable.Nullable[bool]                                           `json:"mfa_web_authn_verify_enabled,omitempty"`
 	NimbusOauthClientId                                   nullable.Nullable[string]                                         `json:"nimbus_oauth_client_id,omitempty"`
 	NimbusOauthClientSecret                               nullable.Nullable[string]                                         `json:"nimbus_oauth_client_secret,omitempty"`
+	OauthServerAllowDynamicRegistration                   nullable.Nullable[bool]                                           `json:"oauth_server_allow_dynamic_registration,omitempty"`
+	OauthServerAuthorizationPath                          nullable.Nullable[string]                                         `json:"oauth_server_authorization_path,omitempty"`
+	OauthServerEnabled                                    nullable.Nullable[bool]                                           `json:"oauth_server_enabled,omitempty"`
 	PasswordHibpEnabled                                   nullable.Nullable[bool]                                           `json:"password_hibp_enabled,omitempty"`
 	PasswordMinLength                                     nullable.Nullable[int]                                            `json:"password_min_length,omitempty"`
 	PasswordRequiredCharacters                            nullable.Nullable[UpdateAuthConfigBodyPasswordRequiredCharacters] `json:"password_required_characters,omitempty"`
