@@ -4,7 +4,6 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
 	"math/big"
@@ -12,8 +11,6 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
-	"github.com/supabase/cli/pkg/cast"
 )
 
 const (
@@ -48,25 +45,6 @@ func (a *auth) generateAPIKeys() error {
 		a.JwtSecret.Value = defaultJwtSecret
 	} else if len(a.JwtSecret.Value) < 16 {
 		return errors.Errorf("Invalid config for auth.jwt_secret. Must be at least 16 characters")
-	}
-	// Generate default signing key (P-256 curve for ES256)
-	if len(a.SigningKeysPath) == 0 {
-		privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			return errors.Errorf("failed to generate ECDSA key: %w", err)
-		}
-		a.SigningKeys = append(a.SigningKeys, JWK{
-			KeyType:         "EC",
-			KeyID:           uuid.New().String(),
-			Use:             "sig",
-			KeyOps:          []string{"sign", "verify"},
-			Algorithm:       "ES256",
-			Extractable:     cast.Ptr(true),
-			Curve:           "P-256",
-			X:               base64.RawURLEncoding.EncodeToString(privateKey.PublicKey.X.Bytes()),
-			Y:               base64.RawURLEncoding.EncodeToString(privateKey.PublicKey.Y.Bytes()),
-			PrivateExponent: base64.RawURLEncoding.EncodeToString(privateKey.D.Bytes()),
-		})
 	}
 	// Generate anon key if not provided
 	if len(a.AnonKey.Value) == 0 {

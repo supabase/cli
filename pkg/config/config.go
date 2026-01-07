@@ -386,6 +386,18 @@ func NewConfig(editors ...ConfigEditor) config {
 				TestOTP: map[string]string{},
 			},
 			External: map[string]provider{},
+			SigningKeys: []JWK{{
+				KeyType:         "EC",
+				KeyID:           "b81269f1-21d8-4f2e-b719-c2240a840d90",
+				Use:             "sig",
+				KeyOps:          []string{"sign", "verify"},
+				Algorithm:       "ES256",
+				Extractable:     cast.Ptr(true),
+				Curve:           "P-256",
+				X:               "M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4",
+				Y:               "P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ",
+				PrivateExponent: "dIhR8wywJlqlua4y_yMq2SLhlFXDZJBCvFrY1DCHyVU",
+			}},
 		},
 		Inbucket: inbucket{
 			Image:      Images.Inbucket,
