@@ -30,10 +30,9 @@ var (
 		Short:   "Manage Supabase preview branches",
 	}
 
-	branchRegion utils.EnumFlag
-	persistent   bool
-	withData     bool
-	notifyURL    string
+	persistent bool
+	withData   bool
+	notifyURL  string
 
 	branchCreateCmd = &cobra.Command{
 		Use:   "create [name]",
@@ -47,7 +46,7 @@ var (
 			}
 			cmdFlags := cmd.Flags()
 			if cmdFlags.Changed("region") {
-				body.Region = &branchRegion.Value
+				body.Region = &region.Value
 			}
 			if cmdFlags.Changed("size") {
 				body.DesiredInstanceSize = (*api.CreateBranchBodyDesiredInstanceSize)(&size.Value)
@@ -204,7 +203,7 @@ func init() {
 	branchFlags := branchesCmd.PersistentFlags()
 	branchFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	createFlags := branchCreateCmd.Flags()
-	createFlags.Var(&branchRegion, "region", "Select a region to deploy the branch database.")
+	createFlags.Var(&region, "region", "Select a region to deploy the branch database.")
 	createFlags.Var(&size, "size", "Select a desired instance size for the branch database.")
 	createFlags.BoolVar(&persistent, "persistent", false, "Whether to create a persistent branch.")
 	createFlags.BoolVar(&withData, "with-data", false, "Whether to clone production data to the branch database.")
