@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"sort"
 	"strings"
 	"time"
 
@@ -93,8 +92,12 @@ var (
 				return errors.New("must set the --experimental flag to run this command")
 			}
 			cmd.SilenceUsage = true
+			// Load profile before changing workdir
 			ctx := cmd.Context()
 			fsys := afero.NewOsFs()
+			if err := utils.LoadProfile(ctx, fsys); err != nil {
+				return err
+			}
 			if err := utils.ChangeWorkDir(fsys); err != nil {
 				return err
 			}
@@ -134,22 +137,11 @@ var (
 
 func Execute() {
 	defer recoverAndExit()
-	fsys := afero.NewOsFs()
-	ctx := context.Background()
-	// Load profile before changing workdir
-	if err := utils.LoadProfile(ctx, fsys); err != nil {
-		panic(err)
-	}
-	region.Allowed = make([]string, len(utils.CurrentProfile.ProjectRegions))
-	for i, r := range utils.CurrentProfile.ProjectRegions {
-		region.Allowed[i] = string(r)
-	}
-	sort.Strings(region.Allowed)
-	if err := rootCmd.ExecuteContext(ctx); err != nil {
+	if err := rootCmd.Execute(); err != nil {
 		panic(err)
 	}
 	// Check upgrade last because --version flag is initialised after execute
-	version, err := checkUpgrade(ctx, fsys)
+	version, err := checkUpgrade(rootCmd.Context(), afero.NewOsFs())
 	if err != nil {
 		fmt.Fprintln(utils.GetDebugLogger(), err)
 	}
