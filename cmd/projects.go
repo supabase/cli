@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"os"
-	"sort"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -150,13 +149,4 @@ func init() {
 	projectsCmd.AddCommand(projectsListCmd)
 	projectsCmd.AddCommand(projectsApiKeysCmd)
 	rootCmd.AddCommand(projectsCmd)
-}
-
-func awsRegions() []string {
-	result := make([]string, len(utils.CurrentProfile.ProjectRegions))
-	for i, region := range utils.CurrentProfile.ProjectRegions {
-		result[i] = string(region)
-	}
-	sort.Strings(result)
-	return result
 }
