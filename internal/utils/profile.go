@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/go-errors/errors"
@@ -127,4 +128,13 @@ func getProfileName(fsys afero.Fs) string {
 		fmt.Fprintln(debuglogger, err)
 		return prof
 	}
+}
+
+func AwsRegions() []string {
+	result := make([]string, len(allProfiles[0].ProjectRegions))
+	for i, region := range allProfiles[0].ProjectRegions {
+		result[i] = string(region)
+	}
+	sort.Strings(result)
+	return result
 }
