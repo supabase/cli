@@ -71,6 +71,8 @@ func IsExperimental(cmd *cobra.Command) bool {
 }
 
 var (
+	rootFsys afero.Fs
+
 	sentryOpts = sentry.ClientOptions{
 		Dsn:        utils.SentryDsn,
 		Release:    utils.Version,
@@ -92,28 +94,24 @@ var (
 				return errors.New("must set the --experimental flag to run this command")
 			}
 			cmd.SilenceUsage = true
-			// Load profile before changing workdir
 			ctx := cmd.Context()
-			fsys := afero.NewOsFs()
-			if err := utils.LoadProfile(ctx, fsys); err != nil {
-				return err
-			}
-			if err := utils.ChangeWorkDir(fsys); err != nil {
+			// profile loaded in Execute(), can change workdir
+			if err := utils.ChangeWorkDir(rootFsys); err != nil {
 				return err
 			}
 			// Add common flags
 			if IsManagementAPI(cmd) {
-				if err := promptLogin(fsys); err != nil {
+				if err := promptLogin(rootFsys); err != nil {
 					return err
 				}
 				ctx, _ = signal.NotifyContext(ctx, os.Interrupt)
 				if cmd.Flags().Lookup("project-ref") != nil {
-					if err := flags.ParseProjectRef(ctx, fsys); err != nil {
+					if err := flags.ParseProjectRef(ctx, rootFsys); err != nil {
 						return err
 					}
 				}
 			}
-			if err := flags.ParseDatabaseConfig(ctx, cmd.Flags(), fsys); err != nil {
+			if err := flags.ParseDatabaseConfig(ctx, cmd.Flags(), rootFsys); err != nil {
 				return err
 			}
 			// Prepare context
@@ -137,7 +135,19 @@ var (
 
 func Execute() {
 	defer recoverAndExit()
-	if err := rootCmd.Execute(); err != nil {
+	rootFsys = afero.NewOsFs()
+	ctx := context.Background()
+	if err := utils.LoadProfile(ctx, rootFsys); err != nil {
+		panic(err)
+	}
+	allowedRegions := awsRegions()
+	region = utils.EnumFlag{
+		Allowed: allowedRegions,
+	}
+	branchRegion = utils.EnumFlag{
+		Allowed: allowedRegions,
+	}
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		panic(err)
 	}
 	// Check upgrade last because --version flag is initialised after execute

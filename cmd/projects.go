@@ -29,10 +29,8 @@ var (
 	projectName string
 	orgId       string
 	dbPassword  string
-	region      = utils.EnumFlag{
-		Allowed: awsRegions(),
-	}
-	size = utils.EnumFlag{
+	region      utils.EnumFlag
+	size        = utils.EnumFlag{
 		Allowed: []string{
 			string(api.V1CreateProjectBodyDesiredInstanceSizeLarge),
 			string(api.V1CreateProjectBodyDesiredInstanceSizeMedium),

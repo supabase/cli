@@ -30,12 +30,10 @@ var (
 		Short:   "Manage Supabase preview branches",
 	}
 
-	branchRegion = utils.EnumFlag{
-		Allowed: awsRegions(),
-	}
-	persistent bool
-	withData   bool
-	notifyURL  string
+	branchRegion utils.EnumFlag
+	persistent   bool
+	withData     bool
+	notifyURL    string
 
 	branchCreateCmd = &cobra.Command{
 		Use:   "create [name]",
