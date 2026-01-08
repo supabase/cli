@@ -131,7 +131,7 @@ func resetDatabase15(ctx context.Context, version string, fsys afero.Fs, options
 	if _, err := utils.DockerStart(ctx, config, hostConfig, networkingConfig, utils.DbId); err != nil {
 		return err
 	}
-	if err := start.WaitForHealthyService(ctx, start.HealthTimeout, utils.DbId); err != nil {
+	if err := start.WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, utils.DbId); err != nil {
 		return err
 	}
 	if err := start.SetupLocalDatabase(ctx, version, fsys, os.Stderr, options...); err != nil {
@@ -215,7 +215,7 @@ func RestartDatabase(ctx context.Context, w io.Writer) error {
 	if err := utils.Docker.ContainerRestart(ctx, utils.DbId, container.StopOptions{}); err != nil {
 		return errors.Errorf("failed to restart container: %w", err)
 	}
-	if err := start.WaitForHealthyService(ctx, start.HealthTimeout, utils.DbId); err != nil {
+	if err := start.WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, utils.DbId); err != nil {
 		return err
 	}
 	return restartServices(ctx)

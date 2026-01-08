@@ -30,7 +30,6 @@ import (
 )
 
 var (
-	HealthTimeout = 120 * time.Second
 	//go:embed templates/schema.sql
 	initialSchema string
 	//go:embed templates/webhook.sql
@@ -177,7 +176,7 @@ EOF`}
 		return err
 	}
 	// Ignore health check because restoring a large backup may take longer than 2 minutes
-	if err := WaitForHealthyService(ctx, HealthTimeout, utils.DbId); err != nil && len(fromBackup) == 0 {
+	if err := WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, utils.DbId); err != nil && len(fromBackup) == 0 {
 		return err
 	}
 	// Initialize if we are on PG14 and there's no existing db volume
