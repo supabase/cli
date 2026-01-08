@@ -26,29 +26,22 @@ const (
 
 func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// Build test command
+	binds := []string{}
 	cmd := []string{"pg_prove", "--ext", ".pg", "--ext", ".sql", "-r"}
-	absTestsDir, err := filepath.Abs(utils.DbTestsDir)
-	if err != nil {
-		return errors.Errorf("failed to resolve absolute path: %w", err)
+	if len(testFiles) == 0 {
+		testFiles = append(testFiles, utils.DbTestsDir)
 	}
 	for _, fp := range testFiles {
-		absPath, err := filepath.Abs(fp)
-		if err != nil {
-			return errors.Errorf("failed to resolve absolute path: %w", err)
+		if !filepath.IsAbs(fp) {
+			fp = filepath.Join(utils.CurrentDirAbs, fp)
 		}
-		relPath, err := filepath.Rel(absTestsDir, absPath)
-		if err != nil {
-			return errors.Errorf("failed to resolve relative path: %w", err)
-		}
-		cmd = append(cmd, relPath)
+		dockerPath := utils.ToDockerPath(fp)
+		cmd = append(cmd, dockerPath)
+		binds = append(binds, fmt.Sprintf("%s:%s:ro", fp, dockerPath))
 	}
 	if viper.GetBool("DEBUG") {
 		cmd = append(cmd, "--verbose")
 	}
-	// Mount tests directory into container as working directory
-	srcPath := absTestsDir
-	dstPath := "/tmp"
-	binds := []string{fmt.Sprintf("%s:%s:ro", srcPath, dstPath)}
 	// Enable pgTAP if not already exists
 	alreadyExists := false
 	options = append(options, func(cc *pgx.ConnConfig) {
@@ -93,7 +86,7 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 				"PGDATABASE=" + config.Database,
 			},
 			Cmd:        cmd,
-			WorkingDir: dstPath,
+			WorkingDir: utils.CurrentDirAbs,
 		},
 		hostConfig,
 		network.NetworkingConfig{},
