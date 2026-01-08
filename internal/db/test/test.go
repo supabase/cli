@@ -26,18 +26,18 @@ const (
 
 func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// Build test command
-	binds := []string{}
-	cmd := []string{"pg_prove", "--ext", ".pg", "--ext", ".sql", "-r"}
 	if len(testFiles) == 0 {
 		testFiles = append(testFiles, utils.DbTestsDir)
 	}
-	for _, fp := range testFiles {
+	binds := make([]string, len(testFiles))
+	cmd := []string{"pg_prove", "--ext", ".pg", "--ext", ".sql", "-r"}
+	for i, fp := range testFiles {
 		if !filepath.IsAbs(fp) {
 			fp = filepath.Join(utils.CurrentDirAbs, fp)
 		}
 		dockerPath := utils.ToDockerPath(fp)
 		cmd = append(cmd, dockerPath)
-		binds = append(binds, fmt.Sprintf("%s:%s:ro", fp, dockerPath))
+		binds[i] = fmt.Sprintf("%s:%s:ro", fp, dockerPath)
 	}
 	if viper.GetBool("DEBUG") {
 		cmd = append(cmd, "--verbose")
