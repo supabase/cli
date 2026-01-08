@@ -156,7 +156,7 @@ func suggestAppStart(cwd, command string) string {
 
 func checkProjectHealth(ctx context.Context) error {
 	params := api.V1GetServicesHealthParams{
-		Services: []api.V1GetServicesHealthParamsServices{api.Db},
+		Services: []api.V1GetServicesHealthParamsServices{api.V1GetServicesHealthParamsServicesDb},
 	}
 	resp, err := utils.GetSupabase().V1GetServicesHealthWithResponse(ctx, flags.ProjectRef, &params)
 	if err != nil {

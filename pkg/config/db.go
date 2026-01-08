@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"slices"
+	"time"
 
 	"github.com/go-errors/errors"
 	v1API "github.com/supabase/cli/pkg/api"
@@ -78,6 +79,7 @@ type (
 		Image               string              `toml:"-"`
 		Port                uint16              `toml:"port"`
 		ShadowPort          uint16              `toml:"shadow_port"`
+		HealthTimeout       time.Duration       `toml:"health_timeout"`
 		MajorVersion        uint                `toml:"major_version"`
 		Password            string              `toml:"-"`
 		RootKey             Secret              `toml:"root_key"`

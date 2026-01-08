@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -621,8 +622,8 @@ EOF
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_WEB3=%v", utils.Config.Auth.RateLimit.Web3),
 		}
 
-		// Since signing key is validated by ResolveJWKS, simply read the key file.
-		if keys, err := afero.ReadFile(fsys, utils.Config.Auth.SigningKeysPath); err == nil && len(keys) > 0 {
+		// Serialise default or custom signing keys
+		if keys, err := json.Marshal(utils.Config.Auth.SigningKeys); err == nil {
 			env = append(env, "GOTRUE_JWT_KEYS="+string(keys))
 			// TODO: deprecate HS256 when it's no longer supported
 			env = append(env, "GOTRUE_JWT_VALID_METHODS=HS256,RS256,ES256")

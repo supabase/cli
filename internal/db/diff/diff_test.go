@@ -19,7 +19,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/helper"
@@ -212,7 +211,7 @@ func TestDiffDatabase(t *testing.T) {
 	})
 
 	t.Run("throws error on health check failure", func(t *testing.T) {
-		start.HealthTimeout = time.Millisecond
+		utils.Config.Db.HealthTimeout = time.Millisecond
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker

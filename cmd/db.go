@@ -87,6 +87,7 @@ var (
 	useMigra    bool
 	usePgAdmin  bool
 	usePgSchema bool
+	usePgDelta  bool
 	schema      []string
 	file        string
 
@@ -101,6 +102,8 @@ var (
 			if usePgSchema {
 				differ = diff.DiffPgSchema
 				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "--use-pg-schema flag is experimental and may not include all entities, such as views and grants.")
+			} else if usePgDelta {
+				differ = diff.DiffPgDelta
 			}
 			return diff.Run(cmd.Context(), schema, file, flags.DbConfig, differ, afero.NewOsFs())
 		},
@@ -257,7 +260,8 @@ func init() {
 	diffFlags.BoolVar(&useMigra, "use-migra", true, "Use migra to generate schema diff.")
 	diffFlags.BoolVar(&usePgAdmin, "use-pgadmin", false, "Use pgAdmin to generate schema diff.")
 	diffFlags.BoolVar(&usePgSchema, "use-pg-schema", false, "Use pg-schema-diff to generate schema diff.")
-	dbDiffCmd.MarkFlagsMutuallyExclusive("use-migra", "use-pgadmin")
+	diffFlags.BoolVar(&usePgDelta, "use-pg-delta", false, "Use pg-delta to generate schema diff.")
+	dbDiffCmd.MarkFlagsMutuallyExclusive("use-migra", "use-pgadmin", "use-pg-schema", "use-pg-delta")
 	diffFlags.String("db-url", "", "Diffs against the database specified by the connection string (must be percent-encoded).")
 	diffFlags.Bool("linked", false, "Diffs local migration files against the linked project.")
 	diffFlags.Bool("local", true, "Diffs local migration files against the local database.")
