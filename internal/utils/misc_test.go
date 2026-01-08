@@ -186,3 +186,49 @@ func TestWriteFile(t *testing.T) {
 		assert.Equal(t, updated, written)
 	})
 }
+
+func TestGetInitialWorkDir(t *testing.T) {
+	// Save and restore original INIT_CWD
+	originalInitCWD := os.Getenv("INIT_CWD")
+	defer func() {
+		if originalInitCWD != "" {
+			os.Setenv("INIT_CWD", originalInitCWD)
+		} else {
+			os.Unsetenv("INIT_CWD")
+		}
+	}()
+
+	t.Run("uses os.Getwd when INIT_CWD is not set", func(t *testing.T) {
+		os.Unsetenv("INIT_CWD")
+
+		expected, err := os.Getwd()
+		require.NoError(t, err)
+
+		result, err := getInitialWorkDir()
+
+		assert.NoError(t, err)
+		assert.Equal(t, expected, result)
+	})
+
+	t.Run("uses INIT_CWD when it is a valid absolute path that differs from os.Getwd", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		os.Setenv("INIT_CWD", tmpDir)
+
+		result, err := getInitialWorkDir()
+
+		assert.NoError(t, err)
+		assert.Equal(t, tmpDir, result)
+	})
+
+	t.Run("uses os.Getwd when INIT_CWD is relative", func(t *testing.T) {
+		os.Setenv("INIT_CWD", ".")
+
+		expected, err := os.Getwd()
+		require.NoError(t, err)
+
+		result, err := getInitialWorkDir()
+
+		assert.NoError(t, err)
+		assert.Equal(t, expected, result)
+	})
+}

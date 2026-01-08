@@ -172,12 +172,37 @@ func isRootDirectory(cleanPath string) bool {
 	return os.IsPathSeparator(cleanPath[len(cleanPath)-1])
 }
 
+// getInitialWorkDir returns the initial working directory, preferring INIT_CWD
+// (set by npm/npx) when it differs from os.Getwd(). This fixes issues where
+// npm workspaces change the working directory to the workspace root before
+// executing the binary.
+func getInitialWorkDir() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", errors.Errorf("failed to get current directory: %w", err)
+	}
+
+	// Check if INIT_CWD is set (npm/npx sets this to the directory where
+	// the command was originally executed when workspace is enabled)
+	if initCWD := os.Getenv("INIT_CWD"); initCWD != "" {
+		// Make sure INIT_CWD is absolute
+		if filepath.IsAbs(initCWD) {
+			// Use INIT_CWD this handles the npm workspace case where npx changes CWD
+			if initCWD != cwd {
+				return initCWD, nil
+			}
+		}
+	}
+
+	return cwd, nil
+}
+
 func ChangeWorkDir(fsys afero.Fs) error {
 	// Track the original workdir before changing to project root
 	if !filepath.IsAbs(CurrentDirAbs) {
 		var err error
-		if CurrentDirAbs, err = os.Getwd(); err != nil {
-			return errors.Errorf("failed to get current directory: %w", err)
+		if CurrentDirAbs, err = getInitialWorkDir(); err != nil {
+			return err
 		}
 	}
 	workdir := viper.GetString("WORKDIR")
