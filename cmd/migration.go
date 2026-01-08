@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/signal"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -25,11 +24,6 @@ var (
 		Use:     "migration",
 		Aliases: []string{"migrations"},
 		Short:   "Manage database migration scripts",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			cmd.SetContext(ctx)
-			return cmd.Root().PersistentPreRunE(cmd, args)
-		},
 	}
 
 	migrationListCmd = &cobra.Command{
