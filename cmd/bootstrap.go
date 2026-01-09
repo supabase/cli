@@ -3,8 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/signal"
 	"strings"
 
 	"github.com/go-errors/errors"
@@ -28,7 +26,7 @@ var (
 		Short:   "Bootstrap a Supabase project from a starter template",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			ctx := cmd.Context()
 			if !viper.IsSet("WORKDIR") {
 				title := fmt.Sprintf("Enter a directory to bootstrap your project (or leave blank to use %s): ", utils.Bold(utils.CurrentDirAbs))
 				if workdir, err := utils.NewConsole().PromptText(ctx, title); err != nil {
