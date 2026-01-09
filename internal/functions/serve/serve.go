@@ -70,7 +70,7 @@ const (
 //go:embed templates/main.ts
 var mainFuncEmbed string
 
-func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
+func Run(ctx context.Context, slugs []string, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
 	watcher, err := NewDebounceFileWatcher()
 	if err != nil {
 		return err
@@ -79,7 +79,7 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 	defer watcher.Close()
 	// TODO: refactor this to edge runtime service
 	runtimeOption.fileWatcher = watcher
-	if err := restartEdgeRuntime(ctx, envFilePath, noVerifyJWT, importMapPath, runtimeOption, fsys); err != nil {
+	if err := restartEdgeRuntime(ctx, slugs, envFilePath, noVerifyJWT, importMapPath, runtimeOption, fsys); err != nil {
 		return err
 	}
 	streamer := NewLogStreamer(ctx)
@@ -91,7 +91,7 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 			fmt.Println("Stopped serving " + utils.Bold(utils.FunctionsDir))
 			return ctx.Err()
 		case <-watcher.RestartCh:
-			if err := restartEdgeRuntime(ctx, envFilePath, noVerifyJWT, importMapPath, runtimeOption, fsys); err != nil {
+			if err := restartEdgeRuntime(ctx, slugs, envFilePath, noVerifyJWT, importMapPath, runtimeOption, fsys); err != nil {
 				return err
 			}
 		case err := <-streamer.ErrCh:
@@ -100,7 +100,7 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 	}
 }
 
-func restartEdgeRuntime(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
+func restartEdgeRuntime(ctx context.Context, slugs []string, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
@@ -117,10 +117,10 @@ func restartEdgeRuntime(ctx context.Context, envFilePath string, noVerifyJWT *bo
 	dbUrl := fmt.Sprintf("postgresql://postgres:postgres@%s:5432/postgres", utils.DbAliases[0])
 	// 3. Serve and log to console
 	fmt.Fprintln(os.Stderr, "Setting up Edge Functions runtime...")
-	return ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys)
+	return ServeFunctions(ctx, slugs, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys)
 }
 
-func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, runtimeOption RuntimeOption, fsys afero.Fs) error {
+func ServeFunctions(ctx context.Context, slugs []string, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, runtimeOption RuntimeOption, fsys afero.Fs) error {
 	// 1. Parse custom env file
 	env, err := parseEnvFile(envFilePath, fsys)
 	if err != nil {
@@ -153,7 +153,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 			return errors.Errorf("failed to resolve relative path: %w", err)
 		}
 	}
-	binds, functionsConfigString, err := PopulatePerFunctionConfigs(cwd, importMapPath, noVerifyJWT, fsys)
+	binds, functionsConfigString, err := PopulatePerFunctionConfigs(slugs, cwd, importMapPath, noVerifyJWT, fsys)
 	if err != nil {
 		return err
 	}
@@ -241,10 +241,13 @@ func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
 	return env, err
 }
 
-func PopulatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) ([]string, string, error) {
-	slugs, err := deploy.GetFunctionSlugs(fsys)
-	if err != nil {
-		return nil, "", err
+func PopulatePerFunctionConfigs(slugs []string, cwd, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) ([]string, string, error) {
+	var err error
+	if len(slugs) == 0 {
+		slugs, err = deploy.GetFunctionSlugs(fsys)
+		if err != nil {
+			return nil, "", err
+		}
 	}
 	functionsConfig, err := deploy.GetFunctionConfig(slugs, importMapPath, noVerifyJWT, fsys)
 	if err != nil {
