@@ -249,7 +249,9 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 		utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImgProxyImage, excluded)
 	isS3ProtocolEnabled := utils.Config.Storage.S3Protocol != nil && utils.Config.Storage.S3Protocol.Enabled
 	fmt.Fprintln(os.Stderr, "Starting containers...")
-
+	if skipSeed {
+	fmt.Fprintln(os.Stderr, "Skipping storage seeding (--no-seed enabled)")
+}
 	workdir, err := os.Getwd()
 	if err != nil {
 		return errors.Errorf("failed to get working directory: %w", err)
