@@ -43,7 +43,7 @@ import (
 	"github.com/supabase/cli/pkg/config"
 )
 
-func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool) error {
+func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool, skipSeed bool) error {
 	// Sanity checks.
 	{
 		if err := flags.LoadConfig(fsys); err != nil {
@@ -68,7 +68,7 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		Password: utils.Config.Db.Password,
 		Database: "postgres",
 	}
-	if err := run(ctx, fsys, excludedContainers, dbConfig); err != nil {
+	if err := run(ctx, fsys, excludedContainers, dbConfig, skipSeed); err != nil {
 		if ignoreHealthCheck && start.IsUnhealthyError(err) {
 			fmt.Fprintln(os.Stderr, err)
 		} else {
@@ -212,7 +212,7 @@ func pullImagesUsingCompose(ctx context.Context, project types.Project) error {
 	return service.Pull(ctx, &project, api.PullOptions{IgnoreFailures: true})
 }
 
-func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, options ...func(*pgx.ConnConfig)) error {
+func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, skipSeed bool, options ...func(*pgx.ConnConfig)) error {
 	excluded := make(map[string]bool)
 	for _, name := range excludedContainers {
 		excluded[name] = true
@@ -1283,9 +1283,14 @@ EOF
 			return err
 		}
 		// Disable prompts when seeding
+			if skipSeed {
+		fmt.Fprintln(os.Stderr, "Skipping storage seeding (--no-seed enabled)")
+	} else {
+		// Disable prompts when seeding
 		if err := buckets.Run(ctx, "", false, fsys); err != nil {
 			return err
 		}
+	}
 	}
 	return start.WaitForHealthyService(ctx, serviceTimeout, started...)
 }
