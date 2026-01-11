@@ -249,9 +249,6 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 		utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImgProxyImage, excluded)
 	isS3ProtocolEnabled := utils.Config.Storage.S3Protocol != nil && utils.Config.Storage.S3Protocol.Enabled
 	fmt.Fprintln(os.Stderr, "Starting containers...")
-	if skipSeed {
-	fmt.Fprintln(os.Stderr, "Skipping storage seeding (--no-seed enabled)")
-}
 	workdir, err := os.Getwd()
 	if err != nil {
 		return errors.Errorf("failed to get working directory: %w", err)
@@ -1280,19 +1277,23 @@ EOF
 	}
 
 	fmt.Fprintln(os.Stderr, "Waiting for health checks...")
+
 	if utils.NoBackupVolume && slices.Contains(started, utils.StorageId) {
 		if err := start.WaitForHealthyService(ctx, serviceTimeout, utils.StorageId); err != nil {
 			return err
 		}
-		// Disable prompts when seeding
-			if skipSeed {
-		fmt.Fprintln(os.Stderr, "Skipping storage seeding (--no-seed enabled)")
-	} else {
-		// Disable prompts when seeding
-		if err := buckets.Run(ctx, "", false, fsys); err != nil {
-			return err
+
+		// Follow db.seed.enabled by default, allow --no-seed as override
+		if skipSeed {
+			fmt.Fprintln(os.Stderr, "Skipping storage seeding (--no-seed enabled)")
+		} else if !utils.Config.Db.Seed.Enabled {
+			fmt.Fprintln(os.Stderr, "Skipping storage seeding (db.seed.enabled = false)")
+		} else {
+			if err := buckets.Run(ctx, "", false, fsys); err != nil {
+				return err
+			}
 		}
-	}
+
 	}
 	return start.WaitForHealthyService(ctx, serviceTimeout, started...)
 }
