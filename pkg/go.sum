@@ -25,8 +25,8 @@ github.com/docker/go-units v0.5.0 h1:69rxXcBk27SvSaaxTtLh/8llcHD8vYHT7WSdRZ/jvr4
 github.com/docker/go-units v0.5.0/go.mod h1:fgPhTUdO+D/Jk86RDLlptpiXQzgHJF7gydDDbaIK4Dk=
 github.com/ecies/go/v2 v2.0.11 h1:xYhtMdLiqNi02oLirFmLyNbVXw6250h3WM6zJryQdiM=
 github.com/ecies/go/v2 v2.0.11/go.mod h1:LPRzoefP0Tam+1uesQOq3Gtb6M2OwlFUnXBTtBAKfDQ=
-github.com/ethereum/go-ethereum v1.15.8 h1:H6NilvRXFVoHiXZ3zkuTqKW5XcxjLZniV5UjxJt1GJU=
-github.com/ethereum/go-ethereum v1.15.8/go.mod h1:+S9k+jFzlyVTNcYGvqFhzN/SFhI6vA+aOY4T5tLSPL0=
+github.com/ethereum/go-ethereum v1.16.8 h1:LLLfkZWijhR5m6yrAXbdlTeXoqontH+Ga2f9igY7law=
+github.com/ethereum/go-ethereum v1.16.8/go.mod h1:Fs6QebQbavneQTYcA39PEKv2+zIjX7rPUZ14DER46wk=
 github.com/frankban/quicktest v1.14.6 h1:7Xjx+VpznH+oBnejlPUj8oUpdxnVs4f8XU8WnHkI4W8=
 github.com/frankban/quicktest v1.14.6/go.mod h1:4ptaffx2x8+WTWXmUCuVU6aPUX1/Mz7zb5vbUoiM6w0=
 github.com/fsnotify/fsnotify v1.9.0 h1:2Ml+OJNzbYCTzsxtv8vKSFD9PbJjmhYF14k/jKC7S9k=

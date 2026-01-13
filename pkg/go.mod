@@ -33,7 +33,7 @@ require (
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0 // indirect
-	github.com/ethereum/go-ethereum v1.15.8 // indirect
+	github.com/ethereum/go-ethereum v1.16.8 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/h2non/parth v0.0.0-20190131123155-b4df798d6542 // indirect
