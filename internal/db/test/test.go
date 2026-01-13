@@ -27,7 +27,11 @@ const (
 func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// Build test command
 	if len(testFiles) == 0 {
-		testFiles = append(testFiles, utils.DbTestsDir)
+		absTestsDir, err = filepath.Abs(utils.DbTestsDir)
+		if err != nil {
+			return errors.Errorf("failed to resolve tests dir: %w", err)
+		}
+		testFiles = append(testFiles, absTestsDir)
 	}
 	binds := make([]string, len(testFiles))
 	cmd := []string{"pg_prove", "--ext", ".pg", "--ext", ".sql", "-r"}
