@@ -9,7 +9,7 @@ require (
 	github.com/docker/go-units v0.5.0
 	github.com/ecies/go/v2 v2.0.11
 	github.com/go-errors/errors v1.5.1
-	github.com/go-viper/mapstructure/v2 v2.4.0
+	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/h2non/gock v1.2.0
 	github.com/jackc/pgconn v1.14.3
