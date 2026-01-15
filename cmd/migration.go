@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/migration/down"
 	"github.com/supabase/cli/internal/migration/fetch"
+	"github.com/supabase/cli/internal/migration/format"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/migration/repair"
@@ -61,12 +62,16 @@ var (
 		},
 	}
 
+	useDeclarative   bool
 	migrationVersion string
 
 	migrationSquashCmd = &cobra.Command{
 		Use:   "squash",
 		Short: "Squash migrations to a single file",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if useDeclarative {
+				return format.Run(cmd.Context(), afero.NewOsFs())
+			}
 			return squash.Run(cmd.Context(), migrationVersion, flags.DbConfig, afero.NewOsFs())
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
@@ -130,6 +135,7 @@ func init() {
 	migrationCmd.AddCommand(migrationRepairCmd)
 	// Build squash command
 	squashFlags := migrationSquashCmd.Flags()
+	squashFlags.BoolVar(&useDeclarative, "declarative", false, "Squash migrations to declarative schemas")
 	squashFlags.StringVar(&migrationVersion, "version", "", "Squash up to the specified version.")
 	squashFlags.String("db-url", "", "Squashes migrations of the database specified by the connection string (must be percent-encoded).")
 	squashFlags.Bool("linked", false, "Squashes the migration history of the linked project.")
