@@ -69,8 +69,10 @@ func (s *EdgeRuntimeAPI) bulkUpload(ctx context.Context, toDeploy []FunctionDepl
 	toUpdate := make(api.BulkUpdateFunctionBody, len(toDeploy))
 	for i, meta := range toDeploy {
 		param := api.V1DeployAFunctionParams{
-			Slug:       meta.Name,
-			BundleOnly: cast.Ptr(true),
+			Slug: meta.Name,
+			// Only bundle the first function to trigger the secret syncing on the server side
+			// following functions will be deployed without bundling to avoid unnecessary overhead
+			BundleOnly: cast.Ptr(i != 0),
 		}
 		bundle := func() error {
 			fmt.Fprintln(os.Stderr, "Deploying Function:", *meta.Name)
