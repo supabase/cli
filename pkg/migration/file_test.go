@@ -49,9 +49,10 @@ func TestMigrationFile(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(migration.Statements[0]).
+		// Expect Exec for statement execution and Exec for migration version insert
+		conn.Exec(migration.Statements[0]).
 			Reply("CREATE SCHEMA").
-			Query(INSERT_MIGRATION_VERSION, "0", "", migration.Statements).
+			Exec(INSERT_MIGRATION_VERSION, "0", "", migration.Statements).
 			Reply("INSERT 0 1")
 		// Run test
 		err := migration.ExecBatch(context.Background(), conn.MockClient(t))
@@ -67,9 +68,10 @@ func TestMigrationFile(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(migration.Statements[0]).
+		// Simulate error on executing the statement (Exec), and then the insert attempt
+		conn.Exec(migration.Statements[0]).
 			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`).
-			Query(INSERT_MIGRATION_VERSION, "0", "", migration.Statements).
+			Exec(INSERT_MIGRATION_VERSION, "0", "", migration.Statements).
 			Reply("INSERT 0 1")
 		// Run test
 		err := migration.ExecBatch(context.Background(), conn.MockClient(t))
