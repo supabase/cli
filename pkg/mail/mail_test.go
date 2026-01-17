@@ -438,3 +438,145 @@ func TestEmailSummaryFields(t *testing.T) {
 	assert.False(t, summary.Date.IsZero())
 	assert.Greater(t, summary.Size, int64(0))
 }
+
+func TestHTMLEmail(t *testing.T) {
+	tmpDir := t.TempDir()
+	storage, err := NewStorage(tmpDir)
+	require.NoError(t, err)
+
+	// Create multipart email with HTML content
+	emailData := []byte("From: sender@example.com\r\n" +
+		"To: recipient@example.com\r\n" +
+		"Subject: HTML Email Test\r\n" +
+		"Date: Mon, 02 Jan 2006 15:04:05 -0700\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/alternative; boundary=\"boundary123\"\r\n" +
+		"\r\n" +
+		"--boundary123\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n" +
+		"\r\n" +
+		"Plain text version\r\n" +
+		"--boundary123\r\n" +
+		"Content-Type: text/html; charset=utf-8\r\n" +
+		"\r\n" +
+		"<html><body><h1>HTML version</h1></body></html>\r\n" +
+		"--boundary123--\r\n")
+
+	err = storage.Store("sender@example.com", []string{"htmltest@example.com"}, emailData)
+	require.NoError(t, err)
+
+	emails, err := storage.ListEmails("htmltest@example.com")
+	require.NoError(t, err)
+	require.Len(t, emails, 1)
+
+	email, err := storage.GetEmail("htmltest@example.com", emails[0].ID)
+	require.NoError(t, err)
+	assert.Contains(t, email.TextBody, "Plain text version")
+	assert.Contains(t, email.HTMLBody, "<h1>HTML version</h1>")
+}
+
+func TestStoreFromReader(t *testing.T) {
+	tmpDir := t.TempDir()
+	storage, err := NewStorage(tmpDir)
+	require.NoError(t, err)
+
+	emailData := createTestEmail("sender@example.com", "reader@example.com", "Reader Test", "Body from reader")
+	reader := strings.NewReader(string(emailData))
+
+	err = storage.StoreFromReader("sender@example.com", []string{"reader@example.com"}, reader)
+	require.NoError(t, err)
+
+	emails, err := storage.ListEmails("reader@example.com")
+	require.NoError(t, err)
+	require.Len(t, emails, 1)
+	assert.Equal(t, "Reader Test", emails[0].Subject)
+}
+
+func TestServerStopIdempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	server, err := NewServer(Config{
+		Host:        "127.0.0.1",
+		Port:        54396,
+		StoragePath: tmpDir,
+	})
+	require.NoError(t, err)
+
+	// Stop without starting should not error
+	err = server.Stop()
+	assert.NoError(t, err)
+
+	// Multiple stops should not error
+	err = server.Stop()
+	assert.NoError(t, err)
+}
+
+func TestServerDeleteMailbox(t *testing.T) {
+	tmpDir := t.TempDir()
+	server, err := NewServer(Config{StoragePath: tmpDir})
+	require.NoError(t, err)
+
+	// Store some emails
+	emailData := createTestEmail("sender@example.com", "todelete@example.com", "Test", "Body")
+	err = server.storage.Store("sender@example.com", []string{"todelete@example.com"}, emailData)
+	require.NoError(t, err)
+
+	// Verify mailbox exists
+	mailboxes, err := server.ListMailboxes()
+	require.NoError(t, err)
+	assert.Contains(t, mailboxes, "todelete@example.com")
+
+	// Delete via server API
+	err = server.DeleteMailbox("todelete@example.com")
+	require.NoError(t, err)
+
+	// Verify mailbox is gone
+	mailboxes, err = server.ListMailboxes()
+	require.NoError(t, err)
+	assert.NotContains(t, mailboxes, "todelete@example.com")
+}
+
+func TestEmailRawContent(t *testing.T) {
+	tmpDir := t.TempDir()
+	storage, err := NewStorage(tmpDir)
+	require.NoError(t, err)
+
+	originalData := createTestEmail("sender@example.com", "raw@example.com", "Raw Test", "Original body")
+	err = storage.Store("sender@example.com", []string{"raw@example.com"}, originalData)
+	require.NoError(t, err)
+
+	emails, err := storage.ListEmails("raw@example.com")
+	require.NoError(t, err)
+	require.Len(t, emails, 1)
+
+	email, err := storage.GetEmail("raw@example.com", emails[0].ID)
+	require.NoError(t, err)
+
+	// Raw content should be preserved
+	assert.Equal(t, originalData, email.Raw)
+}
+
+func TestMultipleEmailsInMailbox(t *testing.T) {
+	tmpDir := t.TempDir()
+	storage, err := NewStorage(tmpDir)
+	require.NoError(t, err)
+
+	// Store multiple emails to same mailbox
+	for i := 1; i <= 5; i++ {
+		emailData := createTestEmail("sender@example.com", "multi@example.com",
+			fmt.Sprintf("Email %d", i), fmt.Sprintf("Body %d", i))
+		err = storage.Store("sender@example.com", []string{"multi@example.com"}, emailData)
+		require.NoError(t, err)
+		// Small delay to ensure different timestamps
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	emails, err := storage.ListEmails("multi@example.com")
+	require.NoError(t, err)
+	assert.Len(t, emails, 5)
+
+	// Emails should be sorted by date (newest first)
+	for i := 0; i < len(emails)-1; i++ {
+		assert.True(t, emails[i].Date.After(emails[i+1].Date) || emails[i].Date.Equal(emails[i+1].Date),
+			"emails should be sorted newest first")
+	}
+}
