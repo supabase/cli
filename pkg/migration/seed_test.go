@@ -98,10 +98,12 @@ func TestSeedData(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		mockSeedHistory(conn).
-			Query(UPSERT_SEED_FILE, seed.Path, seed.Hash).
+			Query(testSeed+`;INSERT INTO supabase_migrations.seed_files(path, hash) VALUES( 'testdata/seed.sql' ,  '61868484fc0ddca2a2022217629a9fd9a4cf1ca479432046290797d6d40ffcc3' ) ON CONFLICT (path) DO UPDATE SET hash = EXCLUDED.hash`).
 			Reply("INSERT 0 1")
 		// Run test
-		err := SeedData(context.Background(), []SeedFile{seed}, conn.MockClient(t), testMigrations)
+		err := SeedData(context.Background(), []SeedFile{seed}, conn.MockClient(t, func(cc *pgx.ConnConfig) {
+			cc.PreferSimpleProtocol = true
+		}), testMigrations)
 		// Check error
 		assert.NoError(t, err)
 	})

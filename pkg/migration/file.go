@@ -177,10 +177,8 @@ func (m *SeedFile) ExecBatchWithCache(ctx context.Context, conn *pgx.Conn, fsys 
 	}
 	// Data statements don't mutate schemas, safe to use statement cache
 	batch := pgx.Batch{}
-	if !m.Dirty {
-		for _, line := range lines {
-			batch.Queue(line)
-		}
+	for _, line := range lines {
+		batch.Queue(line)
 	}
 	batch.Queue(UPSERT_SEED_FILE, m.Path, m.Hash)
 	// No need to track version here because there are no schema changes
