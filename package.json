@@ -24,7 +24,7 @@
     "bin-links": "^6.0.0",
     "https-proxy-agent": "^7.0.2",
     "node-fetch": "^3.3.2",
-    "tar": "7.5.2"
+    "tar": "7.5.3"
   },
   "release": {
     "branches": [
