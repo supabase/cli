@@ -3,6 +3,7 @@ package format
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/multigres/multigres/go/parser"
+	"github.com/multigres/multigres/go/parser/ast"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/migration"
@@ -40,40 +42,55 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	}
 	for _, s := range stat {
 		var name string
-		switch s.StatementType() {
-		case "SET": // T_VariableSetStmt
+		switch v := s.(type) {
+		case *ast.VariableSetStmt:
 			name = utils.VariablesPath
-		case "SELECT": // T_SelectStmt
+		case *ast.SelectStmt:
+			fmt.Fprintln(os.Stderr, v.TargetList)
 			// TODO: differentiate function calls to create cron / pgmq / etc
 			name = utils.CronPath
-		case "CreateExtensionStmt": // T_CreateExtensionStmt
+		case *ast.CreateExtensionStmt:
 			name = utils.ExtensionsPath
-		case "CommentStmt": // T_CommentStmt
-			// TODO: differentiate comment by entity type
-			name = utils.ExtensionsPath
-		case "CreateEnumStmt": // T_CreateEnumStmt
+		case *ast.CommentStmt:
+			switch v.Objtype {
+			case ast.OBJECT_SCHEMA:
+				name = utils.SchemaPath
+			default:
+				name = utils.ExtensionsPath
+			}
+		case *ast.CreateEnumStmt:
 			name = utils.TypePath
-		case "ALTER": // T_AlterOwnerStmt
-			// TODO: different owner by entitye type
-			name = utils.PrivilegesPath
-		case "CREATE": // T_CreateStmt
+		case *ast.AlterOwnerStmt:
+			switch v.ObjectType {
+			case ast.OBJECT_TYPE:
+				name = utils.TypePath
+			case ast.OBJECT_TABLE:
+				name = utils.TablePath
+			case ast.OBJECT_PUBLICATION:
+				name = utils.PublicationsPath
+			default:
+				name = utils.PrivilegesPath
+			}
+		case *ast.CreateStmt:
 			name = utils.TablePath
-		case "AlterTableStmt": // T_AlterTableStmt
+		case *ast.AlterTableStmt:
 			name = utils.TablePath
-		case "GRANT": // T_GrantStmt
+		case *ast.GrantStmt:
 			name = utils.PrivilegesPath
-		case "ALTER_DEFAULT_PRIVILEGES": // T_AlterDefaultPrivilegesStmt
+		case *ast.AlterDefaultPrivilegesStmt:
 			name = utils.PrivilegesPath
 		default:
-			fmt.Fprintln(os.Stderr, "Unsupported:", s.NodeTag(), s.StatementType())
-			fmt.Fprintln(os.Stderr, s.SqlString())
+			fmt.Fprintln(os.Stderr, "Unsupported:", s.SqlString())
 			continue
 		}
 		if err := appendFile(name, s.SqlString()+";\n", fsys); err != nil {
 			return err
 		}
 	}
-	return appendFile(utils.ConfigPath, order, fsys)
+	if len(utils.Config.Db.Migrations.SchemaPaths) == 0 {
+		return appendFile(utils.ConfigPath, order, fsys)
+	}
+	return nil
 }
 
 func readFile(name string, w io.Writer, fsys afero.Fs) error {
