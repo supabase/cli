@@ -75,6 +75,10 @@ type (
 		AllowedCidrsV6 []string `toml:"allowed_cidrs_v6"`
 	}
 
+	sslEnforcement struct {
+		Enabled bool `toml:"enabled"`
+	}
+
 	db struct {
 		Image               string              `toml:"-"`
 		Port                uint16              `toml:"port"`
@@ -88,6 +92,7 @@ type (
 		Seed                seed                `toml:"seed"`
 		Settings            settings            `toml:"settings"`
 		NetworkRestrictions networkRestrictions `toml:"network_restrictions"`
+		SslEnforcement      *sslEnforcement     `toml:"ssl_enforcement"`
 		Vault               map[string]Secret   `toml:"vault"`
 	}
 
@@ -232,4 +237,32 @@ func (n *networkRestrictions) DiffWithRemote(remoteConfig v1API.NetworkRestricti
 		return nil, err
 	}
 	return diff.Diff("remote[db.network_restrictions]", remoteCompare, "local[db.network_restrictions]", currentValue), nil
+}
+
+func (s sslEnforcement) ToUpdateSslEnforcementBody() v1API.V1UpdateSslEnforcementConfigJSONRequestBody {
+	body := v1API.V1UpdateSslEnforcementConfigJSONRequestBody{}
+	body.RequestedConfig.Database = s.Enabled
+	return body
+}
+
+func (s *sslEnforcement) FromRemoteSslEnforcement(remoteConfig v1API.SslEnforcementResponse) {
+	if s == nil {
+		return
+	}
+	s.Enabled = remoteConfig.CurrentConfig.Database
+}
+
+func (s *sslEnforcement) DiffWithRemote(remoteConfig v1API.SslEnforcementResponse) ([]byte, error) {
+	copy := *s
+	// Convert the config values into easily comparable remoteConfig values
+	currentValue, err := ToTomlBytes(copy)
+	if err != nil {
+		return nil, err
+	}
+	copy.FromRemoteSslEnforcement(remoteConfig)
+	remoteCompare, err := ToTomlBytes(copy)
+	if err != nil {
+		return nil, err
+	}
+	return diff.Diff("remote[db.ssl_enforcement]", remoteCompare, "local[db.ssl_enforcement]", currentValue), nil
 }
