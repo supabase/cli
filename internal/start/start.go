@@ -1094,7 +1094,7 @@ EOF
 	// Start all functions.
 	if utils.Config.EdgeRuntime.Enabled && !isContainerExcluded(utils.Config.EdgeRuntime.Image, excluded) {
 		dbUrl := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database)
-		if err := serve.ServeFunctions(ctx, "", nil, "", dbUrl, serve.RuntimeOption{}, fsys); err != nil {
+		if err := serve.ServeFunctions(ctx, nil, "", nil, "", dbUrl, serve.RuntimeOption{}, fsys); err != nil {
 			return err
 		}
 		started = append(started, utils.EdgeRuntimeId)
@@ -1140,7 +1140,7 @@ EOF
 
 	// Start Studio.
 	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.Config.Studio.Image, excluded) {
-		binds, _, err := serve.PopulatePerFunctionConfigs(workdir, "", nil, fsys)
+		binds, _, err := serve.PopulatePerFunctionConfigs(nil, workdir, "", nil, fsys)
 		if err != nil {
 			return err
 		}
