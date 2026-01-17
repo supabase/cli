@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
+	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/pgtest"
@@ -56,10 +57,13 @@ func TestStartDatabase(t *testing.T) {
 		utils.Config.Db.MajorVersion = 15
 		utils.DbId = "supabase_db_test"
 		utils.Config.Db.Port = 5432
+		origServiceRoleKey := utils.Config.Auth.ServiceRoleKey.Value
+		utils.Config.Auth.ServiceRoleKey.Value = ""
+		t.Cleanup(func() { utils.Config.Auth.ServiceRoleKey.Value = origServiceRoleKey })
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		roles := "create role test"
-		require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte(roles), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte(roles), 0o644))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -86,7 +90,8 @@ func TestStartDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(roles).
+		helper.MockVaultSetup(conn, "").
+			Query(roles).
 			Reply("CREATE ROLE")
 		// Run test
 		err := StartDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
@@ -159,7 +164,7 @@ func TestStartCommand(t *testing.T) {
 	t.Run("throws error on malformed config", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0o644))
 		// Run test
 		err := Run(context.Background(), "", fsys)
 		// Check error
@@ -237,12 +242,18 @@ func TestSetupDatabase(t *testing.T) {
 			utils.Config.Db.MajorVersion = 15
 		}()
 		utils.Config.Db.Port = 5432
+		origServiceRoleKey := utils.Config.Auth.ServiceRoleKey.Value
+		utils.Config.Auth.ServiceRoleKey.Value = ""
+		t.Cleanup(func() { utils.Config.Auth.ServiceRoleKey.Value = origServiceRoleKey })
 		utils.GlobalsSql = "create schema public"
 		utils.InitialSchemaPg14Sql = "create schema private"
+		origWebhookSchema := WebhookSchema
+		WebhookSchema = "create schema supabase_functions"
+		t.Cleanup(func() { WebhookSchema = origWebhookSchema })
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		roles := "create role postgres"
-		require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte(roles), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte(roles), 0o644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -250,6 +261,9 @@ func TestSetupDatabase(t *testing.T) {
 			Reply("CREATE SCHEMA").
 			Query(utils.InitialSchemaPg14Sql).
 			Reply("CREATE SCHEMA").
+			Query(WebhookSchema).
+			Reply("CREATE SCHEMA")
+		helper.MockVaultSetup(conn, "").
 			Query(roles).
 			Reply("CREATE ROLE")
 		// Run test
@@ -288,6 +302,9 @@ func TestSetupDatabase(t *testing.T) {
 
 	t.Run("throws error on read failure", func(t *testing.T) {
 		utils.Config.Db.Port = 5432
+		origServiceRoleKey := utils.Config.Auth.ServiceRoleKey.Value
+		utils.Config.Auth.ServiceRoleKey.Value = ""
+		t.Cleanup(func() { utils.Config.Auth.ServiceRoleKey.Value = origServiceRoleKey })
 		// Setup in-memory fs
 		fsys := &fstest.OpenErrorFs{DenyPath: utils.CustomRolesPath}
 		// Setup mock docker
@@ -302,6 +319,7 @@ func TestSetupDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
+		helper.MockVaultSetup(conn, "")
 		// Run test
 		err := SetupLocalDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
 		// Check error
@@ -309,12 +327,16 @@ func TestSetupDatabase(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
+
 func TestStartDatabaseWithCustomSettings(t *testing.T) {
 	t.Run("starts database with custom MaxConnections", func(t *testing.T) {
 		// Setup
 		utils.Config.Db.MajorVersion = 15
 		utils.DbId = "supabase_db_test"
 		utils.Config.Db.Port = 5432
+		origServiceRoleKey := utils.Config.Auth.ServiceRoleKey.Value
+		utils.Config.Auth.ServiceRoleKey.Value = ""
+		t.Cleanup(func() { utils.Config.Auth.ServiceRoleKey.Value = origServiceRoleKey })
 		utils.Config.Db.Settings.MaxConnections = cast.Ptr(uint(50))
 
 		// Setup in-memory fs
@@ -347,6 +369,7 @@ func TestStartDatabaseWithCustomSettings(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
+		helper.MockVaultSetup(conn, "")
 
 		// Run test
 		err := StartDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)

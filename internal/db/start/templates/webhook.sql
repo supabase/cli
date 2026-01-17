@@ -44,6 +44,8 @@ CREATE FUNCTION supabase_functions.http_request()
     headers jsonb DEFAULT '{}'::jsonb;
     params jsonb DEFAULT '{}'::jsonb;
     timeout_ms integer DEFAULT 1000;
+    base_url text;
+    service_key text;
   BEGIN
     IF url IS NULL OR url = 'null' THEN
       RAISE EXCEPTION 'url argument is missing';
@@ -53,10 +55,36 @@ CREATE FUNCTION supabase_functions.http_request()
       RAISE EXCEPTION 'method argument is missing';
     END IF;
 
+    -- Auto-detect: if not a URL, treat as edge function name
+    IF url NOT ILIKE 'http://%' AND url NOT ILIKE 'https://%' THEN
+      IF NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'vault') THEN
+        RAISE EXCEPTION 'Edge function webhooks require vault extension. Install vault or use full URL.';
+      END IF;
+
+      SELECT decrypted_secret INTO base_url
+      FROM vault.decrypted_secrets WHERE name = 'supabase_functions_url';
+      IF base_url IS NULL THEN
+        RAISE EXCEPTION 'Vault secret "supabase_functions_url" not found';
+      END IF;
+
+      SELECT decrypted_secret INTO service_key
+      FROM vault.decrypted_secrets WHERE name = 'supabase_service_role_key';
+      IF service_key IS NULL THEN
+        RAISE EXCEPTION 'Vault secret "supabase_service_role_key" not found';
+      END IF;
+
+      url := rtrim(base_url, '/') || '/' || ltrim(url, '/');
+    END IF;
+
     IF TG_ARGV[2] IS NULL OR TG_ARGV[2] = 'null' THEN
       headers = '{"Content-Type": "application/json"}'::jsonb;
     ELSE
       headers = TG_ARGV[2]::jsonb;
+    END IF;
+
+    -- Add auth header for edge functions
+    IF service_key IS NOT NULL THEN
+      headers = headers || jsonb_build_object('Authorization', 'Bearer ' || service_key);
     END IF;
 
     IF TG_ARGV[3] IS NULL OR TG_ARGV[3] = 'null' THEN
@@ -228,5 +256,24 @@ ALTER function supabase_functions.http_request() SECURITY DEFINER;
 ALTER function supabase_functions.http_request() SET search_path = supabase_functions;
 REVOKE ALL ON FUNCTION supabase_functions.http_request() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION supabase_functions.http_request() TO postgres, anon, authenticated, service_role;
+
+INSERT INTO supabase_functions.migrations (version) VALUES ('20241214000000_http_request_edge_support');
+
+DO
+$$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_namespace
+    WHERE nspname = 'vault'
+  )
+  THEN
+    GRANT USAGE ON SCHEMA vault TO supabase_functions_admin;
+    GRANT SELECT ON vault.secrets TO supabase_functions_admin;
+    GRANT SELECT ON vault.decrypted_secrets TO supabase_functions_admin;
+    GRANT EXECUTE ON FUNCTION vault._crypto_aead_det_decrypt(bytea, bytea, bigint, bytea, bytea) TO supabase_functions_admin;
+  END IF;
+END
+$$;
 
 COMMIT;
