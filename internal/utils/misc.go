@@ -102,6 +102,7 @@ var (
 	TypePath              = filepath.Join(SchemasDir, "type.sql")
 	ViewPath              = filepath.Join(SchemasDir, "view.sql")
 	PrivilegesPath        = filepath.Join(SchemasDir, "privileges.sql")
+	UnqualifiedPath       = filepath.Join(SchemasDir, "unqualified.sql")
 	DataDir               = filepath.Join(SupabaseDirPath, "data")
 	CronPath              = filepath.Join(DataDir, "cron.sql")
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
