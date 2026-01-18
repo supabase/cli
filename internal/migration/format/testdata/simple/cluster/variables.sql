@@ -1,0 +1,11 @@
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET NAMES 'UTF8';
+SET standard_conforming_strings = on;
+SET check_function_bodies = false;
+SET XML OPTION CONTENT;
+SET client_min_messages = 'warning';
+SET row_security = off;
+SET default_tablespace = '';
+SET default_table_access_method = 'heap';

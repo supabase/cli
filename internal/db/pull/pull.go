@@ -1,6 +1,7 @@
 package pull
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"fmt"
@@ -14,8 +15,10 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
+	"github.com/supabase/cli/internal/migration/format"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/migration/repair"
@@ -36,6 +39,14 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 		return err
 	}
 	defer conn.Close(context.Background())
+	if viper.GetBool("EXPERIMENTAL") {
+		var buf bytes.Buffer
+		if err := migration.DumpSchema(ctx, config, &buf, dump.DockerExec); err != nil {
+			return err
+		}
+		// TODO: handle managed schemas
+		return format.WriteStructuredSchemas(ctx, buf.String(), fsys)
+	}
 	// 2. Pull schema
 	timestamp := utils.GetCurrentTimestamp()
 	path := new.GetMigrationPath(timestamp, name)
