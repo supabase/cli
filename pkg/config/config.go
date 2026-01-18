@@ -65,6 +65,23 @@ func (b *LogflareBackend) UnmarshalText(text []byte) error {
 	return nil
 }
 
+type InbucketProvider string
+
+const (
+	// InbucketEmbedded uses the embedded Go SMTP server (default, no Docker required)
+	InbucketEmbedded InbucketProvider = "embedded"
+	// InbucketMailpit uses the Docker-based Mailpit container
+	InbucketMailpit InbucketProvider = "mailpit"
+)
+
+func (p *InbucketProvider) UnmarshalText(text []byte) error {
+	allowed := []InbucketProvider{InbucketEmbedded, InbucketMailpit}
+	if *p = InbucketProvider(text); !slices.Contains(allowed, *p) {
+		return errors.Errorf("must be one of %v", allowed)
+	}
+	return nil
+}
+
 type AddressFamily string
 
 const (
@@ -177,14 +194,18 @@ type (
 		PgmetaImage  string `toml:"-"`
 	}
 
+	// InbucketProvider specifies which email server to use for local development
+	InbucketProvider string
+
 	inbucket struct {
-		Enabled    bool   `toml:"enabled"`
-		Image      string `toml:"-"`
-		Port       uint16 `toml:"port"`
-		SmtpPort   uint16 `toml:"smtp_port"`
-		Pop3Port   uint16 `toml:"pop3_port"`
-		AdminEmail string `toml:"admin_email"`
-		SenderName string `toml:"sender_name"`
+		Enabled    bool             `toml:"enabled"`
+		Provider   InbucketProvider `toml:"provider"`
+		Image      string           `toml:"-"`
+		Port       uint16           `toml:"port"`
+		SmtpPort   uint16           `toml:"smtp_port"`
+		Pop3Port   uint16           `toml:"pop3_port"`
+		AdminEmail string           `toml:"admin_email"`
+		SenderName string           `toml:"sender_name"`
 	}
 
 	edgeRuntime struct {
@@ -388,6 +409,7 @@ func NewConfig(editors ...ConfigEditor) config {
 			External: map[string]provider{},
 		},
 		Inbucket: inbucket{
+			Provider:   InbucketEmbedded,
 			Image:      Images.Inbucket,
 			AdminEmail: "admin@email.com",
 			SenderName: "Admin",

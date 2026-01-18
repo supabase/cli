@@ -89,10 +89,12 @@ api_url = "http://127.0.0.1"
 openai_api_key = "env(OPENAI_API_KEY)"
 
 # Email testing server. Emails sent with the local dev setup are not actually sent - rather, they
-# are monitored, and you can view the emails that would have been sent from the web interface.
+# are monitored, and you can view the emails that would have been sent from the API.
 [inbucket]
 enabled = true
-# Port to use for the email testing server web interface.
+# Provider to use for email testing. Options: "embedded" (default, no Docker required) or "mailpit" (Docker-based with web UI).
+# provider = "embedded"
+# Port to use for the email testing server web interface (only used with mailpit provider).
 port = 54324
 # Uncomment to expose additional ports for testing user applications that send emails.
 # smtp_port = 54325

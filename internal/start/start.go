@@ -41,6 +41,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/config"
+	"github.com/supabase/cli/pkg/mail"
 )
 
 func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool) error {
@@ -61,6 +62,16 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		}
 	}
 
+	// Start embedded mail server if configured (before Docker containers so GoTrue can connect)
+	if utils.Config.Inbucket.Enabled &&
+		(utils.Config.Inbucket.Provider == config.InbucketEmbedded || utils.Config.Inbucket.Provider == "") {
+		server, err := StartEmbeddedMailServer(ctx)
+		if err != nil {
+			return err
+		}
+		embeddedMailServer = server
+	}
+
 	dbConfig := pgconn.Config{
 		Host:     utils.DbId,
 		Port:     5432,
@@ -69,6 +80,8 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		Database: "postgres",
 	}
 	if err := run(ctx, fsys, excludedContainers, dbConfig); err != nil {
+		// Stop embedded mail server on error
+		StopEmbeddedMailServer()
 		if ignoreHealthCheck && start.IsUnhealthyError(err) {
 			fmt.Fprintln(os.Stderr, err)
 		} else {
@@ -81,6 +94,22 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 
 	fmt.Fprintf(os.Stderr, "Started %s local development setup.\n\n", utils.Aqua("supabase"))
 	status.PrettyPrint(os.Stdout, excludedContainers...)
+
+	// If embedded mail server is running, keep the CLI process alive
+	// This is needed because the embedded server runs in this process
+	if embeddedMailServer != nil {
+		fmt.Fprintln(os.Stderr, "\nEmbedded mail server is running. Press Ctrl+C to stop all services.")
+		// Wait for context cancellation (Ctrl+C)
+		<-ctx.Done()
+		fmt.Fprintln(os.Stderr, "\nStopping embedded mail server...")
+		StopEmbeddedMailServer()
+		// Also stop Docker containers
+		if err := utils.DockerRemoveAll(context.Background(), os.Stderr, utils.Config.ProjectId); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		fmt.Fprintln(os.Stderr, "Stopped all services.")
+	}
+
 	return nil
 }
 
@@ -110,6 +139,9 @@ var (
 	// Hardcoded configs which match nginxConfigEmbed
 	nginxEmailTemplateDir   = "/home/kong/templates/email"
 	nginxTemplateServerPort = 8088
+
+	// Embedded mail server configuration
+	embeddedMailSmtpPort uint16 = 2500
 )
 
 type vectorConfig struct {
@@ -149,6 +181,47 @@ var (
 )
 
 var serviceTimeout = 30 * time.Second
+
+// embeddedMailServer holds the embedded mail server instance when running
+var embeddedMailServer *mail.Server
+
+// StartEmbeddedMailServer starts the embedded SMTP server for local email testing.
+// The server runs on the host and stores emails to the configured storage path.
+// Returns the server instance or an error if startup fails.
+func StartEmbeddedMailServer(ctx context.Context) (*mail.Server, error) {
+	// Determine storage path - use SUPABASE_MAIL_PATH env var or default to .supabase/mail
+	storagePath := os.Getenv("SUPABASE_MAIL_PATH")
+	if storagePath == "" {
+		workdir, err := os.Getwd()
+		if err != nil {
+			return nil, errors.Errorf("failed to get working directory: %w", err)
+		}
+		storagePath = filepath.Join(workdir, ".supabase", "mail")
+	}
+
+	// Create the mail server with configuration
+	server := mail.NewServer(mail.Config{
+		Host:        "0.0.0.0", // Bind to all interfaces so Docker containers can connect
+		Port:        embeddedMailSmtpPort,
+		StoragePath: storagePath,
+	})
+
+	// Start the server
+	if err := server.Start(ctx); err != nil {
+		return nil, errors.Errorf("failed to start embedded mail server: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Started embedded mail server on %s (emails stored in %s)\n", server.Addr(), storagePath)
+	return server, nil
+}
+
+// StopEmbeddedMailServer stops the embedded mail server if it's running
+func StopEmbeddedMailServer() {
+	if embeddedMailServer != nil {
+		embeddedMailServer.Stop()
+		embeddedMailServer = nil
+	}
+}
 
 // RetryClient wraps a Docker client to add retry logic for image pulls
 type RetryClient struct {
@@ -639,12 +712,24 @@ EOF
 				fmt.Sprintf("GOTRUE_SMTP_SENDER_NAME=%s", utils.Config.Auth.Email.Smtp.SenderName),
 			)
 		} else if utils.Config.Inbucket.Enabled {
-			env = append(env,
-				"GOTRUE_SMTP_HOST="+utils.InbucketId,
-				"GOTRUE_SMTP_PORT=1025",
-				fmt.Sprintf("GOTRUE_SMTP_ADMIN_EMAIL=%s", utils.Config.Inbucket.AdminEmail),
-				fmt.Sprintf("GOTRUE_SMTP_SENDER_NAME=%s", utils.Config.Inbucket.SenderName),
-			)
+			// Check if using embedded mail server or Docker-based mailpit
+			if utils.Config.Inbucket.Provider == config.InbucketEmbedded || utils.Config.Inbucket.Provider == "" {
+				// Embedded mail server runs on host, accessible via host.docker.internal
+				env = append(env,
+					"GOTRUE_SMTP_HOST="+utils.DinDHost,
+					fmt.Sprintf("GOTRUE_SMTP_PORT=%d", embeddedMailSmtpPort),
+					fmt.Sprintf("GOTRUE_SMTP_ADMIN_EMAIL=%s", utils.Config.Inbucket.AdminEmail),
+					fmt.Sprintf("GOTRUE_SMTP_SENDER_NAME=%s", utils.Config.Inbucket.SenderName),
+				)
+			} else {
+				// Docker-based mailpit
+				env = append(env,
+					"GOTRUE_SMTP_HOST="+utils.InbucketId,
+					"GOTRUE_SMTP_PORT=1025",
+					fmt.Sprintf("GOTRUE_SMTP_ADMIN_EMAIL=%s", utils.Config.Inbucket.AdminEmail),
+					fmt.Sprintf("GOTRUE_SMTP_SENDER_NAME=%s", utils.Config.Inbucket.SenderName),
+				)
+			}
 		}
 
 		if utils.Config.Auth.Sessions.Timebox > 0 {
@@ -846,54 +931,59 @@ EOF
 		started = append(started, utils.GotrueId)
 	}
 
-	// Start Mailpit
+	// Start email testing server
 	if utils.Config.Inbucket.Enabled && !isContainerExcluded(utils.Config.Inbucket.Image, excluded) {
-		inbucketPortBindings := nat.PortMap{"8025/tcp": []nat.PortBinding{{
-			HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10),
-		}}}
-		if utils.Config.Inbucket.SmtpPort != 0 {
-			inbucketPortBindings["1025/tcp"] = []nat.PortBinding{{
-				HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10),
-			}}
-		}
-		if utils.Config.Inbucket.Pop3Port != 0 {
-			inbucketPortBindings["1110/tcp"] = []nat.PortBinding{{
-				HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Pop3Port), 10),
-			}}
-		}
-		if _, err := utils.DockerStart(
-			ctx,
-			container.Config{
-				Image: utils.Config.Inbucket.Image,
-				Env: []string{
-					// Disable reverse DNS lookups in Mailpit to avoid slow/delayed DNS resolution
-					"MP_SMTP_DISABLE_RDNS=true",
-				},
-				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD", "/mailpit", "readyz"},
-					Interval: 10 * time.Second,
-					Timeout:  2 * time.Second,
-					Retries:  3,
-					// StartPeriod taken from upstream Dockerfile
-					StartPeriod: 10 * time.Second,
-				},
-			},
-			container.HostConfig{
-				PortBindings:  inbucketPortBindings,
-				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
-			},
-			network.NetworkingConfig{
-				EndpointsConfig: map[string]*network.EndpointSettings{
-					utils.NetId: {
-						Aliases: utils.InbucketAliases,
+		// Check if using embedded mail server or Docker-based mailpit
+		if utils.Config.Inbucket.Provider == config.InbucketMailpit {
+			// Start Docker-based Mailpit container
+			inbucketPortBindings := nat.PortMap{"8025/tcp": []nat.PortBinding{{
+				HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10),
+			}}}
+			if utils.Config.Inbucket.SmtpPort != 0 {
+				inbucketPortBindings["1025/tcp"] = []nat.PortBinding{{
+					HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10),
+				}}
+			}
+			if utils.Config.Inbucket.Pop3Port != 0 {
+				inbucketPortBindings["1110/tcp"] = []nat.PortBinding{{
+					HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Pop3Port), 10),
+				}}
+			}
+			if _, err := utils.DockerStart(
+				ctx,
+				container.Config{
+					Image: utils.Config.Inbucket.Image,
+					Env: []string{
+						// Disable reverse DNS lookups in Mailpit to avoid slow/delayed DNS resolution
+						"MP_SMTP_DISABLE_RDNS=true",
+					},
+					Healthcheck: &container.HealthConfig{
+						Test:     []string{"CMD", "/mailpit", "readyz"},
+						Interval: 10 * time.Second,
+						Timeout:  2 * time.Second,
+						Retries:  3,
+						// StartPeriod taken from upstream Dockerfile
+						StartPeriod: 10 * time.Second,
 					},
 				},
-			},
-			utils.InbucketId,
-		); err != nil {
-			return err
+				container.HostConfig{
+					PortBindings:  inbucketPortBindings,
+					RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
+				},
+				network.NetworkingConfig{
+					EndpointsConfig: map[string]*network.EndpointSettings{
+						utils.NetId: {
+							Aliases: utils.InbucketAliases,
+						},
+					},
+				},
+				utils.InbucketId,
+			); err != nil {
+				return err
+			}
+			started = append(started, utils.InbucketId)
 		}
-		started = append(started, utils.InbucketId)
+		// Note: Embedded mail server is started separately via StartEmbeddedMailServer
 	}
 
 	// Start Realtime.
