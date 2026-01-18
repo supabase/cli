@@ -8,13 +8,30 @@ An embedded SMTP server for local email testing in the Supabase CLI. This packag
 - **File-based Storage**: Emails stored as `.eml` files that can be opened in any email client
 - **Simple API**: List mailboxes, read emails, delete emails programmatically
 - **Zero Dependencies on Docker**: Runs natively in the CLI process
+- **Integrated with `supabase start`**: Default email provider for local development
 
-## Installation
+## Usage with Supabase CLI
 
-The package is part of the Supabase CLI. Import it with:
+The embedded mail server is the **default** email provider when running `supabase start`. No additional configuration is needed.
 
-```go
-import "github.com/supabase/cli/pkg/mail"
+```bash
+# Start Supabase with embedded mail server (default)
+supabase start
+
+# Emails are stored in .supabase/mail/
+# Stop with Ctrl+C or from another terminal:
+supabase stop
+```
+
+### Switching to Docker-based Mailpit
+
+If you prefer the Docker-based Mailpit (with web UI), set the provider in `config.toml`:
+
+```toml
+[inbucket]
+enabled = true
+provider = "mailpit"  # Use Docker-based Mailpit instead of embedded
+port = 54324          # Web UI port
 ```
 
 ## Configuration
@@ -225,7 +242,6 @@ The test suite includes:
 
 ## Future Improvements
 
-- [ ] Integration with `supabase start` command
 - [ ] Optional web UI for viewing emails
 - [ ] Email retention/cleanup policies
 - [ ] Support for attachments in API responses
