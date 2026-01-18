@@ -3,7 +3,6 @@ package format
 import (
 	"context"
 	"embed"
-	_ "embed"
 	"fmt"
 	"io/fs"
 	"path"
