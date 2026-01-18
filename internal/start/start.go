@@ -185,6 +185,42 @@ var serviceTimeout = 30 * time.Second
 // embeddedMailServer holds the embedded mail server instance when running
 var embeddedMailServer *mail.Server
 
+// EmbeddedMailPidFile is the name of the PID file for the embedded mail server
+const EmbeddedMailPidFile = "mail.pid"
+
+// GetEmbeddedMailPidPath returns the full path to the embedded mail server PID file
+func GetEmbeddedMailPidPath() (string, error) {
+	workdir, err := os.Getwd()
+	if err != nil {
+		return "", errors.Errorf("failed to get working directory: %w", err)
+	}
+	return filepath.Join(workdir, ".supabase", EmbeddedMailPidFile), nil
+}
+
+// writeEmbeddedMailPid writes the current process PID to the PID file
+func writeEmbeddedMailPid() error {
+	pidPath, err := GetEmbeddedMailPidPath()
+	if err != nil {
+		return err
+	}
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(pidPath), 0755); err != nil {
+		return errors.Errorf("failed to create directory for PID file: %w", err)
+	}
+	pid := os.Getpid()
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(pid)), 0644); err != nil {
+		return errors.Errorf("failed to write PID file: %w", err)
+	}
+	return nil
+}
+
+// removeEmbeddedMailPid removes the PID file
+func removeEmbeddedMailPid() {
+	if pidPath, err := GetEmbeddedMailPidPath(); err == nil {
+		os.Remove(pidPath)
+	}
+}
+
 // StartEmbeddedMailServer starts the embedded SMTP server for local email testing.
 // The server runs on the host and stores emails to the configured storage path.
 // Returns the server instance or an error if startup fails.
@@ -211,6 +247,12 @@ func StartEmbeddedMailServer(ctx context.Context) (*mail.Server, error) {
 		return nil, errors.Errorf("failed to start embedded mail server: %w", err)
 	}
 
+	// Write PID file so supabase stop can find and stop this process
+	if err := writeEmbeddedMailPid(); err != nil {
+		server.Stop()
+		return nil, err
+	}
+
 	fmt.Fprintf(os.Stderr, "Started embedded mail server on %s (emails stored in %s)\n", server.Addr(), storagePath)
 	return server, nil
 }
@@ -221,6 +263,7 @@ func StopEmbeddedMailServer() {
 		embeddedMailServer.Stop()
 		embeddedMailServer = nil
 	}
+	removeEmbeddedMailPid()
 }
 
 // RetryClient wraps a Docker client to add retry logic for image pulls
