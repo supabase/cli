@@ -1,11 +1,9 @@
 package format
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 
@@ -14,25 +12,10 @@ import (
 	"github.com/multigres/multigres/go/parser/ast"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/migration"
 )
 
 //go:embed templates/order.toml
 var order string
-
-func Run(ctx context.Context, fsys afero.Fs) error {
-	files, err := migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys))
-	if err != nil {
-		return err
-	}
-	var buf bytes.Buffer
-	for _, name := range files {
-		if err := readFile(name, &buf, fsys); err != nil {
-			return err
-		}
-	}
-	return WriteStructuredSchemas(ctx, buf.String(), fsys)
-}
 
 func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) error {
 	stat, err := parser.ParseSQL(sql)
@@ -75,8 +58,6 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 						name = filepath.Join(utils.SchemasDir, s0.SVal, "tables", s1.SVal+".sql")
 					}
 				}
-			default:
-				fmt.Fprintln(os.Stderr, "Unsupported:", s.SqlString())
 			}
 		case *ast.CompositeTypeStmt:
 			if r := v.Typevar; r != nil && len(r.SchemaName) > 0 {
@@ -104,8 +85,6 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 				if s, ok := v.Object.(*ast.String); ok {
 					name = filepath.Join(utils.SchemasDir, s.SVal, "schema.sql")
 				}
-			default:
-				fmt.Fprintln(os.Stderr, "Unsupported:", s.SqlString())
 			}
 		case *ast.CreateStmt:
 			name = getTablePath(v.Relation)
@@ -131,14 +110,12 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 						name = filepath.Join(utils.SchemasDir, s.SchemaName, "sequences.sql")
 					}
 				}
-			default:
-				fmt.Fprintln(os.Stderr, "Unsupported:", s.SqlString())
 			}
 		case *ast.AlterDefaultPrivilegesStmt:
 			name = utils.PrivilegesPath
-		default:
+		}
+		if name == utils.UnqualifiedPath {
 			fmt.Fprintln(os.Stderr, "Unsupported:", s.SqlString())
-			continue
 		}
 		if err := appendFile(name, s.SqlString()+";\n", fsys); err != nil {
 			return err
@@ -155,18 +132,6 @@ func getTablePath(r *ast.RangeVar) string {
 		return filepath.Join(utils.SchemasDir, r.SchemaName, "tables", r.RelName+".sql")
 	}
 	return utils.TablePath
-}
-
-func readFile(name string, w io.Writer, fsys afero.Fs) error {
-	f, err := fsys.Open(name)
-	if err != nil {
-		return errors.Errorf("failed to open migration: %w", err)
-	}
-	defer f.Close()
-	if _, err := io.Copy(w, f); err != nil {
-		return errors.Errorf("failed to read migration: %w", err)
-	}
-	return nil
 }
 
 func appendFile(name, data string, fsys afero.Fs) error {
