@@ -29,14 +29,44 @@ type Storage struct {
 
 // NewStorage creates a new file-based storage at the given path.
 func NewStorage(basePath string) (*Storage, error) {
+	// Resolve to absolute path for consistent path validation
+	absPath, err := filepath.Abs(basePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve storage path: %w", err)
+	}
+
 	// Create the base directory if it doesn't exist
-	if err := os.MkdirAll(basePath, 0755); err != nil {
+	if err := os.MkdirAll(absPath, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create storage directory: %w", err)
 	}
 
 	return &Storage{
-		basePath: basePath,
+		basePath: absPath,
 	}, nil
+}
+
+// validatePath ensures that a path is within the storage base directory.
+// This prevents path traversal attacks.
+func (s *Storage) validatePath(path string) error {
+	// Clean and resolve the path
+	cleanPath := filepath.Clean(path)
+
+	// Check if the path is within the base directory
+	if !strings.HasPrefix(cleanPath, s.basePath+string(filepath.Separator)) && cleanPath != s.basePath {
+		return fmt.Errorf("path traversal detected: path escapes storage directory")
+	}
+
+	return nil
+}
+
+// sanitizeID ensures the email ID doesn't contain path separators or other dangerous characters.
+func sanitizeID(id string) string {
+	// Remove any path separators and null bytes
+	id = strings.ReplaceAll(id, "/", "")
+	id = strings.ReplaceAll(id, "\\", "")
+	id = strings.ReplaceAll(id, "\x00", "")
+	id = strings.ReplaceAll(id, "..", "")
+	return id
 }
 
 // Store saves an email for the given recipients.
@@ -103,6 +133,11 @@ func (s *Storage) ListEmails(mailbox string) ([]EmailSummary, error) {
 	mailbox = sanitizeMailbox(mailbox)
 	mailboxPath := filepath.Join(s.basePath, mailbox)
 
+	// Validate path stays within storage directory
+	if err := s.validatePath(mailboxPath); err != nil {
+		return nil, err
+	}
+
 	entries, err := os.ReadDir(mailboxPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -117,8 +152,15 @@ func (s *Storage) ListEmails(mailbox string) ([]EmailSummary, error) {
 			continue
 		}
 
-		id := strings.TrimSuffix(entry.Name(), ".eml")
-		emailPath := filepath.Join(mailboxPath, entry.Name())
+		// Sanitize the filename to prevent path traversal
+		filename := filepath.Base(entry.Name())
+		id := strings.TrimSuffix(filename, ".eml")
+		emailPath := filepath.Join(mailboxPath, filename)
+
+		// Validate each email path
+		if err := s.validatePath(emailPath); err != nil {
+			continue
+		}
 
 		summary, err := s.parseEmailSummary(id, emailPath)
 		if err != nil {
@@ -142,7 +184,13 @@ func (s *Storage) GetEmail(mailbox, id string) (*Email, error) {
 	defer s.mu.RUnlock()
 
 	mailbox = sanitizeMailbox(mailbox)
+	id = sanitizeID(id)
 	emailPath := filepath.Join(s.basePath, mailbox, id+".eml")
+
+	// Validate path stays within storage directory
+	if err := s.validatePath(emailPath); err != nil {
+		return nil, fmt.Errorf("invalid email path: %w", err)
+	}
 
 	data, err := os.ReadFile(emailPath)
 	if err != nil {
@@ -161,7 +209,13 @@ func (s *Storage) DeleteEmail(mailbox, id string) error {
 	defer s.mu.Unlock()
 
 	mailbox = sanitizeMailbox(mailbox)
+	id = sanitizeID(id)
 	emailPath := filepath.Join(s.basePath, mailbox, id+".eml")
+
+	// Validate path stays within storage directory
+	if err := s.validatePath(emailPath); err != nil {
+		return fmt.Errorf("invalid email path: %w", err)
+	}
 
 	if err := os.Remove(emailPath); err != nil {
 		if os.IsNotExist(err) {
@@ -181,6 +235,11 @@ func (s *Storage) DeleteMailbox(mailbox string) error {
 	mailbox = sanitizeMailbox(mailbox)
 	mailboxPath := filepath.Join(s.basePath, mailbox)
 
+	// Validate path stays within storage directory
+	if err := s.validatePath(mailboxPath); err != nil {
+		return fmt.Errorf("invalid mailbox path: %w", err)
+	}
+
 	if err := os.RemoveAll(mailboxPath); err != nil {
 		return fmt.Errorf("failed to delete mailbox: %w", err)
 	}
@@ -189,8 +248,14 @@ func (s *Storage) DeleteMailbox(mailbox string) error {
 }
 
 // parseEmailSummary parses an email file and returns a summary.
+// The path must already be validated before calling this function.
 func (s *Storage) parseEmailSummary(id, path string) (EmailSummary, error) {
-	file, err := os.Open(path)
+	// Additional safety check - validate path is within storage
+	if err := s.validatePath(path); err != nil {
+		return EmailSummary{}, err
+	}
+
+	file, err := os.Open(filepath.Clean(path))
 	if err != nil {
 		return EmailSummary{}, err
 	}
