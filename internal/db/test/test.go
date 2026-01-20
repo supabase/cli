@@ -44,7 +44,10 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 		cmd = append(cmd, dockerPath)
 		binds[i] = fmt.Sprintf("%s:%s:ro", fp, dockerPath)
 		if workingDir == "" {
-			workingDir = filepath.Dir(dockerPath)
+			workingDir = dockerPath
+			if path.Ext(dockerPath) != "" {
+				workingDir = path.Dir(dockerPath)
+			}
 		}
 	}
 	if viper.GetBool("DEBUG") {
