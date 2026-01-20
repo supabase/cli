@@ -44,11 +44,46 @@ import (
 	"github.com/supabase/cli/pkg/config"
 )
 
-func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool) error {
+const (
+	SmallImageName      = "supabase/postgres:minimal"
+	graphqlPublicSchema = "graphql_public"
+)
+
+// configureSmallMode configures the system for minimal resource usage by:
+// - Using a smaller PostgreSQL image (minimal)
+// - Disabling non-essential services (keeps only kong, postgrest, and auth)
+// - Removing graphql_public schema from API schemas
+func configureSmallMode() {
+	utils.Config.Db.Image = SmallImageName
+
+	// Disable all services except kong, postgrest, and auth
+	// This ensures they won't be pulled or started regardless of config.toml settings
+	utils.Config.Realtime.Enabled = false
+	utils.Config.Storage.Enabled = false
+	utils.Config.Inbucket.Enabled = false
+	utils.Config.Studio.Enabled = false
+	utils.Config.EdgeRuntime.Enabled = false
+	utils.Config.Analytics.Enabled = false
+	utils.Config.Db.Pooler.Enabled = false
+
+	// Remove graphql_public schema from API schemas when using --small
+	filteredSchemas := make([]string, 0, len(utils.Config.Api.Schemas))
+	for _, schema := range utils.Config.Api.Schemas {
+		if schema != graphqlPublicSchema {
+			filteredSchemas = append(filteredSchemas, schema)
+		}
+	}
+	utils.Config.Api.Schemas = filteredSchemas
+}
+
+func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool, useSmallImage bool) error {
 	// Sanity checks.
 	{
 		if err := flags.LoadConfig(fsys); err != nil {
 			return err
+		}
+		if useSmallImage {
+			configureSmallMode()
 		}
 		if err := utils.AssertSupabaseDbIsRunning(); err == nil {
 			fmt.Fprintln(os.Stderr, utils.Aqua("supabase start")+" is already running.")
