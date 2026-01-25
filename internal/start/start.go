@@ -485,12 +485,18 @@ EOF
 		}
 
 		for id, tmpl := range utils.Config.Auth.Email.Template {
-			mountEmailTemplates(id, tmpl.ContentPath)
+			err := mountEmailTemplates(id, tmpl.ContentPath)
+			if err != nil {
+				return err
+			}
 		}
 
 		for id, tmpl := range utils.Config.Auth.Email.Notification {
 			if tmpl.Enabled {
-				mountEmailTemplates(id+"_notification", tmpl.ContentPath)
+				err := mountEmailTemplates(id+"_notification", tmpl.ContentPath)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
