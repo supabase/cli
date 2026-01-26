@@ -14,8 +14,51 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-//go:embed templates/order.toml
-var order string
+var (
+	//go:embed templates/order.toml
+	schemaOrder       string
+	rolesPath         = filepath.Join(utils.ClusterDir, "roles.sql")
+	extensionsPath    = filepath.Join(utils.ClusterDir, "extensions.sql")
+	foreignDWPath     = filepath.Join(utils.ClusterDir, "foreign_data_wrappers.sql")
+	publicationsPath  = filepath.Join(utils.ClusterDir, "publications.sql")
+	subscriptionsPath = filepath.Join(utils.ClusterDir, "subscriptions.sql")
+	eventTriggersPath = filepath.Join(utils.ClusterDir, "event_triggers.sql")
+	tablespacesPath   = filepath.Join(utils.ClusterDir, "tablespaces.sql")
+	variablesPath     = filepath.Join(utils.ClusterDir, "variables.sql")
+	unqualifiedPath   = filepath.Join(utils.SchemasDir, "unqualified.sql")
+)
+
+func getSchemaPath(name string) string {
+	return filepath.Join(utils.SchemasDir, name, "schema.sql")
+}
+
+func getTypesPath(schema string) string {
+	return filepath.Join(utils.SchemasDir, schema, "types.sql")
+}
+
+func getSequencesPath(schema string) string {
+	return filepath.Join(utils.SchemasDir, schema, "sequences.sql")
+}
+
+func getTablePath(schema, name string) string {
+	return filepath.Join(utils.SchemasDir, schema, "tables", name+".sql")
+}
+
+func getForeignTablePath(schema, name string) string {
+	return filepath.Join(utils.SchemasDir, schema, "foreign_tables", name+".sql")
+}
+
+func getFunctionPath(schema, name string) string {
+	return filepath.Join(utils.SchemasDir, schema, "functions", name+".sql")
+}
+
+func getMaterializedViewPath(schema, name string) string {
+	return filepath.Join(utils.SchemasDir, schema, "materialized_views", name+".sql")
+}
+
+func getViewPath(schema, name string) string {
+	return filepath.Join(utils.SchemasDir, schema, "views", name+".sql")
+}
 
 func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) error {
 	stat, err := parser.ParseSQL(sql)
@@ -28,25 +71,25 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 		}
 	}
 	for _, s := range stat {
-		name := utils.UnqualifiedPath
+		name := unqualifiedPath
 		switch v := s.(type) {
 		// Cluster level entities
 		case *ast.CreateRoleStmt, *ast.AlterRoleStmt, *ast.AlterRoleSetStmt, *ast.GrantRoleStmt:
-			name = utils.RolesPath
+			name = rolesPath
 		case *ast.CreateExtensionStmt, *ast.AlterExtensionStmt, *ast.AlterExtensionContentsStmt:
-			name = utils.ExtensionsPath
+			name = extensionsPath
 		case *ast.CreateFdwStmt, *ast.AlterFdwStmt, *ast.CreateForeignServerStmt, *ast.AlterForeignServerStmt, *ast.CreateUserMappingStmt, *ast.AlterUserMappingStmt:
-			name = utils.ForeignDWPath
+			name = foreignDWPath
 		case *ast.CreatePublicationStmt, *ast.AlterPublicationStmt:
-			name = utils.PublicationsPath
+			name = publicationsPath
 		case *ast.CreateSubscriptionStmt, *ast.AlterSubscriptionStmt:
-			name = utils.SubscriptionsPath
+			name = subscriptionsPath
 		case *ast.CreateEventTrigStmt, *ast.AlterEventTrigStmt:
-			name = utils.EventTriggersPath
+			name = eventTriggersPath
 		case *ast.CreateTableSpaceStmt, *ast.AlterTableSpaceStmt:
-			name = utils.TablespacesPath
+			name = tablespacesPath
 		case *ast.AlterDatabaseStmt, *ast.AlterDatabaseSetStmt, *ast.AlterSystemStmt, *ast.VariableSetStmt:
-			name = utils.VariablesPath
+			name = variablesPath
 		// Schema level entities
 		case *ast.CreateSchemaStmt:
 			name = getSchemaPath(v.Schemaname)
@@ -126,7 +169,15 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 			}
 		case *ast.AlterTableStmt:
 			if r := v.Relation; r != nil && len(r.SchemaName) > 0 {
-				name = getTablePath(r.SchemaName, r.RelName)
+				// TODO: alter sequence / view statements are parsed to wrong ast
+				switch v.Objtype {
+				case ast.OBJECT_SEQUENCE:
+					name = getSequencesPath(r.SchemaName)
+				case ast.OBJECT_VIEW:
+					name = getViewPath(r.SchemaName, r.RelName)
+				default:
+					name = getTablePath(r.SchemaName, r.RelName)
+				}
 			}
 		case *ast.CreateForeignTableStmt:
 			if t := v.Base; t != nil {
@@ -151,6 +202,17 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 		case *ast.AlterSeqStmt:
 			if r := v.Sequence; r != nil && len(r.SchemaName) > 0 {
 				name = getSequencesPath(r.SchemaName)
+				if o := v.Options; o != nil {
+					for _, s := range o.Items {
+						if e, ok := s.(*ast.DefElem); ok && e.Defname == "owned_by" {
+							if nl, ok := e.Arg.(*ast.NodeList); ok {
+								if n := toQualifiedName(nl); len(n) == 3 {
+									name = getTablePath(n[0], n[1])
+								}
+							}
+						}
+					}
+				}
 			}
 		case *ast.IndexStmt:
 			if r := v.Relation; r != nil && len(r.SchemaName) > 0 {
@@ -207,12 +269,12 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 				}
 			}
 		case *ast.AlterDefaultPrivilegesStmt:
-			if n := v.Options; n != nil {
-				for _, s := range n.Items {
+			if o := v.Options; o != nil {
+				for _, s := range o.Items {
 					if e, ok := s.(*ast.DefElem); ok && e.Defname == "schemas" {
 						if n, ok := e.Arg.(*ast.NodeList); ok && len(n.Items) == 1 {
 							if p, ok := n.Items[0].(*ast.String); ok {
-								name = getPrivilegesPath(p.SVal)
+								name = getSchemaPath(p.SVal)
 							}
 						}
 					}
@@ -221,78 +283,117 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 		// TODO: Data level entities, ie. pg_cron, pgmq, etc.
 		case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt, *ast.CopyStmt, *ast.CallStmt, *ast.SelectStmt:
 		}
-		if name == utils.UnqualifiedPath {
-			fmt.Fprintln(os.Stderr, "Unsupported:", s.SqlString())
+		if name == unqualifiedPath {
+			fmt.Fprintf(utils.GetDebugLogger(), "Unqualified (%T): %s\n", s, s.SqlString())
 		}
 		if err := appendFile(name, s.SqlString()+";\n", fsys); err != nil {
 			return err
 		}
 	}
 	if len(utils.Config.Db.Migrations.SchemaPaths) == 0 {
-		return appendFile(utils.ConfigPath, order, fsys)
+		return appendFile(utils.ConfigPath, schemaOrder, fsys)
 	}
 	return nil
 }
 
 func getNodePath(obj ast.ObjectType, n ast.Node) string {
 	switch obj {
-	case ast.OBJECT_ACCESS_METHOD:
-	case ast.OBJECT_AGGREGATE:
+	// case ast.OBJECT_ACCESS_METHOD:
+	// case ast.OBJECT_AGGREGATE:
 	// case ast.OBJECT_AMOP:
 	// case ast.OBJECT_AMPROC:
 	// case ast.OBJECT_ATTRIBUTE:
 	// case ast.OBJECT_CAST:
 	case ast.OBJECT_COLUMN:
-	case ast.OBJECT_COLLATION:
+		if nl, ok := n.(*ast.NodeList); ok {
+			if s := toQualifiedName(nl); len(s) == 3 {
+				return getTablePath(s[0], s[1])
+			}
+		}
+	// case ast.OBJECT_COLLATION:
 	// case ast.OBJECT_CONVERSION:
 	// case ast.OBJECT_DATABASE:
 	// case ast.OBJECT_DEFAULT:
 	// case ast.OBJECT_DEFACL:
-	case ast.OBJECT_DOMAIN:
+	// case ast.OBJECT_DOMAIN:
 	// case ast.OBJECT_DOMCONSTRAINT:
 	case ast.OBJECT_EVENT_TRIGGER:
-		return utils.EventTriggersPath
+		return eventTriggersPath
 	case ast.OBJECT_EXTENSION:
-		return utils.ExtensionsPath
+		return extensionsPath
 	case ast.OBJECT_FDW:
-		return utils.ForeignDWPath
+		return foreignDWPath
 	case ast.OBJECT_FOREIGN_SERVER:
-		return utils.ForeignDWPath
+		return foreignDWPath
 	case ast.OBJECT_FOREIGN_TABLE:
+		if nl, ok := n.(*ast.NodeList); ok {
+			if s := toQualifiedName(nl); len(s) == 2 {
+				return getTablePath(s[0], s[1])
+			}
+		} else if r, ok := n.(*ast.RangeVar); ok && len(r.SchemaName) > 0 {
+			return getTablePath(r.SchemaName, r.RelName)
+		}
 	case ast.OBJECT_FUNCTION:
-	case ast.OBJECT_INDEX:
+		if s, ok := n.(*ast.ObjectWithArgs); ok {
+			if s := toQualifiedName(s.Objname); len(s) == 2 {
+				return getFunctionPath(s[0], s[1])
+			}
+		}
+	// case ast.OBJECT_INDEX:
 	// case ast.OBJECT_LANGUAGE:
 	// case ast.OBJECT_LARGEOBJECT:
 	case ast.OBJECT_MATVIEW:
+		if nl, ok := n.(*ast.NodeList); ok {
+			if s := toQualifiedName(nl); len(s) == 2 {
+				return getMaterializedViewPath(s[0], s[1])
+			}
+		}
 	// case ast.OBJECT_OPCLASS:
 	// case ast.OBJECT_OPERATOR:
 	// case ast.OBJECT_OPFAMILY:
 	// case ast.OBJECT_PARAMETER_ACL:
 	case ast.OBJECT_POLICY:
+		if nl, ok := n.(*ast.NodeList); ok {
+			if s := toQualifiedName(nl); len(s) == 3 {
+				return getTablePath(s[0], s[1])
+			}
+		}
 	case ast.OBJECT_PROCEDURE:
+		if s, ok := n.(*ast.ObjectWithArgs); ok {
+			if s := toQualifiedName(s.Objname); len(s) == 2 {
+				return getFunctionPath(s[0], s[1])
+			}
+		}
 	case ast.OBJECT_PUBLICATION:
-		return utils.PublicationsPath
-	case ast.OBJECT_PUBLICATION_NAMESPACE:
-	case ast.OBJECT_PUBLICATION_REL:
+		return publicationsPath
+	// case ast.OBJECT_PUBLICATION_NAMESPACE:
+	// case ast.OBJECT_PUBLICATION_REL:
 	case ast.OBJECT_ROLE:
+		return rolesPath
 	case ast.OBJECT_ROUTINE:
+		if s, ok := n.(*ast.ObjectWithArgs); ok {
+			if s := toQualifiedName(s.Objname); len(s) == 2 {
+				return getFunctionPath(s[0], s[1])
+			}
+		}
 	case ast.OBJECT_RULE:
 	case ast.OBJECT_SCHEMA:
 		if s, ok := n.(*ast.String); ok {
 			return getSchemaPath(s.SVal)
 		}
 	case ast.OBJECT_SEQUENCE:
-		if nl, ok := n.(*ast.NodeList); ok {
-			if s := toQualifiedName(nl); len(s) == 2 {
-				return getTablePath(s[0], s[1])
-			}
-		} else if s, ok := n.(*ast.RangeVar); ok {
+		if s, ok := n.(*ast.RangeVar); ok {
 			return getSequencesPath(s.SchemaName)
 		}
 	case ast.OBJECT_SUBSCRIPTION:
-		return utils.SubscriptionsPath
+		return subscriptionsPath
 	// case ast.OBJECT_STATISTIC_EXT:
-	// case ast.OBJECT_TABCONSTRAINT:
+	case ast.OBJECT_TABCONSTRAINT:
+		if nl, ok := n.(*ast.NodeList); ok {
+			if s := toQualifiedName(nl); len(s) == 3 {
+				return getTablePath(s[0], s[1])
+			}
+		}
 	case ast.OBJECT_TABLE:
 		if nl, ok := n.(*ast.NodeList); ok {
 			if s := toQualifiedName(nl); len(s) == 2 {
@@ -302,10 +403,25 @@ func getNodePath(obj ast.ObjectType, n ast.Node) string {
 			return getTablePath(r.SchemaName, r.RelName)
 		}
 	case ast.OBJECT_TABLESPACE:
+		return tablespacesPath
 	case ast.OBJECT_TRANSFORM:
+		if nl, ok := n.(*ast.NodeList); ok && len(nl.Items) == 2 {
+			if s, ok := nl.Items[0].(*ast.String); ok {
+				return getTypesPath(s.SVal)
+			}
+		} else if t, ok := n.(*ast.TypeName); ok {
+			if s := toQualifiedName(t.Names); len(s) == 2 {
+				return getTypesPath(s[0])
+			}
+		}
 	case ast.OBJECT_TRIGGER:
-	case ast.OBJECT_TSCONFIGURATION:
-	case ast.OBJECT_TSDICTIONARY:
+		if nl, ok := n.(*ast.NodeList); ok {
+			if s := toQualifiedName(nl); len(s) == 3 {
+				return getFunctionPath(s[0], s[1])
+			}
+		}
+	// case ast.OBJECT_TSCONFIGURATION:
+	// case ast.OBJECT_TSDICTIONARY:
 	// case ast.OBJECT_TSPARSER:
 	// case ast.OBJECT_TSTEMPLATE:
 	case ast.OBJECT_TYPE:
@@ -313,10 +429,20 @@ func getNodePath(obj ast.ObjectType, n ast.Node) string {
 			if s, ok := nl.Items[0].(*ast.String); ok {
 				return getTypesPath(s.SVal)
 			}
+		} else if t, ok := n.(*ast.TypeName); ok {
+			if s := toQualifiedName(t.Names); len(s) == 2 {
+				return getTypesPath(s[0])
+			}
 		}
-	case ast.OBJECT_USER_MAPPING:
+	// case ast.OBJECT_USER_MAPPING:
 	case ast.OBJECT_VIEW:
+		if nl, ok := n.(*ast.NodeList); ok {
+			if s := toQualifiedName(nl); len(s) == 2 {
+				return getViewPath(s[0], s[1])
+			}
+		}
 	}
+	fmt.Fprintf(utils.GetDebugLogger(), "Object %s: %T\n", obj, n)
 	return ""
 }
 
@@ -340,42 +466,6 @@ func toQualifiedName(n *ast.NodeList) []string {
 		}
 	}
 	return r
-}
-
-func getSchemaPath(name string) string {
-	return filepath.Join(utils.SchemasDir, name, "schema.sql")
-}
-
-func getTypesPath(schema string) string {
-	return filepath.Join(utils.SchemasDir, schema, "types.sql")
-}
-
-func getSequencesPath(schema string) string {
-	return filepath.Join(utils.SchemasDir, schema, "sequences.sql")
-}
-
-func getPrivilegesPath(schema string) string {
-	return filepath.Join(utils.SchemasDir, schema, "privileges.sql")
-}
-
-func getTablePath(schema, name string) string {
-	return filepath.Join(utils.SchemasDir, schema, "tables", name+".sql")
-}
-
-func getForeignTablePath(schema, name string) string {
-	return filepath.Join(utils.SchemasDir, schema, "foreign_tables", name+".sql")
-}
-
-func getFunctionPath(schema, name string) string {
-	return filepath.Join(utils.SchemasDir, schema, "functions", name+".sql")
-}
-
-func getMaterializedViewPath(schema, name string) string {
-	return filepath.Join(utils.SchemasDir, schema, "materialized_views", name+".sql")
-}
-
-func getViewPath(schema, name string) string {
-	return filepath.Join(utils.SchemasDir, schema, "views", name+".sql")
 }
 
 func appendFile(name, data string, fsys afero.Fs) error {

@@ -1,9 +1,12 @@
 [db.migrations]
 schema_paths = [
+  "./cluster/variables.sql",
+
   # 1. Cluster-level objects
   "./cluster/roles.sql",
   "./cluster/extensions.sql",
   "./cluster/foreign_data_wrappers.sql",
+  "./cluster/tablespaces.sql",
 
   # 2. Schema definitions
   "./schemas/*/schema.sql",
@@ -14,17 +17,17 @@ schema_paths = [
 
   # 4. Tables (with indexes, constraints)
   "./schemas/*/tables/*.sql",
-
-  # 5. Foreign tables
   "./schemas/*/foreign_tables/*.sql",
 
-  # 6. Views and materialized views (depend on tables)
+  # 5. Views and materialized views (depend on tables)
   "./schemas/*/views/*.sql",
   "./schemas/*/materialized_views/*.sql",
 
-  # 7. Functions and procedures (scalar/table-valued only; trigger functions are with their tables/views)
+  # 6. Functions and procedures (with triggers)
   "./schemas/*/functions/*.sql",
-  "./schemas/*/procedures/*.sql",
+
+  # 7. Other unqualified entities
+  "./schemas/*/unqualified.sql",
 
   # 8. Replication (depends on tables)
   "./cluster/publications.sql",

@@ -43,13 +43,8 @@ func TestWriteStructured(t *testing.T) {
 					return err
 				}
 				expected, err := afero.ReadFile(testFs, fp)
-				if err != nil {
-					return err
-				}
-				actual, err := afero.ReadFile(fsys, path.Join(utils.SupabaseDirPath, fp))
-				if err != nil {
-					return err
-				}
+				assert.NoError(t, err)
+				actual, _ := afero.ReadFile(fsys, path.Join(utils.SupabaseDirPath, fp))
 				assert.Equal(t, string(expected), string(actual), fp)
 				return nil
 			})
