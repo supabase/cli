@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/multigres/multigres/go/parser"
@@ -15,8 +16,6 @@ import (
 )
 
 var (
-	//go:embed templates/order.toml
-	schemaOrder       string
 	rolesPath         = filepath.Join(utils.ClusterDir, "roles.sql")
 	extensionsPath    = filepath.Join(utils.ClusterDir, "extensions.sql")
 	foreignDWPath     = filepath.Join(utils.ClusterDir, "foreign_data_wrappers.sql")
@@ -60,6 +59,10 @@ func getViewPath(schema, name string) string {
 	return filepath.Join(utils.SchemasDir, schema, "views", name+".sql")
 }
 
+func getRelationshipPath(schema, name string) string {
+	return filepath.Join(utils.SchemasDir, schema, "relationships", name+".sql")
+}
+
 func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) error {
 	stat, err := parser.ParseSQL(sql)
 	if err != nil {
@@ -69,6 +72,13 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 		if err := fsys.RemoveAll(d); err != nil {
 			return errors.Errorf("failed to remove directory: %w", err)
 		}
+	}
+	schemaPaths := []string{
+		variablesPath,
+		rolesPath,
+		extensionsPath,
+		foreignDWPath,
+		tablespacesPath,
 	}
 	for _, s := range stat {
 		name := unqualifiedPath
@@ -169,14 +179,29 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 			}
 		case *ast.AlterTableStmt:
 			if r := v.Relation; r != nil && len(r.SchemaName) > 0 {
-				// TODO: alter sequence / view statements are parsed to wrong ast
+				name = getTablePath(r.SchemaName, r.RelName)
+				// TODO: alter sequence / view statements may be parsed to wrong ast
 				switch v.Objtype {
+				case ast.OBJECT_TABLE:
+					if c := v.Cmds; c != nil {
+						for _, e := range c.Items {
+							if n, ok := e.(*ast.AlterTableCmd); ok {
+								switch n.Subtype {
+								case ast.AT_AddConstraint, ast.AT_AddConstraintRecurse, ast.AT_ReAddConstraint, ast.AT_ReAddDomainConstraint, ast.AT_AlterConstraint, ast.AT_ValidateConstraint, ast.AT_AddIndexConstraint, ast.AT_DropConstraint:
+									if t, ok := n.Def.(*ast.Constraint); ok {
+										switch t.Contype {
+										case ast.CONSTR_CHECK, ast.CONSTR_FOREIGN:
+											name = getRelationshipPath(r.SchemaName, r.RelName)
+										}
+									}
+								}
+							}
+						}
+					}
 				case ast.OBJECT_SEQUENCE:
 					name = getSequencesPath(r.SchemaName)
 				case ast.OBJECT_VIEW:
 					name = getViewPath(r.SchemaName, r.RelName)
-				default:
-					name = getTablePath(r.SchemaName, r.RelName)
 				}
 			}
 		case *ast.CreateForeignTableStmt:
@@ -220,15 +245,15 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 			}
 		case *ast.CreatePolicyStmt:
 			if r := v.Table; r != nil && len(r.SchemaName) > 0 {
-				name = getTablePath(r.SchemaName, r.RelName)
+				name = getRelationshipPath(r.SchemaName, r.RelName)
 			}
 		case *ast.AlterPolicyStmt:
 			if r := v.Table; r != nil && len(r.SchemaName) > 0 {
-				name = getTablePath(r.SchemaName, r.RelName)
+				name = getRelationshipPath(r.SchemaName, r.RelName)
 			}
 		case *ast.RuleStmt:
 			if r := v.Relation; r != nil && len(r.SchemaName) > 0 {
-				name = getTablePath(r.SchemaName, r.RelName)
+				name = getRelationshipPath(r.SchemaName, r.RelName)
 			}
 		// Schema level entities - functions
 		case *ast.CreateFunctionStmt:
@@ -285,13 +310,22 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 		}
 		if name == unqualifiedPath {
 			fmt.Fprintf(utils.GetDebugLogger(), "Unqualified (%T): %s\n", s, s.SqlString())
+		} else if strings.HasPrefix(name, utils.SchemasDir) {
+			schemaPaths = append(schemaPaths, name)
 		}
 		if err := appendFile(name, s.SqlString()+";\n", fsys); err != nil {
 			return err
 		}
 	}
+	schemaPaths = append(schemaPaths,
+		unqualifiedPath,
+		publicationsPath,
+		subscriptionsPath,
+		eventTriggersPath,
+	)
 	if len(utils.Config.Db.Migrations.SchemaPaths) == 0 {
-		return appendFile(utils.ConfigPath, schemaOrder, fsys)
+		utils.Config.Db.Migrations.SchemaPaths = utils.RemoveDuplicates(schemaPaths)
+		return appendConfig(fsys)
 	}
 	return nil
 }
@@ -355,7 +389,7 @@ func getNodePath(obj ast.ObjectType, n ast.Node) string {
 	case ast.OBJECT_POLICY:
 		if nl, ok := n.(*ast.NodeList); ok {
 			if s := toQualifiedName(nl); len(s) == 3 {
-				return getTablePath(s[0], s[1])
+				return getRelationshipPath(s[0], s[1])
 			}
 		}
 	case ast.OBJECT_PROCEDURE:
@@ -391,7 +425,7 @@ func getNodePath(obj ast.ObjectType, n ast.Node) string {
 	case ast.OBJECT_TABCONSTRAINT:
 		if nl, ok := n.(*ast.NodeList); ok {
 			if s := toQualifiedName(nl); len(s) == 3 {
-				return getTablePath(s[0], s[1])
+				return getRelationshipPath(s[0], s[1])
 			}
 		}
 	case ast.OBJECT_TABLE:
@@ -479,6 +513,30 @@ func appendFile(name, data string, fsys afero.Fs) error {
 	defer f.Close()
 	if _, err := f.WriteString(data); err != nil {
 		return errors.Errorf("failed to write file: %w", err)
+	}
+	return nil
+}
+
+func appendConfig(fsys afero.Fs) error {
+	f, err := fsys.OpenFile(utils.ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		return errors.Errorf("failed to open config: %w", err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString("\n[db.migrations]\nschema_paths = [\n"); err != nil {
+		return errors.Errorf("failed to write header: %w", err)
+	}
+	for _, fp := range utils.Config.Db.Migrations.SchemaPaths {
+		relPath, err := filepath.Rel(utils.SupabaseDirPath, fp)
+		if err != nil {
+			return errors.Errorf("failed to resolve path: %w", err)
+		}
+		if _, err := fmt.Fprintf(f, "  \"%s\",\n", relPath); err != nil {
+			return errors.Errorf("failed to write path: %w", err)
+		}
+	}
+	if _, err := f.WriteString("]\n"); err != nil {
+		return errors.Errorf("failed to write footer: %w", err)
 	}
 	return nil
 }

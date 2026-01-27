@@ -1,1 +1,1 @@
-COMMENT ON TYPE type_name IS 'type comment';
+COMMENT ON TYPE public.type_name IS 'type comment';
