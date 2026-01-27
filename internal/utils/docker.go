@@ -194,15 +194,49 @@ func GetRegistry() string {
 	return strings.ToLower(registry)
 }
 
-func GetRegistryImageUrl(imageName string) string {
+// GetRegistryImageUrl builds a fully-qualified image reference.
+//
+// Expected input format:
+//
+//	NAMESPACE/IMAGE:TAG
+//
+// Behavior:
+//   - Uses the configured registry (via GetRegistry()).
+//   - Allows per-image namespace overrides via
+//     INTERNAL_IMAGE_NAMESPACE_"IMAGE_NAME".
+//   - Falls back to the "supabase" namespace for non-docker.io registries
+//     when no override is configured.
+func GetRegistryImageUrl(imageRef string) string {
 	registry := GetRegistry()
-	if registry == "docker.io" {
-		return imageName
+
+	// Split path segments (supports nested namespaces)
+	parts := strings.Split(imageRef, "/")
+	if len(parts) < 2 {
+		return imageRef // invalid format
 	}
-	// Configure mirror registry
-	parts := strings.Split(imageName, "/")
-	imageName = parts[len(parts)-1]
-	return registry + "/supabase/" + imageName
+
+	imageWithTag := parts[len(parts)-1]
+	namespace := strings.Join(parts[:len(parts)-1], "/")
+
+	// Split image and tag
+	imageParts := strings.SplitN(imageWithTag, ":", 2)
+	if len(imageParts) != 2 {
+		return imageRef // invalid format
+	}
+
+	imageName := imageParts[0]
+	imageTag := imageParts[1]
+
+	// Check for per-image namespace override
+	overrideKey := "INTERNAL_IMAGE_NAMESPACE_" + strings.ToUpper(imageName)
+	if override := viper.GetString(overrideKey); override != "" {
+		namespace = override
+	} else if registry != "docker.io" {
+		// Default namespace for non-docker.io registries
+		namespace = "supabase"
+	}
+
+	return fmt.Sprintf("%s/%s/%s:%s", registry, namespace, imageName, imageTag)
 }
 
 func DockerImagePull(ctx context.Context, imageTag string, w io.Writer) error {
