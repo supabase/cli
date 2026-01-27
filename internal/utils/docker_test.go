@@ -306,3 +306,49 @@ func TestExecOnce(t *testing.T) {
 
 	// TODO: mock tcp hijack
 }
+
+func TestGetRegistryImageUrl(t *testing.T) {
+	t.Run("docker.io keeps provided namespace (library)", func(t *testing.T) {
+		viper.Set("INTERNAL_IMAGE_REGISTRY", "docker.io")
+
+		got := GetRegistryImageUrl("library/kong:2.8.1")
+		assert.Equal(t, "docker.io/library/kong:2.8.1", got)
+	})
+
+	t.Run("non-docker.io defaults namespace to supabase when no override", func(t *testing.T) {
+		viper.Set("INTERNAL_IMAGE_REGISTRY", "ghcr.io")
+
+		got := GetRegistryImageUrl("library/kong:2.8.1")
+		assert.Equal(t, "ghcr.io/supabase/kong:2.8.1", got)
+	})
+
+	t.Run("supabase namespace remains supabase on non-docker.io registry", func(t *testing.T) {
+		viper.Set("INTERNAL_IMAGE_REGISTRY", "ghcr.io")
+
+		got := GetRegistryImageUrl("supabase/postgres:17.6.1.074")
+		assert.Equal(t, "ghcr.io/supabase/postgres:17.6.1.074", got)
+	})
+
+	t.Run("namespace override gets applied", func(t *testing.T) {
+		viper.Set("INTERNAL_IMAGE_REGISTRY", "ghcr.io")
+		viper.Set("INTERNAL_IMAGE_NAMESPACE_POSTGREST", "custom")
+
+		got := GetRegistryImageUrl("postgrest/postgrest:v14.3")
+		assert.Equal(t, "ghcr.io/custom/postgrest:v14.3", got)
+	})
+
+	t.Run("invalid image format returns as-is", func(t *testing.T) {
+		viper.Set("INTERNAL_IMAGE_REGISTRY", "docker.io")
+
+		got := GetRegistryImageUrl("postgrest")
+		assert.Equal(t, "postgrest", got)
+	})
+
+	t.Run("overrides kong namespace to docker/library on public.ecr.aws", func(t *testing.T) {
+		viper.Set("INTERNAL_IMAGE_REGISTRY", "public.ecr.aws")
+		viper.Set("INTERNAL_IMAGE_NAMESPACE_KONG", "docker/library")
+
+		got := GetRegistryImageUrl("library/kong:2.8.1")
+		assert.Equal(t, "public.ecr.aws/docker/library/kong:2.8.1", got)
+	})
+}
