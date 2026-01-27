@@ -41,6 +41,9 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 	defer conn.Close(context.Background())
 	if viper.GetBool("EXPERIMENTAL") {
 		var buf bytes.Buffer
+		if err := migration.DumpRole(ctx, config, &buf, dump.DockerExec); err != nil {
+			return err
+		}
 		if err := migration.DumpSchema(ctx, config, &buf, dump.DockerExec); err != nil {
 			return err
 		}

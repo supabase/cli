@@ -63,6 +63,32 @@ func getRelationshipPath(schema, name string) string {
 	return filepath.Join(utils.SchemasDir, schema, "relationships", name+".sql")
 }
 
+func getTableOrSequencePath(schema, name string, fsys afero.Fs) string {
+	// Tables may be renamed such that its sequence id doesn't contain the table name
+	if table, found := strings.CutSuffix(name, "_id_seq"); found {
+		fp := getTablePath(schema, table)
+		if exists, _ := afero.Exists(fsys, fp); exists {
+			return fp
+		}
+	}
+	return getSequencesPath(schema)
+}
+
+func getTableOrViewPath(schema, name string, fsys afero.Fs) string {
+	// View grants can use table keyword
+	candidates := []string{
+		getForeignTablePath(schema, name),
+		getViewPath(schema, name),
+		getMaterializedViewPath(schema, name),
+	}
+	for _, fp := range candidates {
+		if exists, _ := afero.Exists(fsys, fp); exists {
+			return fp
+		}
+	}
+	return getTablePath(schema, name)
+}
+
 func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) error {
 	stat, err := parser.ParseSQL(sql)
 	if err != nil {
@@ -180,28 +206,25 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 		case *ast.AlterTableStmt:
 			if r := v.Relation; r != nil && len(r.SchemaName) > 0 {
 				name = getTablePath(r.SchemaName, r.RelName)
-				// TODO: alter sequence / view statements may be parsed to wrong ast
+				// TODO: alter sequence / view owner may be parsed to wrong ast
 				switch v.Objtype {
-				case ast.OBJECT_TABLE:
+				case ast.OBJECT_SEQUENCE:
+					name = getSequencesPath(r.SchemaName)
+				case ast.OBJECT_VIEW:
+					name = getViewPath(r.SchemaName, r.RelName)
+				default:
 					if c := v.Cmds; c != nil {
 						for _, e := range c.Items {
-							if n, ok := e.(*ast.AlterTableCmd); ok {
-								switch n.Subtype {
-								case ast.AT_AddConstraint, ast.AT_AddConstraintRecurse, ast.AT_ReAddConstraint, ast.AT_ReAddDomainConstraint, ast.AT_AlterConstraint, ast.AT_ValidateConstraint, ast.AT_AddIndexConstraint, ast.AT_DropConstraint:
-									if t, ok := n.Def.(*ast.Constraint); ok {
-										switch t.Contype {
-										case ast.CONSTR_CHECK, ast.CONSTR_FOREIGN:
-											name = getRelationshipPath(r.SchemaName, r.RelName)
-										}
+							if t, ok := e.(*ast.AlterTableCmd); ok {
+								if n, ok := t.Def.(*ast.Constraint); ok {
+									switch n.Contype {
+									case ast.CONSTR_FOREIGN:
+										name = getRelationshipPath(r.SchemaName, r.RelName)
 									}
 								}
 							}
 						}
 					}
-				case ast.OBJECT_SEQUENCE:
-					name = getSequencesPath(r.SchemaName)
-				case ast.OBJECT_VIEW:
-					name = getViewPath(r.SchemaName, r.RelName)
 				}
 			}
 		case *ast.CreateForeignTableStmt:
@@ -219,6 +242,10 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 		case *ast.ViewStmt:
 			if r := v.View; r != nil && len(r.SchemaName) > 0 {
 				name = getViewPath(r.SchemaName, r.RelName)
+				// Adjust for forward declaration of views
+				if exists, _ := afero.Exists(fsys, name); exists {
+					name = name[:len(name)-4] + "-final.sql"
+				}
 			}
 		case *ast.CreateSeqStmt:
 			if r := v.Sequence; r != nil && len(r.SchemaName) > 0 {
@@ -267,7 +294,9 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 				}
 			}
 		case *ast.CreateTriggerStmt:
-			if s := toQualifiedName(v.Funcname); len(s) == 2 {
+			if r := v.Relation; r != nil && len(r.SchemaName) > 0 {
+				name = getRelationshipPath(r.SchemaName, r.RelName)
+			} else if s := toQualifiedName(v.Funcname); len(s) == 2 {
 				name = getFunctionPath(s[0], s[1])
 			}
 		case *ast.CreatePLangStmt:
@@ -280,16 +309,16 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 			}
 		// Schema level entities - others
 		case *ast.CommentStmt:
-			if s := getNodePath(v.Objtype, v.Object); len(s) > 0 {
+			if s := getNodePath(v.Objtype, v.Object, fsys); len(s) > 0 {
 				name = s
 			}
 		case *ast.AlterOwnerStmt:
-			if s := getNodePath(v.ObjectType, v.Object); len(s) > 0 {
+			if s := getNodePath(v.ObjectType, v.Object, fsys); len(s) > 0 {
 				name = s
 			}
 		case *ast.GrantStmt:
 			if n := v.Objects; n != nil && len(n.Items) == 1 {
-				if s := getNodePath(v.Objtype, n.Items[0]); len(s) > 0 {
+				if s := getNodePath(v.Objtype, n.Items[0], fsys); len(s) > 0 {
 					name = s
 				}
 			}
@@ -312,6 +341,13 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 			fmt.Fprintf(utils.GetDebugLogger(), "Unqualified (%T): %s\n", s, s.SqlString())
 		} else if strings.HasPrefix(name, utils.SchemasDir) {
 			schemaPaths = append(schemaPaths, name)
+			if filepath.Base(name) == "schema.sql" {
+				schema := filepath.Base(filepath.Dir(name))
+				schemaPaths = append(schemaPaths,
+					getTypesPath(schema),
+					getSequencesPath(schema),
+				)
+			}
 		}
 		if err := appendFile(name, s.SqlString()+";\n", fsys); err != nil {
 			return err
@@ -330,7 +366,7 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 	return nil
 }
 
-func getNodePath(obj ast.ObjectType, n ast.Node) string {
+func getNodePath(obj ast.ObjectType, n ast.Node, fsys afero.Fs) string {
 	switch obj {
 	// case ast.OBJECT_ACCESS_METHOD:
 	// case ast.OBJECT_AGGREGATE:
@@ -417,7 +453,7 @@ func getNodePath(obj ast.ObjectType, n ast.Node) string {
 		}
 	case ast.OBJECT_SEQUENCE:
 		if s, ok := n.(*ast.RangeVar); ok {
-			return getSequencesPath(s.SchemaName)
+			return getTableOrSequencePath(s.SchemaName, s.RelName, fsys)
 		}
 	case ast.OBJECT_SUBSCRIPTION:
 		return subscriptionsPath
@@ -431,10 +467,10 @@ func getNodePath(obj ast.ObjectType, n ast.Node) string {
 	case ast.OBJECT_TABLE:
 		if nl, ok := n.(*ast.NodeList); ok {
 			if s := toQualifiedName(nl); len(s) == 2 {
-				return getTablePath(s[0], s[1])
+				return getTableOrViewPath(s[0], s[1], fsys)
 			}
 		} else if r, ok := n.(*ast.RangeVar); ok && len(r.SchemaName) > 0 {
-			return getTablePath(r.SchemaName, r.RelName)
+			return getTableOrViewPath(r.SchemaName, r.RelName, fsys)
 		}
 	case ast.OBJECT_TABLESPACE:
 		return tablespacesPath

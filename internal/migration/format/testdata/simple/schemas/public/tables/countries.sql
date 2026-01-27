@@ -5,3 +5,6 @@ ALTER TABLE ONLY public.countries ADD CONSTRAINT countries_pkey PRIMARY KEY (id)
 GRANT ALL ON public.countries TO anon;
 GRANT ALL ON public.countries TO authenticated;
 GRANT ALL ON public.countries TO service_role;
+GRANT ALL ON SEQUENCE public.countries_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.countries_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.countries_id_seq TO service_role;
