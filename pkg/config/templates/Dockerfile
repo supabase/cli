@@ -16,5 +16,6 @@ FROM supabase/storage-api:v1.33.5 AS storage
 FROM supabase/logflare:1.30.3 AS logflare
 # Append to JobImages when adding new dependencies below
 FROM supabase/pgadmin-schema-diff:cli-0.0.5 AS differ
-FROM supabase/migra:3.0.1663481299 AS migra
+FROM philipandrewweedewang/migra:v1.0.6 AS migra
+# FROM supabase/migra:3.0.1663481299 AS migra
 FROM supabase/pg_prove:3.36 AS pgprove
