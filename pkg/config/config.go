@@ -151,6 +151,7 @@ type (
 		Functions    FunctionConfig `toml:"functions"`
 		Analytics    analytics      `toml:"analytics"`
 		Experimental experimental   `toml:"experimental"`
+		Dev          dev            `toml:"dev"`
 	}
 
 	config struct {
@@ -244,6 +245,30 @@ type (
 		S3SecretKey     string    `toml:"s3_secret_key"`
 		Webhooks        *webhooks `toml:"webhooks"`
 		Inspect         inspect   `toml:"inspect"`
+	}
+
+	// Dev workflow configuration
+	dev struct {
+		Schemas   devSchemas   `toml:"schemas"`
+		Functions devFunctions `toml:"functions"`
+		Seed      devSeed      `toml:"seed"`
+	}
+
+	devSchemas struct {
+		Enabled  *bool  `toml:"enabled"`
+		Watch    Glob   `toml:"watch"`
+		OnChange string `toml:"on_change"`
+		Types    string `toml:"types"`
+	}
+
+	devFunctions struct {
+		Enabled *bool `toml:"enabled"`
+		Watch   Glob  `toml:"watch"`
+	}
+
+	devSeed struct {
+		Enabled  *bool  `toml:"enabled"`
+		OnChange string `toml:"on_change"`
 	}
 )
 
@@ -417,6 +442,14 @@ func NewConfig(editors ...ConfigEditor) config {
 		},
 		EdgeRuntime: edgeRuntime{
 			Image: Images.EdgeRuntime,
+		},
+		Dev: dev{
+			Schemas: devSchemas{
+				Watch: Glob{"schemas/**/*.sql"},
+			},
+			Functions: devFunctions{
+				Watch: Glob{"functions/**/*.ts"},
+			},
 		},
 	}}
 	for _, apply := range editors {
@@ -1615,4 +1648,28 @@ func (e *experimental) validate() error {
 		return errors.Errorf("Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined")
 	}
 	return nil
+}
+
+// IsEnabled returns whether the schemas workflow is enabled (defaults to true)
+func (d *devSchemas) IsEnabled() bool {
+	if d.Enabled == nil {
+		return true
+	}
+	return *d.Enabled
+}
+
+// IsEnabled returns whether the functions workflow is enabled (defaults to true)
+func (d *devFunctions) IsEnabled() bool {
+	if d.Enabled == nil {
+		return true
+	}
+	return *d.Enabled
+}
+
+// IsEnabled returns whether the seed workflow is enabled (defaults to true)
+func (d *devSeed) IsEnabled() bool {
+	if d.Enabled == nil {
+		return true
+	}
+	return *d.Enabled
 }

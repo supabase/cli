@@ -90,18 +90,25 @@ func findDropStatements(out string) []string {
 }
 
 func CreateShadowDatabase(ctx context.Context, port uint16) (string, error) {
+	return CreateShadowDatabaseWithName(ctx, port, "", true)
+}
+
+// CreateShadowDatabaseWithName creates a shadow database container with a specific name.
+// If name is empty, Docker will assign a random name.
+// If autoRemove is true, the container will be automatically removed when stopped.
+func CreateShadowDatabaseWithName(ctx context.Context, port uint16, name string, autoRemove bool) (string, error) {
 	// Disable background workers in shadow database
 	config := start.NewContainerConfig("-c", "max_worker_processes=0")
 	hostPort := strconv.FormatUint(uint64(port), 10)
 	hostConfig := container.HostConfig{
 		PortBindings: nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
-		AutoRemove:   true,
+		AutoRemove:   autoRemove,
 	}
 	networkingConfig := network.NetworkingConfig{}
 	if utils.Config.Db.MajorVersion <= 14 {
 		hostConfig.Tmpfs = map[string]string{"/docker-entrypoint-initdb.d": ""}
 	}
-	return utils.DockerStart(ctx, config, hostConfig, networkingConfig, "")
+	return utils.DockerStart(ctx, config, hostConfig, networkingConfig, name)
 }
 
 func ConnectShadowDatabase(ctx context.Context, timeout time.Duration, options ...func(*pgx.ConnConfig)) (conn *pgx.Conn, err error) {
