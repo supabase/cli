@@ -51,6 +51,10 @@ func getFunctionPath(schema, name string) string {
 	return filepath.Join(utils.SchemasDir, schema, "functions", name+".sql")
 }
 
+func getProcedurePath(schema, name string) string {
+	return filepath.Join(utils.SchemasDir, schema, "procedures", name+".sql")
+}
+
 func getMaterializedViewPath(schema, name string) string {
 	return filepath.Join(utils.SchemasDir, schema, "materialized_views", name+".sql")
 }
@@ -71,32 +75,6 @@ func getOperatorPath(schema, name string) string {
 	return filepath.Join(utils.SchemasDir, schema, "operators", name+".sql")
 }
 
-func getTableOrSequencePath(schema, name string, fsys afero.Fs) string {
-	// Tables may be renamed such that its sequence id doesn't contain the table name
-	if table, found := strings.CutSuffix(name, "_id_seq"); found {
-		fp := getTablePath(schema, table)
-		if exists, _ := afero.Exists(fsys, fp); exists {
-			return fp
-		}
-	}
-	return getSequencesPath(schema)
-}
-
-func getTableOrViewPath(schema, name string, fsys afero.Fs) string {
-	// View grants can use table keyword
-	candidates := []string{
-		getForeignTablePath(schema, name),
-		getViewPath(schema, name),
-		getMaterializedViewPath(schema, name),
-	}
-	for _, fp := range candidates {
-		if exists, _ := afero.Exists(fsys, fp); exists {
-			return fp
-		}
-	}
-	return getTablePath(schema, name)
-}
-
 func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) error {
 	stat, err := parser.ParseSQL(sql)
 	if err != nil {
@@ -114,6 +92,9 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 		foreignDWPath,
 		tablespacesPath,
 	}
+	// Holds entities that depend on others but can be referenced directly by id
+	// Or those with ambiguous keywords like table / view, etc.
+	nodeToPath := map[string]string{}
 	for _, s := range stat {
 		name := unqualifiedPath
 		switch v := s.(type) {
@@ -159,7 +140,7 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 			}
 		// Schema level entities - types
 		case *ast.DefineStmt:
-			if s := getNodePath(v.Kind, v.DefNames, fsys); len(s) > 0 {
+			if s := getNodePath(v.Kind, v.DefNames, nodeToPath); len(s) > 0 {
 				name = s
 			}
 		case *ast.AlterTypeStmt:
@@ -190,6 +171,8 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 			if t := v.TypeName; t != nil {
 				if s := toQualifiedName(t.Names); len(s) == 2 {
 					name = getTypesPath(s[0])
+					key := fmt.Sprintf("%s.%s.%s", ast.OBJECT_TRANSFORM, s[0], s[1])
+					nodeToPath[key] = name
 				}
 			}
 		case *ast.CreateDomainStmt:
@@ -204,6 +187,8 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 		case *ast.CreateStmt:
 			if r := v.Relation; r != nil && len(r.SchemaName) > 0 {
 				name = getTablePath(r.SchemaName, r.RelName)
+				key := fmt.Sprintf("%s.%s.%s", ast.OBJECT_TABLE, r.SchemaName, r.RelName)
+				nodeToPath[key] = name
 			}
 		case *ast.AlterTableStmt:
 			if r := v.Relation; r != nil && len(r.SchemaName) > 0 {
@@ -233,25 +218,33 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 			if t := v.Base; t != nil {
 				if r := t.Relation; r != nil && len(r.SchemaName) > 0 {
 					name = getForeignTablePath(r.SchemaName, r.RelName)
+					key := fmt.Sprintf("%s.%s.%s", ast.OBJECT_FOREIGN_TABLE, r.SchemaName, r.RelName)
+					nodeToPath[key] = name
 				}
 			}
 		case *ast.CreateTableAsStmt:
 			if t := v.Into; t != nil {
 				if r := t.Rel; r != nil && len(r.SchemaName) > 0 {
 					name = getMaterializedViewPath(r.SchemaName, r.RelName)
+					key := fmt.Sprintf("%s.%s.%s", ast.OBJECT_MATVIEW, r.SchemaName, r.RelName)
+					nodeToPath[key] = name
 				}
 			}
 		case *ast.ViewStmt:
 			if r := v.View; r != nil && len(r.SchemaName) > 0 {
 				name = getViewPath(r.SchemaName, r.RelName)
+				key := fmt.Sprintf("%s.%s.%s", ast.OBJECT_VIEW, r.SchemaName, r.RelName)
 				// Adjust for forward declaration of views
-				if exists, _ := afero.Exists(fsys, name); exists {
+				if _, found := nodeToPath[key]; found {
 					name = name[:len(name)-4] + "-final.sql"
 				}
+				nodeToPath[key] = name
 			}
 		case *ast.CreateSeqStmt:
 			if r := v.Sequence; r != nil && len(r.SchemaName) > 0 {
 				name = getSequencesPath(r.SchemaName)
+				key := fmt.Sprintf("%s.%s.%s", ast.OBJECT_SEQUENCE, r.SchemaName, r.RelName)
+				nodeToPath[key] = name
 			}
 		case *ast.AlterSeqStmt:
 			if r := v.Sequence; r != nil && len(r.SchemaName) > 0 {
@@ -259,10 +252,8 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 				if o := v.Options; o != nil {
 					for _, s := range o.Items {
 						if e, ok := s.(*ast.DefElem); ok && e.Defname == "owned_by" {
-							if nl, ok := e.Arg.(*ast.NodeList); ok {
-								if n := toQualifiedName(nl); len(n) == 3 {
-									name = getTablePath(n[0], n[1])
-								}
+							if n := getQualifiedName(e.Arg); len(n) == 3 {
+								name = getTablePath(n[0], n[1])
 							}
 						}
 					}
@@ -271,6 +262,8 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 		case *ast.IndexStmt:
 			if r := v.Relation; r != nil && len(r.SchemaName) > 0 {
 				name = getTablePath(r.SchemaName, r.RelName)
+				key := fmt.Sprintf("%s.%s.%s", ast.OBJECT_INDEX, r.SchemaName, r.RelName)
+				nodeToPath[key] = name
 			}
 		case *ast.CreatePolicyStmt:
 			if r := v.Table; r != nil && len(r.SchemaName) > 0 {
@@ -287,13 +280,15 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 		// Schema level entities - functions
 		case *ast.CreateFunctionStmt:
 			if s := toQualifiedName(v.FuncName); len(s) == 2 {
-				name = getFunctionPath(s[0], s[1])
-			}
-		case *ast.AlterFunctionStmt:
-			if f := v.Func; f != nil {
-				if s := toQualifiedName(f.Objname); len(s) == 2 {
+				if v.IsProcedure {
+					name = getProcedurePath(s[0], s[1])
+				} else {
 					name = getFunctionPath(s[0], s[1])
 				}
+			}
+		case *ast.AlterFunctionStmt:
+			if s := getNodePath(v.ObjType, v.Func, nodeToPath); len(s) > 0 {
+				name = s
 			}
 		case *ast.CreateTriggerStmt:
 			if r := v.Relation; r != nil && len(r.SchemaName) > 0 {
@@ -304,10 +299,14 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 		case *ast.CreatePLangStmt:
 			if s := toQualifiedName(v.PLHandler); len(s) == 2 {
 				name = getFunctionPath(s[0], s[1])
+				key := fmt.Sprintf("%s.%s.%s", ast.OBJECT_LANGUAGE, s[0], s[1])
+				nodeToPath[key] = name
 			}
 		case *ast.CreateAmStmt:
 			if s := toQualifiedName(v.HandlerName); len(s) == 2 {
 				name = getFunctionPath(s[0], s[1])
+				key := fmt.Sprintf("%s.%s.%s", ast.OBJECT_ACCESS_METHOD, s[0], s[1])
+				nodeToPath[key] = name
 			}
 		case *ast.CreateConversionStmt:
 			if s := toQualifiedName(v.FuncName); len(s) == 2 {
@@ -324,6 +323,8 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 			if s := v.Func; s != nil {
 				if s := toQualifiedName(s.Objname); len(s) == 2 {
 					name = getOperatorPath(s[0], s[1])
+					key := fmt.Sprintf("%s.%s.%s", ast.OBJECT_CAST, s[0], s[1])
+					nodeToPath[key] = name
 				}
 			}
 		case *ast.AlterOperatorStmt:
@@ -334,16 +335,16 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 			}
 		// Schema level entities - others
 		case *ast.CommentStmt:
-			if s := getNodePath(v.Objtype, v.Object, fsys); len(s) > 0 {
+			if s := getNodePath(v.Objtype, v.Object, nodeToPath); len(s) > 0 {
 				name = s
 			}
 		case *ast.AlterOwnerStmt:
-			if s := getNodePath(v.ObjectType, v.Object, fsys); len(s) > 0 {
+			if s := getNodePath(v.ObjectType, v.Object, nodeToPath); len(s) > 0 {
 				name = s
 			}
 		case *ast.GrantStmt:
 			if n := v.Objects; n != nil && len(n.Items) == 1 {
-				if s := getNodePath(v.Objtype, n.Items[0], fsys); len(s) > 0 {
+				if s := getNodePath(v.Objtype, n.Items[0], nodeToPath); len(s) > 0 {
 					name = s
 				}
 			}
@@ -351,10 +352,8 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 			if o := v.Options; o != nil {
 				for _, s := range o.Items {
 					if e, ok := s.(*ast.DefElem); ok && e.Defname == "schemas" {
-						if n, ok := e.Arg.(*ast.NodeList); ok && len(n.Items) == 1 {
-							if p, ok := n.Items[0].(*ast.String); ok {
-								name = getSchemaPath(p.SVal)
-							}
+						if n := getQualifiedName(e.Arg); len(n) == 1 {
+							name = getSchemaPath(n[0])
 						}
 					}
 				}
@@ -391,7 +390,7 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 	return nil
 }
 
-func getNodePath(obj ast.ObjectType, n ast.Node, fsys afero.Fs) string {
+func getNodePath(obj ast.ObjectType, n ast.Node, seen map[string]string) string {
 	switch obj {
 	// case ast.OBJECT_ACCESS_METHOD:
 	case ast.OBJECT_AGGREGATE:
@@ -476,9 +475,8 @@ func getNodePath(obj ast.ObjectType, n ast.Node, fsys afero.Fs) string {
 			return getRelationshipPath(s[0], s[1])
 		}
 	case ast.OBJECT_PROCEDURE:
-		// TODO: getFunctionOrProcedurePath
 		if s := getQualifiedName(n); len(s) == 2 {
-			return getFunctionPath(s[0], s[1])
+			return getProcedurePath(s[0], s[1])
 		}
 	case ast.OBJECT_PUBLICATION:
 		return publicationsPath
@@ -502,7 +500,18 @@ func getNodePath(obj ast.ObjectType, n ast.Node, fsys afero.Fs) string {
 		}
 	case ast.OBJECT_SEQUENCE:
 		if s := getQualifiedName(n); len(s) == 2 {
-			return getTableOrSequencePath(s[0], s[1], fsys)
+			keys := []string{fmt.Sprintf("%s.%s.%s", obj, s[0], s[1])}
+			// Include sequences that were created implicitly with tables
+			if table, found := strings.CutSuffix(s[1], "_id_seq"); found {
+				keys = append(keys, fmt.Sprintf("%s.%s.%s", ast.OBJECT_TABLE, s[0], table))
+			}
+			for _, k := range keys {
+				if fp, found := seen[k]; found {
+					return fp
+				}
+			}
+			// Tables may be renamed such that its sequence id doesn't contain the table name
+			return getSequencesPath(s[0])
 		}
 	case ast.OBJECT_SUBSCRIPTION:
 		return subscriptionsPath
@@ -513,7 +522,19 @@ func getNodePath(obj ast.ObjectType, n ast.Node, fsys afero.Fs) string {
 		}
 	case ast.OBJECT_TABLE:
 		if s := getQualifiedName(n); len(s) == 2 {
-			return getTableOrViewPath(s[0], s[1], fsys)
+			// View and table grants share the same keyword
+			keys := []string{
+				fmt.Sprintf("%s.%s.%s", obj, s[0], s[1]),
+				fmt.Sprintf("%s.%s.%s", ast.OBJECT_VIEW, s[0], s[1]),
+				fmt.Sprintf("%s.%s.%s", ast.OBJECT_MATVIEW, s[0], s[1]),
+				fmt.Sprintf("%s.%s.%s", ast.OBJECT_FOREIGN_TABLE, s[0], s[1]),
+			}
+			for _, k := range keys {
+				if fp, found := seen[k]; found {
+					return fp
+				}
+			}
+			return getTablePath(s[0], s[1])
 		}
 	case ast.OBJECT_TABLESPACE:
 		return tablespacesPath
@@ -547,6 +568,14 @@ func getNodePath(obj ast.ObjectType, n ast.Node, fsys afero.Fs) string {
 	case ast.OBJECT_VIEW:
 		if s := getQualifiedName(n); len(s) == 2 {
 			return getViewPath(s[0], s[1])
+		}
+	default:
+		// Fallback to lookup file path by entity id
+		if s := getQualifiedName(n); len(s) == 2 {
+			key := fmt.Sprintf("%s.%s.%s", obj, s[0], s[1])
+			if fp, found := seen[key]; found {
+				return fp
+			}
 		}
 	}
 	fmt.Fprintf(utils.GetDebugLogger(), "\tObject %s: %T\n", obj, n)
