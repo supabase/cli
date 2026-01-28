@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
+	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/pgtest"
 	"github.com/supabase/cli/pkg/storage"
@@ -26,7 +27,7 @@ func TestResetCommand(t *testing.T) {
 	utils.Config.Hostname = "127.0.0.1"
 	utils.Config.Db.Port = 5432
 
-	var dbConfig = pgconn.Config{
+	dbConfig := pgconn.Config{
 		Host:     utils.Config.Hostname,
 		Port:     utils.Config.Db.Port,
 		User:     "admin",
@@ -37,6 +38,9 @@ func TestResetCommand(t *testing.T) {
 	t.Run("seeds storage after reset", func(t *testing.T) {
 		utils.DbId = "test-reset"
 		utils.Config.Db.MajorVersion = 15
+		origServiceRoleKey := utils.Config.Auth.ServiceRoleKey.Value
+		utils.Config.Auth.ServiceRoleKey.Value = ""
+		t.Cleanup(func() { utils.Config.Auth.ServiceRoleKey.Value = origServiceRoleKey })
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
@@ -65,6 +69,7 @@ func TestResetCommand(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
+		helper.MockVaultSetup(conn, "")
 		// Restarts services
 		utils.StorageId = "test-storage"
 		utils.GotrueId = "test-auth"

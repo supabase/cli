@@ -33,7 +33,7 @@ var (
 	//go:embed templates/schema.sql
 	initialSchema string
 	//go:embed templates/webhook.sql
-	webhookSchema string
+	WebhookSchema string
 	//go:embed templates/_supabase.sql
 	_supabaseSchema string
 	//go:embed templates/restore.sh
@@ -93,7 +93,7 @@ cat <<'EOF' > /etc/postgresql-custom/pgsodium_root.key && \
 cat <<'EOF' >> /etc/postgresql/postgresql.conf && \
 docker-entrypoint.sh postgres -D /etc/postgresql ` + strings.Join(args, " ") + `
 ` + initialSchema + `
-` + webhookSchema + `
+` + WebhookSchema + `
 ` + _supabaseSchema + `
 EOF
 ` + utils.Config.Db.RootKey.Value + `
@@ -247,7 +247,15 @@ func initSchema(ctx context.Context, conn *pgx.Conn, host string, w io.Writer) e
 		} else if err := file.ExecBatch(ctx, conn); err != nil {
 			return err
 		}
-		return InitSchema14(ctx, conn)
+		if err := InitSchema14(ctx, conn); err != nil {
+			return err
+		}
+		if file, err := migration.NewMigrationFromReader(strings.NewReader(WebhookSchema)); err != nil {
+			return err
+		} else if err := file.ExecBatch(ctx, conn); err != nil {
+			return err
+		}
+		return nil
 	}
 	return initSchema15(ctx, host)
 }
@@ -371,8 +379,9 @@ func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer
 	if err := initSchema(ctx, conn, host, w); err != nil {
 		return err
 	}
+	secrets := vault.WithEdgeFunctionSecrets(utils.Config.Db.Vault, "", utils.Config.Auth.ServiceRoleKey.Value)
 	// Create vault secrets first so roles.sql can reference them
-	if err := vault.UpsertVaultSecrets(ctx, utils.Config.Db.Vault, conn); err != nil {
+	if err := vault.UpsertVaultSecrets(ctx, secrets, conn); err != nil {
 		return err
 	}
 	err := migration.SeedGlobals(ctx, []string{utils.CustomRolesPath}, conn, afero.NewIOFS(fsys))
