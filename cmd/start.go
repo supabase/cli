@@ -14,7 +14,6 @@ import (
 )
 
 func validateExcludedContainers(excludedContainers []string) {
-	// Validate excluded containers
 	validContainers := start.ExcludableContainers()
 	var invalidContainers []string
 
@@ -25,7 +24,7 @@ func validateExcludedContainers(excludedContainers []string) {
 	}
 
 	if len(invalidContainers) > 0 {
-		// Sort the names list so it's easier to visually spot the one you looking for
+		// Sort the names list so it's easier to visually spot the one you're looking for
 		sort.Strings(validContainers)
 		warning := fmt.Sprintf("%s The following container names are not valid to exclude: %s\nValid containers to exclude are: %s\n",
 			utils.Yellow("WARNING:"),
@@ -40,6 +39,7 @@ var (
 	excludedContainers []string
 	ignoreHealthCheck  bool
 	preview            bool
+	small              bool
 
 	startCmd = &cobra.Command{
 		GroupID: groupLocalDev,
@@ -47,7 +47,7 @@ var (
 		Short:   "Start containers for Supabase local development",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			validateExcludedContainers(excludedContainers)
-			return start.Run(cmd.Context(), afero.NewOsFs(), excludedContainers, ignoreHealthCheck)
+			return start.Run(cmd.Context(), afero.NewOsFs(), excludedContainers, ignoreHealthCheck, small)
 		},
 	}
 )
@@ -58,6 +58,7 @@ func init() {
 	flags.StringSliceVarP(&excludedContainers, "exclude", "x", []string{}, "Names of containers to not start. ["+names+"]")
 	flags.BoolVar(&ignoreHealthCheck, "ignore-health-check", false, "Ignore unhealthy services and exit 0")
 	flags.BoolVar(&preview, "preview", false, "Connect to feature preview branch")
+	flags.BoolVar(&small, "small", false, "Use "+start.SmallImageName+" image")
 	cobra.CheckErr(flags.MarkHidden("preview"))
 	rootCmd.AddCommand(startCmd)
 }
