@@ -66,7 +66,6 @@ func NewSession(ctx context.Context, fsys afero.Fs) *Session {
 	}
 }
 
-
 // Run starts the dev session main loop
 func (s *Session) Run() error {
 	schemasConfig := &utils.Config.Dev.Schemas
@@ -389,4 +388,3 @@ func loadSchemaFiles(fsys afero.Fs) ([]string, error) {
 	})
 	return files, err
 }
-
