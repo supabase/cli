@@ -319,6 +319,13 @@ func TestValidateHookURI(t *testing.T) {
 			},
 			errorMsg: "Invalid hook config: auth.hook.valid pg-functions URI with unsupported secrets.secrets is unsupported for pg-functions URI",
 		},
+		{
+			name: "URI with env() reference skips validation",
+			hookConfig: hookConfig{
+				Enabled: true,
+				URI:     "env(SUPABASE_PROJECT_URL)/functions/v1/send-email",
+			},
+		},
 	}
 
 	for _, tt := range tests {
