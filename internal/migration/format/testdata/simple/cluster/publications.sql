@@ -1,1 +1,1 @@
-ALTER PUBLICATION supabase_realtime OWNER TO postgres;
+ALTER PUBLICATION "supabase_realtime" OWNER TO "postgres";

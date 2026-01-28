@@ -30,12 +30,13 @@ func TestWriteStructured(t *testing.T) {
 		const dumpPath = "dump.sql"
 
 		t.Run(testName, func(t *testing.T) {
-			sql, err := afero.ReadFile(testFs, dumpPath)
-			assert.NoError(t, err)
+			sql, err := testFs.Open(dumpPath)
+			require.NoError(t, err)
+			defer sql.Close()
 			// Setup in-memory fs
 			fsys := afero.NewMemMapFs()
 			// Run test
-			err = WriteStructuredSchemas(context.Background(), string(sql), fsys)
+			err = WriteStructuredSchemas(context.Background(), sql, fsys)
 			// Check error
 			assert.NoError(t, err)
 			err = afero.Walk(testFs, ".", func(fp string, info fs.FileInfo, err error) error {

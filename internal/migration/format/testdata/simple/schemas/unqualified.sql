@@ -1,1 +1,1 @@
-SELECT pg_catalog.set_config('search_path', '', FALSE);
+SELECT pg_catalog.set_config('search_path', '', false);

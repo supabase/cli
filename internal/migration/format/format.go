@@ -4,15 +4,17 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/go-errors/errors"
-	"github.com/multigres/multigres/go/parser"
+	mg "github.com/multigres/multigres/go/parser"
 	"github.com/multigres/multigres/go/parser/ast"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/parser"
 )
 
 var (
@@ -75,10 +77,10 @@ func getOperatorPath(schema, name string) string {
 	return filepath.Join(utils.SchemasDir, schema, "operators", name+".sql")
 }
 
-func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) error {
-	stat, err := parser.ParseSQL(sql)
+func WriteStructuredSchemas(ctx context.Context, sql io.Reader, fsys afero.Fs) error {
+	stat, err := parser.Split(sql, strings.TrimSpace)
 	if err != nil {
-		return errors.Errorf("failed to parse SQL: %w", err)
+		return err
 	}
 	for _, d := range []string{utils.ClusterDir, utils.SchemasDir, utils.DataDir} {
 		if err := fsys.RemoveAll(d); err != nil {
@@ -95,9 +97,15 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 	// Holds entities that depend on others but can be referenced directly by id
 	// Or those with ambiguous keywords like table / view, etc.
 	nodeToPath := map[string]string{}
-	for _, s := range stat {
+	for _, line := range stat {
 		name := unqualifiedPath
-		switch v := s.(type) {
+		parsed, err := mg.ParseSQL(line)
+		if err != nil {
+			return errors.Errorf("failed to parse SQL: %w", err)
+		} else if len(parsed) == 0 {
+			continue
+		}
+		switch v := parsed[0].(type) {
 		// Cluster level entities
 		case *ast.CreateRoleStmt, *ast.AlterRoleStmt, *ast.AlterRoleSetStmt, *ast.GrantRoleStmt:
 			name = rolesPath
@@ -362,7 +370,7 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 		case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt, *ast.CopyStmt, *ast.CallStmt, *ast.SelectStmt:
 		}
 		if name == unqualifiedPath {
-			fmt.Fprintf(utils.GetDebugLogger(), "Unqualified (%T): %s\n", s, s.SqlString())
+			fmt.Fprintf(utils.GetDebugLogger(), "Unqualified (%T): %s\n", parsed[0], line)
 		} else if strings.HasPrefix(name, utils.SchemasDir) {
 			schemaPaths = append(schemaPaths, name)
 			if filepath.Base(name) == "schema.sql" {
@@ -373,7 +381,7 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 				)
 			}
 		}
-		if err := appendFile(name, s.SqlString()+";\n", fsys); err != nil {
+		if err := appendLine(name, line, fsys); err != nil {
 			return err
 		}
 	}
@@ -613,7 +621,7 @@ func toQualifiedName(n *ast.NodeList) []string {
 	return r
 }
 
-func appendFile(name, data string, fsys afero.Fs) error {
+func appendLine(name, data string, fsys afero.Fs) error {
 	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(name)); err != nil {
 		return err
 	}
@@ -622,7 +630,7 @@ func appendFile(name, data string, fsys afero.Fs) error {
 		return errors.Errorf("failed to open file: %w", err)
 	}
 	defer f.Close()
-	if _, err := f.WriteString(data); err != nil {
+	if _, err := fmt.Fprintln(f, data); err != nil {
 		return errors.Errorf("failed to write file: %w", err)
 	}
 	return nil

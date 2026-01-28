@@ -48,7 +48,7 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 			return err
 		}
 		// TODO: handle managed schemas
-		return format.WriteStructuredSchemas(ctx, buf.String(), fsys)
+		return format.WriteStructuredSchemas(ctx, &buf, fsys)
 	}
 	// 2. Pull schema
 	timestamp := utils.GetCurrentTimestamp()
