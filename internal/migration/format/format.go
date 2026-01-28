@@ -63,6 +63,14 @@ func getRelationshipPath(schema, name string) string {
 	return filepath.Join(utils.SchemasDir, schema, "relationships", name+".sql")
 }
 
+func getDomainPath(schema, name string) string {
+	return filepath.Join(utils.SchemasDir, schema, "domains", name+".sql")
+}
+
+func getOperatorPath(schema, name string) string {
+	return filepath.Join(utils.SchemasDir, schema, "operators", name+".sql")
+}
+
 func getTableOrSequencePath(schema, name string, fsys afero.Fs) string {
 	// Tables may be renamed such that its sequence id doesn't contain the table name
 	if table, found := strings.CutSuffix(name, "_id_seq"); found {
@@ -130,73 +138,67 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 		case *ast.CreateSchemaStmt:
 			name = getSchemaPath(v.Schemaname)
 		case *ast.CreateOpFamilyStmt:
-			if s := getQualifiedSchema(v.OpFamilyName); s != nil {
-				name = getSchemaPath(s.SVal)
+			if s := toQualifiedName(v.OpFamilyName); len(s) == 2 {
+				name = getSchemaPath(s[0])
 			}
 		case *ast.AlterOpFamilyStmt:
-			if s := getQualifiedSchema(v.OpFamilyName); s != nil {
-				name = getSchemaPath(s.SVal)
+			if s := toQualifiedName(v.OpFamilyName); len(s) == 2 {
+				name = getSchemaPath(s[0])
 			}
 		case *ast.AlterCollationStmt:
-			if s := getQualifiedSchema(v.Collname); s != nil {
-				name = getSchemaPath(s.SVal)
+			if s := toQualifiedName(v.Collname); len(s) == 2 {
+				name = getSchemaPath(s[0])
 			}
 		case *ast.AlterTSDictionaryStmt:
-			if s := getQualifiedSchema(v.Dictname); s != nil {
-				name = getSchemaPath(s.SVal)
+			if s := toQualifiedName(v.Dictname); len(s) == 2 {
+				name = getSchemaPath(s[0])
 			}
 		case *ast.AlterTSConfigurationStmt:
-			if s := getQualifiedSchema(v.Cfgname); s != nil {
-				name = getSchemaPath(s.SVal)
+			if s := toQualifiedName(v.Cfgname); len(s) == 2 {
+				name = getSchemaPath(s[0])
 			}
 		// Schema level entities - types
+		case *ast.DefineStmt:
+			if s := getNodePath(v.Kind, v.DefNames, fsys); len(s) > 0 {
+				name = s
+			}
+		case *ast.AlterTypeStmt:
+			if s := toQualifiedName(v.TypeName); len(s) == 2 {
+				name = getTypesPath(s[0])
+			}
 		case *ast.CompositeTypeStmt:
 			if r := v.Typevar; r != nil && len(r.SchemaName) > 0 {
 				name = getTypesPath(r.SchemaName)
 			}
 		case *ast.AlterCompositeTypeStmt:
-			if s := getQualifiedSchema(v.TypeName); s != nil {
-				name = getTypesPath(s.SVal)
-			}
-		case *ast.AlterTypeStmt:
-			if s := getQualifiedSchema(v.TypeName); s != nil {
-				name = getTypesPath(s.SVal)
+			if s := toQualifiedName(v.TypeName); len(s) == 2 {
+				name = getTypesPath(s[0])
 			}
 		case *ast.CreateEnumStmt:
-			if s := getQualifiedSchema(v.TypeName); s != nil {
-				name = getTypesPath(s.SVal)
+			if s := toQualifiedName(v.TypeName); len(s) == 2 {
+				name = getTypesPath(s[0])
 			}
 		case *ast.AlterEnumStmt:
-			if s := getQualifiedSchema(v.TypeName); s != nil {
-				name = getTypesPath(s.SVal)
+			if s := toQualifiedName(v.TypeName); len(s) == 2 {
+				name = getTypesPath(s[0])
 			}
 		case *ast.CreateRangeStmt:
-			if s := getQualifiedSchema(v.TypeName); s != nil {
-				name = getTypesPath(s.SVal)
+			if s := toQualifiedName(v.TypeName); len(s) == 2 {
+				name = getTypesPath(s[0])
 			}
 		case *ast.CreateTransformStmt:
 			if t := v.TypeName; t != nil {
-				if s := getQualifiedSchema(t.Names); s != nil {
-					name = getTypesPath(s.SVal)
+				if s := toQualifiedName(t.Names); len(s) == 2 {
+					name = getTypesPath(s[0])
 				}
 			}
 		case *ast.CreateDomainStmt:
-			if s := getQualifiedSchema(v.Domainname); s != nil {
-				name = getTypesPath(s.SVal)
+			if s := toQualifiedName(v.Domainname); len(s) == 2 {
+				name = getDomainPath(s[0], s[1])
 			}
 		case *ast.AlterDomainStmt:
-			if s := getQualifiedSchema(v.TypeName); s != nil {
-				name = getTypesPath(s.SVal)
-			}
-		case *ast.CreateOpClassStmt:
-			if t := v.DataType; t != nil {
-				if s := getQualifiedSchema(t.Names); s != nil {
-					name = getTypesPath(s.SVal)
-				}
-			}
-		case *ast.DefineStmt:
-			if s := getQualifiedSchema(v.DefNames); s != nil {
-				name = getTypesPath(s.SVal)
+			if s := toQualifiedName(v.TypeName); len(s) == 2 {
+				name = getDomainPath(s[0], s[1])
 			}
 		// Schema level entities - relations
 		case *ast.CreateStmt:
@@ -307,6 +309,29 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 			if s := toQualifiedName(v.HandlerName); len(s) == 2 {
 				name = getFunctionPath(s[0], s[1])
 			}
+		case *ast.CreateConversionStmt:
+			if s := toQualifiedName(v.FuncName); len(s) == 2 {
+				name = getFunctionPath(s[0], s[1])
+			}
+		// Schema level entities - operators
+		case *ast.CreateOpClassStmt:
+			if t := v.DataType; t != nil {
+				if s := toQualifiedName(t.Names); len(s) == 2 {
+					name = getOperatorPath(s[0], s[1])
+				}
+			}
+		case *ast.CreateCastStmt:
+			if s := v.Func; s != nil {
+				if s := toQualifiedName(s.Objname); len(s) == 2 {
+					name = getOperatorPath(s[0], s[1])
+				}
+			}
+		case *ast.AlterOperatorStmt:
+			if t := v.Opername; t != nil {
+				if s := toQualifiedName(t.Objname); len(s) == 2 {
+					name = getOperatorPath(s[0], s[1])
+				}
+			}
 		// Schema level entities - others
 		case *ast.CommentStmt:
 			if s := getNodePath(v.Objtype, v.Object, fsys); len(s) > 0 {
@@ -369,24 +394,46 @@ func WriteStructuredSchemas(ctx context.Context, sql string, fsys afero.Fs) erro
 func getNodePath(obj ast.ObjectType, n ast.Node, fsys afero.Fs) string {
 	switch obj {
 	// case ast.OBJECT_ACCESS_METHOD:
-	// case ast.OBJECT_AGGREGATE:
+	case ast.OBJECT_AGGREGATE:
+		if s := getQualifiedName(n); len(s) == 2 {
+			return getOperatorPath(s[0], s[1])
+		}
 	// case ast.OBJECT_AMOP:
 	// case ast.OBJECT_AMPROC:
-	// case ast.OBJECT_ATTRIBUTE:
+	case ast.OBJECT_ATTRIBUTE:
+		if s := getQualifiedName(n); len(s) == 2 {
+			return getTypesPath(s[0])
+		}
 	// case ast.OBJECT_CAST:
 	case ast.OBJECT_COLUMN:
-		if nl, ok := n.(*ast.NodeList); ok {
-			if s := toQualifiedName(nl); len(s) == 3 {
-				return getTablePath(s[0], s[1])
-			}
+		if s := getQualifiedName(n); len(s) == 3 {
+			return getTablePath(s[0], s[1])
 		}
-	// case ast.OBJECT_COLLATION:
-	// case ast.OBJECT_CONVERSION:
+	case ast.OBJECT_COLLATION:
+		if s := getQualifiedName(n); len(s) == 2 {
+			return getSchemaPath(s[0])
+		}
+	case ast.OBJECT_CONVERSION:
+		if s := getQualifiedName(n); len(s) == 2 {
+			return getFunctionPath(s[0], s[1])
+		}
 	// case ast.OBJECT_DATABASE:
-	// case ast.OBJECT_DEFAULT:
-	// case ast.OBJECT_DEFACL:
-	// case ast.OBJECT_DOMAIN:
-	// case ast.OBJECT_DOMCONSTRAINT:
+	case ast.OBJECT_DEFAULT:
+		if s := getQualifiedName(n); len(s) == 1 {
+			return getSchemaPath(s[0])
+		}
+	case ast.OBJECT_DEFACL:
+		if s := getQualifiedName(n); len(s) == 1 {
+			return getSchemaPath(s[0])
+		}
+	case ast.OBJECT_DOMAIN:
+		if s := getQualifiedName(n); len(s) == 2 {
+			return getDomainPath(s[0], s[1])
+		}
+	case ast.OBJECT_DOMCONSTRAINT:
+		if s := getQualifiedName(n); len(s) == 3 {
+			return getDomainPath(s[0], s[1])
+		}
 	case ast.OBJECT_EVENT_TRIGGER:
 		return eventTriggersPath
 	case ast.OBJECT_EXTENSION:
@@ -396,131 +443,130 @@ func getNodePath(obj ast.ObjectType, n ast.Node, fsys afero.Fs) string {
 	case ast.OBJECT_FOREIGN_SERVER:
 		return foreignDWPath
 	case ast.OBJECT_FOREIGN_TABLE:
-		if nl, ok := n.(*ast.NodeList); ok {
-			if s := toQualifiedName(nl); len(s) == 2 {
-				return getTablePath(s[0], s[1])
-			}
-		} else if r, ok := n.(*ast.RangeVar); ok && len(r.SchemaName) > 0 {
-			return getTablePath(r.SchemaName, r.RelName)
+		if s := getQualifiedName(n); len(s) == 2 {
+			return getTablePath(s[0], s[1])
 		}
 	case ast.OBJECT_FUNCTION:
-		if s, ok := n.(*ast.ObjectWithArgs); ok {
-			if s := toQualifiedName(s.Objname); len(s) == 2 {
-				return getFunctionPath(s[0], s[1])
-			}
+		if s := getQualifiedName(n); len(s) == 2 {
+			return getFunctionPath(s[0], s[1])
 		}
 	// case ast.OBJECT_INDEX:
 	// case ast.OBJECT_LANGUAGE:
 	// case ast.OBJECT_LARGEOBJECT:
 	case ast.OBJECT_MATVIEW:
-		if nl, ok := n.(*ast.NodeList); ok {
-			if s := toQualifiedName(nl); len(s) == 2 {
-				return getMaterializedViewPath(s[0], s[1])
-			}
+		if s := getQualifiedName(n); len(s) == 2 {
+			return getMaterializedViewPath(s[0], s[1])
 		}
-	// case ast.OBJECT_OPCLASS:
-	// case ast.OBJECT_OPERATOR:
-	// case ast.OBJECT_OPFAMILY:
-	// case ast.OBJECT_PARAMETER_ACL:
+	case ast.OBJECT_OPCLASS:
+		if s := getQualifiedName(n); len(s) == 3 {
+			return getOperatorPath(s[1], s[2])
+		}
+	case ast.OBJECT_OPERATOR:
+		if s := getQualifiedName(n); len(s) == 2 {
+			return getOperatorPath(s[0], s[1])
+		}
+	case ast.OBJECT_OPFAMILY:
+		if s := getQualifiedName(n); len(s) == 2 {
+			return getSchemaPath(s[0])
+		}
+	case ast.OBJECT_PARAMETER_ACL:
+		return variablesPath
 	case ast.OBJECT_POLICY:
-		if nl, ok := n.(*ast.NodeList); ok {
-			if s := toQualifiedName(nl); len(s) == 3 {
-				return getRelationshipPath(s[0], s[1])
-			}
+		if s := getQualifiedName(n); len(s) == 3 {
+			return getRelationshipPath(s[0], s[1])
 		}
 	case ast.OBJECT_PROCEDURE:
-		if s, ok := n.(*ast.ObjectWithArgs); ok {
-			if s := toQualifiedName(s.Objname); len(s) == 2 {
-				return getFunctionPath(s[0], s[1])
-			}
+		// TODO: getFunctionOrProcedurePath
+		if s := getQualifiedName(n); len(s) == 2 {
+			return getFunctionPath(s[0], s[1])
 		}
 	case ast.OBJECT_PUBLICATION:
 		return publicationsPath
-	// case ast.OBJECT_PUBLICATION_NAMESPACE:
-	// case ast.OBJECT_PUBLICATION_REL:
+	case ast.OBJECT_PUBLICATION_NAMESPACE:
+		return publicationsPath
+	case ast.OBJECT_PUBLICATION_REL:
+		return publicationsPath
 	case ast.OBJECT_ROLE:
 		return rolesPath
 	case ast.OBJECT_ROUTINE:
-		if s, ok := n.(*ast.ObjectWithArgs); ok {
-			if s := toQualifiedName(s.Objname); len(s) == 2 {
-				return getFunctionPath(s[0], s[1])
-			}
+		if s := getQualifiedName(n); len(s) == 2 {
+			return getFunctionPath(s[0], s[1])
 		}
 	case ast.OBJECT_RULE:
+		if s := getQualifiedName(n); len(s) == 3 {
+			return getRelationshipPath(s[0], s[1])
+		}
 	case ast.OBJECT_SCHEMA:
-		if s, ok := n.(*ast.String); ok {
-			return getSchemaPath(s.SVal)
+		if s := getQualifiedName(n); len(s) == 1 {
+			return getSchemaPath(s[0])
 		}
 	case ast.OBJECT_SEQUENCE:
-		if s, ok := n.(*ast.RangeVar); ok {
-			return getTableOrSequencePath(s.SchemaName, s.RelName, fsys)
+		if s := getQualifiedName(n); len(s) == 2 {
+			return getTableOrSequencePath(s[0], s[1], fsys)
 		}
 	case ast.OBJECT_SUBSCRIPTION:
 		return subscriptionsPath
 	// case ast.OBJECT_STATISTIC_EXT:
 	case ast.OBJECT_TABCONSTRAINT:
-		if nl, ok := n.(*ast.NodeList); ok {
-			if s := toQualifiedName(nl); len(s) == 3 {
-				return getRelationshipPath(s[0], s[1])
-			}
+		if s := getQualifiedName(n); len(s) == 3 {
+			return getRelationshipPath(s[0], s[1])
 		}
 	case ast.OBJECT_TABLE:
-		if nl, ok := n.(*ast.NodeList); ok {
-			if s := toQualifiedName(nl); len(s) == 2 {
-				return getTableOrViewPath(s[0], s[1], fsys)
-			}
-		} else if r, ok := n.(*ast.RangeVar); ok && len(r.SchemaName) > 0 {
-			return getTableOrViewPath(r.SchemaName, r.RelName, fsys)
+		if s := getQualifiedName(n); len(s) == 2 {
+			return getTableOrViewPath(s[0], s[1], fsys)
 		}
 	case ast.OBJECT_TABLESPACE:
 		return tablespacesPath
-	case ast.OBJECT_TRANSFORM:
-		if nl, ok := n.(*ast.NodeList); ok && len(nl.Items) == 2 {
-			if s, ok := nl.Items[0].(*ast.String); ok {
-				return getTypesPath(s.SVal)
-			}
-		} else if t, ok := n.(*ast.TypeName); ok {
-			if s := toQualifiedName(t.Names); len(s) == 2 {
-				return getTypesPath(s[0])
-			}
-		}
+	// case ast.OBJECT_TRANSFORM:
 	case ast.OBJECT_TRIGGER:
-		if nl, ok := n.(*ast.NodeList); ok {
-			if s := toQualifiedName(nl); len(s) == 3 {
-				return getFunctionPath(s[0], s[1])
-			}
+		if s := getQualifiedName(n); len(s) == 3 {
+			return getFunctionPath(s[0], s[1])
 		}
-	// case ast.OBJECT_TSCONFIGURATION:
-	// case ast.OBJECT_TSDICTIONARY:
-	// case ast.OBJECT_TSPARSER:
-	// case ast.OBJECT_TSTEMPLATE:
+	case ast.OBJECT_TSCONFIGURATION:
+		if s := getQualifiedName(n); len(s) == 2 {
+			return getSchemaPath(s[0])
+		}
+	case ast.OBJECT_TSDICTIONARY:
+		if s := getQualifiedName(n); len(s) == 2 {
+			return getSchemaPath(s[0])
+		}
+	case ast.OBJECT_TSPARSER:
+		if s := getQualifiedName(n); len(s) == 2 {
+			return getSchemaPath(s[0])
+		}
+	case ast.OBJECT_TSTEMPLATE:
+		if s := getQualifiedName(n); len(s) == 2 {
+			return getSchemaPath(s[0])
+		}
 	case ast.OBJECT_TYPE:
-		if nl, ok := n.(*ast.NodeList); ok && len(nl.Items) == 2 {
-			if s, ok := nl.Items[0].(*ast.String); ok {
-				return getTypesPath(s.SVal)
-			}
-		} else if t, ok := n.(*ast.TypeName); ok {
-			if s := toQualifiedName(t.Names); len(s) == 2 {
-				return getTypesPath(s[0])
-			}
+		if s := getQualifiedName(n); len(s) == 2 {
+			return getTypesPath(s[0])
 		}
-	// case ast.OBJECT_USER_MAPPING:
+	case ast.OBJECT_USER_MAPPING:
+		return foreignDWPath
 	case ast.OBJECT_VIEW:
-		if nl, ok := n.(*ast.NodeList); ok {
-			if s := toQualifiedName(nl); len(s) == 2 {
-				return getViewPath(s[0], s[1])
-			}
+		if s := getQualifiedName(n); len(s) == 2 {
+			return getViewPath(s[0], s[1])
 		}
 	}
-	fmt.Fprintf(utils.GetDebugLogger(), "Object %s: %T\n", obj, n)
+	fmt.Fprintf(utils.GetDebugLogger(), "\tObject %s: %T\n", obj, n)
 	return ""
 }
 
-func getQualifiedSchema(n *ast.NodeList) *ast.String {
-	if n != nil && len(n.Items) == 2 {
-		if s, ok := n.Items[0].(*ast.String); ok {
-			return s
+func getQualifiedName(n ast.Node) []string {
+	switch v := n.(type) {
+	case *ast.NodeList:
+		return toQualifiedName(v)
+	case *ast.TypeName:
+		return toQualifiedName(v.Names)
+	case *ast.ObjectWithArgs:
+		return toQualifiedName(v.Objname)
+	case *ast.RangeVar:
+		if len(v.SchemaName) > 0 {
+			return []string{v.SchemaName, v.RelName}
 		}
+	case *ast.String:
+		return []string{v.SVal}
 	}
 	return nil
 }
