@@ -42,7 +42,7 @@ var (
 		PostRunE: func(cmd *cobra.Command, args []string) error {
 			if prof := viper.GetString("PROFILE"); viper.IsSet("PROFILE") {
 				// Failure to save should block subsequent commands on CI
-				return utils.WriteFile(utils.ProfilePath, []byte(prof), afero.NewOsFs())
+				return utils.SaveProfileName(prof, afero.NewOsFs())
 			}
 			return nil
 		},
