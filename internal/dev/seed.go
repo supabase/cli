@@ -6,10 +6,13 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
+	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/migration"
+	"github.com/supabase/cli/pkg/parser"
 )
 
 // runSeed executes seeding based on configuration
@@ -41,7 +44,10 @@ func (s *Session) runCustomSeed(command string) error {
 	return cmd.Run()
 }
 
-// runInternalSeed uses the built-in SeedData from pkg/migration
+// runInternalSeed always executes seed files in dev mode.
+// Unlike pkg/migration.SeedData which skips already-applied seeds (only updating the hash),
+// this function always re-executes the SQL. This is the expected behavior for dev mode
+// where users want their seed changes to be applied immediately.
 func (s *Session) runInternalSeed() error {
 	// Check if base seed config is enabled
 	if !utils.Config.Db.Seed.Enabled {
@@ -67,20 +73,67 @@ func (s *Session) runInternalSeed() error {
 	}
 	defer conn.Close(context.Background())
 
-	seeds, err := migration.GetPendingSeeds(
-		s.ctx,
-		utils.Config.Db.Seed.SqlPaths,
-		conn,
-		afero.NewIOFS(s.fsys),
-	)
-	if err != nil {
+	// Create seed table if needed (for hash tracking)
+	if err := migration.CreateSeedTable(s.ctx, conn); err != nil {
 		return err
 	}
 
-	if len(seeds) == 0 {
-		fmt.Fprintln(os.Stderr, "[dev] No pending seeds")
+	// Get seed file paths from config
+	seedPaths, err := utils.Config.Db.Seed.SqlPaths.Files(afero.NewIOFS(s.fsys))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "WARN:", err)
+	}
+
+	if len(seedPaths) == 0 {
+		fmt.Fprintln(os.Stderr, "[dev] No seed files found")
 		return nil
 	}
 
-	return migration.SeedData(s.ctx, seeds, conn, afero.NewIOFS(s.fsys))
+	// For dev mode: always execute all seed files (don't use GetPendingSeeds)
+	for _, seedPath := range seedPaths {
+		fmt.Fprintf(os.Stderr, "Seeding data from %s...\n", seedPath)
+
+		// Create seed file with hash
+		seed, err := migration.NewSeedFile(seedPath, afero.NewIOFS(s.fsys))
+		if err != nil {
+			return err
+		}
+
+		// Always execute the seed SQL (not just update hash like SeedData does for dirty seeds)
+		if err := executeSeedForDev(s.ctx, conn, seed, s.fsys); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// executeSeedForDev always executes the seed SQL and updates the hash.
+// This differs from SeedFile.ExecBatchWithCache which skips SQL execution for "dirty" seeds.
+func executeSeedForDev(ctx context.Context, conn *pgx.Conn, seed *migration.SeedFile, fsys afero.Fs) error {
+	// Open and parse the seed file
+	f, err := fsys.Open(seed.Path)
+	if err != nil {
+		return errors.Errorf("failed to open seed file: %w", err)
+	}
+	defer f.Close()
+
+	lines, err := parser.SplitAndTrim(f)
+	if err != nil {
+		return errors.Errorf("failed to parse seed file: %w", err)
+	}
+
+	// Build batch: all SQL statements + hash update
+	batch := pgx.Batch{}
+	for _, line := range lines {
+		batch.Queue(line)
+	}
+	// Update hash in seed_files table
+	batch.Queue(migration.UPSERT_SEED_FILE, seed.Path, seed.Hash)
+
+	if err := conn.SendBatch(ctx, &batch).Close(); err != nil {
+		return errors.Errorf("failed to execute seed: %w", err)
+	}
+
+	return nil
 }
