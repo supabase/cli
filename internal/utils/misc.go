@@ -77,6 +77,7 @@ var (
 	CliVersionPath        = filepath.Join(TempDir, "cli-latest")
 	ProfilePath           = filepath.Join(TempDir, "profile")
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
+	ClusterDir            = filepath.Join(SupabaseDirPath, "cluster")
 	SchemasDir            = filepath.Join(SupabaseDirPath, "schemas")
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
 	FunctionsDir          = filepath.Join(SupabaseDirPath, "functions")

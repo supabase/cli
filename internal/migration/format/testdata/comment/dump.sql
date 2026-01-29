@@ -1,0 +1,14 @@
+COMMENT ON TABLE public.table_name IS 'table comment';
+COMMENT ON COLUMN public.table_name.column_name IS 'column comment';
+COMMENT ON VIEW public.view_name IS 'view comment';
+COMMENT ON MATERIALIZED VIEW public.matview_name IS 'matview comment';
+COMMENT ON SCHEMA public IS 'schema comment';
+COMMENT ON DATABASE database_name IS 'database comment'; 
+COMMENT ON INDEX public.index_name IS 'index comment';
+COMMENT ON CONSTRAINT constraint_name ON public.table_name IS 'constraint comment';
+COMMENT ON FUNCTION public.function_name(args) IS 'function comment';
+COMMENT ON PROCEDURE public.procedure_name(args) IS 'procedure comment';
+COMMENT ON TRIGGER trigger_name ON public.table_name IS 'trigger comment';
+COMMENT ON TYPE public.type_name IS 'type comment';
+COMMENT ON EXTENSION extension_name IS 'extension comment';
+COMMENT ON ROLE role_name IS 'role comment';
