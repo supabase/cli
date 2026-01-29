@@ -1,6 +1,8 @@
 ## supabase-functions-serve
 
-Serve all Functions locally.
+Serve Functions locally.
+
+When no function names are provided, all functions in config.toml file plus those in the `supabase/functions` directory are served. When one or more function names are specified, only those functions will be served.
 
 `supabase functions serve` command includes additional flags to assist developers in debugging Edge Functions via the v8 inspector protocol, allowing for debugging via Chrome DevTools, VS Code, and IntelliJ IDEA for example. Refer to the [docs guide](/docs/guides/functions/debugging-tools) for setup instructions.
 

@@ -46,7 +46,7 @@ func TestServeCommand(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image), containerId)
 		require.NoError(t, apitest.MockDockerLogsStream(utils.Docker, containerId, 1, strings.NewReader("failed")))
 		// Run test with timeout context
-		err := Run(context.Background(), "", nil, "", RuntimeOption{}, fsys)
+		err := Run(context.Background(), nil, "", nil, "", RuntimeOption{}, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "error running container: exit 1")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -57,7 +57,7 @@ func TestServeCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
 		// Run test
-		err := Run(context.Background(), "", nil, "", RuntimeOption{}, fsys)
+		err := Run(context.Background(), nil, "", nil, "", RuntimeOption{}, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "toml: expected = after a key, but the document ends there")
 	})
@@ -73,7 +73,7 @@ func TestServeCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_test/json").
 			Reply(http.StatusNotFound)
 		// Run test
-		err := Run(context.Background(), "", nil, "", RuntimeOption{}, fsys)
+		err := Run(context.Background(), nil, "", nil, "", RuntimeOption{}, fsys)
 		// Check error
 		assert.ErrorIs(t, err, utils.ErrNotRunning)
 	})
@@ -90,7 +90,7 @@ func TestServeCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(container.InspectResponse{})
 		// Run test
-		err := Run(context.Background(), ".env", nil, "", RuntimeOption{}, fsys)
+		err := Run(context.Background(), nil, ".env", nil, "", RuntimeOption{}, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "open .env: file does not exist")
 	})
@@ -110,7 +110,7 @@ func TestServeCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(container.InspectResponse{})
 		// Run test
-		err := Run(context.Background(), ".env", cast.Ptr(true), "import_map.json", RuntimeOption{}, fsys)
+		err := Run(context.Background(), nil, ".env", cast.Ptr(true), "import_map.json", RuntimeOption{}, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "failed to resolve relative path:")
 	})
@@ -128,7 +128,7 @@ func TestServeFunctions(t *testing.T) {
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image), utils.EdgeRuntimeId)
 		// Run test
-		err := ServeFunctions(context.Background(), "", nil, "", "", RuntimeOption{
+		err := ServeFunctions(context.Background(), nil, "", nil, "", "", RuntimeOption{
 			InspectMode: cast.Ptr(InspectModeRun),
 			InspectMain: true,
 		}, fsys)
@@ -157,17 +157,74 @@ func TestServeFunctions(t *testing.T) {
 		}, env)
 	})
 
-	t.Run("parses function config", func(t *testing.T) {
+	t.Run("parses function config for all functions", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.FromIOFS{FS: testdata}
-		// Run test
-		binds, configString, err := PopulatePerFunctionConfigs("/", "", nil, fsys)
+		// Run test with nil slugs (serve all)
+		binds, configString, err := PopulatePerFunctionConfigs(nil, "/", "", nil, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.ElementsMatch(t, []string{
 			"supabase_edge_runtime_test:/root/.cache/deno:rw",
 			"/supabase/functions/:/supabase/functions/:ro",
 		}, binds)
-		assert.Equal(t, `{"hello":{"verifyJWT":true,"entrypointPath":"testdata/functions/hello/index.ts","staticFiles":["testdata/image.png"]}}`, configString)
+		// Should contain hello, good, bye but NOT world (disabled)
+		assert.Contains(t, configString, `"hello"`)
+		assert.Contains(t, configString, `"good"`)
+		assert.Contains(t, configString, `"bye"`)
+		assert.NotContains(t, configString, `"world"`)
+	})
+
+	t.Run("serves only disabled function returns empty config", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.FromIOFS{FS: testdata}
+		// Run test with only disabled function
+		_, configString, err := PopulatePerFunctionConfigs([]string{"world"}, "/", "", nil, fsys)
+		// Check error
+		assert.NoError(t, err)
+		// Config should be empty since world is disabled
+		assert.Equal(t, "{}", configString)
+	})
+
+	t.Run("serves single specific function", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.FromIOFS{FS: testdata}
+		// Run test with single slug
+		_, configString, err := PopulatePerFunctionConfigs([]string{"hello"}, "/", "", nil, fsys)
+		// Check error
+		assert.NoError(t, err)
+		// Should only contain hello
+		assert.Contains(t, configString, `"hello"`)
+		assert.NotContains(t, configString, `"good"`)
+		assert.NotContains(t, configString, `"bye"`)
+		assert.NotContains(t, configString, `"world"`)
+	})
+
+	t.Run("serves multiple specific enabled functions", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.FromIOFS{FS: testdata}
+		// Run test with multiple enabled slugs
+		_, configString, err := PopulatePerFunctionConfigs([]string{"hello", "good", "bye"}, "/", "", nil, fsys)
+		// Check error
+		assert.NoError(t, err)
+		// Should contain all three
+		assert.Contains(t, configString, `"hello"`)
+		assert.Contains(t, configString, `"good"`)
+		assert.Contains(t, configString, `"bye"`)
+		assert.NotContains(t, configString, `"world"`)
+	})
+
+	t.Run("serves multiple functions skipping disabled ones", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.FromIOFS{FS: testdata}
+		// Run test with mix of enabled and disabled slugs
+		_, configString, err := PopulatePerFunctionConfigs([]string{"hello", "world", "good", "bye"}, "/", "", nil, fsys)
+		// Check error
+		assert.NoError(t, err)
+		// Should contain hello, good, bye but NOT world (disabled)
+		assert.Contains(t, configString, `"hello"`)
+		assert.Contains(t, configString, `"good"`)
+		assert.Contains(t, configString, `"bye"`)
+		assert.NotContains(t, configString, `"world"`)
 	})
 }

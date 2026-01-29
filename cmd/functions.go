@@ -15,6 +15,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/cast"
+	"github.com/supabase/cli/pkg/config"
 )
 
 var (
@@ -106,13 +107,20 @@ var (
 	runtimeOption serve.RuntimeOption
 
 	functionsServeCmd = &cobra.Command{
-		Use:   "serve",
-		Short: "Serve all Functions locally",
+		Use:   "serve [Function name]",
+		Short: "Serve Functions locally",
+		Long:  "Serve Functions locally, omit function names to serve all Functions.",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			cmd.GroupID = groupLocalDev
 			return cmd.Root().PersistentPreRunE(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			for _, slug := range args {
+				if err := config.ValidateFunctionSlug(slug); err != nil {
+					return err
+				}
+			}
+
 			// Fallback to config if user did not set the flag.
 			if !cmd.Flags().Changed("no-verify-jwt") {
 				noVerifyJWT = nil
@@ -127,7 +135,7 @@ var (
 				return fmt.Errorf("--inspect-main must be used together with one of these flags: [inspect inspect-mode]")
 			}
 
-			return serve.Run(cmd.Context(), envFilePath, noVerifyJWT, importMapPath, runtimeOption, afero.NewOsFs())
+			return serve.Run(cmd.Context(), args, envFilePath, noVerifyJWT, importMapPath, runtimeOption, afero.NewOsFs())
 		},
 	}
 )
@@ -154,7 +162,7 @@ func init() {
 	functionsServeCmd.Flags().Var(&inspectMode, "inspect-mode", "Activate inspector capability for debugging.")
 	functionsServeCmd.Flags().BoolVar(&runtimeOption.InspectMain, "inspect-main", false, "Allow inspecting the main worker.")
 	functionsServeCmd.MarkFlagsMutuallyExclusive("inspect", "inspect-mode")
-	functionsServeCmd.Flags().Bool("all", true, "Serve all Functions.")
+	functionsServeCmd.Flags().Bool("all", true, "Serve all Functions.") // TODO: maybe remove this flag in next major release? it currently does nothing
 	cobra.CheckErr(functionsServeCmd.Flags().MarkHidden("all"))
 	downloadFlags := functionsDownloadCmd.Flags()
 	downloadFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
