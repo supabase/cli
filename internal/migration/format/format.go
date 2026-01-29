@@ -65,8 +65,8 @@ func getViewPath(schema, name string) string {
 	return filepath.Join(utils.SchemasDir, schema, "views", name+".sql")
 }
 
-func getRelationshipPath(schema, name string) string {
-	return filepath.Join(utils.SchemasDir, schema, "relationships", name+".sql")
+func getPolicyPath(schema, name string) string {
+	return filepath.Join(utils.SchemasDir, schema, "policies", name+".sql")
 }
 
 func getDomainPath(schema, name string) string {
@@ -214,7 +214,7 @@ func WriteStructuredSchemas(ctx context.Context, sql io.Reader, fsys afero.Fs) e
 								if n, ok := t.Def.(*ast.Constraint); ok {
 									switch n.Contype {
 									case ast.CONSTR_FOREIGN:
-										name = getRelationshipPath(r.SchemaName, r.RelName)
+										name = getPolicyPath(r.SchemaName, r.RelName)
 									}
 								}
 							}
@@ -275,15 +275,15 @@ func WriteStructuredSchemas(ctx context.Context, sql io.Reader, fsys afero.Fs) e
 			}
 		case *ast.CreatePolicyStmt:
 			if r := v.Table; r != nil && len(r.SchemaName) > 0 {
-				name = getRelationshipPath(r.SchemaName, r.RelName)
+				name = getPolicyPath(r.SchemaName, r.RelName)
 			}
 		case *ast.AlterPolicyStmt:
 			if r := v.Table; r != nil && len(r.SchemaName) > 0 {
-				name = getRelationshipPath(r.SchemaName, r.RelName)
+				name = getPolicyPath(r.SchemaName, r.RelName)
 			}
 		case *ast.RuleStmt:
 			if r := v.Relation; r != nil && len(r.SchemaName) > 0 {
-				name = getRelationshipPath(r.SchemaName, r.RelName)
+				name = getPolicyPath(r.SchemaName, r.RelName)
 			}
 		// Schema level entities - functions
 		case *ast.CreateFunctionStmt:
@@ -300,7 +300,7 @@ func WriteStructuredSchemas(ctx context.Context, sql io.Reader, fsys afero.Fs) e
 			}
 		case *ast.CreateTriggerStmt:
 			if r := v.Relation; r != nil && len(r.SchemaName) > 0 {
-				name = getRelationshipPath(r.SchemaName, r.RelName)
+				name = getPolicyPath(r.SchemaName, r.RelName)
 			} else if s := toQualifiedName(v.Funcname); len(s) == 2 {
 				name = getFunctionPath(s[0], s[1])
 			}
@@ -480,7 +480,7 @@ func getNodePath(obj ast.ObjectType, n ast.Node, seen map[string]string) string 
 		return variablesPath
 	case ast.OBJECT_POLICY:
 		if s := getQualifiedName(n); len(s) == 3 {
-			return getRelationshipPath(s[0], s[1])
+			return getPolicyPath(s[0], s[1])
 		}
 	case ast.OBJECT_PROCEDURE:
 		if s := getQualifiedName(n); len(s) == 2 {
@@ -500,7 +500,7 @@ func getNodePath(obj ast.ObjectType, n ast.Node, seen map[string]string) string 
 		}
 	case ast.OBJECT_RULE:
 		if s := getQualifiedName(n); len(s) == 3 {
-			return getRelationshipPath(s[0], s[1])
+			return getPolicyPath(s[0], s[1])
 		}
 	case ast.OBJECT_SCHEMA:
 		if s := getQualifiedName(n); len(s) == 1 {
@@ -526,7 +526,7 @@ func getNodePath(obj ast.ObjectType, n ast.Node, seen map[string]string) string 
 	// case ast.OBJECT_STATISTIC_EXT:
 	case ast.OBJECT_TABCONSTRAINT:
 		if s := getQualifiedName(n); len(s) == 3 {
-			return getRelationshipPath(s[0], s[1])
+			return getPolicyPath(s[0], s[1])
 		}
 	case ast.OBJECT_TABLE:
 		if s := getQualifiedName(n); len(s) == 2 {
