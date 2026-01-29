@@ -137,16 +137,17 @@ var (
 		},
 	}
 
-	dryRun       bool
-	includeAll   bool
-	includeRoles bool
-	includeSeed  bool
+	dryRun         bool
+	includeAll     bool
+	includeRoles   bool
+	includeSeed    bool
+	skipDriftCheck bool
 
 	dbPushCmd = &cobra.Command{
 		Use:   "push",
 		Short: "Push new migrations to the remote database",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return push.Run(cmd.Context(), dryRun, includeAll, includeRoles, includeSeed, flags.DbConfig, afero.NewOsFs())
+			return push.Run(cmd.Context(), dryRun, includeAll, includeRoles, includeSeed, skipDriftCheck, flags.DbConfig, afero.NewOsFs())
 		},
 	}
 
@@ -289,6 +290,7 @@ func init() {
 	pushFlags.BoolVar(&includeRoles, "include-roles", false, "Include custom roles from "+utils.CustomRolesPath+".")
 	pushFlags.BoolVar(&includeSeed, "include-seed", false, "Include seed data from your config.")
 	pushFlags.BoolVar(&dryRun, "dry-run", false, "Print the migrations that would be applied, but don't actually apply them.")
+	pushFlags.BoolVar(&skipDriftCheck, "skip-drift-check", false, "Skip checking for uncommitted local schema changes.")
 	pushFlags.String("db-url", "", "Pushes to the database specified by the connection string (must be percent-encoded).")
 	pushFlags.Bool("linked", true, "Pushes to the linked project.")
 	pushFlags.Bool("local", false, "Pushes to the local database.")

@@ -199,8 +199,13 @@ func GetRegistryImageUrl(imageName string) string {
 	if registry == "docker.io" {
 		return imageName
 	}
-	// Configure mirror registry
+	// Check if this is a third-party image (not supabase/)
+	// Third-party images like "oven/bun:tag" should be pulled from Docker Hub directly
 	parts := strings.Split(imageName, "/")
+	if len(parts) >= 2 && parts[0] != "supabase" {
+		return imageName
+	}
+	// Configure mirror registry for Supabase images
 	imageName = parts[len(parts)-1]
 	return registry + "/supabase/" + imageName
 }

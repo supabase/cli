@@ -17,10 +17,56 @@ import (
 	"github.com/supabase/cli/pkg/vault"
 )
 
-func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, includeSeed bool, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, includeSeed, skipDriftCheck bool, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "DRY RUN: migrations will *not* be pushed to the database.")
 	}
+
+	// Check for local drift before connecting to remote
+	// Only check when:
+	// 1. Not skipped via flag
+	// 2. Not pushing to local database (drift is only meaningful for remote)
+	// 3. Local database is running
+	var newMigration string
+	if !skipDriftCheck && !utils.IsLocalDatabase(config) {
+		if err := utils.AssertSupabaseDbIsRunning(); err == nil {
+			result, err := CheckLocalDrift(ctx, fsys)
+			if err != nil {
+				// Non-fatal warning - don't block push if drift check fails
+				fmt.Fprintf(os.Stderr, "%s Failed to check for drift: %s\n\n", utils.Yellow("Warning:"), err.Error())
+			} else if result.HasDrift {
+				fmt.Fprint(os.Stderr, FormatDriftWarning(result))
+
+				if dryRun {
+					// In dry-run mode, just show what would happen
+					fmt.Fprintln(os.Stderr, "\nWould prompt to create migration or continue.")
+				} else {
+					action, err := PromptDriftAction(ctx)
+					if err != nil {
+						return err
+					}
+					switch action {
+					case DriftActionCreateMigration:
+						// Create migration using SQL already in memory (no redundant diff!)
+						path, err := CreateMigrationFromDrift(ctx, result.DiffSQL, fsys)
+						if err != nil {
+							return err
+						}
+						newMigration = path
+						fmt.Fprintf(os.Stderr, "\nCreated migration: %s\n\n", utils.Bold(path))
+					case DriftActionContinue:
+						// Continue without creating migration
+						fmt.Fprintln(os.Stderr)
+					case DriftActionCancel:
+						return errors.New(context.Canceled)
+					}
+				}
+			} else {
+				fmt.Fprintln(os.Stderr, utils.Green("✓")+" No uncommitted schema changes detected.\n")
+			}
+		}
+	}
+
 	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
 		return err
@@ -31,6 +77,11 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 		fmt.Fprintln(os.Stderr, "Skipping migrations because it is disabled in config.toml for project:", flags.ProjectRef)
 	} else if pending, err = up.GetPendingMigrations(ctx, ignoreVersionMismatch, conn, fsys); err != nil {
 		return err
+	}
+
+	// If we created a new migration from drift, add it to the pending list
+	if newMigration != "" {
+		pending = append(pending, newMigration)
 	}
 	var seeds []migration.SeedFile
 	if includeSeed {
