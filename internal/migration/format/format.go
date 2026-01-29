@@ -79,6 +79,23 @@ func getOperatorPath(schema, name string) string {
 	return filepath.Join(utils.SchemasDir, schema, "operators", name+".sql")
 }
 
+func getSequenceOrTablePath(schema, name string, seen map[string]string) string {
+	keys := []string{fmt.Sprintf("%s.%s.%s", ast.OBJECT_SEQUENCE, schema, name)}
+	// Find sequences that were created implicitly with tables
+	parts := strings.Split(name, "_")
+	for i := len(parts) - 2; i > 0; i-- {
+		table := strings.Join(parts[:i], "_")
+		keys = append(keys, fmt.Sprintf("%s.%s.%s", ast.OBJECT_TABLE, schema, table))
+	}
+	for _, k := range keys {
+		if fp, found := seen[k]; found {
+			return fp
+		}
+	}
+	// Tables may be renamed such that its sequence id doesn't contain the table name
+	return getSequencesPath(schema)
+}
+
 func WriteStructuredSchemas(ctx context.Context, sql io.Reader, fsys afero.Fs) error {
 	stat, err := parser.Split(sql, strings.TrimSpace)
 	if err != nil {
@@ -210,7 +227,7 @@ func WriteStructuredSchemas(ctx context.Context, sql io.Reader, fsys afero.Fs) e
 				// TODO: alter sequence / view owner may be parsed to wrong ast
 				switch v.Objtype {
 				case ast.OBJECT_SEQUENCE:
-					name = getSequencesPath(r.SchemaName)
+					name = getSequenceOrTablePath(r.SchemaName, r.RelName, nodeToPath)
 				case ast.OBJECT_VIEW:
 					name = getViewPath(r.SchemaName, r.RelName)
 				default:
@@ -541,18 +558,7 @@ func getNodePath(obj ast.ObjectType, n ast.Node, seen map[string]string) string 
 		}
 	case ast.OBJECT_SEQUENCE:
 		if s := getQualifiedName(n); len(s) == 2 {
-			keys := []string{fmt.Sprintf("%s.%s.%s", obj, s[0], s[1])}
-			// TODO: include sequences that were created implicitly with tables
-			if table, found := strings.CutSuffix(s[1], "_id_seq"); found {
-				keys = append(keys, fmt.Sprintf("%s.%s.%s", ast.OBJECT_TABLE, s[0], table))
-			}
-			for _, k := range keys {
-				if fp, found := seen[k]; found {
-					return fp
-				}
-			}
-			// Tables may be renamed such that its sequence id doesn't contain the table name
-			return getSequencesPath(s[0])
+			return getSequenceOrTablePath(s[0], s[1], seen)
 		}
 	case ast.OBJECT_SUBSCRIPTION:
 		return subscriptionsPath
@@ -563,7 +569,7 @@ func getNodePath(obj ast.ObjectType, n ast.Node, seen map[string]string) string 
 		}
 	case ast.OBJECT_TABLE:
 		if s := getQualifiedName(n); len(s) == 2 {
-			// View and table grants share the same keyword
+			// View and table grants can share the same keyword
 			keys := []string{
 				fmt.Sprintf("%s.%s.%s", obj, s[0], s[1]),
 				fmt.Sprintf("%s.%s.%s", ast.OBJECT_VIEW, s[0], s[1]),
@@ -685,7 +691,7 @@ func appendConfig(fsys afero.Fs) error {
 		return errors.Errorf("failed to read config: %w", err)
 	}
 	if newConfig := pattern.ReplaceAllLiteral(data, []byte(schemaPaths)); !bytes.Equal(data, newConfig) {
-		return utils.WriteFile(utils.ConfigPath, []byte(newConfig), fsys)
+		return utils.WriteFile(utils.ConfigPath, newConfig, fsys)
 	}
 	// Fallback to append
 	f, err := fsys.OpenFile(utils.ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
