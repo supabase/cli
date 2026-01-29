@@ -435,7 +435,7 @@ var (
 	initConfigEmbed    string
 	initConfigTemplate = template.Must(template.New("initConfig").Parse(initConfigEmbed))
 
-	invalidProjectId = regexp.MustCompile("[^a-zA-Z0-9_.-]+")
+	invalidProjectId = regexp.MustCompile("[^a-zA-Z0-9_-]+")
 	refPattern       = regexp.MustCompile(`^[a-z]{20}$`)
 )
 
@@ -975,10 +975,10 @@ func truncateText(text string, maxLen int) string {
 const maxProjectIdLength = 40
 
 func sanitizeProjectId(src string) string {
-	// A valid project ID must only contain alphanumeric and special characters _.-
+	// A valid project ID must only contain alphanumeric and special characters _-
 	sanitized := invalidProjectId.ReplaceAllString(src, "_")
 	// It must also start with an alphanumeric character
-	sanitized = strings.TrimLeft(sanitized, "_.-")
+	sanitized = strings.TrimLeft(sanitized, "_-")
 	// Truncate sanitized ID to 40 characters since docker hostnames cannot exceed
 	// 63 characters, and we need to save space for padding supabase_*_edge_runtime.
 	return truncateText(sanitized, maxProjectIdLength)
