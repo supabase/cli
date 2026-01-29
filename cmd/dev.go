@@ -1,10 +1,15 @@
 package cmd
 
 import (
+	"os"
+
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/dev"
+	"golang.org/x/term"
 )
+
+var skipOnboarding bool
 
 var devCmd = &cobra.Command{
 	GroupID: groupLocalDev,
@@ -12,6 +17,14 @@ var devCmd = &cobra.Command{
 	Short:   "Start reactive development mode with multiple workflows",
 	Long: `Start a development session that watches for file changes and
 automatically applies them to your local environment.
+
+If no Supabase project exists, dev will guide you through setup:
+  1. Initialize config.toml if missing
+  2. Optionally link to a remote Supabase project
+  3. Pull schema/functions from remote if linked
+  4. Start local development environment
+
+Use --skip-onboarding to bypass the setup wizard.
 
 WORKFLOWS:
 
@@ -48,10 +61,15 @@ DEBUG LOGGING:
 
 Press Ctrl+C to stop the development session.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return dev.Run(cmd.Context(), afero.NewOsFs())
+		opts := dev.RunOptions{
+			SkipOnboarding: skipOnboarding,
+			Interactive:    term.IsTerminal(int(os.Stdin.Fd())),
+		}
+		return dev.Run(cmd.Context(), afero.NewOsFs(), opts)
 	},
 }
 
 func init() {
+	devCmd.Flags().BoolVar(&skipOnboarding, "skip-onboarding", false, "Skip the interactive setup wizard")
 	rootCmd.AddCommand(devCmd)
 }

@@ -12,24 +12,41 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/dev/onboarding"
 	"github.com/supabase/cli/internal/start"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 )
 
-// Run starts the dev session
-func Run(ctx context.Context, fsys afero.Fs) error {
-	// Load config first
-	if err := flags.LoadConfig(fsys); err != nil {
-		return err
+// RunOptions configures the dev command behavior
+type RunOptions struct {
+	SkipOnboarding bool
+	Interactive    bool
+}
+
+// Run starts the dev session with optional onboarding
+func Run(ctx context.Context, fsys afero.Fs, opts RunOptions) error {
+	// Step 1: Run onboarding if not skipped
+	if !opts.SkipOnboarding {
+		onboardingOpts := onboarding.Options{
+			Interactive: opts.Interactive,
+		}
+		if _, err := onboarding.Run(ctx, fsys, onboardingOpts); err != nil {
+			return err
+		}
+	} else {
+		// Skip onboarding, just load config directly
+		if err := flags.LoadConfig(fsys); err != nil {
+			return err
+		}
 	}
 
-	// Ensure local database is running
+	// Step 2: Ensure local database is running
 	if err := ensureDbRunning(ctx, fsys); err != nil {
 		return err
 	}
 
-	// Create and run the dev session
+	// Step 3: Create and run the dev session
 	session := NewSession(ctx, fsys)
 	return session.Run()
 }

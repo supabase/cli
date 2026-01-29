@@ -84,9 +84,11 @@ types = "src/types/database.ts"   # Auto-generate TypeScript types
 ```
 
 **Supported workflows:**
-- **Supabase native** (default): SQL files in `supabase/schemas/`
-- **Drizzle ORM**: `on_change = "npx drizzle-kit push"`
-- **Prisma ORM**: `on_change = "npx prisma db push --skip-generate"`
+- **Supabase native** (default): SQL files in `supabase/schemas/`, uses internal differ
+- **Custom tooling**: Any external command via `on_change`:
+  - Drizzle: `on_change = "npx drizzle-kit push"`
+  - Prisma: `on_change = "npx prisma db push --skip-generate"`
+  - Or any custom script/command
 - **Disabled**: `enabled = false` for users with their own watch tooling
 
 ### 6. Automatic Seeding
@@ -199,14 +201,166 @@ DEBUG=supabase:dev:sql      # SQL statements being executed
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Pipeline Flow
+### Workflow Diagrams
 
+#### Dev Session Lifecycle
+
+```mermaid
+flowchart TD
+    Start([supabase dev]) --> CheckDB{Database running?}
+    CheckDB -->|No| StartDB[Start local database]
+    CheckDB -->|Yes| UseExisting[Use existing database]
+    StartDB --> InitSchema
+    UseExisting --> InitSchema
+
+    InitSchema[Initial schema sync] --> InitSeed{Seed enabled?}
+    InitSeed -->|Yes| RunSeed[Run initial seed]
+    InitSeed -->|No| Watch
+    RunSeed --> Watch
+
+    Watch[Watch for file changes] --> Event{Event type?}
+
+    Event -->|Schema file| SchemaFlow[Schema workflow]
+    Event -->|Seed file| SeedFlow[Seed workflow]
+    Event -->|Migration file| MigrationFlow[Invalidate shadow template]
+    Event -->|Ctrl+C| Shutdown
+
+    SchemaFlow --> Watch
+    SeedFlow --> Watch
+    MigrationFlow --> Watch
+
+    Shutdown{Dirty state?} -->|Yes| WarnDirty[Warn: uncommitted changes]
+    Shutdown -->|No| Cleanup
+    WarnDirty --> Cleanup
+    Cleanup[Cleanup shadow container] --> End([Exit])
 ```
-File save → Debounce (500ms) → Validate ALL *.sql → Diff → Apply
-                                     │
-                                     ↓ (if invalid)
-                               Show error with location
-                               Wait for next save...
+
+#### Schema Workflow
+
+```mermaid
+flowchart TD
+    FileChange([Schema file changed]) --> Debounce[Debounce 500ms]
+    Debounce --> CheckEnabled{schemas.enabled?}
+
+    CheckEnabled -->|No| Skip([Skip])
+    CheckEnabled -->|Yes| CheckOnChange{on_change set?}
+
+    %% Custom command path
+    CheckOnChange -->|Yes| RunCustom[Run custom command]
+    RunCustom --> CustomResult{Success?}
+    CustomResult -->|Yes| MarkDirty[Mark session dirty]
+    CustomResult -->|No| ShowError1[Show error]
+    ShowError1 --> Done
+
+    %% Internal differ path
+    CheckOnChange -->|No| LoadFiles[Load all schema files]
+    LoadFiles --> Validate[Validate SQL syntax]
+
+    Validate --> ValidResult{Valid?}
+    ValidResult -->|No| ShowSyntaxError[Show syntax error with location]
+    ShowSyntaxError --> Done([Wait for next change])
+
+    ValidResult -->|Yes| PrepareShadow[Prepare shadow DB]
+    PrepareShadow --> ApplyShadow[Apply schemas to shadow]
+    ApplyShadow --> Diff[Diff local vs shadow]
+
+    Diff --> HasChanges{Changes detected?}
+    HasChanges -->|No| NoChanges[No schema changes]
+    NoChanges --> Done
+
+    HasChanges -->|Yes| CheckDrops{DROP statements?}
+    CheckDrops -->|Yes| WarnDrops[Show DROP warning]
+    CheckDrops -->|No| Apply
+    WarnDrops --> Apply
+
+    Apply[Apply changes to local DB] --> MarkDirty
+    MarkDirty --> GenTypes{types configured?}
+    GenTypes -->|Yes| GenerateTypes[Generate TypeScript types]
+    GenTypes -->|No| Done
+    GenerateTypes --> Done
+
+    style RunCustom fill:#e1f5fe
+    style Diff fill:#fff3e0
+    style Apply fill:#e8f5e9
+```
+
+#### Seed Workflow
+
+```mermaid
+flowchart TD
+    Trigger([Seed triggered]) --> Source{Trigger source?}
+
+    Source -->|Startup| AfterSchema[After initial schema sync]
+    Source -->|File change| FileChange[Seed file modified]
+
+    AfterSchema --> CheckEnabled
+    FileChange --> CheckEnabled{seed.enabled?}
+
+    CheckEnabled -->|No| Skip([Skip])
+    CheckEnabled -->|Yes| CheckOnChange{on_change set?}
+
+    %% Custom command path
+    CheckOnChange -->|Yes| RunCustom[Run custom command]
+    RunCustom --> CustomResult{Success?}
+    CustomResult -->|Yes| Done([Done])
+    CustomResult -->|No| ShowError[Show error, continue watching]
+    ShowError --> Done
+
+    %% Internal seed path
+    CheckOnChange -->|No| CheckDbSeed{db.seed.enabled?}
+    CheckDbSeed -->|No| NoSeed[No seed config]
+    NoSeed --> Done
+
+    CheckDbSeed -->|Yes| LoadPaths[Load seed file paths]
+    LoadPaths --> HasFiles{Files found?}
+    HasFiles -->|No| NoFiles[No seed files found]
+    NoFiles --> Done
+
+    HasFiles -->|Yes| ForEach[For each seed file]
+    ForEach --> ParseSQL[Parse SQL statements]
+    ParseSQL --> Execute[Execute all statements]
+    Execute --> UpdateHash[Update hash in seed_files table]
+    UpdateHash --> MoreFiles{More files?}
+    MoreFiles -->|Yes| ForEach
+    MoreFiles -->|No| Done
+
+    style RunCustom fill:#e1f5fe
+    style Execute fill:#e8f5e9
+```
+
+#### Shadow Database: Cold Start (~14s)
+
+```mermaid
+flowchart TD
+    Start([Diff requested]) --> CheckContainer{Shadow container exists?}
+    CheckContainer -->|Yes| FastPath([Use fast path])
+    CheckContainer -->|No| CreateContainer[Create shadow container]
+    CreateContainer --> ApplyMigrations[Apply all migrations]
+    ApplyMigrations --> SnapshotRoles[Snapshot baseline roles]
+    SnapshotRoles --> CreateTemplate[CREATE DATABASE shadow_template]
+    CreateTemplate --> Ready([Template ready])
+
+    style CreateContainer fill:#fff3e0
+    style ApplyMigrations fill:#fff3e0
+    style CreateTemplate fill:#fff3e0
+```
+
+#### Shadow Database: Fast Path (~10ms)
+
+```mermaid
+flowchart TD
+    Start([Diff requested]) --> CleanRoles[Clean non-baseline roles]
+    CleanRoles --> DropDB[DROP DATABASE contrib_regression]
+    DropDB --> CloneTemplate[CREATE DATABASE ... TEMPLATE shadow_template]
+    CloneTemplate --> ApplySchemas[Apply declared schemas]
+    ApplySchemas --> RunDiff[Run pg-delta diff]
+    RunDiff --> Done([Diff complete])
+
+    style CleanRoles fill:#e8f5e9
+    style DropDB fill:#e8f5e9
+    style CloneTemplate fill:#e8f5e9
+    style ApplySchemas fill:#e8f5e9
+    style RunDiff fill:#e8f5e9
 ```
 
 ## Performance Optimization: Persistent Shadow Database
@@ -271,11 +425,20 @@ PostgreSQL template databases only copy **database-scoped objects** (tables, vie
 ## CLI Usage
 
 ```bash
-# Start dev mode (starts database if not running)
 supabase dev
+```
 
-# With debug logging
-DEBUG=supabase:dev:* supabase dev
+**Workflows** (configured via `config.toml`):
+- `schemas` - Watch schema files, auto-apply to local database
+- `seed` - Run seeds on startup and when seed files change
+- `functions` - (coming soon) Watch and auto-deploy edge functions
+
+**Flags**: None currently. All configuration is done via `config.toml`.
+
+**Debug logging** (via environment variable):
+```bash
+DEBUG=supabase:dev:* supabase dev       # All dev logs
+DEBUG=supabase:dev:timing supabase dev  # Timing information only
 ```
 
 ## Configuration Examples
@@ -423,10 +586,53 @@ The `[dev.functions]` config structure is already in place. Future work includes
 - Auto-deploy to local edge runtime
 - Unified dev experience for schema + functions
 
-### 4. Additional Workflows
+### 4. Interactive Setup Wizard
 
-- **Lazy service startup** - start only database immediately, other services on-demand
-- **`auto_apply = false`** - preview mode requiring explicit sync command
+On first run of `supabase dev`, offer an interactive setup flow to configure the dev workflow:
+
+```
+$ supabase dev
+
+Welcome to Supabase Dev Mode! Let's configure your workflow.
+
+? Are you using supabase-js in your project? (Y/n) Y
+? Generate TypeScript types automatically? (Y/n) Y
+? Where should types be saved? src/types/database.ts
+
+? How do you manage your database schema?
+  > Supabase SQL files (supabase/schemas/*.sql)
+    Drizzle ORM
+    Prisma ORM
+    Other / I'll configure manually
+
+Configuration saved to config.toml:
+  [dev.schemas]
+  types = "src/types/database.ts"
+
+Starting dev mode...
+```
+
+This would:
+- Detect existing project setup (package.json for supabase-js, prisma/schema.prisma, drizzle config)
+- Pre-fill sensible defaults based on detection
+- Write configuration to `config.toml`
+- Only run on first invocation (or with `--setup` flag)
+
+## Platform Enhancement Ideas
+
+Beyond the `dev` command, this work highlighted a broader DX improvement opportunity:
+
+### Lazy Service Startup with Proxy
+
+Currently, `supabase start` spins up all services (postgres, auth, storage, realtime, etc.), which can take significant time. A more efficient approach:
+
+1. **Start only postgres initially** - The database is the core dependency
+2. **Add a lightweight proxy** (Kong or similar) in front of other services
+3. **Lazy-start services on first request** - Proxy holds the request, starts the container, then forwards
+
+This would dramatically reduce cold start time for users who only need the database (common during schema development). Services like Auth, Storage, and Realtime would start on-demand when actually accessed.
+
+This is a platform-wide architectural change, not specific to the `dev` command.
 
 ## Breaking Changes
 
