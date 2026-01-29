@@ -1176,6 +1176,13 @@ func (s *sms) validate() (err error) {
 		if err := assertEnvLoaded(s.Vonage.ApiSecret.Value); err != nil {
 			return err
 		}
+	case len(s.TestOTP) > 0:
+		// TestOTP is considered a valid SMS provider for local development
+		// Set up minimal Twilio provider with empty strings
+		s.Twilio.Enabled = true
+		s.Twilio.AccountSid = ""
+		s.Twilio.MessageServiceSid = ""
+		s.Twilio.AuthToken.Value = ""
 	case s.EnableSignup:
 		s.EnableSignup = false
 		fmt.Fprintln(os.Stderr, "WARN: no SMS provider is enabled. Disabling phone login")
