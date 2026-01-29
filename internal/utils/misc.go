@@ -79,7 +79,6 @@ var (
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
 	ClusterDir            = filepath.Join(SupabaseDirPath, "cluster")
 	SchemasDir            = filepath.Join(SupabaseDirPath, "schemas")
-	DataDir               = filepath.Join(SupabaseDirPath, "data")
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
 	FunctionsDir          = filepath.Join(SupabaseDirPath, "functions")
 	SnippetsDir           = filepath.Join(SupabaseDirPath, "snippets")

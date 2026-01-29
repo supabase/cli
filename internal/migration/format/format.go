@@ -1,12 +1,14 @@
 package format
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/go-errors/errors"
@@ -82,7 +84,7 @@ func WriteStructuredSchemas(ctx context.Context, sql io.Reader, fsys afero.Fs) e
 	if err != nil {
 		return err
 	}
-	for _, d := range []string{utils.ClusterDir, utils.SchemasDir, utils.DataDir} {
+	for _, d := range []string{utils.ClusterDir, utils.SchemasDir} {
 		if err := fsys.RemoveAll(d); err != nil {
 			return errors.Errorf("failed to remove directory: %w", err)
 		}
@@ -391,11 +393,8 @@ func WriteStructuredSchemas(ctx context.Context, sql io.Reader, fsys afero.Fs) e
 		subscriptionsPath,
 		eventTriggersPath,
 	)
-	if len(utils.Config.Db.Migrations.SchemaPaths) == 0 {
-		utils.Config.Db.Migrations.SchemaPaths = utils.RemoveDuplicates(schemaPaths)
-		return appendConfig(fsys)
-	}
-	return nil
+	utils.Config.Db.Migrations.SchemaPaths = utils.RemoveDuplicates(schemaPaths)
+	return appendConfig(fsys)
 }
 
 func getNodePath(obj ast.ObjectType, n ast.Node, seen map[string]string) string {
@@ -636,26 +635,38 @@ func appendLine(name, data string, fsys afero.Fs) error {
 	return nil
 }
 
+var pattern = regexp.MustCompile(`\nschema_paths = \[.*\]\n`)
+
 func appendConfig(fsys afero.Fs) error {
-	f, err := fsys.OpenFile(utils.ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
-	if err != nil {
-		return errors.Errorf("failed to open config: %w", err)
-	}
-	defer f.Close()
-	if _, err := f.WriteString("\n[db.migrations]\nschema_paths = [\n"); err != nil {
-		return errors.Errorf("failed to write header: %w", err)
-	}
+	lines := []string{"\nschema_paths = ["}
 	for _, fp := range utils.Config.Db.Migrations.SchemaPaths {
 		relPath, err := filepath.Rel(utils.SupabaseDirPath, fp)
 		if err != nil {
 			return errors.Errorf("failed to resolve path: %w", err)
 		}
-		if _, err := fmt.Fprintf(f, "  \"%s\",\n", relPath); err != nil {
-			return errors.Errorf("failed to write path: %w", err)
-		}
+		lines = append(lines, fmt.Sprintf(`  "%s",`, relPath))
 	}
-	if _, err := f.WriteString("]\n"); err != nil {
-		return errors.Errorf("failed to write footer: %w", err)
+	lines = append(lines, "]\n")
+	schemaPaths := strings.Join(lines, "\n")
+	// Attempt in-line config replacement
+	data, err := afero.ReadFile(fsys, utils.ConfigPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.Errorf("failed to read config: %w", err)
+	}
+	if newConfig := pattern.ReplaceAllLiteral(data, []byte(schemaPaths)); !bytes.Equal(data, newConfig) {
+		return utils.WriteFile(utils.ConfigPath, []byte(newConfig), fsys)
+	}
+	// Fallback to append
+	f, err := fsys.OpenFile(utils.ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		return errors.Errorf("failed to open config: %w", err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString("\n[db.migrations]"); err != nil {
+		return errors.Errorf("failed to write header: %w", err)
+	}
+	if _, err := f.WriteString(schemaPaths); err != nil {
+		return errors.Errorf("failed to write config: %w", err)
 	}
 	return nil
 }
