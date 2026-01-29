@@ -672,7 +672,8 @@ func appendLine(name, data string, fsys afero.Fs) error {
 	return nil
 }
 
-var pattern = regexp.MustCompile(`\nschema_paths = \[.*\]\n`)
+// Non-greedy match of any character in [], including new lines
+var pattern = regexp.MustCompile(`(?s)\nschema_paths = \[(.*?)\]\n`)
 
 func appendConfig(fsys afero.Fs) error {
 	lines := []string{"\nschema_paths = ["}
