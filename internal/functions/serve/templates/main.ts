@@ -1,7 +1,7 @@
 import { STATUS_CODE, STATUS_TEXT } from "https://deno.land/std/http/status.ts";
 import * as posix from "https://deno.land/std/path/posix/mod.ts";
 
-import * as jose from "https://deno.land/x/jose@v4.13.1/index.ts";
+import * as jose from "jsr:@panva/jose@6";
 
 const SB_SPECIFIC_ERROR_CODE = {
   BootError:
@@ -29,8 +29,9 @@ const SB_SPECIFIC_ERROR_REASON = {
 // OS stuff - we don't want to expose these to the functions.
 const EXCLUDED_ENVS = ["HOME", "HOSTNAME", "PATH", "PWD"];
 
-const JWT_SECRET = Deno.env.get("SUPABASE_INTERNAL_JWT_SECRET")!;
 const HOST_PORT = Deno.env.get("SUPABASE_INTERNAL_HOST_PORT")!;
+const JWT_SECRET = Deno.env.get("SUPABASE_INTERNAL_JWT_SECRET")!;
+const JWKS_ENDPOINT = Deno.env.get("SUPABASE_URL")! + "/auth/v1/.well-known/jwks.json";
 const DEBUG = Deno.env.get("SUPABASE_INTERNAL_DEBUG") === "true";
 const FUNCTIONS_CONFIG_STRING = Deno.env.get(
   "SUPABASE_INTERNAL_FUNCTIONS_CONFIG",
@@ -104,13 +105,28 @@ function getAuthToken(req: Request) {
   return token;
 }
 
-async function verifyJWT(jwt: string): Promise<boolean> {
+async function verifyLegacyJWT(jwt: string): Promise<boolean> {
   const encoder = new TextEncoder();
   const secretKey = encoder.encode(JWT_SECRET);
   try {
     await jose.jwtVerify(jwt, secretKey);
   } catch (e) {
-    console.error(e);
+    console.error('Symmetric Legacy JWT verification error', e);
+    return false;
+  }
+  return true;
+}
+
+// Lazy-loading JWKs
+let jwks = null;
+async function verifyJWT(jwt: string): Promise<boolean> {
+  try {
+    if (!jwks) {
+      jwks = jose.createRemoteJWKSet(new URL(JWKS_ENDPOINT));
+    }
+    await jose.jwtVerify(jwt, jwks);
+  } catch (e) {
+    console.error('Asymmetric JWT verification error', e);
     return false;
   }
   return true;
@@ -161,7 +177,12 @@ Deno.serve({
         const isValidJWT = await verifyJWT(token);
 
         if (!isValidJWT) {
-          return getResponse({ msg: "Invalid JWT" }, STATUS_CODE.Unauthorized);
+          console.log('Asymmetric JWT verification failed; attempting legacy verification.')
+          const isValidLegacyJWT = await verifyLegacyJWT(token);
+
+          if (!isValidLegacyJWT) {
+            return getResponse({ msg: "Invalid JWT" }, STATUS_CODE.Unauthorized);
+          }
         }
       } catch (e) {
         console.error(e);
