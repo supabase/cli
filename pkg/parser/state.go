@@ -48,6 +48,13 @@ func (s *ReadyState) Next(r rune, data []byte) State {
 	case 'C':
 		offset := len(data) - len(BEGIN_ATOMIC)
 		if offset >= 0 && strings.EqualFold(string(data[offset:]), BEGIN_ATOMIC) {
+			// Check if ATOMIC is preceded by whitespace (word boundary)
+			if offset > 0 {
+				prevRune, _ := utf8.DecodeLastRune(data[:offset])
+				if !unicode.IsSpace(prevRune) {
+					return s
+				}
+			}
 			return &AtomicState{prev: s, delimiter: []byte(END_ATOMIC)}
 		}
 	}

@@ -167,4 +167,9 @@ END
 ;`}
 		checkSplit(t, sql)
 	})
+
+	t.Run("atomic in identifier", func(t *testing.T) {
+		sql := []string{"create table public.atomic_test (id int);", " select 1;"}
+		checkSplit(t, sql)
+	})
 }
