@@ -1,5 +1,5 @@
 # Exposed for updates by .github/dependabot.yml
-FROM supabase/postgres:17.6.1.074 AS pg
+FROM supabase/postgres:17.6.1.075 AS pg
 # Append to ServiceImages when adding new dependencies below
 FROM library/kong:2.8.1 AS kong
 FROM axllent/mailpit:v1.22.3 AS mailpit
