@@ -1147,6 +1147,10 @@ EOF
 		}
 
 		// Mount snippets directory for Studio to access
+		studioConfig, err := json.Marshal(utils.Config)
+		if err != nil {
+			return errors.Errorf("failed to marshal config: %w", err)
+		}
 		hostSnippetsPath := filepath.Join(workdir, utils.SnippetsDir)
 		containerSnippetsPath := utils.ToDockerPath(hostSnippetsPath)
 		binds = append(binds, fmt.Sprintf("%s:%s:rw", hostSnippetsPath, containerSnippetsPath))
@@ -1171,6 +1175,7 @@ EOF
 					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
 					"EDGE_FUNCTIONS_MANAGEMENT_FOLDER=" + utils.ToDockerPath(filepath.Join(workdir, utils.FunctionsDir)),
 					"SNIPPETS_MANAGEMENT_FOLDER=" + containerSnippetsPath,
+					"SUPABASE_CONFIG=" + string(studioConfig),
 					// Ref: https://github.com/vercel/next.js/issues/51684#issuecomment-1612834913
 					"HOSTNAME=0.0.0.0",
 				},
