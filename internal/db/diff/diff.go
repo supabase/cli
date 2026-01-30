@@ -157,14 +157,14 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 		Database: "postgres",
 	}
 	if utils.IsLocalDatabase(config) {
-		if declared, err := loadDeclaredSchemas(fsys); err != nil {
-			return "", err
-		} else if len(declared) > 0 {
+		if declared, err := loadDeclaredSchemas(fsys); len(declared) > 0 {
 			config = shadowConfig
 			config.Database = "contrib_regression"
 			if err := migrateBaseDatabase(ctx, config, declared, fsys, options...); err != nil {
 				return "", err
 			}
+		} else if err != nil {
+			return "", err
 		}
 	}
 	// Load all user defined schemas
