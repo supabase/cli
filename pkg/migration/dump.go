@@ -87,6 +87,7 @@ var (
 		"anon",
 		"authenticated",
 		"authenticator",
+		"cli_login_postgres",
 		"dashboard_user",
 		"pgbouncer",
 		"postgres",
