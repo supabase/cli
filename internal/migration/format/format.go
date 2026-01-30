@@ -691,7 +691,7 @@ func appendConfig(fsys afero.Fs) error {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return errors.Errorf("failed to read config: %w", err)
 	}
-	if newConfig := pattern.ReplaceAllLiteral(data, []byte(schemaPaths)); !bytes.Equal(data, newConfig) {
+	if newConfig := pattern.ReplaceAllLiteral(data, []byte(schemaPaths)); bytes.Contains(newConfig, []byte(schemaPaths)) {
 		return utils.WriteFile(utils.ConfigPath, newConfig, fsys)
 	}
 	// Fallback to append
