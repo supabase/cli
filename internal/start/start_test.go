@@ -257,27 +257,48 @@ func TestDatabaseStart(t *testing.T) {
 
 func TestFormatMapForEnvConfig(t *testing.T) {
 	t.Run("It produces the correct format and removes the trailing comma", func(t *testing.T) {
+		testcases := []struct {
+			key      string
+			value    string
+			expected string
+		}{
+			{
+				key:      "123456",
+				value:    "123456",
+				expected: `^\w{6}:\w{6}$`,
+			},
+			{
+				key:      "234567",
+				value:    "234567",
+				expected: `^\w{6}:\w{6},\w{6}:\w{6}$`,
+			},
+			{
+				key:      "345678",
+				value:    "345678",
+				expected: `^\w{6}:\w{6},\w{6}:\w{6},\w{6}:\w{6}$`,
+			},
+			{
+				key:      "456789",
+				value:    "456789",
+				expected: `^\w{6}:\w{6},\w{6}:\w{6},\w{6}:\w{6},\w{6}:\w{6}$`,
+			},
+		}
+
 		output := bytes.Buffer{}
 		input := map[string]string{}
-
-		keys := [4]string{"123456", "234567", "345678", "456789"}
-		values := [4]string{"123456", "234567", "345678", "456789"}
-		expected := [4]string{
-			`^\w{6}:\w{6}$`,
-			`^\w{6}:\w{6},\w{6}:\w{6}$`,
-			`^\w{6}:\w{6},\w{6}:\w{6},\w{6}:\w{6}$`,
-			`^\w{6}:\w{6},\w{6}:\w{6},\w{6}:\w{6},\w{6}:\w{6}$`,
-		}
 		formatMapForEnvConfig(input, &output)
 		if len(output.Bytes()) > 0 {
 			t.Error("No values should be expected when empty map is provided")
 		}
-		for i := range 4 {
+
+		for _, c := range testcases {
 			output.Reset()
-			input[keys[i]] = values[i]
+			input[c.key] = c.value
 			formatMapForEnvConfig(input, &output)
 			result := output.String()
-			assert.Regexp(t, regexp.MustCompile(expected[i]), result)
+			r, err := regexp.Compile(c.expected)
+			require.NoError(t, err)
+			assert.Regexp(t, r, result)
 		}
 	})
 }

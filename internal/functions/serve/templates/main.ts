@@ -190,6 +190,7 @@ Deno.serve({
     // NOTE(Nyannyacha): Decorator type has been set to tc39 by Lakshan's request,
     // but in my opinion, we should probably expose this to customers at some
     // point, as their migration process will not be easy.
+    // This need to be kept for Deno 1 compatibility.
     const decoratorType = "tc39";
 
     const absEntrypoint = posix.join(Deno.cwd(), functionsConfig[functionName].entrypointPath);

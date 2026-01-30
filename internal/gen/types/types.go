@@ -23,6 +23,7 @@ const (
 	LangTypescript = "typescript"
 	LangGo         = "go"
 	LangSwift      = "swift"
+	LangPython     = "python"
 )
 
 const (

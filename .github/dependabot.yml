@@ -21,6 +21,8 @@ updates:
         update-types:
           - minor
           - patch
+        exclude-patterns:
+          - github.com/compose-spec/compose-go/v2
   - package-ecosystem: "npm"
     directory: "/"
     schedule:

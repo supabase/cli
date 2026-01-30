@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/signal"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -28,7 +27,7 @@ var (
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			ctx := cmd.Context()
 			// Use an empty fs to skip loading from file
 			if err := flags.ParseProjectRef(ctx, afero.NewMemMapFs()); err != nil {
 				return err

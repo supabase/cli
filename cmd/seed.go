@@ -1,9 +1,6 @@
 package cmd
 
 import (
-	"os"
-	"os/signal"
-
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/seed/buckets"
@@ -16,11 +13,6 @@ var (
 		GroupID: groupLocalDev,
 		Use:     "seed",
 		Short:   "Seed a Supabase project from " + utils.ConfigPath,
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			cmd.SetContext(ctx)
-			return cmd.Root().PersistentPreRunE(cmd, args)
-		},
 	}
 
 	bucketsCmd = &cobra.Command{

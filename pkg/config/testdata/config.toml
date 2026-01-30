@@ -29,6 +29,8 @@ key_path = "../certs/my-key.pem"
 port = 54322
 # Port used by db diff command to initialize the shadow database.
 shadow_port = 54320
+# Maximum amount of time to wait for health check when starting the local database.
+health_timeout = "2m"
 # The database major version to use. This has to be the same as your remote database's. Run `SHOW
 # server_version;` on the remote database to check.
 major_version = 17
@@ -112,7 +114,7 @@ file_size_limit = "50MiB"
 allowed_mime_types = ["image/png", "image/jpeg"]
 objects_path = "./images"
 
-# Uncomment to allow connections via S3 compatible clients
+# Allow connections via S3 compatible clients
 [storage.s3_protocol]
 enabled = true
 
@@ -304,7 +306,7 @@ verify_enabled = true
 
 # Use an external OAuth provider. The full list of providers are: `apple`, `azure`, `bitbucket`,
 # `discord`, `facebook`, `github`, `gitlab`, `google`, `keycloak`, `linkedin_oidc`, `notion`, `twitch`,
-# `twitter`, `slack`, `spotify`, `workos`, `zoom`.
+# `twitter`, `x`, `slack`, `spotify`, `workos`, `zoom`.
 [auth.external.azure]
 enabled = true
 client_id = "env(AZURE_CLIENT_ID)"

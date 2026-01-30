@@ -99,6 +99,7 @@ var (
 		"supabase_realtime_admin",
 		"supabase_replication_admin",
 		"supabase_storage_admin",
+		"supabase_superuser",
 		// Managed by extensions
 		"pgsodium_keyholder",
 		"pgsodium_keyiduser",
