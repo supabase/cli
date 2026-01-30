@@ -138,112 +138,112 @@ func (g Glob) Files(fsys fs.FS) ([]string, error) {
 type (
 	// Common config fields between our "base" config and any "remote" branch specific
 	baseConfig struct {
-		ProjectId    string         `toml:"project_id"`
-		Hostname     string         `toml:"-"`
-		Api          api            `toml:"api"`
-		Db           db             `toml:"db"`
-		Realtime     realtime       `toml:"realtime"`
-		Studio       studio         `toml:"studio"`
-		Inbucket     inbucket       `toml:"inbucket"`
-		Storage      storage        `toml:"storage"`
-		Auth         auth           `toml:"auth"`
-		EdgeRuntime  edgeRuntime    `toml:"edge_runtime"`
-		Functions    FunctionConfig `toml:"functions"`
-		Analytics    analytics      `toml:"analytics"`
-		Experimental experimental   `toml:"experimental"`
+		ProjectId    string         `json:"project_id"`
+		Hostname     string         `json:"-"`
+		Api          api            `json:"api"`
+		Db           db             `json:"db"`
+		Realtime     realtime       `json:"realtime"`
+		Studio       studio         `json:"studio"`
+		Inbucket     inbucket       `json:"inbucket"`
+		Storage      storage        `json:"storage"`
+		Auth         auth           `json:"auth"`
+		EdgeRuntime  edgeRuntime    `json:"edge_runtime"`
+		Functions    FunctionConfig `json:"functions"`
+		Analytics    analytics      `json:"analytics"`
+		Experimental experimental   `json:"experimental"`
 	}
 
 	config struct {
 		baseConfig
-		Remotes map[string]baseConfig `toml:"remotes"`
+		Remotes map[string]baseConfig `json:"remotes"`
 	}
 
 	realtime struct {
-		Enabled         bool          `toml:"enabled"`
-		Image           string        `toml:"-"`
-		IpVersion       AddressFamily `toml:"ip_version"`
-		MaxHeaderLength uint          `toml:"max_header_length"`
-		TenantId        string        `toml:"-"`
-		EncryptionKey   string        `toml:"-"`
-		SecretKeyBase   string        `toml:"-"`
+		Enabled         bool          `json:"enabled"`
+		Image           string        `json:"-"`
+		IpVersion       AddressFamily `json:"ip_version"`
+		MaxHeaderLength uint          `json:"max_header_length"`
+		TenantId        string        `json:"-"`
+		EncryptionKey   string        `json:"-"`
+		SecretKeyBase   string        `json:"-"`
 	}
 
 	studio struct {
-		Enabled      bool   `toml:"enabled"`
-		Image        string `toml:"-"`
-		Port         uint16 `toml:"port"`
-		ApiUrl       string `toml:"api_url"`
-		OpenaiApiKey Secret `toml:"openai_api_key"`
-		PgmetaImage  string `toml:"-"`
+		Enabled      bool   `json:"enabled"`
+		Image        string `json:"-"`
+		Port         uint16 `json:"port"`
+		ApiUrl       string `json:"api_url"`
+		OpenaiApiKey Secret `json:"openai_api_key"`
+		PgmetaImage  string `json:"-"`
 	}
 
 	inbucket struct {
-		Enabled    bool   `toml:"enabled"`
-		Image      string `toml:"-"`
-		Port       uint16 `toml:"port"`
-		SmtpPort   uint16 `toml:"smtp_port"`
-		Pop3Port   uint16 `toml:"pop3_port"`
-		AdminEmail string `toml:"admin_email"`
-		SenderName string `toml:"sender_name"`
+		Enabled    bool   `json:"enabled"`
+		Image      string `json:"-"`
+		Port       uint16 `json:"port"`
+		SmtpPort   uint16 `json:"smtp_port"`
+		Pop3Port   uint16 `json:"pop3_port"`
+		AdminEmail string `json:"admin_email"`
+		SenderName string `json:"sender_name"`
 	}
 
 	edgeRuntime struct {
-		Enabled       bool          `toml:"enabled"`
-		Image         string        `toml:"-"`
-		Policy        RequestPolicy `toml:"policy"`
-		InspectorPort uint16        `toml:"inspector_port"`
-		Secrets       SecretsConfig `toml:"secrets"`
-		DenoVersion   uint          `toml:"deno_version"`
+		Enabled       bool          `json:"enabled"`
+		Image         string        `json:"-"`
+		Policy        RequestPolicy `json:"policy"`
+		InspectorPort uint16        `json:"inspector_port"`
+		Secrets       SecretsConfig `json:"secrets"`
+		DenoVersion   uint          `json:"deno_version"`
 	}
 
 	SecretsConfig  map[string]Secret
 	FunctionConfig map[string]function
 
 	function struct {
-		Enabled     bool   `toml:"enabled" json:"-"`
-		VerifyJWT   bool   `toml:"verify_jwt" json:"verifyJWT"`
-		ImportMap   string `toml:"import_map" json:"importMapPath,omitempty"`
-		Entrypoint  string `toml:"entrypoint" json:"entrypointPath,omitempty"`
-		StaticFiles Glob   `toml:"static_files" json:"staticFiles,omitempty"`
+		Enabled     bool   `json:"enabled"`
+		VerifyJWT   bool   `json:"verify_jwt"`
+		ImportMap   string `json:"import_map"`
+		Entrypoint  string `json:"entrypoint"`
+		StaticFiles Glob   `json:"static_files"`
 	}
 
 	analytics struct {
-		Enabled          bool            `toml:"enabled"`
-		Image            string          `toml:"-"`
-		VectorImage      string          `toml:"-"`
-		Port             uint16          `toml:"port"`
-		Backend          LogflareBackend `toml:"backend"`
-		GcpProjectId     string          `toml:"gcp_project_id"`
-		GcpProjectNumber string          `toml:"gcp_project_number"`
-		GcpJwtPath       string          `toml:"gcp_jwt_path"`
-		ApiKey           string          `toml:"-"`
+		Enabled          bool            `json:"enabled"`
+		Image            string          `json:"-"`
+		VectorImage      string          `json:"-"`
+		Port             uint16          `json:"port"`
+		Backend          LogflareBackend `json:"backend"`
+		GcpProjectId     string          `json:"gcp_project_id"`
+		GcpProjectNumber string          `json:"gcp_project_number"`
+		GcpJwtPath       string          `json:"gcp_jwt_path"`
+		ApiKey           string          `json:"-"`
 		// Deprecated together with syslog
-		VectorPort uint16 `toml:"vector_port"`
+		VectorPort uint16 `json:"vector_port"`
 	}
 
 	webhooks struct {
-		Enabled bool `toml:"enabled"`
+		Enabled bool `json:"enabled"`
 	}
 
 	inspect struct {
-		Rules []rule `toml:"rules"`
+		Rules []rule `json:"rules"`
 	}
 
 	rule struct {
-		Query string `toml:"query"`
-		Name  string `toml:"name"`
-		Pass  string `toml:"pass"`
-		Fail  string `toml:"fail"`
+		Query string `json:"query"`
+		Name  string `json:"name"`
+		Pass  string `json:"pass"`
+		Fail  string `json:"fail"`
 	}
 
 	experimental struct {
-		OrioleDBVersion string    `toml:"orioledb_version"`
-		S3Host          string    `toml:"s3_host"`
-		S3Region        string    `toml:"s3_region"`
-		S3AccessKey     string    `toml:"s3_access_key"`
-		S3SecretKey     string    `toml:"s3_secret_key"`
-		Webhooks        *webhooks `toml:"webhooks"`
-		Inspect         inspect   `toml:"inspect"`
+		OrioleDBVersion string    `json:"orioledb_version"`
+		S3Host          string    `json:"s3_host"`
+		S3Region        string    `json:"s3_region"`
+		S3AccessKey     string    `json:"s3_access_key"`
+		S3SecretKey     string    `json:"s3_secret_key"`
+		Webhooks        *webhooks `json:"webhooks"`
+		Inspect         inspect   `json:"inspect"`
 	}
 )
 
@@ -551,7 +551,7 @@ func (c *config) load(v *viper.Viper) error {
 		}
 	}
 	if err := v.UnmarshalExact(c, func(dc *mapstructure.DecoderConfig) {
-		dc.TagName = "toml"
+		dc.TagName = "json"
 		dc.Squash = true
 		dc.ZeroFields = true
 		dc.DecodeHook = c.newDecodeHook(LoadEnvHook, ValidateFunctionsHook)

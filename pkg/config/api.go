@@ -10,25 +10,25 @@ import (
 
 type (
 	api struct {
-		Enabled         bool     `toml:"enabled"`
-		Schemas         []string `toml:"schemas"`
-		ExtraSearchPath []string `toml:"extra_search_path"`
-		MaxRows         uint     `toml:"max_rows"`
+		Enabled         bool     `json:"enabled"`
+		Schemas         []string `json:"schemas"`
+		ExtraSearchPath []string `json:"extra_search_path"`
+		MaxRows         uint     `json:"max_rows"`
 		// Local only config
-		Image     string  `toml:"-"`
-		KongImage string  `toml:"-"`
-		Port      uint16  `toml:"port"`
-		Tls       tlsKong `toml:"tls"`
+		Image     string  `json:"-"`
+		KongImage string  `json:"-"`
+		Port      uint16  `json:"port"`
+		Tls       tlsKong `json:"tls"`
 		// TODO: replace [auth|studio].api_url
-		ExternalUrl string `toml:"external_url"`
+		ExternalUrl string `json:"external_url"`
 	}
 
 	tlsKong struct {
-		Enabled     bool   `toml:"enabled"`
-		CertPath    string `toml:"cert_path"`
-		CertContent []byte `toml:"-"`
-		KeyPath     string `toml:"key_path"`
-		KeyContent  []byte `toml:"-"`
+		Enabled     bool   `json:"enabled"`
+		CertPath    string `json:"cert_path"`
+		CertContent []byte `json:"-"`
+		KeyPath     string `json:"key_path"`
+		KeyContent  []byte `json:"-"`
 	}
 )
 

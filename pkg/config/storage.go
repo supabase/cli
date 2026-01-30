@@ -8,55 +8,55 @@ import (
 
 type (
 	storage struct {
-		Enabled             bool                 `toml:"enabled"`
-		Image               string               `toml:"-"`
-		TargetMigration     string               `toml:"-"`
-		ImgProxyImage       string               `toml:"-"`
-		FileSizeLimit       sizeInBytes          `toml:"file_size_limit"`
-		ImageTransformation *imageTransformation `toml:"image_transformation"`
-		S3Protocol          *s3Protocol          `toml:"s3_protocol"`
-		S3Credentials       storageS3Credentials `toml:"-"`
-		Buckets             BucketConfig         `toml:"buckets"`
-		AnalyticsBuckets    analyticsBuckets     `toml:"analytics"`
-		VectorBuckets       vectorBuckets        `toml:"vector"`
+		Enabled             bool                 `json:"enabled"`
+		Image               string               `json:"-"`
+		TargetMigration     string               `json:"-"`
+		ImgProxyImage       string               `json:"-"`
+		FileSizeLimit       sizeInBytes          `json:"file_size_limit"`
+		ImageTransformation *imageTransformation `json:"image_transformation"`
+		S3Protocol          *s3Protocol          `json:"s3_protocol"`
+		S3Credentials       storageS3Credentials `json:"-"`
+		Buckets             BucketConfig         `json:"buckets"`
+		AnalyticsBuckets    analyticsBuckets     `json:"analytics"`
+		VectorBuckets       vectorBuckets        `json:"vector"`
 	}
 
 	imageTransformation struct {
-		Enabled bool `toml:"enabled"`
+		Enabled bool `json:"enabled"`
 	}
 
 	analyticsBuckets struct {
-		Enabled       bool                `toml:"enabled"`
-		MaxNamespaces uint                `toml:"max_namespaces"`
-		MaxTables     uint                `toml:"max_tables"`
-		MaxCatalogs   uint                `toml:"max_catalogs"`
-		Buckets       map[string]struct{} `toml:"buckets"`
+		Enabled       bool                `json:"enabled"`
+		MaxNamespaces uint                `json:"max_namespaces"`
+		MaxTables     uint                `json:"max_tables"`
+		MaxCatalogs   uint                `json:"max_catalogs"`
+		Buckets       map[string]struct{} `json:"buckets"`
 	}
 
 	vectorBuckets struct {
-		Enabled    bool                `toml:"enabled"`
-		MaxBuckets uint                `toml:"max_buckets"`
-		MaxIndexes uint                `toml:"max_indexes"`
-		Buckets    map[string]struct{} `toml:"buckets"`
+		Enabled    bool                `json:"enabled"`
+		MaxBuckets uint                `json:"max_buckets"`
+		MaxIndexes uint                `json:"max_indexes"`
+		Buckets    map[string]struct{} `json:"buckets"`
 	}
 
 	s3Protocol struct {
-		Enabled bool `toml:"enabled"`
+		Enabled bool `json:"enabled"`
 	}
 
 	storageS3Credentials struct {
-		AccessKeyId     string `toml:"-"`
-		SecretAccessKey string `toml:"-"`
-		Region          string `toml:"-"`
+		AccessKeyId     string `json:"-"`
+		SecretAccessKey string `json:"-"`
+		Region          string `json:"-"`
 	}
 
 	BucketConfig map[string]bucket
 
 	bucket struct {
-		Public           *bool       `toml:"public"`
-		FileSizeLimit    sizeInBytes `toml:"file_size_limit"`
-		AllowedMimeTypes []string    `toml:"allowed_mime_types"`
-		ObjectsPath      string      `toml:"objects_path"`
+		Public           *bool       `json:"public"`
+		FileSizeLimit    sizeInBytes `json:"file_size_limit"`
+		AllowedMimeTypes []string    `json:"allowed_mime_types"`
+		ObjectsPath      string      `json:"objects_path"`
 	}
 )
 

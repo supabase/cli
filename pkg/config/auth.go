@@ -146,242 +146,242 @@ func (j JWK) ToPublicJWK() JWK {
 
 type (
 	auth struct {
-		Enabled bool   `toml:"enabled"`
-		Image   string `toml:"-"`
+		Enabled bool   `json:"enabled"`
+		Image   string `json:"-"`
 
-		SiteUrl                    string               `toml:"site_url"`
-		AdditionalRedirectUrls     []string             `toml:"additional_redirect_urls"`
-		JwtExpiry                  uint                 `toml:"jwt_expiry"`
-		JwtIssuer                  string               `toml:"jwt_issuer"`
-		EnableRefreshTokenRotation bool                 `toml:"enable_refresh_token_rotation"`
-		RefreshTokenReuseInterval  uint                 `toml:"refresh_token_reuse_interval"`
-		EnableManualLinking        bool                 `toml:"enable_manual_linking"`
-		EnableSignup               bool                 `toml:"enable_signup"`
-		EnableAnonymousSignIns     bool                 `toml:"enable_anonymous_sign_ins"`
-		MinimumPasswordLength      uint                 `toml:"minimum_password_length"`
-		PasswordRequirements       PasswordRequirements `toml:"password_requirements"`
-		SigningKeysPath            string               `toml:"signing_keys_path"`
-		SigningKeys                []JWK                `toml:"-"`
+		SiteUrl                    string               `json:"site_url"`
+		AdditionalRedirectUrls     []string             `json:"additional_redirect_urls"`
+		JwtExpiry                  uint                 `json:"jwt_expiry"`
+		JwtIssuer                  string               `json:"jwt_issuer"`
+		EnableRefreshTokenRotation bool                 `json:"enable_refresh_token_rotation"`
+		RefreshTokenReuseInterval  uint                 `json:"refresh_token_reuse_interval"`
+		EnableManualLinking        bool                 `json:"enable_manual_linking"`
+		EnableSignup               bool                 `json:"enable_signup"`
+		EnableAnonymousSignIns     bool                 `json:"enable_anonymous_sign_ins"`
+		MinimumPasswordLength      uint                 `json:"minimum_password_length"`
+		PasswordRequirements       PasswordRequirements `json:"password_requirements"`
+		SigningKeysPath            string               `json:"signing_keys_path"`
+		SigningKeys                []JWK                `json:"-"`
 
-		RateLimit   rateLimit   `toml:"rate_limit"`
-		Captcha     *captcha    `toml:"captcha"`
-		Hook        hook        `toml:"hook"`
-		MFA         mfa         `toml:"mfa"`
-		Sessions    sessions    `toml:"sessions"`
-		Email       email       `toml:"email"`
-		Sms         sms         `toml:"sms"`
-		External    external    `toml:"external"`
-		Web3        web3        `toml:"web3"`
-		OAuthServer OAuthServer `toml:"oauth_server"`
+		RateLimit   rateLimit   `json:"rate_limit"`
+		Captcha     *captcha    `json:"captcha"`
+		Hook        hook        `json:"hook"`
+		MFA         mfa         `json:"mfa"`
+		Sessions    sessions    `json:"sessions"`
+		Email       email       `json:"email"`
+		Sms         sms         `json:"sms"`
+		External    external    `json:"external"`
+		Web3        web3        `json:"web3"`
+		OAuthServer OAuthServer `json:"oauth_server"`
 
 		// Custom secrets can be injected from .env file
-		PublishableKey Secret `toml:"publishable_key"`
-		SecretKey      Secret `toml:"secret_key"`
-		JwtSecret      Secret `toml:"jwt_secret"`
-		AnonKey        Secret `toml:"anon_key"`
-		ServiceRoleKey Secret `toml:"service_role_key"`
+		PublishableKey Secret `json:"publishable_key"`
+		SecretKey      Secret `json:"secret_key"`
+		JwtSecret      Secret `json:"jwt_secret"`
+		AnonKey        Secret `json:"anon_key"`
+		ServiceRoleKey Secret `json:"service_role_key"`
 
-		ThirdParty thirdParty `toml:"third_party"`
+		ThirdParty thirdParty `json:"third_party"`
 	}
 
 	external map[string]provider
 
 	thirdParty struct {
-		Firebase tpaFirebase `toml:"firebase"`
-		Auth0    tpaAuth0    `toml:"auth0"`
-		Cognito  tpaCognito  `toml:"aws_cognito"`
-		Clerk    tpaClerk    `toml:"clerk"`
-		WorkOs   tpaWorkOs   `toml:"workos"`
+		Firebase tpaFirebase `json:"firebase"`
+		Auth0    tpaAuth0    `json:"auth0"`
+		Cognito  tpaCognito  `json:"aws_cognito"`
+		Clerk    tpaClerk    `json:"clerk"`
+		WorkOs   tpaWorkOs   `json:"workos"`
 	}
 
 	rateLimit struct {
-		AnonymousUsers     uint `toml:"anonymous_users"`
-		TokenRefresh       uint `toml:"token_refresh"`
-		SignInSignUps      uint `toml:"sign_in_sign_ups"`
-		TokenVerifications uint `toml:"token_verifications"`
-		EmailSent          uint `toml:"email_sent"`
-		SmsSent            uint `toml:"sms_sent"`
-		Web3               uint `toml:"web3"`
+		AnonymousUsers     uint `json:"anonymous_users"`
+		TokenRefresh       uint `json:"token_refresh"`
+		SignInSignUps      uint `json:"sign_in_sign_ups"`
+		TokenVerifications uint `json:"token_verifications"`
+		EmailSent          uint `json:"email_sent"`
+		SmsSent            uint `json:"sms_sent"`
+		Web3               uint `json:"web3"`
 	}
 
 	tpaFirebase struct {
-		Enabled bool `toml:"enabled"`
+		Enabled bool `json:"enabled"`
 
-		ProjectID string `toml:"project_id"`
+		ProjectID string `json:"project_id"`
 	}
 
 	tpaAuth0 struct {
-		Enabled bool `toml:"enabled"`
+		Enabled bool `json:"enabled"`
 
-		Tenant       string `toml:"tenant"`
-		TenantRegion string `toml:"tenant_region"`
+		Tenant       string `json:"tenant"`
+		TenantRegion string `json:"tenant_region"`
 	}
 
 	tpaCognito struct {
-		Enabled bool `toml:"enabled"`
+		Enabled bool `json:"enabled"`
 
-		UserPoolID     string `toml:"user_pool_id"`
-		UserPoolRegion string `toml:"user_pool_region"`
+		UserPoolID     string `json:"user_pool_id"`
+		UserPoolRegion string `json:"user_pool_region"`
 	}
 
 	tpaClerk struct {
-		Enabled bool `toml:"enabled"`
+		Enabled bool `json:"enabled"`
 
-		Domain string `toml:"domain"`
+		Domain string `json:"domain"`
 	}
 
 	tpaWorkOs struct {
-		Enabled bool `toml:"enabled"`
+		Enabled bool `json:"enabled"`
 
-		IssuerUrl string `toml:"issuer_url"`
+		IssuerUrl string `json:"issuer_url"`
 	}
 
 	email struct {
-		EnableSignup         bool                     `toml:"enable_signup"`
-		DoubleConfirmChanges bool                     `toml:"double_confirm_changes"`
-		EnableConfirmations  bool                     `toml:"enable_confirmations"`
-		SecurePasswordChange bool                     `toml:"secure_password_change"`
-		Template             map[string]emailTemplate `toml:"template"`
-		Notification         map[string]notification  `toml:"notification"`
-		Smtp                 *smtp                    `toml:"smtp"`
-		MaxFrequency         time.Duration            `toml:"max_frequency"`
-		OtpLength            uint                     `toml:"otp_length"`
-		OtpExpiry            uint                     `toml:"otp_expiry"`
+		EnableSignup         bool                     `json:"enable_signup"`
+		DoubleConfirmChanges bool                     `json:"double_confirm_changes"`
+		EnableConfirmations  bool                     `json:"enable_confirmations"`
+		SecurePasswordChange bool                     `json:"secure_password_change"`
+		Template             map[string]emailTemplate `json:"template"`
+		Notification         map[string]notification  `json:"notification"`
+		Smtp                 *smtp                    `json:"smtp"`
+		MaxFrequency         time.Duration            `json:"max_frequency"`
+		OtpLength            uint                     `json:"otp_length"`
+		OtpExpiry            uint                     `json:"otp_expiry"`
 	}
 
 	smtp struct {
-		Enabled    bool                `toml:"enabled"`
-		Host       string              `toml:"host"`
-		Port       uint16              `toml:"port"`
-		User       string              `toml:"user"`
-		Pass       Secret              `toml:"pass"`
-		AdminEmail openapi_types.Email `toml:"admin_email"`
-		SenderName string              `toml:"sender_name"`
+		Enabled    bool                `json:"enabled"`
+		Host       string              `json:"host"`
+		Port       uint16              `json:"port"`
+		User       string              `json:"user"`
+		Pass       Secret              `json:"pass"`
+		AdminEmail openapi_types.Email `json:"admin_email"`
+		SenderName string              `json:"sender_name"`
 	}
 
 	emailTemplate struct {
-		Subject *string `toml:"subject"`
-		Content *string `toml:"content"`
+		Subject *string `json:"subject"`
+		Content *string `json:"content"`
 		// Only content path is accepted in config.toml
-		ContentPath string `toml:"content_path"`
+		ContentPath string `json:"content_path"`
 	}
 
 	notification struct {
-		Enabled bool `toml:"enabled"`
+		Enabled bool `json:"enabled"`
 		emailTemplate
 	}
 
 	sms struct {
-		EnableSignup        bool              `toml:"enable_signup"`
-		EnableConfirmations bool              `toml:"enable_confirmations"`
-		Template            string            `toml:"template"`
-		Twilio              twilioConfig      `toml:"twilio"`
-		TwilioVerify        twilioConfig      `toml:"twilio_verify"`
-		Messagebird         messagebirdConfig `toml:"messagebird"`
-		Textlocal           textlocalConfig   `toml:"textlocal"`
-		Vonage              vonageConfig      `toml:"vonage"`
-		TestOTP             map[string]string `toml:"test_otp"`
-		MaxFrequency        time.Duration     `toml:"max_frequency"`
+		EnableSignup        bool              `json:"enable_signup"`
+		EnableConfirmations bool              `json:"enable_confirmations"`
+		Template            string            `json:"template"`
+		Twilio              twilioConfig      `json:"twilio"`
+		TwilioVerify        twilioConfig      `json:"twilio_verify"`
+		Messagebird         messagebirdConfig `json:"messagebird"`
+		Textlocal           textlocalConfig   `json:"textlocal"`
+		Vonage              vonageConfig      `json:"vonage"`
+		TestOTP             map[string]string `json:"test_otp"`
+		MaxFrequency        time.Duration     `json:"max_frequency"`
 	}
 
 	captcha struct {
-		Enabled  bool            `toml:"enabled"`
-		Provider CaptchaProvider `toml:"provider"`
-		Secret   Secret          `toml:"secret"`
+		Enabled  bool            `json:"enabled"`
+		Provider CaptchaProvider `json:"provider"`
+		Secret   Secret          `json:"secret"`
 	}
 
 	hook struct {
-		MFAVerificationAttempt      *hookConfig `toml:"mfa_verification_attempt"`
-		PasswordVerificationAttempt *hookConfig `toml:"password_verification_attempt"`
-		CustomAccessToken           *hookConfig `toml:"custom_access_token"`
-		SendSMS                     *hookConfig `toml:"send_sms"`
-		SendEmail                   *hookConfig `toml:"send_email"`
-		BeforeUserCreated           *hookConfig `toml:"before_user_created"`
+		MFAVerificationAttempt      *hookConfig `json:"mfa_verification_attempt"`
+		PasswordVerificationAttempt *hookConfig `json:"password_verification_attempt"`
+		CustomAccessToken           *hookConfig `json:"custom_access_token"`
+		SendSMS                     *hookConfig `json:"send_sms"`
+		SendEmail                   *hookConfig `json:"send_email"`
+		BeforeUserCreated           *hookConfig `json:"before_user_created"`
 	}
 
 	factorTypeConfiguration struct {
-		EnrollEnabled bool `toml:"enroll_enabled"`
-		VerifyEnabled bool `toml:"verify_enabled"`
+		EnrollEnabled bool `json:"enroll_enabled"`
+		VerifyEnabled bool `json:"verify_enabled"`
 	}
 
 	phoneFactorTypeConfiguration struct {
 		factorTypeConfiguration
-		OtpLength    uint          `toml:"otp_length"`
-		Template     string        `toml:"template"`
-		MaxFrequency time.Duration `toml:"max_frequency"`
+		OtpLength    uint          `json:"otp_length"`
+		Template     string        `json:"template"`
+		MaxFrequency time.Duration `json:"max_frequency"`
 	}
 
 	mfa struct {
-		TOTP               factorTypeConfiguration      `toml:"totp"`
-		Phone              phoneFactorTypeConfiguration `toml:"phone"`
-		WebAuthn           factorTypeConfiguration      `toml:"web_authn"`
-		MaxEnrolledFactors uint                         `toml:"max_enrolled_factors"`
+		TOTP               factorTypeConfiguration      `json:"totp"`
+		Phone              phoneFactorTypeConfiguration `json:"phone"`
+		WebAuthn           factorTypeConfiguration      `json:"web_authn"`
+		MaxEnrolledFactors uint                         `json:"max_enrolled_factors"`
 	}
 
 	hookConfig struct {
-		Enabled bool   `toml:"enabled"`
-		URI     string `toml:"uri"`
-		Secrets Secret `toml:"secrets"`
+		Enabled bool   `json:"enabled"`
+		URI     string `json:"uri"`
+		Secrets Secret `json:"secrets"`
 	}
 
 	sessions struct {
-		Timebox           time.Duration `toml:"timebox"`
-		InactivityTimeout time.Duration `toml:"inactivity_timeout"`
+		Timebox           time.Duration `json:"timebox"`
+		InactivityTimeout time.Duration `json:"inactivity_timeout"`
 	}
 
 	twilioConfig struct {
-		Enabled           bool   `toml:"enabled"`
-		AccountSid        string `toml:"account_sid"`
-		MessageServiceSid string `toml:"message_service_sid"`
-		AuthToken         Secret `toml:"auth_token"`
+		Enabled           bool   `json:"enabled"`
+		AccountSid        string `json:"account_sid"`
+		MessageServiceSid string `json:"message_service_sid"`
+		AuthToken         Secret `json:"auth_token"`
 	}
 
 	messagebirdConfig struct {
-		Enabled    bool   `toml:"enabled"`
-		Originator string `toml:"originator"`
-		AccessKey  Secret `toml:"access_key"`
+		Enabled    bool   `json:"enabled"`
+		Originator string `json:"originator"`
+		AccessKey  Secret `json:"access_key"`
 	}
 
 	textlocalConfig struct {
-		Enabled bool   `toml:"enabled"`
-		Sender  string `toml:"sender"`
-		ApiKey  Secret `toml:"api_key"`
+		Enabled bool   `json:"enabled"`
+		Sender  string `json:"sender"`
+		ApiKey  Secret `json:"api_key"`
 	}
 
 	vonageConfig struct {
-		Enabled   bool   `toml:"enabled"`
-		From      string `toml:"from"`
-		ApiKey    string `toml:"api_key"`
-		ApiSecret Secret `toml:"api_secret"`
+		Enabled   bool   `json:"enabled"`
+		From      string `json:"from"`
+		ApiKey    string `json:"api_key"`
+		ApiSecret Secret `json:"api_secret"`
 	}
 
 	provider struct {
-		Enabled        bool   `toml:"enabled"`
-		ClientId       string `toml:"client_id"`
-		Secret         Secret `toml:"secret"`
-		Url            string `toml:"url"`
-		RedirectUri    string `toml:"redirect_uri"`
-		SkipNonceCheck bool   `toml:"skip_nonce_check"`
-		EmailOptional  bool   `toml:"email_optional"`
+		Enabled        bool   `json:"enabled"`
+		ClientId       string `json:"client_id"`
+		Secret         Secret `json:"secret"`
+		Url            string `json:"url"`
+		RedirectUri    string `json:"redirect_uri"`
+		SkipNonceCheck bool   `json:"skip_nonce_check"`
+		EmailOptional  bool   `json:"email_optional"`
 	}
 
 	solana struct {
-		Enabled bool `toml:"enabled"`
+		Enabled bool `json:"enabled"`
 	}
 
 	ethereum struct {
-		Enabled bool `toml:"enabled"`
+		Enabled bool `json:"enabled"`
 	}
 
 	web3 struct {
-		Solana   solana   `toml:"solana"`
-		Ethereum ethereum `toml:"ethereum"`
+		Solana   solana   `json:"solana"`
+		Ethereum ethereum `json:"ethereum"`
 	}
 
 	OAuthServer struct {
-		Enabled                  bool   `toml:"enabled"`
-		AllowDynamicRegistration bool   `toml:"allow_dynamic_registration"`
-		AuthorizationUrlPath     string `toml:"authorization_url_path"`
+		Enabled                  bool   `json:"enabled"`
+		AllowDynamicRegistration bool   `json:"allow_dynamic_registration"`
+		AuthorizationUrlPath     string `json:"authorization_url_path"`
 	}
 )
 
