@@ -93,6 +93,40 @@ var (
 	ErrNotRunning  = errors.Errorf("%s is not running.", Aqua("supabase start"))
 )
 
+func SetSupabaseDirPath(base string) {
+	if len(base) == 0 {
+		base = "supabase"
+	}
+	SupabaseDirPath = base
+	ConfigPath = filepath.Join(SupabaseDirPath, "config.toml")
+	GitIgnorePath = filepath.Join(SupabaseDirPath, ".gitignore")
+	TempDir = filepath.Join(SupabaseDirPath, ".temp")
+	ImportMapsDir = filepath.Join(TempDir, "import_maps")
+	ProjectRefPath = filepath.Join(TempDir, "project-ref")
+	PoolerUrlPath = filepath.Join(TempDir, "pooler-url")
+	PostgresVersionPath = filepath.Join(TempDir, "postgres-version")
+	GotrueVersionPath = filepath.Join(TempDir, "gotrue-version")
+	RestVersionPath = filepath.Join(TempDir, "rest-version")
+	StorageVersionPath = filepath.Join(TempDir, "storage-version")
+	StorageMigrationPath = filepath.Join(TempDir, "storage-migration")
+	StudioVersionPath = filepath.Join(TempDir, "studio-version")
+	PgmetaVersionPath = filepath.Join(TempDir, "pgmeta-version")
+	PoolerVersionPath = filepath.Join(TempDir, "pooler-version")
+	RealtimeVersionPath = filepath.Join(TempDir, "realtime-version")
+	CliVersionPath = filepath.Join(TempDir, "cli-latest")
+	ProfilePath = filepath.Join(TempDir, "profile")
+	CurrBranchPath = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
+	ClusterDir = filepath.Join(SupabaseDirPath, "cluster")
+	SchemasDir = filepath.Join(SupabaseDirPath, "schemas")
+	MigrationsDir = filepath.Join(SupabaseDirPath, "migrations")
+	FunctionsDir = filepath.Join(SupabaseDirPath, "functions")
+	SnippetsDir = filepath.Join(SupabaseDirPath, "snippets")
+	FallbackImportMapPath = filepath.Join(FunctionsDir, "import_map.json")
+	FallbackEnvFilePath = filepath.Join(FunctionsDir, ".env")
+	DbTestsDir = filepath.Join(SupabaseDirPath, "tests")
+	CustomRolesPath = filepath.Join(SupabaseDirPath, "roles.sql")
+}
+
 func GetCurrentTimestamp() string {
 	// Magic number: https://stackoverflow.com/q/45160822.
 	return time.Now().UTC().Format(layoutVersion)
