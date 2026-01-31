@@ -39,17 +39,6 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 		return err
 	}
 	defer conn.Close(context.Background())
-	if viper.GetBool("EXPERIMENTAL") {
-		var buf bytes.Buffer
-		if err := migration.DumpRole(ctx, config, &buf, dump.DockerExec); err != nil {
-			return err
-		}
-		if err := migration.DumpSchema(ctx, config, &buf, dump.DockerExec); err != nil {
-			return err
-		}
-		// TODO: handle managed schemas
-		return format.WriteStructuredSchemas(ctx, &buf, fsys)
-	}
 	// 2. Pull schema
 	timestamp := utils.GetCurrentTimestamp()
 	path := new.GetMigrationPath(timestamp, name)
@@ -58,10 +47,12 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 	}
 	// 3. Insert a row to `schema_migrations`
 	fmt.Fprintln(os.Stderr, "Schema written to "+utils.Bold(path))
-	if shouldUpdate, err := utils.NewConsole().PromptYesNo(ctx, "Update remote migration history table?", true); err != nil {
-		return err
-	} else if shouldUpdate {
-		return repair.UpdateMigrationTable(ctx, conn, []string{timestamp}, repair.Applied, false, fsys)
+	if !viper.GetBool("EXPERIMENTAL") {
+		if shouldUpdate, err := utils.NewConsole().PromptYesNo(ctx, "Update remote migration history table?", true); err != nil {
+			return err
+		} else if shouldUpdate {
+			return repair.UpdateMigrationTable(ctx, conn, []string{timestamp}, repair.Applied, false, fsys)
+		}
 	}
 	return nil
 }
@@ -71,18 +62,38 @@ func run(ctx context.Context, schema []string, path string, conn *pgx.Conn, fsys
 	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
 	if err := assertRemoteInSync(ctx, conn, fsys); errors.Is(err, errMissing) {
 		// Ignore schemas flag when working on the initial pull
-		if err = dumpRemoteSchema(ctx, path, config, fsys); err != nil {
+		if err := dumpRemoteSchema(ctx, path, config, fsys); err != nil {
 			return err
 		}
 		// Run a second pass to pull in changes from default privileges and managed schemas
-		if err = diffRemoteSchema(ctx, nil, path, config, fsys); errors.Is(err, errInSync) {
-			err = nil
+		if err := diffRemoteSchema(ctx, nil, path, config, fsys); err != nil && !errors.Is(err, errInSync) {
+			return err
 		}
-		return err
+		if viper.GetBool("EXPERIMENTAL") {
+			f, err := fsys.Open(path)
+			if err != nil {
+				return errors.Errorf("failed to open schema file: %w", err)
+			}
+			defer f.Close()
+			return format.WriteStructuredSchemas(ctx, f, fsys)
+		}
+		return nil
 	} else if err != nil {
 		return err
 	}
 	// 2. Fetch remote schema changes
+	if len(schema) == 0 && viper.GetBool("EXPERIMENTAL") {
+		var buf bytes.Buffer
+		if err := migration.DumpRole(ctx, config, &buf, dump.DockerExec); err != nil {
+			return err
+		}
+		if err := migration.DumpSchema(ctx, config, &buf, dump.DockerExec); err != nil {
+			return err
+		}
+		if err := format.WriteStructuredSchemas(ctx, &buf, fsys); err != nil {
+			return err
+		}
+	}
 	return diffRemoteSchema(ctx, schema, path, config, fsys)
 }
 
@@ -97,6 +108,9 @@ func dumpRemoteSchema(ctx context.Context, path string, config pgconn.Config, fs
 		return errors.Errorf("failed to open dump file: %w", err)
 	}
 	defer f.Close()
+	if err := migration.DumpRole(ctx, config, f, dump.DockerExec); err != nil {
+		return err
+	}
 	return migration.DumpSchema(ctx, config, f, dump.DockerExec)
 }
 
