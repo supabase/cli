@@ -12,7 +12,7 @@ import (
 )
 
 func Run(fsys afero.Fs, out io.Writer) error {
-	branches, err := afero.ReadDir(fsys, filepath.Dir(utils.CurrBranchPath))
+	branches, err := afero.ReadDir(fsys, filepath.Dir(utils.Paths.CurrBranchPath))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {
@@ -21,7 +21,7 @@ func Run(fsys afero.Fs, out io.Writer) error {
 
 	currBranch, _ := utils.GetCurrentBranchFS(fsys)
 	for _, branch := range branches {
-		if branch.Name() == filepath.Base(utils.CurrBranchPath) {
+		if branch.Name() == filepath.Base(utils.Paths.CurrBranchPath) {
 			continue
 		}
 

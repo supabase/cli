@@ -43,10 +43,10 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 	}
 	var globals []string
 	if includeRoles {
-		if exists, err := afero.Exists(fsys, utils.CustomRolesPath); err != nil {
+		if exists, err := afero.Exists(fsys, utils.Paths.CustomRolesPath); err != nil {
 			return errors.Errorf("failed to find custom roles: %w", err)
 		} else if exists {
-			globals = append(globals, utils.CustomRolesPath)
+			globals = append(globals, utils.Paths.CustomRolesPath)
 		}
 	}
 	if len(pending) == 0 && len(seeds) == 0 && len(globals) == 0 {

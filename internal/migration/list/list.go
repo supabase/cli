@@ -75,7 +75,7 @@ func LoadLocalVersions(fsys afero.Fs) ([]string, error) {
 		versions = append(versions, v)
 		return true
 	}
-	_, err := migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys), filter)
+	_, err := migration.ListLocalMigrations(utils.Paths.MigrationsDir, afero.NewIOFS(fsys), filter)
 	return versions, err
 }
 
@@ -83,5 +83,5 @@ func LoadPartialMigrations(version string, fsys afero.Fs) ([]string, error) {
 	filter := func(v string) bool {
 		return version == "" || v <= version
 	}
-	return migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys), filter)
+	return migration.ListLocalMigrations(utils.Paths.MigrationsDir, afero.NewIOFS(fsys), filter)
 }

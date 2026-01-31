@@ -226,7 +226,7 @@ func InitConfig(params InitParams, fsys afero.Fs) error {
 		c.Experimental.OrioleDBVersion = "15.1.0.150"
 	}
 	// Create config file
-	if err := MkdirIfNotExistFS(fsys, SupabaseDirPath); err != nil {
+	if err := MkdirIfNotExistFS(fsys, Paths.SupabaseDirPath); err != nil {
 		return err
 	}
 	flag := os.O_WRONLY | os.O_CREATE
@@ -235,7 +235,7 @@ func InitConfig(params InitParams, fsys afero.Fs) error {
 	} else {
 		flag |= os.O_EXCL
 	}
-	f, err := fsys.OpenFile(ConfigPath, flag, 0644)
+	f, err := fsys.OpenFile(Paths.ConfigPath, flag, 0644)
 	if err != nil {
 		return errors.Errorf("failed to create config file: %w", err)
 	}

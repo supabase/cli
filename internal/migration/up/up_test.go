@@ -20,10 +20,10 @@ func TestPendingMigrations(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		files := []string{
-			filepath.Join(utils.MigrationsDir, "20221201000000_test.sql"),
-			filepath.Join(utils.MigrationsDir, "20221201000001_test.sql"),
-			filepath.Join(utils.MigrationsDir, "20221201000002_test.sql"),
-			filepath.Join(utils.MigrationsDir, "20221201000003_test.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "20221201000000_test.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "20221201000001_test.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "20221201000002_test.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "20221201000003_test.sql"),
 		}
 		for _, path := range files {
 			require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
@@ -42,7 +42,7 @@ func TestPendingMigrations(t *testing.T) {
 
 	t.Run("throws error on local load failure", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.Paths.MigrationsDir}
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -74,7 +74,7 @@ func TestPendingMigrations(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		files := []string{"0_test.sql", "1_test.sql"}
 		for _, name := range files {
-			path := filepath.Join(utils.MigrationsDir, name)
+			path := filepath.Join(utils.Paths.MigrationsDir, name)
 			require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
 		}
 		// Setup mock postgres
@@ -94,10 +94,10 @@ func TestIgnoreVersionMismatch(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		files := []string{
-			filepath.Join(utils.MigrationsDir, "20221201000000_test.sql"),
-			filepath.Join(utils.MigrationsDir, "20221201000001_test.sql"),
-			filepath.Join(utils.MigrationsDir, "20221201000002_test.sql"),
-			filepath.Join(utils.MigrationsDir, "20221201000003_test.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "20221201000000_test.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "20221201000001_test.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "20221201000002_test.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "20221201000003_test.sql"),
 		}
 		for _, path := range files {
 			require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
@@ -118,10 +118,10 @@ func TestIgnoreVersionMismatch(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		files := []string{
-			filepath.Join(utils.MigrationsDir, "20221201000000_test.sql"),
-			filepath.Join(utils.MigrationsDir, "20221201000001_test.sql"),
-			filepath.Join(utils.MigrationsDir, "20221201000002_test.sql"),
-			filepath.Join(utils.MigrationsDir, "20221201000003_test.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "20221201000000_test.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "20221201000001_test.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "20221201000002_test.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "20221201000003_test.sql"),
 		}
 		for _, path := range files {
 			require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
@@ -142,8 +142,8 @@ func TestIgnoreVersionMismatch(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		files := []string{
-			filepath.Join(utils.MigrationsDir, "20221201000000_test.sql"),
-			filepath.Join(utils.MigrationsDir, "20221201000002_test.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "20221201000000_test.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "20221201000002_test.sql"),
 		}
 		for _, path := range files {
 			require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))

@@ -18,7 +18,7 @@ func TestNewCommand(t *testing.T) {
 		// Run test
 		assert.NoError(t, Run(context.Background(), "test-func", fsys))
 		// Validate output
-		funcPath := filepath.Join(utils.FunctionsDir, "test-func", "index.ts")
+		funcPath := filepath.Join(utils.Paths.FunctionsDir, "test-func", "index.ts")
 		content, err := afero.ReadFile(fsys, funcPath)
 		assert.NoError(t, err)
 		assert.Contains(t, string(content),
@@ -26,16 +26,16 @@ func TestNewCommand(t *testing.T) {
 		)
 
 		// Verify config.toml is updated
-		_, err = afero.ReadFile(fsys, utils.ConfigPath)
+		_, err = afero.ReadFile(fsys, utils.Paths.ConfigPath)
 		assert.NoError(t, err, "config.toml should be created")
 
 		// Verify deno.json exists
-		denoPath := filepath.Join(utils.FunctionsDir, "test-func", "deno.json")
+		denoPath := filepath.Join(utils.Paths.FunctionsDir, "test-func", "deno.json")
 		_, err = afero.ReadFile(fsys, denoPath)
 		assert.NoError(t, err, "deno.json should be created")
 
 		// Verify .npmrc exists
-		npmrcPath := filepath.Join(utils.FunctionsDir, "test-func", ".npmrc")
+		npmrcPath := filepath.Join(utils.Paths.FunctionsDir, "test-func", ".npmrc")
 		_, err = afero.ReadFile(fsys, npmrcPath)
 		assert.NoError(t, err, ".npmrc should be created")
 	})
@@ -47,7 +47,7 @@ func TestNewCommand(t *testing.T) {
 	t.Run("throws error on duplicate slug", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		funcPath := filepath.Join(utils.FunctionsDir, "test-func", "index.ts")
+		funcPath := filepath.Join(utils.Paths.FunctionsDir, "test-func", "index.ts")
 		require.NoError(t, afero.WriteFile(fsys, funcPath, []byte{}, 0644))
 		// Run test
 		assert.Error(t, Run(context.Background(), "test-func", fsys))

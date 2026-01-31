@@ -121,8 +121,8 @@ func getProfileName(fsys afero.Fs) string {
 	if prof := viper.GetString("PROFILE"); viper.IsSet("PROFILE") {
 		fmt.Fprintln(debuglogger, "Loading profile from flag:", prof)
 		return prof
-	} else if content, err := afero.ReadFile(fsys, ProfilePath); err == nil {
-		fmt.Fprintln(debuglogger, "Loading profile from file:", ProfilePath)
+	} else if content, err := afero.ReadFile(fsys, Paths.ProfilePath); err == nil {
+		fmt.Fprintln(debuglogger, "Loading profile from file:", Paths.ProfilePath)
 		return string(content)
 	} else {
 		fmt.Fprintln(debuglogger, err)

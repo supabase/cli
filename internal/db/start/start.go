@@ -231,12 +231,12 @@ func IsUnhealthyError(err error) bool {
 
 func initCurrentBranch(fsys afero.Fs) error {
 	// Create _current_branch file to avoid breaking db branch commands
-	if _, err := fsys.Stat(utils.CurrBranchPath); err == nil {
+	if _, err := fsys.Stat(utils.Paths.CurrBranchPath); err == nil {
 		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return errors.Errorf("failed init current branch: %w", err)
 	}
-	return utils.WriteFile(utils.CurrBranchPath, []byte("main"), fsys)
+	return utils.WriteFile(utils.Paths.CurrBranchPath, []byte("main"), fsys)
 }
 
 func initSchema(ctx context.Context, conn *pgx.Conn, host string, w io.Writer) error {
@@ -375,7 +375,7 @@ func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer
 	if err := vault.UpsertVaultSecrets(ctx, utils.Config.Db.Vault, conn); err != nil {
 		return err
 	}
-	err := migration.SeedGlobals(ctx, []string{utils.CustomRolesPath}, conn, afero.NewIOFS(fsys))
+	err := migration.SeedGlobals(ctx, []string{utils.Paths.CustomRolesPath}, conn, afero.NewIOFS(fsys))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

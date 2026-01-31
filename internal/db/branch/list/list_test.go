@@ -17,8 +17,8 @@ func TestListCommand(t *testing.T) {
 	t.Run("lists all branches", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.CurrBranchPath, []byte("main"), 0644))
-		base := filepath.Dir(utils.CurrBranchPath)
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.CurrBranchPath, []byte("main"), 0644))
+		base := filepath.Dir(utils.Paths.CurrBranchPath)
 		require.NoError(t, fsys.Mkdir(filepath.Join(base, "main"), 0755))
 		require.NoError(t, fsys.Mkdir(filepath.Join(base, "test"), 0755))
 		// Run test
@@ -36,7 +36,7 @@ func TestListCommand(t *testing.T) {
 	t.Run("lists without current branch", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		base := filepath.Dir(utils.CurrBranchPath)
+		base := filepath.Dir(utils.Paths.CurrBranchPath)
 		require.NoError(t, fsys.Mkdir(filepath.Join(base, "main"), 0755))
 		require.NoError(t, fsys.Mkdir(filepath.Join(base, "test"), 0755))
 		// Run test
@@ -58,7 +58,7 @@ func TestListCommand(t *testing.T) {
 	t.Run("throws error on unreadable directory", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		_, err := fsys.Create(filepath.Dir(utils.CurrBranchPath))
+		_, err := fsys.Create(filepath.Dir(utils.Paths.CurrBranchPath))
 		require.NoError(t, err)
 		// Run test
 		require.Error(t, Run(fsys, io.Discard))

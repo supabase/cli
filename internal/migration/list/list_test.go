@@ -52,7 +52,7 @@ func TestMigrationList(t *testing.T) {
 
 	t.Run("throws error on open failure", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.Paths.MigrationsDir}
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -116,9 +116,9 @@ func TestLocalMigrations(t *testing.T) {
 	t.Run("loads migration versions", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "20220727064246_test.sql")
+		path := filepath.Join(utils.Paths.MigrationsDir, "20220727064246_test.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
-		path = filepath.Join(utils.MigrationsDir, "20220727064248_test.sql")
+		path = filepath.Join(utils.Paths.MigrationsDir, "20220727064248_test.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
 		// Run test
 		versions, err := LoadLocalVersions(fsys)
@@ -130,9 +130,9 @@ func TestLocalMigrations(t *testing.T) {
 	t.Run("ignores outdated and invalid files", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "20211208000000_init.sql")
+		path := filepath.Join(utils.Paths.MigrationsDir, "20211208000000_init.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
-		path = filepath.Join(utils.MigrationsDir, "20211208000001_invalid.ts")
+		path = filepath.Join(utils.Paths.MigrationsDir, "20211208000001_invalid.ts")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
 		// Run test
 		versions, err := LoadLocalVersions(fsys)
@@ -143,7 +143,7 @@ func TestLocalMigrations(t *testing.T) {
 
 	t.Run("throws error on open failure", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.Paths.MigrationsDir}
 		// Run test
 		_, err := LoadLocalVersions(fsys)
 		// Check error

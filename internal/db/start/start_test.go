@@ -34,7 +34,7 @@ func TestInitBranch(t *testing.T) {
 
 	t.Run("throws error on stat failure", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := &fstest.StatErrorFs{DenyPath: utils.CurrBranchPath}
+		fsys := &fstest.StatErrorFs{DenyPath: utils.Paths.CurrBranchPath}
 		// Run test
 		err := initCurrentBranch(fsys)
 		// Check error
@@ -43,7 +43,7 @@ func TestInitBranch(t *testing.T) {
 
 	t.Run("throws error on write failure", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: utils.CurrBranchPath}
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.Paths.CurrBranchPath}
 		// Run test
 		err := initCurrentBranch(fsys)
 		// Check error
@@ -59,7 +59,7 @@ func TestStartDatabase(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		roles := "create role test"
-		require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte(roles), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.CustomRolesPath, []byte(roles), 0644))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -94,7 +94,7 @@ func TestStartDatabase(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 		// Check current branch
-		contents, err := afero.ReadFile(fsys, utils.CurrBranchPath)
+		contents, err := afero.ReadFile(fsys, utils.Paths.CurrBranchPath)
 		assert.NoError(t, err)
 		assert.Equal(t, []byte("main"), contents)
 	})
@@ -128,7 +128,7 @@ func TestStartDatabase(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 		// Check current branch
-		contents, err := afero.ReadFile(fsys, utils.CurrBranchPath)
+		contents, err := afero.ReadFile(fsys, utils.Paths.CurrBranchPath)
 		assert.NoError(t, err)
 		assert.Equal(t, []byte("main"), contents)
 	})
@@ -159,7 +159,7 @@ func TestStartCommand(t *testing.T) {
 	t.Run("throws error on malformed config", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.ConfigPath, []byte("malformed"), 0644))
 		// Run test
 		err := Run(context.Background(), "", fsys)
 		// Check error
@@ -242,7 +242,7 @@ func TestSetupDatabase(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		roles := "create role postgres"
-		require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte(roles), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.CustomRolesPath, []byte(roles), 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -289,7 +289,7 @@ func TestSetupDatabase(t *testing.T) {
 	t.Run("throws error on read failure", func(t *testing.T) {
 		utils.Config.Db.Port = 5432
 		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: utils.CustomRolesPath}
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.Paths.CustomRolesPath}
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()

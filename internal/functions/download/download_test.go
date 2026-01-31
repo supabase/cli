@@ -208,7 +208,7 @@ func TestRunDockerUnbundle(t *testing.T) {
 		err := Run(context.Background(), slugDocker, project, false, true, fsys)
 		require.NoError(t, err)
 
-		eszipPath := filepath.Join(utils.TempDir, fmt.Sprintf("output_%s.eszip", slugDocker))
+		eszipPath := filepath.Join(utils.Paths.TempDir, fmt.Sprintf("output_%s.eszip", slugDocker))
 		exists, err := afero.Exists(fsys, eszipPath)
 		require.NoError(t, err)
 		assert.False(t, exists, "temporary eszip file should be removed after extraction")
@@ -243,7 +243,7 @@ func TestRunDockerUnbundle(t *testing.T) {
 		err := Run(context.Background(), slugDocker, project, false, true, fsys)
 		require.NoError(t, err)
 
-		data, err := afero.ReadFile(fsys, filepath.Join(utils.FunctionsDir, slugDocker, "index.ts"))
+		data, err := afero.ReadFile(fsys, filepath.Join(utils.Paths.FunctionsDir, slugDocker, "index.ts"))
 		require.NoError(t, err)
 		assert.Equal(t, "console.log('hello')", string(data))
 
@@ -270,15 +270,15 @@ func TestRunServerSideUnbundle(t *testing.T) {
 		err := Run(context.Background(), slug, project, false, false, fsys)
 		require.NoError(t, err)
 
-		data, err := afero.ReadFile(fsys, filepath.Join(utils.FunctionsDir, slug, "index.ts"))
+		data, err := afero.ReadFile(fsys, filepath.Join(utils.Paths.FunctionsDir, slug, "index.ts"))
 		require.NoError(t, err)
 		assert.Equal(t, "console.log('hello')", string(data))
 
-		data, err = afero.ReadFile(fsys, filepath.Join(utils.FunctionsDir, slug, "utils.ts"))
+		data, err = afero.ReadFile(fsys, filepath.Join(utils.Paths.FunctionsDir, slug, "utils.ts"))
 		require.NoError(t, err)
 		assert.Equal(t, "export const value = 1;", string(data))
 
-		entries, err := afero.ReadDir(fsys, utils.TempDir)
+		entries, err := afero.ReadDir(fsys, utils.Paths.TempDir)
 		if err == nil {
 			assert.Len(t, entries, 0, "expected temporary directory to be cleaned up")
 		} else {
@@ -317,7 +317,7 @@ func TestRunServerSideUnbundle(t *testing.T) {
 		err := Run(context.Background(), slug, project, false, false, fsys)
 		require.NoError(t, err)
 
-		root := filepath.Join(utils.FunctionsDir, slug)
+		root := filepath.Join(utils.Paths.FunctionsDir, slug)
 		data, err := afero.ReadFile(fsys, filepath.Join(root, "index.ts"))
 		require.NoError(t, err)
 		assert.Equal(t, "console.log('abs')", string(data))
@@ -385,12 +385,12 @@ func TestRunServerSideUnbundle(t *testing.T) {
 		err := Run(context.Background(), slug, project, false, false, fsys)
 		assert.NoError(t, err)
 
-		root := filepath.Join(utils.FunctionsDir, slug)
+		root := filepath.Join(utils.Paths.FunctionsDir, slug)
 		data, err := afero.ReadFile(fsys, filepath.Join(root, "source", "index.ts"))
 		require.NoError(t, err)
 		assert.Equal(t, "console.log('hello')", string(data))
 
-		data, err = afero.ReadFile(fsys, filepath.Join(utils.FunctionsDir, "secret.env"))
+		data, err = afero.ReadFile(fsys, filepath.Join(utils.Paths.FunctionsDir, "secret.env"))
 		require.NoError(t, err)
 		assert.Equal(t, "SECRET=1", string(data))
 

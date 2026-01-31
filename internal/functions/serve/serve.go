@@ -88,7 +88,7 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println("Stopped serving " + utils.Bold(utils.FunctionsDir))
+			fmt.Println("Stopped serving " + utils.Bold(utils.Paths.FunctionsDir))
 			return ctx.Err()
 		case <-watcher.RestartCh:
 			if err := restartEdgeRuntime(ctx, envFilePath, noVerifyJWT, importMapPath, runtimeOption, fsys); err != nil {
@@ -227,8 +227,8 @@ EOF
 
 func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
 	if envFilePath == "" {
-		if f, err := fsys.Stat(utils.FallbackEnvFilePath); err == nil && !f.IsDir() {
-			envFilePath = utils.FallbackEnvFilePath
+		if f, err := fsys.Stat(utils.Paths.FallbackEnvFilePath); err == nil && !f.IsDir() {
+			envFilePath = utils.Paths.FallbackEnvFilePath
 		}
 	} else if !filepath.IsAbs(envFilePath) {
 		envFilePath = filepath.Join(utils.CurrentDirAbs, envFilePath)
@@ -257,7 +257,7 @@ func PopulatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 			delete(functionsConfig, slug)
 			continue
 		}
-		modules, err := deploy.GetBindMounts(cwd, utils.FunctionsDir, "", fc.Entrypoint, fc.ImportMap, fsys)
+		modules, err := deploy.GetBindMounts(cwd, utils.Paths.FunctionsDir, "", fc.Entrypoint, fc.ImportMap, fsys)
 		if err != nil {
 			return nil, "", err
 		}

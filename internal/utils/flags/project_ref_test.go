@@ -36,7 +36,7 @@ func TestProjectRef(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
-		err := afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644)
+		err := afero.WriteFile(fsys, utils.Paths.ProjectRefPath, []byte(project), 0644)
 		require.NoError(t, err)
 		// Run test
 		err = ParseProjectRef(context.Background(), fsys)
@@ -47,7 +47,7 @@ func TestProjectRef(t *testing.T) {
 	t.Run("throws error on read failure", func(t *testing.T) {
 		ProjectRef = ""
 		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: utils.ProjectRefPath}
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.Paths.ProjectRefPath}
 		// Run test
 		err := ParseProjectRef(context.Background(), fsys)
 		// Check error

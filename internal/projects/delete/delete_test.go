@@ -27,7 +27,7 @@ func TestDeleteCommand(t *testing.T) {
 	t.Run("deletes project", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(ref), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.ProjectRefPath, []byte(ref), 0644))
 		// Setup api mock
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).

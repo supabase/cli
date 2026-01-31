@@ -25,9 +25,9 @@ func TestSwitchCommand(t *testing.T) {
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup target branch
 		branch := "target"
-		branchPath := filepath.Join(filepath.Dir(utils.CurrBranchPath), branch)
+		branchPath := filepath.Join(filepath.Dir(utils.Paths.CurrBranchPath), branch)
 		require.NoError(t, fsys.Mkdir(branchPath, 0755))
-		require.NoError(t, afero.WriteFile(fsys, utils.CurrBranchPath, []byte("main"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.CurrBranchPath, []byte("main"), 0644))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -57,7 +57,7 @@ func TestSwitchCommand(t *testing.T) {
 		assert.NoError(t, Run(context.Background(), branch, fsys, conn.Intercept))
 		// Validate output
 		assert.Empty(t, apitest.ListUnmatchedRequests())
-		contents, err := afero.ReadFile(fsys, utils.CurrBranchPath)
+		contents, err := afero.ReadFile(fsys, utils.Paths.CurrBranchPath)
 		assert.NoError(t, err)
 		assert.Equal(t, []byte(branch), contents)
 	})
@@ -65,7 +65,7 @@ func TestSwitchCommand(t *testing.T) {
 	t.Run("throws error on malformed config", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.ConfigPath, []byte("malformed"), 0644))
 		// Run test
 		err := Run(context.Background(), "target", fsys)
 		// Check error
@@ -138,13 +138,13 @@ func TestSwitchCommand(t *testing.T) {
 			JSON(container.InspectResponse{})
 		// Setup target branch
 		branch := "main"
-		branchPath := filepath.Join(filepath.Dir(utils.CurrBranchPath), branch)
+		branchPath := filepath.Join(filepath.Dir(utils.Paths.CurrBranchPath), branch)
 		require.NoError(t, fsys.Mkdir(branchPath, 0755))
 		// Run test
 		assert.NoError(t, Run(context.Background(), branch, fsys))
 		// Check error
 		assert.Empty(t, apitest.ListUnmatchedRequests())
-		contents, err := afero.ReadFile(fsys, utils.CurrBranchPath)
+		contents, err := afero.ReadFile(fsys, utils.Paths.CurrBranchPath)
 		assert.NoError(t, err)
 		assert.Equal(t, []byte(branch), contents)
 	})
@@ -162,7 +162,7 @@ func TestSwitchCommand(t *testing.T) {
 			JSON(container.InspectResponse{})
 		// Setup target branch
 		branch := "target"
-		branchPath := filepath.Join(filepath.Dir(utils.CurrBranchPath), branch)
+		branchPath := filepath.Join(filepath.Dir(utils.Paths.CurrBranchPath), branch)
 		require.NoError(t, fsys.Mkdir(branchPath, 0755))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -186,7 +186,7 @@ func TestSwitchCommand(t *testing.T) {
 			JSON(container.InspectResponse{})
 		// Setup target branch
 		branch := "main"
-		branchPath := filepath.Join(filepath.Dir(utils.CurrBranchPath), branch)
+		branchPath := filepath.Join(filepath.Dir(utils.Paths.CurrBranchPath), branch)
 		require.NoError(t, fsys.Mkdir(branchPath, 0755))
 		// Run test
 		err := Run(context.Background(), branch, afero.NewReadOnlyFs(fsys))

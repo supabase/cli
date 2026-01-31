@@ -21,7 +21,7 @@ var (
 )
 
 func Run(ctx context.Context, name, template string, fsys afero.Fs) error {
-	path := filepath.Join(utils.DbTestsDir, fmt.Sprintf("%s_test.sql", name))
+	path := filepath.Join(utils.Paths.DbTestsDir, fmt.Sprintf("%s_test.sql", name))
 	if _, err := fsys.Stat(path); err == nil {
 		return errors.New(path + " already exists.")
 	}

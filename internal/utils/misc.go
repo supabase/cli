@@ -58,74 +58,11 @@ var (
 	PgSchemas       = migration.InternalSchemas[:2]
 	InternalSchemas = migration.InternalSchemas
 
-	SupabaseDirPath       = "supabase"
-	ConfigPath            = filepath.Join(SupabaseDirPath, "config.toml")
-	GitIgnorePath         = filepath.Join(SupabaseDirPath, ".gitignore")
-	TempDir               = filepath.Join(SupabaseDirPath, ".temp")
-	ImportMapsDir         = filepath.Join(TempDir, "import_maps")
-	ProjectRefPath        = filepath.Join(TempDir, "project-ref")
-	PoolerUrlPath         = filepath.Join(TempDir, "pooler-url")
-	PostgresVersionPath   = filepath.Join(TempDir, "postgres-version")
-	GotrueVersionPath     = filepath.Join(TempDir, "gotrue-version")
-	RestVersionPath       = filepath.Join(TempDir, "rest-version")
-	StorageVersionPath    = filepath.Join(TempDir, "storage-version")
-	StorageMigrationPath  = filepath.Join(TempDir, "storage-migration")
-	StudioVersionPath     = filepath.Join(TempDir, "studio-version")
-	PgmetaVersionPath     = filepath.Join(TempDir, "pgmeta-version")
-	PoolerVersionPath     = filepath.Join(TempDir, "pooler-version")
-	RealtimeVersionPath   = filepath.Join(TempDir, "realtime-version")
-	CliVersionPath        = filepath.Join(TempDir, "cli-latest")
-	ProfilePath           = filepath.Join(TempDir, "profile")
-	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
-	ClusterDir            = filepath.Join(SupabaseDirPath, "cluster")
-	SchemasDir            = filepath.Join(SupabaseDirPath, "schemas")
-	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
-	FunctionsDir          = filepath.Join(SupabaseDirPath, "functions")
-	SnippetsDir           = filepath.Join(SupabaseDirPath, "snippets")
-	FallbackImportMapPath = filepath.Join(FunctionsDir, "import_map.json")
-	FallbackEnvFilePath   = filepath.Join(FunctionsDir, ".env")
-	DbTestsDir            = filepath.Join(SupabaseDirPath, "tests")
-	CustomRolesPath       = filepath.Join(SupabaseDirPath, "roles.sql")
-
 	ErrNotLinked   = errors.Errorf("Cannot find project ref. Have you run %s?", Aqua("supabase link"))
 	ErrInvalidRef  = errors.New("Invalid project ref format. Must be like `abcdefghijklmnopqrst`.")
 	ErrInvalidSlug = errors.New("Invalid Function name. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens. (^[A-Za-z][A-Za-z0-9_-]*$)")
 	ErrNotRunning  = errors.Errorf("%s is not running.", Aqua("supabase start"))
 )
-
-func SetSupabaseDirPath(base string) {
-	if len(base) == 0 {
-		base = "supabase"
-	}
-	SupabaseDirPath = base
-	ConfigPath = filepath.Join(SupabaseDirPath, "config.toml")
-	GitIgnorePath = filepath.Join(SupabaseDirPath, ".gitignore")
-	TempDir = filepath.Join(SupabaseDirPath, ".temp")
-	ImportMapsDir = filepath.Join(TempDir, "import_maps")
-	ProjectRefPath = filepath.Join(TempDir, "project-ref")
-	PoolerUrlPath = filepath.Join(TempDir, "pooler-url")
-	PostgresVersionPath = filepath.Join(TempDir, "postgres-version")
-	GotrueVersionPath = filepath.Join(TempDir, "gotrue-version")
-	RestVersionPath = filepath.Join(TempDir, "rest-version")
-	StorageVersionPath = filepath.Join(TempDir, "storage-version")
-	StorageMigrationPath = filepath.Join(TempDir, "storage-migration")
-	StudioVersionPath = filepath.Join(TempDir, "studio-version")
-	PgmetaVersionPath = filepath.Join(TempDir, "pgmeta-version")
-	PoolerVersionPath = filepath.Join(TempDir, "pooler-version")
-	RealtimeVersionPath = filepath.Join(TempDir, "realtime-version")
-	CliVersionPath = filepath.Join(TempDir, "cli-latest")
-	ProfilePath = filepath.Join(TempDir, "profile")
-	CurrBranchPath = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
-	ClusterDir = filepath.Join(SupabaseDirPath, "cluster")
-	SchemasDir = filepath.Join(SupabaseDirPath, "schemas")
-	MigrationsDir = filepath.Join(SupabaseDirPath, "migrations")
-	FunctionsDir = filepath.Join(SupabaseDirPath, "functions")
-	SnippetsDir = filepath.Join(SupabaseDirPath, "snippets")
-	FallbackImportMapPath = filepath.Join(FunctionsDir, "import_map.json")
-	FallbackEnvFilePath = filepath.Join(FunctionsDir, ".env")
-	DbTestsDir = filepath.Join(SupabaseDirPath, "tests")
-	CustomRolesPath = filepath.Join(SupabaseDirPath, "roles.sql")
-}
 
 func GetCurrentTimestamp() string {
 	// Magic number: https://stackoverflow.com/q/45160822.
@@ -133,7 +70,7 @@ func GetCurrentTimestamp() string {
 }
 
 func GetCurrentBranchFS(fsys afero.Fs) (string, error) {
-	branch, err := afero.ReadFile(fsys, CurrBranchPath)
+	branch, err := afero.ReadFile(fsys, Paths.CurrBranchPath)
 	if err != nil {
 		return "", errors.Errorf("failed to load current branch: %w", err)
 	}
@@ -182,18 +119,24 @@ func IsGitIgnored(fp ...string) (bool, error) {
 	return m.Match(fp, false), nil
 }
 
+func isSupabaseProjectRoot(cwd string, fsys afero.Fs) bool {
+	if ok, err := afero.Exists(fsys, filepath.Join(cwd, "supabase", "config.toml")); ok && err == nil {
+		return true
+	}
+	if ok, err := afero.Exists(fsys, filepath.Join(cwd, "config.toml")); ok && err == nil {
+		return true
+	}
+	return false
+}
+
 // If the `os.Getwd()` is within a supabase project, this will return
 // the root of the given project as the current working directory.
 // Otherwise, the `os.Getwd()` is kept as is.
 func getProjectRoot(absPath string, fsys afero.Fs) string {
 	for cwd := absPath; ; cwd = filepath.Dir(cwd) {
-		path := filepath.Join(cwd, ConfigPath)
 		// Treat all errors as file not exists
-		if isSupaProj, err := afero.Exists(fsys, path); isSupaProj {
+		if isSupabaseProjectRoot(cwd, fsys) {
 			return cwd
-		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-			logger := GetDebugLogger()
-			fmt.Fprintln(logger, err)
 		}
 		if isRootDirectory(cwd) {
 			break

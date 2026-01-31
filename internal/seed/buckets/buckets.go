@@ -31,7 +31,7 @@ func Run(ctx context.Context, projectRef string, interactive bool, fsys afero.Fs
 		return err
 	}
 	prune := func(name string) bool {
-		label := fmt.Sprintf("Bucket %s not found in %s. Do you want to prune it?", utils.Bold(name), utils.Bold(utils.ConfigPath))
+		label := fmt.Sprintf("Bucket %s not found in %s. Do you want to prune it?", utils.Bold(name), utils.Bold(utils.Paths.ConfigPath))
 		shouldPrune, err := console.PromptYesNo(ctx, label, false)
 		if err != nil {
 			fmt.Fprintln(utils.GetDebugLogger(), err)

@@ -46,7 +46,7 @@ func TestWriteStructured(t *testing.T) {
 				}
 				expected, err := afero.ReadFile(testFs, fp)
 				assert.NoError(t, err)
-				actual, _ := afero.ReadFile(fsys, path.Join(utils.SupabaseDirPath, fp))
+				actual, _ := afero.ReadFile(fsys, path.Join(utils.Paths.SupabaseDirPath, fp))
 				assert.Equal(t, string(expected), string(actual), fp)
 				return nil
 			})
@@ -67,7 +67,7 @@ func TestAppendConfig(t *testing.T) {
 		err := appendConfig(fsys)
 		// Check error
 		assert.NoError(t, err)
-		data, err := afero.ReadFile(fsys, utils.ConfigPath)
+		data, err := afero.ReadFile(fsys, utils.Paths.ConfigPath)
 		assert.NoError(t, err)
 		assert.True(t, strings.Contains(string(data), `
 schema_paths = [
@@ -90,7 +90,7 @@ schema_paths = [
 		err := appendConfig(fsys)
 		// Check error
 		assert.NoError(t, err)
-		data, err := afero.ReadFile(fsys, utils.ConfigPath)
+		data, err := afero.ReadFile(fsys, utils.Paths.ConfigPath)
 		assert.NoError(t, err)
 		assert.Equal(t, `
 [db.migrations]

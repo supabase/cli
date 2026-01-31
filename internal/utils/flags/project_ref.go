@@ -64,8 +64,8 @@ func LoadProjectRef(fsys afero.Fs) error {
 		return utils.AssertProjectRefIsValid(ProjectRef)
 	}
 	// Load from local file last
-	projectRefBytes, err := afero.ReadFile(fsys, utils.ProjectRefPath)
-	fmt.Fprintf(debuglogger, "Loading project ref from file: %s\n", utils.ProjectRefPath)
+	projectRefBytes, err := afero.ReadFile(fsys, utils.Paths.ProjectRefPath)
+	fmt.Fprintf(debuglogger, "Loading project ref from file: %s\n", utils.Paths.ProjectRefPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return errors.New(utils.ErrNotLinked)
 	} else if err != nil {

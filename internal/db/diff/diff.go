@@ -52,13 +52,13 @@ func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
 	if schemas := utils.Config.Db.Migrations.SchemaPaths; len(schemas) > 0 {
 		return schemas.Files(afero.NewIOFS(fsys))
 	}
-	if exists, err := afero.DirExists(fsys, utils.SchemasDir); err != nil {
+	if exists, err := afero.DirExists(fsys, utils.Paths.SchemasDir); err != nil {
 		return nil, errors.Errorf("failed to check schemas: %w", err)
 	} else if !exists {
 		return nil, nil
 	}
 	var declared []string
-	if err := afero.Walk(fsys, utils.SchemasDir, func(path string, info fs.FileInfo, err error) error {
+	if err := afero.Walk(fsys, utils.Paths.SchemasDir, func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -118,7 +118,7 @@ func ConnectShadowDatabase(ctx context.Context, timeout time.Duration, options .
 const CREATE_TEMPLATE = "CREATE DATABASE contrib_regression TEMPLATE postgres"
 
 func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	migrations, err := migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys))
+	migrations, err := migration.ListLocalMigrations(utils.Paths.MigrationsDir, afero.NewIOFS(fsys))
 	if err != nil {
 		return err
 	}

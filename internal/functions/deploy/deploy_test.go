@@ -70,7 +70,7 @@ func TestDeployCommand(t *testing.T) {
 			JSON(api.BulkUpdateFunctionResponse{})
 		// Setup output file
 		for _, v := range functions {
-			outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", v))
+			outputDir := filepath.Join(utils.Paths.TempDir, fmt.Sprintf(".output_%s", v))
 			require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		}
 		// Run test
@@ -86,7 +86,7 @@ func TestDeployCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
-		f, err := fsys.OpenFile(utils.ConfigPath, os.O_APPEND|os.O_WRONLY, 0600)
+		f, err := fsys.OpenFile(utils.Paths.ConfigPath, os.O_APPEND|os.O_WRONLY, 0600)
 		require.NoError(t, err)
 		_, err = f.WriteString(`
 [functions.` + slug + `]
@@ -94,12 +94,12 @@ import_map = "./import_map.json"
 `)
 		require.NoError(t, err)
 		require.NoError(t, f.Close())
-		importMapPath := filepath.Join(utils.SupabaseDirPath, "import_map.json")
+		importMapPath := filepath.Join(utils.Paths.SupabaseDirPath, "import_map.json")
 		require.NoError(t, afero.WriteFile(fsys, importMapPath, []byte("{}"), 0644))
 		// Setup function entrypoint
-		entrypointPath := filepath.Join(utils.FunctionsDir, slug, "index.ts")
+		entrypointPath := filepath.Join(utils.Paths.FunctionsDir, slug, "index.ts")
 		require.NoError(t, afero.WriteFile(fsys, entrypointPath, []byte{}, 0644))
-		ignorePath := filepath.Join(utils.FunctionsDir, "_ignore", "index.ts")
+		ignorePath := filepath.Join(utils.Paths.FunctionsDir, "_ignore", "index.ts")
 		require.NoError(t, afero.WriteFile(fsys, ignorePath, []byte{}, 0644))
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
@@ -127,7 +127,7 @@ import_map = "./import_map.json"
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
 		// Setup output file
-		outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
+		outputDir := filepath.Join(utils.Paths.TempDir, fmt.Sprintf(".output_%s", slug))
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		// Run test
 		err = Run(context.Background(), nil, true, nil, "", 1, false, fsys)
@@ -141,7 +141,7 @@ import_map = "./import_map.json"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
-		f, err := fsys.OpenFile(utils.ConfigPath, os.O_APPEND|os.O_WRONLY, 0600)
+		f, err := fsys.OpenFile(utils.Paths.ConfigPath, os.O_APPEND|os.O_WRONLY, 0600)
 		require.NoError(t, err)
 		_, err = f.WriteString(`
 [functions.disabled-func]
@@ -150,12 +150,12 @@ import_map = "./import_map.json"
 `)
 		require.NoError(t, err)
 		require.NoError(t, f.Close())
-		importMapPath, err := filepath.Abs(filepath.Join(utils.SupabaseDirPath, "import_map.json"))
+		importMapPath, err := filepath.Abs(filepath.Join(utils.Paths.SupabaseDirPath, "import_map.json"))
 		require.NoError(t, err)
 		require.NoError(t, afero.WriteFile(fsys, importMapPath, []byte("{}"), 0644))
 		// Setup function entrypoints
-		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "enabled-func", "index.ts"), []byte{}, 0644))
-		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "disabled-func", "index.ts"), []byte{}, 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.Paths.FunctionsDir, "enabled-func", "index.ts"), []byte{}, 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.Paths.FunctionsDir, "disabled-func", "index.ts"), []byte{}, 0644))
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
@@ -180,7 +180,7 @@ import_map = "./import_map.json"
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
 		// Setup output file
-		outputDir := filepath.Join(utils.TempDir, ".output_enabled-func")
+		outputDir := filepath.Join(utils.Paths.TempDir, ".output_enabled-func")
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		// Run test
 		err = Run(context.Background(), nil, true, nil, "", 1, false, fsys)
@@ -214,7 +214,7 @@ import_map = "./import_map.json"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
-		f, err := fsys.OpenFile(utils.ConfigPath, os.O_APPEND|os.O_WRONLY, 0600)
+		f, err := fsys.OpenFile(utils.Paths.ConfigPath, os.O_APPEND|os.O_WRONLY, 0600)
 		require.NoError(t, err)
 		_, err = f.WriteString(`
 [functions.` + slug + `]
@@ -247,7 +247,7 @@ verify_jwt = false
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
 		// Setup output file
-		outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
+		outputDir := filepath.Join(utils.Paths.TempDir, fmt.Sprintf(".output_%s", slug))
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		// Run test
 		assert.NoError(t, Run(context.Background(), []string{slug}, true, nil, "", 1, false, fsys))
@@ -260,7 +260,7 @@ verify_jwt = false
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
-		f, err := fsys.OpenFile(utils.ConfigPath, os.O_APPEND|os.O_WRONLY, 0600)
+		f, err := fsys.OpenFile(utils.Paths.ConfigPath, os.O_APPEND|os.O_WRONLY, 0600)
 		require.NoError(t, err)
 		_, err = f.WriteString(`
 [functions.` + slug + `]
@@ -293,7 +293,7 @@ verify_jwt = false
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
 		// Setup output file
-		outputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
+		outputDir := filepath.Join(utils.Paths.TempDir, fmt.Sprintf(".output_%s", slug))
 		require.NoError(t, afero.WriteFile(fsys, filepath.Join(outputDir, "output.eszip"), []byte(""), 0644))
 		// Run test
 		noVerifyJWT := false
@@ -307,12 +307,12 @@ func TestImportMapPath(t *testing.T) {
 	t.Run("loads import map from default location", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.FallbackImportMapPath, []byte("{}"), 0644))
 		// Run test
 		fc, err := GetFunctionConfig([]string{"test"}, "", nil, fsys)
 		// Check error
 		assert.NoError(t, err)
-		assert.Equal(t, utils.FallbackImportMapPath, fc["test"].ImportMap)
+		assert.Equal(t, utils.Paths.FallbackImportMapPath, fc["test"].ImportMap)
 	})
 
 	t.Run("per function config takes precedence", func(t *testing.T) {
@@ -323,7 +323,7 @@ func TestImportMapPath(t *testing.T) {
 		}
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.FallbackImportMapPath, []byte("{}"), 0644))
 		// Run test
 		fc, err := GetFunctionConfig([]string{slug}, "", nil, fsys)
 		// Check error
@@ -340,10 +340,10 @@ func TestImportMapPath(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Custom global import map loaded via cli flag
-		customImportMapPath := filepath.Join(utils.FunctionsDir, "custom_import_map.json")
+		customImportMapPath := filepath.Join(utils.Paths.FunctionsDir, "custom_import_map.json")
 		require.NoError(t, afero.WriteFile(fsys, customImportMapPath, []byte("{}"), 0644))
 		// Create fallback import map to test precedence order
-		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.FallbackImportMapPath, []byte("{}"), 0644))
 		// Run test
 		fc, err := GetFunctionConfig([]string{slug}, customImportMapPath, cast.Ptr(false), fsys)
 		// Check error
@@ -365,7 +365,7 @@ func TestImportMapPath(t *testing.T) {
 		path := "/tmp/import_map.json"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.FallbackImportMapPath, []byte("{}"), 0644))
 		// Run test
 		fc, err := GetFunctionConfig([]string{"test"}, path, nil, fsys)
 		// Check error

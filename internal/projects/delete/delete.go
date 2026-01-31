@@ -46,7 +46,7 @@ func Run(ctx context.Context, ref string, fsys afero.Fs) error {
 	if err := credentials.StoreProvider.Delete(ref); err != nil && !errors.Is(err, keyring.ErrNotFound) {
 		fmt.Fprintln(os.Stderr, err)
 	}
-	if match, err := afero.FileContainsBytes(fsys, utils.ProjectRefPath, []byte(ref)); match {
+	if match, err := afero.FileContainsBytes(fsys, utils.Paths.ProjectRefPath, []byte(ref)); match {
 		if err := unlink.Unlink(ref, fsys); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}

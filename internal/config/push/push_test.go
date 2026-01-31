@@ -23,7 +23,7 @@ func TestPushConfig(t *testing.T) {
 	t.Run("throws error on malformed config", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, utils.WriteFile(utils.ConfigPath, []byte("malformed"), fsys))
+		require.NoError(t, utils.WriteFile(utils.Paths.ConfigPath, []byte("malformed"), fsys))
 		// Run test
 		err := Run(context.Background(), "", fsys)
 		// Check error

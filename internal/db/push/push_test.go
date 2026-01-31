@@ -32,7 +32,7 @@ func TestMigrationPush(t *testing.T) {
 	t.Run("dry run", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		path := filepath.Join(utils.Paths.MigrationsDir, "0_test.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -91,7 +91,7 @@ func TestMigrationPush(t *testing.T) {
 	t.Run("throws error on push failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		path := filepath.Join(utils.Paths.MigrationsDir, "0_test.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -115,7 +115,7 @@ func TestPushAll(t *testing.T) {
 	t.Run("ignores missing roles and seed", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		path := filepath.Join(utils.Paths.MigrationsDir, "0_test.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -137,7 +137,7 @@ func TestPushAll(t *testing.T) {
 		t.Cleanup(fstest.MockStdin(t, "n"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		path := filepath.Join(utils.Paths.MigrationsDir, "0_test.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -152,8 +152,8 @@ func TestPushAll(t *testing.T) {
 
 	t.Run("throws error on roles failure", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := &fstest.StatErrorFs{DenyPath: utils.CustomRolesPath}
-		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		fsys := &fstest.StatErrorFs{DenyPath: utils.Paths.CustomRolesPath}
+		path := filepath.Join(utils.Paths.MigrationsDir, "0_test.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -168,12 +168,12 @@ func TestPushAll(t *testing.T) {
 
 	t.Run("throws error on seed failure", func(t *testing.T) {
 		digest := hex.EncodeToString(sha256.New().Sum(nil))
-		seedPath := filepath.Join(utils.SupabaseDirPath, "seed.sql")
+		seedPath := filepath.Join(utils.Paths.SupabaseDirPath, "seed.sql")
 		utils.Config.Db.Seed.SqlPaths = []string{seedPath}
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, seedPath, []byte{}, 0644))
-		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		path := filepath.Join(utils.Paths.MigrationsDir, "0_test.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()

@@ -27,7 +27,7 @@ func Run(ctx context.Context, target string, fsys afero.Fs, options ...func(*pgx
 		if target != "main" && utils.IsBranchNameReserved(target) {
 			return errors.New("Cannot switch branch " + utils.Aqua(target) + ": branch name is reserved.")
 		}
-		branchPath := filepath.Join(filepath.Dir(utils.CurrBranchPath), target)
+		branchPath := filepath.Join(filepath.Dir(utils.Paths.CurrBranchPath), target)
 		if _, err := fsys.Stat(branchPath); errors.Is(err, os.ErrNotExist) {
 			return errors.New("Branch " + utils.Aqua(target) + " does not exist.")
 		} else if err != nil {
@@ -52,8 +52,8 @@ func Run(ctx context.Context, target string, fsys afero.Fs, options ...func(*pgx
 	}
 
 	// 4. Update current branch
-	if err := afero.WriteFile(fsys, utils.CurrBranchPath, []byte(target), 0644); err != nil {
-		return errors.New("Unable to update local branch file. Fix by running: echo '" + target + "' > " + utils.CurrBranchPath)
+	if err := afero.WriteFile(fsys, utils.Paths.CurrBranchPath, []byte(target), 0644); err != nil {
+		return errors.New("Unable to update local branch file. Fix by running: echo '" + target + "' > " + utils.Paths.CurrBranchPath)
 	}
 	return nil
 }
