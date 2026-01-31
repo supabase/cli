@@ -82,7 +82,10 @@ func run(ctx context.Context, schema []string, path string, conn *pgx.Conn, fsys
 		return err
 	}
 	// 2. Fetch remote schema changes
-	if len(schema) == 0 && viper.GetBool("EXPERIMENTAL") {
+	if err := diffRemoteSchema(ctx, schema, path, config, fsys); err != nil {
+		return err
+	}
+	if viper.GetBool("EXPERIMENTAL") {
 		var buf bytes.Buffer
 		if err := migration.DumpRole(ctx, config, &buf, dump.DockerExec); err != nil {
 			return err
@@ -94,7 +97,7 @@ func run(ctx context.Context, schema []string, path string, conn *pgx.Conn, fsys
 			return err
 		}
 	}
-	return diffRemoteSchema(ctx, schema, path, config, fsys)
+	return nil
 }
 
 func dumpRemoteSchema(ctx context.Context, path string, config pgconn.Config, fsys afero.Fs) error {
