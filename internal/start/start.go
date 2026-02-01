@@ -36,30 +36,35 @@ import (
 
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/functions/serve"
+	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/seed/buckets"
 	"github.com/supabase/cli/internal/services"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	svc "github.com/supabase/cli/internal/utils/services"
+	"github.com/supabase/cli/internal/utils/services/native"
 	"github.com/supabase/cli/pkg/config"
 )
 
-func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck bool) error {
+func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignoreHealthCheck, nativeBinary bool) error {
 	// Sanity checks.
-	{
-		if err := flags.LoadConfig(fsys); err != nil {
-			return err
-		}
-		if err := utils.AssertSupabaseDbIsRunning(); err == nil {
-			fmt.Fprintln(os.Stderr, utils.Aqua("supabase start")+" is already running.")
-			names := status.CustomName{}
-			return status.Run(ctx, names, utils.OutputPretty, fsys)
-		} else if !errors.Is(err, utils.ErrNotRunning) {
-			return err
-		}
-		if err := flags.LoadProjectRef(fsys); err == nil {
-			_ = services.CheckVersions(ctx, fsys)
-		}
+	if err := flags.LoadConfig(fsys); err != nil {
+		return err
+	}
+	if nativeBinary {
+		return nativeStart(ctx, fsys)
+	}
+
+	if err := utils.AssertSupabaseDbIsRunning(); err == nil {
+		fmt.Fprintln(os.Stderr, utils.Aqua("supabase start")+" is already running.")
+		names := status.CustomName{}
+		return status.Run(ctx, names, utils.OutputPretty, fsys)
+	} else if !errors.Is(err, utils.ErrNotRunning) {
+		return err
+	}
+	if err := flags.LoadProjectRef(fsys); err == nil {
+		_ = services.CheckVersions(ctx, fsys)
 	}
 
 	dbConfig := pgconn.Config{
@@ -83,6 +88,64 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 	fmt.Fprintf(os.Stderr, "Started %s local development setup.\n\n", utils.Aqua("supabase"))
 	status.PrettyPrint(os.Stdout, excludedContainers...)
 	return nil
+}
+
+func nativeStart(ctx context.Context, fsys afero.Fs) error {
+	// Start Postgres service
+	pg := native.NewNativePostgres()
+	if err := pg.Start(ctx); err != nil {
+		return err
+	}
+	defer pg.Close()
+	// Watch for changed files
+	watcher, err := serve.NewDebounceFileWatcher()
+	if err != nil {
+		return err
+	}
+	go watcher.Start()
+	defer watcher.Close()
+	// Wait for notification
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Fprintln(os.Stderr, "Stopping local stack...")
+			return ctx.Err()
+		case err := <-pg.ErrCh:
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+			}
+			fmt.Fprintln(os.Stderr, "Restarting postgres service...")
+			if err := pg.Start(ctx); err != nil {
+				return err
+			}
+		case err := <-pg.ReadyCh:
+			if err != nil {
+				return err
+			}
+			if err := nativeMigrate(ctx, &pg, fsys); err != nil {
+				return err
+			}
+		case <-watcher.RestartCh:
+			// TODO: rerun migrations
+			if err := pg.Close(); err != nil {
+				return err
+			}
+			if err := pg.Start(ctx); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func nativeMigrate(ctx context.Context, pg svc.Service, fsys afero.Fs) error {
+	conn, err := utils.ConnectByUrl(ctx, pg.GetURL(), func(cc *pgx.ConnConfig) {
+		cc.TLSConfig = nil
+	})
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	return apply.MigrateAndSeed(ctx, "", conn, fsys)
 }
 
 type kongConfig struct {

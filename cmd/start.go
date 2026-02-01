@@ -39,6 +39,7 @@ var (
 	allowedContainers  = start.ExcludableContainers()
 	excludedContainers []string
 	ignoreHealthCheck  bool
+	nativeBinary       bool
 	preview            bool
 
 	startCmd = &cobra.Command{
@@ -47,7 +48,7 @@ var (
 		Short:   "Start containers for Supabase local development",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			validateExcludedContainers(excludedContainers)
-			return start.Run(cmd.Context(), afero.NewOsFs(), excludedContainers, ignoreHealthCheck)
+			return start.Run(cmd.Context(), afero.NewOsFs(), excludedContainers, ignoreHealthCheck, nativeBinary)
 		},
 	}
 )
@@ -57,6 +58,7 @@ func init() {
 	names := strings.Join(allowedContainers, ",")
 	flags.StringSliceVarP(&excludedContainers, "exclude", "x", []string{}, "Names of containers to not start. ["+names+"]")
 	flags.BoolVar(&ignoreHealthCheck, "ignore-health-check", false, "Ignore unhealthy services and exit 0")
+	flags.BoolVar(&nativeBinary, "native", false, "Start postgres using local binary")
 	flags.BoolVar(&preview, "preview", false, "Connect to feature preview branch")
 	cobra.CheckErr(flags.MarkHidden("preview"))
 	rootCmd.AddCommand(startCmd)

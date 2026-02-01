@@ -1,0 +1,12 @@
+# Pre: compile binaries with goreleaser before running.
+# SENTRY_DSN= goreleaser build --snapshot --clean
+# docker compose up --build
+services:
+  executor:
+    build: .
+    environment:
+      SUPABASE_DEBUG: false
+    volumes:
+      - ./supabase:/app/supabase:ro
+      - /var/lib/postgresql/data
+      - /root/.cache/deno

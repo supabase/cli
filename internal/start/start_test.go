@@ -31,7 +31,7 @@ func TestStartCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
 		// Run test
-		err := Run(context.Background(), fsys, []string{}, false)
+		err := Run(context.Background(), fsys, []string{}, false, false)
 		// Check error
 		assert.ErrorContains(t, err, "toml: expected = after a key, but the document ends there")
 	})
@@ -47,7 +47,7 @@ func TestStartCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), fsys, []string{}, false)
+		err := Run(context.Background(), fsys, []string{}, false, false)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -84,7 +84,7 @@ func TestStartCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(running)
 		// Run test
-		err := Run(context.Background(), fsys, []string{}, false)
+		err := Run(context.Background(), fsys, []string{}, false, false)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
