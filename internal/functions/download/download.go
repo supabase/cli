@@ -56,7 +56,7 @@ func RunLegacy(ctx context.Context, slug string, projectRef string, fsys afero.F
 		return err
 	}
 
-	fmt.Println("Downloaded Function " + utils.Aqua(slug) + " from project " + utils.Aqua(projectRef) + ".")
+	fmt.Fprintf(os.Stderr, "Downloaded Function %s from project %s.\n", utils.Aqua(slug), utils.Aqua(projectRef))
 	return nil
 }
 
@@ -85,7 +85,7 @@ func getFunctionMetadata(ctx context.Context, projectRef, slug string) (*api.Fun
 }
 
 func downloadFunction(ctx context.Context, projectRef, slug, extractScriptPath string) error {
-	fmt.Println("Downloading " + utils.Bold(slug))
+	fmt.Fprintln(os.Stderr, "Downloading function:", utils.Bold(slug))
 	denoPath, err := utils.GetDenoPath()
 	if err != nil {
 		return err
@@ -124,21 +124,49 @@ func Run(ctx context.Context, slug, projectRef string, useLegacyBundle, useDocke
 		return err
 	}
 
+	// Defaults to server-side unbundling with multipart/form-data
+	downloader := downloadWithServerSideUnbundle
 	if useLegacyBundle {
-		return RunLegacy(ctx, slug, projectRef, fsys)
-	}
-
-	if useDocker {
+		downloader = RunLegacy
+	} else if useDocker {
 		if utils.IsDockerRunning(ctx) {
-			// download eszip file for client-side unbundling with edge-runtime
-			return downloadWithDockerUnbundle(ctx, slug, projectRef, fsys)
+			// Download eszip file for client-side unbundling with edge-runtime
+			downloader = downloadWithDockerUnbundle
 		} else {
 			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Docker is not running")
 		}
 	}
 
-	// Use server-side unbundling with multipart/form-data
-	return downloadWithServerSideUnbundle(ctx, slug, projectRef, fsys)
+	if len(slug) > 0 {
+		return downloader(ctx, slug, projectRef, fsys)
+	}
+	return downloadAll(ctx, projectRef, fsys, downloader)
+}
+
+func downloadAll(ctx context.Context, projectRef string, fsys afero.Fs, downloader func(context.Context, string, string, afero.Fs) error) error {
+	resp, err := utils.GetSupabase().V1ListAllFunctionsWithResponse(ctx, projectRef)
+	if err != nil {
+		return errors.Errorf("failed to list functions: %w", err)
+	}
+	if resp.JSON200 == nil {
+		return errors.Errorf("unexpected list functions status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+
+	functions := *resp.JSON200
+	if len(functions) == 0 {
+		fmt.Fprintln(os.Stderr, "No functions found in project ", utils.Aqua(projectRef))
+		return nil
+	}
+
+	fmt.Fprintf(os.Stderr, "Found %d function(s) to download\n", len(functions))
+	for _, f := range functions {
+		if err := downloader(ctx, f.Slug, projectRef, fsys); err != nil {
+			return err
+		}
+	}
+
+	fmt.Fprintln(os.Stderr, "Successfully downloaded all functions from project", utils.Aqua(projectRef))
+	return nil
 }
 
 func downloadWithDockerUnbundle(ctx context.Context, slug string, projectRef string, fsys afero.Fs) error {
@@ -162,7 +190,7 @@ func downloadWithDockerUnbundle(ctx context.Context, slug string, projectRef str
 }
 
 func downloadOne(ctx context.Context, slug, projectRef string, fsys afero.Fs) (string, error) {
-	fmt.Println("Downloading " + utils.Bold(slug))
+	fmt.Fprintln(os.Stderr, "Downloading function:", utils.Bold(slug))
 	resp, err := utils.GetSupabase().V1GetAFunctionBody(ctx, projectRef, slug)
 	if err != nil {
 		return "", errors.Errorf("failed to get function body: %w", err)
@@ -313,7 +341,7 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 		}
 	}
 
-	fmt.Println("Downloaded Function " + utils.Aqua(slug) + " from project " + utils.Aqua(projectRef) + ".")
+	fmt.Fprintf(os.Stderr, "Downloaded Function %s from project %s.\n", utils.Aqua(slug), utils.Aqua(projectRef))
 	return nil
 }
 
