@@ -1,0 +1,138 @@
+version: "0.5"
+name: supabase-sandbox
+log_location: {{ .LogLocation }}
+
+processes:
+  postgres:
+    command: docker start -a {{ .PostgresContainer }}
+    readiness_probe:
+      exec:
+        command: docker exec {{ .PostgresContainer }} pg_isready -U postgres -h 127.0.0.1 -p 5432
+      initial_delay_seconds: 2
+      period_seconds: 5
+      timeout_seconds: 2
+      failure_threshold: 3
+    shutdown:
+      command: docker stop {{ .PostgresContainer }}
+      timeout_seconds: 10
+
+  postgres-init:
+    command: |
+      docker exec -e PGPASSWORD={{ .DbPassword }} {{ .PostgresContainer }} psql -U supabase_admin -d postgres -c "
+        DO \$\$
+        DECLARE
+          roles text[] := ARRAY['authenticator', 'supabase_auth_admin', 'supabase_storage_admin', 'supabase_functions_admin', 'supabase_replication_admin', 'supabase_read_only_user'];
+          r text;
+        BEGIN
+          FOREACH r IN ARRAY roles LOOP
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+              EXECUTE format('ALTER ROLE %I WITH PASSWORD ''{{ .DbPassword }}''', r);
+            END IF;
+          END LOOP;
+        END
+        \$\$;
+      "
+    depends_on:
+      postgres:
+        condition: process_healthy
+    availability:
+      restart: "no"
+
+  gotrue-migrate:
+    command: {{ .GotruePath }} migrate
+    environment:
+      - GOTRUE_DB_DRIVER=postgres
+      - GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:{{ .DbPassword }}@127.0.0.1:{{ .PostgresPort }}/postgres
+      - API_EXTERNAL_URL=http://127.0.0.1:{{ .NginxPort }}
+      - GOTRUE_SITE_URL={{ .SiteUrl }}
+      - GOTRUE_JWT_SECRET={{ .JwtSecret }}
+    depends_on:
+      postgres-init:
+        condition: process_completed_successfully
+    availability:
+      restart: "no"
+
+  gotrue:
+    command: {{ .GotruePath }}
+    environment:
+      - GOTRUE_API_HOST=0.0.0.0
+      - GOTRUE_API_PORT={{ .GoTruePort }}
+      - GOTRUE_DB_DRIVER=postgres
+      - GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:{{ .DbPassword }}@127.0.0.1:{{ .PostgresPort }}/postgres
+      - GOTRUE_JWT_SECRET={{ .JwtSecret }}
+      - GOTRUE_JWT_EXP={{ .JwtExpiry }}
+      - GOTRUE_JWT_AUD=authenticated
+      - GOTRUE_JWT_ADMIN_ROLES=service_role
+      - GOTRUE_SITE_URL={{ .SiteUrl }}
+      - GOTRUE_EXTERNAL_EMAIL_ENABLED={{ .EmailEnabled }}
+      - GOTRUE_MAILER_AUTOCONFIRM={{ .MailerAutoconfirm }}
+      - API_EXTERNAL_URL=http://127.0.0.1:{{ .NginxPort }}
+      - GOTRUE_SMTP_HOST=
+      - GOTRUE_DISABLE_SIGNUP=false
+    depends_on:
+      gotrue-migrate:
+        condition: process_completed_successfully
+    readiness_probe:
+      http_get:
+        host: 127.0.0.1
+        port: {{ .GoTruePort }}
+        path: /health
+        scheme: http
+      initial_delay_seconds: 2
+      period_seconds: 3
+    availability:
+      restart: on_failure
+      backoff_seconds: 2
+      max_restarts: 5
+
+  postgrest:
+    command: {{ .PostgrestPath }}
+    environment:
+      - PGRST_DB_URI=postgresql://authenticator:{{ .DbPassword }}@127.0.0.1:{{ .PostgresPort }}/postgres
+      - PGRST_DB_SCHEMAS={{ .DbSchemas }}
+      - PGRST_DB_EXTRA_SEARCH_PATH={{ .DbExtraSearchPath }}
+      - PGRST_DB_MAX_ROWS={{ .DbMaxRows }}
+      - PGRST_DB_ANON_ROLE=anon
+      - PGRST_JWT_SECRET={{ .JwtSecret }}
+      - PGRST_SERVER_PORT={{ .PostgRESTPort }}
+      - PGRST_ADMIN_SERVER_PORT={{ .PostgRESTAdminPort }}
+    depends_on:
+      postgres-init:
+        condition: process_completed_successfully
+    readiness_probe:
+      http_get:
+        host: 127.0.0.1
+        port: {{ .PostgRESTPort }}
+        path: /
+        scheme: http
+      initial_delay_seconds: 2
+      period_seconds: 3
+    availability:
+      restart: on_failure
+      backoff_seconds: 2
+      max_restarts: 5
+
+  nginx:
+    command: {{ .NginxPath }} -c {{ .NginxConfigPath }} -e stderr
+    depends_on:
+      gotrue:
+        condition: process_healthy
+      postgrest:
+        condition: process_healthy
+    is_daemon: true
+    readiness_probe:
+      http_get:
+        host: 127.0.0.1
+        port: {{ .NginxPort }}
+        path: /rest/v1/
+        scheme: http
+      initial_delay_seconds: 1
+      period_seconds: 2
+      timeout_seconds: 2
+      failure_threshold: 3
+    shutdown:
+      signal: 15
+      timeout_seconds: 10
+    availability:
+      restart: on_failure
+      max_restarts: 3
