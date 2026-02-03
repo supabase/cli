@@ -7,7 +7,7 @@ FROM postgrest/postgrest:v14.3 AS postgrest
 FROM supabase/postgres-meta:v0.95.2 AS pgmeta
 FROM supabase/studio:2026.01.27-sha-2a37755 AS studio
 FROM darthsim/imgproxy:v3.8.0 AS imgproxy
-FROM supabase/edge-runtime:v1.70.0 AS edgeruntime
+FROM supabase/edge-runtime:v1.70.1 AS edgeruntime
 FROM timberio/vector:0.28.1-alpine AS vector
 FROM supabase/supavisor:2.7.4 AS supavisor
 FROM supabase/gotrue:v2.186.0 AS gotrue
