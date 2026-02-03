@@ -95,6 +95,10 @@ func TestDatabaseStart(t *testing.T) {
 	t.Run("starts database locally", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		// Disable dev schemas to skip shadow database warmup in this test
+		disabled := false
+		utils.Config.Dev.Schemas.Enabled = &disabled
+		defer func() { utils.Config.Dev.Schemas.Enabled = nil }()
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -211,6 +215,10 @@ func TestDatabaseStart(t *testing.T) {
 	t.Run("skips excluded containers", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		// Disable dev schemas to skip shadow database startup in this test
+		disabled := false
+		utils.Config.Dev.Schemas.Enabled = &disabled
+		defer func() { utils.Config.Dev.Schemas.Enabled = nil }()
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()

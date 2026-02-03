@@ -187,12 +187,10 @@ func (s *Session) Run() error {
 	for {
 		select {
 		case <-s.ctx.Done():
-			CleanupShadow(s.ctx)
 			return s.ctx.Err()
 		case <-sigCh:
 			fmt.Fprintln(os.Stderr)
 			fmt.Fprintln(os.Stderr, "[dev] Stopping dev session...")
-			CleanupShadow(s.ctx)
 			s.showDirtyWarning()
 			return nil
 		case <-watcher.RestartCh:
@@ -230,7 +228,6 @@ func (s *Session) Run() error {
 			}
 			fmt.Fprintln(os.Stderr, "[dev] Watching for changes...")
 		case err := <-watcher.ErrCh:
-			CleanupShadow(s.ctx)
 			return errors.Errorf("watcher error: %w", err)
 		}
 	}

@@ -18,6 +18,7 @@ import (
 var (
 	NetId         string
 	DbId          string
+	ShadowId      string
 	KongId        string
 	GotrueId      string
 	InbucketId    string
@@ -34,6 +35,7 @@ var (
 	PoolerId      string
 
 	DbAliases          = []string{"db", "db.supabase.internal"}
+	ShadowAliases      = []string{"db_shadow"}
 	KongAliases        = []string{"kong", "api.supabase.internal"}
 	GotrueAliases      = []string{"auth"}
 	InbucketAliases    = []string{"inbucket"}
@@ -63,6 +65,7 @@ func UpdateDockerIds() {
 		NetId = GetId("network")
 	}
 	DbId = GetId(DbAliases[0])
+	ShadowId = GetId(ShadowAliases[0])
 	KongId = GetId(KongAliases[0])
 	GotrueId = GetId(GotrueAliases[0])
 	InbucketId = GetId(InbucketAliases[0])

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
-	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/go-errors/errors"
@@ -30,7 +29,7 @@ type ShadowState struct {
 
 // shadowContainerName returns the name for the shadow container
 func shadowContainerName() string {
-	return "supabase_db_" + utils.Config.ProjectId + "_shadow"
+	return utils.ShadowId
 }
 
 // EnsureShadowReady prepares the shadow database for diffing
@@ -131,33 +130,84 @@ func (s *ShadowState) isContainerHealthy(ctx context.Context) (bool, error) {
 
 // coldStart creates container and builds initial template
 func (s *ShadowState) coldStart(ctx context.Context, fsys afero.Fs) error {
-	// 1. Remove any existing shadow container
-	if s.ContainerID != "" {
-		_ = utils.Docker.ContainerRemove(ctx, s.ContainerID, container.RemoveOptions{Force: true})
-	}
-
-	// 2. Create and start shadow container with a proper name
 	name := shadowContainerName()
-	containerID, err := diff.CreateShadowDatabaseWithName(ctx, utils.Config.Db.ShadowPort, name, false)
+
+	// 1. Check if shadow container already exists (may have been started by `supabase start`)
+	containers, err := utils.Docker.ContainerList(ctx, container.ListOptions{All: true})
 	if err != nil {
-		return errors.Errorf("failed to create shadow container: %w", err)
+		return errors.Errorf("failed to list containers: %w", err)
 	}
-	s.ContainerID = containerID
-	timingLog.Printf("Created shadow container: %s (%s)", name, containerID[:12])
 
-	// 3. Wait for healthy
-	if err := start.WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, s.ContainerID); err != nil {
-		return errors.Errorf("shadow container unhealthy: %w", err)
+	var existingContainerID string
+	var existingRunning bool
+	expectedName := "/" + name
+	for _, c := range containers {
+		for _, n := range c.Names {
+			if n == expectedName {
+				existingContainerID = c.ID
+				existingRunning = c.State == "running"
+				break
+			}
+		}
 	}
-	timingLog.Printf("Shadow container started")
 
-	// 4. Apply migrations
-	if err := diff.MigrateShadowDatabase(ctx, s.ContainerID, fsys); err != nil {
-		return errors.Errorf("failed to migrate shadow: %w", err)
+	if existingContainerID != "" {
+		// Shadow container exists, reuse it
+		s.ContainerID = existingContainerID
+		timingLog.Printf("Found existing shadow container: %s", existingContainerID[:12])
+
+		if !existingRunning {
+			// Start the container if not running
+			if err := utils.Docker.ContainerStart(ctx, existingContainerID, container.StartOptions{}); err != nil {
+				return errors.Errorf("failed to start shadow container: %w", err)
+			}
+			if err := start.WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, existingContainerID); err != nil {
+				return errors.Errorf("shadow container unhealthy: %w", err)
+			}
+		}
+
+		// Check if migrations are already applied by checking for contrib_regression database
+		migrationsApplied, err := s.checkMigrationsApplied(ctx)
+		if err != nil {
+			timingLog.Printf("Failed to check migrations, will re-apply: %v", err)
+		}
+
+		if !migrationsApplied {
+			// Apply migrations
+			if err := diff.MigrateShadowDatabase(ctx, s.ContainerID, fsys); err != nil {
+				return errors.Errorf("failed to migrate shadow: %w", err)
+			}
+			timingLog.Printf("Migrations applied to shadow")
+		} else {
+			timingLog.Printf("Migrations already applied, skipping")
+		}
+	} else {
+		// No existing container, create a new one
+		if s.ContainerID != "" {
+			_ = utils.Docker.ContainerRemove(ctx, s.ContainerID, container.RemoveOptions{Force: true})
+		}
+
+		containerID, err := diff.CreateShadowDatabaseWithName(ctx, utils.Config.Db.ShadowPort, name, false)
+		if err != nil {
+			return errors.Errorf("failed to create shadow container: %w", err)
+		}
+		s.ContainerID = containerID
+		timingLog.Printf("Created shadow container: %s (%s)", name, containerID[:12])
+
+		// Wait for healthy
+		if err := start.WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, s.ContainerID); err != nil {
+			return errors.Errorf("shadow container unhealthy: %w", err)
+		}
+		timingLog.Printf("Shadow container started")
+
+		// Apply migrations
+		if err := diff.MigrateShadowDatabase(ctx, s.ContainerID, fsys); err != nil {
+			return errors.Errorf("failed to migrate shadow: %w", err)
+		}
+		timingLog.Printf("Migrations applied to shadow")
 	}
-	timingLog.Printf("Migrations applied to shadow")
 
-	// 5. Snapshot baseline roles
+	// Snapshot baseline roles
 	baselineRoles, err := s.queryRoles(ctx)
 	if err != nil {
 		return errors.Errorf("failed to query baseline roles: %w", err)
@@ -165,12 +215,12 @@ func (s *ShadowState) coldStart(ctx context.Context, fsys afero.Fs) error {
 	s.BaselineRoles = baselineRoles
 	timingLog.Printf("Captured %d baseline roles", len(baselineRoles))
 
-	// 6. Create template from current state
+	// Create template from current state
 	if err := s.createTemplate(ctx); err != nil {
 		return errors.Errorf("failed to create template: %w", err)
 	}
 
-	// 7. Store migrations hash
+	// Store migrations hash
 	hash, err := s.hashMigrations(fsys)
 	if err != nil {
 		return err
@@ -297,6 +347,23 @@ func (s *ShadowState) createTemplate(ctx context.Context) error {
 	return nil
 }
 
+// checkMigrationsApplied checks if migrations have already been applied to the shadow database
+// by checking for the existence of the contrib_regression database
+func (s *ShadowState) checkMigrationsApplied(ctx context.Context) (bool, error) {
+	conn, err := s.connectPostgres(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer conn.Close(ctx)
+
+	var exists bool
+	err = conn.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = 'contrib_regression')").Scan(&exists)
+	if err != nil {
+		return false, errors.Errorf("failed to check contrib_regression: %w", err)
+	}
+	return exists, nil
+}
+
 // connectPostgres connects to the shadow's postgres database (not contrib_regression)
 func (s *ShadowState) connectPostgres(ctx context.Context) (*pgx.Conn, error) {
 	config := pgconn.Config{
@@ -383,51 +450,6 @@ func (s *ShadowState) hashMigrations(fsys afero.Fs) (string, error) {
 	}
 
 	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-// Cleanup removes the shadow container
-func (s *ShadowState) Cleanup(ctx context.Context) {
-	// Use a fresh context with timeout for cleanup - the original context
-	// may be cancelled (e.g., from Ctrl+C) which would cause Docker API calls to fail
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	// If we have the container ID in memory, use it
-	if s.ContainerID != "" {
-		timingLog.Printf("Cleaning up shadow container: %s", s.ContainerID)
-		if err := utils.Docker.ContainerRemove(cleanupCtx, s.ContainerID, container.RemoveOptions{Force: true}); err != nil {
-			timingLog.Printf("Failed to remove shadow container: %v", err)
-		} else {
-			timingLog.Printf("Shadow container removed successfully")
-		}
-		s.ContainerID = ""
-		s.TemplateReady = false
-		return
-	}
-
-	// Otherwise, look up the container by name
-	name := shadowContainerName()
-	containers, err := utils.Docker.ContainerList(cleanupCtx, container.ListOptions{All: true})
-	if err != nil {
-		timingLog.Printf("Failed to list containers for cleanup: %v", err)
-		return
-	}
-
-	expectedName := "/" + name
-	for _, c := range containers {
-		for _, n := range c.Names {
-			if n == expectedName {
-				timingLog.Printf("Found shadow container by name, removing: %s", c.ID)
-				if err := utils.Docker.ContainerRemove(cleanupCtx, c.ID, container.RemoveOptions{Force: true}); err != nil {
-					timingLog.Printf("Failed to remove shadow container: %v", err)
-				} else {
-					timingLog.Printf("Shadow container removed successfully")
-				}
-				s.TemplateReady = false
-				return
-			}
-		}
-	}
 }
 
 // ApplyDeclaredSchemas applies declared schema files to the shadow database

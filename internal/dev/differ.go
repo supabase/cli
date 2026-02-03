@@ -113,11 +113,6 @@ func DiffAndApply(ctx context.Context, fsys afero.Fs, w io.Writer) (bool, error)
 	return true, nil
 }
 
-// CleanupShadow removes the persistent shadow container
-func CleanupShadow(ctx context.Context) {
-	shadowState.Cleanup(ctx)
-}
-
 // InvalidateShadowTemplate marks the shadow template as needing rebuild
 // Call this when migrations change so the shadow rebuilds with new migrations
 func InvalidateShadowTemplate() {

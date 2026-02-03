@@ -34,6 +34,7 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 
+	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/functions/serve"
 	"github.com/supabase/cli/internal/seed/buckets"
@@ -1278,6 +1279,15 @@ EOF
 		started = append(started, utils.PoolerId)
 	}
 
+	// Start shadow database for faster dev mode diffing
+	if utils.Config.Dev.Schemas.IsEnabled() {
+		if _, err := diff.CreateShadowDatabaseWithName(ctx, utils.Config.Db.ShadowPort, utils.ShadowId, false); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to create shadow container: %v\n", err)
+		} else {
+			started = append(started, utils.ShadowId)
+		}
+	}
+
 	fmt.Fprintln(os.Stderr, "Waiting for health checks...")
 	if utils.NoBackupVolume && slices.Contains(started, utils.StorageId) {
 		if err := start.WaitForHealthyService(ctx, serviceTimeout, utils.StorageId); err != nil {
@@ -1288,7 +1298,19 @@ EOF
 			return err
 		}
 	}
-	return start.WaitForHealthyService(ctx, serviceTimeout, started...)
+
+	if err := start.WaitForHealthyService(ctx, serviceTimeout, started...); err != nil {
+		return err
+	}
+
+	// Apply migrations to shadow database after it's healthy
+	if slices.Contains(started, utils.ShadowId) {
+		if err := diff.MigrateShadowDatabase(ctx, utils.ShadowId, fsys); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to migrate shadow: %v\n", err)
+		}
+	}
+
+	return nil
 }
 
 func isContainerExcluded(imageName string, excluded map[string]bool) bool {
