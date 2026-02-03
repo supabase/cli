@@ -41,5 +41,8 @@
       "@semantic-release/commit-analyzer",
       "@semantic-release/git"
     ]
+  },
+  "devDependencies": {
+    "@types/node": "^25.1.0"
   }
 }

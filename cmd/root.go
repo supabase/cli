@@ -11,16 +11,25 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/client"
 	"github.com/getsentry/sentry-go"
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/debug"
+	"github.com/supabase/cli/internal/remote"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"golang.org/x/mod/semver"
 )
+
+func init() {
+	// Wire up the callback to allow remote package to update utils.Docker
+	remote.InitDockerClient = func(c *client.Client) {
+		utils.Docker = c
+	}
+}
 
 const (
 	groupQuickStart    = "quick-start"
@@ -101,6 +110,8 @@ var (
 			if err := utils.ChangeWorkDir(fsys); err != nil {
 				return err
 			}
+			// Configure Docker client for remote mode if active
+			remote.ConfigureDocker()
 			// Add common flags
 			if IsManagementAPI(cmd) {
 				if err := promptLogin(fsys); err != nil {

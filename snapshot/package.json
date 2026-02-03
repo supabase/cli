@@ -1,0 +1,17 @@
+{
+  "name": "supabase-remote-snapshot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsx build-snapshot.ts"
+  },
+  "dependencies": {
+    "@daytonaio/sdk": "^0.136.0",
+    "dotenv": "^17.2.3"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0"
+  }
+}

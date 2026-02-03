@@ -3,19 +3,24 @@ package cmd
 import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/supabase/cli/internal/remote"
 	"github.com/supabase/cli/internal/stop"
 )
 
 var (
-	noBackup  bool
-	projectId string
-	all       bool
+	noBackup   bool
+	projectId  string
+	all        bool
+	stopRemote bool
 
 	stopCmd = &cobra.Command{
 		GroupID: groupLocalDev,
 		Use:     "stop",
 		Short:   "Stop all local Supabase containers",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if stopRemote {
+				return remote.StopRemoteSession(cmd.Context())
+			}
 			return stop.Run(cmd.Context(), !noBackup, projectId, all, afero.NewOsFs())
 		},
 	}
@@ -28,6 +33,7 @@ func init() {
 	cobra.CheckErr(flags.MarkHidden("backup"))
 	flags.BoolVar(&noBackup, "no-backup", false, "Deletes all data volumes after stopping.")
 	flags.BoolVar(&all, "all", false, "Stop all local Supabase instances from all projects across the machine.")
-	stopCmd.MarkFlagsMutuallyExclusive("project-id", "all")
+	flags.BoolVar(&stopRemote, "remote", false, "Stop the remote Docker environment")
+	stopCmd.MarkFlagsMutuallyExclusive("project-id", "all", "remote")
 	rootCmd.AddCommand(stopCmd)
 }
