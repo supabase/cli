@@ -66,9 +66,9 @@ func Stop(ctx context.Context, fsys afero.Fs, projectId string, w io.Writer) err
 		fmt.Fprintf(w, "Note: %v\n", err)
 	}
 
-	// Clean up state file
-	if err := sandboxCtx.CleanupState(fsys); err != nil {
-		fmt.Fprintf(w, "Warning: failed to cleanup state: %v\n", err)
+	// Clean up all sandbox files (state, yaml, logs)
+	if err := fsys.RemoveAll(sandboxCtx.ConfigDir); err != nil {
+		fmt.Fprintf(w, "Warning: failed to cleanup sandbox files: %v\n", err)
 	}
 
 	fmt.Fprintln(w, "Sandbox stopped.")
