@@ -32,29 +32,29 @@ func Status(ctx context.Context, projectId string, fsys afero.Fs) ([]ServiceStat
 		return nil, fmt.Errorf("failed to create sandbox context: %w", err)
 	}
 
-	// Load ports to find services
-	ports, err := sandboxCtx.LoadPorts(fsys)
+	// Load state to find services
+	state, err := sandboxCtx.LoadState(fsys)
 	if err != nil {
-		return nil, fmt.Errorf("sandbox is not running (no ports file): %w", err)
+		return nil, fmt.Errorf("sandbox is not running (no state file): %w", err)
 	}
 
 	var statuses []ServiceStatus
 
 	// Check postgres (Docker container)
-	pgStatus := checkPostgresStatus(ctx, sandboxCtx.ContainerName("db"), ports.Postgres)
+	pgStatus := checkPostgresStatus(ctx, sandboxCtx.ContainerName("db"), state.Ports.Postgres)
 	statuses = append(statuses, pgStatus)
 
 	// Check gotrue (native process)
-	gotrueStatus := checkHTTPStatus("gotrue", ports.GoTrue, "/health")
+	gotrueStatus := checkHTTPStatus("gotrue", state.Ports.GoTrue, "/health")
 	statuses = append(statuses, gotrueStatus)
 
 	// Check postgrest (native process)
-	postgrestStatus := checkHTTPStatus("postgrest", ports.PostgREST, "/")
+	postgrestStatus := checkHTTPStatus("postgrest", state.Ports.PostgREST, "/")
 	statuses = append(statuses, postgrestStatus)
 
-	// Check nginx (native process via API endpoint)
-	nginxStatus := checkHTTPStatus("nginx", ports.Nginx, "/rest/v1/")
-	statuses = append(statuses, nginxStatus)
+	// Check api proxy (process-compose managed)
+	apiStatus := checkHTTPStatus("api", state.Ports.API, "/health")
+	statuses = append(statuses, apiStatus)
 
 	return statuses, nil
 }
@@ -170,9 +170,9 @@ func PrintStatus(w io.Writer, statuses []ServiceStatus, ports *AllocatedPorts, p
 
 	// Connection info
 	fmt.Fprintln(w, utils.Bold("Connection Info:"))
-	fmt.Fprintf(w, "  API URL:       %s\n", utils.Aqua(fmt.Sprintf("http://127.0.0.1:%d", ports.Nginx)))
-	fmt.Fprintf(w, "  REST URL:      %s\n", utils.Aqua(fmt.Sprintf("http://127.0.0.1:%d/rest/v1/", ports.Nginx)))
-	fmt.Fprintf(w, "  Auth URL:      %s\n", utils.Aqua(fmt.Sprintf("http://127.0.0.1:%d/auth/v1/", ports.Nginx)))
+	fmt.Fprintf(w, "  API URL:       %s\n", utils.Aqua(fmt.Sprintf("http://127.0.0.1:%d", ports.API)))
+	fmt.Fprintf(w, "  REST URL:      %s\n", utils.Aqua(fmt.Sprintf("http://127.0.0.1:%d/rest/v1/", ports.API)))
+	fmt.Fprintf(w, "  Auth URL:      %s\n", utils.Aqua(fmt.Sprintf("http://127.0.0.1:%d/auth/v1/", ports.API)))
 	fmt.Fprintf(w, "  DB URL:        %s\n", utils.Aqua(fmt.Sprintf("postgresql://%s@127.0.0.1:%d/postgres",
 		url.UserPassword("postgres", utils.Config.Db.Password), ports.Postgres)))
 	fmt.Fprintln(w)
@@ -185,8 +185,8 @@ func ShowStatus(ctx context.Context, projectId string, fsys afero.Fs) error {
 		return fmt.Errorf("failed to create sandbox context: %w", err)
 	}
 
-	// Load ports
-	ports, err := sandboxCtx.LoadPorts(fsys)
+	// Load state
+	state, err := sandboxCtx.LoadState(fsys)
 	if err != nil {
 		return errors.Errorf("sandbox is not running: %w", err)
 	}
@@ -209,6 +209,6 @@ func ShowStatus(ctx context.Context, projectId string, fsys afero.Fs) error {
 		fmt.Fprintf(os.Stderr, "Unhealthy services: %v\n", unhealthy)
 	}
 
-	PrintStatus(os.Stdout, statuses, ports, projectId)
+	PrintStatus(os.Stdout, statuses, &state.Ports, projectId)
 	return nil
 }

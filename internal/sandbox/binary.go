@@ -18,36 +18,28 @@ import (
 
 const (
 	// Binary versions
-	NginxVersion     = "1.28.1"  // Latest available from nginx-binaries
 	GotrueVersion    = "2.186.0" // Local build for darwin-arm64
 	PostgrestVersion = "14.4"
 )
 
-// GetNginxPath returns the path to the nginx binary.
-func GetNginxPath(binDir string) string {
-	name := "nginx"
-	if runtime.GOOS == "windows" {
-		name = "nginx.exe"
-	}
-	return filepath.Join(binDir, name)
-}
-
 // GetGotruePath returns the path to the gotrue binary.
+// Binaries are cached with versioning: ~/.supabase/bin/gotrue/<version>/gotrue
 func GetGotruePath(binDir string) string {
 	name := "gotrue"
 	if runtime.GOOS == "windows" {
 		name = "gotrue.exe"
 	}
-	return filepath.Join(binDir, name)
+	return filepath.Join(binDir, "gotrue", GotrueVersion, name)
 }
 
 // GetPostgrestPath returns the path to the postgrest binary.
+// Binaries are cached with versioning: ~/.supabase/bin/postgrest/<version>/postgrest
 func GetPostgrestPath(binDir string) string {
 	name := "postgrest"
 	if runtime.GOOS == "windows" {
 		name = "postgrest.exe"
 	}
-	return filepath.Join(binDir, name)
+	return filepath.Join(binDir, "postgrest", PostgrestVersion, name)
 }
 
 // InstallBinaries downloads and installs all required binaries if not already present.
@@ -55,16 +47,6 @@ func InstallBinaries(ctx context.Context, fsys afero.Fs, binDir string) error {
 	// Ensure bin directory exists
 	if err := fsys.MkdirAll(binDir, 0755); err != nil {
 		return fmt.Errorf("failed to create bin directory: %w", err)
-	}
-
-	// Install nginx
-	nginxPath := GetNginxPath(binDir)
-	nginxURL, err := getNginxDownloadURL()
-	if err != nil {
-		return fmt.Errorf("nginx: %w", err)
-	}
-	if err := installBinaryIfMissing(ctx, fsys, nginxPath, nginxURL, false); err != nil {
-		return fmt.Errorf("failed to install nginx: %w", err)
 	}
 
 	// Install gotrue
@@ -87,33 +69,41 @@ func InstallBinaries(ctx context.Context, fsys afero.Fs, binDir string) error {
 	return nil
 }
 
-// installGotrueFromLocalOrDownload checks for a local gotrue binary first, then falls back to download.
-// This is a workaround since gotrue doesn't publish darwin binaries yet.
+// installGotrueFromLocalOrDownload installs the gotrue binary, checking local sources first.
+// For darwin/arm64, there's no official release yet, so we check for a locally built binary.
 func installGotrueFromLocalOrDownload(ctx context.Context, fsys afero.Fs, binPath string) error {
 	// Check if already installed
 	if _, err := fsys.Stat(binPath); err == nil {
 		return nil // Already installed
 	}
 
-	// Check for local binary (for development/demo purposes)
-	// Look in the CLI source directory where the binary was placed
+	// Ensure parent directory exists (for versioned paths)
+	if err := fsys.MkdirAll(filepath.Dir(binPath), 0755); err != nil {
+		return fmt.Errorf("failed to create binary directory: %w", err)
+	}
+
+	// For darwin/arm64, check for a locally built binary first (no official release yet)
 	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
-		localBinary := "/Users/jgoux/Code/supabase/cli/auth-v" + GotrueVersion + "-darwin-arm64"
-		if data, err := os.ReadFile(localBinary); err == nil {
-			fmt.Printf("Copying local %s to cache...\n", filepath.Base(localBinary))
-			if err := afero.WriteFile(fsys, binPath, data, 0755); err != nil {
-				return fmt.Errorf("failed to copy local gotrue: %w", err)
+		localBinaryName := fmt.Sprintf("auth-v%s-darwin-arm64", GotrueVersion)
+		// Check next to the CLI binary (for development)
+		if cliPath, err := os.Executable(); err == nil {
+			localPath := filepath.Join(filepath.Dir(cliPath), localBinaryName)
+			if data, err := os.ReadFile(localPath); err == nil {
+				fmt.Printf("Installing %s from local binary...\n", filepath.Base(binPath))
+				if err := afero.WriteFile(fsys, binPath, data, 0755); err != nil {
+					return fmt.Errorf("failed to copy local gotrue: %w", err)
+				}
+				return nil
 			}
-			return nil
 		}
 	}
 
-	// Fall back to download
+	// Fall back to download from GitHub releases
 	gotrueURL, err := getGotrueDownloadURL()
 	if err != nil {
 		return err
 	}
-	return installBinaryIfMissing(ctx, fsys, binPath, gotrueURL, true)
+	return installBinaryFromArchive(ctx, fsys, binPath, gotrueURL, "auth")
 }
 
 // installBinaryIfMissing downloads a binary if not already cached.
@@ -124,6 +114,11 @@ func installBinaryIfMissing(ctx context.Context, fsys afero.Fs, binPath, downloa
 		return nil // Already installed
 	} else if !os.IsNotExist(err) {
 		return err
+	}
+
+	// Ensure parent directory exists (for versioned paths like bin/gotrue/2.186.0/)
+	if err := fsys.MkdirAll(filepath.Dir(binPath), 0755); err != nil {
+		return fmt.Errorf("failed to create binary directory: %w", err)
 	}
 
 	fmt.Printf("Downloading %s...\n", filepath.Base(binPath))
@@ -149,7 +144,7 @@ func installBinaryIfMissing(ctx context.Context, fsys afero.Fs, binPath, downloa
 		return extractTarGz(resp.Body, binPath, fsys)
 	}
 
-	// Direct binary download (nginx)
+	// Direct binary download
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
@@ -169,6 +164,11 @@ func installBinaryIfMissingXZ(ctx context.Context, fsys afero.Fs, binPath, downl
 		return nil // Already installed
 	} else if !os.IsNotExist(err) {
 		return err
+	}
+
+	// Ensure parent directory exists (for versioned paths like bin/postgrest/14.4/)
+	if err := fsys.MkdirAll(filepath.Dir(binPath), 0755); err != nil {
+		return fmt.Errorf("failed to create binary directory: %w", err)
 	}
 
 	fmt.Printf("Downloading %s...\n", filepath.Base(binPath))
@@ -193,15 +193,55 @@ func installBinaryIfMissingXZ(ctx context.Context, fsys afero.Fs, binPath, downl
 	return extractTarXz(resp.Body, binPath, fsys)
 }
 
+// installBinaryFromArchive downloads and extracts a binary from a .tar.gz archive.
+// srcBinName is the name of the binary inside the archive (e.g., "auth" for gotrue).
+func installBinaryFromArchive(ctx context.Context, fsys afero.Fs, binPath, downloadURL, srcBinName string) error {
+	// Check if already installed
+	if _, err := fsys.Stat(binPath); err == nil {
+		return nil // Already installed
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	// Ensure parent directory exists
+	if err := fsys.MkdirAll(filepath.Dir(binPath), 0755); err != nil {
+		return fmt.Errorf("failed to create binary directory: %w", err)
+	}
+
+	fmt.Printf("Downloading %s...\n", filepath.Base(binPath))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return errors.Errorf("failed to download %s: HTTP %d", downloadURL, resp.StatusCode)
+	}
+
+	return extractTarGzWithName(resp.Body, binPath, srcBinName, fsys)
+}
+
 // extractTarGz extracts the first executable from a .tar.gz archive.
 func extractTarGz(r io.Reader, binPath string, fsys afero.Fs) error {
+	return extractTarGzWithName(r, binPath, filepath.Base(binPath), fsys)
+}
+
+// extractTarGzWithName extracts a named binary from a .tar.gz archive.
+func extractTarGzWithName(r io.Reader, binPath, srcBinName string, fsys afero.Fs) error {
 	gzr, err := gzip.NewReader(r)
 	if err != nil {
 		return fmt.Errorf("failed to create gzip reader: %w", err)
 	}
 	defer gzr.Close()
 
-	return extractTar(gzr, binPath, fsys)
+	return extractTarWithName(gzr, binPath, srcBinName, fsys)
 }
 
 // extractTarXz extracts the first executable from a .tar.xz archive.
@@ -211,13 +251,13 @@ func extractTarXz(r io.Reader, binPath string, fsys afero.Fs) error {
 		return fmt.Errorf("failed to create xz reader: %w", err)
 	}
 
-	return extractTar(xzr, binPath, fsys)
+	return extractTarWithName(xzr, binPath, filepath.Base(binPath), fsys)
 }
 
-// extractTar extracts the binary from a tar archive.
-func extractTar(r io.Reader, binPath string, fsys afero.Fs) error {
+// extractTarWithName extracts a binary from a tar archive.
+// srcBinName is the name to look for in the archive, binPath is the destination path.
+func extractTarWithName(r io.Reader, binPath, srcBinName string, fsys afero.Fs) error {
 	tr := tar.NewReader(r)
-	binName := filepath.Base(binPath)
 
 	for {
 		header, err := tr.Next()
@@ -230,7 +270,7 @@ func extractTar(r io.Reader, binPath string, fsys afero.Fs) error {
 
 		// Look for the binary file
 		name := filepath.Base(header.Name)
-		if name == binName || name == binName+".exe" {
+		if name == srcBinName || name == srcBinName+".exe" {
 			if header.Typeflag != tar.TypeReg {
 				continue
 			}
@@ -248,29 +288,7 @@ func extractTar(r io.Reader, binPath string, fsys afero.Fs) error {
 		}
 	}
 
-	return errors.Errorf("binary %s not found in archive", binName)
-}
-
-// getNginxDownloadURL returns the download URL for nginx based on the current platform.
-// nginx binaries are plain executables (not archives).
-// Binaries are hosted on GitHub: https://github.com/jirutka/nginx-binaries
-func getNginxDownloadURL() (string, error) {
-	base := "https://raw.githubusercontent.com/jirutka/nginx-binaries/binaries/"
-
-	switch {
-	case runtime.GOOS == "darwin" && runtime.GOARCH == "arm64":
-		return base + "nginx-" + NginxVersion + "-arm64-darwin", nil
-	case runtime.GOOS == "darwin" && runtime.GOARCH == "amd64":
-		return base + "nginx-" + NginxVersion + "-x86_64-darwin", nil
-	case runtime.GOOS == "linux" && runtime.GOARCH == "amd64":
-		return base + "nginx-" + NginxVersion + "-x86_64-linux", nil
-	case runtime.GOOS == "linux" && runtime.GOARCH == "arm64":
-		return base + "nginx-" + NginxVersion + "-aarch64-linux", nil
-	case runtime.GOOS == "windows":
-		return base + "nginx-" + NginxVersion + "-x86_64-win32.exe", nil
-	default:
-		return "", errors.Errorf("unsupported platform: %s/%s", runtime.GOOS, runtime.GOARCH)
-	}
+	return errors.Errorf("binary %s not found in archive", srcBinName)
 }
 
 // getGotrueDownloadURL returns the download URL for GoTrue based on the current platform.

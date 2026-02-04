@@ -19,39 +19,39 @@ import (
 
 // Stop stops all sandbox services and cleans up resources.
 // Uses process-compose HTTP API for graceful shutdown with proper dependency ordering.
-// Falls back to PID-based termination if HTTP API is unavailable.
+// Falls back to killing the server PID if HTTP API is unavailable.
 func Stop(ctx context.Context, fsys afero.Fs, projectId string, w io.Writer) error {
 	sandboxCtx, err := NewSandboxContext(projectId)
 	if err != nil {
 		return fmt.Errorf("failed to create sandbox context: %w", err)
 	}
 
-	// Load ports to find the process-compose server
-	ports, err := sandboxCtx.LoadPorts(fsys)
+	// Load state to find server PID and process-compose port
+	state, err := sandboxCtx.LoadState(fsys)
 	if err != nil {
-		return fmt.Errorf("sandbox is not running (no ports file): %w", err)
+		return fmt.Errorf("sandbox is not running (no state file): %w", err)
 	}
 
 	fmt.Fprintln(w, "Stopping sandbox services...")
 
 	// Try graceful shutdown via HTTP API first
-	if ports.ProcessCompose > 0 {
-		pcClient := client.NewTcpClient("127.0.0.1", ports.ProcessCompose, 100)
-		if err := pcClient.ShutDownProject(); err != nil {
-			fmt.Fprintf(w, "Note: HTTP API unavailable, using fallback shutdown: %v\n", err)
-			// Fall back to PID-based shutdown
-			if pids, err := sandboxCtx.LoadPids(fsys); err == nil {
-				stopNativeProcesses(pids, w)
-			}
-		} else {
+	stopped := false
+	if state.Ports.ProcessCompose > 0 {
+		pcClient := client.NewTcpClient("127.0.0.1", state.Ports.ProcessCompose, 100)
+		if err := pcClient.ShutDownProject(); err == nil {
+			stopped = true
 			// Give processes time to shut down gracefully
 			time.Sleep(2 * time.Second)
 		}
-	} else {
-		// No HTTP API port, use PID-based shutdown
-		if pids, err := sandboxCtx.LoadPids(fsys); err == nil {
-			stopNativeProcesses(pids, w)
+	}
+
+	// Fallback: kill server PID (process-compose will clean up children)
+	if !stopped && state.PID > 0 {
+		fmt.Fprintf(w, "HTTP API unavailable, terminating server (PID %d)...\n", state.PID)
+		if err := terminateProcess(state.PID); err != nil {
+			fmt.Fprintf(w, "Warning: failed to terminate server: %v\n", err)
 		}
+		time.Sleep(2 * time.Second)
 	}
 
 	// Stop docker container using Docker API
@@ -66,36 +66,13 @@ func Stop(ctx context.Context, fsys afero.Fs, projectId string, w io.Writer) err
 		fmt.Fprintf(w, "Note: %v\n", err)
 	}
 
-	// Clean up state files
+	// Clean up state file
 	if err := sandboxCtx.CleanupState(fsys); err != nil {
 		fmt.Fprintf(w, "Warning: failed to cleanup state: %v\n", err)
 	}
 
+	fmt.Fprintln(w, "Sandbox stopped.")
 	return nil
-}
-
-// stopNativeProcesses terminates the native processes by PID.
-// Used as fallback when HTTP API is unavailable.
-func stopNativeProcesses(pids *ProcessPids, w io.Writer) {
-	// Stop in reverse dependency order: nginx -> gotrue -> postgrest
-	if pids.Nginx > 0 {
-		if err := terminateProcess(pids.Nginx); err != nil {
-			fmt.Fprintf(w, "Warning: failed to stop nginx (PID %d): %v\n", pids.Nginx, err)
-		}
-	}
-	if pids.GoTrue > 0 {
-		if err := terminateProcess(pids.GoTrue); err != nil {
-			fmt.Fprintf(w, "Warning: failed to stop gotrue (PID %d): %v\n", pids.GoTrue, err)
-		}
-	}
-	if pids.PostgREST > 0 {
-		if err := terminateProcess(pids.PostgREST); err != nil {
-			fmt.Fprintf(w, "Warning: failed to stop postgrest (PID %d): %v\n", pids.PostgREST, err)
-		}
-	}
-
-	// Give processes time to shut down gracefully
-	time.Sleep(2 * time.Second)
 }
 
 // terminateProcess sends a termination signal to a process.

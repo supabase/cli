@@ -30,21 +30,21 @@ func Run(ctx context.Context, fsys afero.Fs, detach bool) error {
 		return fmt.Errorf("failed to create sandbox context: %w", err)
 	}
 
-	// 3. Ensure directories exist
+	// 3. Check if sandbox is already running
+	if sandboxCtx.IsSandboxRunning(fsys) {
+		return fmt.Errorf("sandbox is already running. Use 'supabase stop' first")
+	}
+
+	// 4. Ensure directories exist
 	if err := sandboxCtx.EnsureDirectories(fsys); err != nil {
 		return fmt.Errorf("failed to create directories: %w", err)
 	}
 
-	// 4. Allocate dynamic ports
+	// 5. Allocate dynamic ports
 	fmt.Fprintln(os.Stderr, "Allocating ports...")
 	sandboxCtx.Ports, err = AllocatePorts(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to allocate ports: %w", err)
-	}
-
-	// 5. Save ports for stop command
-	if err := sandboxCtx.SavePorts(fsys); err != nil {
-		return fmt.Errorf("failed to save ports: %w", err)
 	}
 
 	// 6. Download service binaries if needed (shared across projects)
@@ -53,44 +53,47 @@ func Run(ctx context.Context, fsys afero.Fs, detach bool) error {
 		return fmt.Errorf("failed to install binaries: %w", err)
 	}
 
-	// 7. Generate nginx.conf for this sandbox instance
-	fmt.Fprintln(os.Stderr, "Generating nginx configuration...")
-	if err := WriteNginxConfig(sandboxCtx, fsys); err != nil {
-		return fmt.Errorf("failed to write nginx config: %w", err)
-	}
-
-	// 8. Pre-create PostgreSQL container (so process-compose can just start it)
+	// 7. Pre-create PostgreSQL container (so process-compose can just start it)
 	fmt.Fprintln(os.Stderr, "Setting up PostgreSQL container...")
 	if err := createPostgresContainer(ctx, sandboxCtx); err != nil {
 		return fmt.Errorf("failed to create postgres container: %w", err)
 	}
 
-	// 9. Generate process-compose.yaml configuration
+	// 8. Generate process-compose.yaml configuration
 	fmt.Fprintln(os.Stderr, "Generating process-compose configuration...")
-	processComposePath, err := WriteProcessComposeConfig(sandboxCtx, fsys)
+	processComposePath, err := WriteProcessComposeConfig(ctx, sandboxCtx, fsys)
 	if err != nil {
 		return fmt.Errorf("failed to write process-compose config: %w", err)
 	}
 
-	// 10. Print allocated ports
+	// 9. Print allocated ports
 	printStartupInfo(sandboxCtx)
 
-	// 11. Run using process-compose library
+	// 10. Run using process-compose library (state.json is saved in runDetached)
 	fmt.Fprintln(os.Stderr, "\nStarting services with process-compose...")
 	return RunProject(processComposePath, detach, sandboxCtx, fsys)
 }
 
 // createPostgresContainer creates the PostgreSQL container if it doesn't exist.
 // Uses Docker API directly to create a stopped container that process-compose can start.
+// If the container exists but has different port bindings, it will be recreated.
 func createPostgresContainer(ctx context.Context, sandboxCtx *SandboxContext) error {
 	containerName := sandboxCtx.ContainerName("db")
 	volumeName := sandboxCtx.VolumeName("db")
+	expectedPort := strconv.Itoa(sandboxCtx.Ports.Postgres)
 
 	// Check if container already exists
-	if _, err := utils.Docker.ContainerInspect(ctx, containerName); err == nil {
-		// Container exists, just make sure it's stopped
+	if info, err := utils.Docker.ContainerInspect(ctx, containerName); err == nil {
+		// Container exists, check if port binding matches
+		portBindings := info.HostConfig.PortBindings["5432/tcp"]
+		if len(portBindings) > 0 && portBindings[0].HostPort == expectedPort {
+			// Port matches, just make sure it's stopped
+			_ = utils.Docker.ContainerStop(ctx, containerName, container.StopOptions{})
+			return nil
+		}
+		// Port doesn't match, remove container to recreate with correct port
 		_ = utils.Docker.ContainerStop(ctx, containerName, container.StopOptions{})
-		return nil
+		_ = utils.Docker.ContainerRemove(ctx, containerName, container.RemoveOptions{})
 	}
 
 	// Create volume if it doesn't exist
@@ -151,7 +154,7 @@ func createPostgresContainer(ctx context.Context, sandboxCtx *SandboxContext) er
 func printStartupInfo(ctx *SandboxContext) {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Sandbox starting with ports:")
-	fmt.Fprintf(os.Stderr, "  API (nginx):   http://127.0.0.1:%d\n", ctx.Ports.Nginx)
+	fmt.Fprintf(os.Stderr, "  API:           http://127.0.0.1:%d\n", ctx.Ports.API)
 	fmt.Fprintf(os.Stderr, "  Database:      postgresql://postgres:postgres@127.0.0.1:%d/postgres\n", ctx.Ports.Postgres)
 	fmt.Fprintf(os.Stderr, "  Auth (GoTrue): http://127.0.0.1:%d\n", ctx.Ports.GoTrue)
 	fmt.Fprintf(os.Stderr, "  REST API:      http://127.0.0.1:%d\n", ctx.Ports.PostgREST)

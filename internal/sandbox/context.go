@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/utils"
 )
 
 // SandboxContext holds project-specific runtime context for sandbox mode.
@@ -14,7 +16,7 @@ import (
 type SandboxContext struct {
 	ProjectId string
 	Ports     *AllocatedPorts
-	ConfigDir string // .supabase/sandbox/<projectId>/ (project-specific)
+	ConfigDir string // supabase/.temp/ (project-local temp directory)
 	BinDir    string // ~/.supabase/sandbox/bin/ (shared across projects)
 }
 
@@ -27,8 +29,8 @@ func NewSandboxContext(projectId string) (*SandboxContext, error) {
 
 	return &SandboxContext{
 		ProjectId: projectId,
-		ConfigDir: filepath.Join(".supabase", "sandbox", projectId),
-		BinDir:    filepath.Join(homeDir, ".supabase", "sandbox", "bin"),
+		ConfigDir: filepath.Join(utils.TempDir, "sandbox"),
+		BinDir:    filepath.Join(homeDir, ".supabase", "bin"),
 	}, nil
 }
 
@@ -44,14 +46,9 @@ func (c *SandboxContext) VolumeName(service string) string {
 	return fmt.Sprintf("supabase_%s_%s", service, c.ProjectId)
 }
 
-// NginxConfigPath returns the path to the nginx.conf file for this project.
-func (c *SandboxContext) NginxConfigPath() string {
-	return filepath.Join(c.ConfigDir, "nginx.conf")
-}
-
-// PortsFilePath returns the path to the ports.json state file for this project.
-func (c *SandboxContext) PortsFilePath() string {
-	return filepath.Join(c.ConfigDir, "ports.json")
+// StateFilePath returns the path to the state.json file for this project.
+func (c *SandboxContext) StateFilePath() string {
+	return filepath.Join(c.ConfigDir, "state.json")
 }
 
 // LogDir returns the path to the logs directory for this project.
@@ -75,88 +72,69 @@ func (c *SandboxContext) EnsureDirectories(fsys afero.Fs) error {
 	return nil
 }
 
-// SavePorts persists the allocated ports to a JSON file.
-// This allows supabase stop to find running instances.
-func (c *SandboxContext) SavePorts(fsys afero.Fs) error {
-	data, err := json.MarshalIndent(c.Ports, "", "  ")
+// SaveState persists the sandbox state (PID + ports) to state.json.
+func (c *SandboxContext) SaveState(fsys afero.Fs, state *SandboxState) error {
+	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal ports: %w", err)
+		return fmt.Errorf("failed to marshal state: %w", err)
 	}
-	if err := afero.WriteFile(fsys, c.PortsFilePath(), data, 0644); err != nil {
-		return fmt.Errorf("failed to write ports file: %w", err)
+	if err := afero.WriteFile(fsys, c.StateFilePath(), data, 0644); err != nil {
+		return fmt.Errorf("failed to write state file: %w", err)
 	}
 	return nil
 }
 
-// LoadPorts reads the allocated ports from the state file.
-func (c *SandboxContext) LoadPorts(fsys afero.Fs) (*AllocatedPorts, error) {
-	data, err := afero.ReadFile(fsys, c.PortsFilePath())
+// LoadState reads the sandbox state from state.json.
+func (c *SandboxContext) LoadState(fsys afero.Fs) (*SandboxState, error) {
+	data, err := afero.ReadFile(fsys, c.StateFilePath())
 	if err != nil {
-		return nil, fmt.Errorf("failed to read ports file: %w", err)
+		return nil, err
 	}
-	var ports AllocatedPorts
-	if err := json.Unmarshal(data, &ports); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal ports: %w", err)
+	var state SandboxState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal state: %w", err)
 	}
-	return &ports, nil
+	return &state, nil
 }
 
-// PidsFilePath returns the path to the pids.json state file for this project.
-func (c *SandboxContext) PidsFilePath() string {
-	return filepath.Join(c.ConfigDir, "pids.json")
-}
-
-// ProcessPids holds PIDs of running native processes for shutdown.
-type ProcessPids struct {
-	Nginx     int `json:"nginx"`
-	GoTrue    int `json:"gotrue"`
-	PostgREST int `json:"postgrest"`
-}
-
-// SavePids persists the process PIDs to a JSON file.
-func (c *SandboxContext) SavePids(fsys afero.Fs, pids *ProcessPids) error {
-	data, err := json.MarshalIndent(pids, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal pids: %w", err)
-	}
-	if err := afero.WriteFile(fsys, c.PidsFilePath(), data, 0644); err != nil {
-		return fmt.Errorf("failed to write pids file: %w", err)
-	}
-	return nil
-}
-
-// LoadPids reads the process PIDs from the state file.
-func (c *SandboxContext) LoadPids(fsys afero.Fs) (*ProcessPids, error) {
-	data, err := afero.ReadFile(fsys, c.PidsFilePath())
-	if err != nil {
-		return nil, fmt.Errorf("failed to read pids file: %w", err)
-	}
-	var pids ProcessPids
-	if err := json.Unmarshal(data, &pids); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal pids: %w", err)
-	}
-	return &pids, nil
-}
-
-// CleanupState removes the ports file and other state files.
+// CleanupState removes the state file.
 func (c *SandboxContext) CleanupState(fsys afero.Fs) error {
-	// Remove ports file
-	if err := fsys.Remove(c.PortsFilePath()); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove ports file: %w", err)
-	}
-	// Remove pids file
-	if err := fsys.Remove(c.PidsFilePath()); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove pids file: %w", err)
+	if err := fsys.Remove(c.StateFilePath()); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove state file: %w", err)
 	}
 	return nil
 }
 
-// IsSandboxRunning checks if a sandbox instance is running by checking for the ports file.
+// IsSandboxRunning checks if sandbox is running by verifying state file exists
+// AND the server PID is still alive.
+func (c *SandboxContext) IsSandboxRunning(fsys afero.Fs) bool {
+	state, err := c.LoadState(fsys)
+	if err != nil {
+		return false
+	}
+	return processExists(state.PID)
+}
+
+// processExists checks if a process with the given PID is still running.
+func processExists(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	// On Unix, FindProcess always succeeds. We need to send signal 0 to check if process exists.
+	err = process.Signal(syscall.Signal(0))
+	return err == nil
+}
+
+// IsSandboxRunning checks if a sandbox instance is running for the given project.
+// This is a convenience function for external callers.
 func IsSandboxRunning(fsys afero.Fs, projectId string) bool {
 	ctx, err := NewSandboxContext(projectId)
 	if err != nil {
 		return false
 	}
-	_, err = fsys.Stat(ctx.PortsFilePath())
-	return err == nil
+	return ctx.IsSandboxRunning(fsys)
 }

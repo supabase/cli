@@ -43,7 +43,7 @@ processes:
     environment:
       - GOTRUE_DB_DRIVER=postgres
       - GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:{{ .DbPassword }}@127.0.0.1:{{ .PostgresPort }}/postgres
-      - API_EXTERNAL_URL=http://127.0.0.1:{{ .NginxPort }}
+      - API_EXTERNAL_URL=http://127.0.0.1:{{ .APIPort }}
       - GOTRUE_SITE_URL={{ .SiteUrl }}
       - GOTRUE_JWT_SECRET={{ .JwtSecret }}
     depends_on:
@@ -55,20 +55,199 @@ processes:
   gotrue:
     command: {{ .GotruePath }}
     environment:
+      # API
       - GOTRUE_API_HOST=0.0.0.0
       - GOTRUE_API_PORT={{ .GoTruePort }}
+      - API_EXTERNAL_URL=http://127.0.0.1:{{ .APIPort }}
+
+      # Database
       - GOTRUE_DB_DRIVER=postgres
       - GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:{{ .DbPassword }}@127.0.0.1:{{ .PostgresPort }}/postgres
+
+      # JWT
       - GOTRUE_JWT_SECRET={{ .JwtSecret }}
       - GOTRUE_JWT_EXP={{ .JwtExpiry }}
       - GOTRUE_JWT_AUD=authenticated
       - GOTRUE_JWT_ADMIN_ROLES=service_role
+      - GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated
+      - GOTRUE_JWT_ISSUER={{ .JwtIssuer }}
+      {{- if .JwtKeys }}
+      - GOTRUE_JWT_KEYS={{ .JwtKeys }}
+      - GOTRUE_JWT_VALIDMETHODS={{ .JwtMethods }}
+      {{- end }}
+
+      # Site
       - GOTRUE_SITE_URL={{ .SiteUrl }}
+      - GOTRUE_URI_ALLOW_LIST={{ .AdditionalRedirectUrls }}
+      - GOTRUE_DISABLE_SIGNUP={{ not .EnableSignup }}
+
+      # Email/Mailer
       - GOTRUE_EXTERNAL_EMAIL_ENABLED={{ .EmailEnabled }}
       - GOTRUE_MAILER_AUTOCONFIRM={{ .MailerAutoconfirm }}
-      - API_EXTERNAL_URL=http://127.0.0.1:{{ .NginxPort }}
+      - GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED={{ .MailerSecureEmailChange }}
+      - GOTRUE_MAILER_OTP_LENGTH={{ .MailerOtpLength }}
+      - GOTRUE_MAILER_OTP_EXP={{ .MailerOtpExp }}
+      - GOTRUE_MAILER_TEMPLATE_RELOADING_ENABLED=true
+      - GOTRUE_MAILER_URLPATHS_INVITE={{ .MailerUrlPathsInvite }}
+      - GOTRUE_MAILER_URLPATHS_CONFIRMATION={{ .MailerUrlPathsConfirm }}
+      - GOTRUE_MAILER_URLPATHS_RECOVERY={{ .MailerUrlPathsRecovery }}
+      - GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE={{ .MailerUrlPathsChange }}
+      - GOTRUE_RATE_LIMIT_EMAIL_SENT={{ .RateLimitEmailSent }}
+      - GOTRUE_SMTP_MAX_FREQUENCY={{ .SmtpMaxFrequency }}
+
+      # SMTP
+      {{- if .SmtpEnabled }}
+      - GOTRUE_SMTP_HOST={{ .SmtpHost }}
+      - GOTRUE_SMTP_PORT={{ .SmtpPort }}
+      - GOTRUE_SMTP_USER={{ .SmtpUser }}
+      - GOTRUE_SMTP_PASS={{ .SmtpPass }}
+      - GOTRUE_SMTP_ADMIN_EMAIL={{ .SmtpAdminEmail }}
+      - GOTRUE_SMTP_SENDER_NAME={{ .SmtpSenderName }}
+      {{- else }}
       - GOTRUE_SMTP_HOST=
-      - GOTRUE_DISABLE_SIGNUP=false
+      {{- end }}
+
+      # Phone/SMS
+      - GOTRUE_EXTERNAL_PHONE_ENABLED={{ .PhoneEnabled }}
+      - GOTRUE_SMS_AUTOCONFIRM={{ .SmsAutoconfirm }}
+      - GOTRUE_SMS_MAX_FREQUENCY={{ .SmsMaxFrequency }}
+      - GOTRUE_SMS_OTP_EXP=6000
+      - GOTRUE_SMS_OTP_LENGTH=6
+      - GOTRUE_SMS_TEMPLATE={{ .SmsTemplate }}
+      - GOTRUE_SMS_TEST_OTP={{ .SmsTestOtp }}
+
+      # SMS Providers
+      {{- if .SmsTwilioEnabled }}
+      - GOTRUE_SMS_PROVIDER=twilio
+      - GOTRUE_SMS_TWILIO_ACCOUNT_SID={{ .SmsTwilioAccountSid }}
+      - GOTRUE_SMS_TWILIO_AUTH_TOKEN={{ .SmsTwilioAuthToken }}
+      - GOTRUE_SMS_TWILIO_MESSAGE_SERVICE_SID={{ .SmsTwilioMsgSvcSid }}
+      {{- else if .SmsTwilioVerifyEnabled }}
+      - GOTRUE_SMS_PROVIDER=twilio_verify
+      - GOTRUE_SMS_TWILIO_VERIFY_ACCOUNT_SID={{ .SmsTwilioVerifyAcctSid }}
+      - GOTRUE_SMS_TWILIO_VERIFY_AUTH_TOKEN={{ .SmsTwilioVerifyToken }}
+      - GOTRUE_SMS_TWILIO_VERIFY_MESSAGE_SERVICE_SID={{ .SmsTwilioVerifyMsgSid }}
+      {{- else if .SmsMessagebirdEnabled }}
+      - GOTRUE_SMS_PROVIDER=messagebird
+      - GOTRUE_SMS_MESSAGEBIRD_ACCESS_KEY={{ .SmsMessagebirdKey }}
+      - GOTRUE_SMS_MESSAGEBIRD_ORIGINATOR={{ .SmsMessagebirdOrig }}
+      {{- else if .SmsTextlocalEnabled }}
+      - GOTRUE_SMS_PROVIDER=textlocal
+      - GOTRUE_SMS_TEXTLOCAL_API_KEY={{ .SmsTextlocalApiKey }}
+      - GOTRUE_SMS_TEXTLOCAL_SENDER={{ .SmsTextlocalSender }}
+      {{- else if .SmsVonageEnabled }}
+      - GOTRUE_SMS_PROVIDER=vonage
+      - GOTRUE_SMS_VONAGE_API_KEY={{ .SmsVonageApiKey }}
+      - GOTRUE_SMS_VONAGE_API_SECRET={{ .SmsVonageApiSecret }}
+      - GOTRUE_SMS_VONAGE_FROM={{ .SmsVonageFrom }}
+      {{- end }}
+
+      # Anonymous Users
+      - GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED={{ .EnableAnonymousSignIns }}
+
+      # Password
+      - GOTRUE_PASSWORD_MIN_LENGTH={{ .PasswordMinLength }}
+      - GOTRUE_PASSWORD_REQUIRED_CHARACTERS={{ .PasswordRequirements }}
+
+      # Security
+      - GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED={{ .RefreshTokenRotation }}
+      - GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL={{ .RefreshTokenReuseInterval }}
+      - GOTRUE_SECURITY_MANUAL_LINKING_ENABLED={{ .ManualLinkingEnabled }}
+      - GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION={{ .SecurePasswordChange }}
+
+      # Captcha
+      {{- if .CaptchaEnabled }}
+      - GOTRUE_SECURITY_CAPTCHA_ENABLED={{ .CaptchaEnabled }}
+      - GOTRUE_SECURITY_CAPTCHA_PROVIDER={{ .CaptchaProvider }}
+      - GOTRUE_SECURITY_CAPTCHA_SECRET={{ .CaptchaSecret }}
+      {{- end }}
+
+      # MFA
+      - GOTRUE_MFA_PHONE_ENROLL_ENABLED={{ .MfaPhoneEnrollEnabled }}
+      - GOTRUE_MFA_PHONE_VERIFY_ENABLED={{ .MfaPhoneVerifyEnabled }}
+      - GOTRUE_MFA_TOTP_ENROLL_ENABLED={{ .MfaTotpEnrollEnabled }}
+      - GOTRUE_MFA_TOTP_VERIFY_ENABLED={{ .MfaTotpVerifyEnabled }}
+      - GOTRUE_MFA_WEB_AUTHN_ENROLL_ENABLED={{ .MfaWebAuthnEnrollEnabled }}
+      - GOTRUE_MFA_WEB_AUTHN_VERIFY_ENABLED={{ .MfaWebAuthnVerifyEnabled }}
+      - GOTRUE_MFA_MAX_ENROLLED_FACTORS={{ .MfaMaxEnrolledFactors }}
+      {{- if or .MfaPhoneEnrollEnabled .MfaPhoneVerifyEnabled }}
+      - GOTRUE_MFA_PHONE_TEMPLATE={{ .MfaPhoneTemplate }}
+      - GOTRUE_MFA_PHONE_OTP_LENGTH={{ .MfaPhoneOtpLength }}
+      - GOTRUE_MFA_PHONE_MAX_FREQUENCY={{ .MfaPhoneMaxFrequency }}
+      {{- end }}
+
+      # Rate Limits
+      - GOTRUE_RATE_LIMIT_ANONYMOUS_USERS={{ .RateLimitAnonymousUsers }}
+      - GOTRUE_RATE_LIMIT_TOKEN_REFRESH={{ .RateLimitTokenRefresh }}
+      - GOTRUE_RATE_LIMIT_OTP={{ .RateLimitOtp }}
+      - GOTRUE_RATE_LIMIT_VERIFY={{ .RateLimitVerify }}
+      - GOTRUE_RATE_LIMIT_SMS_SENT={{ .RateLimitSmsSent }}
+      - GOTRUE_RATE_LIMIT_WEB3={{ .RateLimitWeb3 }}
+
+      # Sessions
+      {{- if .SessionsTimebox }}
+      - GOTRUE_SESSIONS_TIMEBOX={{ .SessionsTimebox }}
+      {{- end }}
+      {{- if .SessionsInactivityTimeout }}
+      - GOTRUE_SESSIONS_INACTIVITY_TIMEOUT={{ .SessionsInactivityTimeout }}
+      {{- end }}
+
+      # Web3
+      - GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED={{ .Web3SolanaEnabled }}
+      - GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED={{ .Web3EthereumEnabled }}
+
+      # OAuth Providers
+      {{- range .OAuthProviders }}
+      - GOTRUE_EXTERNAL_{{ .Name | upper }}_ENABLED={{ .Enabled }}
+      - GOTRUE_EXTERNAL_{{ .Name | upper }}_CLIENT_ID={{ .ClientId }}
+      - GOTRUE_EXTERNAL_{{ .Name | upper }}_SECRET={{ .Secret }}
+      - GOTRUE_EXTERNAL_{{ .Name | upper }}_REDIRECT_URI={{ .RedirectUri }}
+      {{- if .Url }}
+      - GOTRUE_EXTERNAL_{{ .Name | upper }}_URL={{ .Url }}
+      {{- end }}
+      - GOTRUE_EXTERNAL_{{ .Name | upper }}_SKIP_NONCE_CHECK={{ .SkipNonceCheck }}
+      - GOTRUE_EXTERNAL_{{ .Name | upper }}_EMAIL_OPTIONAL={{ .EmailOptional }}
+      {{- end }}
+
+      # Hooks
+      {{- if .HookMfaVerificationEnabled }}
+      - GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_ENABLED=true
+      - GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_URI={{ .HookMfaVerificationUri }}
+      - GOTRUE_HOOK_MFA_VERIFICATION_ATTEMPT_SECRETS={{ .HookMfaVerificationSecrets }}
+      {{- end }}
+      {{- if .HookPasswordVerificationEnabled }}
+      - GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_ENABLED=true
+      - GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_URI={{ .HookPasswordVerificationUri }}
+      - GOTRUE_HOOK_PASSWORD_VERIFICATION_ATTEMPT_SECRETS={{ .HookPasswordVerificationSecrets }}
+      {{- end }}
+      {{- if .HookCustomAccessTokenEnabled }}
+      - GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED=true
+      - GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI={{ .HookCustomAccessTokenUri }}
+      - GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_SECRETS={{ .HookCustomAccessTokenSecrets }}
+      {{- end }}
+      {{- if .HookSendSmsEnabled }}
+      - GOTRUE_HOOK_SEND_SMS_ENABLED=true
+      - GOTRUE_HOOK_SEND_SMS_URI={{ .HookSendSmsUri }}
+      - GOTRUE_HOOK_SEND_SMS_SECRETS={{ .HookSendSmsSecrets }}
+      {{- end }}
+      {{- if .HookSendEmailEnabled }}
+      - GOTRUE_HOOK_SEND_EMAIL_ENABLED=true
+      - GOTRUE_HOOK_SEND_EMAIL_URI={{ .HookSendEmailUri }}
+      - GOTRUE_HOOK_SEND_EMAIL_SECRETS={{ .HookSendEmailSecrets }}
+      {{- end }}
+      {{- if .HookBeforeUserCreatedEnabled }}
+      - GOTRUE_HOOK_BEFORE_USER_CREATED_ENABLED=true
+      - GOTRUE_HOOK_BEFORE_USER_CREATED_URI={{ .HookBeforeUserCreatedUri }}
+      - GOTRUE_HOOK_BEFORE_USER_CREATED_SECRETS={{ .HookBeforeUserCreatedSecrets }}
+      {{- end }}
+
+      # OAuth Server
+      {{- if .OAuthServerEnabled }}
+      - GOTRUE_OAUTH_SERVER_ENABLED={{ .OAuthServerEnabled }}
+      - GOTRUE_OAUTH_SERVER_AUTHORIZATION_PATH={{ .OAuthServerAuthorizationPath }}
+      - GOTRUE_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION={{ .OAuthServerAllowDynamicReg }}
+      {{- end }}
+
     depends_on:
       gotrue-migrate:
         condition: process_completed_successfully
@@ -93,7 +272,7 @@ processes:
       - PGRST_DB_EXTRA_SEARCH_PATH={{ .DbExtraSearchPath }}
       - PGRST_DB_MAX_ROWS={{ .DbMaxRows }}
       - PGRST_DB_ANON_ROLE=anon
-      - PGRST_JWT_SECRET={{ .JwtSecret }}
+      - PGRST_JWT_SECRET={{ .PostgRESTJwks }}
       - PGRST_SERVER_PORT={{ .PostgRESTPort }}
       - PGRST_ADMIN_SERVER_PORT={{ .PostgRESTAdminPort }}
     depends_on:
@@ -112,19 +291,27 @@ processes:
       backoff_seconds: 2
       max_restarts: 5
 
-  nginx:
-    command: {{ .NginxPath }} -c {{ .NginxConfigPath }} -e stderr
+  proxy:
+    command: >
+      {{ .SupabaseBin }} _proxy
+      --port {{ .APIPort }}
+      --gotrue-port {{ .GoTruePort }}
+      --postgrest-port {{ .PostgRESTPort }}
+      --postgrest-admin-port {{ .PostgRESTAdminPort }}
+      --service-role-key "{{ .ServiceRoleKey }}"
+      --service-role-jwt "{{ .ServiceRoleJWT }}"
+      --anon-key "{{ .AnonKey }}"
+      --anon-jwt "{{ .AnonJWT }}"
     depends_on:
       gotrue:
         condition: process_healthy
       postgrest:
         condition: process_healthy
-    is_daemon: true
     readiness_probe:
       http_get:
         host: 127.0.0.1
-        port: {{ .NginxPort }}
-        path: /rest/v1/
+        port: {{ .APIPort }}
+        path: /health
         scheme: http
       initial_delay_seconds: 1
       period_seconds: 2
