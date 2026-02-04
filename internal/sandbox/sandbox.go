@@ -4,12 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strconv"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/go-connections/nat"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
@@ -49,19 +48,25 @@ func Run(ctx context.Context, fsys afero.Fs, detach bool) error {
 
 	// 6. Download service binaries if needed (shared across projects)
 	fmt.Fprintln(os.Stderr, "Checking binaries...")
-	if err := InstallBinaries(ctx, fsys, sandboxCtx.BinDir); err != nil {
+	postgresVersion, err := InstallBinaries(ctx, fsys, sandboxCtx.BinDir)
+	if err != nil {
 		return fmt.Errorf("failed to install binaries: %w", err)
 	}
 
-	// 7. Pre-create PostgreSQL container (so process-compose can just start it)
-	fmt.Fprintln(os.Stderr, "Setting up PostgreSQL container...")
-	if err := createPostgresContainer(ctx, sandboxCtx); err != nil {
-		return fmt.Errorf("failed to create postgres container: %w", err)
+	// 6b. Save postgres version to persistent file (survives stop)
+	if err := SavePostgresVersion(fsys, postgresVersion); err != nil {
+		return fmt.Errorf("failed to save postgres version: %w", err)
+	}
+
+	// 7. Initialize postgres data directory if needed (replaces Docker container setup)
+	fmt.Fprintln(os.Stderr, "Setting up PostgreSQL...")
+	if err := initializePostgresDataDir(ctx, sandboxCtx, fsys, postgresVersion); err != nil {
+		return fmt.Errorf("failed to initialize postgres: %w", err)
 	}
 
 	// 8. Generate process-compose.yaml configuration
 	fmt.Fprintln(os.Stderr, "Generating process-compose configuration...")
-	processComposePath, err := WriteProcessComposeConfig(ctx, sandboxCtx, fsys)
+	processComposePath, err := WriteProcessComposeConfig(ctx, sandboxCtx, fsys, postgresVersion)
 	if err != nil {
 		return fmt.Errorf("failed to write process-compose config: %w", err)
 	}
@@ -74,80 +79,144 @@ func Run(ctx context.Context, fsys afero.Fs, detach bool) error {
 	return RunProject(processComposePath, detach, sandboxCtx, fsys)
 }
 
-// createPostgresContainer creates the PostgreSQL container if it doesn't exist.
-// Uses Docker API directly to create a stopped container that process-compose can start.
-// If the container exists but has different port bindings, it will be recreated.
-func createPostgresContainer(ctx context.Context, sandboxCtx *SandboxContext) error {
-	containerName := sandboxCtx.ContainerName("db")
-	volumeName := sandboxCtx.VolumeName("db")
-	expectedPort := strconv.Itoa(sandboxCtx.Ports.Postgres)
+// initializePostgresDataDir initializes the PostgreSQL data directory if needed.
+// On first run, it runs initdb and copies config templates from the bundled distribution.
+// On subsequent runs, it just updates the port in postgresql.conf if needed.
+func initializePostgresDataDir(ctx context.Context, sandboxCtx *SandboxContext, fsys afero.Fs, postgresVersion string) error {
+	pgDataDir := sandboxCtx.PgDataDir()
+	pgVersionFile := filepath.Join(pgDataDir, "PG_VERSION")
 
-	// Check if container already exists
-	if info, err := utils.Docker.ContainerInspect(ctx, containerName); err == nil {
-		// Container exists, check if port binding matches
-		portBindings := info.HostConfig.PortBindings["5432/tcp"]
-		if len(portBindings) > 0 && portBindings[0].HostPort == expectedPort {
-			// Port matches, just make sure it's stopped
-			_ = utils.Docker.ContainerStop(ctx, containerName, container.StopOptions{})
-			return nil
+	// Check if already initialized
+	if _, err := fsys.Stat(pgVersionFile); err == nil {
+		// Already initialized - just update port in postgresql.conf
+		return updatePostgresPort(fsys, pgDataDir, sandboxCtx.Ports.Postgres)
+	}
+
+	// Create data directory with restricted permissions
+	if err := fsys.MkdirAll(pgDataDir, 0700); err != nil {
+		return fmt.Errorf("failed to create pgdata directory: %w", err)
+	}
+
+	// Create symlink for timezone data (Nix-built postgres has hardcoded paths)
+	// This is a workaround for postgres binaries built with --with-system-tzdata pointing to /nix/store
+	nixTzdataPath := "/nix/store/fy3qa8s8kzb7a6abzmyidzp1c8axz3s3-tzdata-2025b/share"
+	systemZoneinfo := "/var/db/timezone/zoneinfo" // macOS timezone data location
+	if runtime.GOOS == "darwin" {
+		if _, err := os.Stat(systemZoneinfo); err == nil {
+			// Create /nix/store/.../share directory if it doesn't exist
+			if err := os.MkdirAll(nixTzdataPath, 0755); err == nil {
+				// Create symlink: /nix/store/.../share/zoneinfo -> /var/db/timezone/zoneinfo
+				targetPath := filepath.Join(nixTzdataPath, "zoneinfo")
+				if _, err := os.Lstat(targetPath); os.IsNotExist(err) {
+					_ = os.Symlink(systemZoneinfo, targetPath)
+				}
+			}
 		}
-		// Port doesn't match, remove container to recreate with correct port
-		_ = utils.Docker.ContainerStop(ctx, containerName, container.StopOptions{})
-		_ = utils.Docker.ContainerRemove(ctx, containerName, container.RemoveOptions{})
 	}
 
-	// Create volume if it doesn't exist
-	_, _ = utils.Docker.VolumeCreate(ctx, volume.CreateOptions{
-		Name: volumeName,
-	})
+	// Run initdb with supabase_admin as initial superuser
+	initdbPath := GetPostgresBinPath(sandboxCtx.BinDir, postgresVersion, "initdb")
+	cmd := exec.CommandContext(ctx, initdbPath,
+		"-D", pgDataDir,
+		"-U", "supabase_admin",
+		"--encoding=UTF8",
+		"--locale=C",
+	)
+	setLibraryPath(cmd, GetPostgresLibDir(sandboxCtx.BinDir, postgresVersion))
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
 
-	// Pull image if needed
-	image := utils.GetRegistryImageUrl(utils.Config.Db.Image)
-	if err := utils.DockerPullImageIfNotCached(ctx, image); err != nil {
-		return fmt.Errorf("failed to pull postgres image: %w", err)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("initdb failed: %w", err)
 	}
 
-	// Create container
-	env := []string{
-		"POSTGRES_PASSWORD=" + utils.Config.Db.Password,
-		"JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
-		fmt.Sprintf("JWT_EXP=%d", utils.Config.Auth.JwtExpiry),
+	// Set password using postgres single-user mode (like Docker entrypoint does)
+	// This allows scram-sha-256 authentication to work immediately
+	postgresPath := GetPostgresBinPath(sandboxCtx.BinDir, postgresVersion, "postgres")
+	alterCmd := exec.CommandContext(ctx, postgresPath,
+		"--single",
+		"-D", pgDataDir,
+		"-j", // disable newline as statement terminator
+		"postgres",
+	)
+	setLibraryPath(alterCmd, GetPostgresLibDir(sandboxCtx.BinDir, postgresVersion))
+	alterCmd.Stdin = strings.NewReader(fmt.Sprintf("ALTER USER supabase_admin WITH PASSWORD '%s';", utils.Config.Db.Password))
+	alterCmd.Stdout = os.Stderr
+	alterCmd.Stderr = os.Stderr
+
+	if err := alterCmd.Run(); err != nil {
+		return fmt.Errorf("failed to set superuser password: %w", err)
 	}
 
-	containerConfig := &container.Config{
-		Image: image,
-		Env:   env,
-		Healthcheck: &container.HealthConfig{
-			Test:        []string{"CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1", "-p", "5432"},
-			Interval:    10_000_000_000, // 10 seconds in nanoseconds
-			Timeout:     2_000_000_000,  // 2 seconds
-			Retries:     3,
-			StartPeriod: 5_000_000_000, // 5 seconds
-		},
-	}
+	// Copy postgresql.conf from bundled template
+	postgresDir := GetPostgresDir(sandboxCtx.BinDir, postgresVersion)
+	templatePath := filepath.Join(postgresDir, "share", "supabase-cli", "config", "postgresql.conf.template")
+	confPath := filepath.Join(pgDataDir, "postgresql.conf")
 
-	hostConfig := &container.HostConfig{
-		PortBindings: nat.PortMap{
-			"5432/tcp": []nat.PortBinding{{
-				HostIP:   "127.0.0.1",
-				HostPort: strconv.Itoa(sandboxCtx.Ports.Postgres),
-			}},
-		},
-		Mounts: []mount.Mount{
-			{
-				Type:   mount.TypeVolume,
-				Source: volumeName,
-				Target: "/var/lib/postgresql/data",
-			},
-		},
-	}
-
-	_, err := utils.Docker.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, containerName)
+	templateContent, err := afero.ReadFile(fsys, templatePath)
 	if err != nil {
-		return fmt.Errorf("failed to create container: %w", err)
+		return fmt.Errorf("failed to read postgresql.conf template: %w", err)
+	}
+
+	// Update port and pgsodium/vault getkey paths
+	pgsodiumScript := filepath.Join(postgresDir, "share", "supabase-cli", "config", "pgsodium_getkey.sh")
+	conf := strings.Replace(string(templateContent), "port = 54322", fmt.Sprintf("port = %d", sandboxCtx.Ports.Postgres), 1)
+	conf += fmt.Sprintf("\npgsodium.getkey_script = '%s'\n", pgsodiumScript)
+	conf += fmt.Sprintf("vault.getkey_script = '%s'\n", pgsodiumScript)
+
+	if err := afero.WriteFile(fsys, confPath, []byte(conf), 0600); err != nil {
+		return fmt.Errorf("failed to write postgresql.conf: %w", err)
+	}
+
+	// Copy pg_hba.conf from bundled template
+	// The bundled template uses scram-sha-256 for TCP connections, which works now
+	// because we set the password during initdb with --pwfile
+	hbaTemplatePath := filepath.Join(postgresDir, "share", "supabase-cli", "config", "pg_hba.conf.template")
+	hbaPath := filepath.Join(pgDataDir, "pg_hba.conf")
+
+	hbaContent, err := afero.ReadFile(fsys, hbaTemplatePath)
+	if err != nil {
+		return fmt.Errorf("failed to read pg_hba.conf template: %w", err)
+	}
+
+	if err := afero.WriteFile(fsys, hbaPath, hbaContent, 0600); err != nil {
+		return fmt.Errorf("failed to write pg_hba.conf: %w", err)
 	}
 
 	return nil
+}
+
+// updatePostgresPort updates the port in postgresql.conf for subsequent starts.
+func updatePostgresPort(fsys afero.Fs, pgDataDir string, port int) error {
+	confPath := filepath.Join(pgDataDir, "postgresql.conf")
+	content, err := afero.ReadFile(fsys, confPath)
+	if err != nil {
+		return fmt.Errorf("failed to read postgresql.conf: %w", err)
+	}
+
+	// Replace the port line
+	lines := strings.Split(string(content), "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "port = ") {
+			lines[i] = fmt.Sprintf("port = %d", port)
+			break
+		}
+	}
+
+	return afero.WriteFile(fsys, confPath, []byte(strings.Join(lines, "\n")), 0600)
+}
+
+// setLibraryPath sets the appropriate library path environment variable for the command.
+func setLibraryPath(cmd *exec.Cmd, libDir string) {
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		cmd.Env = append(cmd.Env, "DYLD_LIBRARY_PATH="+libDir)
+	case "linux":
+		cmd.Env = append(cmd.Env, "LD_LIBRARY_PATH="+libDir)
+	}
 }
 
 // printStartupInfo displays the allocated ports and URLs to the user.

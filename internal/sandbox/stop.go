@@ -11,10 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/f1bonacc1/process-compose/src/client"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/utils"
 )
 
 // Stop stops all sandbox services and cleans up resources.
@@ -54,19 +52,8 @@ func Stop(ctx context.Context, fsys afero.Fs, projectId string, w io.Writer) err
 		time.Sleep(2 * time.Second)
 	}
 
-	// Stop docker container using Docker API
-	dbContainer := sandboxCtx.ContainerName("db")
-	fmt.Fprintf(w, "Stopping container %s...\n", dbContainer)
-
-	timeout := 10
-	if err := utils.Docker.ContainerStop(ctx, dbContainer, container.StopOptions{
-		Timeout: &timeout,
-	}); err != nil {
-		// Container might not exist or already be stopped
-		fmt.Fprintf(w, "Note: %v\n", err)
-	}
-
 	// Clean up all sandbox files (state, yaml, logs)
+	// Note: pgdata directory is NOT removed - it persists between start/stop cycles
 	if err := fsys.RemoveAll(sandboxCtx.ConfigDir); err != nil {
 		fmt.Fprintf(w, "Warning: failed to cleanup sandbox files: %v\n", err)
 	}
@@ -97,8 +84,8 @@ func terminateProcess(pid int) error {
 	return process.Signal(syscall.SIGTERM)
 }
 
-// Cleanup removes all sandbox-related Docker resources for a project.
-// This includes the container and volume.
+// Cleanup removes all sandbox-related resources for a project.
+// This includes the config directory and postgres data directory.
 func Cleanup(ctx context.Context, fsys afero.Fs, projectId string) error {
 	sandboxCtx, err := NewSandboxContext(projectId)
 	if err != nil {
@@ -110,24 +97,22 @@ func Cleanup(ctx context.Context, fsys afero.Fs, projectId string) error {
 		fmt.Fprintf(os.Stderr, "Warning: stop failed: %v\n", err)
 	}
 
-	// Remove container using Docker API
-	dbContainer := sandboxCtx.ContainerName("db")
-	fmt.Fprintf(os.Stderr, "Removing container %s...\n", dbContainer)
-	if err := utils.Docker.ContainerRemove(ctx, dbContainer, container.RemoveOptions{Force: true}); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to remove container: %v\n", err)
-	}
-
-	// Remove volume using Docker API
-	dbVolume := sandboxCtx.VolumeName("db")
-	fmt.Fprintf(os.Stderr, "Removing volume %s...\n", dbVolume)
-	if err := utils.Docker.VolumeRemove(ctx, dbVolume, true); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to remove volume: %v\n", err)
+	// Remove postgres data directory
+	pgDataDir := sandboxCtx.PgDataDir()
+	fmt.Fprintf(os.Stderr, "Removing postgres data directory %s...\n", pgDataDir)
+	if err := fsys.RemoveAll(pgDataDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to remove postgres data dir: %v\n", err)
 	}
 
 	// Remove config directory
 	fmt.Fprintf(os.Stderr, "Removing config directory %s...\n", sandboxCtx.ConfigDir)
 	if err := fsys.RemoveAll(sandboxCtx.ConfigDir); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to remove config dir: %v\n", err)
+	}
+
+	// Remove postgres version file
+	if err := fsys.Remove(SandboxPostgresVersionPath); err != nil && !os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "Warning: failed to remove postgres version file: %v\n", err)
 	}
 
 	fmt.Fprintln(os.Stderr, "Sandbox cleanup complete.")

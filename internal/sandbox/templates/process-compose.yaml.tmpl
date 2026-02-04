@@ -4,24 +4,46 @@ log_location: {{ .LogLocation }}
 
 processes:
   postgres:
-    command: docker start -a {{ .PostgresContainer }}
+    command: {{ .PostgresBinDir }}/postgres -D {{ .PostgresDataDir }}
+    environment:
+      - DYLD_LIBRARY_PATH={{ .PostgresLibDir }}
+      - LD_LIBRARY_PATH={{ .PostgresLibDir }}
+      - TZDIR=/var/db/timezone/zoneinfo
     readiness_probe:
       exec:
-        command: docker exec {{ .PostgresContainer }} pg_isready -U postgres -h 127.0.0.1 -p 5432
+        command: {{ .PostgresBinDir }}/pg_isready -h 127.0.0.1 -p {{ .PostgresPort }} -U postgres
       initial_delay_seconds: 2
       period_seconds: 5
       timeout_seconds: 2
       failure_threshold: 3
     shutdown:
-      command: docker stop {{ .PostgresContainer }}
-      timeout_seconds: 10
+      signal: 15
+      timeout_seconds: 30
 
   postgres-init:
     command: |
-      docker exec -e PGPASSWORD={{ .DbPassword }} {{ .PostgresContainer }} psql -U supabase_admin -d postgres -c "
+      export PATH="{{ .PostgresBinDir }}:$PATH"
+      export DYLD_LIBRARY_PATH="{{ .PostgresLibDir }}"
+      export LD_LIBRARY_PATH="{{ .PostgresLibDir }}"
+      export POSTGRES_HOST=127.0.0.1
+      export POSTGRES_PORT={{ .PostgresPort }}
+      export POSTGRES_PASSWORD={{ .DbPassword }}
+      export POSTGRES_DB=postgres
+      export PGPASSWORD={{ .DbPassword }}
+
+      # Check if already migrated (authenticator role exists)
+      if {{ .PostgresBinDir }}/psql -h 127.0.0.1 -p {{ .PostgresPort }} -U supabase_admin -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='authenticator'" 2>/dev/null | grep -q 1; then
+        echo "Database already initialized, updating passwords..."
+      else
+        echo "Running Supabase migrations..."
+        sh {{ .PostgresMigrateScript }}
+      fi
+
+      # Always update role passwords and fix role configs (idempotent)
+      {{ .PostgresBinDir }}/psql -h 127.0.0.1 -p {{ .PostgresPort }} -U supabase_admin -d postgres -c "
         DO \$\$
         DECLARE
-          roles text[] := ARRAY['authenticator', 'supabase_auth_admin', 'supabase_storage_admin', 'supabase_functions_admin', 'supabase_replication_admin', 'supabase_read_only_user'];
+          roles text[] := ARRAY['authenticator', 'supabase_auth_admin', 'supabase_storage_admin', 'supabase_functions_admin', 'supabase_replication_admin', 'supabase_read_only_user', 'postgres'];
           r text;
         BEGIN
           FOREACH r IN ARRAY roles LOOP
@@ -31,7 +53,14 @@ processes:
           END LOOP;
         END
         \$\$;
+
+        -- Remove safeupdate from session_preload_libraries (not available in native bundle)
+        ALTER ROLE authenticator RESET session_preload_libraries;
       "
+    environment:
+      - DYLD_LIBRARY_PATH={{ .PostgresLibDir }}
+      - LD_LIBRARY_PATH={{ .PostgresLibDir }}
+      - PGPASSWORD={{ .DbPassword }}
     depends_on:
       postgres:
         condition: process_healthy

@@ -7,9 +7,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
+	"runtime"
 	"time"
 
-	"github.com/docker/docker/api/types"
 	"github.com/go-errors/errors"
 	"github.com/olekukonko/tablewriter"
 	"github.com/olekukonko/tablewriter/tw"
@@ -40,8 +41,8 @@ func Status(ctx context.Context, projectId string, fsys afero.Fs) ([]ServiceStat
 
 	var statuses []ServiceStatus
 
-	// Check postgres (Docker container)
-	pgStatus := checkPostgresStatus(ctx, sandboxCtx.ContainerName("db"), state.Ports.Postgres)
+	// Check postgres (native process using pg_isready)
+	pgStatus := checkPostgresStatus(ctx, fsys, sandboxCtx.BinDir, state.Ports.Postgres)
 	statuses = append(statuses, pgStatus)
 
 	// Check gotrue (native process)
@@ -59,28 +60,49 @@ func Status(ctx context.Context, projectId string, fsys afero.Fs) ([]ServiceStat
 	return statuses, nil
 }
 
-// checkPostgresStatus checks if the postgres Docker container is healthy.
-func checkPostgresStatus(ctx context.Context, containerName string, port int) ServiceStatus {
+// checkPostgresStatus checks if native postgres is healthy using pg_isready.
+func checkPostgresStatus(ctx context.Context, fsys afero.Fs, binDir string, port int) ServiceStatus {
 	status := ServiceStatus{
 		Name: "postgres",
 		Port: port,
 	}
 
-	resp, err := utils.Docker.ContainerInspect(ctx, containerName)
+	if port == 0 {
+		status.Status = "not configured"
+		status.Healthy = false
+		return status
+	}
+
+	// Load postgres version from persistent file
+	postgresVersion, err := LoadPostgresVersion(fsys)
 	if err != nil {
-		status.Status = "not found"
+		status.Status = "unknown version"
 		status.Healthy = false
 		return status
 	}
 
-	if !resp.State.Running {
-		status.Status = resp.State.Status
-		status.Healthy = false
-		return status
+	// Use pg_isready to check postgres health
+	pgIsReady := GetPostgresBinPath(binDir, postgresVersion, "pg_isready")
+	cmd := exec.CommandContext(ctx, pgIsReady,
+		"-h", "127.0.0.1",
+		"-p", fmt.Sprintf("%d", port),
+		"-U", "postgres",
+	)
+
+	// Set library path for shared libraries
+	libDir := GetPostgresLibDir(binDir, postgresVersion)
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		cmd.Env = append(cmd.Env, "DYLD_LIBRARY_PATH="+libDir)
+	case "linux":
+		cmd.Env = append(cmd.Env, "LD_LIBRARY_PATH="+libDir)
 	}
 
-	if resp.State.Health != nil && resp.State.Health.Status != types.Healthy {
-		status.Status = resp.State.Health.Status
+	if err := cmd.Run(); err != nil {
+		status.Status = "not responding"
 		status.Healthy = false
 		return status
 	}

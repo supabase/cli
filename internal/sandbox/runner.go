@@ -41,7 +41,6 @@ type OAuthProviderConfig struct {
 // processComposeConfig holds the template variables for process-compose.yaml generation.
 type processComposeConfig struct {
 	LogLocation        string
-	PostgresContainer  string
 	PostgresPort       int
 	DbPassword         string
 	DbSchemas          string
@@ -53,6 +52,12 @@ type processComposeConfig struct {
 	PostgRESTAdminPort int
 	GotruePath         string
 	PostgrestPath      string
+
+	// Native PostgreSQL configuration
+	PostgresBinDir        string // Path to postgres bin directory
+	PostgresDataDir       string // Path to pgdata directory
+	PostgresLibDir        string // Path to postgres lib directory (for DYLD_LIBRARY_PATH)
+	PostgresMigrateScript string // Path to bundled migrate.sh
 
 	// Proxy configuration
 	SupabaseBin    string
@@ -199,7 +204,7 @@ type processComposeConfig struct {
 }
 
 // GenerateProcessComposeConfig generates the process-compose.yaml from the template.
-func GenerateProcessComposeConfig(goCtx context.Context, ctx *SandboxContext) (string, error) {
+func GenerateProcessComposeConfig(goCtx context.Context, ctx *SandboxContext, postgresVersion string) (string, error) {
 	// Create template with custom functions
 	funcMap := template.FuncMap{
 		"upper": strings.ToUpper,
@@ -266,9 +271,11 @@ func GenerateProcessComposeConfig(goCtx context.Context, ctx *SandboxContext) (s
 		rateLimitEmailSent = utils.Config.Auth.RateLimit.EmailSent
 	}
 
+	// Build postgres paths
+	postgresDir := GetPostgresDir(ctx.BinDir, postgresVersion)
+
 	data := processComposeConfig{
 		LogLocation:        filepath.Join(ctx.LogDir(), "process-compose.log"),
-		PostgresContainer:  ctx.ContainerName("db"),
 		PostgresPort:       ctx.Ports.Postgres,
 		DbPassword:         utils.Config.Db.Password,
 		DbSchemas:          strings.Join(utils.Config.Api.Schemas, ","),
@@ -280,6 +287,12 @@ func GenerateProcessComposeConfig(goCtx context.Context, ctx *SandboxContext) (s
 		PostgRESTAdminPort: ctx.Ports.PostgRESTAdmin,
 		GotruePath:         GetGotruePath(ctx.BinDir),
 		PostgrestPath:      GetPostgrestPath(ctx.BinDir),
+
+		// Native PostgreSQL configuration
+		PostgresBinDir:        filepath.Join(postgresDir, "bin"),
+		PostgresDataDir:       ctx.PgDataDir(),
+		PostgresLibDir:        filepath.Join(postgresDir, "lib"),
+		PostgresMigrateScript: filepath.Join(postgresDir, "share", "supabase-cli", "migrations", "migrate.sh"),
 
 		// Proxy configuration
 		SupabaseBin:    os.Args[0],
@@ -448,8 +461,8 @@ func GenerateProcessComposeConfig(goCtx context.Context, ctx *SandboxContext) (s
 }
 
 // WriteProcessComposeConfig generates and writes process-compose.yaml to the sandbox directory.
-func WriteProcessComposeConfig(goCtx context.Context, ctx *SandboxContext, fsys afero.Fs) (string, error) {
-	content, err := GenerateProcessComposeConfig(goCtx, ctx)
+func WriteProcessComposeConfig(goCtx context.Context, ctx *SandboxContext, fsys afero.Fs, postgresVersion string) (string, error) {
+	content, err := GenerateProcessComposeConfig(goCtx, ctx, postgresVersion)
 	if err != nil {
 		return "", err
 	}

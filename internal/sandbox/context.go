@@ -5,11 +5,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
+
+// SandboxPostgresVersionPath stores the postgres version persistently.
+// This follows the same pattern as PostgresVersionPath, GotrueVersionPath, etc. in misc.go.
+// Located in TempDir (not ConfigDir) so it survives stop but is still project-local.
+var SandboxPostgresVersionPath = filepath.Join(utils.TempDir, "sandbox-postgres-version")
 
 // SandboxContext holds project-specific runtime context for sandbox mode.
 // It includes paths, allocated ports, and helper methods for resource naming.
@@ -56,12 +62,20 @@ func (c *SandboxContext) LogDir() string {
 	return filepath.Join(c.ConfigDir, "logs")
 }
 
+// PgDataDir returns the path to the postgres data directory.
+// IMPORTANT: This is stored OUTSIDE ConfigDir (.temp/sandbox/) so it persists between start/stop.
+// Location: supabase/.temp/pgdata/
+func (c *SandboxContext) PgDataDir() string {
+	return filepath.Join(utils.TempDir, "pgdata")
+}
+
 // EnsureDirectories creates all necessary directories for the sandbox.
 func (c *SandboxContext) EnsureDirectories(fsys afero.Fs) error {
 	dirs := []string{
 		c.ConfigDir,
 		c.BinDir,
 		c.LogDir(),
+		c.PgDataDir(),
 	}
 
 	for _, dir := range dirs {
@@ -137,4 +151,19 @@ func IsSandboxRunning(fsys afero.Fs, projectId string) bool {
 		return false
 	}
 	return ctx.IsSandboxRunning(fsys)
+}
+
+// SavePostgresVersion writes the postgres version to a persistent file.
+// This survives stop/start cycles since it's in TempDir, not ConfigDir.
+func SavePostgresVersion(fsys afero.Fs, version string) error {
+	return utils.WriteFile(SandboxPostgresVersionPath, []byte(version), fsys)
+}
+
+// LoadPostgresVersion reads the postgres version from the persistent file.
+func LoadPostgresVersion(fsys afero.Fs) (string, error) {
+	data, err := afero.ReadFile(fsys, SandboxPostgresVersionPath)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
 }
