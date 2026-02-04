@@ -23,12 +23,15 @@ var pgDeltaScript string
 func DiffPgDelta(ctx context.Context, source, target pgconn.Config, schema []string, options ...func(*pgx.ConnConfig)) (string, error) {
 	env := []string{
 		"SOURCE=" + utils.ToPostgresURL(source),
-		"TARGET=" + utils.ToPostgresURL(target),
 	}
 	if ca, err := types.GetRootCA(ctx, utils.ToPostgresURL(target), options...); err != nil {
 		return "", err
 	} else if len(ca) > 0 {
-		env = append(env, "PGDELTA_TARGET_SSLROOTCERT="+ca)
+		target.RuntimeParams["sslmode"] = "require"
+		env = append(env,
+			"TARGET="+utils.ToPostgresURL(target),
+			"PGDELTA_TARGET_SSLROOTCERT="+ca,
+		)
 	}
 	if len(schema) > 0 {
 		env = append(env, "INCLUDED_SCHEMAS="+strings.Join(schema, ","))
