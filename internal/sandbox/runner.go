@@ -63,12 +63,12 @@ type processComposeConfig struct {
 	AnonJWT        string
 
 	// JWT configuration
-	JwtSecret       string
-	JwtExpiry       uint
-	JwtIssuer       string
-	JwtKeys         string
-	JwtMethods      string
-	PostgRESTJwks   string // JWKS for PostgREST JWT verification
+	JwtSecret     string
+	JwtExpiry     uint
+	JwtIssuer     string
+	JwtKeys       string
+	JwtMethods    string
+	PostgRESTJwks string // JWKS for PostgREST JWT verification
 
 	// Site configuration
 	SiteUrl                string
@@ -298,10 +298,10 @@ func GenerateProcessComposeConfig(goCtx context.Context, ctx *SandboxContext, po
 		AnonJWT:        utils.Config.Auth.AnonKey.Value,
 
 		// JWT configuration
-		JwtSecret:  utils.Config.Auth.JwtSecret.Value,
-		JwtExpiry:  utils.Config.Auth.JwtExpiry,
-		JwtIssuer:  utils.Config.Auth.JwtIssuer,
-		JwtKeys:    jwtKeys,
+		JwtSecret:     utils.Config.Auth.JwtSecret.Value,
+		JwtExpiry:     utils.Config.Auth.JwtExpiry,
+		JwtIssuer:     utils.Config.Auth.JwtIssuer,
+		JwtKeys:       jwtKeys,
 		JwtMethods:    jwtMethods,
 		PostgRESTJwks: postgRESTJwks,
 

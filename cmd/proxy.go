@@ -6,9 +6,9 @@ import (
 )
 
 var (
-	proxyPort          int
-	proxyGotruePort    int
-	proxyPostgrestPort int
+	proxyPort               int
+	proxyGotruePort         int
+	proxyPostgrestPort      int
 	proxyPostgrestAdminPort int
 	proxyServiceRoleKey     string
 	proxyServiceRoleJWT     string
