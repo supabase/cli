@@ -27,6 +27,9 @@ const (
 	// Binary versions
 	GotrueVersion    = "2.186.0" // Local build for darwin-arm64
 	PostgrestVersion = "14.4"
+
+	// SpinnerTickInterval is how often the download spinner animation updates.
+	SpinnerTickInterval = 80 * time.Millisecond
 )
 
 // GetGotruePath returns the path to the gotrue binary.
@@ -140,7 +143,7 @@ func InstallBinaries(ctx context.Context, fsys afero.Fs, binDir string) (postgre
 	go func() {
 		defer close(spinnerDone)
 		frame := 0
-		ticker := time.NewTicker(80 * time.Millisecond)
+		ticker := time.NewTicker(SpinnerTickInterval)
 		defer ticker.Stop()
 		for {
 			select {
@@ -560,7 +563,7 @@ func findLocalPostgresArchive() (path string, version string, err error) {
 // extractZipToDir extracts a zip archive to a destination directory.
 // Preserves the full directory structure from the archive.
 func extractZipToDir(zipPath, destDir string, fsys afero.Fs) error {
-	data, err := os.ReadFile(zipPath)
+	data, err := afero.ReadFile(fsys, zipPath)
 	if err != nil {
 		return fmt.Errorf("failed to read zip file: %w", err)
 	}

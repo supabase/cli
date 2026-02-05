@@ -6,11 +6,15 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"runtime"
 	"time"
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+)
+
+const (
+	// HealthCheckTimeout is the timeout for HTTP health check requests.
+	HealthCheckTimeout = 2 * time.Second
 )
 
 // ServiceStatus represents the health status of a service.
@@ -86,15 +90,7 @@ func checkPostgresStatus(ctx context.Context, fsys afero.Fs, binDir string, port
 
 	// Set library path for shared libraries
 	libDir := GetPostgresLibDir(binDir, postgresVersion)
-	if cmd.Env == nil {
-		cmd.Env = os.Environ()
-	}
-	switch runtime.GOOS {
-	case "darwin":
-		cmd.Env = append(cmd.Env, "DYLD_LIBRARY_PATH="+libDir)
-	case "linux":
-		cmd.Env = append(cmd.Env, "LD_LIBRARY_PATH="+libDir)
-	}
+	setLibraryPath(cmd, libDir)
 
 	if err := cmd.Run(); err != nil {
 		status.Status = "not responding"
@@ -121,7 +117,7 @@ func checkHTTPStatus(name string, port int, path string) ServiceStatus {
 	}
 
 	client := &http.Client{
-		Timeout: 2 * time.Second,
+		Timeout: HealthCheckTimeout,
 	}
 
 	url := fmt.Sprintf("http://127.0.0.1:%d%s", port, path)

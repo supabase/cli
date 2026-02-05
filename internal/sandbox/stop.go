@@ -15,6 +15,11 @@ import (
 	"github.com/spf13/afero"
 )
 
+const (
+	// ShutdownGracePeriod is the time to wait for processes to shut down gracefully.
+	ShutdownGracePeriod = 2 * time.Second
+)
+
 // Stop stops all sandbox services and cleans up resources.
 // Uses process-compose HTTP API for graceful shutdown with proper dependency ordering.
 // Falls back to killing the server PID if HTTP API is unavailable.
@@ -40,7 +45,7 @@ func Stop(ctx context.Context, fsys afero.Fs, projectId string, backup bool, w i
 		if err := pcClient.ShutDownProject(); err == nil {
 			stopped = true
 			// Give processes time to shut down gracefully
-			time.Sleep(2 * time.Second)
+			time.Sleep(ShutdownGracePeriod)
 		}
 	}
 
@@ -50,7 +55,7 @@ func Stop(ctx context.Context, fsys afero.Fs, projectId string, backup bool, w i
 		if err := terminateProcess(state.PID); err != nil {
 			fmt.Fprintf(w, "Warning: failed to terminate server: %v\n", err)
 		}
-		time.Sleep(2 * time.Second)
+		time.Sleep(ShutdownGracePeriod)
 	}
 
 	// Clean up all sandbox files (state, yaml, logs)

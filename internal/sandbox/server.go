@@ -16,6 +16,15 @@ import (
 	"github.com/f1bonacc1/process-compose/src/types"
 )
 
+const (
+	// PollingInterval is how often to check service status.
+	PollingInterval = 2 * time.Second
+	// InitialStartupDelay gives the server time to start before polling.
+	InitialStartupDelay = 1 * time.Second
+	// HTTPServerShutdownTimeout is the timeout for graceful HTTP server shutdown.
+	HTTPServerShutdownTimeout = 5 * time.Second
+)
+
 // RunServer runs the process-compose server in the foreground.
 // This is meant to be called by a detached background process.
 // It starts the runner, HTTP server, and waits for shutdown signals.
@@ -77,10 +86,33 @@ func shutdownHTTPServer(server *http.Server) {
 	if server == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), HTTPServerShutdownTimeout)
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: server shutdown error: %v\n", err)
+	}
+}
+
+// waitForCondition polls until the check function returns true or timeout is reached.
+func waitForCondition(timeout time.Duration, timeoutMsg string, check func() bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(PollingInterval)
+	defer ticker.Stop()
+
+	// Initial delay to let the server start
+	time.Sleep(InitialStartupDelay)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf(timeoutMsg)
+		case <-ticker.C:
+			if check() {
+				return nil
+			}
+		}
 	}
 }
 
@@ -88,31 +120,13 @@ func shutdownHTTPServer(server *http.Server) {
 func WaitForServerReady(serverPort int, timeout time.Duration) error {
 	pcClient := client.NewTcpClient("127.0.0.1", serverPort, 100)
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	// Initial delay to let the server start
-	time.Sleep(1 * time.Second)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for services to become healthy")
-		case <-ticker.C:
-			states, err := pcClient.GetProcessesState()
-			if err != nil {
-				// Server might not be ready yet
-				continue
-			}
-
-			if isAllStatesReady(states) {
-				return nil
-			}
+	return waitForCondition(timeout, "timeout waiting for services to become healthy", func() bool {
+		states, err := pcClient.GetProcessesState()
+		if err != nil {
+			return false
 		}
-	}
+		return isAllStatesReady(states)
+	})
 }
 
 // isAllStatesReady checks if all services are ready based on client API response.
@@ -154,31 +168,13 @@ func isStateReady(state *types.ProcessState) bool {
 func WaitForPostgresReady(serverPort int, timeout time.Duration) error {
 	pcClient := client.NewTcpClient("127.0.0.1", serverPort, 100)
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	// Initial delay to let the server start
-	time.Sleep(1 * time.Second)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for postgres to become healthy")
-		case <-ticker.C:
-			states, err := pcClient.GetProcessesState()
-			if err != nil {
-				// Server might not be ready yet
-				continue
-			}
-
-			if isPostgresReady(states) {
-				return nil
-			}
+	return waitForCondition(timeout, "timeout waiting for postgres to become healthy", func() bool {
+		states, err := pcClient.GetProcessesState()
+		if err != nil {
+			return false
 		}
-	}
+		return isPostgresReady(states)
+	})
 }
 
 // isPostgresReady checks if postgres and postgres-init are ready.
