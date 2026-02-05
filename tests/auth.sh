@@ -2,7 +2,7 @@
 set -eou pipefail
 
 # 1. Create user with publishable key
-output=$(curl -sS 'http://127.0.0.1:54321/auth/v1/signup' \
+output=$(curl -sS "$API_URL/auth/v1/signup" \
   -H "apikey: $PUBLISHABLE_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"email":"user@example.com","password":"aSecurePassword123"}' \
@@ -15,7 +15,7 @@ fi
 
 # 2. Delete user with secret key
 user_id=$(echo "$output" | jq -r '.user.id')
-output=$(curl -sS -X DELETE "http://127.0.0.1:54321/auth/v1/admin/users/$user_id" \
+output=$(curl -sS -X DELETE "$API_URL/auth/v1/admin/users/$user_id" \
   -H "apikey: $SECRET_KEY" \
   -H 'Content-Type: application/json' \
 )
@@ -26,7 +26,7 @@ if [[ "$output" != '{}' ]]; then
 fi
 
 # 3. Create user with legacy anon key
-output=$(curl -sS 'http://127.0.0.1:54321/auth/v1/signup' \
+output=$(curl -sS "$API_URL/auth/v1/signup" \
   -H "Authorization: Bearer $ANON_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"email":"user@example.com","password":"aSecurePassword123"}' \
@@ -39,7 +39,7 @@ fi
 
 # 4. Delete user with legacy service role key
 user_id=$(echo "$output" | jq -r '.user.id')
-output=$(curl -sS -X DELETE "http://127.0.0.1:54321/auth/v1/admin/users/$user_id" \
+output=$(curl -sS -X DELETE "$API_URL/auth/v1/admin/users/$user_id" \
   -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
   -H 'Content-Type: application/json' \
 )

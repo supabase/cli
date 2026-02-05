@@ -22,7 +22,7 @@ if [[ $(echo "$output" | jq -r '.payload.status') != 'ok' ]]; then
 fi
 
 ## 3. Broadcast with secret key
-curl -sSf 'http://127.0.0.1:54321/realtime/v1/api/broadcast' \
+curl -sSf "$API_URL/realtime/v1/api/broadcast" \
   -H "apikey: $SECRET_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"messages":[{"topic":"room1","event":"my_event","payload":{"foo":"bar"},"private":true}]}'

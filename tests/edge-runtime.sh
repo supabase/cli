@@ -5,7 +5,7 @@ set -eou pipefail
 # supabase --workdir tests functions serve
 
 # 1. POST request with publishable key
-output=$(curl -sS 'http://127.0.0.1:54321/functions/v1/hello-world' \
+output=$(curl -sS "$API_URL/functions/v1/hello-world" \
   -H "apikey: $PUBLISHABLE_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"name":"Functions"}' \
@@ -17,7 +17,7 @@ if [[ $(echo "$output" | jq -r '.message') != 'Hello Functions!' ]]; then
 fi
 
 # 2. POST request with legacy key
-output=$(curl -sS 'http://127.0.0.1:54321/functions/v1/hello-world' \
+output=$(curl -sS "$API_URL/functions/v1/hello-world" \
   -H "Authorization: Bearer $ANON_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"name":"Functions"}' \
@@ -29,7 +29,7 @@ if [[ $(echo "$output" | jq -r '.message') != 'Hello Functions!' ]]; then
 fi
 
 # 3. POST request with secret key
-output=$(curl -sS 'http://127.0.0.1:54321/functions/v1/hello-world' \
+output=$(curl -sS "$API_URL/functions/v1/hello-world" \
   -H "apikey: $SECRET_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"name":"Functions"}' \
@@ -41,7 +41,7 @@ if [[ $(echo "$output" | jq -r '.message') != 'Hello Functions!' ]]; then
 fi
 
 # 4. POST request with service role key
-output=$(curl -sS 'http://127.0.0.1:54321/functions/v1/hello-world' \
+output=$(curl -sS "$API_URL/functions/v1/hello-world" \
   -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"name":"Functions"}' \

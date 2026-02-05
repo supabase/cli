@@ -5,7 +5,7 @@ set -eou pipefail
 # supabase --workdir tests migrations up
 
 # 1. Create todo as service role
-output=$(curl -sS 'http://127.0.0.1:54321/rest/v1/todos' \
+output=$(curl -sS "$API_URL/rest/v1/todos" \
   -H "apikey: $SECRET_KEY" \
   -H 'Content-Type: application/json' \
   -H 'Prefer: return=representation' \
@@ -18,7 +18,7 @@ if [[ $(echo "$output" | jq -r 'length') != '1' ]]; then
 fi
 
 # 2. Create todo as anon role should fail
-output=$(curl -sS 'http://127.0.0.1:54321/rest/v1/todos' \
+output=$(curl -sS "$API_URL/rest/v1/todos" \
   -H "apikey: $PUBLISHABLE_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"task": "New task", "done": false}' \
@@ -30,7 +30,7 @@ if [[ $(echo "$output" | jq -r '.code') != '42501' ]]; then
 fi
 
 # 3. List todos as anon role
-output=$(curl -sS -G 'http://127.0.0.1:54321/rest/v1/todos' \
+output=$(curl -sS -G "$API_URL/rest/v1/todos" \
   -H "apikey: $PUBLISHABLE_KEY" \
   -H 'Content-Type: application/json' \
 )
@@ -41,7 +41,7 @@ if [[ $(echo "$output" | jq -r 'length') != '1' ]]; then
 fi
 
 # 4. Delete todo as anon role should fail
-output=$(curl -sS -X DELETE 'http://127.0.0.1:54321/rest/v1/todos?id=eq.1' \
+output=$(curl -sS -X DELETE "$API_URL/rest/v1/todos?id=eq.1" \
   -H "apikey: $PUBLISHABLE_KEY" \
   -H 'Content-Type: application/json' \
   -H 'Prefer: return=representation' \
@@ -53,7 +53,7 @@ if [[ $(echo "$output" | jq -r 'length') != '0' ]]; then
 fi
 
 # 5. Delete todo as authenticated role (custom jwt)
-output=$(curl -sS -X DELETE 'http://127.0.0.1:54321/rest/v1/todos?id=not.eq.0' \
+output=$(curl -sS -X DELETE "$API_URL/rest/v1/todos?id=not.eq.0" \
   -H "apikey: $PUBLISHABLE_KEY" \
   -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
   -H 'Content-Type: application/json' \
