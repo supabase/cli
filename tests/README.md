@@ -1,5 +1,11 @@
 ## Local e2e tests
 
+0. Install websocat
+
+```bash
+brew install websocat
+```
+
 1. Start local stack
 
 ```bash
