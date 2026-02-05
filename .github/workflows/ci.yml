@@ -79,6 +79,9 @@ jobs:
       - run: ./main start
         env:
           SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
+      - run: ./main --workdir tests migrations up
+      - run: ./tests/auth.sh
+      - run: ./tests/postgrest.sh
 
   link:
     name: Link
