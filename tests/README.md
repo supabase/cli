@@ -1,5 +1,17 @@
 ## End-to-End tests from client lib to local stack
 
+1. Start local stack
+
+```bash
+supabase --workdir tests start
+```
+
+2. Run all tests
+
+```bash
+./tests/all.sh supabase
+```
+
 ### Auth test
 
 1. Run user signup tests
@@ -10,13 +22,7 @@
 
 ### PostgREST test
 
-1. Create todos table
-
-```bash
-supabase --workdir tests migrations up
-```
-
-2. Run RLS policy tests
+1. Run RLS policy tests
 
 ```bash
 ./tests/postgrest.sh

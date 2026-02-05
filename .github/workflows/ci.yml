@@ -79,11 +79,7 @@ jobs:
       - run: ./main start --workdir tests
         env:
           SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
-      - run: ./tests/auth.sh
-      - run: ./tests/postgrest.sh
-      - run: ./tests/storage.sh
-      - run: ./tests/realtime.sh
-      - run: ./tests/edge-runtime.sh
+      - run: ./tests/all.sh ./main
 
   link:
     name: Link

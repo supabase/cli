@@ -1,6 +1,11 @@
 #!/bin/bash
 set -eou pipefail
 
+# 0. Serve Edge Functions
+# supabase --workdir tests functions serve
+
+echo "Running Edge Function tests..."
+
 # 1. POST request with publishable key
 output=$(curl 'http://127.0.0.1:54321/functions/v1/hello-world' \
   -H 'apikey: sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH' \
