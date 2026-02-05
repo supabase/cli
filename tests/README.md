@@ -29,3 +29,19 @@ supabase --workdir tests migrations up
 ```bash
 ./tests/storage.sh
 ```
+
+### Realtime test
+
+1. Join a room and broadcast
+
+```bash
+./tests/realtime.sh
+```
+
+### Edge Function test
+
+1. Invoke hello-world function
+
+```bash
+./tests/edge-runtime.sh
+```
