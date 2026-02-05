@@ -1,4 +1,4 @@
-## End-to-End tests from client lib to local stack
+## Local e2e tests
 
 1. Start local stack
 
@@ -9,7 +9,7 @@ supabase --workdir tests start
 2. Run all tests
 
 ```bash
-./tests/all.sh supabase
+./e2e-test.sh supabase
 ```
 
 ### Auth test
