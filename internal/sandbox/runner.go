@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -16,9 +15,6 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/f1bonacc1/process-compose/src/api"
-	"github.com/f1bonacc1/process-compose/src/app"
-	"github.com/f1bonacc1/process-compose/src/loader"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -475,14 +471,10 @@ func WriteProcessComposeConfig(goCtx context.Context, ctx *SandboxContext, fsys 
 	return configPath, nil
 }
 
-// RunProject starts all services using process-compose.
-// If detach is true, it spawns a background server process, waits for health, then exits.
-// If detach is false, it runs in foreground with signal handling.
-func RunProject(configPath string, detach bool, sandboxCtx *SandboxContext, fsys afero.Fs) error {
-	if detach {
-		return runDetached(configPath, sandboxCtx, fsys)
-	}
-	return runAttached(configPath, sandboxCtx.Ports.ProcessCompose)
+// RunProject starts all services using process-compose as a background server.
+// It spawns a detached server process and waits for postgres to be healthy.
+func RunProject(configPath string, sandboxCtx *SandboxContext, fsys afero.Fs) error {
+	return runDetached(configPath, sandboxCtx, fsys)
 }
 
 // runDetached spawns a background server process and waits for postgres to be healthy.
@@ -544,70 +536,4 @@ func runDetached(configPath string, sandboxCtx *SandboxContext, fsys afero.Fs) e
 // WaitForAllServices waits for all services to be healthy.
 func WaitForAllServices(processComposePort int, timeout time.Duration) error {
 	return WaitForServerReady(processComposePort, timeout)
-}
-
-// runAttached runs the server in foreground with signal handling.
-func runAttached(configPath string, serverPort int) error {
-	// Load process-compose config
-	loaderOpts := &loader.LoaderOptions{
-		FileNames: []string{configPath},
-	}
-
-	project, err := loader.Load(loaderOpts)
-	if err != nil {
-		return fmt.Errorf("failed to load process-compose config: %w", err)
-	}
-
-	opts := &app.ProjectOpts{}
-	opts.WithProject(project).WithIsTuiOn(false)
-
-	runner, err := app.NewProjectRunner(opts)
-	if err != nil {
-		return fmt.Errorf("failed to create project runner: %w", err)
-	}
-
-	// Start HTTP server for remote control
-	server, err := api.StartHttpServerWithTCP(false, "127.0.0.1", serverPort, runner)
-	if err != nil {
-		return fmt.Errorf("failed to start process-compose server on port %d: %w", serverPort, err)
-	}
-
-	// Set up signal handling
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// Channel to receive runner errors
-	errChan := make(chan error, 1)
-
-	// Start the runner in a goroutine
-	go func() {
-		errChan <- runner.Run()
-	}()
-
-	// Wait for signal or runner exit
-	select {
-	case sig := <-sigChan:
-		fmt.Fprintf(os.Stderr, "\nReceived %v, shutting down...\n", sig)
-		if err := runner.ShutDownProject(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error during shutdown: %v\n", err)
-		}
-		runner.WaitForProjectShutdown()
-		shutdownServer(server)
-		return nil
-	case err := <-errChan:
-		shutdownServer(server)
-		return err
-	}
-}
-
-// shutdownServer gracefully shuts down the HTTP server.
-func shutdownServer(server interface{ Shutdown(context.Context) error }) {
-	if server == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := server.Shutdown(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: server shutdown error: %v\n", err)
-	}
 }

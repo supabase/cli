@@ -22,9 +22,8 @@ import (
 )
 
 // Run starts the sandbox mode with native binaries and process-compose.
-// If detach is true (default), it spawns a background server and exits after services are healthy.
-// If detach is false, it runs in foreground and responds to Ctrl+C.
-func Run(ctx context.Context, fsys afero.Fs, detach bool) error {
+// It spawns a background server and exits after services are healthy.
+func Run(ctx context.Context, fsys afero.Fs) error {
 	// 1. Load config
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
@@ -82,13 +81,13 @@ func Run(ctx context.Context, fsys afero.Fs, detach bool) error {
 
 	// 9. Start process-compose and wait for postgres to be healthy
 	// This starts all services but only waits for postgres so we can run migrations
-	if err := RunProject(processComposePath, detach, sandboxCtx, fsys); err != nil {
+	if err := RunProject(processComposePath, sandboxCtx, fsys); err != nil {
 		return err
 	}
 
 	// 10. Apply migrations and seeds on first run (like Docker mode does in SetupLocalDatabase)
 	// Note: Internal migrations are handled by postgres-init in process-compose
-	if isFirstRun && detach {
+	if isFirstRun {
 		// Print messages to match Docker output (internal migrations already done by postgres-init)
 		fmt.Fprintln(os.Stderr, "Initialising schema...")
 		fmt.Fprintln(os.Stderr, "Seeding globals from roles.sql...")
@@ -100,17 +99,15 @@ func Run(ctx context.Context, fsys afero.Fs, detach bool) error {
 	}
 
 	// 11. Wait for all services to be healthy
-	if detach {
-		fmt.Fprintln(os.Stderr, "Starting services...")
-		fmt.Fprintln(os.Stderr, "Waiting for health checks...")
-		if err := WaitForAllServices(sandboxCtx.Ports.ProcessCompose, 120*time.Second); err != nil {
-			return err
-		}
-
-		// 12. Print final status and connection info
-		fmt.Fprintf(os.Stderr, "Started %s local development setup.\n\n", utils.Aqua("supabase"))
-		PrettyPrintSandbox(os.Stdout, sandboxCtx)
+	fmt.Fprintln(os.Stderr, "Starting services...")
+	fmt.Fprintln(os.Stderr, "Waiting for health checks...")
+	if err := WaitForAllServices(sandboxCtx.Ports.ProcessCompose, 120*time.Second); err != nil {
+		return err
 	}
+
+	// 12. Print final status and connection info
+	fmt.Fprintf(os.Stderr, "Started %s local development setup.\n\n", utils.Aqua("supabase"))
+	PrettyPrintSandbox(os.Stdout, sandboxCtx)
 
 	return nil
 }
