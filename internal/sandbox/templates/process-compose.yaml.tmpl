@@ -53,9 +53,6 @@ processes:
           END LOOP;
         END
         \$\$;
-
-        -- Remove safeupdate from session_preload_libraries (not available in native bundle)
-        ALTER ROLE authenticator RESET session_preload_libraries;
       "
     environment:
       - DYLD_LIBRARY_PATH={{ .PostgresLibDir }}
