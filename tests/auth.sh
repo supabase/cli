@@ -7,7 +7,7 @@ output=$(curl 'http://127.0.0.1:54321/auth/v1/signup' \
   -H 'Content-Type: application/json' \
   -d '{"email":"user@example.com","password":"aSecurePassword123"}' \
 )
-if [[ $(echo "$output" | jq '.role') != 'authenticated' ]]; then
+if [[ $(echo "$output" | jq '.user.role') != 'authenticated' ]]; then
   echo 'User sign up with publishable key should succeed.' >&2
   echo "$output" | jq
   exit 1
@@ -19,7 +19,7 @@ output=$(curl 'http://127.0.0.1:54321/auth/v1/signup' \
   -H 'Content-Type: application/json' \
   -d '{"email":"user@example.com","password":"aSecurePassword123"}' \
 )
-if [[ $(echo "$output" | jq '.role') != 'authenticated' ]]; then
+if [[ $(echo "$output" | jq '.user.role') != 'authenticated' ]]; then
   echo 'User sign up with legacy key should succeed.' >&2
   echo "$output" | jq
   exit 1
