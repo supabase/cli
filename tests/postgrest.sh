@@ -11,7 +11,7 @@ output=$(curl 'http://127.0.0.1:54321/rest/v1/todos' \
   -H 'Prefer: return=representation' \
   -d '{"task": "New task", "done": false}'
 )
-if [[ $(echo "$output" | jq 'length') != '1' ]]; then
+if [[ $(echo "$output" | jq -r 'length') != '1' ]]; then
   echo 'Creating todo as service role should succeed.' >&2
   echo "$output" | jq
   exit 1
@@ -23,7 +23,7 @@ output=$(curl 'http://127.0.0.1:54321/rest/v1/todos' \
   -H 'Content-Type: application/json' \
   -d '{"task": "New task", "done": false}'
 )
-if [[ $(echo "$output" | jq '.code') != '42501' ]]; then
+if [[ $(echo "$output" | jq -r '.code') != '42501' ]]; then
   echo 'Creating todo as anon role should fail.' >&2
   echo "$output" | jq
   exit 1
@@ -34,7 +34,7 @@ output=$(curl -G 'http://127.0.0.1:54321/rest/v1/todos' \
   -H 'apikey: sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH' \
   -H 'Content-Type: application/json' \
 )
-if [[ $(echo "$output" | jq 'length') != '1' ]]; then
+if [[ $(echo "$output" | jq -r 'length') != '1' ]]; then
   echo 'Listing todos as anon role should succeed.' >&2
   echo "$output" | jq
   exit 1
@@ -46,7 +46,7 @@ output=$(curl -X DELETE 'http://127.0.0.1:54321/rest/v1/todos?id=eq.1' \
   -H 'Content-Type: application/json' \
   -H 'Prefer: return=representation' \
 )
-if [[ $(echo "$output" | jq 'length') != '1' ]]; then
+if [[ $(echo "$output" | jq -r 'length') != '1' ]]; then
   echo 'Deleting todo as anon role should fail.' >&2
   echo "$output" | jq
   exit 1
@@ -59,7 +59,7 @@ output=$(curl -X DELETE 'http://127.0.0.1:54321/rest/v1/todos?id=eq.1' \
   -H 'Content-Type: application/json' \
   -H 'Prefer: return=representation' \
 )
-if [[ $(echo "$output" | jq 'length') != '1' ]]; then
+if [[ $(echo "$output" | jq -r 'length') != '1' ]]; then
   echo 'Deleting todo as authenticated role should succeed.' >&2
   echo "$output" | jq
   exit 1
