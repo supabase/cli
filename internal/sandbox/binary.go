@@ -117,9 +117,9 @@ func installGotrueFromLocalOrDownload(ctx context.Context, fsys afero.Fs, binPat
 	// For darwin/arm64, check for a locally built binary first (no official release yet)
 	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
 		localBinaryName := fmt.Sprintf("auth-v%s-darwin-arm64", GotrueVersion)
-		// Check next to the CLI binary (for development)
-		if cliPath, err := os.Executable(); err == nil {
-			localPath := filepath.Join(filepath.Dir(cliPath), localBinaryName)
+		// Check next to the CLI binary (for development), resolving symlinks
+		if cliDir, err := getCliDir(); err == nil {
+			localPath := filepath.Join(cliDir, localBinaryName)
 			if data, err := os.ReadFile(localPath); err == nil {
 				fmt.Printf("Installing %s from local binary...\n", filepath.Base(binPath))
 				if err := afero.WriteFile(fsys, binPath, data, 0755); err != nil {
@@ -361,16 +361,34 @@ func getPostgrestDownloadURL() (string, error) {
 	}
 }
 
+// getCliDir returns the directory containing the CLI binary, resolving symlinks.
+// This allows finding local binaries when the CLI is symlinked (e.g., /usr/local/bin/supa -> /path/to/cli/supa).
+func getCliDir() (string, error) {
+	cliPath, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("failed to get executable path: %w", err)
+	}
+
+	// Resolve symlinks to find the actual binary location
+	realPath, err := filepath.EvalSymlinks(cliPath)
+	if err != nil {
+		// If we can't resolve symlinks, fall back to the original path
+		realPath = cliPath
+	}
+
+	return filepath.Dir(realPath), nil
+}
+
 // findLocalPostgresArchive finds a local postgres archive and extracts the version from its filename.
 // Pattern: supabase-postgres-<version>-<os>-<arch>.zip
 // Example: supabase-postgres-17.6-darwin-arm64.zip → version "17.6"
 func findLocalPostgresArchive() (path string, version string, err error) {
-	cliPath, err := os.Executable()
+	cliDir, err := getCliDir()
 	if err != nil {
-		return "", "", fmt.Errorf("failed to get executable path: %w", err)
+		return "", "", err
 	}
 
-	pattern := filepath.Join(filepath.Dir(cliPath), fmt.Sprintf("supabase-postgres-*-%s-%s.zip", runtime.GOOS, runtime.GOARCH))
+	pattern := filepath.Join(cliDir, fmt.Sprintf("supabase-postgres-*-%s-%s.zip", runtime.GOOS, runtime.GOARCH))
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to glob for postgres archive: %w", err)

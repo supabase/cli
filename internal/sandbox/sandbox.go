@@ -9,7 +9,9 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 )
@@ -59,6 +61,11 @@ func Run(ctx context.Context, fsys afero.Fs, detach bool) error {
 	}
 
 	// 7. Initialize postgres data directory if needed (replaces Docker container setup)
+	// Track if this is a first run (pgdata doesn't exist yet) for seed application
+	pgVersionFile := filepath.Join(sandboxCtx.PgDataDir(), "PG_VERSION")
+	_, statErr := fsys.Stat(pgVersionFile)
+	isFirstRun := os.IsNotExist(statErr)
+
 	fmt.Fprintln(os.Stderr, "Setting up PostgreSQL...")
 	if err := initializePostgresDataDir(ctx, sandboxCtx, fsys, postgresVersion); err != nil {
 		return fmt.Errorf("failed to initialize postgres: %w", err)
@@ -76,7 +83,19 @@ func Run(ctx context.Context, fsys afero.Fs, detach bool) error {
 
 	// 10. Run using process-compose library (state.json is saved in runDetached)
 	fmt.Fprintln(os.Stderr, "\nStarting services with process-compose...")
-	return RunProject(processComposePath, detach, sandboxCtx, fsys)
+	if err := RunProject(processComposePath, detach, sandboxCtx, fsys); err != nil {
+		return err
+	}
+
+	// 11. Apply user migrations and seed files on first run (like Docker mode does in SetupLocalDatabase)
+	// Note: Supabase internal migrations are handled by postgres-init in process-compose
+	if isFirstRun && detach {
+		if err := applyUserMigrationsAndSeeds(ctx, sandboxCtx, fsys); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to apply migrations/seeds: %v\n", err)
+		}
+	}
+
+	return nil
 }
 
 // initializePostgresDataDir initializes the PostgreSQL data directory if needed.
@@ -227,4 +246,24 @@ func printStartupInfo(ctx *SandboxContext) {
 	fmt.Fprintf(os.Stderr, "  Database:      postgresql://postgres:postgres@127.0.0.1:%d/postgres\n", ctx.Ports.Postgres)
 	fmt.Fprintf(os.Stderr, "  Auth (GoTrue): http://127.0.0.1:%d\n", ctx.Ports.GoTrue)
 	fmt.Fprintf(os.Stderr, "  REST API:      http://127.0.0.1:%d\n", ctx.Ports.PostgREST)
+}
+
+// applyUserMigrationsAndSeeds connects to postgres and applies user migrations and seed files on first run.
+// This mirrors the behavior in Docker mode where SetupLocalDatabase calls apply.MigrateAndSeed.
+// Note: Supabase internal migrations are already handled by postgres-init in process-compose.
+func applyUserMigrationsAndSeeds(ctx context.Context, sandboxCtx *SandboxContext, fsys afero.Fs) error {
+	fmt.Fprintln(os.Stderr, "Applying user migrations and seeds...")
+
+	// Connect to postgres using sandbox port via connection URL
+	connURL := fmt.Sprintf("postgresql://supabase_admin:%s@127.0.0.1:%d/postgres",
+		utils.Config.Db.Password, sandboxCtx.Ports.Postgres)
+
+	conn, err := pgx.Connect(ctx, connURL)
+	if err != nil {
+		return fmt.Errorf("failed to connect to postgres: %w", err)
+	}
+	defer conn.Close(ctx)
+
+	// Apply user migrations and seeds using the same logic as Docker mode
+	return apply.MigrateAndSeed(ctx, "", conn, fsys)
 }
