@@ -79,7 +79,10 @@ jobs:
       - run: ./main start --workdir tests
         env:
           SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
-      - run: ./tests/all.sh ./main
+      - run: |
+          sudo apt-get update
+          sudo apt-get -y websocat
+      - run: ./e2e-test.sh ./main
 
   link:
     name: Link
