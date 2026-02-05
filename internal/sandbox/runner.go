@@ -290,8 +290,8 @@ func GenerateProcessComposeConfig(goCtx context.Context, ctx *SandboxContext, po
 		PostgresLibDir:        filepath.Join(postgresDir, "lib"),
 		PostgresMigrateScript: filepath.Join(postgresDir, "share", "supabase-cli", "migrations", "migrate.sh"),
 
-		// Proxy configuration
-		SupabaseBin:    os.Args[0],
+		// Proxy configuration - use absolute path to handle --workdir flag
+		SupabaseBin:    getExecutablePath(),
 		ServiceRoleKey: utils.Config.Auth.SecretKey.Value,
 		ServiceRoleJWT: utils.Config.Auth.ServiceRoleKey.Value,
 		AnonKey:        utils.Config.Auth.PublishableKey.Value,
@@ -482,7 +482,8 @@ func RunProject(configPath string, sandboxCtx *SandboxContext, fsys afero.Fs) er
 // The server process runs the HTTP API for graceful shutdown via 'supabase stop'.
 func runDetached(configPath string, sandboxCtx *SandboxContext, fsys afero.Fs) error {
 	// Spawn the server as a detached background process
-	serverCmd := exec.Command(os.Args[0], "_sandbox-server",
+	// Use absolute path to handle --workdir flag
+	serverCmd := exec.Command(getExecutablePath(), "_sandbox-server",
 		"--config", configPath,
 		"--port", fmt.Sprintf("%d", sandboxCtx.Ports.ProcessCompose),
 	)
@@ -536,4 +537,14 @@ func runDetached(configPath string, sandboxCtx *SandboxContext, fsys afero.Fs) e
 // WaitForAllServices waits for all services to be healthy.
 func WaitForAllServices(processComposePort int, timeout time.Duration) error {
 	return WaitForServerReady(processComposePort, timeout)
+}
+
+// getExecutablePath returns the absolute path to the current executable.
+// This is needed for --workdir support since os.Args[0] may be relative.
+func getExecutablePath() string {
+	if path, err := os.Executable(); err == nil {
+		return path
+	}
+	// Fallback to os.Args[0] if os.Executable() fails
+	return os.Args[0]
 }
