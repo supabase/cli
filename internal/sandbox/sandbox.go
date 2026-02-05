@@ -137,23 +137,6 @@ func initializePostgresDataDir(ctx context.Context, sandboxCtx *SandboxContext, 
 		return fmt.Errorf("failed to create pgdata directory: %w", err)
 	}
 
-	// Create symlink for timezone data (Nix-built postgres has hardcoded paths)
-	// This is a workaround for postgres binaries built with --with-system-tzdata pointing to /nix/store
-	nixTzdataPath := "/nix/store/fy3qa8s8kzb7a6abzmyidzp1c8axz3s3-tzdata-2025b/share"
-	systemZoneinfo := "/var/db/timezone/zoneinfo" // macOS timezone data location
-	if runtime.GOOS == "darwin" {
-		if _, err := os.Stat(systemZoneinfo); err == nil {
-			// Create /nix/store/.../share directory if it doesn't exist
-			if err := os.MkdirAll(nixTzdataPath, 0755); err == nil {
-				// Create symlink: /nix/store/.../share/zoneinfo -> /var/db/timezone/zoneinfo
-				targetPath := filepath.Join(nixTzdataPath, "zoneinfo")
-				if _, err := os.Lstat(targetPath); os.IsNotExist(err) {
-					_ = os.Symlink(systemZoneinfo, targetPath)
-				}
-			}
-		}
-	}
-
 	// Run initdb with supabase_admin as initial superuser (suppress verbose output)
 	initdbPath := GetPostgresBinPath(sandboxCtx.BinDir, postgresVersion, "initdb")
 	cmd := exec.CommandContext(ctx, initdbPath,
