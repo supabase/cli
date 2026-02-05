@@ -14,9 +14,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/ulikunitz/xz"
 )
 
@@ -67,7 +70,21 @@ func GetPostgresLibDir(binDir, version string) string {
 	return filepath.Join(GetPostgresDir(binDir, version), "lib")
 }
 
+// BinaryStatus represents the installation status of a binary.
+type BinaryStatus struct {
+	Name            string
+	InitiallyCached bool // Was already in cache before this run
+	Cached          bool // Is now cached (either initially or after download)
+	Downloading     bool
+	Error           error
+	mu              sync.Mutex
+}
+
+// Spinner frames for animated progress display
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
 // InstallBinaries downloads and installs all required binaries if not already present.
+// Shows a Docker-like status display when binaries need to be downloaded.
 // Returns the postgres version that was installed/found.
 func InstallBinaries(ctx context.Context, fsys afero.Fs, binDir string) (postgresVersion string, err error) {
 	// Ensure bin directory exists
@@ -75,30 +92,321 @@ func InstallBinaries(ctx context.Context, fsys afero.Fs, binDir string) (postgre
 		return "", fmt.Errorf("failed to create bin directory: %w", err)
 	}
 
-	// Install gotrue
+	// Get paths and check cache status
 	gotruePath := GetGotruePath(binDir)
-	if err := installGotrueFromLocalOrDownload(ctx, fsys, gotruePath); err != nil {
-		return "", fmt.Errorf("failed to install gotrue: %w", err)
-	}
-
-	// Install postgrest
 	postgrestPath := GetPostgrestPath(binDir)
-	postgrestURL, err := getPostgrestDownloadURL()
+
+	// Find postgres archive and version first
+	archivePath, pgVersion, err := findLocalPostgresArchive()
 	if err != nil {
-		return "", fmt.Errorf("postgrest: %w", err)
+		return "", fmt.Errorf("postgres: %w", err)
 	}
-	// PostgREST uses .tar.xz format
-	if err := installBinaryIfMissingXZ(ctx, fsys, postgrestPath, postgrestURL); err != nil {
-		return "", fmt.Errorf("failed to install postgrest: %w", err)
+	postgresVersion = pgVersion
+	postgresBin := GetPostgresBinPath(binDir, postgresVersion, "postgres")
+
+	// Check which binaries are already cached
+	gotrueCached := fileExists(fsys, gotruePath)
+	postgrestCached := fileExists(fsys, postgrestPath)
+	postgresCached := fileExists(fsys, postgresBin)
+
+	// If all cached, nothing to do
+	if gotrueCached && postgrestCached && postgresCached {
+		return postgresVersion, nil
 	}
 
-	// Install postgres
-	postgresVersion, err = installPostgresFromLocalOrDownload(ctx, fsys, binDir)
-	if err != nil {
-		return "", fmt.Errorf("failed to install postgres: %w", err)
+	// Show download status like Docker
+	statuses := []*BinaryStatus{
+		{Name: "auth", InitiallyCached: gotrueCached, Cached: gotrueCached, Downloading: !gotrueCached},
+		{Name: "postgrest", InitiallyCached: postgrestCached, Cached: postgrestCached, Downloading: !postgrestCached},
+		{Name: "postgres", InitiallyCached: postgresCached, Cached: postgresCached, Downloading: !postgresCached},
+	}
+
+	// Print initial status lines (without moving cursor up)
+	for _, s := range statuses {
+		var icon, status string
+		if s.InitiallyCached {
+			icon = utils.Green("✔")
+			status = "Skipped - Image is already present locally"
+		} else {
+			icon = utils.Aqua(spinnerFrames[0])
+			status = "Pulling"
+		}
+		fmt.Fprintf(os.Stderr, " %s %s %s\n", icon, s.Name, status)
+	}
+
+	// Start spinner animation in background
+	done := make(chan struct{})
+	spinnerDone := make(chan struct{})
+	go func() {
+		defer close(spinnerDone)
+		frame := 0
+		ticker := time.NewTicker(80 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				frame = (frame + 1) % len(spinnerFrames)
+				printBinaryStatus(statuses, frame, false)
+			}
+		}
+	}()
+
+	// Install binaries in parallel
+	var wg sync.WaitGroup
+	errChan := make(chan error, 3)
+
+	// GoTrue
+	if !gotrueCached {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := installGotrueFromLocalOrDownloadQuiet(ctx, fsys, gotruePath); err != nil {
+				statuses[0].mu.Lock()
+				statuses[0].Error = err
+				statuses[0].Downloading = false
+				statuses[0].mu.Unlock()
+				errChan <- fmt.Errorf("auth: %w", err)
+				return
+			}
+			statuses[0].mu.Lock()
+			statuses[0].Cached = true
+			statuses[0].Downloading = false
+			statuses[0].mu.Unlock()
+		}()
+	}
+
+	// PostgREST
+	if !postgrestCached {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			postgrestURL, err := getPostgrestDownloadURL()
+			if err != nil {
+				statuses[1].mu.Lock()
+				statuses[1].Error = err
+				statuses[1].Downloading = false
+				statuses[1].mu.Unlock()
+				errChan <- fmt.Errorf("postgrest: %w", err)
+				return
+			}
+			if err := installBinaryIfMissingXZQuiet(ctx, fsys, postgrestPath, postgrestURL); err != nil {
+				statuses[1].mu.Lock()
+				statuses[1].Error = err
+				statuses[1].Downloading = false
+				statuses[1].mu.Unlock()
+				errChan <- fmt.Errorf("postgrest: %w", err)
+				return
+			}
+			statuses[1].mu.Lock()
+			statuses[1].Cached = true
+			statuses[1].Downloading = false
+			statuses[1].mu.Unlock()
+		}()
+	}
+
+	// PostgreSQL
+	if !postgresCached {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := installPostgresQuiet(ctx, fsys, binDir, archivePath, postgresVersion); err != nil {
+				statuses[2].mu.Lock()
+				statuses[2].Error = err
+				statuses[2].Downloading = false
+				statuses[2].mu.Unlock()
+				errChan <- fmt.Errorf("postgres: %w", err)
+				return
+			}
+			statuses[2].mu.Lock()
+			statuses[2].Cached = true
+			statuses[2].Downloading = false
+			statuses[2].mu.Unlock()
+		}()
+	}
+
+	// Wait for all downloads to complete
+	wg.Wait()
+	close(errChan)
+
+	// Stop spinner animation and wait for goroutine to exit
+	close(done)
+	<-spinnerDone
+
+	// Print final status
+	printBinaryStatus(statuses, 0, true)
+
+	// Collect errors
+	var errs []error
+	for err := range errChan {
+		errs = append(errs, err)
+	}
+	if len(errs) > 0 {
+		return "", errors.Join(errs...)
 	}
 
 	return postgresVersion, nil
+}
+
+// fileExists checks if a file exists.
+func fileExists(fsys afero.Fs, path string) bool {
+	_, err := fsys.Stat(path)
+	return err == nil
+}
+
+// printBinaryStatus prints the Docker-like status display with animated spinners.
+// spinnerFrame is the current frame index for the spinner animation.
+func printBinaryStatus(statuses []*BinaryStatus, spinnerFrame int, final bool) {
+	// Move cursor up to overwrite previous status
+	for range statuses {
+		fmt.Fprint(os.Stderr, "\033[A\033[K") // Move up and clear line
+	}
+
+	for _, s := range statuses {
+		s.mu.Lock()
+		var icon, status string
+
+		if s.Error != nil {
+			icon = utils.Red("✗")
+			status = fmt.Sprintf("Error - %v", s.Error)
+		} else if s.Downloading {
+			icon = utils.Aqua(spinnerFrames[spinnerFrame])
+			status = "Pulling"
+		} else if s.InitiallyCached {
+			// Was already in cache before this run
+			icon = utils.Green("✔")
+			if final {
+				status = "Pulled"
+			} else {
+				status = "Skipped - Image is already present locally"
+			}
+		} else if s.Cached {
+			// Just finished installing
+			icon = utils.Green("✔")
+			status = "Pulled"
+		} else {
+			icon = utils.Green("✔")
+			status = "Pulled"
+		}
+
+		fmt.Fprintf(os.Stderr, " %s %s %s\n", icon, s.Name, status)
+		s.mu.Unlock()
+	}
+}
+
+// installGotrueFromLocalOrDownloadQuiet installs gotrue without printing progress.
+func installGotrueFromLocalOrDownloadQuiet(ctx context.Context, fsys afero.Fs, binPath string) error {
+	// Ensure parent directory exists
+	if err := fsys.MkdirAll(filepath.Dir(binPath), 0755); err != nil {
+		return fmt.Errorf("failed to create binary directory: %w", err)
+	}
+
+	// For darwin/arm64, check for a locally built binary first
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+		localBinaryName := fmt.Sprintf("auth-v%s-darwin-arm64", GotrueVersion)
+		if cliDir, err := getCliDir(); err == nil {
+			localPath := filepath.Join(cliDir, localBinaryName)
+			if data, err := os.ReadFile(localPath); err == nil {
+				return afero.WriteFile(fsys, binPath, data, 0755)
+			}
+		}
+	}
+
+	// Fall back to download from GitHub releases
+	gotrueURL, err := getGotrueDownloadURL()
+	if err != nil {
+		return err
+	}
+	return installBinaryFromArchiveQuiet(ctx, fsys, binPath, gotrueURL, "auth")
+}
+
+// installBinaryIfMissingXZQuiet handles .tar.xz archives without printing progress.
+func installBinaryIfMissingXZQuiet(ctx context.Context, fsys afero.Fs, binPath, downloadURL string) error {
+	// Ensure parent directory exists
+	if err := fsys.MkdirAll(filepath.Dir(binPath), 0755); err != nil {
+		return fmt.Errorf("failed to create binary directory: %w", err)
+	}
+
+	// Download the file
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return errors.Errorf("failed to download %s: HTTP %d", downloadURL, resp.StatusCode)
+	}
+
+	return extractTarXz(resp.Body, binPath, fsys)
+}
+
+// installBinaryFromArchiveQuiet downloads and extracts a binary without printing progress.
+func installBinaryFromArchiveQuiet(ctx context.Context, fsys afero.Fs, binPath, downloadURL, srcBinName string) error {
+	// Ensure parent directory exists
+	if err := fsys.MkdirAll(filepath.Dir(binPath), 0755); err != nil {
+		return fmt.Errorf("failed to create binary directory: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return errors.Errorf("failed to download %s: HTTP %d", downloadURL, resp.StatusCode)
+	}
+
+	return extractTarGzWithName(resp.Body, binPath, srcBinName, fsys)
+}
+
+// installPostgresQuiet installs PostgreSQL without printing progress (except codesign warnings).
+func installPostgresQuiet(ctx context.Context, fsys afero.Fs, binDir, archivePath, version string) error {
+	postgresDir := GetPostgresDir(binDir, version)
+
+	// Ensure parent directory exists
+	if err := fsys.MkdirAll(postgresDir, 0755); err != nil {
+		return fmt.Errorf("failed to create postgres directory: %w", err)
+	}
+
+	// Extract the zip archive
+	if err := extractZipToDir(archivePath, postgresDir, fsys); err != nil {
+		return fmt.Errorf("failed to extract postgres archive: %w", err)
+	}
+
+	// On macOS, re-sign all binaries and libraries (suppress warnings)
+	if runtime.GOOS == "darwin" {
+		codesignPostgresDirQuiet(postgresDir)
+	}
+
+	return nil
+}
+
+// codesignPostgresDirQuiet re-signs binaries without printing warnings.
+func codesignPostgresDirQuiet(postgresDir string) {
+	filepath.Walk(postgresDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
+		}
+
+		needsSign := info.Mode()&0111 != 0 || strings.HasSuffix(path, ".dylib")
+		if needsSign {
+			exec.Command("codesign", "-f", "-s", "-", path).Run()
+		}
+		return nil
+	})
 }
 
 // installGotrueFromLocalOrDownload installs the gotrue binary, checking local sources first.

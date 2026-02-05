@@ -148,3 +148,56 @@ func isStateReady(state *types.ProcessState) bool {
 		return false
 	}
 }
+
+// WaitForPostgresReady polls the process-compose server until postgres and postgres-init are ready.
+// This allows migrations to run before other services are fully healthy.
+func WaitForPostgresReady(serverPort int, timeout time.Duration) error {
+	pcClient := client.NewTcpClient("127.0.0.1", serverPort, 100)
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	// Initial delay to let the server start
+	time.Sleep(1 * time.Second)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for postgres to become healthy")
+		case <-ticker.C:
+			states, err := pcClient.GetProcessesState()
+			if err != nil {
+				// Server might not be ready yet
+				continue
+			}
+
+			if isPostgresReady(states) {
+				return nil
+			}
+		}
+	}
+}
+
+// isPostgresReady checks if postgres and postgres-init are ready.
+func isPostgresReady(states *types.ProcessesState) bool {
+	if states == nil {
+		return false
+	}
+
+	postgresReady := false
+	postgresInitReady := false
+
+	for _, state := range states.States {
+		switch state.Name {
+		case "postgres":
+			postgresReady = isStateReady(&state)
+		case "postgres-init":
+			postgresInitReady = isStateReady(&state)
+		}
+	}
+
+	return postgresReady && postgresInitReady
+}

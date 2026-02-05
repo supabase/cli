@@ -3,17 +3,13 @@ package sandbox
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
 	"time"
 
 	"github.com/go-errors/errors"
-	"github.com/olekukonko/tablewriter"
-	"github.com/olekukonko/tablewriter/tw"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -149,58 +145,7 @@ func checkHTTPStatus(name string, port int, path string) ServiceStatus {
 	return status
 }
 
-// PrintStatus prints the sandbox status in a formatted table.
-func PrintStatus(w io.Writer, statuses []ServiceStatus, ports *AllocatedPorts, projectId string) {
-	fmt.Fprintf(w, "%s sandbox is running.\n\n", utils.Aqua("supabase"))
-
-	// Services status table
-	table := tablewriter.NewTable(w,
-		tablewriter.WithSymbols(tw.NewSymbols(tw.StyleRounded)),
-		tablewriter.WithConfig(tablewriter.Config{
-			Header: tw.CellConfig{
-				Formatting: tw.CellFormatting{
-					AutoFormat: tw.Off,
-				},
-				Alignment: tw.CellAlignment{
-					Global: tw.AlignLeft,
-				},
-			},
-			Row: tw.CellConfig{
-				Alignment: tw.CellAlignment{
-					Global: tw.AlignLeft,
-				},
-			},
-		}),
-		tablewriter.WithHeader([]string{"Service", "Status", "Port"}),
-	)
-
-	for _, s := range statuses {
-		statusStr := s.Status
-		if s.Healthy {
-			statusStr = utils.Green(statusStr)
-		} else {
-			statusStr = utils.Red(statusStr)
-		}
-		portStr := fmt.Sprintf("%d", s.Port)
-		if s.Port == 0 {
-			portStr = "-"
-		}
-		table.Append(s.Name, statusStr, portStr)
-	}
-	table.Render()
-	fmt.Fprintln(w)
-
-	// Connection info
-	fmt.Fprintln(w, utils.Bold("Connection Info:"))
-	fmt.Fprintf(w, "  API URL:       %s\n", utils.Aqua(fmt.Sprintf("http://127.0.0.1:%d", ports.API)))
-	fmt.Fprintf(w, "  REST URL:      %s\n", utils.Aqua(fmt.Sprintf("http://127.0.0.1:%d/rest/v1/", ports.API)))
-	fmt.Fprintf(w, "  Auth URL:      %s\n", utils.Aqua(fmt.Sprintf("http://127.0.0.1:%d/auth/v1/", ports.API)))
-	fmt.Fprintf(w, "  DB URL:        %s\n", utils.Aqua(fmt.Sprintf("postgresql://%s@127.0.0.1:%d/postgres",
-		url.UserPassword("postgres", utils.Config.Db.Password), ports.Postgres)))
-	fmt.Fprintln(w)
-}
-
-// ShowStatus checks sandbox status and prints it.
+// ShowStatus checks sandbox status and prints it using the same format as Docker mode.
 func ShowStatus(ctx context.Context, projectId string, fsys afero.Fs) error {
 	sandboxCtx, err := NewSandboxContext(projectId)
 	if err != nil {
@@ -213,7 +158,10 @@ func ShowStatus(ctx context.Context, projectId string, fsys afero.Fs) error {
 		return errors.Errorf("sandbox is not running: %w", err)
 	}
 
-	// Get status of all services
+	// Set ports from state so PrettyPrintSandbox can use them
+	sandboxCtx.Ports = &state.Ports
+
+	// Get status of all services to check for unhealthy ones
 	statuses, err := Status(ctx, projectId, fsys)
 	if err != nil {
 		return err
@@ -231,6 +179,10 @@ func ShowStatus(ctx context.Context, projectId string, fsys afero.Fs) error {
 		fmt.Fprintf(os.Stderr, "Unhealthy services: %v\n", unhealthy)
 	}
 
-	PrintStatus(os.Stdout, statuses, &state.Ports, projectId)
+	// Print status message matching Docker mode
+	fmt.Fprintf(os.Stderr, "%s local development setup is running.\n\n", utils.Aqua("supabase"))
+
+	// Print tables using the same format as start --sandbox
+	PrettyPrintSandbox(os.Stdout, sandboxCtx)
 	return nil
 }

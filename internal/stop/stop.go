@@ -27,7 +27,7 @@ func Run(ctx context.Context, backup bool, projectId string, all bool, fsys afer
 
 	// Check if sandbox mode is running for this project
 	if !all && sandbox.IsSandboxRunning(fsys, searchProjectIdFilter) {
-		return stopSandbox(ctx, searchProjectIdFilter, fsys)
+		return stopSandbox(ctx, backup, searchProjectIdFilter, fsys)
 	}
 
 	// Stop all services (Docker mode)
@@ -53,16 +53,16 @@ func Run(ctx context.Context, backup bool, projectId string, all bool, fsys afer
 	return nil
 }
 
-func stopSandbox(ctx context.Context, projectId string, fsys afero.Fs) error {
+func stopSandbox(ctx context.Context, backup bool, projectId string, fsys afero.Fs) error {
 	// Stop sandbox services
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
 		w := utils.StatusWriter{Program: p}
-		return sandbox.Stop(ctx, fsys, projectId, w)
+		return sandbox.Stop(ctx, fsys, projectId, backup, w)
 	}); err != nil {
 		return err
 	}
 
-	fmt.Println("Stopped " + utils.Aqua("supabase") + " sandbox.")
+	fmt.Println("Stopped " + utils.Aqua("supabase") + " local development setup.")
 	return nil
 }
 

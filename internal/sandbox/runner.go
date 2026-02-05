@@ -485,7 +485,8 @@ func RunProject(configPath string, detach bool, sandboxCtx *SandboxContext, fsys
 	return runAttached(configPath, sandboxCtx.Ports.ProcessCompose)
 }
 
-// runDetached spawns a background server process and waits for services to be healthy.
+// runDetached spawns a background server process and waits for postgres to be healthy.
+// Returns after postgres is ready so migrations can run. Call WaitForAllServices after migrations.
 // The server process runs the HTTP API for graceful shutdown via 'supabase stop'.
 func runDetached(configPath string, sandboxCtx *SandboxContext, fsys afero.Fs) error {
 	// Spawn the server as a detached background process
@@ -527,9 +528,9 @@ func runDetached(configPath string, sandboxCtx *SandboxContext, fsys afero.Fs) e
 		return fmt.Errorf("failed to save state: %w", err)
 	}
 
-	// Wait for all services to be healthy via HTTP API
-	fmt.Fprintln(os.Stderr, "Waiting for services to be healthy...")
-	if err := WaitForServerReady(sandboxCtx.Ports.ProcessCompose, 120*time.Second); err != nil {
+	// Wait for postgres to be healthy (so migrations can run)
+	// Other services continue starting in background
+	if err := WaitForPostgresReady(sandboxCtx.Ports.ProcessCompose, 120*time.Second); err != nil {
 		// Try to kill the server process
 		if serverCmd.Process != nil {
 			_ = serverCmd.Process.Kill()
@@ -537,10 +538,12 @@ func runDetached(configPath string, sandboxCtx *SandboxContext, fsys afero.Fs) e
 		return err
 	}
 
-	fmt.Fprintln(os.Stderr, "\nAll services are running.")
-	fmt.Fprintln(os.Stderr, "Use 'supabase stop' to stop the sandbox.")
-
 	return nil
+}
+
+// WaitForAllServices waits for all services to be healthy.
+func WaitForAllServices(processComposePort int, timeout time.Duration) error {
+	return WaitForServerReady(processComposePort, timeout)
 }
 
 // runAttached runs the server in foreground with signal handling.

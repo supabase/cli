@@ -18,7 +18,8 @@ import (
 // Stop stops all sandbox services and cleans up resources.
 // Uses process-compose HTTP API for graceful shutdown with proper dependency ordering.
 // Falls back to killing the server PID if HTTP API is unavailable.
-func Stop(ctx context.Context, fsys afero.Fs, projectId string, w io.Writer) error {
+// If backup is false, also removes the postgres data directory.
+func Stop(ctx context.Context, fsys afero.Fs, projectId string, backup bool, w io.Writer) error {
 	sandboxCtx, err := NewSandboxContext(projectId)
 	if err != nil {
 		return fmt.Errorf("failed to create sandbox context: %w", err)
@@ -30,7 +31,7 @@ func Stop(ctx context.Context, fsys afero.Fs, projectId string, w io.Writer) err
 		return fmt.Errorf("sandbox is not running (no state file): %w", err)
 	}
 
-	fmt.Fprintln(w, "Stopping sandbox services...")
+	fmt.Fprintln(w, "Stopping services...")
 
 	// Try graceful shutdown via HTTP API first
 	stopped := false
@@ -53,12 +54,19 @@ func Stop(ctx context.Context, fsys afero.Fs, projectId string, w io.Writer) err
 	}
 
 	// Clean up all sandbox files (state, yaml, logs)
-	// Note: pgdata directory is NOT removed - it persists between start/stop cycles
 	if err := fsys.RemoveAll(sandboxCtx.ConfigDir); err != nil {
 		fmt.Fprintf(w, "Warning: failed to cleanup sandbox files: %v\n", err)
 	}
 
-	fmt.Fprintln(w, "Sandbox stopped.")
+	// If no backup requested, also remove the postgres data directory
+	if !backup {
+		pgDataDir := sandboxCtx.PgDataDir()
+		fmt.Fprintf(w, "Removing postgres data directory %s...\n", pgDataDir)
+		if err := fsys.RemoveAll(pgDataDir); err != nil {
+			fmt.Fprintf(w, "Warning: failed to remove postgres data dir: %v\n", err)
+		}
+	}
+
 	return nil
 }
 
@@ -92,8 +100,8 @@ func Cleanup(ctx context.Context, fsys afero.Fs, projectId string) error {
 		return fmt.Errorf("failed to create sandbox context: %w", err)
 	}
 
-	// First stop everything
-	if err := Stop(ctx, fsys, projectId, os.Stderr); err != nil {
+	// First stop everything (with backup=true since Cleanup handles pgdata removal separately)
+	if err := Stop(ctx, fsys, projectId, true, os.Stderr); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: stop failed: %v\n", err)
 	}
 
