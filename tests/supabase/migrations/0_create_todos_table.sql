@@ -19,8 +19,3 @@ CREATE POLICY "Allow authenticated full access" ON public.todos FOR ALL TO authe
 GRANT SELECT ON public.todos TO anon;
 GRANT ALL ON public.todos TO authenticated;
 GRANT USAGE, SELECT ON SEQUENCE public.todos_id_seq TO authenticated;
-
--- Insert sample data
--- INSERT INTO public.todos (task, done) VALUES
---     ('Learn PostgREST', false),
---     ('Setup Supabase locally', true);

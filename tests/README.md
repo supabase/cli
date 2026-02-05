@@ -21,3 +21,11 @@ supabase --workdir tests migrations up
 ```bash
 ./tests/postgrest.sh
 ```
+
+### Storage test
+
+1. Run storage bucket tests
+
+```bash
+./tests/storage.sh
+```

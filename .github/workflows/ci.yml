@@ -82,6 +82,7 @@ jobs:
       - run: ./main --workdir tests migrations up
       - run: ./tests/auth.sh
       - run: ./tests/postgrest.sh
+      - run: ./tests/storage.sh
 
   link:
     name: Link
