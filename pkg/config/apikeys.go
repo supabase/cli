@@ -74,7 +74,7 @@ func (a *auth) generateAPIKeys() error {
 
 func (a auth) generateJWT(role string) (string, error) {
 	claims := CustomClaims{Issuer: "supabase-demo", Role: role}
-	if len(a.SigningKeys) > 0 {
+	if len(a.SigningKeysPath) > 0 {
 		claims.ExpiresAt = jwt.NewNumericDate(time.Now().Add(time.Hour * 24 * 365 * 10)) // 10 years
 		return GenerateAsymmetricJWT(a.SigningKeys[0], claims)
 	}

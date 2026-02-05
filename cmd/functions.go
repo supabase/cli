@@ -44,15 +44,19 @@ var (
 	}
 
 	functionsDownloadCmd = &cobra.Command{
-		Use:   "download <Function name>",
+		Use:   "download [Function name]",
 		Short: "Download a Function from Supabase",
-		Long:  "Download the source code for a Function from the linked Supabase project.",
-		Args:  cobra.ExactArgs(1),
+		Long:  "Download the source code for a Function from the linked Supabase project. If no function name is provided, downloads all functions.",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if useApi {
 				useDocker = false
 			}
-			return download.Run(cmd.Context(), args[0], flags.ProjectRef, useLegacyBundle, useDocker, afero.NewOsFs())
+			slug := ""
+			if len(args) > 0 {
+				slug = args[0]
+			}
+			return download.Run(cmd.Context(), slug, flags.ProjectRef, useLegacyBundle, useDocker, afero.NewOsFs())
 		},
 	}
 

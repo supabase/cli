@@ -1,9 +1,6 @@
 package cmd
 
 import (
-	"os"
-	"os/signal"
-
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/test/new"
@@ -33,8 +30,7 @@ var (
 		Short: "Create a new test file",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			return new.Run(ctx, args[0], template.Value, afero.NewOsFs())
+			return new.Run(cmd.Context(), args[0], template.Value, afero.NewOsFs())
 		},
 	}
 )

@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
 
 	"github.com/spf13/afero"
@@ -31,11 +30,6 @@ var (
 		GroupID: groupLocalDev,
 		Use:     "db",
 		Short:   "Manage Postgres databases",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			cmd.SetContext(ctx)
-			return cmd.Root().PersistentPreRunE(cmd, args)
-		},
 	}
 
 	dbBranchCmd = &cobra.Command{

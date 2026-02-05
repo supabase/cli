@@ -3,7 +3,6 @@ package cmd
 import (
 	"encoding/json"
 	"os"
-	"os/signal"
 	"strings"
 	"time"
 
@@ -88,7 +87,7 @@ var (
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			ctx := cmd.Context()
 			if flags.DbConfig.Host == "" {
 				// If no flag is specified, prompt for project id.
 				if err := flags.ParseProjectRef(ctx, afero.NewMemMapFs()); errors.Is(err, utils.ErrNotLinked) {
