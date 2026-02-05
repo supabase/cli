@@ -522,7 +522,7 @@ func runDetached(configPath string, sandboxCtx *SandboxContext, fsys afero.Fs) e
 
 	// Wait for postgres to be healthy (so migrations can run)
 	// Other services continue starting in background
-	if err := WaitForPostgresReady(sandboxCtx.Ports.ProcessCompose, 120*time.Second); err != nil {
+	if err := WaitForPostgresReady(sandboxCtx.Ports.ProcessCompose, DefaultServiceTimeout); err != nil {
 		// Try to kill the server process
 		if serverCmd.Process != nil {
 			_ = serverCmd.Process.Kill()

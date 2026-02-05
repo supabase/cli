@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -155,7 +154,7 @@ func ShowStatus(ctx context.Context, projectId string, fsys afero.Fs) error {
 	// Load state
 	state, err := sandboxCtx.LoadState(fsys)
 	if err != nil {
-		return errors.Errorf("sandbox is not running: %w", err)
+		return fmt.Errorf("sandbox is not running: %w", err)
 	}
 
 	// Set ports from state so PrettyPrintSandbox can use them

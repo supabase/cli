@@ -40,18 +40,6 @@ func NewSandboxContext(projectId string) (*SandboxContext, error) {
 	}, nil
 }
 
-// ContainerName returns the namespaced Docker container name for a service.
-// Format: supabase_<service>_<projectId>
-func (c *SandboxContext) ContainerName(service string) string {
-	return fmt.Sprintf("supabase_%s_%s", service, c.ProjectId)
-}
-
-// VolumeName returns the namespaced Docker volume name for a service.
-// Format: supabase_<service>_<projectId>
-func (c *SandboxContext) VolumeName(service string) string {
-	return fmt.Sprintf("supabase_%s_%s", service, c.ProjectId)
-}
-
 // StateFilePath returns the path to the state.json file for this project.
 func (c *SandboxContext) StateFilePath() string {
 	return filepath.Join(c.ConfigDir, "state.json")

@@ -94,35 +94,35 @@ func terminateProcess(pid int) error {
 
 // Cleanup removes all sandbox-related resources for a project.
 // This includes the config directory and postgres data directory.
-func Cleanup(ctx context.Context, fsys afero.Fs, projectId string) error {
+func Cleanup(ctx context.Context, fsys afero.Fs, projectId string, w io.Writer) error {
 	sandboxCtx, err := NewSandboxContext(projectId)
 	if err != nil {
 		return fmt.Errorf("failed to create sandbox context: %w", err)
 	}
 
 	// First stop everything (with backup=true since Cleanup handles pgdata removal separately)
-	if err := Stop(ctx, fsys, projectId, true, os.Stderr); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: stop failed: %v\n", err)
+	if err := Stop(ctx, fsys, projectId, true, w); err != nil {
+		fmt.Fprintf(w, "Warning: stop failed: %v\n", err)
 	}
 
 	// Remove postgres data directory
 	pgDataDir := sandboxCtx.PgDataDir()
-	fmt.Fprintf(os.Stderr, "Removing postgres data directory %s...\n", pgDataDir)
+	fmt.Fprintf(w, "Removing postgres data directory %s...\n", pgDataDir)
 	if err := fsys.RemoveAll(pgDataDir); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to remove postgres data dir: %v\n", err)
+		fmt.Fprintf(w, "Warning: failed to remove postgres data dir: %v\n", err)
 	}
 
 	// Remove config directory
-	fmt.Fprintf(os.Stderr, "Removing config directory %s...\n", sandboxCtx.ConfigDir)
+	fmt.Fprintf(w, "Removing config directory %s...\n", sandboxCtx.ConfigDir)
 	if err := fsys.RemoveAll(sandboxCtx.ConfigDir); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to remove config dir: %v\n", err)
+		fmt.Fprintf(w, "Warning: failed to remove config dir: %v\n", err)
 	}
 
 	// Remove postgres version file
 	if err := fsys.Remove(SandboxPostgresVersionPath); err != nil && !os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Warning: failed to remove postgres version file: %v\n", err)
+		fmt.Fprintf(w, "Warning: failed to remove postgres version file: %v\n", err)
 	}
 
-	fmt.Fprintln(os.Stderr, "Sandbox cleanup complete.")
+	fmt.Fprintln(w, "Sandbox cleanup complete.")
 	return nil
 }

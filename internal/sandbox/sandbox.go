@@ -21,6 +21,13 @@ import (
 	"github.com/supabase/cli/internal/utils/flags"
 )
 
+const (
+	// DefaultServiceTimeout is the maximum time to wait for services to become healthy.
+	DefaultServiceTimeout = 120 * time.Second
+	// DefaultPostgresPort is the default port in the postgres template config.
+	DefaultPostgresPort = 54322
+)
+
 // Run starts the sandbox mode with native binaries and process-compose.
 // It spawns a background server and exits after services are healthy.
 func Run(ctx context.Context, fsys afero.Fs) error {
@@ -101,7 +108,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	// 11. Wait for all services to be healthy
 	fmt.Fprintln(os.Stderr, "Starting services...")
 	fmt.Fprintln(os.Stderr, "Waiting for health checks...")
-	if err := WaitForAllServices(sandboxCtx.Ports.ProcessCompose, 120*time.Second); err != nil {
+	if err := WaitForAllServices(sandboxCtx.Ports.ProcessCompose, DefaultServiceTimeout); err != nil {
 		return err
 	}
 
@@ -193,7 +200,7 @@ func initializePostgresDataDir(ctx context.Context, sandboxCtx *SandboxContext, 
 
 	// Update port and pgsodium/vault getkey paths
 	pgsodiumScript := filepath.Join(postgresDir, "share", "supabase-cli", "config", "pgsodium_getkey.sh")
-	conf := strings.Replace(string(templateContent), "port = 54322", fmt.Sprintf("port = %d", sandboxCtx.Ports.Postgres), 1)
+	conf := strings.Replace(string(templateContent), fmt.Sprintf("port = %d", DefaultPostgresPort), fmt.Sprintf("port = %d", sandboxCtx.Ports.Postgres), 1)
 	conf += fmt.Sprintf("\npgsodium.getkey_script = '%s'\n", pgsodiumScript)
 	conf += fmt.Sprintf("vault.getkey_script = '%s'\n", pgsodiumScript)
 
