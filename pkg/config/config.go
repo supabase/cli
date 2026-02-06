@@ -307,6 +307,7 @@ func (s *storage) Clone() storage {
 func (c *baseConfig) Clone() baseConfig {
 	copy := *c
 	copy.Db.Vault = maps.Clone(c.Db.Vault)
+	copy.Db.Migrations.SchemaPlacement = maps.Clone(c.Db.Migrations.SchemaPlacement)
 	copy.Storage = c.Storage.Clone()
 	copy.EdgeRuntime.Secrets = maps.Clone(c.EdgeRuntime.Secrets)
 	copy.Functions = maps.Clone(c.Functions)
@@ -770,6 +771,11 @@ func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 	for i, pattern := range c.Db.Migrations.SchemaPaths {
 		if len(pattern) > 0 && !filepath.IsAbs(pattern) {
 			c.Db.Migrations.SchemaPaths[i] = path.Join(builder.SupabaseDirPath, pattern)
+		}
+	}
+	for component, pattern := range c.Db.Migrations.SchemaPlacement {
+		if len(pattern) > 0 && !filepath.IsAbs(pattern) {
+			c.Db.Migrations.SchemaPlacement[component] = path.Join(builder.SupabaseDirPath, pattern)
 		}
 	}
 	return nil

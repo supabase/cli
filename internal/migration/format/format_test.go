@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -99,4 +100,40 @@ schema_paths = [
 ]
 `, string(data))
 	})
+}
+
+func TestWriteStructuredWithSchemaPlacement(t *testing.T) {
+	testFs := afero.NewBasePathFs(
+		afero.FromIOFS{FS: testdata},
+		path.Join("testdata", "simple"),
+	)
+	sql, err := testFs.Open("dump.sql")
+	require.NoError(t, err)
+	defer sql.Close()
+
+	prevPlacement := utils.Config.Db.Migrations.SchemaPlacement
+	prevSchemaPaths := utils.Config.Db.Migrations.SchemaPaths
+	t.Cleanup(func() {
+		utils.Config.Db.Migrations.SchemaPlacement = prevPlacement
+		utils.Config.Db.Migrations.SchemaPaths = prevSchemaPaths
+	})
+	utils.Config.Db.Migrations.SchemaPlacement = map[string]string{
+		"tables": filepath.Join(utils.SupabaseDirPath, "custom", "tables", "{name}.sql"),
+		"types":  filepath.Join(utils.SupabaseDirPath, "custom", "types.sql"),
+	}
+
+	fsys := afero.NewMemMapFs()
+	err = WriteStructuredSchemas(context.Background(), sql, fsys)
+	require.NoError(t, err)
+
+	expectedTable, err := afero.ReadFile(testFs, "schemas/public/tables/countries.sql")
+	require.NoError(t, err)
+	actualTable, err := afero.ReadFile(fsys, filepath.Join(utils.SupabaseDirPath, "custom", "tables", "countries.sql"))
+	require.NoError(t, err)
+	assert.Equal(t, string(expectedTable), string(actualTable))
+
+	data, err := afero.ReadFile(fsys, utils.ConfigPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"custom/tables/countries.sql"`)
+	assert.Contains(t, string(data), `"custom/types.sql"`)
 }

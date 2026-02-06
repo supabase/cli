@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 	fs "testing/fstest"
@@ -74,6 +75,27 @@ func TestConfigParsing(t *testing.T) {
 		// Run test
 		assert.Error(t, config.Load("", fsys))
 	})
+}
+
+func TestSchemaPlacementPathResolution(t *testing.T) {
+	config := NewConfig()
+	fsys := fs.MapFS{
+		"supabase/config.toml": &fs.MapFile{Data: []byte(`
+project_id = "test"
+[db.migrations.schema_placement]
+"tables" = "./schemas/tables/{name}.sql"
+"extensions" = "./cluster"
+`)},
+	}
+	require.NoError(t, config.Load("", fsys))
+	assert.Equal(t,
+		filepath.Join("supabase", "schemas", "tables", "{name}.sql"),
+		config.Db.Migrations.SchemaPlacement["tables"],
+	)
+	assert.Equal(t,
+		filepath.Join("supabase", "cluster"),
+		config.Db.Migrations.SchemaPlacement["extensions"],
+	)
 }
 
 func TestRemoteOverride(t *testing.T) {

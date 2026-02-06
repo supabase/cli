@@ -92,8 +92,9 @@ type (
 	}
 
 	migrations struct {
-		Enabled     bool `toml:"enabled"`
-		SchemaPaths Glob `toml:"schema_paths"`
+		Enabled         bool              `toml:"enabled"`
+		SchemaPaths     Glob              `toml:"schema_paths"`
+		SchemaPlacement map[string]string `toml:"schema_placement"`
 	}
 
 	seed struct {
