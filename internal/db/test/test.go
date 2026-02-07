@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/docker/docker/api/types/container"
@@ -35,6 +36,7 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 	}
 	binds := make([]string, len(testFiles))
 	cmd := []string{"pg_prove", "--ext", ".pg", "--ext", ".sql", "-r"}
+	var workingDir string
 	for i, fp := range testFiles {
 		if !filepath.IsAbs(fp) {
 			fp = filepath.Join(utils.CurrentDirAbs, fp)
@@ -42,6 +44,12 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 		dockerPath := utils.ToDockerPath(fp)
 		cmd = append(cmd, dockerPath)
 		binds[i] = fmt.Sprintf("%s:%s:ro", fp, dockerPath)
+		if workingDir == "" {
+			workingDir = dockerPath
+			if path.Ext(dockerPath) != "" {
+				workingDir = path.Dir(dockerPath)
+			}
+		}
 	}
 	if viper.GetBool("DEBUG") {
 		cmd = append(cmd, "--verbose")
@@ -89,7 +97,8 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 				"PGPASSWORD=" + config.Password,
 				"PGDATABASE=" + config.Database,
 			},
-			Cmd: cmd,
+			Cmd:        cmd,
+			WorkingDir: workingDir,
 		},
 		hostConfig,
 		network.NetworkingConfig{},
