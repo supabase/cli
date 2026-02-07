@@ -44,79 +44,79 @@ func (r *SessionReplicationRole) UnmarshalText(text []byte) error {
 
 type (
 	settings struct {
-		EffectiveCacheSize            *string                 `toml:"effective_cache_size"`
-		LogicalDecodingWorkMem        *string                 `toml:"logical_decoding_work_mem"`
-		MaintenanceWorkMem            *string                 `toml:"maintenance_work_mem"`
-		MaxConnections                *uint                   `toml:"max_connections"`
-		MaxLocksPerTransaction        *uint                   `toml:"max_locks_per_transaction"`
-		MaxParallelMaintenanceWorkers *uint                   `toml:"max_parallel_maintenance_workers"`
-		MaxParallelWorkers            *uint                   `toml:"max_parallel_workers"`
-		MaxParallelWorkersPerGather   *uint                   `toml:"max_parallel_workers_per_gather"`
-		MaxReplicationSlots           *uint                   `toml:"max_replication_slots"`
-		MaxSlotWalKeepSize            *string                 `toml:"max_slot_wal_keep_size"`
-		MaxStandbyArchiveDelay        *string                 `toml:"max_standby_archive_delay"`
-		MaxStandbyStreamingDelay      *string                 `toml:"max_standby_streaming_delay"`
-		MaxWalSize                    *string                 `toml:"max_wal_size"`
-		MaxWalSenders                 *uint                   `toml:"max_wal_senders"`
-		MaxWorkerProcesses            *uint                   `toml:"max_worker_processes"`
-		SessionReplicationRole        *SessionReplicationRole `toml:"session_replication_role"`
-		SharedBuffers                 *string                 `toml:"shared_buffers"`
-		StatementTimeout              *string                 `toml:"statement_timeout"`
-		TrackActivityQuerySize        *string                 `toml:"track_activity_query_size"`
-		TrackCommitTimestamp          *bool                   `toml:"track_commit_timestamp"`
-		WalKeepSize                   *string                 `toml:"wal_keep_size"`
-		WalSenderTimeout              *string                 `toml:"wal_sender_timeout"`
-		WorkMem                       *string                 `toml:"work_mem"`
+		EffectiveCacheSize            *string                 `toml:"effective_cache_size" json:"effective_cache_size"`
+		LogicalDecodingWorkMem        *string                 `toml:"logical_decoding_work_mem" json:"logical_decoding_work_mem"`
+		MaintenanceWorkMem            *string                 `toml:"maintenance_work_mem" json:"maintenance_work_mem"`
+		MaxConnections                *uint                   `toml:"max_connections" json:"max_connections"`
+		MaxLocksPerTransaction        *uint                   `toml:"max_locks_per_transaction" json:"max_locks_per_transaction"`
+		MaxParallelMaintenanceWorkers *uint                   `toml:"max_parallel_maintenance_workers" json:"max_parallel_maintenance_workers"`
+		MaxParallelWorkers            *uint                   `toml:"max_parallel_workers" json:"max_parallel_workers"`
+		MaxParallelWorkersPerGather   *uint                   `toml:"max_parallel_workers_per_gather" json:"max_parallel_workers_per_gather"`
+		MaxReplicationSlots           *uint                   `toml:"max_replication_slots" json:"max_replication_slots"`
+		MaxSlotWalKeepSize            *string                 `toml:"max_slot_wal_keep_size" json:"max_slot_wal_keep_size"`
+		MaxStandbyArchiveDelay        *string                 `toml:"max_standby_archive_delay" json:"max_standby_archive_delay"`
+		MaxStandbyStreamingDelay      *string                 `toml:"max_standby_streaming_delay" json:"max_standby_streaming_delay"`
+		MaxWalSize                    *string                 `toml:"max_wal_size" json:"max_wal_size"`
+		MaxWalSenders                 *uint                   `toml:"max_wal_senders" json:"max_wal_senders"`
+		MaxWorkerProcesses            *uint                   `toml:"max_worker_processes" json:"max_worker_processes"`
+		SessionReplicationRole        *SessionReplicationRole `toml:"session_replication_role" json:"session_replication_role"`
+		SharedBuffers                 *string                 `toml:"shared_buffers" json:"shared_buffers"`
+		StatementTimeout              *string                 `toml:"statement_timeout" json:"statement_timeout"`
+		TrackActivityQuerySize        *string                 `toml:"track_activity_query_size" json:"track_activity_query_size"`
+		TrackCommitTimestamp          *bool                   `toml:"track_commit_timestamp" json:"track_commit_timestamp"`
+		WalKeepSize                   *string                 `toml:"wal_keep_size" json:"wal_keep_size"`
+		WalSenderTimeout              *string                 `toml:"wal_sender_timeout" json:"wal_sender_timeout"`
+		WorkMem                       *string                 `toml:"work_mem" json:"work_mem"`
 	}
 
 	networkRestrictions struct {
-		Enabled        bool     `toml:"enabled"`
-		AllowedCidrs   []string `toml:"allowed_cidrs"`
-		AllowedCidrsV6 []string `toml:"allowed_cidrs_v6"`
+		Enabled        bool     `toml:"enabled" json:"enabled"`
+		AllowedCidrs   []string `toml:"allowed_cidrs" json:"allowed_cidrs"`
+		AllowedCidrsV6 []string `toml:"allowed_cidrs_v6" json:"allowed_cidrs_v6"`
 	}
 
 	sslEnforcement struct {
-		Enabled bool `toml:"enabled"`
+		Enabled bool `toml:"enabled" json:"enabled"`
 	}
 
 	db struct {
-		Image               string              `toml:"-"`
-		Port                uint16              `toml:"port"`
-		ShadowPort          uint16              `toml:"shadow_port"`
-		HealthTimeout       time.Duration       `toml:"health_timeout"`
-		MajorVersion        uint                `toml:"major_version"`
-		Password            string              `toml:"-"`
-		RootKey             Secret              `toml:"root_key"`
-		Pooler              pooler              `toml:"pooler"`
-		Migrations          migrations          `toml:"migrations"`
-		Seed                seed                `toml:"seed"`
-		Settings            settings            `toml:"settings"`
-		NetworkRestrictions networkRestrictions `toml:"network_restrictions"`
-		SslEnforcement      *sslEnforcement     `toml:"ssl_enforcement"`
-		Vault               map[string]Secret   `toml:"vault"`
+		Image               string              `toml:"-" json:"-"`
+		Port                uint16              `toml:"port" json:"port"`
+		ShadowPort          uint16              `toml:"shadow_port" json:"shadow_port"`
+		HealthTimeout       time.Duration       `toml:"health_timeout" json:"health_timeout"`
+		MajorVersion        uint                `toml:"major_version" json:"major_version"`
+		Password            string              `toml:"-" json:"-"`
+		RootKey             Secret              `toml:"root_key" json:"root_key"`
+		Pooler              pooler              `toml:"pooler" json:"pooler"`
+		Migrations          migrations          `toml:"migrations" json:"migrations"`
+		Seed                seed                `toml:"seed" json:"seed"`
+		Settings            settings            `toml:"settings" json:"settings"`
+		NetworkRestrictions networkRestrictions `toml:"network_restrictions" json:"network_restrictions"`
+    SslEnforcement      *sslEnforcement     `toml:"ssl_enforcement" json:"ssl_enforcement"`
+		Vault               map[string]Secret   `toml:"vault" json:"vault"`
 	}
 
 	migrations struct {
-		Enabled     bool `toml:"enabled"`
-		SchemaPaths Glob `toml:"schema_paths"`
+		Enabled     bool `toml:"enabled" json:"enabled"`
+		SchemaPaths Glob `toml:"schema_paths" json:"schema_paths"`
 	}
 
 	seed struct {
-		Enabled  bool `toml:"enabled"`
-		SqlPaths Glob `toml:"sql_paths"`
+		Enabled  bool `toml:"enabled" json:"enabled"`
+		SqlPaths Glob `toml:"sql_paths" json:"sql_paths"`
 	}
 
 	pooler struct {
-		Enabled          bool     `toml:"enabled"`
-		Image            string   `toml:"-"`
-		Port             uint16   `toml:"port"`
-		PoolMode         PoolMode `toml:"pool_mode"`
-		DefaultPoolSize  uint     `toml:"default_pool_size"`
-		MaxClientConn    uint     `toml:"max_client_conn"`
-		ConnectionString string   `toml:"-"`
-		TenantId         string   `toml:"-"`
-		EncryptionKey    string   `toml:"-"`
-		SecretKeyBase    string   `toml:"-"`
+		Enabled          bool     `toml:"enabled" json:"enabled"`
+		Image            string   `toml:"-" json:"-"`
+		Port             uint16   `toml:"port" json:"port"`
+		PoolMode         PoolMode `toml:"pool_mode" json:"pool_mode"`
+		DefaultPoolSize  uint     `toml:"default_pool_size" json:"default_pool_size"`
+		MaxClientConn    uint     `toml:"max_client_conn" json:"max_client_conn"`
+		ConnectionString string   `toml:"-" json:"-"`
+		TenantId         string   `toml:"-" json:"-"`
+		EncryptionKey    string   `toml:"-" json:"-"`
+		SecretKeyBase    string   `toml:"-" json:"-"`
 	}
 )
 
