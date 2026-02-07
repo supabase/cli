@@ -120,6 +120,38 @@ func TestMigrationFile(t *testing.T) {
 	})
 }
 
+func TestExtractTypeName(t *testing.T) {
+	t.Run("extracts type name from standard error message", func(t *testing.T) {
+		result := extractTypeName(`type "ltree" does not exist`)
+		assert.Equal(t, "ltree", result)
+	})
+
+	t.Run("extracts schema-qualified type name", func(t *testing.T) {
+		result := extractTypeName(`type "extensions.ltree" does not exist`)
+		assert.Equal(t, "extensions.ltree", result)
+	})
+
+	t.Run("extracts type with underscores", func(t *testing.T) {
+		result := extractTypeName(`type "my_custom_type" does not exist`)
+		assert.Equal(t, "my_custom_type", result)
+	})
+
+	t.Run("returns empty string for non-matching message", func(t *testing.T) {
+		result := extractTypeName(`column "name" does not exist`)
+		assert.Equal(t, "", result)
+	})
+
+	t.Run("returns empty string for empty message", func(t *testing.T) {
+		result := extractTypeName("")
+		assert.Equal(t, "", result)
+	})
+
+	t.Run("handles type names with numbers", func(t *testing.T) {
+		result := extractTypeName(`type "type123" does not exist`)
+		assert.Equal(t, "type123", result)
+	})
+}
+
 func TestIsSchemaQualified(t *testing.T) {
 	assert.True(t, IsSchemaQualified("extensions.ltree"))
 	assert.True(t, IsSchemaQualified("public.my_type"))
