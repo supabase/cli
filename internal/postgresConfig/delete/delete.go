@@ -35,14 +35,15 @@ func Run(ctx context.Context, projectRef string, configKeys []string, noRestart 
 
 	resp, err := utils.GetSupabase().V1UpdatePostgresConfigWithBodyWithResponse(ctx, projectRef, "application/json", bytes.NewReader(bts))
 	if err != nil {
-		return errors.Errorf("failed to update config overrides: %w", err)
-	}
-	if resp.JSON200 == nil {
-		if resp.StatusCode() == 400 {
-			return errors.Errorf("failed to update config overrides: %s (%s). This usually indicates that an unsupported or invalid config override was attempted. Please refer to https://supabase.com/docs/guides/platform/custom-postgres-config", resp.Status(), string(resp.Body))
-		}
-		return errors.Errorf("failed to update config overrides: %s (%s)", resp.Status(), string(resp.Body))
+		return errors.Errorf("failed to delete config overrides: %w", err)
+	} else if resp.JSON200 == nil {
+		return errors.Errorf("unexpected delete config overrides status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 
-	return get.Run(ctx, projectRef, fsys)
+	var config map[string]any
+	err = json.Unmarshal(resp.Body, &config)
+	if err != nil {
+		return errors.Errorf("failed to unmarshal delete response: %w", err)
+	}
+	return get.PrintOutPostgresConfigOverrides(config)
 }
