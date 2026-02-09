@@ -6,10 +6,7 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v4"
@@ -24,8 +21,6 @@ import (
 const (
 	// DefaultServiceTimeout is the maximum time to wait for services to become healthy.
 	DefaultServiceTimeout = 120 * time.Second
-	// DefaultPostgresPort is the default port in the postgres template config.
-	DefaultPostgresPort = 54322
 )
 
 // Run starts the sandbox mode with native binaries and process-compose.
@@ -69,16 +64,12 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		return fmt.Errorf("failed to save postgres version: %w", err)
 	}
 
-	// 7. Initialize postgres data directory if needed (replaces Docker container setup)
-	// Track if this is a first run (pgdata doesn't exist yet) for seed application
+	// 7. Track if this is a first run (pgdata doesn't exist yet) for seed application
 	pgVersionFile := filepath.Join(sandboxCtx.PgDataDir(), "PG_VERSION")
 	_, statErr := fsys.Stat(pgVersionFile)
 	isFirstRun := os.IsNotExist(statErr)
 
 	fmt.Fprintln(os.Stderr, "Starting database...")
-	if err := initializePostgresDataDir(ctx, sandboxCtx, fsys, postgresVersion); err != nil {
-		return fmt.Errorf("failed to initialize postgres: %w", err)
-	}
 
 	// 8. Generate process-compose.yaml configuration
 	processComposePath, err := WriteProcessComposeConfig(ctx, sandboxCtx, fsys, postgresVersion)
@@ -117,129 +108,6 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 	PrettyPrintSandbox(os.Stdout, sandboxCtx)
 
 	return nil
-}
-
-// initializePostgresDataDir initializes the PostgreSQL data directory if needed.
-// On first run, it runs initdb and copies config templates from the bundled distribution.
-// On subsequent runs, it just updates the port in postgresql.conf if needed.
-func initializePostgresDataDir(ctx context.Context, sandboxCtx *SandboxContext, fsys afero.Fs, postgresVersion string) error {
-	pgDataDir := sandboxCtx.PgDataDir()
-	pgVersionFile := filepath.Join(pgDataDir, "PG_VERSION")
-
-	// Check if already initialized
-	if _, err := fsys.Stat(pgVersionFile); err == nil {
-		// Already initialized - just update port in postgresql.conf
-		return updatePostgresPort(fsys, pgDataDir, sandboxCtx.Ports.Postgres)
-	}
-
-	// Create data directory with restricted permissions
-	if err := fsys.MkdirAll(pgDataDir, 0700); err != nil {
-		return fmt.Errorf("failed to create pgdata directory: %w", err)
-	}
-
-	// Run initdb with supabase_admin as initial superuser (suppress verbose output)
-	initdbPath := GetPostgresBinPath(sandboxCtx.BinDir, postgresVersion, "initdb")
-	cmd := exec.CommandContext(ctx, initdbPath,
-		"-D", pgDataDir,
-		"-U", "supabase_admin",
-		"--encoding=UTF8",
-		"--locale=C",
-	)
-	setLibraryPath(cmd, GetPostgresLibDir(sandboxCtx.BinDir, postgresVersion))
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("initdb failed: %w", err)
-	}
-
-	// Set password using postgres single-user mode (like Docker entrypoint does)
-	// This allows scram-sha-256 authentication to work immediately
-	postgresPath := GetPostgresBinPath(sandboxCtx.BinDir, postgresVersion, "postgres")
-	alterCmd := exec.CommandContext(ctx, postgresPath,
-		"--single",
-		"-D", pgDataDir,
-		"-j", // disable newline as statement terminator
-		"postgres",
-	)
-	setLibraryPath(alterCmd, GetPostgresLibDir(sandboxCtx.BinDir, postgresVersion))
-	alterCmd.Stdin = strings.NewReader(fmt.Sprintf("ALTER USER supabase_admin WITH PASSWORD '%s';", utils.Config.Db.Password))
-	alterCmd.Stdout = io.Discard
-	alterCmd.Stderr = io.Discard
-
-	if err := alterCmd.Run(); err != nil {
-		return fmt.Errorf("failed to set superuser password: %w", err)
-	}
-
-	// Copy postgresql.conf from bundled template
-	postgresDir := GetPostgresDir(sandboxCtx.BinDir, postgresVersion)
-	templatePath := filepath.Join(postgresDir, "share", "supabase-cli", "config", "postgresql.conf.template")
-	confPath := filepath.Join(pgDataDir, "postgresql.conf")
-
-	templateContent, err := afero.ReadFile(fsys, templatePath)
-	if err != nil {
-		return fmt.Errorf("failed to read postgresql.conf template: %w", err)
-	}
-
-	// Update port and pgsodium/vault getkey paths
-	pgsodiumScript := filepath.Join(postgresDir, "share", "supabase-cli", "config", "pgsodium_getkey.sh")
-	conf := strings.Replace(string(templateContent), fmt.Sprintf("port = %d", DefaultPostgresPort), fmt.Sprintf("port = %d", sandboxCtx.Ports.Postgres), 1)
-	conf += fmt.Sprintf("\npgsodium.getkey_script = '%s'\n", pgsodiumScript)
-	conf += fmt.Sprintf("vault.getkey_script = '%s'\n", pgsodiumScript)
-
-	if err := afero.WriteFile(fsys, confPath, []byte(conf), 0600); err != nil {
-		return fmt.Errorf("failed to write postgresql.conf: %w", err)
-	}
-
-	// Copy pg_hba.conf from bundled template
-	// The bundled template uses scram-sha-256 for TCP connections, which works now
-	// because we set the password during initdb with --pwfile
-	hbaTemplatePath := filepath.Join(postgresDir, "share", "supabase-cli", "config", "pg_hba.conf.template")
-	hbaPath := filepath.Join(pgDataDir, "pg_hba.conf")
-
-	hbaContent, err := afero.ReadFile(fsys, hbaTemplatePath)
-	if err != nil {
-		return fmt.Errorf("failed to read pg_hba.conf template: %w", err)
-	}
-
-	if err := afero.WriteFile(fsys, hbaPath, hbaContent, 0600); err != nil {
-		return fmt.Errorf("failed to write pg_hba.conf: %w", err)
-	}
-
-	return nil
-}
-
-// updatePostgresPort updates the port in postgresql.conf for subsequent starts.
-func updatePostgresPort(fsys afero.Fs, pgDataDir string, port int) error {
-	confPath := filepath.Join(pgDataDir, "postgresql.conf")
-	content, err := afero.ReadFile(fsys, confPath)
-	if err != nil {
-		return fmt.Errorf("failed to read postgresql.conf: %w", err)
-	}
-
-	// Replace the port line
-	lines := strings.Split(string(content), "\n")
-	for i, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "port = ") {
-			lines[i] = fmt.Sprintf("port = %d", port)
-			break
-		}
-	}
-
-	return afero.WriteFile(fsys, confPath, []byte(strings.Join(lines, "\n")), 0600)
-}
-
-// setLibraryPath sets the appropriate library path environment variable for the command.
-func setLibraryPath(cmd *exec.Cmd, libDir string) {
-	if cmd.Env == nil {
-		cmd.Env = os.Environ()
-	}
-	switch runtime.GOOS {
-	case "darwin":
-		cmd.Env = append(cmd.Env, "DYLD_LIBRARY_PATH="+libDir)
-	case "linux":
-		cmd.Env = append(cmd.Env, "LD_LIBRARY_PATH="+libDir)
-	}
 }
 
 // PrettyPrintSandbox prints the sandbox status in beautiful tables like Docker mode.

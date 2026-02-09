@@ -4,8 +4,10 @@ log_location: {{ .LogLocation }}
 
 processes:
   postgres:
-    command: {{ .PostgresBinDir }}/postgres -D {{ .PostgresDataDir }}
+    command: bash {{ .PostgresInitScript }} -p {{ .PostgresPort }}
     environment:
+      - PGDATA={{ .PostgresDataDir }}
+      - POSTGRES_PASSWORD={{ .DbPassword }}
       - DYLD_LIBRARY_PATH={{ .PostgresLibDir }}
       - LD_LIBRARY_PATH={{ .PostgresLibDir }}
       - TZDIR=/var/db/timezone/zoneinfo
@@ -13,9 +15,9 @@ processes:
       exec:
         command: {{ .PostgresBinDir }}/pg_isready -h 127.0.0.1 -p {{ .PostgresPort }} -U postgres
       initial_delay_seconds: 2
-      period_seconds: 5
+      period_seconds: 3
       timeout_seconds: 2
-      failure_threshold: 3
+      failure_threshold: 20
     shutdown:
       signal: 15
       timeout_seconds: 30

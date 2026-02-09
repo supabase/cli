@@ -53,6 +53,7 @@ type processComposeConfig struct {
 	PostgresBinDir        string // Path to postgres bin directory
 	PostgresDataDir       string // Path to pgdata directory
 	PostgresLibDir        string // Path to postgres lib directory (for DYLD_LIBRARY_PATH)
+	PostgresInitScript    string // Path to supabase-postgres-init.sh
 	PostgresMigrateScript string // Path to bundled migrate.sh
 
 	// Proxy configuration
@@ -288,6 +289,7 @@ func GenerateProcessComposeConfig(goCtx context.Context, ctx *SandboxContext, po
 		PostgresBinDir:        filepath.Join(postgresDir, "bin"),
 		PostgresDataDir:       ctx.PgDataDir(),
 		PostgresLibDir:        filepath.Join(postgresDir, "lib"),
+		PostgresInitScript:    filepath.Join(postgresDir, "share", "supabase-cli", "bin", "supabase-postgres-init.sh"),
 		PostgresMigrateScript: filepath.Join(postgresDir, "share", "supabase-cli", "migrations", "migrate.sh"),
 
 		// Proxy configuration - use absolute path to handle --workdir flag

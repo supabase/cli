@@ -2,8 +2,6 @@ package sandbox
 
 import (
 	"archive/tar"
-	"archive/zip"
-	"bytes"
 	"compress/gzip"
 	"context"
 	"fmt"
@@ -27,6 +25,7 @@ const (
 	// Binary versions
 	GotrueVersion    = "2.186.0" // Local build for darwin-arm64
 	PostgrestVersion = "14.4"
+	PostgresVersion  = "17.6.1.081-cli"
 
 	// SpinnerTickInterval is how often the download spinner animation updates.
 	SpinnerTickInterval = 80 * time.Millisecond
@@ -99,12 +98,7 @@ func InstallBinaries(ctx context.Context, fsys afero.Fs, binDir string) (postgre
 	gotruePath := GetGotruePath(binDir)
 	postgrestPath := GetPostgrestPath(binDir)
 
-	// Find postgres archive and version first
-	archivePath, pgVersion, err := findLocalPostgresArchive()
-	if err != nil {
-		return "", fmt.Errorf("postgres: %w", err)
-	}
-	postgresVersion = pgVersion
+	postgresVersion = PostgresVersion
 	postgresBin := GetPostgresBinPath(binDir, postgresVersion, "postgres")
 
 	// Check which binaries are already cached
@@ -214,7 +208,7 @@ func InstallBinaries(ctx context.Context, fsys afero.Fs, binDir string) (postgre
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := installPostgresQuiet(ctx, fsys, binDir, archivePath, postgresVersion); err != nil {
+			if err := installPostgresQuiet(ctx, fsys, binDir, postgresVersion); err != nil {
 				statuses[2].mu.Lock()
 				statuses[2].Error = err
 				statuses[2].Downloading = false
@@ -373,7 +367,7 @@ func installBinaryFromArchiveQuiet(ctx context.Context, fsys afero.Fs, binPath, 
 }
 
 // installPostgresQuiet installs PostgreSQL without printing progress (except codesign warnings).
-func installPostgresQuiet(ctx context.Context, fsys afero.Fs, binDir, archivePath, version string) error {
+func installPostgresQuiet(ctx context.Context, fsys afero.Fs, binDir, version string) error {
 	postgresDir := GetPostgresDir(binDir, version)
 
 	// Ensure parent directory exists
@@ -381,9 +375,35 @@ func installPostgresQuiet(ctx context.Context, fsys afero.Fs, binDir, archivePat
 		return fmt.Errorf("failed to create postgres directory: %w", err)
 	}
 
-	// Extract the zip archive
-	if err := extractZipToDir(archivePath, postgresDir, fsys); err != nil {
+	// Download from GitHub releases
+	downloadURL, err := getPostgresDownloadURL()
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return errors.Errorf("failed to download postgres: HTTP %d", resp.StatusCode)
+	}
+
+	// Extract tar.gz, stripping the top-level directory
+	if err := extractTarGzToDir(resp.Body, postgresDir); err != nil {
 		return fmt.Errorf("failed to extract postgres archive: %w", err)
+	}
+
+	// Fix permissions: the Nix-built archive ships without execute bits
+	if err := fixPostgresPermissions(postgresDir); err != nil {
+		return fmt.Errorf("failed to fix permissions: %w", err)
 	}
 
 	// On macOS, re-sign all binaries and libraries (suppress warnings)
@@ -392,6 +412,25 @@ func installPostgresQuiet(ctx context.Context, fsys afero.Fs, binDir, archivePat
 	}
 
 	return nil
+}
+
+// fixPostgresPermissions makes binaries, libraries, and scripts executable.
+// The Nix-built tar archive ships all files without execute bits.
+func fixPostgresPermissions(postgresDir string) error {
+	return filepath.Walk(postgresDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
+		}
+		// Make files in bin/ and any .dylib or .sh files executable
+		rel, _ := filepath.Rel(postgresDir, path)
+		inBin := strings.HasPrefix(rel, "bin/") || strings.HasPrefix(rel, "bin\\")
+		if inBin || strings.HasSuffix(path, ".dylib") || strings.HasSuffix(path, ".sh") {
+			if err := os.Chmod(path, info.Mode()|0755); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // codesignPostgresDirQuiet re-signs binaries without printing warnings.
@@ -409,11 +448,6 @@ func codesignPostgresDirQuiet(postgresDir string) {
 	})
 }
 
-// extractTarGz extracts the first executable from a .tar.gz archive.
-func extractTarGz(r io.Reader, binPath string, fsys afero.Fs) error {
-	return extractTarGzWithName(r, binPath, filepath.Base(binPath), fsys)
-}
-
 // extractTarGzWithName extracts a named binary from a .tar.gz archive.
 func extractTarGzWithName(r io.Reader, binPath, srcBinName string, fsys afero.Fs) error {
 	gzr, err := gzip.NewReader(r)
@@ -423,6 +457,64 @@ func extractTarGzWithName(r io.Reader, binPath, srcBinName string, fsys afero.Fs
 	defer gzr.Close()
 
 	return extractTarWithName(gzr, binPath, srcBinName, fsys)
+}
+
+// extractTarGzToDir extracts a .tar.gz archive to a destination directory,
+// stripping the first path component (top-level wrapper directory).
+func extractTarGzToDir(r io.Reader, destDir string) error {
+	gzr, err := gzip.NewReader(r)
+	if err != nil {
+		return fmt.Errorf("failed to create gzip reader: %w", err)
+	}
+	defer gzr.Close()
+
+	tr := tar.NewReader(gzr)
+
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read tar: %w", err)
+		}
+
+		// Strip the first path component
+		parts := strings.SplitN(header.Name, "/", 2)
+		if len(parts) < 2 || parts[1] == "" {
+			continue
+		}
+		relPath := parts[1]
+
+		destPath := filepath.Join(destDir, relPath)
+
+		// Path traversal protection
+		if !strings.HasPrefix(destPath, filepath.Clean(destDir)+string(os.PathSeparator)) {
+			return fmt.Errorf("invalid file path in archive: %s", header.Name)
+		}
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(destPath, os.FileMode(header.Mode)); err != nil {
+				return fmt.Errorf("failed to create directory %s: %w", destPath, err)
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+				return fmt.Errorf("failed to create parent directory for %s: %w", destPath, err)
+			}
+			f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode))
+			if err != nil {
+				return fmt.Errorf("failed to create file %s: %w", destPath, err)
+			}
+			if _, err := io.Copy(f, tr); err != nil {
+				f.Close()
+				return fmt.Errorf("failed to write file %s: %w", destPath, err)
+			}
+			f.Close()
+		}
+	}
+
+	return nil
 }
 
 // extractTarXz extracts the first executable from a .tar.xz archive.
@@ -510,6 +602,47 @@ func getPostgrestDownloadURL() (string, error) {
 	}
 }
 
+// getPostgresDownloadURL returns the download URL for PostgreSQL based on the current platform.
+// PostgreSQL releases are .tar.gz archives.
+func getPostgresDownloadURL() (string, error) {
+	base := fmt.Sprintf("https://github.com/supabase/postgres/releases/download/v%s/", PostgresVersion)
+
+	var arch string
+	switch runtime.GOARCH {
+	case "amd64":
+		arch = "x64"
+	case "arm64":
+		arch = "arm64"
+	default:
+		return "", errors.Errorf("unsupported architecture for postgres: %s", runtime.GOARCH)
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		if runtime.GOARCH == "amd64" {
+			return "", errors.Errorf("no postgres build available for darwin/amd64")
+		}
+		return base + "supabase-postgres-v" + PostgresVersion + "-darwin-" + arch + ".tar.gz", nil
+	case "linux":
+		return base + "supabase-postgres-v" + PostgresVersion + "-linux-" + arch + ".tar.gz", nil
+	default:
+		return "", errors.Errorf("unsupported platform for postgres: %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+}
+
+// setLibraryPath sets the appropriate library path environment variable for the command.
+func setLibraryPath(cmd *exec.Cmd, libDir string) {
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		cmd.Env = append(cmd.Env, "DYLD_LIBRARY_PATH="+libDir)
+	case "linux":
+		cmd.Env = append(cmd.Env, "LD_LIBRARY_PATH="+libDir)
+	}
+}
+
 // getCliDir returns the directory containing the CLI binary, resolving symlinks.
 // This allows finding local binaries when the CLI is symlinked (e.g., /usr/local/bin/supa -> /path/to/cli/supa).
 func getCliDir() (string, error) {
@@ -526,91 +659,4 @@ func getCliDir() (string, error) {
 	}
 
 	return filepath.Dir(realPath), nil
-}
-
-// findLocalPostgresArchive finds a local postgres archive and extracts the version from its filename.
-// Pattern: supabase-postgres-<version>-<os>-<arch>.zip
-// Example: supabase-postgres-17.6-darwin-arm64.zip → version "17.6"
-func findLocalPostgresArchive() (path string, version string, err error) {
-	cliDir, err := getCliDir()
-	if err != nil {
-		return "", "", err
-	}
-
-	pattern := filepath.Join(cliDir, fmt.Sprintf("supabase-postgres-*-%s-%s.zip", runtime.GOOS, runtime.GOARCH))
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to glob for postgres archive: %w", err)
-	}
-	if len(matches) == 0 {
-		return "", "", errors.Errorf("no postgres archive found matching pattern: %s", pattern)
-	}
-
-	// Extract version from filename: supabase-postgres-17.6-darwin-arm64.zip
-	filename := filepath.Base(matches[0])
-	// Remove prefix "supabase-postgres-" and suffix "-<os>-<arch>.zip"
-	suffix := fmt.Sprintf("-%s-%s.zip", runtime.GOOS, runtime.GOARCH)
-	version = strings.TrimPrefix(filename, "supabase-postgres-")
-	version = strings.TrimSuffix(version, suffix)
-
-	if version == "" {
-		return "", "", errors.Errorf("failed to extract version from filename: %s", filename)
-	}
-
-	return matches[0], version, nil
-}
-
-// extractZipToDir extracts a zip archive to a destination directory.
-// Preserves the full directory structure from the archive.
-func extractZipToDir(zipPath, destDir string, fsys afero.Fs) error {
-	data, err := afero.ReadFile(fsys, zipPath)
-	if err != nil {
-		return fmt.Errorf("failed to read zip file: %w", err)
-	}
-
-	r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		return fmt.Errorf("failed to open zip: %w", err)
-	}
-
-	for _, f := range r.File {
-		destPath := filepath.Join(destDir, f.Name)
-
-		// Prevent zip slip vulnerability
-		if !strings.HasPrefix(destPath, filepath.Clean(destDir)+string(os.PathSeparator)) {
-			return fmt.Errorf("invalid file path in archive: %s", f.Name)
-		}
-
-		if f.FileInfo().IsDir() {
-			if err := fsys.MkdirAll(destPath, 0755); err != nil {
-				return fmt.Errorf("failed to create directory %s: %w", destPath, err)
-			}
-			continue
-		}
-
-		// Ensure parent directory exists
-		if err := fsys.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-			return fmt.Errorf("failed to create parent directory for %s: %w", destPath, err)
-		}
-
-		// Extract file
-		rc, err := f.Open()
-		if err != nil {
-			return fmt.Errorf("failed to open file in archive %s: %w", f.Name, err)
-		}
-
-		fileData, err := io.ReadAll(rc)
-		rc.Close()
-		if err != nil {
-			return fmt.Errorf("failed to read file from archive %s: %w", f.Name, err)
-		}
-
-		// Preserve file mode (important for executables)
-		mode := f.Mode()
-		if err := afero.WriteFile(fsys, destPath, fileData, mode); err != nil {
-			return fmt.Errorf("failed to write file %s: %w", destPath, err)
-		}
-	}
-
-	return nil
 }
