@@ -64,9 +64,9 @@ After the vanity subdomain is activated, your project's auth services will no lo
 func init() {
 	vanityCmd.PersistentFlags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	vanityActivateCmd.Flags().StringVar(&desiredSubdomain, "desired-subdomain", "", "The desired vanity subdomain to use for your Supabase project.")
-	vanityActivateCmd.MarkFlagRequired("desired-subdomain")
+	cobra.CheckErr(vanityActivateCmd.MarkFlagRequired("desired-subdomain"))
 	vanityCheckCmd.Flags().StringVar(&desiredSubdomain, "desired-subdomain", "", "The desired vanity subdomain to use for your Supabase project.")
-	vanityCheckCmd.MarkFlagRequired("desired-subdomain")
+	cobra.CheckErr(vanityCheckCmd.MarkFlagRequired("desired-subdomain"))
 	vanityCmd.AddCommand(vanityGetCmd)
 	vanityCmd.AddCommand(vanityCheckCmd)
 	vanityCmd.AddCommand(vanityActivateCmd)
