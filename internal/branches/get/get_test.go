@@ -75,7 +75,7 @@ func TestTomlOutput(t *testing.T) {
 	utils.OutputFormat.Value = utils.OutputToml
 	t.Cleanup(func() { utils.OutputFormat.Value = utils.OutputPretty })
 
-	t.Run("outputs toml format", func(t *testing.T) {
+	t.Run("encodes toml format", func(t *testing.T) {
 		t.Cleanup(fstest.MockStdout(t, fmt.Sprintf(`POSTGRES_URL = "postgresql://postgres:postgres@127.0.0.1:6543/postgres?connect_timeout=10"
 POSTGRES_URL_NON_POOLING = "postgresql://postgres:postgres@127.0.0.1:5432/postgres?connect_timeout=10"
 SUPABASE_ANON_KEY = "anon-key"
