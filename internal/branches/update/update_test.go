@@ -77,10 +77,10 @@ func TestUpdateBranch(t *testing.T) {
 		t.Cleanup(apitest.MockPlatformAPI(t))
 		// Setup mock api
 		gock.New(utils.DefaultApiHost).
-			Patch("/v1/branches/" + flags.ProjectRef).
+			Get("/v1/projects/" + flags.ProjectRef + "/branches/missing").
 			ReplyError(errNetwork)
 		// Run test
-		err := Run(context.Background(), flags.ProjectRef, api.UpdateBranchBody{}, nil)
+		err := Run(context.Background(), "missing", api.UpdateBranchBody{}, nil)
 		assert.ErrorIs(t, err, errNetwork)
 	})
 
