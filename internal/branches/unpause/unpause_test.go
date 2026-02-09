@@ -1,4 +1,4 @@
-package delete
+package unpause
 
 import (
 	"context"
@@ -13,21 +13,21 @@ import (
 	"github.com/supabase/cli/internal/utils/flags"
 )
 
-func TestDeleteBranch(t *testing.T) {
+func TestUnpauseBranch(t *testing.T) {
 	flags.ProjectRef = apitest.RandomProjectRef()
 
-	t.Run("deletes existing branch", func(t *testing.T) {
+	t.Run("unpause a branch", func(t *testing.T) {
 		t.Cleanup(apitest.MockPlatformAPI(t))
 		// Setup mock api
 		gock.New(utils.DefaultApiHost).
-			Delete("/v1/branches/" + flags.ProjectRef).
+			Post("/v1/projects/" + flags.ProjectRef + "/restore").
 			Reply(http.StatusOK)
 		// Run test
-		err := Run(context.Background(), flags.ProjectRef, nil)
+		err := Run(context.Background(), flags.ProjectRef)
 		assert.NoError(t, err)
 	})
 
-	t.Run("throws error on branch not found", func(t *testing.T) {
+	t.Run("throws error on missing branch", func(t *testing.T) {
 		errNetwork := errors.New("network error")
 		t.Cleanup(apitest.MockPlatformAPI(t))
 		// Setup mock api
@@ -35,7 +35,7 @@ func TestDeleteBranch(t *testing.T) {
 			Get("/v1/projects/" + flags.ProjectRef + "/branches/missing").
 			ReplyError(errNetwork)
 		// Run test
-		err := Run(context.Background(), "missing", nil)
+		err := Run(context.Background(), "missing")
 		assert.ErrorIs(t, err, errNetwork)
 	})
 
@@ -44,10 +44,10 @@ func TestDeleteBranch(t *testing.T) {
 		t.Cleanup(apitest.MockPlatformAPI(t))
 		// Setup mock api
 		gock.New(utils.DefaultApiHost).
-			Delete("/v1/branches/" + flags.ProjectRef).
+			Post("/v1/projects/" + flags.ProjectRef + "/restore").
 			ReplyError(errNetwork)
 		// Run test
-		err := Run(context.Background(), flags.ProjectRef, nil)
+		err := Run(context.Background(), flags.ProjectRef)
 		assert.ErrorIs(t, err, errNetwork)
 	})
 
@@ -55,10 +55,10 @@ func TestDeleteBranch(t *testing.T) {
 		t.Cleanup(apitest.MockPlatformAPI(t))
 		// Setup mock api
 		gock.New(utils.DefaultApiHost).
-			Delete("/v1/branches/" + flags.ProjectRef).
+			Post("/v1/projects/" + flags.ProjectRef + "/restore").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		err := Run(context.Background(), flags.ProjectRef, nil)
-		assert.ErrorContains(t, err, "unexpected delete branch status 503:")
+		err := Run(context.Background(), flags.ProjectRef)
+		assert.ErrorContains(t, err, "unexpected unpause branch status 503:")
 	})
 }
