@@ -16,9 +16,6 @@ import (
 )
 
 func TestListBackup(t *testing.T) {
-	// Setup valid access token
-	token := apitest.RandomAccessToken(t)
-	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 	// Setup valid project ref
 	flags.ProjectRef = apitest.RandomProjectRef()
 
@@ -30,8 +27,8 @@ func TestListBackup(t *testing.T) {
    Southeast Asia (Singapore) | true | true | 0                  | 0                
 
 `))
+		t.Cleanup(apitest.MockPlatformAPI(t))
 		// Setup mock api
-		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + flags.ProjectRef + "/database/backups").
 			Reply(http.StatusOK).
@@ -53,8 +50,8 @@ func TestListBackup(t *testing.T) {
    Southeast Asia (Singapore) | PHYSICAL    | COMPLETED | 2026-02-08 16:44:07 
 
 `))
+		t.Cleanup(apitest.MockPlatformAPI(t))
 		// Setup mock api
-		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + flags.ProjectRef + "/database/backups").
 			Reply(http.StatusOK).
@@ -77,8 +74,8 @@ func TestListBackup(t *testing.T) {
 
 	t.Run("throws error on network error", func(t *testing.T) {
 		errNetwork := errors.New("network error")
+		t.Cleanup(apitest.MockPlatformAPI(t))
 		// Setup mock api
-		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + flags.ProjectRef + "/database/backups").
 			ReplyError(errNetwork)
@@ -88,8 +85,8 @@ func TestListBackup(t *testing.T) {
 	})
 
 	t.Run("throws error on service unavailable", func(t *testing.T) {
+		t.Cleanup(apitest.MockPlatformAPI(t))
 		// Setup mock api
-		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + flags.ProjectRef + "/database/backups").
 			Reply(http.StatusServiceUnavailable)
