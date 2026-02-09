@@ -72,6 +72,28 @@ func TestListBackup(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
+	t.Run("encodes json output", func(t *testing.T) {
+		utils.OutputFormat.Value = utils.OutputJson
+		t.Cleanup(func() { utils.OutputFormat.Value = utils.OutputPretty })
+		t.Cleanup(fstest.MockStdout(t, `{
+  "backups": null,
+  "physical_backup_data": {},
+  "pitr_enabled": false,
+  "region": "ap-southeast-1",
+  "walg_enabled": false
+}
+`))
+		t.Cleanup(apitest.MockPlatformAPI(t))
+		// Setup mock api
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + flags.ProjectRef + "/database/backups").
+			Reply(http.StatusOK).
+			JSON(api.V1BackupsResponse{Region: "ap-southeast-1"})
+		// Run test
+		err := Run(context.Background())
+		assert.NoError(t, err)
+	})
+
 	t.Run("throws error on network error", func(t *testing.T) {
 		errNetwork := errors.New("network error")
 		t.Cleanup(apitest.MockPlatformAPI(t))
