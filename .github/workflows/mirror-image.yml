@@ -30,7 +30,7 @@ jobs:
           TAG=${{ github.event.client_payload.image || inputs.image }}
           echo "image=${TAG##*/}" >> $GITHUB_OUTPUT
       - name: configure aws credentials
-        uses: aws-actions/configure-aws-credentials@v5.1.1
+        uses: aws-actions/configure-aws-credentials@v6.0.0
         with:
           role-to-assume: ${{ secrets.PROD_AWS_ROLE }}
           aws-region: us-east-1
