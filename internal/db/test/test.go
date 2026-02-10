@@ -38,7 +38,7 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 	bindsSet := map[string]struct{}{}
 	cmd := []string{"pg_prove", "--ext", ".pg", "--ext", ".sql", "-r"}
 	var workingDir string
-	for i, fp := range testFiles {
+	for _, fp := range testFiles {
 		if !filepath.IsAbs(fp) {
 			fp = filepath.Join(utils.CurrentDirAbs, fp)
 		}
