@@ -19,7 +19,7 @@ import (
 func TestListSnippets(t *testing.T) {
 	flags.ProjectRef = apitest.RandomProjectRef()
 
-	t.Run("fetches custom hostname", func(t *testing.T) {
+	t.Run("lists sql snippets", func(t *testing.T) {
 		t.Cleanup(fstest.MockStdout(t, `
   
    ID           | NAME         | VISIBILITY | OWNER    | CREATED AT (UTC)    | UPDATED AT (UTC)    
