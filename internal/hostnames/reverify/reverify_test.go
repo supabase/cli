@@ -34,7 +34,7 @@ func TestReverifyHostname(t *testing.T) {
 		utils.OutputFormat.Value = utils.OutputToml
 		t.Cleanup(func() { utils.OutputFormat.Value = utils.OutputPretty })
 		t.Cleanup(fstest.MockStdout(t, `CustomHostname = ""
-Status = ""
+Status = "2_initiated"
 
 [Data]
   Success = false
@@ -55,7 +55,9 @@ Status = ""
 		gock.New(utils.DefaultApiHost).
 			Post("v1/projects/" + flags.ProjectRef + "/custom-hostname/reverify").
 			Reply(http.StatusCreated).
-			JSON(api.UpdateCustomHostnameResponse{})
+			JSON(api.UpdateCustomHostnameResponse{
+				Status: api.N2Initiated,
+			})
 		// Run test
 		err := Run(context.Background(), flags.ProjectRef, nil)
 		assert.NoError(t, err)

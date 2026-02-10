@@ -2,7 +2,6 @@ package get
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"github.com/go-errors/errors"
@@ -18,13 +17,9 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	} else if resp.JSON200 == nil {
 		return errors.Errorf("unexpected get hostname status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
+	hostnames.PrintStatus(resp.JSON200, os.Stderr)
 	if utils.OutputFormat.Value != utils.OutputPretty {
 		return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, *resp.JSON200)
 	}
-	status, err := hostnames.TranslateStatus(resp.JSON200, false)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintln(os.Stderr, status)
 	return nil
 }

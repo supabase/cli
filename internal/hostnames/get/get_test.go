@@ -34,7 +34,7 @@ func TestGetHostname(t *testing.T) {
 		utils.OutputFormat.Value = utils.OutputToml
 		t.Cleanup(func() { utils.OutputFormat.Value = utils.OutputPretty })
 		t.Cleanup(fstest.MockStdout(t, `CustomHostname = ""
-Status = ""
+Status = "5_services_reconfigured"
 
 [Data]
   Success = false
@@ -55,7 +55,9 @@ Status = ""
 		gock.New(utils.DefaultApiHost).
 			Get("v1/projects/" + flags.ProjectRef + "/custom-hostname").
 			Reply(http.StatusOK).
-			JSON(api.UpdateCustomHostnameResponse{})
+			JSON(api.UpdateCustomHostnameResponse{
+				Status: api.N5ServicesReconfigured,
+			})
 		// Run test
 		err := Run(context.Background(), flags.ProjectRef, nil)
 		assert.NoError(t, err)

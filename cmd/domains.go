@@ -97,7 +97,7 @@ func init() {
 	cobra.CheckErr(persistentFlags.MarkDeprecated("include-raw-output", "use -o json instead"))
 	createFlags := customHostnamesCreateCmd.Flags()
 	createFlags.StringVar(&customHostname, "custom-hostname", "", "The custom hostname to use for your Supabase project.")
-	customHostnamesCreateCmd.MarkFlagRequired("custom-hostname")
+	cobra.CheckErr(customHostnamesCreateCmd.MarkFlagRequired("custom-hostname"))
 	customHostnamesCmd.AddCommand(customHostnamesGetCmd)
 	customHostnamesCmd.AddCommand(customHostnamesCreateCmd)
 	customHostnamesCmd.AddCommand(customHostnamesReverifyCmd)
