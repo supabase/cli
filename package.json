@@ -1,0 +1,18 @@
+{
+  "name": "@supabase/root",
+  "private": true,
+  "workspaces": {
+    "packages": [
+      "packages/*"
+    ],
+    "catalog": {
+      "@tsconfig/bun": "^1.0.10",
+      "@types/bun": "^1.3.8",
+      "@typescript/native-preview": "^7.0.0-dev.20260208.1",
+      "knip": "https://pkg.pr.new/knip@1513",
+      "oxfmt": "^0.28.0",
+      "oxlint": "^1.43.0",
+      "oxlint-tsgolint": "^0.11.5"
+    }
+  }
+}

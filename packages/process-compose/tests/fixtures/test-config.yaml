@@ -1,0 +1,53 @@
+version: "0.5"
+name: test-project
+
+processes:
+  # Simple process that exits immediately with success
+  init:
+    command: echo "init completed"
+    availability:
+      restart: "no"
+
+  # Long-running process with HTTP health check
+  server:
+    command: |
+      echo "server starting..."
+      # Simple HTTP server using bun
+      bun -e "Bun.serve({ port: 19876, fetch: () => new Response('OK') })"
+    depends_on:
+      init:
+        condition: process_completed_successfully
+    readiness_probe:
+      http_get:
+        host: 127.0.0.1
+        port: 19876
+        path: /
+        scheme: http
+      initial_delay_seconds: 1
+      period_seconds: 1
+      timeout_seconds: 2
+      failure_threshold: 3
+    shutdown:
+      signal: 15
+      timeout_seconds: 5
+    availability:
+      restart: "no"
+
+  # Process that depends on server being healthy
+  worker:
+    command: |
+      echo "worker starting..."
+      sleep 30
+    depends_on:
+      server:
+        condition: process_healthy
+    readiness_probe:
+      exec:
+        command: "true"
+      initial_delay_seconds: 0
+      period_seconds: 2
+    shutdown:
+      signal: 15
+      timeout_seconds: 5
+    availability:
+      restart: "no"

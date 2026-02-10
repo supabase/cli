@@ -1,0 +1,25 @@
+{
+  "name": "@supabase/cli",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test --concurrent",
+    "types:check": "tsgo --noEmit",
+    "lint:check": "oxlint --deny-warnings",
+    "lint:fix": "oxlint --deny-warnings --fix",
+    "fmt:check": "oxfmt --check",
+    "fmt:fix": "oxfmt",
+    "knip:check": "knip-bun",
+    "knip:fix": "knip-bun --fix"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:",
+    "@typescript/native-preview": "catalog:",
+    "knip": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "oxlint-tsgolint": "catalog:"
+  }
+}

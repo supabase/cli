@@ -1,0 +1,33 @@
+{
+  "name": "@supabase/config",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./dist/types.d.ts",
+    "./schema.json": "./dist/schema.json"
+  },
+  "scripts": {
+    "build": "bun run ./scripts/build.ts",
+    "test": "bun test --concurrent",
+    "types:check": "tsgo --noEmit",
+    "lint:check": "oxlint --deny-warnings",
+    "lint:fix": "oxlint --deny-warnings --fix",
+    "fmt:check": "oxfmt --check",
+    "fmt:fix": "oxfmt",
+    "knip:check": "knip-bun",
+    "knip:fix": "knip-bun --fix"
+  },
+  "dependencies": {
+    "dedent": "^1.7.1",
+    "jsonv-ts": "^0.10.1"
+  },
+  "devDependencies": {
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:",
+    "@typescript/native-preview": "catalog:",
+    "knip": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "oxlint-tsgolint": "catalog:"
+  }
+}

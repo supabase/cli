@@ -1,0 +1,33 @@
+{
+  "name": "@supabase/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "generate": "openapi-typescript https://api.supabase.com/api/v1-json -o src/v1.d.ts",
+    "test": "bun test --concurrent",
+    "types:check": "tsgo --noEmit",
+    "lint:check": "oxlint --type-aware --deny-warnings",
+    "lint:fix": "oxlint --type-aware --deny-warnings --fix",
+    "fmt:check": "oxfmt --check",
+    "fmt:fix": "oxfmt",
+    "knip:check": "knip-bun",
+    "knip:fix": "knip-bun --fix"
+  },
+  "dependencies": {
+    "openapi-fetch": "^0.13.5"
+  },
+  "devDependencies": {
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:",
+    "@typescript/native-preview": "catalog:",
+    "knip": "catalog:",
+    "openapi-typescript": "^7.6.1",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "oxlint-tsgolint": "catalog:"
+  }
+}
