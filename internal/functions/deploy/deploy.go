@@ -110,7 +110,7 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 	for _, name := range slugs {
 		function, ok := utils.Config.Functions[name]
 		if !ok {
-			function.Enabled = true
+			function.Enabled = false
 			function.VerifyJWT = true
 		}
 		// Precedence order: flag > config > fallback
