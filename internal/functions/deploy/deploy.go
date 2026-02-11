@@ -67,7 +67,13 @@ func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool,
 	} else if err != nil {
 		return err
 	}
-	fmt.Printf("Deployed Functions on project %s: %s\n", utils.Aqua(flags.ProjectRef), strings.Join(slugs, ", "))
+	deployed := make([]string, 0, len(slugs))
+	for _, slug := range slugs {
+		if functionConfig[slug].Enabled {
+			deployed = append(deployed, slug)
+		}
+	}
+	fmt.Printf("Deployed Functions on project %s: %s\n", utils.Aqua(flags.ProjectRef), strings.Join(deployed, ", "))
 	url := fmt.Sprintf("%s/project/%v/functions", utils.GetSupabaseDashboardURL(), flags.ProjectRef)
 	fmt.Println("You can inspect your deployment in the Dashboard: " + url)
 	if !prune {
@@ -92,7 +98,7 @@ func GetFunctionSlugs(fsys afero.Fs) (slugs []string, err error) {
 	for slug := range utils.Config.Functions {
 		slugs = append(slugs, slug)
 	}
-	return slugs, nil
+	return utils.RemoveDuplicates(slugs), nil
 }
 
 func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) (config.FunctionConfig, error) {
