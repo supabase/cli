@@ -42,14 +42,18 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 			fp = filepath.Join(utils.CurrentDirAbs, fp)
 		}
 		dockerPath := utils.ToDockerPath(fp)
-		cmd = append(cmd, dockerPath)
-		binds[i] = fmt.Sprintf("%s:%s:ro", fp, dockerPath)
 		if workingDir == "" {
 			workingDir = dockerPath
 			if path.Ext(dockerPath) != "" {
 				workingDir = path.Dir(dockerPath)
 			}
 		}
+		relPath := dockerPath
+		if path.Ext(dockerPath) != "" {
+			relPath = path.Base(dockerPath)
+		}
+		cmd = append(cmd, relPath)
+		binds[i] = fmt.Sprintf("%s:%s:ro", fp, dockerPath)
 	}
 	if viper.GetBool("DEBUG") {
 		cmd = append(cmd, "--verbose")
