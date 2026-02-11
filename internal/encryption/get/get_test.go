@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/go-errors/errors"
 	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/testing/apitest"
@@ -13,40 +14,40 @@ import (
 )
 
 func TestGetRootKey(t *testing.T) {
+	project := apitest.RandomProjectRef()
+
 	t.Run("fetches project encryption key", func(t *testing.T) {
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
-		// Setup valid access token
-		token := apitest.RandomAccessToken(t)
-		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-		// Flush pending mocks after test execution
-		defer gock.OffAll()
+		t.Cleanup(apitest.MockPlatformAPI(t))
+		// Setup mock api
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/pgsodium").
 			Reply(http.StatusOK).
 			JSON(api.PgsodiumConfigResponse{RootKey: "test-key"})
 		// Run test
 		err := Run(context.Background(), project)
-		// Check error
 		assert.NoError(t, err)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("throws on invalid credentials", func(t *testing.T) {
-		// Setup valid project ref
-		project := apitest.RandomProjectRef()
-		// Setup valid access token
-		token := apitest.RandomAccessToken(t)
-		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-		// Flush pending mocks after test execution
-		defer gock.OffAll()
+	t.Run("throws error on network error", func(t *testing.T) {
+		errNetwork := errors.New("network error")
+		t.Cleanup(apitest.MockPlatformAPI(t))
+		// Setup mock api
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/pgsodium").
-			Reply(http.StatusForbidden)
+			ReplyError(errNetwork)
 		// Run test
 		err := Run(context.Background(), project)
-		// Check error
-		assert.ErrorContains(t, err, "Unexpected error retrieving project root key:")
-		assert.Empty(t, apitest.ListUnmatchedRequests())
+		assert.ErrorIs(t, err, errNetwork)
+	})
+
+	t.Run("throws error on service unavailable", func(t *testing.T) {
+		t.Cleanup(apitest.MockPlatformAPI(t))
+		// Setup mock api
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + project + "/pgsodium").
+			Reply(http.StatusServiceUnavailable)
+		// Run test
+		err := Run(context.Background(), project)
+		assert.ErrorContains(t, err, "unexpected get pgsodium config status 503:")
 	})
 }
