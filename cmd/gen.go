@@ -13,11 +13,11 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/gen/bearerjwt"
-	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/gen/signingkeys"
 	"github.com/supabase/cli/internal/gen/types"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/legacy/keys"
 	"github.com/supabase/cli/pkg/config"
 )
 
