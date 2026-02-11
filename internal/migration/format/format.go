@@ -20,63 +20,63 @@ import (
 )
 
 var (
-	rolesPath         = filepath.Join(utils.ClusterDir, "roles.sql")
-	extensionsPath    = filepath.Join(utils.ClusterDir, "extensions.sql")
-	foreignDWPath     = filepath.Join(utils.ClusterDir, "foreign_data_wrappers.sql")
-	publicationsPath  = filepath.Join(utils.ClusterDir, "publications.sql")
-	subscriptionsPath = filepath.Join(utils.ClusterDir, "subscriptions.sql")
-	eventTriggersPath = filepath.Join(utils.ClusterDir, "event_triggers.sql")
-	tablespacesPath   = filepath.Join(utils.ClusterDir, "tablespaces.sql")
-	variablesPath     = filepath.Join(utils.ClusterDir, "variables.sql")
-	unqualifiedPath   = filepath.Join(utils.SchemasDir, "unqualified.sql")
+	rolesPath         = filepath.Join(utils.Paths.ClusterDir, "roles.sql")
+	extensionsPath    = filepath.Join(utils.Paths.ClusterDir, "extensions.sql")
+	foreignDWPath     = filepath.Join(utils.Paths.ClusterDir, "foreign_data_wrappers.sql")
+	publicationsPath  = filepath.Join(utils.Paths.ClusterDir, "publications.sql")
+	subscriptionsPath = filepath.Join(utils.Paths.ClusterDir, "subscriptions.sql")
+	eventTriggersPath = filepath.Join(utils.Paths.ClusterDir, "event_triggers.sql")
+	tablespacesPath   = filepath.Join(utils.Paths.ClusterDir, "tablespaces.sql")
+	variablesPath     = filepath.Join(utils.Paths.ClusterDir, "variables.sql")
+	unqualifiedPath   = filepath.Join(utils.Paths.SchemasDir, "unqualified.sql")
 )
 
 func getSchemaPath(name string) string {
-	return filepath.Join(utils.SchemasDir, name, "schema.sql")
+	return filepath.Join(utils.Paths.SchemasDir, name, "schema.sql")
 }
 
 func getTypesPath(schema string) string {
-	return filepath.Join(utils.SchemasDir, schema, "types.sql")
+	return filepath.Join(utils.Paths.SchemasDir, schema, "types.sql")
 }
 
 func getSequencesPath(schema string) string {
-	return filepath.Join(utils.SchemasDir, schema, "sequences.sql")
+	return filepath.Join(utils.Paths.SchemasDir, schema, "sequences.sql")
 }
 
 func getTablePath(schema, name string) string {
-	return filepath.Join(utils.SchemasDir, schema, "tables", name+".sql")
+	return filepath.Join(utils.Paths.SchemasDir, schema, "tables", name+".sql")
 }
 
 func getForeignTablePath(schema, name string) string {
-	return filepath.Join(utils.SchemasDir, schema, "foreign_tables", name+".sql")
+	return filepath.Join(utils.Paths.SchemasDir, schema, "foreign_tables", name+".sql")
 }
 
 func getFunctionPath(schema, name string) string {
-	return filepath.Join(utils.SchemasDir, schema, "functions", name+".sql")
+	return filepath.Join(utils.Paths.SchemasDir, schema, "functions", name+".sql")
 }
 
 func getProcedurePath(schema, name string) string {
-	return filepath.Join(utils.SchemasDir, schema, "procedures", name+".sql")
+	return filepath.Join(utils.Paths.SchemasDir, schema, "procedures", name+".sql")
 }
 
 func getMaterializedViewPath(schema, name string) string {
-	return filepath.Join(utils.SchemasDir, schema, "materialized_views", name+".sql")
+	return filepath.Join(utils.Paths.SchemasDir, schema, "materialized_views", name+".sql")
 }
 
 func getViewPath(schema, name string) string {
-	return filepath.Join(utils.SchemasDir, schema, "views", name+".sql")
+	return filepath.Join(utils.Paths.SchemasDir, schema, "views", name+".sql")
 }
 
 func getPolicyPath(schema, name string) string {
-	return filepath.Join(utils.SchemasDir, schema, "policies", name+".sql")
+	return filepath.Join(utils.Paths.SchemasDir, schema, "policies", name+".sql")
 }
 
 func getDomainPath(schema, name string) string {
-	return filepath.Join(utils.SchemasDir, schema, "domains", name+".sql")
+	return filepath.Join(utils.Paths.SchemasDir, schema, "domains", name+".sql")
 }
 
 func getOperatorPath(schema, name string) string {
-	return filepath.Join(utils.SchemasDir, schema, "operators", name+".sql")
+	return filepath.Join(utils.Paths.SchemasDir, schema, "operators", name+".sql")
 }
 
 func getSequenceOrTablePath(schema, name string, seen map[string]string) string {
@@ -101,7 +101,7 @@ func WriteStructuredSchemas(ctx context.Context, sql io.Reader, fsys afero.Fs) e
 	if err != nil {
 		return err
 	}
-	for _, d := range []string{utils.ClusterDir, utils.SchemasDir} {
+	for _, d := range []string{utils.Paths.ClusterDir, utils.Paths.SchemasDir} {
 		if err := fsys.RemoveAll(d); err != nil {
 			return errors.Errorf("failed to remove directory: %w", err)
 		}
@@ -398,7 +398,7 @@ func WriteStructuredSchemas(ctx context.Context, sql io.Reader, fsys afero.Fs) e
 		}
 		if name == unqualifiedPath {
 			fmt.Fprintf(utils.GetDebugLogger(), "Unqualified (%T): %s\n", parsed[0], line)
-		} else if strings.HasPrefix(name, utils.SchemasDir) {
+		} else if strings.HasPrefix(name, utils.Paths.SchemasDir) {
 			schemaPaths = append(schemaPaths, name)
 			if filepath.Base(name) == "schema.sql" {
 				schema := filepath.Base(filepath.Dir(name))
@@ -678,7 +678,7 @@ var pattern = regexp.MustCompile(`(?s)\nschema_paths = \[(.*?)\]\n`)
 func appendConfig(fsys afero.Fs) error {
 	lines := []string{"\nschema_paths = ["}
 	for _, fp := range utils.Config.Db.Migrations.SchemaPaths {
-		relPath, err := filepath.Rel(utils.SupabaseDirPath, fp)
+		relPath, err := filepath.Rel(utils.Paths.SupabaseDirPath, fp)
 		if err != nil {
 			return errors.Errorf("failed to resolve path: %w", err)
 		}
@@ -687,15 +687,15 @@ func appendConfig(fsys afero.Fs) error {
 	lines = append(lines, "]\n")
 	schemaPaths := strings.Join(lines, "\n")
 	// Attempt in-line config replacement
-	data, err := afero.ReadFile(fsys, utils.ConfigPath)
+	data, err := afero.ReadFile(fsys, utils.Paths.ConfigPath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return errors.Errorf("failed to read config: %w", err)
 	}
 	if newConfig := pattern.ReplaceAllLiteral(data, []byte(schemaPaths)); bytes.Contains(newConfig, []byte(schemaPaths)) {
-		return utils.WriteFile(utils.ConfigPath, newConfig, fsys)
+		return utils.WriteFile(utils.Paths.ConfigPath, newConfig, fsys)
 	}
 	// Fallback to append
-	f, err := fsys.OpenFile(utils.ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	f, err := fsys.OpenFile(utils.Paths.ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
 		return errors.Errorf("failed to open config: %w", err)
 	}

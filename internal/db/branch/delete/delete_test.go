@@ -17,7 +17,7 @@ func TestBranchDir(t *testing.T) {
 	t.Run("removes a branch directory", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(filepath.Dir(utils.CurrBranchPath), "test-branch")
+		path := filepath.Join(filepath.Dir(utils.Paths.CurrBranchPath), "test-branch")
 		require.NoError(t, fsys.Mkdir(path, 0755))
 		// Run test
 		assert.NoError(t, deleteBranchDir("test-branch", fsys))
@@ -30,7 +30,7 @@ func TestBranchDir(t *testing.T) {
 	t.Run("branch is current", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.CurrBranchPath, []byte("main"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.CurrBranchPath, []byte("main"), 0644))
 		// Run test
 		assert.Error(t, deleteBranchDir("main", fsys))
 	})
@@ -46,7 +46,7 @@ func TestBranchDir(t *testing.T) {
 	t.Run("branch permission denied", func(t *testing.T) {
 		// Setup read-only fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(filepath.Dir(utils.CurrBranchPath), "test-branch")
+		path := filepath.Join(filepath.Dir(utils.Paths.CurrBranchPath), "test-branch")
 		require.NoError(t, fsys.Mkdir(path, 0755))
 		// Run test
 		assert.Error(t, deleteBranchDir("test-branch", afero.NewReadOnlyFs(fsys)))

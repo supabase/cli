@@ -123,7 +123,7 @@ To enable JWT signing keys in your local project:
 
 [auth]
 signing_keys_path = "./signing_key.json"
-`, utils.Bold(filepath.Join(utils.SupabaseDirPath, "signing_key.json")), utils.Bold(utils.ConfigPath))
+`, utils.Bold(filepath.Join(utils.Paths.SupabaseDirPath, "signing_key.json")), utils.Bold(utils.Paths.ConfigPath))
 		return nil
 	}
 

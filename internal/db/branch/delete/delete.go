@@ -46,7 +46,7 @@ func deleteBranchDir(branch string, fsys afero.Fs) error {
 		return errors.New("Cannot delete branch " + utils.Aqua(branch) + ": branch name is reserved.")
 	}
 
-	branchPath := filepath.Join(filepath.Dir(utils.CurrBranchPath), branch)
+	branchPath := filepath.Join(filepath.Dir(utils.Paths.CurrBranchPath), branch)
 	if _, err := afero.ReadDir(fsys, branchPath); err != nil {
 		return errors.New("Branch " + utils.Aqua(branch) + " does not exist.")
 	}

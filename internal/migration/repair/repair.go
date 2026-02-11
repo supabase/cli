@@ -88,7 +88,7 @@ func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version []string,
 }
 
 func GetMigrationFile(version string, fsys afero.Fs) (string, error) {
-	path := filepath.Join(utils.MigrationsDir, version+"_*.sql")
+	path := filepath.Join(utils.Paths.MigrationsDir, version+"_*.sql")
 	matches, err := afero.Glob(fsys, path)
 	if err != nil {
 		return "", errors.Errorf("failed to glob migration files: %w", err)

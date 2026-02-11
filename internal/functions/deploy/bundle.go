@@ -33,7 +33,7 @@ func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 		return meta, errors.Errorf("failed to get working directory: %w", err)
 	}
 	// BitBucket pipelines require docker bind mounts to be world writable
-	hostOutputDir := filepath.Join(utils.TempDir, fmt.Sprintf(".output_%s", slug))
+	hostOutputDir := filepath.Join(utils.Paths.TempDir, fmt.Sprintf(".output_%s", slug))
 	if err := b.fsys.MkdirAll(hostOutputDir, 0777); err != nil {
 		return meta, errors.Errorf("failed to mkdir: %w", err)
 	}
@@ -43,7 +43,7 @@ func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 		}
 	}()
 	// Create bind mounts
-	binds, err := GetBindMounts(cwd, utils.FunctionsDir, hostOutputDir, entrypoint, importMap, b.fsys)
+	binds, err := GetBindMounts(cwd, utils.Paths.FunctionsDir, hostOutputDir, entrypoint, importMap, b.fsys)
 	if err != nil {
 		return meta, err
 	}

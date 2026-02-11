@@ -322,7 +322,7 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 			if endpoint, ok := networkingConfig.EndpointsConfig[NetId]; ok && len(endpoint.Aliases) > 0 {
 				name = endpoint.Aliases[0]
 			}
-			CmdSuggestion += fmt.Sprintf("\n%s a different %s port in %s", prefix, name, Bold(ConfigPath))
+			CmdSuggestion += fmt.Sprintf("\n%s a different %s port in %s", prefix, name, Bold(Paths.ConfigPath))
 		}
 		err = errors.Errorf("failed to start docker container: %w", err)
 	}

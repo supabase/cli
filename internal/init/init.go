@@ -44,7 +44,7 @@ func Run(ctx context.Context, fsys afero.Fs, interactive bool, params utils.Init
 
 	// 2. Append to `.gitignore`.
 	if utils.IsGitRepo() {
-		if err := updateGitIgnore(utils.GitIgnorePath, fsys); err != nil {
+		if err := updateGitIgnore(utils.Paths.GitIgnorePath, fsys); err != nil {
 			return err
 		}
 	}

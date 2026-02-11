@@ -21,7 +21,7 @@ func TestUnlinkCommand(t *testing.T) {
 	t.Run("unlinks project", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.ProjectRefPath, []byte(project), 0644))
 		// Save database password
 		require.NoError(t, credentials.StoreProvider.Set(project, "test"))
 		// Run test
@@ -29,7 +29,7 @@ func TestUnlinkCommand(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		// Validate file does not exist
-		exists, err := afero.Exists(fsys, utils.ProjectRefPath)
+		exists, err := afero.Exists(fsys, utils.Paths.ProjectRefPath)
 		assert.NoError(t, err)
 		assert.False(t, exists)
 		// Check credentials does not exist
@@ -40,7 +40,7 @@ func TestUnlinkCommand(t *testing.T) {
 	t.Run("unlinks project without credentials", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.ProjectRefPath, []byte(project), 0644))
 		// Run test
 		err := Run(context.Background(), fsys)
 		// Check error
@@ -59,7 +59,7 @@ func TestUnlinkCommand(t *testing.T) {
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.ProjectRefPath, []byte(project), 0644))
 		// Run test
 		err := Run(context.Background(), afero.NewReadOnlyFs(fsys))
 		// Check error

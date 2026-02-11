@@ -27,7 +27,7 @@ public = false`
 		require.NoError(t, toml.Unmarshal([]byte(config), &utils.Config.Storage.Buckets))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		bucketPath := filepath.Join(utils.SupabaseDirPath, "images")
+		bucketPath := filepath.Join(utils.Paths.SupabaseDirPath, "images")
 		require.NoError(t, fsys.Mkdir(bucketPath, 0755))
 		// Setup mock api
 		defer gock.OffAll()

@@ -47,7 +47,7 @@ func TestCreateCommand(t *testing.T) {
 	t.Run("throws error on network disconnected", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(flags.ProjectRef), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.ProjectRefPath, []byte(flags.ProjectRef), 0644))
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
@@ -64,7 +64,7 @@ func TestCreateCommand(t *testing.T) {
 	t.Run("throws error on service unavailable", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(flags.ProjectRef), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.ProjectRefPath, []byte(flags.ProjectRef), 0644))
 		// Setup mock api
 		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).

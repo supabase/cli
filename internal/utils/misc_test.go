@@ -30,7 +30,7 @@ func TestProjectRoot(t *testing.T) {
 	t.Run("stops at root dir", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		_, err := fsys.Create(filepath.Join(root, ConfigPath))
+		_, err := fsys.Create(filepath.Join(root, Paths.ConfigPath))
 		require.NoError(t, err)
 		// Run test
 		cwd := filepath.Join(root, "home", "user", "project")
@@ -42,7 +42,7 @@ func TestProjectRoot(t *testing.T) {
 	t.Run("stops at closest parent", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		_, err := fsys.Create(filepath.Join(root, "supabase", ConfigPath))
+		_, err := fsys.Create(filepath.Join(root, "supabase", Paths.ConfigPath))
 		require.NoError(t, err)
 		// Run test
 		cwd := filepath.Join(root, "supabase", "supabase", "functions")

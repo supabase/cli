@@ -21,11 +21,11 @@ func TestInitCommand(t *testing.T) {
 		// Run test (non-interactive mode)
 		assert.NoError(t, Run(context.Background(), fsys, false, utils.InitParams{}))
 		// Validate generated config.toml
-		exists, err := afero.Exists(fsys, utils.ConfigPath)
+		exists, err := afero.Exists(fsys, utils.Paths.ConfigPath)
 		assert.NoError(t, err)
 		assert.True(t, exists)
 		// Validate generated .gitignore
-		exists, err = afero.Exists(fsys, utils.GitIgnorePath)
+		exists, err = afero.Exists(fsys, utils.Paths.GitIgnorePath)
 		assert.NoError(t, err)
 		assert.True(t, exists)
 		// Validate vscode settings file isn't generated
@@ -44,7 +44,7 @@ func TestInitCommand(t *testing.T) {
 	t.Run("throws error when config file exists", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &afero.MemMapFs{}
-		_, err := fsys.Create(utils.ConfigPath)
+		_, err := fsys.Create(utils.Paths.ConfigPath)
 		require.NoError(t, err)
 		// Run test
 		assert.Error(t, Run(context.Background(), fsys, false, utils.InitParams{}))
@@ -52,7 +52,7 @@ func TestInitCommand(t *testing.T) {
 
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: utils.ConfigPath}
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.Paths.ConfigPath}
 		// Run test
 		err := Run(context.Background(), fsys, false, utils.InitParams{})
 		// Check error

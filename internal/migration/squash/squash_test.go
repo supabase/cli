@@ -46,8 +46,8 @@ func TestSquashCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, flags.LoadConfig(fsys))
 		paths := []string{
-			filepath.Join(utils.MigrationsDir, "0_init.sql"),
-			filepath.Join(utils.MigrationsDir, "1_target.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "0_init.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "1_target.sql"),
 		}
 		sql := "create schema test"
 		require.NoError(t, afero.WriteFile(fsys, paths[0], []byte(sql), 0644))
@@ -113,7 +113,7 @@ func TestSquashCommand(t *testing.T) {
 	t.Run("baselines migration history", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_init.sql")
+		path := filepath.Join(utils.Paths.MigrationsDir, "0_init.sql")
 		sql := "create schema test"
 		require.NoError(t, afero.WriteFile(fsys, path, []byte(sql), 0644))
 		// Setup mock postgres
@@ -155,7 +155,7 @@ func TestSquashCommand(t *testing.T) {
 func TestSquashVersion(t *testing.T) {
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.Paths.MigrationsDir}
 		// Run test
 		err := squashToVersion(context.Background(), "0", fsys)
 		// Check error
@@ -174,9 +174,9 @@ func TestSquashVersion(t *testing.T) {
 	t.Run("throws error on shadow create failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_init.sql")
+		path := filepath.Join(utils.Paths.MigrationsDir, "0_init.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
-		path = filepath.Join(utils.MigrationsDir, "1_target.sql")
+		path = filepath.Join(utils.Paths.MigrationsDir, "1_target.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
@@ -278,7 +278,7 @@ func TestSquashMigrations(t *testing.T) {
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_init.sql")
+		path := filepath.Join(utils.Paths.MigrationsDir, "0_init.sql")
 		sql := "create schema test"
 		require.NoError(t, afero.WriteFile(fsys, path, []byte(sql), 0644))
 		// Setup mock docker
@@ -330,8 +330,8 @@ func TestBaselineMigration(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		paths := []string{
-			filepath.Join(utils.MigrationsDir, "0_init.sql"),
-			filepath.Join(utils.MigrationsDir, "1_target.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "0_init.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "1_target.sql"),
 		}
 		sql := "create schema test"
 		require.NoError(t, afero.WriteFile(fsys, paths[0], []byte(sql), 0644))
@@ -362,7 +362,7 @@ func TestBaselineMigration(t *testing.T) {
 	t.Run("throws error on query failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_init.sql")
+		path := filepath.Join(utils.Paths.MigrationsDir, "0_init.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()

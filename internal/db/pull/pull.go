@@ -29,7 +29,7 @@ import (
 var (
 	errMissing  = errors.New("No migrations found")
 	errInSync   = errors.New("No schema changes found")
-	errConflict = errors.Errorf("The remote database's migration history does not match local files in %s directory.", utils.MigrationsDir)
+	errConflict = errors.Errorf("The remote database's migration history does not match local files in %s directory.", utils.Paths.MigrationsDir)
 )
 
 func Run(ctx context.Context, schema []string, config pgconn.Config, name string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {

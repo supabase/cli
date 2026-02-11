@@ -30,7 +30,7 @@ func Run(migrationName string, stdin afero.File, fsys afero.Fs) error {
 
 func GetMigrationPath(timestamp, name string) string {
 	fullName := fmt.Sprintf("%s_%s.sql", timestamp, name)
-	return filepath.Join(utils.MigrationsDir, fullName)
+	return filepath.Join(utils.Paths.MigrationsDir, fullName)
 }
 
 func CopyStdinIfExists(stdin afero.File, dst io.Writer) error {

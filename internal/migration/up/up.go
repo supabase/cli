@@ -35,7 +35,7 @@ func GetPendingMigrations(ctx context.Context, includeAll bool, conn *pgx.Conn, 
 	if err != nil {
 		return nil, err
 	}
-	localMigrations, err := migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys))
+	localMigrations, err := migration.ListLocalMigrations(utils.Paths.MigrationsDir, afero.NewIOFS(fsys))
 	if err != nil {
 		return nil, err
 	}

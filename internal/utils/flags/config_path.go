@@ -9,7 +9,12 @@ import (
 
 func LoadConfig(fsys afero.Fs) error {
 	utils.Config.ProjectId = ProjectRef
-	if err := utils.Config.Load("", utils.NewRootFS(fsys)); err != nil {
+	paths, err := utils.ResolveProjectPaths(fsys)
+	if err != nil {
+		return err
+	}
+	utils.Paths = paths
+	if err := utils.Config.Load(paths.ConfigPath, utils.NewRootFS(fsys)); err != nil {
 		return err
 	}
 	utils.UpdateDockerIds()

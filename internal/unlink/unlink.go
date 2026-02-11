@@ -13,7 +13,7 @@ import (
 )
 
 func Run(ctx context.Context, fsys afero.Fs) error {
-	if projectRef, err := afero.ReadFile(fsys, utils.ProjectRefPath); errors.Is(err, os.ErrNotExist) {
+	if projectRef, err := afero.ReadFile(fsys, utils.Paths.ProjectRefPath); errors.Is(err, os.ErrNotExist) {
 		return errors.New(utils.ErrNotLinked)
 	} else if err != nil {
 		return errors.Errorf("failed to load project ref: %w", err)
@@ -28,7 +28,7 @@ func Unlink(projectRef string, fsys afero.Fs) error {
 	fmt.Fprintln(os.Stderr, "Unlinking project:", projectRef)
 	var allErrors []error
 	// Remove temp directory
-	if err := fsys.RemoveAll(utils.TempDir); err != nil {
+	if err := fsys.RemoveAll(utils.Paths.TempDir); err != nil {
 		wrapped := errors.Errorf("failed to remove temp directory: %w", err)
 		allErrors = append(allErrors, wrapped)
 	}

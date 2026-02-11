@@ -100,7 +100,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 		return err
 	}
 	link.LinkServices(ctx, flags.ProjectRef, tenant.NewApiKey(keys).Anon, false, fsys)
-	if err := utils.WriteFile(utils.ProjectRefPath, []byte(flags.ProjectRef), fsys); err != nil {
+	if err := utils.WriteFile(utils.Paths.ProjectRefPath, []byte(flags.ProjectRef), fsys); err != nil {
 		return err
 	}
 	// 5. Wait for project healthy

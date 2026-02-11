@@ -21,7 +21,7 @@ func TestNewCommand(t *testing.T) {
 		// Run test
 		assert.NoError(t, Run("test_migrate", stdin, fsys))
 		// Validate output
-		files, err := afero.ReadDir(fsys, utils.MigrationsDir)
+		files, err := afero.ReadDir(fsys, utils.Paths.MigrationsDir)
 		assert.NoError(t, err)
 		assert.Equal(t, 1, len(files))
 		assert.Regexp(t, `([0-9]{14})_test_migrate\.sql`, files[0].Name())
@@ -40,10 +40,10 @@ func TestNewCommand(t *testing.T) {
 		// Run test
 		assert.NoError(t, Run("test_migrate", r, fsys))
 		// Validate output
-		files, err := afero.ReadDir(fsys, utils.MigrationsDir)
+		files, err := afero.ReadDir(fsys, utils.Paths.MigrationsDir)
 		assert.NoError(t, err)
 		assert.Equal(t, 1, len(files))
-		path := filepath.Join(utils.MigrationsDir, files[0].Name())
+		path := filepath.Join(utils.Paths.MigrationsDir, files[0].Name())
 		contents, err := afero.ReadFile(fsys, path)
 		assert.NoError(t, err)
 		assert.Equal(t, []byte(script), contents)

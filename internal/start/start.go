@@ -1147,7 +1147,7 @@ EOF
 		}
 
 		// Mount snippets directory for Studio to access
-		hostSnippetsPath := filepath.Join(workdir, utils.SnippetsDir)
+		hostSnippetsPath := filepath.Join(workdir, utils.Paths.SnippetsDir)
 		containerSnippetsPath := utils.ToDockerPath(hostSnippetsPath)
 		binds = append(binds, fmt.Sprintf("%s:%s:rw", hostSnippetsPath, containerSnippetsPath))
 		binds = utils.RemoveDuplicates(binds)
@@ -1169,7 +1169,7 @@ EOF
 					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
 					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
 					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
-					"EDGE_FUNCTIONS_MANAGEMENT_FOLDER=" + utils.ToDockerPath(filepath.Join(workdir, utils.FunctionsDir)),
+					"EDGE_FUNCTIONS_MANAGEMENT_FOLDER=" + utils.ToDockerPath(filepath.Join(workdir, utils.Paths.FunctionsDir)),
 					"SNIPPETS_MANAGEMENT_FOLDER=" + containerSnippetsPath,
 					// Ref: https://github.com/vercel/next.js/issues/51684#issuecomment-1612834913
 					"HOSTNAME=0.0.0.0",

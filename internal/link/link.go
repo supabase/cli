@@ -32,7 +32,7 @@ func Run(ctx context.Context, projectRef string, skipPooler bool, fsys afero.Fs,
 	}
 	LinkServices(ctx, projectRef, keys.ServiceRole, skipPooler, fsys)
 	// 3. Save project ref
-	return utils.WriteFile(utils.ProjectRefPath, []byte(projectRef), fsys)
+	return utils.WriteFile(utils.Paths.ProjectRefPath, []byte(projectRef), fsys)
 }
 
 func LinkServices(ctx context.Context, projectRef, serviceKey string, skipPooler bool, fsys afero.Fs) {
@@ -47,7 +47,7 @@ func LinkServices(ctx context.Context, projectRef, serviceKey string, skipPooler
 		func() error {
 			if skipPooler {
 				utils.Config.Db.Pooler.ConnectionString = ""
-				return fsys.RemoveAll(utils.PoolerUrlPath)
+				return fsys.RemoveAll(utils.Paths.PoolerUrlPath)
 			}
 			return linkPooler(ctx, projectRef, fsys)
 		},
@@ -83,7 +83,7 @@ func linkPostgrestVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.
 	if err != nil {
 		return err
 	}
-	return utils.WriteFile(utils.RestVersionPath, []byte(version), fsys)
+	return utils.WriteFile(utils.Paths.RestVersionPath, []byte(version), fsys)
 }
 
 func linkGotrue(ctx context.Context, projectRef string) error {
@@ -102,7 +102,7 @@ func linkGotrueVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs)
 	if err != nil {
 		return err
 	}
-	return utils.WriteFile(utils.GotrueVersionPath, []byte(version), fsys)
+	return utils.WriteFile(utils.Paths.GotrueVersionPath, []byte(version), fsys)
 }
 
 func linkStorage(ctx context.Context, projectRef string, fsys afero.Fs) error {
@@ -113,7 +113,7 @@ func linkStorage(ctx context.Context, projectRef string, fsys afero.Fs) error {
 		return errors.Errorf("unexpected Storage config status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 	utils.Config.Storage.FromRemoteStorageConfig(*resp.JSON200)
-	return utils.WriteFile(utils.StorageMigrationPath, []byte(utils.Config.Storage.TargetMigration), fsys)
+	return utils.WriteFile(utils.Paths.StorageMigrationPath, []byte(utils.Config.Storage.TargetMigration), fsys)
 }
 
 func linkStorageVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs) error {
@@ -121,7 +121,7 @@ func linkStorageVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs
 	if err != nil {
 		return err
 	}
-	return utils.WriteFile(utils.StorageVersionPath, []byte(version), fsys)
+	return utils.WriteFile(utils.Paths.StorageVersionPath, []byte(version), fsys)
 }
 
 const GET_LATEST_STORAGE_MIGRATION = "SELECT name FROM storage.migrations ORDER BY id DESC LIMIT 1"
@@ -131,7 +131,7 @@ func linkStorageMigration(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) er
 	if err := conn.QueryRow(ctx, GET_LATEST_STORAGE_MIGRATION).Scan(&name); err != nil {
 		return errors.Errorf("failed to fetch storage migration: %w", err)
 	}
-	return utils.WriteFile(utils.StorageMigrationPath, []byte(name), fsys)
+	return utils.WriteFile(utils.Paths.StorageMigrationPath, []byte(name), fsys)
 }
 
 func linkDatabaseSettings(ctx context.Context, projectRef string) error {
@@ -182,7 +182,7 @@ func linkPooler(ctx context.Context, projectRef string, fsys afero.Fs) error {
 		return err
 	}
 	updatePoolerConfig(primary)
-	return utils.WriteFile(utils.PoolerUrlPath, []byte(utils.Config.Db.Pooler.ConnectionString), fsys)
+	return utils.WriteFile(utils.Paths.PoolerUrlPath, []byte(utils.Config.Db.Pooler.ConnectionString), fsys)
 }
 
 func updatePoolerConfig(config api.SupavisorConfigResponse) {
@@ -246,8 +246,8 @@ func linkPostgresVersion(version string, fsys afero.Fs) error {
 		fmt.Fprintf(os.Stderr, `Update your %s to fix it:
 [db]
 major_version = %d
-`, utils.Bold(utils.ConfigPath), majorVersion)
+`, utils.Bold(utils.Paths.ConfigPath), majorVersion)
 	}
 	utils.Config.Db.MajorVersion = uint(majorVersion)
-	return utils.WriteFile(utils.PostgresVersionPath, []byte(version), fsys)
+	return utils.WriteFile(utils.Paths.PostgresVersionPath, []byte(version), fsys)
 }

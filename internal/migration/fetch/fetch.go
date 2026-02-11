@@ -15,13 +15,13 @@ import (
 )
 
 func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	if err := utils.MkdirIfNotExistFS(fsys, utils.MigrationsDir); err != nil {
+	if err := utils.MkdirIfNotExistFS(fsys, utils.Paths.MigrationsDir); err != nil {
 		return err
 	}
-	if empty, err := afero.IsEmpty(fsys, utils.MigrationsDir); err != nil {
+	if empty, err := afero.IsEmpty(fsys, utils.Paths.MigrationsDir); err != nil {
 		return errors.Errorf("failed to read migrations: %w", err)
 	} else if !empty {
-		title := fmt.Sprintf("Do you want to overwrite existing files in %s directory?", utils.Bold(utils.MigrationsDir))
+		title := fmt.Sprintf("Do you want to overwrite existing files in %s directory?", utils.Bold(utils.Paths.MigrationsDir))
 		if shouldOverwrite, err := utils.NewConsole().PromptYesNo(ctx, title, true); err != nil {
 			return err
 		} else if !shouldOverwrite {
@@ -34,7 +34,7 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 	}
 	for _, r := range result {
 		name := fmt.Sprintf("%s_%s.sql", r.Version, r.Name)
-		path := filepath.Join(utils.MigrationsDir, name)
+		path := filepath.Join(utils.Paths.MigrationsDir, name)
 		contents := strings.Join(r.Statements, ";\n") + ";\n"
 		if err := afero.WriteFile(fsys, path, []byte(contents), 0644); err != nil {
 			return errors.Errorf("failed to write migration: %w", err)

@@ -29,9 +29,9 @@ func TestMigrationsDown(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		files := []string{
-			filepath.Join(utils.MigrationsDir, "20221201000000_test.sql"),
-			filepath.Join(utils.MigrationsDir, "20221201000001_test.sql"),
-			filepath.Join(utils.MigrationsDir, "20221201000002_test.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "20221201000000_test.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "20221201000001_test.sql"),
+			filepath.Join(utils.Paths.MigrationsDir, "20221201000002_test.sql"),
 		}
 		for _, path := range files {
 			require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
@@ -80,7 +80,7 @@ func TestResetRemote(t *testing.T) {
 	t.Run("resets remote database", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_schema.sql")
+		path := filepath.Join(utils.Paths.MigrationsDir, "0_schema.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, nil, 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -101,9 +101,9 @@ func TestResetRemote(t *testing.T) {
 	t.Run("resets remote database with seed config disabled", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_schema.sql")
+		path := filepath.Join(utils.Paths.MigrationsDir, "0_schema.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, nil, 0644))
-		seedPath := filepath.Join(utils.SupabaseDirPath, "seed.sql")
+		seedPath := filepath.Join(utils.Paths.SupabaseDirPath, "seed.sql")
 		// Will raise an error when seeding
 		require.NoError(t, afero.WriteFile(fsys, seedPath, []byte("INSERT INTO test_table;"), 0644))
 		// Setup mock postgres

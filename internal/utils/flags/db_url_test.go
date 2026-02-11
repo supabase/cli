@@ -70,11 +70,11 @@ func TestParseDatabaseConfig(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 
 		project := apitest.RandomProjectRef()
-		err = afero.WriteFile(fsys, utils.ProjectRefPath, []byte(project), 0644)
+		err = afero.WriteFile(fsys, utils.Paths.ProjectRefPath, []byte(project), 0644)
 		require.NoError(t, err)
 
 		dbURL := fmt.Sprintf("postgres://postgres:postgres@db.%s.supabase.co:6543/postgres", project)
-		err = afero.WriteFile(fsys, utils.PoolerUrlPath, []byte(dbURL), 0644)
+		err = afero.WriteFile(fsys, utils.Paths.PoolerUrlPath, []byte(dbURL), 0644)
 		require.NoError(t, err)
 
 		viper.Set("DB_PASSWORD", "test")

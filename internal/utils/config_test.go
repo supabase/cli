@@ -67,7 +67,7 @@ func TestInitConfig(t *testing.T) {
 		err := InitConfig(params, fsys)
 
 		assert.NoError(t, err)
-		exists, err := afero.Exists(fsys, ConfigPath)
+		exists, err := afero.Exists(fsys, Paths.ConfigPath)
 		assert.NoError(t, err)
 		assert.True(t, exists)
 	})
@@ -82,14 +82,14 @@ func TestInitConfig(t *testing.T) {
 		err := InitConfig(params, fsys)
 
 		assert.NoError(t, err)
-		content, err := afero.ReadFile(fsys, ConfigPath)
+		content, err := afero.ReadFile(fsys, Paths.ConfigPath)
 		assert.NoError(t, err)
 		assert.Contains(t, string(content), "15.1.0.150")
 	})
 
 	t.Run("fails if config exists and no overwrite", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
-		err := afero.WriteFile(fsys, ConfigPath, []byte("existing"), 0644)
+		err := afero.WriteFile(fsys, Paths.ConfigPath, []byte("existing"), 0644)
 		require.NoError(t, err)
 		params := InitParams{
 			ProjectId: "test-project",
@@ -102,7 +102,7 @@ func TestInitConfig(t *testing.T) {
 
 	t.Run("overwrites existing config when specified", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
-		err := afero.WriteFile(fsys, ConfigPath, []byte("existing"), 0644)
+		err := afero.WriteFile(fsys, Paths.ConfigPath, []byte("existing"), 0644)
 		require.NoError(t, err)
 		params := InitParams{
 			ProjectId: "test-project",
@@ -112,7 +112,7 @@ func TestInitConfig(t *testing.T) {
 		err = InitConfig(params, fsys)
 
 		assert.NoError(t, err)
-		content, err := afero.ReadFile(fsys, ConfigPath)
+		content, err := afero.ReadFile(fsys, Paths.ConfigPath)
 		assert.NoError(t, err)
 		assert.NotEqual(t, "existing", string(content))
 	})

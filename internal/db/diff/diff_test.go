@@ -87,10 +87,10 @@ func TestRun(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 		// Check diff file
-		files, err := afero.ReadDir(fsys, utils.MigrationsDir)
+		files, err := afero.ReadDir(fsys, utils.Paths.MigrationsDir)
 		assert.NoError(t, err)
 		assert.Equal(t, 1, len(files))
-		diffPath := filepath.Join(utils.MigrationsDir, files[0].Name())
+		diffPath := filepath.Join(utils.Paths.MigrationsDir, files[0].Name())
 		contents, err := afero.ReadFile(fsys, diffPath)
 		assert.NoError(t, err)
 		assert.Equal(t, []byte(diff), contents)
@@ -122,7 +122,7 @@ func TestMigrateShadow(t *testing.T) {
 		utils.InitialSchemaPg14Sql = "create schema private"
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		path := filepath.Join(utils.Paths.MigrationsDir, "0_test.sql")
 		sql := "create schema test"
 		require.NoError(t, afero.WriteFile(fsys, path, []byte(sql), 0644))
 		// Setup mock postgres
@@ -162,7 +162,7 @@ func TestMigrateShadow(t *testing.T) {
 
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.Paths.MigrationsDir}
 		// Run test
 		err := MigrateShadowDatabase(context.Background(), "", fsys)
 		// Check error
@@ -278,7 +278,7 @@ create schema public`)
 	t.Run("throws error on failure to diff target", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		path := filepath.Join(utils.Paths.MigrationsDir, "0_test.sql")
 		sql := "create schema test"
 		require.NoError(t, afero.WriteFile(fsys, path, []byte(sql), 0644))
 		// Setup mock docker
@@ -346,10 +346,10 @@ func TestDropStatements(t *testing.T) {
 
 func TestLoadSchemas(t *testing.T) {
 	expected := []string{
-		filepath.Join(utils.SchemasDir, "comment", "model.sql"),
-		filepath.Join(utils.SchemasDir, "model.sql"),
-		filepath.Join(utils.SchemasDir, "reaction", "dislike", "model.sql"),
-		filepath.Join(utils.SchemasDir, "reaction", "like", "model.sql"),
+		filepath.Join(utils.Paths.SchemasDir, "comment", "model.sql"),
+		filepath.Join(utils.Paths.SchemasDir, "model.sql"),
+		filepath.Join(utils.Paths.SchemasDir, "reaction", "dislike", "model.sql"),
+		filepath.Join(utils.Paths.SchemasDir, "reaction", "like", "model.sql"),
 	}
 	fsys := afero.NewMemMapFs()
 	for _, fp := range expected {

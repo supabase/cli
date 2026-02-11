@@ -105,7 +105,7 @@ func downloadFunction(ctx context.Context, projectRef, slug, extractScriptPath s
 	}
 
 	resBuf := bytes.NewReader(resp.Body)
-	funcDir := filepath.Join(utils.FunctionsDir, slug)
+	funcDir := filepath.Join(utils.Paths.FunctionsDir, slug)
 	args := []string{"run", "-A", extractScriptPath, funcDir, *meta.EntrypointPath}
 	cmd := exec.CommandContext(ctx, denoPath, args...)
 	var errBuf bytes.Buffer
@@ -208,8 +208,8 @@ func downloadOne(ctx context.Context, slug, projectRef string, fsys afero.Fs) (s
 		r = brotli.NewReader(resp.Body)
 	}
 	// Create temp file to store downloaded eszip
-	eszipPath := filepath.Join(utils.TempDir, fmt.Sprintf("output_%s.eszip", slug))
-	if err := utils.MkdirIfNotExistFS(fsys, utils.TempDir); err != nil {
+	eszipPath := filepath.Join(utils.Paths.TempDir, fmt.Sprintf("output_%s.eszip", slug))
+	if err := utils.MkdirIfNotExistFS(fsys, utils.Paths.TempDir); err != nil {
 		return "", err
 	}
 	if err := afero.WriteReader(fsys, eszipPath, r); err != nil {
@@ -219,7 +219,7 @@ func downloadOne(ctx context.Context, slug, projectRef string, fsys afero.Fs) (s
 }
 
 func extractOne(ctx context.Context, slug, eszipPath string) error {
-	hostFuncDirPath, err := filepath.Abs(filepath.Join(utils.FunctionsDir, slug))
+	hostFuncDirPath, err := filepath.Abs(filepath.Join(utils.Paths.FunctionsDir, slug))
 	if err != nil {
 		return errors.Errorf("failed to resolve absolute path: %w", err)
 	}
@@ -281,7 +281,7 @@ func suggestDenoV2() string {
 
 [edge_runtime]
 deno_version = 2
-`, utils.Bold(utils.ConfigPath))
+`, utils.Bold(utils.Paths.ConfigPath))
 }
 
 func suggestLegacyBundle(slug string) string {
@@ -332,7 +332,7 @@ func downloadWithServerSideUnbundle(ctx context.Context, slug, projectRef string
 	fmt.Fprintln(utils.GetDebugLogger(), "Using entrypoint path:", metadata.EntrypointPath)
 
 	// Root directory on disk: supabase/functions/<slug>
-	funcDir := filepath.Join(utils.FunctionsDir, slug)
+	funcDir := filepath.Join(utils.Paths.FunctionsDir, slug)
 	for _, data := range form.File {
 		for _, file := range data {
 			if err := saveFile(file, metadata.EntrypointPath, funcDir, fsys); err != nil {

@@ -29,9 +29,9 @@ func TestServeCommand(t *testing.T) {
 	t.Run("serves all functions", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, testConfig, 0644))
-		require.NoError(t, afero.WriteFile(fsys, utils.FallbackEnvFilePath, []byte{}, 0644))
-		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.ConfigPath, testConfig, 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.FallbackEnvFilePath, []byte{}, 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.FallbackImportMapPath, []byte("{}"), 0644))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -55,7 +55,7 @@ func TestServeCommand(t *testing.T) {
 	t.Run("throws error on malformed config", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, utils.Paths.ConfigPath, []byte("malformed"), 0644))
 		// Run test
 		err := Run(context.Background(), "", nil, "", RuntimeOption{}, fsys)
 		// Check error
@@ -100,7 +100,7 @@ func TestServeCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.InitConfig(utils.InitParams{ProjectId: "test"}, fsys))
 		require.NoError(t, afero.WriteFile(fsys, ".env", []byte{}, 0644))
-		entrypoint := filepath.Join(utils.FunctionsDir, "hello", "index.ts")
+		entrypoint := filepath.Join(utils.Paths.FunctionsDir, "hello", "index.ts")
 		require.NoError(t, afero.WriteFile(fsys, entrypoint, []byte{}, 0644))
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))

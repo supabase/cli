@@ -48,7 +48,7 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 	isFirstFunction := len(existingSlugs) == 0
 
 	// 2. Create new function.
-	funcDir := filepath.Join(utils.FunctionsDir, slug)
+	funcDir := filepath.Join(utils.Paths.FunctionsDir, slug)
 	if err := utils.MkdirIfNotExistFS(fsys, funcDir); err != nil {
 		return err
 	}
@@ -80,7 +80,7 @@ func Run(ctx context.Context, slug string, fsys afero.Fs) error {
 }
 
 func createEntrypointFile(slug string, fsys afero.Fs) error {
-	entrypointPath := filepath.Join(utils.FunctionsDir, slug, "index.ts")
+	entrypointPath := filepath.Join(utils.Paths.FunctionsDir, slug, "index.ts")
 	f, err := fsys.OpenFile(entrypointPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
 		return errors.Errorf("failed to create entrypoint: %w", err)
@@ -97,10 +97,10 @@ func createEntrypointFile(slug string, fsys afero.Fs) error {
 
 func appendConfigFile(slug string, fsys afero.Fs) error {
 	if _, exists := utils.Config.Functions[slug]; exists {
-		fmt.Fprintf(os.Stderr, "[functions.%s] is already declared in %s\n", slug, utils.Bold(utils.ConfigPath))
+		fmt.Fprintf(os.Stderr, "[functions.%s] is already declared in %s\n", slug, utils.Bold(utils.Paths.ConfigPath))
 		return nil
 	}
-	f, err := fsys.OpenFile(utils.ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	f, err := fsys.OpenFile(utils.Paths.ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
 		return errors.Errorf("failed to append config: %w", err)
 	}

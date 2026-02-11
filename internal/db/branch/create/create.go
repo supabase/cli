@@ -30,7 +30,7 @@ func Run(branch string, fsys afero.Fs) error {
 		return err
 	}
 
-	branchPath := filepath.Join(filepath.Dir(utils.CurrBranchPath), branch)
+	branchPath := filepath.Join(filepath.Dir(utils.Paths.CurrBranchPath), branch)
 	if err := assertNewBranchIsValid(branchPath, fsys); err != nil {
 		return nil
 	}

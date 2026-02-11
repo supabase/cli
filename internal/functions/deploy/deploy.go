@@ -32,7 +32,7 @@ func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool,
 	}
 	// TODO: require all functions to be deployed from config for v2
 	if len(slugs) == 0 {
-		return errors.Errorf("No Functions specified or found in %s", utils.Bold(utils.FunctionsDir))
+		return errors.Errorf("No Functions specified or found in %s", utils.Bold(utils.Paths.FunctionsDir))
 	}
 	// Flag import map is specified relative to current directory instead of workdir
 	cwd, err := os.Getwd()
@@ -77,7 +77,7 @@ func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool,
 }
 
 func GetFunctionSlugs(fsys afero.Fs) (slugs []string, err error) {
-	pattern := filepath.Join(utils.FunctionsDir, "*", "index.ts")
+	pattern := filepath.Join(utils.Paths.FunctionsDir, "*", "index.ts")
 	paths, err := afero.Glob(fsys, pattern)
 	if err != nil {
 		return nil, errors.Errorf("failed to glob function slugs: %w", err)
@@ -101,7 +101,7 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 	fallbackExists := true
 	functionsUsingDeprecatedGlobalFallback := []string{}
 	functionsUsingDeprecatedImportMap := []string{}
-	if _, err := fsys.Stat(utils.FallbackImportMapPath); errors.Is(err, os.ErrNotExist) {
+	if _, err := fsys.Stat(utils.Paths.FallbackImportMapPath); errors.Is(err, os.ErrNotExist) {
 		fallbackExists = false
 	} else if err != nil {
 		return nil, errors.Errorf("failed to fallback import map: %w", err)
@@ -114,7 +114,7 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 			function.VerifyJWT = true
 		}
 		// Precedence order: flag > config > fallback
-		functionDir := filepath.Join(utils.FunctionsDir, name)
+		functionDir := filepath.Join(utils.Paths.FunctionsDir, name)
 		if len(function.Entrypoint) == 0 {
 			function.Entrypoint = filepath.Join(functionDir, "index.ts")
 		}
@@ -132,7 +132,7 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 				function.ImportMap = importMapPath
 				functionsUsingDeprecatedImportMap = append(functionsUsingDeprecatedImportMap, name)
 			} else if fallbackExists {
-				function.ImportMap = utils.FallbackImportMapPath
+				function.ImportMap = utils.Paths.FallbackImportMapPath
 				functionsUsingDeprecatedGlobalFallback = append(functionsUsingDeprecatedGlobalFallback, name)
 			}
 		}

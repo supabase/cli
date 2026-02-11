@@ -32,7 +32,7 @@ func TestRepairCommand(t *testing.T) {
 	t.Run("applies new version", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		path := filepath.Join(utils.Paths.MigrationsDir, "0_test.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte("select 1"), 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -82,7 +82,7 @@ func TestRepairCommand(t *testing.T) {
 	t.Run("throws error on insert failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		path := filepath.Join(utils.Paths.MigrationsDir, "0_test.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -102,7 +102,7 @@ func TestRepairAll(t *testing.T) {
 		t.Cleanup(fstest.MockStdin(t, "y"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		path := filepath.Join(utils.Paths.MigrationsDir, "0_test.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte("select 1"), 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -150,7 +150,7 @@ func TestRepairAll(t *testing.T) {
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		t.Cleanup(fstest.MockStdin(t, "y"))
 		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.Paths.MigrationsDir}
 		// Run test
 		err := Run(context.Background(), dbConfig, nil, Applied, fsys)
 		// Check error

@@ -19,7 +19,7 @@ func TestCreatePgTAP(t *testing.T) {
 		err := Run(context.Background(), "pet", TemplatePgTAP, fsys)
 		// Check error
 		assert.NoError(t, err)
-		f, err := fsys.Stat(filepath.Join(utils.DbTestsDir, "pet_test.sql"))
+		f, err := fsys.Stat(filepath.Join(utils.Paths.DbTestsDir, "pet_test.sql"))
 		assert.NoError(t, err)
 		assert.EqualValues(t, len(pgtapTest), f.Size())
 	})
@@ -36,7 +36,7 @@ func TestCreatePgTAP(t *testing.T) {
 	t.Run("throws error on file exists", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		_, err := fsys.Create(filepath.Join(utils.DbTestsDir, "pet_test.sql"))
+		_, err := fsys.Create(filepath.Join(utils.Paths.DbTestsDir, "pet_test.sql"))
 		require.NoError(t, err)
 		// Run test
 		err = Run(context.Background(), "pet", TemplatePgTAP, fsys)

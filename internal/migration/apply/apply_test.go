@@ -20,7 +20,7 @@ func TestMigrateDatabase(t *testing.T) {
 	t.Run("applies local migration", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		path := filepath.Join(utils.Paths.MigrationsDir, "0_test.sql")
 		sql := "create schema public"
 		require.NoError(t, afero.WriteFile(fsys, path, []byte(sql), 0644))
 		// Setup mock postgres
@@ -42,10 +42,10 @@ func TestMigrateDatabase(t *testing.T) {
 	t.Run("skip seeding when seed config is disabled", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		path := filepath.Join(utils.Paths.MigrationsDir, "0_test.sql")
 		sql := "create schema public"
 		require.NoError(t, afero.WriteFile(fsys, path, []byte(sql), 0644))
-		seedPath := filepath.Join(utils.SupabaseDirPath, "seed.sql")
+		seedPath := filepath.Join(utils.Paths.SupabaseDirPath, "seed.sql")
 		// This will raise an error when seeding
 		require.NoError(t, afero.WriteFile(fsys, seedPath, []byte("INSERT INTO test_table;"), 0644))
 		// Setup mock postgres
@@ -71,7 +71,7 @@ func TestMigrateDatabase(t *testing.T) {
 
 	t.Run("throws error on open failure", func(t *testing.T) {
 		// Setup in-memory fs
-		fsys := &fstest.OpenErrorFs{DenyPath: utils.MigrationsDir}
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.Paths.MigrationsDir}
 		// Run test
 		err := MigrateAndSeed(context.Background(), "", nil, fsys)
 		// Check error
