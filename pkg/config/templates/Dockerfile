@@ -11,7 +11,7 @@ FROM supabase/edge-runtime:v1.70.3 AS edgeruntime
 FROM timberio/vector:0.28.1-alpine AS vector
 FROM supabase/supavisor:2.7.4 AS supavisor
 FROM supabase/gotrue:v2.186.0 AS gotrue
-FROM supabase/realtime:v2.76.0 AS realtime
+FROM supabase/realtime:v2.76.1 AS realtime
 FROM supabase/storage-api:v1.37.7 AS storage
 FROM supabase/logflare:1.30.8 AS logflare
 # Append to JobImages when adding new dependencies below
