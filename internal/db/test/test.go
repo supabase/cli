@@ -7,6 +7,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
@@ -25,19 +27,21 @@ const (
 	DISABLE_PGTAP = "drop extension if exists pgtap"
 )
 
+var irPattern = regexp.MustCompile(`(?im)^\\ir\s+['"]?([^'"\s]+)['"]?`)
+
 func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// Build test command
 	if len(testFiles) == 0 {
-		absTestsDir, err := filepath.Abs(utils.DbTestsDir)
-		if err != nil {
-			return errors.Errorf("failed to resolve tests dir: %w", err)
-		}
-		testFiles = append(testFiles, absTestsDir)
+		testFiles = append(testFiles, utils.DbTestsDir)
 	}
-	binds := make([]string, len(testFiles))
+	allFiles, err := traverseImports(testFiles, fsys)
+	if err != nil {
+		return err
+	}
+	binds := make([]string, len(allFiles))
 	cmd := []string{"pg_prove", "--ext", ".pg", "--ext", ".sql", "-r"}
 	var workingDir string
-	for i, fp := range testFiles {
+	for i, fp := range allFiles {
 		if !filepath.IsAbs(fp) {
 			fp = filepath.Join(utils.CurrentDirAbs, fp)
 		}
@@ -52,7 +56,9 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 		if path.Ext(dockerPath) != "" {
 			relPath = path.Base(dockerPath)
 		}
-		cmd = append(cmd, relPath)
+		if i < len(testFiles) {
+			cmd = append(cmd, relPath)
+		}
 		binds[i] = fmt.Sprintf("%s:%s:ro", fp, dockerPath)
 	}
 	if viper.GetBool("DEBUG") {
@@ -110,4 +116,39 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 		os.Stdout,
 		os.Stderr,
 	)
+}
+
+func traverseImports(testFiles []string, fsys afero.Fs) ([]string, error) {
+	seen := map[string]struct{}{}
+	q := append([]string{}, testFiles...)
+	result := []string{}
+	for len(q) > 0 {
+		curr := q[len(q)-1]
+		q = q[:len(q)-1]
+		if _, ok := seen[curr]; ok {
+			continue
+		}
+		seen[curr] = struct{}{}
+		result = append(result, curr)
+		info, err := fsys.Stat(curr)
+		if err != nil {
+			return nil, errors.Errorf("failed to stat %s: %w", curr, err)
+		}
+		if info.IsDir() {
+			continue
+		}
+		data, err := afero.ReadFile(fsys, curr)
+		if err != nil {
+			return nil, errors.Errorf("failed to read %s: %w", curr, err)
+		}
+		for _, m := range irPattern.FindAllStringSubmatch(string(data), -1) {
+			if len(m) < 2 {
+				continue
+			}
+			importPath := strings.TrimSpace(m[1])
+			resolved := filepath.Join(filepath.Dir(curr), importPath)
+			q = append(q, resolved)
+		}
+	}
+	return result, nil
 }
