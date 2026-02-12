@@ -22,6 +22,7 @@ func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool,
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	} else if len(slugs) > 0 {
+		slugs = utils.RemoveDuplicates(slugs)
 		for _, s := range slugs {
 			if err := utils.ValidateFunctionSlug(s); err != nil {
 				return err
