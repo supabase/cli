@@ -8,14 +8,13 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/branches/list"
-	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
 )
 
 func Run(ctx context.Context, body api.CreateBranchBody, fsys afero.Fs) error {
-	gitBranch := keys.GetGitBranchOrDefault("", fsys)
+	gitBranch := utils.GetGitBranchOrDefault("", fsys)
 	if len(body.BranchName) == 0 && len(gitBranch) > 0 {
 		title := fmt.Sprintf("Do you want to create a branch named %s?", utils.Aqua(gitBranch))
 		if shouldCreate, err := utils.NewConsole().PromptYesNo(ctx, title, true); err != nil {
