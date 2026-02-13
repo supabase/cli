@@ -168,8 +168,26 @@ END
 		checkSplit(t, sql)
 	})
 
-	t.Run("atomic in identifier", func(t *testing.T) {
-		sql := []string{"create table public.atomic_test (id int);", " select 1;"}
+	t.Run("atomic in table name", func(t *testing.T) {
+		sql := []string{"create table public.atomic_test (id int);", "\nselect 1;"}
+		checkSplit(t, sql)
+	})
+
+	t.Run("atomic in function name", func(t *testing.T) {
+		sql := []string{
+			"CREATE OR REPLACE FUNCTION public.my_function_atomic(p_id uuid)\nRETURNS void\nLANGUAGE plpgsql\nAS $$\nBEGIN\n  RAISE NOTICE 'hello';\nEND;\n$$;",
+			"\nGRANT EXECUTE ON FUNCTION public.my_function_atomic(uuid) TO authenticated;",
+		}
+		checkSplit(t, sql)
+	})
+
+	t.Run("atomic in column name", func(t *testing.T) {
+		sql := []string{"select is_atomic from flags;", "\nselect 1;"}
+		checkSplit(t, sql)
+	})
+
+	t.Run("digit before atomic", func(t *testing.T) {
+		sql := []string{"select col1atomic from t;", "\nselect 1;"}
 		checkSplit(t, sql)
 	})
 }
