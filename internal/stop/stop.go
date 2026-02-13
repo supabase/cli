@@ -8,6 +8,7 @@ import (
 
 	"github.com/docker/docker/api/types/volume"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/sandbox"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 )
@@ -24,7 +25,12 @@ func Run(ctx context.Context, backup bool, projectId string, all bool, fsys afer
 		searchProjectIdFilter = utils.Config.ProjectId
 	}
 
-	// Stop all services
+	// Check if sandbox mode is running for this project
+	if !all && sandbox.IsSandboxRunning(fsys, searchProjectIdFilter) {
+		return stopSandbox(ctx, backup, searchProjectIdFilter, fsys)
+	}
+
+	// Stop all services (Docker mode)
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
 		w := utils.StatusWriter{Program: p}
 		return stop(ctx, backup, w, searchProjectIdFilter)
@@ -44,6 +50,19 @@ func Run(ctx context.Context, backup bool, projectId string, all bool, fsys afer
 			utils.CmdSuggestion = "Local data are backed up to docker volume. Use docker to show them: " + utils.Aqua(listVolume)
 		}
 	}
+	return nil
+}
+
+func stopSandbox(ctx context.Context, backup bool, projectId string, fsys afero.Fs) error {
+	// Stop sandbox services
+	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
+		w := utils.StatusWriter{Program: p}
+		return sandbox.Stop(ctx, fsys, projectId, backup, w)
+	}); err != nil {
+		return err
+	}
+
+	fmt.Println("Stopped " + utils.Aqua("supabase") + " local development setup.")
 	return nil
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/olekukonko/tablewriter/tw"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/sandbox"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/fetcher"
@@ -98,8 +99,17 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
+
+	// Check if sandbox mode is running for this project
+	if sandbox.IsSandboxRunning(fsys, utils.Config.ProjectId) {
+		return sandbox.ShowStatus(ctx, utils.Config.ProjectId, fsys)
+	}
+
+	// Check if Docker stack is running
 	if err := assertContainerHealthy(ctx, utils.DbId); err != nil {
-		return err
+		// If container is not found or not running, show a friendly message
+		utils.CmdSuggestion = fmt.Sprintf("Run %s to start the local development stack.", utils.Aqua("supabase start"))
+		return fmt.Errorf("the local development stack is not running")
 	}
 	stopped, err := checkServiceHealth(ctx)
 	if err != nil {
