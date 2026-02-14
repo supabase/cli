@@ -38,6 +38,10 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 	if err != nil {
 		return err
 	}
+	testFileSet := make(map[string]struct{}, len(testFiles))
+	for _, tf := range testFiles {
+		testFileSet[tf] = struct{}{}
+	}
 	binds := make([]string, len(allFiles))
 	cmd := []string{"pg_prove", "--ext", ".pg", "--ext", ".sql", "-r"}
 	var workingDir string
@@ -52,11 +56,11 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 				workingDir = path.Dir(dockerPath)
 			}
 		}
-		relPath := dockerPath
-		if path.Ext(dockerPath) != "" {
-			relPath = path.Base(dockerPath)
-		}
-		if i < len(testFiles) {
+		if _, isTestFile := testFileSet[allFiles[i]]; isTestFile {
+			relPath := dockerPath
+			if path.Ext(dockerPath) != "" {
+				relPath = path.Base(dockerPath)
+			}
 			cmd = append(cmd, relPath)
 		}
 		binds[i] = fmt.Sprintf("%s:%s:ro", fp, dockerPath)
