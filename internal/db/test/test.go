@@ -27,7 +27,7 @@ const (
 	DISABLE_PGTAP = "drop extension if exists pgtap"
 )
 
-var irPattern = regexp.MustCompile(`(?im)^\\ir\s+['"]?([^'"\s]+)['"]?`)
+var irPattern = regexp.MustCompile(`(?im)^\s*\\ir\s+['"]?([^'"\s]+)['"]?`)
 
 func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// Build test command
@@ -58,7 +58,7 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 		}
 		if _, isTestFile := testFileSet[allFiles[i]]; isTestFile {
 			relPath := dockerPath
-			if path.Ext(dockerPath) != "" {
+			if path.Ext(dockerPath) != "" && path.Dir(dockerPath) == workingDir {
 				relPath = path.Base(dockerPath)
 			}
 			cmd = append(cmd, relPath)
