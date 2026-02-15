@@ -525,7 +525,6 @@ vector --config /etc/vector/vector.yaml
 					// Ref: https://github.com/Kong/kong/issues/3974#issuecomment-482105126
 					"KONG_NGINX_PROXY_PROXY_BUFFER_SIZE=160k",
 					"KONG_NGINX_PROXY_PROXY_BUFFERS=64 160k",
-					"KONG_NGINX_WORKER_PROCESSES=1",
 					// Use modern TLS certificate
 					"KONG_SSL_CERT=/home/kong/localhost.crt",
 					"KONG_SSL_CERT_KEY=/home/kong/localhost.key",
