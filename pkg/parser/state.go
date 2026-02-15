@@ -47,7 +47,6 @@ func (s *ReadyState) Next(r rune, data []byte) State {
 		fallthrough
 	case 'C':
 		offset := len(data) - len(BEGIN_ATOMIC)
-		if offset >= 0 && strings.EqualFold(string(data[offset:]), BEGIN_ATOMIC) {
 		if offset > 0 && strings.EqualFold(string(data[offset:]), BEGIN_ATOMIC) && unicode.IsSpace(rune(data[offset-1])) {
 			return &AtomicState{prev: s, delimiter: []byte(END_ATOMIC)}
 		}
