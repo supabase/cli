@@ -47,7 +47,7 @@ func readMaskedInput(r io.Reader, echo io.Writer) (string, error) {
 				buf = buf[:len(buf)-1]
 				fmt.Fprint(echo, "\b \b")
 			}
-		case ch >= 32 && ch < 127: // Printable ASCII
+		case ch >= 32 && ch != 127: // Printable (incl. non-ASCII bytes)
 			buf = append(buf, ch)
 			fmt.Fprint(echo, "*")
 		}

@@ -55,6 +55,14 @@ func TestReadMaskedInput(t *testing.T) {
 		assert.Equal(t, "abc", result)
 	})
 
+	t.Run("accepts non-ASCII bytes", func(t *testing.T) {
+		// UTF-8 encoded "é" is 0xc3 0xa9
+		input := bytes.NewReader([]byte{'a', 0xc3, 0xa9, 'b', '\r'})
+		result, err := readMaskedInput(input, io.Discard)
+		require.NoError(t, err)
+		assert.Equal(t, "a\xc3\xa9b", result)
+	})
+
 	t.Run("echoes asterisks for each character", func(t *testing.T) {
 		input := strings.NewReader("abc\r")
 		var echo bytes.Buffer
