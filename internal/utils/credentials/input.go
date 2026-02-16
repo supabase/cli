@@ -17,7 +17,7 @@ func PromptMaskedWithAsterisks(stdin *os.File) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to set raw terminal: %w", err)
 	}
-	defer term.Restore(fd, oldState)
+	defer func() { _ = term.Restore(fd, oldState) }()
 	return readMaskedInput(stdin, os.Stderr)
 }
 
@@ -25,29 +25,30 @@ func PromptMaskedWithAsterisks(stdin *os.File) (string, error) {
 // printable character. Handles backspace, Ctrl+C, and Enter.
 func readMaskedInput(r io.Reader, echo io.Writer) (string, error) {
 	var buf []byte
-	b := make([]byte, 1)
+	var b [1]byte
 	for {
-		if _, err := r.Read(b); err != nil {
+		if _, err := io.ReadFull(r, b[:]); err != nil {
 			fmt.Fprint(echo, "\r\n")
-			if err == io.EOF {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
 				return string(buf), nil
 			}
 			return "", fmt.Errorf("failed to read input: %w", err)
 		}
+		ch := b[0]
 		switch {
-		case b[0] == 3: // Ctrl+C
+		case ch == 3: // Ctrl+C
 			fmt.Fprint(echo, "\r\n")
 			return "", fmt.Errorf("interrupted")
-		case b[0] == 13 || b[0] == 10: // Enter
+		case ch == 13 || ch == 10: // Enter
 			fmt.Fprint(echo, "\r\n")
 			return string(buf), nil
-		case b[0] == 127 || b[0] == 8: // Backspace / Delete
+		case ch == 127 || ch == 8: // Backspace / Delete
 			if len(buf) > 0 {
 				buf = buf[:len(buf)-1]
 				fmt.Fprint(echo, "\b \b")
 			}
-		case b[0] >= 32 && b[0] < 127: // Printable ASCII
-			buf = append(buf, b[0])
+		case ch >= 32 && ch < 127: // Printable ASCII
+			buf = append(buf, ch)
 			fmt.Fprint(echo, "*")
 		}
 	}
