@@ -437,6 +437,16 @@ const (
 	DeployFunctionResponseStatusTHROTTLED DeployFunctionResponseStatus = "THROTTLED"
 )
 
+// Defines values for DiskRequestBodyAttributes0Type.
+const (
+	DiskRequestBodyAttributes0TypeGp3 DiskRequestBodyAttributes0Type = "gp3"
+)
+
+// Defines values for DiskRequestBodyAttributes1Type.
+const (
+	Io2 DiskRequestBodyAttributes1Type = "io2"
+)
+
 // Defines values for FunctionResponseStatus.
 const (
 	FunctionResponseStatusACTIVE    FunctionResponseStatus = "ACTIVE"
@@ -468,6 +478,13 @@ const (
 	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelInternal  GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "internal"
 	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelPreview   GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "preview"
 	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelWithdrawn GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "withdrawn"
+)
+
+// Defines values for JitAccessRequestRequestState.
+const (
+	Disabled    JitAccessRequestRequestState = "disabled"
+	Enabled     JitAccessRequestRequestState = "enabled"
+	Unavailable JitAccessRequestRequestState = "unavailable"
 )
 
 // Defines values for ListActionRunResponseRunStepsName.
@@ -713,8 +730,8 @@ const (
 
 // Defines values for OrganizationProjectsResponseProjectsDatabasesDiskType.
 const (
-	Gp3 OrganizationProjectsResponseProjectsDatabasesDiskType = "gp3"
-	Io2 OrganizationProjectsResponseProjectsDatabasesDiskType = "io2"
+	OrganizationProjectsResponseProjectsDatabasesDiskTypeGp3 OrganizationProjectsResponseProjectsDatabasesDiskType = "gp3"
+	OrganizationProjectsResponseProjectsDatabasesDiskTypeIo2 OrganizationProjectsResponseProjectsDatabasesDiskType = "io2"
 )
 
 // Defines values for OrganizationProjectsResponseProjectsDatabasesInfraComputeSize.
@@ -876,6 +893,28 @@ const (
 	RegionsInfoAllSmartGroupTypeSmartGroup RegionsInfoAllSmartGroupType = "smartGroup"
 )
 
+// Defines values for RegionsInfoAllSpecificCode.
+const (
+	RegionsInfoAllSpecificCodeApEast1      RegionsInfoAllSpecificCode = "ap-east-1"
+	RegionsInfoAllSpecificCodeApNortheast1 RegionsInfoAllSpecificCode = "ap-northeast-1"
+	RegionsInfoAllSpecificCodeApNortheast2 RegionsInfoAllSpecificCode = "ap-northeast-2"
+	RegionsInfoAllSpecificCodeApSouth1     RegionsInfoAllSpecificCode = "ap-south-1"
+	RegionsInfoAllSpecificCodeApSoutheast1 RegionsInfoAllSpecificCode = "ap-southeast-1"
+	RegionsInfoAllSpecificCodeApSoutheast2 RegionsInfoAllSpecificCode = "ap-southeast-2"
+	RegionsInfoAllSpecificCodeCaCentral1   RegionsInfoAllSpecificCode = "ca-central-1"
+	RegionsInfoAllSpecificCodeEuCentral1   RegionsInfoAllSpecificCode = "eu-central-1"
+	RegionsInfoAllSpecificCodeEuCentral2   RegionsInfoAllSpecificCode = "eu-central-2"
+	RegionsInfoAllSpecificCodeEuNorth1     RegionsInfoAllSpecificCode = "eu-north-1"
+	RegionsInfoAllSpecificCodeEuWest1      RegionsInfoAllSpecificCode = "eu-west-1"
+	RegionsInfoAllSpecificCodeEuWest2      RegionsInfoAllSpecificCode = "eu-west-2"
+	RegionsInfoAllSpecificCodeEuWest3      RegionsInfoAllSpecificCode = "eu-west-3"
+	RegionsInfoAllSpecificCodeSaEast1      RegionsInfoAllSpecificCode = "sa-east-1"
+	RegionsInfoAllSpecificCodeUsEast1      RegionsInfoAllSpecificCode = "us-east-1"
+	RegionsInfoAllSpecificCodeUsEast2      RegionsInfoAllSpecificCode = "us-east-2"
+	RegionsInfoAllSpecificCodeUsWest1      RegionsInfoAllSpecificCode = "us-west-1"
+	RegionsInfoAllSpecificCodeUsWest2      RegionsInfoAllSpecificCode = "us-west-2"
+)
+
 // Defines values for RegionsInfoAllSpecificProvider.
 const (
 	RegionsInfoAllSpecificProviderAWS       RegionsInfoAllSpecificProvider = "AWS"
@@ -905,6 +944,28 @@ const (
 // Defines values for RegionsInfoRecommendationsSmartGroupType.
 const (
 	RegionsInfoRecommendationsSmartGroupTypeSmartGroup RegionsInfoRecommendationsSmartGroupType = "smartGroup"
+)
+
+// Defines values for RegionsInfoRecommendationsSpecificCode.
+const (
+	RegionsInfoRecommendationsSpecificCodeApEast1      RegionsInfoRecommendationsSpecificCode = "ap-east-1"
+	RegionsInfoRecommendationsSpecificCodeApNortheast1 RegionsInfoRecommendationsSpecificCode = "ap-northeast-1"
+	RegionsInfoRecommendationsSpecificCodeApNortheast2 RegionsInfoRecommendationsSpecificCode = "ap-northeast-2"
+	RegionsInfoRecommendationsSpecificCodeApSouth1     RegionsInfoRecommendationsSpecificCode = "ap-south-1"
+	RegionsInfoRecommendationsSpecificCodeApSoutheast1 RegionsInfoRecommendationsSpecificCode = "ap-southeast-1"
+	RegionsInfoRecommendationsSpecificCodeApSoutheast2 RegionsInfoRecommendationsSpecificCode = "ap-southeast-2"
+	RegionsInfoRecommendationsSpecificCodeCaCentral1   RegionsInfoRecommendationsSpecificCode = "ca-central-1"
+	RegionsInfoRecommendationsSpecificCodeEuCentral1   RegionsInfoRecommendationsSpecificCode = "eu-central-1"
+	RegionsInfoRecommendationsSpecificCodeEuCentral2   RegionsInfoRecommendationsSpecificCode = "eu-central-2"
+	RegionsInfoRecommendationsSpecificCodeEuNorth1     RegionsInfoRecommendationsSpecificCode = "eu-north-1"
+	RegionsInfoRecommendationsSpecificCodeEuWest1      RegionsInfoRecommendationsSpecificCode = "eu-west-1"
+	RegionsInfoRecommendationsSpecificCodeEuWest2      RegionsInfoRecommendationsSpecificCode = "eu-west-2"
+	RegionsInfoRecommendationsSpecificCodeEuWest3      RegionsInfoRecommendationsSpecificCode = "eu-west-3"
+	RegionsInfoRecommendationsSpecificCodeSaEast1      RegionsInfoRecommendationsSpecificCode = "sa-east-1"
+	RegionsInfoRecommendationsSpecificCodeUsEast1      RegionsInfoRecommendationsSpecificCode = "us-east-1"
+	RegionsInfoRecommendationsSpecificCodeUsEast2      RegionsInfoRecommendationsSpecificCode = "us-east-2"
+	RegionsInfoRecommendationsSpecificCodeUsWest1      RegionsInfoRecommendationsSpecificCode = "us-west-1"
+	RegionsInfoRecommendationsSpecificCodeUsWest2      RegionsInfoRecommendationsSpecificCode = "us-west-2"
 )
 
 // Defines values for RegionsInfoRecommendationsSpecificProvider.
@@ -1941,6 +2002,7 @@ type AuthConfigResponse struct {
 	SecurityCaptchaSecret                                 nullable.Nullable[string]                                       `json:"security_captcha_secret"`
 	SecurityManualLinkingEnabled                          nullable.Nullable[bool]                                         `json:"security_manual_linking_enabled"`
 	SecurityRefreshTokenReuseInterval                     nullable.Nullable[int]                                          `json:"security_refresh_token_reuse_interval"`
+	SecuritySbForwardedForEnabled                         nullable.Nullable[bool]                                         `json:"security_sb_forwarded_for_enabled"`
 	SecurityUpdatePasswordRequireReauthentication         nullable.Nullable[bool]                                         `json:"security_update_password_require_reauthentication"`
 	SessionsInactivityTimeout                             nullable.Nullable[int]                                          `json:"sessions_inactivity_timeout"`
 	SessionsSinglePerUser                                 nullable.Nullable[bool]                                         `json:"sessions_single_per_user"`
@@ -2466,6 +2528,59 @@ type DeployFunctionResponse struct {
 // DeployFunctionResponseStatus defines model for DeployFunctionResponse.Status.
 type DeployFunctionResponseStatus string
 
+// DiskAutoscaleConfig defines model for DiskAutoscaleConfig.
+type DiskAutoscaleConfig struct {
+	// GrowthPercent Growth percentage for disk autoscaling
+	GrowthPercent nullable.Nullable[int] `json:"growth_percent"`
+
+	// MaxSizeGb Maximum limit the disk size will grow to in GB
+	MaxSizeGb nullable.Nullable[int] `json:"max_size_gb"`
+
+	// MinIncrementGb Minimum increment size for disk autoscaling in GB
+	MinIncrementGb nullable.Nullable[int] `json:"min_increment_gb"`
+}
+
+// DiskRequestBody defines model for DiskRequestBody.
+type DiskRequestBody struct {
+	Attributes DiskRequestBody_Attributes `json:"attributes"`
+}
+
+// DiskRequestBodyAttributes0 defines model for .
+type DiskRequestBodyAttributes0 struct {
+	Iops            int                            `json:"iops"`
+	SizeGb          int                            `json:"size_gb"`
+	ThroughputMibps *int                           `json:"throughput_mibps,omitempty"`
+	Type            DiskRequestBodyAttributes0Type `json:"type"`
+}
+
+// DiskRequestBodyAttributes0Type defines model for DiskRequestBody.Attributes.0.Type.
+type DiskRequestBodyAttributes0Type string
+
+// DiskRequestBodyAttributes1 defines model for .
+type DiskRequestBodyAttributes1 struct {
+	Iops   int                            `json:"iops"`
+	SizeGb int                            `json:"size_gb"`
+	Type   DiskRequestBodyAttributes1Type `json:"type"`
+}
+
+// DiskRequestBodyAttributes1Type defines model for DiskRequestBody.Attributes.1.Type.
+type DiskRequestBodyAttributes1Type string
+
+// DiskRequestBody_Attributes defines model for DiskRequestBody.Attributes.
+type DiskRequestBody_Attributes struct {
+	union json.RawMessage
+}
+
+// DiskUtilMetricsResponse defines model for DiskUtilMetricsResponse.
+type DiskUtilMetricsResponse struct {
+	Metrics struct {
+		FsAvailBytes float32 `json:"fs_avail_bytes"`
+		FsSizeBytes  float32 `json:"fs_size_bytes"`
+		FsUsedBytes  float32 `json:"fs_used_bytes"`
+	} `json:"metrics"`
+	Timestamp string `json:"timestamp"`
+}
+
 // FunctionDeployBody defines model for FunctionDeployBody.
 type FunctionDeployBody struct {
 	File     *[]openapi_types.File `json:"file,omitempty"`
@@ -2576,6 +2691,14 @@ type GetProviderResponse struct {
 	} `json:"saml,omitempty"`
 	UpdatedAt *string `json:"updated_at,omitempty"`
 }
+
+// JitAccessRequestRequest defines model for JitAccessRequestRequest.
+type JitAccessRequestRequest struct {
+	State JitAccessRequestRequestState `json:"state"`
+}
+
+// JitAccessRequestRequestState defines model for JitAccessRequestRequest.State.
+type JitAccessRequestRequestState string
 
 // JitAccessResponse defines model for JitAccessResponse.
 type JitAccessResponse struct {
@@ -3265,7 +3388,7 @@ type RegionsInfo struct {
 			Type RegionsInfoAllSmartGroupType `json:"type"`
 		} `json:"smartGroup"`
 		Specific []struct {
-			Code     string                         `json:"code"`
+			Code     RegionsInfoAllSpecificCode     `json:"code"`
 			Name     string                         `json:"name"`
 			Provider RegionsInfoAllSpecificProvider `json:"provider"`
 			Status   *RegionsInfoAllSpecificStatus  `json:"status,omitempty"`
@@ -3279,7 +3402,7 @@ type RegionsInfo struct {
 			Type RegionsInfoRecommendationsSmartGroupType `json:"type"`
 		} `json:"smartGroup"`
 		Specific []struct {
-			Code     string                                     `json:"code"`
+			Code     RegionsInfoRecommendationsSpecificCode     `json:"code"`
 			Name     string                                     `json:"name"`
 			Provider RegionsInfoRecommendationsSpecificProvider `json:"provider"`
 			Status   *RegionsInfoRecommendationsSpecificStatus  `json:"status,omitempty"`
@@ -3293,6 +3416,9 @@ type RegionsInfoAllSmartGroupCode string
 
 // RegionsInfoAllSmartGroupType defines model for RegionsInfo.All.SmartGroup.Type.
 type RegionsInfoAllSmartGroupType string
+
+// RegionsInfoAllSpecificCode defines model for RegionsInfo.All.Specific.Code.
+type RegionsInfoAllSpecificCode string
 
 // RegionsInfoAllSpecificProvider defines model for RegionsInfo.All.Specific.Provider.
 type RegionsInfoAllSpecificProvider string
@@ -3308,6 +3434,9 @@ type RegionsInfoRecommendationsSmartGroupCode string
 
 // RegionsInfoRecommendationsSmartGroupType defines model for RegionsInfo.Recommendations.SmartGroup.Type.
 type RegionsInfoRecommendationsSmartGroupType string
+
+// RegionsInfoRecommendationsSpecificCode defines model for RegionsInfo.Recommendations.Specific.Code.
+type RegionsInfoRecommendationsSpecificCode string
 
 // RegionsInfoRecommendationsSpecificProvider defines model for RegionsInfo.Recommendations.Specific.Provider.
 type RegionsInfoRecommendationsSpecificProvider string
@@ -3753,6 +3882,7 @@ type UpdateAuthConfigBody struct {
 	SecurityCaptchaSecret                                 nullable.Nullable[string]                                         `json:"security_captcha_secret,omitempty"`
 	SecurityManualLinkingEnabled                          nullable.Nullable[bool]                                           `json:"security_manual_linking_enabled,omitempty"`
 	SecurityRefreshTokenReuseInterval                     nullable.Nullable[int]                                            `json:"security_refresh_token_reuse_interval,omitempty"`
+	SecuritySbForwardedForEnabled                         nullable.Nullable[bool]                                           `json:"security_sb_forwarded_for_enabled,omitempty"`
 	SecurityUpdatePasswordRequireReauthentication         nullable.Nullable[bool]                                           `json:"security_update_password_require_reauthentication,omitempty"`
 	SessionsInactivityTimeout                             nullable.Nullable[int]                                            `json:"sessions_inactivity_timeout,omitempty"`
 	SessionsSinglePerUser                                 nullable.Nullable[bool]                                           `json:"sessions_single_per_user,omitempty"`
@@ -4984,6 +5114,9 @@ type V1UpdatePoolerConfigJSONRequestBody = UpdateSupavisorConfigBody
 // V1UpdatePostgresConfigJSONRequestBody defines body for V1UpdatePostgresConfig for application/json ContentType.
 type V1UpdatePostgresConfigJSONRequestBody = UpdatePostgresConfigBody
 
+// V1ModifyDatabaseDiskJSONRequestBody defines body for V1ModifyDatabaseDisk for application/json ContentType.
+type V1ModifyDatabaseDiskJSONRequestBody = DiskRequestBody
+
 // V1UpdateRealtimeConfigJSONRequestBody defines body for V1UpdateRealtimeConfig for application/json ContentType.
 type V1UpdateRealtimeConfigJSONRequestBody = UpdateRealtimeConfigBody
 
@@ -5037,6 +5170,9 @@ type V1DeployAFunctionMultipartRequestBody = FunctionDeployBody
 
 // V1UpdateAFunctionJSONRequestBody defines body for V1UpdateAFunction for application/json ContentType.
 type V1UpdateAFunctionJSONRequestBody = V1UpdateFunctionBody
+
+// V1UpdateJitAccessConfigJSONRequestBody defines body for V1UpdateJitAccessConfig for application/json ContentType.
+type V1UpdateJitAccessConfigJSONRequestBody = JitAccessRequestRequest
 
 // V1DeleteNetworkBansJSONRequestBody defines body for V1DeleteNetworkBans for application/json ContentType.
 type V1DeleteNetworkBansJSONRequestBody = RemoveNetworkBanRequest
@@ -5508,6 +5644,68 @@ func (t CreateSigningKeyBody_PrivateJwk) MarshalJSON() ([]byte, error) {
 }
 
 func (t *CreateSigningKeyBody_PrivateJwk) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsDiskRequestBodyAttributes0 returns the union data inside the DiskRequestBody_Attributes as a DiskRequestBodyAttributes0
+func (t DiskRequestBody_Attributes) AsDiskRequestBodyAttributes0() (DiskRequestBodyAttributes0, error) {
+	var body DiskRequestBodyAttributes0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDiskRequestBodyAttributes0 overwrites any union data inside the DiskRequestBody_Attributes as the provided DiskRequestBodyAttributes0
+func (t *DiskRequestBody_Attributes) FromDiskRequestBodyAttributes0(v DiskRequestBodyAttributes0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDiskRequestBodyAttributes0 performs a merge with any union data inside the DiskRequestBody_Attributes, using the provided DiskRequestBodyAttributes0
+func (t *DiskRequestBody_Attributes) MergeDiskRequestBodyAttributes0(v DiskRequestBodyAttributes0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsDiskRequestBodyAttributes1 returns the union data inside the DiskRequestBody_Attributes as a DiskRequestBodyAttributes1
+func (t DiskRequestBody_Attributes) AsDiskRequestBodyAttributes1() (DiskRequestBodyAttributes1, error) {
+	var body DiskRequestBodyAttributes1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDiskRequestBodyAttributes1 overwrites any union data inside the DiskRequestBody_Attributes as the provided DiskRequestBodyAttributes1
+func (t *DiskRequestBody_Attributes) FromDiskRequestBodyAttributes1(v DiskRequestBodyAttributes1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDiskRequestBodyAttributes1 performs a merge with any union data inside the DiskRequestBody_Attributes, using the provided DiskRequestBodyAttributes1
+func (t *DiskRequestBody_Attributes) MergeDiskRequestBodyAttributes1(v DiskRequestBodyAttributes1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t DiskRequestBody_Attributes) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *DiskRequestBody_Attributes) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
