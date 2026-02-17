@@ -1,8 +1,18 @@
 {
   "name": "@supabase/cli",
-  "private": true,
+  "private": false,
+  "bin": {
+    "supabase": "dist/bin.js"
+  },
+  "files": [
+    "dist/"
+  ],
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
+    "build": "bun build src/bin.ts --outdir dist --target node",
     "test": "bun test --concurrent",
     "types:check": "tsgo --noEmit",
     "lint:check": "oxlint --deny-warnings",
@@ -21,5 +31,18 @@
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:"
+  },
+  "optionalDependencies": {
+    "@supabase/cli-darwin-arm64": "0.0.0",
+    "@supabase/cli-darwin-x64": "0.0.0",
+    "@supabase/cli-linux-arm64": "0.0.0",
+    "@supabase/cli-linux-x64": "0.0.0",
+    "@supabase/cli-windows-x64": "0.0.0"
+  },
+  "knip": {
+    "entry": [
+      "src/index.ts",
+      "src/bin.ts"
+    ]
   }
 }

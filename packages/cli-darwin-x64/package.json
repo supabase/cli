@@ -1,0 +1,16 @@
+{
+  "name": "@supabase/cli-darwin-x64",
+  "version": "0.0.0",
+  "description": "Supabase CLI binary (darwin-x64)",
+  "license": "MIT",
+  "os": ["darwin"],
+  "cpu": ["x64"],
+  "preferUnplugged": true,
+  "bin": {
+    "supabase": "bin/supabase"
+  },
+  "files": ["bin/"],
+  "publishConfig": {
+    "access": "public"
+  }
+}

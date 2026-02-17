@@ -1,0 +1,16 @@
+{
+  "name": "@supabase/cli-windows-x64",
+  "version": "0.0.0",
+  "description": "Supabase CLI binary (windows-x64)",
+  "license": "MIT",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "preferUnplugged": true,
+  "bin": {
+    "supabase": "bin/supabase.exe"
+  },
+  "files": ["bin/"],
+  "publishConfig": {
+    "access": "public"
+  }
+}

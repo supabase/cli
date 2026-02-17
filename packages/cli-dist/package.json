@@ -1,0 +1,14 @@
+{
+	"name": "@supabase/cli-dist",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "bun run scripts/build.ts",
+		"publish-packages": "bun run scripts/publish.ts",
+		"sync-versions": "bun run scripts/sync-versions.ts",
+		"test:smoke": "bun run tests/smoke-test.ts"
+	},
+	"devDependencies": {
+		"@types/bun": "catalog:"
+	}
+}

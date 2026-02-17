@@ -24,9 +24,8 @@
     },
     "packages/cli": {
       "name": "@supabase/cli",
-      "dependencies": {
-        "@stricli/core": "^1.2.5",
-        "@supabase/config": "workspace:*",
+      "bin": {
+        "supabase": "bin/supabase.js",
       },
       "devDependencies": {
         "@tsconfig/bun": "catalog:",
@@ -36,6 +35,54 @@
         "oxfmt": "catalog:",
         "oxlint": "catalog:",
         "oxlint-tsgolint": "catalog:",
+      },
+      "optionalDependencies": {
+        "@supabase/cli-darwin-arm64": "0.0.0",
+        "@supabase/cli-darwin-x64": "0.0.0",
+        "@supabase/cli-linux-arm64": "0.0.0",
+        "@supabase/cli-linux-x64": "0.0.0",
+        "@supabase/cli-windows-x64": "0.0.0",
+      },
+    },
+    "packages/cli-darwin-arm64": {
+      "name": "@supabase/cli-darwin-arm64",
+      "version": "0.0.0",
+      "bin": {
+        "supabase": "bin/supabase",
+      },
+    },
+    "packages/cli-darwin-x64": {
+      "name": "@supabase/cli-darwin-x64",
+      "version": "0.0.0",
+      "bin": {
+        "supabase": "bin/supabase",
+      },
+    },
+    "packages/cli-dist": {
+      "name": "@supabase/cli-dist",
+      "devDependencies": {
+        "@types/bun": "catalog:",
+      },
+    },
+    "packages/cli-linux-arm64": {
+      "name": "@supabase/cli-linux-arm64",
+      "version": "0.0.0",
+      "bin": {
+        "supabase": "bin/supabase",
+      },
+    },
+    "packages/cli-linux-x64": {
+      "name": "@supabase/cli-linux-x64",
+      "version": "0.0.0",
+      "bin": {
+        "supabase": "bin/supabase",
+      },
+    },
+    "packages/cli-windows-x64": {
+      "name": "@supabase/cli-windows-x64",
+      "version": "0.0.0",
+      "bin": {
+        "supabase": "bin/supabase.exe",
       },
     },
     "packages/config": {
@@ -189,11 +236,21 @@
 
     "@redocly/openapi-core": ["@redocly/openapi-core@1.34.6", "", { "dependencies": { "@redocly/ajv": "^8.11.2", "@redocly/config": "^0.22.0", "colorette": "^1.2.0", "https-proxy-agent": "^7.0.5", "js-levenshtein": "^1.1.6", "js-yaml": "^4.1.0", "minimatch": "^5.0.1", "pluralize": "^8.0.0", "yaml-ast-parser": "0.0.43" } }, "sha512-2+O+riuIUgVSuLl3Lyh5AplWZyVMNuG2F98/o6NrutKJfW4/GTZdPpZlIphS0HGgcOHgmWcCSHj+dWFlZaGSHw=="],
 
-    "@stricli/core": ["@stricli/core@1.2.5", "", {}, "sha512-+afyztQW7fwWkqmU2WQZbdc3LjnZThWYdtE0l+hykZ1Rvy7YGxZSvsVCS/wZ/2BNv117pQ9TU1GZZRIcPnB4tw=="],
-
     "@supabase/api": ["@supabase/api@workspace:packages/api"],
 
     "@supabase/cli": ["@supabase/cli@workspace:packages/cli"],
+
+    "@supabase/cli-darwin-arm64": ["@supabase/cli-darwin-arm64@workspace:packages/cli-darwin-arm64"],
+
+    "@supabase/cli-darwin-x64": ["@supabase/cli-darwin-x64@workspace:packages/cli-darwin-x64"],
+
+    "@supabase/cli-dist": ["@supabase/cli-dist@workspace:packages/cli-dist"],
+
+    "@supabase/cli-linux-arm64": ["@supabase/cli-linux-arm64@workspace:packages/cli-linux-arm64"],
+
+    "@supabase/cli-linux-x64": ["@supabase/cli-linux-x64@workspace:packages/cli-linux-x64"],
+
+    "@supabase/cli-windows-x64": ["@supabase/cli-windows-x64@workspace:packages/cli-windows-x64"],
 
     "@supabase/config": ["@supabase/config@workspace:packages/config"],
 
