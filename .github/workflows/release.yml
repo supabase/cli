@@ -99,6 +99,10 @@ jobs:
         with:
           name: cli-build
 
+      - name: Setup QEMU for cross-platform Docker
+        if: runner.os == 'Linux'
+        uses: docker/setup-qemu-action@v3
+
       - name: Fix binary permissions
         if: runner.os != 'Windows'
         run: chmod +x packages/cli-*/bin/supabase packages/cli-*/bin/supabase-backend || true
