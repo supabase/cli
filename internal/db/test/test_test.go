@@ -44,7 +44,7 @@ func TestRunCommand(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(config.Images.PgProve), containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "Result: SUCCESS"))
 		// Run test
-		err := Run(context.Background(), []string{"nested"}, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), []string{"nested"}, dbConfig, false, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -54,7 +54,7 @@ func TestRunCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Run test
-		err := Run(context.Background(), nil, dbConfig, fsys)
+		err := Run(context.Background(), nil, dbConfig, false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "failed to connect to postgres")
 	})
@@ -69,7 +69,7 @@ func TestRunCommand(t *testing.T) {
 		conn.Query(ENABLE_PGTAP).
 			ReplyError(pgerrcode.DuplicateObject, `extension "pgtap" already exists, skipping`)
 		// Run test
-		err := Run(context.Background(), nil, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), nil, dbConfig, false, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, "failed to enable pgTAP")
 	})
@@ -93,7 +93,7 @@ func TestRunCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(config.Images.PgProve) + "/json").
 			ReplyError(errNetwork)
 		// Run test
-		err := Run(context.Background(), nil, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), nil, dbConfig, false, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorIs(t, err, errNetwork)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
