@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       go_cli_version:
-        description: "Go CLI version to wrap (e.g. 2.75.0)"
-        required: true
+        description: "Go CLI version to wrap (e.g. 2.75.0). Leave empty to use latest release."
+        required: false
         type: string
       version:
         description: "npm package version to publish"
@@ -18,7 +18,25 @@ on:
         default: true
 
 jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      go_cli_version: ${{ steps.go-cli.outputs.version }}
+    steps:
+      - name: Resolve Go CLI version
+        id: go-cli
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${{ inputs.go_cli_version }}"
+          if [ -z "$version" ]; then
+            version=$(gh api repos/supabase/cli/releases/latest --jq '.tag_name | ltrimstr("v")')
+            echo "Auto-detected Go CLI version: $version"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: resolve
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -28,20 +46,23 @@ jobs:
         uses: oven-sh/setup-bun@v2
 
       - name: Install nfpm
-        uses: goreleaser/nfpm@v2
+        run: |
+          echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
+          sudo apt-get update
+          sudo apt-get install -y nfpm
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
       - name: Sync versions
-        run: bun run packages/cli-dist/scripts/sync-versions.ts --version ${{ inputs.version }}
+        run: bun run packages/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
 
       - name: Build all targets
-        run: bun run packages/cli-dist/scripts/build.ts --go-version ${{ inputs.go_cli_version }} --version ${{ inputs.version }}
+        run: bun run packages/cli/scripts/build.ts --go-version ${{ needs.resolve.outputs.go_cli_version }} --version ${{ inputs.version }}
 
       - name: Verify build artifacts
         run: |
-          for pkg in cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-x64 cli-windows-x64; do
+          for pkg in cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-arm64-musl cli-linux-x64 cli-linux-x64-musl cli-windows-x64; do
             echo "Checking packages/$pkg/bin/..."
             ls -la "packages/$pkg/bin/"
           done
@@ -84,10 +105,11 @@ jobs:
 
       - name: Run smoke tests
         run: bun run test:smoke --version ${{ inputs.version }}
-        working-directory: packages/cli-dist
+        working-directory: packages/cli
 
   publish:
-    needs: smoke-test
+    needs: [smoke-test, resolve]
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -108,26 +130,21 @@ jobs:
           name: cli-build
 
       - name: Sync versions
-        run: bun run packages/cli-dist/scripts/sync-versions.ts --version ${{ inputs.version }}
+        run: bun run packages/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
 
-      - name: Publish to npm
-        if: ${{ !inputs.dry_run }}
-        run: bun run packages/cli-dist/scripts/publish.ts
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish to npm (dry run)
-        if: ${{ inputs.dry_run }}
-        run: bun run packages/cli-dist/scripts/publish.ts --dry-run
+      # TODO: Enable once we're ready to publish on npm
+      # - name: Publish to npm
+      #   run: bun run packages/cli/scripts/publish.ts
+      #   env:
+      #     NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create draft GitHub Release
-        if: ${{ !inputs.dry_run }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ inputs.version }}
           name: v${{ inputs.version }}
           body: |
-            Wraps [supabase/cli v${{ inputs.go_cli_version }}](https://github.com/supabase/cli/releases/tag/v${{ inputs.go_cli_version }})
+            Wraps [supabase/cli v${{ needs.resolve.outputs.go_cli_version }}](https://github.com/supabase/cli/releases/tag/v${{ needs.resolve.outputs.go_cli_version }})
           draft: true
           prerelease: false
           files: |
@@ -145,14 +162,14 @@ jobs:
             dist/checksums.txt
 
       - name: Publish GitHub Release (immutable)
-        if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit v${{ inputs.version }} --draft=false
 
+  # TODO: Enable once we're ready to publish on Homebrew
   update-homebrew:
     needs: publish
-    if: ${{ !inputs.dry_run }}
+    if: false # ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -170,13 +187,14 @@ jobs:
           name: cli-build
 
       - name: Update Homebrew tap
-        run: bun run packages/cli-dist/scripts/update-homebrew.ts --version ${{ inputs.version }}
+        run: bun run packages/cli/scripts/update-homebrew.ts --version ${{ inputs.version }}
         env:
           GH_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
 
+  # TODO: Enable once we're ready to publish on Scoop
   update-scoop:
     needs: publish
-    if: ${{ !inputs.dry_run }}
+    if: false # ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -194,6 +212,6 @@ jobs:
           name: cli-build
 
       - name: Update Scoop bucket
-        run: bun run packages/cli-dist/scripts/update-scoop.ts --version ${{ inputs.version }}
+        run: bun run packages/cli/scripts/update-scoop.ts --version ${{ inputs.version }}
         env:
           GH_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}

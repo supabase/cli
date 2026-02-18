@@ -33,7 +33,7 @@ const distDir = path.join(root, "dist");
 const checksums = new Map<string, string>();
 const checksumsText = await readFile(path.join(distDir, "checksums.txt"), "utf-8");
 for (const line of checksumsText.trim().split("\n")) {
-  const [hash, file] = line.split(/\s+/);
+  const [hash, file] = line.split(/\s+/) as [string, string];
   checksums.set(file, hash);
 }
 

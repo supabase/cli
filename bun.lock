@@ -25,7 +25,7 @@
     "packages/cli": {
       "name": "@supabase/cli",
       "bin": {
-        "supabase": "bin/supabase.js",
+        "supabase": "dist/bin.js",
       },
       "devDependencies": {
         "@tsconfig/bun": "catalog:",
@@ -40,7 +40,9 @@
         "@supabase/cli-darwin-arm64": "0.0.0",
         "@supabase/cli-darwin-x64": "0.0.0",
         "@supabase/cli-linux-arm64": "0.0.0",
+        "@supabase/cli-linux-arm64-musl": "0.0.0",
         "@supabase/cli-linux-x64": "0.0.0",
+        "@supabase/cli-linux-x64-musl": "0.0.0",
         "@supabase/cli-windows-x64": "0.0.0",
       },
     },
@@ -58,12 +60,6 @@
         "supabase": "bin/supabase",
       },
     },
-    "packages/cli-dist": {
-      "name": "@supabase/cli-dist",
-      "devDependencies": {
-        "@types/bun": "catalog:",
-      },
-    },
     "packages/cli-linux-arm64": {
       "name": "@supabase/cli-linux-arm64",
       "version": "0.0.0",
@@ -71,8 +67,22 @@
         "supabase": "bin/supabase",
       },
     },
+    "packages/cli-linux-arm64-musl": {
+      "name": "@supabase/cli-linux-arm64-musl",
+      "version": "0.0.0",
+      "bin": {
+        "supabase": "bin/supabase",
+      },
+    },
     "packages/cli-linux-x64": {
       "name": "@supabase/cli-linux-x64",
+      "version": "0.0.0",
+      "bin": {
+        "supabase": "bin/supabase",
+      },
+    },
+    "packages/cli-linux-x64-musl": {
+      "name": "@supabase/cli-linux-x64-musl",
       "version": "0.0.0",
       "bin": {
         "supabase": "bin/supabase",
@@ -244,11 +254,13 @@
 
     "@supabase/cli-darwin-x64": ["@supabase/cli-darwin-x64@workspace:packages/cli-darwin-x64"],
 
-    "@supabase/cli-dist": ["@supabase/cli-dist@workspace:packages/cli-dist"],
-
     "@supabase/cli-linux-arm64": ["@supabase/cli-linux-arm64@workspace:packages/cli-linux-arm64"],
 
+    "@supabase/cli-linux-arm64-musl": ["@supabase/cli-linux-arm64-musl@workspace:packages/cli-linux-arm64-musl"],
+
     "@supabase/cli-linux-x64": ["@supabase/cli-linux-x64@workspace:packages/cli-linux-x64"],
+
+    "@supabase/cli-linux-x64-musl": ["@supabase/cli-linux-x64-musl@workspace:packages/cli-linux-x64-musl"],
 
     "@supabase/cli-windows-x64": ["@supabase/cli-windows-x64@workspace:packages/cli-windows-x64"],
 

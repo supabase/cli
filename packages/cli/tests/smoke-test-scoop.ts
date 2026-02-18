@@ -26,7 +26,7 @@ const manifest = path.join(root, "dist", "supabase.json");
 
 // Generate the manifest with local file:/// URLs
 console.log("Generating Scoop manifest...");
-await $`bun run packages/cli-dist/scripts/update-scoop.ts --version ${version} --local`.cwd(root);
+await $`bun run packages/cli/scripts/update-scoop.ts --version ${version} --local`.cwd(root);
 
 console.log("Installing via Scoop...");
 await $`scoop install ${manifest}`;

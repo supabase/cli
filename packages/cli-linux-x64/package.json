@@ -5,6 +5,7 @@
   "license": "MIT",
   "os": ["linux"],
   "cpu": ["x64"],
+  "libc": ["glibc"],
   "preferUnplugged": true,
   "bin": {
     "supabase": "bin/supabase"

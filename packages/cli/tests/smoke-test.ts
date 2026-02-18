@@ -72,7 +72,9 @@ const passed = results.filter((r) => r.status === "pass").length;
 const skipped = results.filter((r) => r.status === "skip").length;
 const failed = results.filter((r) => r.status === "fail").length;
 
-console.log(`\n${passed} passed, ${skipped} skipped, ${failed} failed out of ${results.length} tests`);
+console.log(
+  `\n${passed} passed, ${skipped} skipped, ${failed} failed out of ${results.length} tests`,
+);
 
 if (failed > 0) {
   process.exit(1);

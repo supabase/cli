@@ -18,7 +18,9 @@ const ALL_PACKAGES = [
   "cli-darwin-arm64",
   "cli-darwin-x64",
   "cli-linux-arm64",
+  "cli-linux-arm64-musl",
   "cli-linux-x64",
+  "cli-linux-x64-musl",
   "cli-windows-x64",
   "cli",
 ];
@@ -100,7 +102,7 @@ listen: 0.0.0.0:${PORT}
 
 // Sync versions across all packages
 console.log(`Syncing versions to ${version}...`);
-await $`bun run packages/cli-dist/scripts/sync-versions.ts --version ${version}`.cwd(root).quiet();
+await $`bun run packages/cli/scripts/sync-versions.ts --version ${version}`.cwd(root).quiet();
 
 console.log("Starting local npm registry...");
 await using registry = await startVerdaccio(configPath, PORT);

@@ -1,11 +1,11 @@
 {
-  "name": "@supabase/cli-linux-arm64",
+  "name": "@supabase/cli-linux-x64-musl",
   "version": "0.0.0",
-  "description": "Supabase CLI binary (linux-arm64)",
+  "description": "Supabase CLI binary (linux-x64-musl)",
   "license": "MIT",
   "os": ["linux"],
-  "cpu": ["arm64"],
-  "libc": ["glibc"],
+  "cpu": ["x64"],
+  "libc": ["musl"],
   "preferUnplugged": true,
   "bin": {
     "supabase": "bin/supabase"

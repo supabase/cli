@@ -14,6 +14,7 @@
   "scripts": {
     "build": "bun build src/bin.ts --outdir dist --target node",
     "test": "bun test --concurrent",
+    "test:smoke": "bun run tests/smoke-test.ts",
     "types:check": "tsgo --noEmit",
     "lint:check": "oxlint --deny-warnings",
     "lint:fix": "oxlint --deny-warnings --fix",
@@ -33,16 +34,28 @@
     "oxlint-tsgolint": "catalog:"
   },
   "optionalDependencies": {
-    "@supabase/cli-darwin-arm64": "0.0.0",
-    "@supabase/cli-darwin-x64": "0.0.0",
-    "@supabase/cli-linux-arm64": "0.0.0",
-    "@supabase/cli-linux-x64": "0.0.0",
-    "@supabase/cli-windows-x64": "0.0.0"
+    "@supabase/cli-darwin-arm64": "workspace:*",
+    "@supabase/cli-darwin-x64": "workspace:*",
+    "@supabase/cli-linux-arm64": "workspace:*",
+    "@supabase/cli-linux-arm64-musl": "workspace:*",
+    "@supabase/cli-linux-x64": "workspace:*",
+    "@supabase/cli-linux-x64-musl": "workspace:*",
+    "@supabase/cli-windows-x64": "workspace:*"
   },
   "knip": {
     "entry": [
       "src/index.ts",
-      "src/bin.ts"
+      "src/bin.ts",
+      "scripts/*.ts",
+      "tests/*.ts"
+    ],
+    "ignoreBinaries": [
+      "tar",
+      "nfpm",
+      "gh",
+      "brew",
+      "scoop",
+      "supabase"
     ]
   }
 }
