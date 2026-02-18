@@ -157,4 +157,4 @@ update-homebrew + update-scoop (parallel, ubuntu-latest)
 
 ## Version Management
 
-`packages/cli/scripts/sync-versions.ts` updates the `version` field across all 8 package.json files (7 platform + 1 umbrella). Run before build and before publish. The umbrella package uses `workspace:*` for its `optionalDependencies` — Bun replaces these with the actual version at publish time.
+`packages/cli/scripts/sync-versions.ts` updates the `version` field across all 8 package.json files (7 platform + 1 umbrella) and replaces `workspace:*` references in `optionalDependencies` with explicit versions. Run before build and before publish.

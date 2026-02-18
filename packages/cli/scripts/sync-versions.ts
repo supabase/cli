@@ -12,6 +12,8 @@ const ALL_PACKAGES = [
   "cli-windows-x64",
 ];
 
+const PLATFORM_PACKAGES = ALL_PACKAGES.filter((p) => p !== "cli");
+
 const { values } = parseArgs({
   options: {
     version: { type: "string" },
@@ -31,6 +33,16 @@ for (const pkg of ALL_PACKAGES) {
   const pkgJson = await Bun.file(pkgJsonPath).json();
 
   pkgJson.version = version;
+
+  // Replace workspace:* references with explicit versions for publishing
+  if (pkg === "cli" && pkgJson.optionalDependencies) {
+    for (const platformPkg of PLATFORM_PACKAGES) {
+      const depName = `@supabase/${platformPkg}`;
+      if (depName in pkgJson.optionalDependencies) {
+        pkgJson.optionalDependencies[depName] = version;
+      }
+    }
+  }
 
   await Bun.write(pkgJsonPath, `${JSON.stringify(pkgJson, null, "\t")}\n`);
   console.log(`Updated ${pkg} to v${version}`);
