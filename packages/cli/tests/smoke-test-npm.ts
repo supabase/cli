@@ -40,17 +40,14 @@ async function startVerdaccio(
   port: number,
 ): Promise<AsyncDisposable & { url: string }> {
   const url = `http://localhost:${port}`;
-  // On Windows, Bun.spawn can't resolve npx.cmd — use cmd /c to handle it.
-  const cmd =
-    process.platform === "win32"
-      ? ["cmd", "/c", "npx", "-y", "verdaccio", "--config", configPath]
-      : ["npx", "-y", "verdaccio", "--config", configPath];
-  const proc = Bun.spawn(cmd, {
-    stdout: "ignore",
-    stderr: "ignore",
+  const isWindows = process.platform === "win32";
+  const proc = Bun.spawn(["bunx", "verdaccio", "--config", configPath], {
+    stdout: isWindows ? "inherit" : "ignore",
+    stderr: isWindows ? "inherit" : "ignore",
   });
 
-  const deadline = Date.now() + 30_000;
+  const timeout = 120_000;
+  const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     try {
       const res = await fetch(`${url}/-/ping`);
@@ -62,7 +59,7 @@ async function startVerdaccio(
   }
 
   proc.kill();
-  throw new Error("Verdaccio failed to start within 30s");
+  throw new Error(`Verdaccio failed to start within ${timeout / 1000}s`);
 }
 
 async function savePackageJsons() {
