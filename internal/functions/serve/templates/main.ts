@@ -106,9 +106,9 @@ function getAuthToken(req: Request) {
   return token;
 }
 
-async function verifyLegacyJWT(jwt: string): Promise<boolean> {
+async function isValidLegacyJWT(jwtSecret: string, jwt: string): Promise<boolean> {
   const encoder = new TextEncoder();
-  const secretKey = encoder.encode(JWT_SECRET);
+  const secretKey = encoder.encode(jwtSecret);
   try {
     await jose.jwtVerify(jwt, secretKey);
   } catch (e) {
@@ -120,10 +120,10 @@ async function verifyLegacyJWT(jwt: string): Promise<boolean> {
 
 // Lazy-loading JWKs
 let jwks = null;
-async function verifyJWT(jwt: string): Promise<boolean> {
+async function isValidJWT(jwksUrl: string, jwt: string): Promise<boolean> {
   try {
     if (!jwks) {
-      jwks = jose.createRemoteJWKSet(new URL(JWKS_ENDPOINT));
+      jwks = jose.createRemoteJWKSet(new URL(jwksUrl));
     }
     await jose.jwtVerify(jwt, jwks);
   } catch (e) {
@@ -131,6 +131,26 @@ async function verifyJWT(jwt: string): Promise<boolean> {
     return false;
   }
   return true;
+}
+
+/**
+ * Applies hybrid JWT verification, using JWK as primary and Legacy Secret as fallback.
+ * Use only during 'New JWT Keys' migration period, while `JWT_SECRET` is still available.
+ */
+export async function verifyHybridJWT(jwtSecret: string, jwksUrl: string, jwt: string): Promise<boolean> {
+  const { alg: jwtAlgorithm } = jose.decodeProtectedHeader(jwt)
+
+  if (jwtAlgorithm === 'HS256') {
+    console.log(`Legacy token type detected, attempting ${jwtAlgorithm} verification.`)
+
+    return await isValidLegacyJWT(jwtSecret, jwt)
+  }
+
+  if (jwtAlgorithm === 'ES256' || jwtAlgorithm === 'RS256') {
+    return await isValidJWT(jwksUrl, jwt)
+  }
+
+  return false;
 }
 
 // Ref: https://docs.deno.com/examples/checking_file_existence/
@@ -175,15 +195,10 @@ Deno.serve({
     if (req.method !== "OPTIONS" && functionsConfig[functionName].verifyJWT) {
       try {
         const token = getAuthToken(req);
-        const isValidJWT = await verifyJWT(token);
+        const isValidJWT = await verifyHybridJWT(JWT_SECRET, JWKS_ENDPOINT, token);
 
         if (!isValidJWT) {
-          console.log('Asymmetric JWT verification failed; attempting legacy verification.')
-          const isValidLegacyJWT = await verifyLegacyJWT(token);
-
-          if (!isValidLegacyJWT) {
-            return getResponse({ msg: "Invalid JWT" }, STATUS_CODE.Unauthorized);
-          }
+          return getResponse({ msg: "Invalid JWT" }, STATUS_CODE.Unauthorized);
         }
       } catch (e) {
         console.error(e);
