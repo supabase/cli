@@ -7,7 +7,7 @@ import { parseArgs } from "node:util";
 const { values } = parseArgs({
   options: {
     version: { type: "string" },
-    repo: { type: "string", default: "supabase/supa" },
+    repo: { type: "string", default: "supabase/cli" },
     bucket: { type: "string", default: "supabase/scoop-bucket" },
     local: { type: "boolean", default: false },
     "dry-run": { type: "boolean", default: false },

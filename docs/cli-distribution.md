@@ -133,7 +133,7 @@ Requires `scoop`. Generates a manifest with `--local` (file:/// URLs), installs 
 ```
 build (ubuntu-latest)
   ↓
-smoke-test (matrix: ubuntu, macos-latest, macos-13, windows-latest)
+smoke-test (matrix: ubuntu, macos-latest, macos-15-intel, windows-latest)
   ↓
 publish (ubuntu-latest)
   ↓
@@ -148,7 +148,7 @@ update-homebrew + update-scoop (parallel, ubuntu-latest)
 |--------|--------|--------|-----|------|-------|
 | ubuntu-latest | PASS | PASS | PASS | SKIP | SKIP |
 | macos-latest (ARM) | PASS | SKIP | PASS | PASS | SKIP |
-| macos-13 (Intel) | PASS | SKIP | PASS | PASS | SKIP |
+| macos-15-intel (Intel) | PASS | SKIP | PASS | PASS | SKIP |
 | windows-latest | PASS | SKIP | PASS | SKIP | PASS |
 
 **publish** — publishes to npm (skipped on dry run), creates an immutable GitHub release (draft + publish) with all versioned artifacts.
