@@ -1,0 +1,17 @@
+{
+  "name": "@supabase/cli-linux-arm64",
+  "version": "0.0.0",
+  "description": "Supabase CLI binary (linux-arm64)",
+  "license": "MIT",
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "libc": ["glibc"],
+  "preferUnplugged": true,
+  "bin": {
+    "supabase": "bin/supabase"
+  },
+  "files": ["bin/"],
+  "publishConfig": {
+    "access": "public"
+  }
+}

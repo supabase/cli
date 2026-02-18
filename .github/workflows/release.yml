@@ -1,0 +1,217 @@
+name: Release CLI
+
+on:
+  workflow_dispatch:
+    inputs:
+      go_cli_version:
+        description: "Go CLI version to wrap (e.g. 2.75.0). Leave empty to use latest release."
+        required: false
+        type: string
+      version:
+        description: "npm package version to publish"
+        required: true
+        type: string
+      dry_run:
+        description: "Dry run (skip actual publishing)"
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      go_cli_version: ${{ steps.go-cli.outputs.version }}
+    steps:
+      - name: Resolve Go CLI version
+        id: go-cli
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${{ inputs.go_cli_version }}"
+          if [ -z "$version" ]; then
+            version=$(gh api repos/supabase/cli/releases/latest --jq '.tag_name | ltrimstr("v")')
+            echo "Auto-detected Go CLI version: $version"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install nfpm
+        run: |
+          echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
+          sudo apt-get update
+          sudo apt-get install -y nfpm
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Sync versions
+        run: bun run packages/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
+
+      - name: Build all targets
+        run: bun run packages/cli/scripts/build.ts --go-version ${{ needs.resolve.outputs.go_cli_version }} --version ${{ inputs.version }}
+
+      - name: Verify build artifacts
+        run: |
+          for pkg in cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-arm64-musl cli-linux-x64 cli-linux-x64-musl cli-windows-x64; do
+            echo "Checking packages/$pkg/bin/..."
+            ls -la "packages/$pkg/bin/"
+          done
+          echo "Checking dist/..."
+          ls -la dist/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-build
+          path: |
+            packages/cli-*/bin/
+            dist/
+
+  smoke-test:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: cli-build
+
+      - name: Fix binary permissions
+        if: runner.os != 'Windows'
+        run: chmod +x packages/cli-*/bin/supabase packages/cli-*/bin/supabase-backend || true
+
+      - name: Run smoke tests
+        run: bun run test:smoke --version ${{ inputs.version }}
+        working-directory: packages/cli
+
+  publish:
+    needs: [smoke-test, resolve]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: cli-build
+
+      - name: Sync versions
+        run: bun run packages/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
+
+      # TODO: Enable once we're ready to publish on npm
+      # - name: Publish to npm
+      #   run: bun run packages/cli/scripts/publish.ts
+      #   env:
+      #     NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create draft GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: v${{ inputs.version }}
+          body: |
+            Wraps [supabase/cli v${{ needs.resolve.outputs.go_cli_version }}](https://github.com/supabase/cli/releases/tag/v${{ needs.resolve.outputs.go_cli_version }})
+          draft: true
+          prerelease: false
+          files: |
+            dist/supabase_${{ inputs.version }}_darwin_arm64.tar.gz
+            dist/supabase_${{ inputs.version }}_darwin_amd64.tar.gz
+            dist/supabase_${{ inputs.version }}_linux_arm64.tar.gz
+            dist/supabase_${{ inputs.version }}_linux_amd64.tar.gz
+            dist/supabase_${{ inputs.version }}_linux_arm64.deb
+            dist/supabase_${{ inputs.version }}_linux_amd64.deb
+            dist/supabase_${{ inputs.version }}_linux_arm64.rpm
+            dist/supabase_${{ inputs.version }}_linux_amd64.rpm
+            dist/supabase_${{ inputs.version }}_linux_arm64.apk
+            dist/supabase_${{ inputs.version }}_linux_amd64.apk
+            dist/supabase_${{ inputs.version }}_windows_amd64.zip
+            dist/checksums.txt
+
+      - name: Publish GitHub Release (immutable)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit v${{ inputs.version }} --draft=false
+
+  # TODO: Enable once we're ready to publish on Homebrew
+  update-homebrew:
+    needs: publish
+    if: false # ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: cli-build
+
+      - name: Update Homebrew tap
+        run: bun run packages/cli/scripts/update-homebrew.ts --version ${{ inputs.version }}
+        env:
+          GH_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+
+  # TODO: Enable once we're ready to publish on Scoop
+  update-scoop:
+    needs: publish
+    if: false # ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: cli-build
+
+      - name: Update Scoop bucket
+        run: bun run packages/cli/scripts/update-scoop.ts --version ${{ inputs.version }}
+        env:
+          GH_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
