@@ -19,21 +19,6 @@ linters:
       - text: 'ST1003:'
         linters:
           - staticcheck
-      - text: 'G101:'
-        linters:
-          - gosec
-      - text: 'G115:'
-        linters:
-          - gosec
-      - text: 'G117:'
-        linters:
-          - gosec
-      - text: 'G704:'
-        linters:
-          - gosec
-      - text: 'G705:'
-        linters:
-          - gosec
     presets:
       - comments
       - common-false-positives
