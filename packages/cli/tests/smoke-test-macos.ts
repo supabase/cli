@@ -26,7 +26,8 @@ console.log(`\n${"=".repeat(60)}`);
 console.log("Native binary tests");
 console.log("=".repeat(60));
 
-for (const arch of ["arm64", "x64"] as const) {
+{
+  const arch = process.arch; // "arm64" or "x64"
   const name = `native-darwin-${arch}`;
   const binPath = path.join(root, "packages", `cli-darwin-${arch}`, "bin", "supabase");
 

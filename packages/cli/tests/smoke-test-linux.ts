@@ -26,7 +26,8 @@ console.log(`\n${"=".repeat(60)}`);
 console.log("Native binary tests");
 console.log("=".repeat(60));
 
-for (const arch of ["x64", "arm64"] as const) {
+{
+  const arch = process.arch; // "x64" or "arm64"
   const name = `native-linux-${arch}`;
   const binPath = path.join(root, "packages", `cli-linux-${arch}`, "bin", "supabase");
 
