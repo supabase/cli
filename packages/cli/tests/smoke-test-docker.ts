@@ -2,6 +2,11 @@ import { $ } from "bun";
 import path from "node:path";
 import { parseArgs } from "node:util";
 
+if (process.platform === "win32") {
+  console.log("[docker] SKIP — Linux container tests not supported on Windows");
+  process.exit(0);
+}
+
 try {
   await $`docker --version`.quiet();
 } catch {

@@ -103,6 +103,13 @@ jobs:
         if: runner.os == 'Linux'
         uses: docker/setup-qemu-action@v3
 
+      - name: Install Scoop
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          iex "& {$(irm get.scoop.sh)} -RunAsAdmin"
+          Join-Path (Resolve-Path ~).Path "scoop\shims" >> $env:GITHUB_PATH
+
       - name: Fix binary permissions
         if: runner.os != 'Windows'
         run: chmod +x packages/cli-*/bin/supabase packages/cli-*/bin/supabase-backend || true

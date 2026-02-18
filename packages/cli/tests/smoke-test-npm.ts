@@ -40,7 +40,7 @@ async function startVerdaccio(
   port: number,
 ): Promise<AsyncDisposable & { url: string }> {
   const url = `http://localhost:${port}`;
-  const proc = Bun.spawn(["npx", "-y", "verdaccio", "--config", configPath], {
+  const proc = Bun.spawn(["bunx", "verdaccio", "--config", configPath], {
     stdout: "ignore",
     stderr: "ignore",
   });
