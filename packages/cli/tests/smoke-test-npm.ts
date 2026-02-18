@@ -40,7 +40,12 @@ async function startVerdaccio(
   port: number,
 ): Promise<AsyncDisposable & { url: string }> {
   const url = `http://localhost:${port}`;
-  const proc = Bun.spawn(["bunx", "verdaccio", "--config", configPath], {
+  // On Windows, Bun.spawn can't resolve npx.cmd — use cmd /c to handle it.
+  const cmd =
+    process.platform === "win32"
+      ? ["cmd", "/c", "npx", "-y", "verdaccio", "--config", configPath]
+      : ["npx", "-y", "verdaccio", "--config", configPath];
+  const proc = Bun.spawn(cmd, {
     stdout: "ignore",
     stderr: "ignore",
   });
