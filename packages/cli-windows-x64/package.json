@@ -6,9 +6,6 @@
   "os": ["win32"],
   "cpu": ["x64"],
   "preferUnplugged": true,
-  "bin": {
-    "supabase": "bin/supabase.exe"
-  },
   "files": ["bin/"],
   "publishConfig": {
     "access": "public"

@@ -7,9 +7,6 @@
   "cpu": ["x64"],
   "libc": ["glibc"],
   "preferUnplugged": true,
-  "bin": {
-    "supabase": "bin/supabase"
-  },
   "files": ["bin/"],
   "publishConfig": {
     "access": "public"

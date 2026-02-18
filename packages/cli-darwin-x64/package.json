@@ -6,9 +6,6 @@
   "os": ["darwin"],
   "cpu": ["x64"],
   "preferUnplugged": true,
-  "bin": {
-    "supabase": "bin/supabase"
-  },
   "files": ["bin/"],
   "publishConfig": {
     "access": "public"
