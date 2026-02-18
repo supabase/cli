@@ -1,3 +1,8 @@
+if ((process.platform as string) === "win32") {
+  console.log("[npm] SKIP — bunx verdaccio not supported on Windows");
+  process.exit(0);
+}
+
 import { $ } from "bun";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -40,10 +45,9 @@ async function startVerdaccio(
   port: number,
 ): Promise<AsyncDisposable & { url: string }> {
   const url = `http://localhost:${port}`;
-  const isWindows = process.platform === "win32";
   const proc = Bun.spawn(["bunx", "verdaccio", "--config", configPath], {
-    stdout: isWindows ? "inherit" : "ignore",
-    stderr: isWindows ? "inherit" : "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
   });
 
   const timeout = 120_000;
