@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/go-errors/errors"
-	"github.com/go-git/go-git/v5"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/config"
@@ -24,7 +23,7 @@ type CustomName struct {
 }
 
 func Run(ctx context.Context, projectRef, format string, names CustomName, fsys afero.Fs) error {
-	branch := GetGitBranch(fsys)
+	branch := utils.GetGitBranch(fsys)
 	if err := GenerateSecrets(ctx, projectRef, branch, fsys); err != nil {
 		return err
 	}
@@ -73,22 +72,4 @@ func GenerateSecrets(ctx context.Context, projectRef, branch string, fsys afero.
 		return errors.Errorf("failed to sign service_role key: %w", err)
 	}
 	return nil
-}
-
-func GetGitBranch(fsys afero.Fs) string {
-	return GetGitBranchOrDefault("main", fsys)
-}
-
-func GetGitBranchOrDefault(def string, fsys afero.Fs) string {
-	head := os.Getenv("GITHUB_HEAD_REF")
-	if len(head) > 0 {
-		return head
-	}
-	opts := &git.PlainOpenOptions{DetectDotGit: true}
-	if repo, err := git.PlainOpenWithOptions(".", opts); err == nil {
-		if ref, err := repo.Head(); err == nil {
-			return ref.Name().Short()
-		}
-	}
-	return def
 }

@@ -16,7 +16,6 @@ import (
 	"github.com/supabase/cli/internal/branches/pause"
 	"github.com/supabase/cli/internal/branches/unpause"
 	"github.com/supabase/cli/internal/branches/update"
-	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
@@ -229,7 +228,7 @@ func promptBranchId(ctx context.Context, fsys afero.Fs) error {
 	if console := utils.NewConsole(); !console.IsTTY {
 		// Only read from stdin if the terminal is non-interactive
 		title := "Enter the name of your branch"
-		if branchId = keys.GetGitBranch(fsys); len(branchId) > 0 {
+		if branchId = utils.GetGitBranch(fsys); len(branchId) > 0 {
 			title += fmt.Sprintf(" (or leave blank to use %s)", utils.Aqua(branchId))
 		}
 		title += ": "
