@@ -71,41 +71,35 @@ The release is first created as a draft with all assets attached, then published
 
 ## Smoke Tests
 
-Five independent test scripts live in `packages/cli/tests/`, each testing one distribution channel. An orchestrator (`smoke-test.ts`) runs them all in sequence and reports a summary.
-
-Each test that requires a specific tool (Docker, Homebrew, Scoop) checks for it at startup and exits gracefully with a SKIP message if it's not available. This means every test is self-selecting — you can run all tests on any platform and only the applicable ones will execute.
+Smoke tests are organized into per-OS files so it's immediately clear which tests run on which platform. An entry point (`smoke-test.ts`) detects the OS and delegates to the matching file.
 
 ```
 packages/cli/tests/
-  smoke-test.ts              # orchestrator
-  smoke-test-native.ts       # runs the compiled binary directly
-  smoke-test-docker.ts       # Linux packages via Docker (skips if no docker)
-  smoke-test-npm.ts          # end-to-end npm install via local Verdaccio registry
-  smoke-test-brew.ts         # Homebrew install via temporary local tap (skips if no brew)
-  smoke-test-scoop.ts        # Scoop install from local manifest (skips if no scoop)
+  smoke-test.ts              # entry point: detects OS, delegates to per-OS file
+  smoke-test-linux.ts        # native + docker + npm
+  smoke-test-macos.ts        # native + npm + brew
+  smoke-test-windows.ts      # native + scoop
+  helpers/
+    npm-registry.ts          # shared Verdaccio helpers (used by linux + macos)
 ```
 
 ### Running locally
 
 ```bash
-# Run all applicable smoke tests (skips what's not available)
+# Run the tests for your current OS
 cd packages/cli && bun run test:smoke
 
 # With a specific version (must match the version used to build dist/ artifacts)
 bun run test:smoke --version 2.75.0
 
-# Run one test directly
-bun run tests/smoke-test-native.ts
-bun run tests/smoke-test-npm.ts --version 0.0.1-smoke
+# Run a per-OS file directly
+bun run tests/smoke-test-macos.ts --version 0.0.1-smoke
 ```
 
-### Native test
+### Linux tests (`smoke-test-linux.ts`)
 
-Auto-detects the host platform and architecture, then runs the matching binary from `packages/cli-{platform}-{arch}/bin/`. Covers macOS (arm64, x64) and Windows (x64). Always runs (no prerequisites).
-
-### Docker-based Linux tests
-
-Requires Docker. Tests all Linux package formats across arm64 and amd64 (8 tests total, run in parallel via `--platform`):
+- **Native** — runs `packages/cli-linux-{x64,arm64}/bin/supabase --version`
+- **Docker** — tests all Linux package formats across arm64 and amd64 (8 tests total, run in parallel):
 
 | Test | Image | Method |
 |------|-------|--------|
@@ -114,17 +108,18 @@ Requires Docker. Tests all Linux package formats across arm64 and amd64 (8 tests
 | `linux-{arch}-rpm` | `amazonlinux:2023` | `rpm -ivh` + run |
 | `linux-{arch}-apk` | `alpine:3.21` | `apk add --allow-untrusted` + run |
 
-### npm test
+- **npm** — spins up a local Verdaccio registry, publishes all packages, tests `npm install @supabase/cli` end-to-end
 
-Always runs (Verdaccio is installed via npx). Spins up a local Verdaccio registry, publishes all packages via `bun publish`, then tests `npm install @supabase/cli` end-to-end.
+### macOS tests (`smoke-test-macos.ts`)
 
-### Brew test
+- **Native** — runs `packages/cli-darwin-{arm64,x64}/bin/supabase --version`
+- **npm** — same Verdaccio-based end-to-end test as Linux
+- **Brew** — generates a formula with `--local` (file:// URLs), creates a temporary git-backed tap, installs via `brew install`, verifies, and cleans up. Skips if `brew` is not found.
 
-Requires `brew`. Generates a formula with `--local` (file:// URLs), creates a temporary git-backed tap, installs via `brew install`, verifies, and cleans up.
+### Windows tests (`smoke-test-windows.ts`)
 
-### Scoop test
-
-Requires `scoop`. Generates a manifest with `--local` (file:/// URLs), installs via `scoop install`, verifies, and cleans up.
+- **Native** — runs `packages/cli-windows-x64/bin/supabase.exe --version`
+- **Scoop** — generates a manifest with `--local` (file:/// URLs), installs via `scoop install`, verifies, and cleans up. Skips if `scoop` is not found.
 
 ## CI Workflow
 
@@ -142,14 +137,14 @@ update-homebrew + update-scoop (parallel, ubuntu-latest)
 
 **build** — compiles all binaries, creates archives and Linux packages, uploads as artifacts.
 
-**smoke-test** — downloads artifacts and runs `bun run test:smoke --version <version>`. Each runner runs all 5 tests; tests self-select based on available tools:
+**smoke-test** — downloads artifacts and runs `bun run test:smoke --version <version>`. Each runner runs the per-OS test file automatically:
 
-| Runner | native | docker | npm | brew | scoop |
-|--------|--------|--------|-----|------|-------|
-| ubuntu-latest | PASS | PASS | PASS | SKIP | SKIP |
-| macos-latest (ARM) | PASS | SKIP | PASS | PASS | SKIP |
-| macos-15-intel (Intel) | PASS | SKIP | PASS | PASS | SKIP |
-| windows-latest | PASS | SKIP | SKIP | SKIP | PASS |
+| Runner | Tests run |
+|--------|-----------|
+| ubuntu-latest | native (x64, arm64) + docker (8 tests) + npm |
+| macos-latest (ARM) | native (arm64, x64) + npm + brew |
+| macos-15-intel (Intel) | native (arm64, x64) + npm + brew |
+| windows-latest | native (x64) + scoop |
 
 **publish** — publishes to npm (skipped on dry run), creates an immutable GitHub release (draft + publish) with all versioned artifacts.
 

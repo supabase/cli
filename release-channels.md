@@ -21,7 +21,7 @@ Cross-compiles the Bun CLI for all targets, downloads the matching Go CLI sideca
 
 **Smoke tests** (`packages/cli/tests/`)
 
-Five self-selecting tests (native binary, Docker-based Linux packages, npm end-to-end via Verdaccio, Homebrew, Scoop) with an orchestrator. Each test checks for prerequisites and skips gracefully, so all tests can run on any platform.
+Per-OS test files (Linux, macOS, Windows) with a thin entry point that detects the platform and delegates. Each file tests the distribution channels relevant to its OS (native binary, Docker packages, npm via Verdaccio, Homebrew, Scoop).
 
 **CI workflow** (`.github/workflows/release.yml`)
 
@@ -42,7 +42,7 @@ Manual dispatch with `go_cli_version`, `version`, and `dry_run` inputs. Builds o
 | `packages/cli/scripts/sync-versions.ts` | Stamp version across all packages |
 | `packages/cli/scripts/update-homebrew.ts` | Generate + push Homebrew formula |
 | `packages/cli/scripts/update-scoop.ts` | Generate + push Scoop manifest |
-| `packages/cli/tests/smoke-test*.ts` | 6 smoke test files |
+| `packages/cli/tests/smoke-test*.ts` | Per-OS smoke test files + shared helpers |
 | `packages/cli-{os}-{arch}/` | 7 platform packages |
 | `.github/workflows/release.yml` | CI release workflow |
 | `docs/cli-distribution.md` | Architecture documentation |
