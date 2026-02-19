@@ -12,6 +12,12 @@ type Template struct {
 	Version     string                   `json:"version"`
 	Inputs      map[string]TemplateInput `json:"inputs"`
 	Steps       []TemplateStep           `json:"steps"`
+	PostInstall *TemplatePostInstall     `json:"postInstall"`
+}
+
+type TemplatePostInstall struct {
+	Title   string `json:"title"`
+	Message string `json:"message"`
 }
 
 type TemplateInput struct {

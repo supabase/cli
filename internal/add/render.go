@@ -2,6 +2,7 @@ package add
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 )
@@ -18,11 +19,20 @@ func renderValue(input string, context map[string]string, refs map[string]string
 			return match
 		}
 		expr := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(match, "{{"), "}}"))
-		if strings.HasPrefix(expr, "context.") {
-			key := strings.TrimPrefix(expr, "context.")
+		if strings.HasPrefix(expr, "context.") || strings.HasPrefix(expr, "inputs.") {
+			key := strings.TrimPrefix(strings.TrimPrefix(expr, "context."), "inputs.")
 			value, ok := context[key]
 			if !ok {
 				renderErr = fmt.Errorf("missing context value: %s", key)
+				return match
+			}
+			return value
+		}
+		if strings.HasPrefix(expr, "env.") {
+			key := strings.TrimPrefix(expr, "env.")
+			value, ok := os.LookupEnv(key)
+			if !ok {
+				// Leave missing env placeholders untouched instead of failing.
 				return match
 			}
 			return value

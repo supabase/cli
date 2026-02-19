@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path"
@@ -13,12 +14,16 @@ import (
 	"strings"
 
 	"github.com/go-errors/errors"
+	"github.com/joho/godotenv"
+	mg "github.com/multigres/multigres/go/parser"
+	"github.com/multigres/multigres/go/parser/ast"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/component/placement"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/supabase/cli/internal/utils/flags"
+	sqlparser "github.com/supabase/cli/pkg/parser"
 )
 
 type runtimeState struct {
@@ -80,6 +85,37 @@ func Run(ctx context.Context, source string, inputArgs []string, fsys afero.Fs) 
 		return err
 	}
 	fmt.Println("Finished " + utils.Aqua("supabase add") + ".")
+	if err := showPostInstallMessage(tmpl.PostInstall, state.contextValues, state.refs); err != nil {
+		return err
+	}
+	return nil
+}
+
+func showPostInstallMessage(spec *TemplatePostInstall, context map[string]string, refs map[string]string) error {
+	if spec == nil {
+		return nil
+	}
+	title, err := renderValue(spec.Title, context, refs)
+	if err != nil {
+		return err
+	}
+	message, err := renderValue(spec.Message, context, refs)
+	if err != nil {
+		return err
+	}
+	if len(strings.TrimSpace(title)) == 0 && len(strings.TrimSpace(message)) == 0 {
+		return nil
+	}
+	fmt.Println()
+	if len(strings.TrimSpace(title)) > 0 {
+		fmt.Println(strings.TrimSpace(title))
+	}
+	if len(message) > 0 {
+		fmt.Print(message)
+		if !strings.HasSuffix(message, "\n") {
+			fmt.Println()
+		}
+	}
 	return nil
 }
 
@@ -222,17 +258,21 @@ func executeComponent(ctx context.Context, src *templateSource, c TemplateCompon
 		return err
 	}
 	componentType = strings.TrimSpace(componentType)
+	if len(componentType) == 0 {
+		return errors.New("template component requires type")
+	}
 	switch {
 	case isSchemaComponentType(componentType):
 		return executeSQLComponent(src, c, componentType, fsys, state)
 	case componentType == "edge_function":
 		return executeEdgeFunctionComponent(src, c, fsys, state)
 	case componentType == "secret":
-		return executeSecretComponent(c, state)
+		return executeSecretComponent(c, fsys, state)
 	case componentType == "vault":
 		return executeVaultComponent(c, state)
 	default:
-		return errors.Errorf("unsupported template component type: %s", componentType)
+		// Unknown component types fall back to SQL handling and default placement.
+		return executeSQLComponent(src, c, componentType, fsys, state)
 	}
 }
 
@@ -383,21 +423,736 @@ func mergeSQLFile(destPath, incomingSQL string, fsys afero.Fs) (bool, error) {
 		return false, errors.Errorf("failed to read SQL component for merge: %w", err)
 	}
 	existingText := string(existing)
+	mergedText, changed, structured := mergeSQLStatements(existingText, block)
+	if structured {
+		if !changed {
+			return false, nil
+		}
+		if err := afero.WriteFile(fsys, destPath, []byte(mergedText), 0644); err != nil {
+			return false, errors.Errorf("failed to write SQL component: %w", err)
+		}
+		return true, nil
+	}
 	if strings.Contains(existingText, block) {
 		return false, nil
 	}
-	merged := strings.TrimRight(existingText, "\n")
-	if len(strings.TrimSpace(merged)) > 0 {
-		merged += "\n\n"
+	mergedTextFallback := strings.TrimRight(existingText, "\n")
+	if len(strings.TrimSpace(mergedTextFallback)) > 0 {
+		mergedTextFallback += "\n\n"
 	}
-	merged += block + "\n"
-	if err := afero.WriteFile(fsys, destPath, []byte(merged), 0644); err != nil {
+	mergedTextFallback += block + "\n"
+	if err := afero.WriteFile(fsys, destPath, []byte(mergedTextFallback), 0644); err != nil {
 		return false, errors.Errorf("failed to write SQL component: %w", err)
 	}
 	return true, nil
 }
 
-func executeSecretComponent(c TemplateComponent, state *runtimeState) error {
+type parsedSQLStatement struct {
+	raw      string
+	stmt     ast.Stmt
+	parsed   bool
+	modified bool
+}
+
+type createStmtRef struct {
+	index int
+	stmt  *ast.CreateStmt
+}
+
+func mergeSQLStatements(existingText, incomingText string) (string, bool, bool) {
+	existingStatements, err := splitSQLStatements(strings.NewReader(existingText))
+	if err != nil {
+		return "", false, false
+	}
+	incomingStatements, err := splitSQLStatements(strings.NewReader(incomingText))
+	if err != nil {
+		return "", false, false
+	}
+	entries := make([]parsedSQLStatement, 0, len(existingStatements))
+	creates := make([]createStmtRef, 0, len(existingStatements))
+	seen := map[string]struct{}{}
+	for _, raw := range existingStatements {
+		entry := parseSQLStatement(raw)
+		entries = append(entries, entry)
+		seen[statementKey(entry)] = struct{}{}
+		if createStmt, ok := entry.stmt.(*ast.CreateStmt); ok && createStmt != nil {
+			creates = append(creates, createStmtRef{
+				index: len(entries) - 1,
+				stmt:  createStmt,
+			})
+		}
+	}
+	changed := false
+	for _, raw := range incomingStatements {
+		incoming := parseSQLStatement(raw)
+		if _, found := seen[statementKey(incoming)]; found {
+			continue
+		}
+		if alterStmt, ok := incoming.stmt.(*ast.AlterTableStmt); ok && alterStmt != nil {
+			if target := findCreateStmtForAlter(alterStmt, creates); target != nil {
+				handled, createChanged := applyAlterTableStmt(target.stmt, alterStmt)
+				if handled {
+					if createChanged {
+						entries[target.index].modified = true
+						seen[statementKey(entries[target.index])] = struct{}{}
+						changed = true
+					}
+					// Skip appending the ALTER statement if it is already represented by CREATE TABLE.
+					continue
+				}
+			}
+		}
+		entries = append(entries, incoming)
+		seen[statementKey(incoming)] = struct{}{}
+		changed = true
+	}
+	if !changed {
+		return "", false, true
+	}
+	serialized := serializeSQLStatements(entries)
+	return serialized, true, true
+}
+
+func splitSQLStatements(r io.Reader) ([]string, error) {
+	return sqlparser.Split(r, strings.TrimSpace)
+}
+
+func parseSQLStatement(raw string) parsedSQLStatement {
+	parsed, err := mg.ParseSQL(raw)
+	if err != nil || len(parsed) != 1 {
+		return parsedSQLStatement{raw: raw}
+	}
+	return parsedSQLStatement{
+		raw:    raw,
+		stmt:   parsed[0],
+		parsed: true,
+	}
+}
+
+func statementKey(stmt parsedSQLStatement) string {
+	if stmt.parsed {
+		if sql, ok := safeStmtSQL(stmt.stmt); ok {
+			return canonicalSQL(sql)
+		}
+	}
+	return canonicalSQL(stmt.raw)
+}
+
+func safeStmtSQL(stmt ast.Stmt) (string, bool) {
+	if stmt == nil {
+		return "", false
+	}
+	defer func() {
+		_ = recover()
+	}()
+	return stmt.SqlString(), true
+}
+
+func serializeSQLStatements(entries []parsedSQLStatement) string {
+	lines := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		text := strings.TrimSpace(entry.raw)
+		if entry.modified && entry.parsed {
+			if sql, ok := safeStmtSQL(entry.stmt); ok {
+				text = strings.TrimSpace(sql)
+			}
+		}
+		text = strings.TrimSpace(strings.TrimSuffix(text, ";"))
+		if len(text) == 0 {
+			continue
+		}
+		lines = append(lines, text+";")
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func canonicalSQL(sql string) string {
+	trimmed := strings.TrimSpace(strings.TrimSuffix(sql, ";"))
+	if len(trimmed) == 0 {
+		return ""
+	}
+	return strings.Join(strings.Fields(strings.ToLower(trimmed)), " ")
+}
+
+func findCreateStmtForAlter(alter *ast.AlterTableStmt, creates []createStmtRef) *createStmtRef {
+	if alter == nil || alter.Relation == nil || len(creates) == 0 {
+		return nil
+	}
+	alterSchema := normalizeIdentifier(alter.Relation.SchemaName)
+	alterName := normalizeIdentifier(alter.Relation.RelName)
+	if len(alterName) == 0 {
+		return nil
+	}
+	byName := make([]*createStmtRef, 0, 1)
+	for i := range creates {
+		c := &creates[i]
+		if c.stmt == nil || c.stmt.Relation == nil {
+			continue
+		}
+		createSchema := normalizeIdentifier(c.stmt.Relation.SchemaName)
+		createName := normalizeIdentifier(c.stmt.Relation.RelName)
+		if createName != alterName {
+			continue
+		}
+		if len(alterSchema) > 0 && createSchema == alterSchema {
+			return c
+		}
+		byName = append(byName, c)
+	}
+	if len(byName) == 1 {
+		return byName[0]
+	}
+	return nil
+}
+
+func normalizeIdentifier(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func applyAlterTableStmt(create *ast.CreateStmt, alter *ast.AlterTableStmt) (bool, bool) {
+	if create == nil || alter == nil || alter.Cmds == nil || alter.Cmds.Len() == 0 {
+		return false, false
+	}
+	clone, ok := cloneCreateStmt(create)
+	if !ok {
+		return false, false
+	}
+	changed := false
+	for _, item := range alter.Cmds.Items {
+		cmd, ok := item.(*ast.AlterTableCmd)
+		if !ok || cmd == nil {
+			return false, false
+		}
+		applied, cmdChanged := applyAlterTableCmd(clone, cmd)
+		if !applied {
+			return false, false
+		}
+		changed = changed || cmdChanged
+	}
+	if changed {
+		*create = *clone
+	}
+	return true, changed
+}
+
+func cloneCreateStmt(create *ast.CreateStmt) (*ast.CreateStmt, bool) {
+	sql, ok := safeStmtSQL(create)
+	if !ok {
+		return nil, false
+	}
+	parsed, err := mg.ParseSQL(sql)
+	if err != nil || len(parsed) != 1 {
+		return nil, false
+	}
+	cloned, ok := parsed[0].(*ast.CreateStmt)
+	if !ok {
+		return nil, false
+	}
+	return cloned, true
+}
+
+func applyAlterTableCmd(create *ast.CreateStmt, cmd *ast.AlterTableCmd) (bool, bool) {
+	switch cmd.Subtype {
+	case ast.AT_AddColumn:
+		return applyAddColumn(create, cmd)
+	case ast.AT_DropColumn:
+		return applyDropColumn(create, cmd)
+	case ast.AT_ColumnDefault:
+		return applyColumnDefault(create, cmd)
+	case ast.AT_SetNotNull:
+		return applySetNotNull(create, cmd)
+	case ast.AT_DropNotNull:
+		return applyDropNotNull(create, cmd)
+	case ast.AT_AlterColumnType:
+		return applyAlterColumnType(create, cmd)
+	case ast.AT_AddConstraint:
+		return applyAddConstraint(create, cmd)
+	case ast.AT_DropConstraint:
+		return applyDropConstraint(create, cmd)
+	case ast.AT_AddIdentity:
+		return applyAddIdentity(create, cmd)
+	case ast.AT_SetIdentity:
+		return applySetIdentity(create, cmd)
+	case ast.AT_DropIdentity:
+		return applyDropIdentity(create, cmd)
+	default:
+		return false, false
+	}
+}
+
+func applyAddColumn(create *ast.CreateStmt, cmd *ast.AlterTableCmd) (bool, bool) {
+	col, ok := cmd.Def.(*ast.ColumnDef)
+	if !ok || col == nil || len(strings.TrimSpace(col.Colname)) == 0 {
+		return false, false
+	}
+	if existing := findColumnDef(create, col.Colname); existing != nil {
+		if cmd.MissingOk || sameNodeSQL(existing, col) {
+			return true, false
+		}
+		return false, false
+	}
+	if create.TableElts == nil {
+		create.TableElts = ast.NewNodeList()
+	}
+	create.TableElts.Append(col)
+	return true, true
+}
+
+func applyDropColumn(create *ast.CreateStmt, cmd *ast.AlterTableCmd) (bool, bool) {
+	if len(strings.TrimSpace(cmd.Name)) == 0 {
+		return false, false
+	}
+	if create.TableElts == nil || create.TableElts.Len() == 0 {
+		return cmd.MissingOk, false
+	}
+	changed := false
+	filtered := make([]ast.Node, 0, len(create.TableElts.Items))
+	for _, item := range create.TableElts.Items {
+		if col, ok := item.(*ast.ColumnDef); ok && identifierEquals(col.Colname, cmd.Name) {
+			changed = true
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	if !changed {
+		return cmd.MissingOk, false
+	}
+	create.TableElts.Items = filtered
+	return true, true
+}
+
+func applyColumnDefault(create *ast.CreateStmt, cmd *ast.AlterTableCmd) (bool, bool) {
+	col := findColumnDef(create, cmd.Name)
+	if col == nil {
+		return false, false
+	}
+	if cmd.Def == nil {
+		changed := clearColumnDefault(col)
+		return true, changed
+	}
+	if defaultNodeSQL(col) == canonicalNodeSQL(cmd.Def) {
+		return true, false
+	}
+	clearColumnDefault(col)
+	defaultConstraint := ast.NewConstraint(ast.CONSTR_DEFAULT)
+	defaultConstraint.RawExpr = cmd.Def
+	ensureColumnConstraints(col).Append(defaultConstraint)
+	return true, true
+}
+
+func applySetNotNull(create *ast.CreateStmt, cmd *ast.AlterTableCmd) (bool, bool) {
+	col := findColumnDef(create, cmd.Name)
+	if col == nil {
+		return false, false
+	}
+	if columnHasConstraintType(col, ast.CONSTR_NOTNULL) || col.IsNotNull {
+		return true, false
+	}
+	constraint := ast.NewConstraint(ast.CONSTR_NOTNULL)
+	ensureColumnConstraints(col).Append(constraint)
+	col.IsNotNull = false
+	return true, true
+}
+
+func applyDropNotNull(create *ast.CreateStmt, cmd *ast.AlterTableCmd) (bool, bool) {
+	col := findColumnDef(create, cmd.Name)
+	if col == nil {
+		return false, false
+	}
+	changed := removeColumnConstraints(col, func(c *ast.Constraint) bool {
+		return c.Contype == ast.CONSTR_NOTNULL
+	})
+	if col.IsNotNull {
+		col.IsNotNull = false
+		changed = true
+	}
+	return true, changed
+}
+
+func applyAlterColumnType(create *ast.CreateStmt, cmd *ast.AlterTableCmd) (bool, bool) {
+	col := findColumnDef(create, cmd.Name)
+	if col == nil {
+		return false, false
+	}
+	def, ok := cmd.Def.(*ast.ColumnDef)
+	if !ok || def == nil || def.TypeName == nil {
+		return false, false
+	}
+	// TYPE ... USING cannot be represented directly in CREATE TABLE.
+	if def.RawDefault != nil {
+		return false, false
+	}
+	if sameNodeSQL(col.TypeName, def.TypeName) {
+		return true, false
+	}
+	col.TypeName = def.TypeName
+	return true, true
+}
+
+func applyAddConstraint(create *ast.CreateStmt, cmd *ast.AlterTableCmd) (bool, bool) {
+	constraint, ok := cmd.Def.(*ast.Constraint)
+	if !ok || constraint == nil {
+		return false, false
+	}
+	existing, found := findConstraint(create, constraint.Conname, constraint)
+	if found {
+		if sameNodeSQL(existing, constraint) || samePrimaryKeyConstraint(create, existing, constraint) {
+			return true, false
+		}
+		return false, false
+	}
+	if create.TableElts == nil {
+		create.TableElts = ast.NewNodeList()
+	}
+	create.TableElts.Append(constraint)
+	return true, true
+}
+
+func applyDropConstraint(create *ast.CreateStmt, cmd *ast.AlterTableCmd) (bool, bool) {
+	if len(strings.TrimSpace(cmd.Name)) == 0 {
+		return false, false
+	}
+	changed := false
+	if create.TableElts != nil {
+		filtered := make([]ast.Node, 0, len(create.TableElts.Items))
+		for _, item := range create.TableElts.Items {
+			if constraint, ok := item.(*ast.Constraint); ok && identifierEquals(constraint.Conname, cmd.Name) {
+				changed = true
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		create.TableElts.Items = filtered
+	}
+	if len(create.Constraints) > 0 {
+		filtered := make([]*ast.Constraint, 0, len(create.Constraints))
+		for _, constraint := range create.Constraints {
+			if constraint != nil && identifierEquals(constraint.Conname, cmd.Name) {
+				changed = true
+				continue
+			}
+			filtered = append(filtered, constraint)
+		}
+		create.Constraints = filtered
+	}
+	for _, item := range createTableElements(create) {
+		col, ok := item.(*ast.ColumnDef)
+		if !ok || col == nil {
+			continue
+		}
+		if removeColumnConstraints(col, func(c *ast.Constraint) bool {
+			return identifierEquals(c.Conname, cmd.Name)
+		}) {
+			changed = true
+		}
+	}
+	if !changed {
+		return cmd.MissingOk, false
+	}
+	return true, true
+}
+
+func applyAddIdentity(create *ast.CreateStmt, cmd *ast.AlterTableCmd) (bool, bool) {
+	col := findColumnDef(create, cmd.Name)
+	if col == nil {
+		return false, false
+	}
+	constraint, ok := cmd.Def.(*ast.Constraint)
+	if !ok || constraint == nil || constraint.Contype != ast.CONSTR_IDENTITY {
+		return false, false
+	}
+	if existing := findColumnConstraint(col, func(c *ast.Constraint) bool {
+		return c.Contype == ast.CONSTR_IDENTITY
+	}); existing != nil {
+		if sameNodeSQL(existing, constraint) {
+			return true, false
+		}
+		return false, false
+	}
+	ensureColumnConstraints(col).Append(constraint)
+	return true, true
+}
+
+func applySetIdentity(create *ast.CreateStmt, cmd *ast.AlterTableCmd) (bool, bool) {
+	col := findColumnDef(create, cmd.Name)
+	if col == nil {
+		return false, false
+	}
+	identity := findColumnConstraint(col, func(c *ast.Constraint) bool {
+		return c.Contype == ast.CONSTR_IDENTITY
+	})
+	if identity == nil {
+		identity = ast.NewConstraint(ast.CONSTR_IDENTITY)
+		identity.GeneratedWhen = ast.ATTRIBUTE_IDENTITY_BY_DEFAULT
+		ensureColumnConstraints(col).Append(identity)
+	}
+	before := canonicalNodeSQL(identity)
+	switch v := cmd.Def.(type) {
+	case *ast.Constraint:
+		if v.Contype != ast.CONSTR_IDENTITY {
+			return false, false
+		}
+		identity.GeneratedWhen = v.GeneratedWhen
+		identity.Options = v.Options
+	case *ast.NodeList:
+		for _, item := range v.Items {
+			def, ok := item.(*ast.DefElem)
+			if !ok || def == nil {
+				continue
+			}
+			if def.Defname == "generated" {
+				if integer, ok := def.Arg.(*ast.Integer); ok {
+					switch integer.IVal {
+					case int(97): // 'a' => ALWAYS
+						identity.GeneratedWhen = ast.ATTRIBUTE_IDENTITY_ALWAYS
+					case int(100): // 'd' => BY DEFAULT
+						identity.GeneratedWhen = ast.ATTRIBUTE_IDENTITY_BY_DEFAULT
+					}
+				}
+			}
+		}
+		identity.Options = v
+	default:
+		return false, false
+	}
+	after := canonicalNodeSQL(identity)
+	return true, before != after
+}
+
+func applyDropIdentity(create *ast.CreateStmt, cmd *ast.AlterTableCmd) (bool, bool) {
+	col := findColumnDef(create, cmd.Name)
+	if col == nil {
+		return false, false
+	}
+	changed := removeColumnConstraints(col, func(c *ast.Constraint) bool {
+		return c.Contype == ast.CONSTR_IDENTITY
+	})
+	return true, changed
+}
+
+func findColumnDef(create *ast.CreateStmt, name string) *ast.ColumnDef {
+	for _, item := range createTableElements(create) {
+		col, ok := item.(*ast.ColumnDef)
+		if ok && col != nil && identifierEquals(col.Colname, name) {
+			return col
+		}
+	}
+	return nil
+}
+
+func createTableElements(create *ast.CreateStmt) []ast.Node {
+	if create == nil || create.TableElts == nil {
+		return nil
+	}
+	return create.TableElts.Items
+}
+
+func identifierEquals(a, b string) bool {
+	return normalizeIdentifier(a) == normalizeIdentifier(b)
+}
+
+func ensureColumnConstraints(col *ast.ColumnDef) *ast.NodeList {
+	if col.Constraints == nil {
+		col.Constraints = ast.NewNodeList()
+	}
+	return col.Constraints
+}
+
+func findColumnConstraint(col *ast.ColumnDef, match func(*ast.Constraint) bool) *ast.Constraint {
+	if col == nil || col.Constraints == nil {
+		return nil
+	}
+	for _, item := range col.Constraints.Items {
+		constraint, ok := item.(*ast.Constraint)
+		if ok && constraint != nil && match(constraint) {
+			return constraint
+		}
+	}
+	return nil
+}
+
+func columnHasConstraintType(col *ast.ColumnDef, kind ast.ConstrType) bool {
+	return findColumnConstraint(col, func(c *ast.Constraint) bool {
+		return c.Contype == kind
+	}) != nil
+}
+
+func removeColumnConstraints(col *ast.ColumnDef, match func(*ast.Constraint) bool) bool {
+	if col == nil || col.Constraints == nil || col.Constraints.Len() == 0 {
+		return false
+	}
+	changed := false
+	filtered := make([]ast.Node, 0, len(col.Constraints.Items))
+	for _, item := range col.Constraints.Items {
+		constraint, ok := item.(*ast.Constraint)
+		if ok && constraint != nil && match(constraint) {
+			changed = true
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	if changed {
+		col.Constraints.Items = filtered
+	}
+	return changed
+}
+
+func clearColumnDefault(col *ast.ColumnDef) bool {
+	changed := false
+	if col.RawDefault != nil {
+		col.RawDefault = nil
+		changed = true
+	}
+	if removeColumnConstraints(col, func(c *ast.Constraint) bool {
+		return c.Contype == ast.CONSTR_DEFAULT
+	}) {
+		changed = true
+	}
+	return changed
+}
+
+func defaultNodeSQL(col *ast.ColumnDef) string {
+	if col == nil {
+		return ""
+	}
+	if col.RawDefault != nil {
+		return canonicalNodeSQL(col.RawDefault)
+	}
+	if constraint := findColumnConstraint(col, func(c *ast.Constraint) bool {
+		return c.Contype == ast.CONSTR_DEFAULT
+	}); constraint != nil && constraint.RawExpr != nil {
+		return canonicalNodeSQL(constraint.RawExpr)
+	}
+	return ""
+}
+
+func canonicalNodeSQL(node ast.Node) string {
+	if node == nil {
+		return ""
+	}
+	defer func() {
+		_ = recover()
+	}()
+	return canonicalSQL(node.SqlString())
+}
+
+func sameNodeSQL(a, b ast.Node) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return canonicalNodeSQL(a) == canonicalNodeSQL(b)
+}
+
+func findConstraint(create *ast.CreateStmt, conname string, exemplar *ast.Constraint) (*ast.Constraint, bool) {
+	if len(conname) > 0 {
+		for _, constraint := range listTableConstraints(create) {
+			if constraint != nil && identifierEquals(constraint.Conname, conname) {
+				return constraint, true
+			}
+		}
+		for _, item := range createTableElements(create) {
+			col, ok := item.(*ast.ColumnDef)
+			if !ok || col == nil {
+				continue
+			}
+			if constraint := findColumnConstraint(col, func(c *ast.Constraint) bool {
+				return identifierEquals(c.Conname, conname)
+			}); constraint != nil {
+				return constraint, true
+			}
+		}
+	}
+	if exemplar == nil {
+		return nil, false
+	}
+	for _, constraint := range listTableConstraints(create) {
+		if constraint != nil && sameNodeSQL(constraint, exemplar) {
+			return constraint, true
+		}
+	}
+	return nil, false
+}
+
+func listTableConstraints(create *ast.CreateStmt) []*ast.Constraint {
+	result := make([]*ast.Constraint, 0, len(create.Constraints))
+	for _, item := range createTableElements(create) {
+		if constraint, ok := item.(*ast.Constraint); ok && constraint != nil {
+			result = append(result, constraint)
+		}
+	}
+	result = append(result, create.Constraints...)
+	return result
+}
+
+func samePrimaryKeyConstraint(create *ast.CreateStmt, existing, incoming *ast.Constraint) bool {
+	if existing == nil || incoming == nil {
+		return false
+	}
+	if existing.Contype != ast.CONSTR_PRIMARY || incoming.Contype != ast.CONSTR_PRIMARY {
+		return false
+	}
+	incomingCols := primaryKeyColumns(incoming, "")
+	if len(incomingCols) == 0 {
+		return false
+	}
+	existingCols := primaryKeyColumns(existing, "")
+	if len(existingCols) == 0 {
+		existingCols = existingPrimaryColumns(create)
+	}
+	if len(existingCols) != len(incomingCols) {
+		return false
+	}
+	for i := range existingCols {
+		if !identifierEquals(existingCols[i], incomingCols[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func existingPrimaryColumns(create *ast.CreateStmt) []string {
+	for _, constraint := range listTableConstraints(create) {
+		if constraint != nil && constraint.Contype == ast.CONSTR_PRIMARY {
+			if cols := primaryKeyColumns(constraint, ""); len(cols) > 0 {
+				return cols
+			}
+		}
+	}
+	for _, item := range createTableElements(create) {
+		col, ok := item.(*ast.ColumnDef)
+		if !ok || col == nil {
+			continue
+		}
+		if columnHasConstraintType(col, ast.CONSTR_PRIMARY) {
+			return []string{col.Colname}
+		}
+	}
+	return nil
+}
+
+func primaryKeyColumns(constraint *ast.Constraint, fallback string) []string {
+	if constraint == nil {
+		return nil
+	}
+	if constraint.Keys != nil && constraint.Keys.Len() > 0 {
+		cols := make([]string, 0, constraint.Keys.Len())
+		for _, item := range constraint.Keys.Items {
+			if s, ok := item.(*ast.String); ok {
+				cols = append(cols, s.SVal)
+			}
+		}
+		return cols
+	}
+	if len(fallback) > 0 {
+		return []string{fallback}
+	}
+	return nil
+}
+
+func executeSecretComponent(c TemplateComponent, fsys afero.Fs, state *runtimeState) error {
 	key, err := renderValue(c.Key, state.contextValues, state.refs)
 	if err != nil {
 		return err
@@ -406,8 +1161,40 @@ func executeSecretComponent(c TemplateComponent, state *runtimeState) error {
 	if len(key) == 0 {
 		return errors.New("secret component requires key")
 	}
+	value, err := renderValue(c.Value, state.contextValues, state.refs)
+	if err != nil {
+		return err
+	}
+	if err := upsertFunctionsEnv(key, value, fsys); err != nil {
+		return err
+	}
 	state.config.ensureSecretConfig(sectionEdgeSecrets, key)
 	return applyOutputs(c, state)
+}
+
+func upsertFunctionsEnv(key, value string, fsys afero.Fs) error {
+	path := utils.FallbackEnvFilePath
+	envMap := map[string]string{}
+	f, err := fsys.Open(path)
+	if err == nil {
+		defer f.Close()
+		parsed, err := godotenv.Parse(f)
+		if err != nil {
+			return errors.Errorf("failed to parse %s: %w", path, err)
+		}
+		envMap = parsed
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return errors.Errorf("failed to read %s: %w", path, err)
+	}
+	envMap[key] = value
+	content, err := godotenv.Marshal(envMap)
+	if err != nil {
+		return errors.Errorf("failed to marshal %s: %w", path, err)
+	}
+	if err := utils.WriteFile(path, []byte(content), fsys); err != nil {
+		return errors.Errorf("failed to write %s: %w", path, err)
+	}
+	return nil
 }
 
 func executeVaultComponent(c TemplateComponent, state *runtimeState) error {
@@ -550,11 +1337,8 @@ func copyLocalFunctionDirectory(src *templateSource, componentPath, destDir stri
 }
 
 func copyFunctionFilesFromLocalRefs(src *templateSource, refsList []string, destDir string, context map[string]string, refs map[string]string, fsys afero.Fs) error {
-	normalized := make([]string, 0, len(refsList))
-	for _, item := range refsList {
-		normalized = append(normalized, refPathKey(item))
-	}
-	baseDir := commonPathDir(normalized)
+	normalized, baseDir := normalizeFunctionRefs(refsList)
+	entrypointPrefix := inferEntrypointPrefix(normalized, baseDir)
 	wroteEntrypoint := false
 	for i, ref := range refsList {
 		sourcePath, err := src.resolveLocalPath(ref)
@@ -572,6 +1356,10 @@ func copyFunctionFilesFromLocalRefs(src *templateSource, refsList []string, dest
 		if err != nil {
 			return err
 		}
+		dest, rel, err := resolveFunctionTargetPath(rel, entrypointPrefix, destDir)
+		if err != nil {
+			return err
+		}
 		data, err := afero.ReadFile(src.fsys, sourcePath)
 		if err != nil {
 			return err
@@ -581,7 +1369,6 @@ func copyFunctionFilesFromLocalRefs(src *templateSource, refsList []string, dest
 				data = []byte(rendered)
 			}
 		}
-		dest := filepath.Join(destDir, filepath.FromSlash(rel))
 		if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(dest)); err != nil {
 			return err
 		}
@@ -599,11 +1386,8 @@ func copyFunctionFilesFromLocalRefs(src *templateSource, refsList []string, dest
 }
 
 func copyFunctionFilesFromRemoteRefs(src *templateSource, refsList []string, destDir string, context map[string]string, refs map[string]string, fsys afero.Fs) error {
-	normalized := make([]string, 0, len(refsList))
-	for _, item := range refsList {
-		normalized = append(normalized, refPathKey(item))
-	}
-	baseDir := commonPathDir(normalized)
+	normalized, baseDir := normalizeFunctionRefs(refsList)
+	entrypointPrefix := inferEntrypointPrefix(normalized, baseDir)
 	wroteEntrypoint := false
 	for i, ref := range refsList {
 		data, err := src.readTemplatePath(ref, true)
@@ -614,12 +1398,15 @@ func copyFunctionFilesFromRemoteRefs(src *templateSource, refsList []string, des
 		if err != nil {
 			return err
 		}
+		dest, rel, err := resolveFunctionTargetPath(rel, entrypointPrefix, destDir)
+		if err != nil {
+			return err
+		}
 		if shouldRenderFile(rel) {
 			if rendered, err := renderValue(string(data), context, refs); err == nil {
 				data = []byte(rendered)
 			}
 		}
-		dest := filepath.Join(destDir, filepath.FromSlash(rel))
 		if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(dest)); err != nil {
 			return err
 		}
@@ -634,6 +1421,51 @@ func copyFunctionFilesFromRemoteRefs(src *templateSource, refsList []string, des
 		return errors.New("missing edge function entrypoint index.ts")
 	}
 	return nil
+}
+
+func normalizeFunctionRefs(refsList []string) ([]string, string) {
+	normalized := make([]string, 0, len(refsList))
+	for _, item := range refsList {
+		normalized = append(normalized, refPathKey(item))
+	}
+	return normalized, commonPathDir(normalized)
+}
+
+func inferEntrypointPrefix(normalized []string, baseDir string) string {
+	entrypointPrefix := ""
+	for _, fullPath := range normalized {
+		rel, err := relativeFromCommonPrefix(baseDir, fullPath)
+		if err != nil || path.Base(rel) != "index.ts" {
+			continue
+		}
+		dir := path.Dir(rel)
+		if dir == "." {
+			return ""
+		}
+		if len(entrypointPrefix) > 0 && entrypointPrefix != dir {
+			return ""
+		}
+		entrypointPrefix = dir
+	}
+	return entrypointPrefix
+}
+
+func resolveFunctionTargetPath(relPath, entrypointPrefix, destDir string) (string, string, error) {
+	relPath = path.Clean(strings.TrimPrefix(relPath, "/"))
+	if len(entrypointPrefix) > 0 {
+		prefix := entrypointPrefix + "/"
+		if strings.HasPrefix(relPath, prefix) {
+			relPath = strings.TrimPrefix(relPath, prefix)
+		}
+	}
+	if relPath == "." || len(relPath) == 0 || strings.HasPrefix(relPath, "../") {
+		return "", "", errors.Errorf("invalid function file path: %s", relPath)
+	}
+	destRoot := destDir
+	if len(entrypointPrefix) > 0 && strings.HasPrefix(relPath, "_shared/") {
+		destRoot = filepath.Dir(destDir)
+	}
+	return filepath.Join(destRoot, filepath.FromSlash(relPath)), relPath, nil
 }
 
 func refPathKey(raw string) string {

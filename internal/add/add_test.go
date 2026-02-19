@@ -1,11 +1,15 @@
 package add
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -21,6 +25,27 @@ func TestRenderValue(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "messages -> http://localhost:54321/functions/v1/fn", out)
+}
+
+func TestRenderValueInputsAndEnv(t *testing.T) {
+	t.Setenv("SUPABASE_URL", "http://localhost:54321")
+	out, err := renderValue(
+		`{{inputs.table_name}} -> {{env.SUPABASE_URL}}`,
+		map[string]string{"table_name": "messages"},
+		nil,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "messages -> http://localhost:54321", out)
+}
+
+func TestRenderValueMissingEnvLeavesPlaceholder(t *testing.T) {
+	out, err := renderValue(
+		`{{env.SUPABASE_URL}}`,
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, `{{env.SUPABASE_URL}}`, out)
 }
 
 func TestAddRunWithLocalTemplate(t *testing.T) {
@@ -80,6 +105,10 @@ func TestAddRunWithLocalTemplate(t *testing.T) {
 	assert.Contains(t, string(config), `OPENAI_API_KEY = "env(OPENAI_API_KEY)"`)
 	assert.Contains(t, string(config), `EMBEDDING_FUNCTION_SECRET = "env(EMBEDDING_FUNCTION_SECRET)"`)
 	assert.Contains(t, string(config), `./schemas/tables/*.sql`)
+
+	functionEnv := readEnvMap(t, fsys, utils.FallbackEnvFilePath)
+	assert.Equal(t, "test-key", functionEnv["OPENAI_API_KEY"])
+	assert.NotContains(t, functionEnv, "EMBEDDING_FUNCTION_SECRET")
 }
 
 func TestAddRunWithEmbeddingsTemplateAndSchemaPlacement(t *testing.T) {
@@ -237,6 +266,103 @@ func TestAddRunWithEdgeFunctionPathArray(t *testing.T) {
 	assert.Contains(t, string(helper), "text-embedding-3-small")
 }
 
+func TestAddRunWithEdgeFunctionPathArraySharedSibling(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	require.NoError(t, utils.WriteConfig(fsys, false))
+
+	template := `{
+  "name": "path-array-shared-sibling",
+  "steps": [
+    {
+      "name": "deploy_function",
+      "components": [
+        {
+          "name": "stripe-webhook",
+          "type": "edge_function",
+          "path": [
+            "./functions/stripe-webhook/index.ts",
+            "./functions/_shared/db.ts"
+          ]
+        }
+      ]
+    }
+  ]
+}`
+	require.NoError(t, afero.WriteFile(fsys, "templates/path-array-shared-sibling.json", []byte(template), 0644))
+	require.NoError(t, afero.WriteFile(fsys, "templates/functions/stripe-webhook/index.ts", []byte(`import { db } from "../_shared/db.ts"; export const handler = () => db;`), 0644))
+	require.NoError(t, afero.WriteFile(fsys, "templates/functions/_shared/db.ts", []byte(`export const db = "ok"`), 0644))
+
+	require.NoError(t, Run(context.Background(), "templates/path-array-shared-sibling.json", nil, fsys))
+
+	index, err := afero.ReadFile(fsys, filepath.Join(utils.FunctionsDir, "stripe-webhook", "index.ts"))
+	require.NoError(t, err)
+	assert.Contains(t, string(index), "../_shared/db.ts")
+
+	shared, err := afero.ReadFile(fsys, filepath.Join(utils.FunctionsDir, "_shared", "db.ts"))
+	require.NoError(t, err)
+	assert.Contains(t, string(shared), `export const db = "ok"`)
+
+	_, err = fsys.Stat(filepath.Join(utils.FunctionsDir, "stripe-webhook", "_shared", "db.ts"))
+	assert.Error(t, err)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestAddRunFallsBackForUnsupportedComponentType(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	require.NoError(t, utils.WriteConfig(fsys, false))
+
+	template := `{
+  "name": "unsupported-type-fallback",
+  "steps": [
+    {
+      "name": "provision_database",
+      "components": [
+        {"name": "stripe-schema", "type": "schema", "path": "./schemas/stripe-schema.sql"}
+      ]
+    }
+  ]
+}`
+	require.NoError(t, afero.WriteFile(fsys, "templates/fallback.json", []byte(template), 0644))
+	require.NoError(t, afero.WriteFile(fsys, "templates/schemas/stripe-schema.sql", []byte(`create schema if not exists stripe;`), 0644))
+
+	require.NoError(t, Run(context.Background(), "templates/fallback.json", nil, fsys))
+
+	outPath := filepath.Join(utils.SchemasDir, "stripe-schema.sql")
+	sql, err := afero.ReadFile(fsys, outPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(sql), "create schema if not exists stripe")
+}
+
+func TestAddRunSecretAppendsToExistingFunctionsEnv(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	require.NoError(t, utils.WriteConfig(fsys, false))
+	require.NoError(t, utils.WriteFile(utils.FallbackEnvFilePath, []byte("EXISTING=1\n"), fsys))
+
+	template := `{
+  "name": "secret-env-append",
+  "inputs": {
+    "secret_value": {"type": "string", "required": true}
+  },
+  "steps": [
+    {
+      "name": "configure_secrets",
+      "components": [
+        {"name": "openai-api-key", "type": "secret", "key": "OPENAI_API_KEY", "value": "{{inputs.secret_value}}"}
+      ]
+    }
+  ]
+}`
+	require.NoError(t, afero.WriteFile(fsys, "templates/secret-env-append.json", []byte(template), 0644))
+
+	require.NoError(t, Run(context.Background(), "templates/secret-env-append.json", []string{
+		"secret_value=appended-value",
+	}, fsys))
+
+	functionEnv := readEnvMap(t, fsys, utils.FallbackEnvFilePath)
+	assert.Equal(t, "1", functionEnv["EXISTING"])
+	assert.Equal(t, "appended-value", functionEnv["OPENAI_API_KEY"])
+}
+
 func TestAddRunAppendsAndDedupesSqlTablePatch(t *testing.T) {
 	fsys := afero.NewMemMapFs()
 	require.NoError(t, utils.WriteConfig(fsys, false))
@@ -295,13 +421,147 @@ create index if not exists idx_{{context.table_name}}_{{context.embedding_column
 	tableSQL, err := afero.ReadFile(fsys, filepath.Join(utils.SchemasDir, "tables", "tasks.sql"))
 	require.NoError(t, err)
 	sqlText := strings.ToLower(string(tableSQL))
-	assert.Contains(t, sqlText, `create table public.tasks`)
-	assert.Contains(t, sqlText, `alter table tasks`)
-	assert.Contains(t, sqlText, `embedding vector(1536)`)
+	assert.Contains(t, sqlText, `create table`)
+	assert.Contains(t, sqlText, `vector(1536)`)
 	assert.Contains(t, sqlText, `create index if not exists idx_tasks_embedding`)
-	assert.Equal(t, 1, strings.Count(sqlText, "alter table tasks"))
+	assert.NotContains(t, sqlText, "alter table tasks")
 	assert.Equal(t, 1, strings.Count(sqlText, "idx_tasks_embedding"))
 
 	_, err = fsys.Stat(filepath.Join(utils.SchemasDir, "tables", "add-embedding-column.sql"))
 	assert.Error(t, err)
+}
+
+func TestMergeSQLFileMergesBasicAlterTableVariants(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	path := filepath.Join(utils.SchemasDir, "tables", "events.sql")
+	require.NoError(t, utils.MkdirIfNotExistFS(fsys, filepath.Dir(path)))
+	require.NoError(t, afero.WriteFile(fsys, path, []byte(`
+create table public.events (
+  id bigint not null,
+  payload text
+);
+`), 0644))
+
+	firstPatch := `
+alter table public.events alter column id add generated by default as identity (
+  start with 1
+  increment by 1
+);
+alter table public.events alter column payload set default 'x'::text;
+alter table public.events alter column payload set not null;
+alter table public.events add constraint events_payload_key unique (payload);
+`
+	changed, err := mergeSQLFile(path, firstPatch, fsys)
+	require.NoError(t, err)
+	assert.True(t, changed)
+
+	changed, err = mergeSQLFile(path, firstPatch, fsys)
+	require.NoError(t, err)
+	assert.False(t, changed)
+
+	secondPatch := `
+alter table public.events alter column payload drop default;
+alter table public.events alter column payload drop not null;
+alter table public.events drop constraint events_payload_key;
+alter table public.events alter column payload type varchar(255);
+`
+	changed, err = mergeSQLFile(path, secondPatch, fsys)
+	require.NoError(t, err)
+	assert.True(t, changed)
+
+	sql, err := afero.ReadFile(fsys, path)
+	require.NoError(t, err)
+	sqlText := strings.ToLower(string(sql))
+	assert.Contains(t, sqlText, "generated by default as identity")
+	assert.Contains(t, sqlText, "varchar(255)")
+	assert.NotContains(t, sqlText, "events_payload_key")
+	assert.NotContains(t, sqlText, "default 'x'::text")
+	assert.NotContains(t, sqlText, "alter table public.events")
+}
+
+func TestMergeSQLFileFallsBackForUnsupportedAlterTable(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	path := filepath.Join(utils.SchemasDir, "tables", "flags.sql")
+	require.NoError(t, utils.MkdirIfNotExistFS(fsys, filepath.Dir(path)))
+	require.NoError(t, afero.WriteFile(fsys, path, []byte(`
+create table public.flags (
+  id bigint primary key
+);
+`), 0644))
+
+	changed, err := mergeSQLFile(path, `alter table public.flags enable row level security;`, fsys)
+	require.NoError(t, err)
+	assert.True(t, changed)
+
+	sql, err := afero.ReadFile(fsys, path)
+	require.NoError(t, err)
+	sqlText := strings.ToLower(string(sql))
+	assert.Contains(t, sqlText, "create table public.flags")
+	assert.Contains(t, sqlText, "alter table public.flags enable row level security")
+}
+
+func TestAddRunShowsPostInstallMessage(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	require.NoError(t, utils.WriteConfig(fsys, false))
+
+	template := `{
+  "name": "post-install-template",
+  "inputs": {
+    "webhook_events": {"type": "string", "required": true},
+    "run_backfill": {"type": "string", "required": true}
+  },
+  "steps": [],
+  "postInstall": {
+    "title": "Complete setup for {{inputs.webhook_events}}",
+    "message": "Call: {{env.SUPABASE_URL}}/functions/v1/stripe-setup\\nrun_backfill={{inputs.run_backfill}}"
+  }
+}`
+	require.NoError(t, afero.WriteFile(fsys, "templates/post-install-template.json", []byte(template), 0644))
+
+	t.Setenv("SUPABASE_URL", "http://localhost:54321")
+	stdout := captureStdout(t, func() error {
+		return Run(context.Background(), "templates/post-install-template.json", []string{
+			"webhook_events=[\"invoice.paid\"]",
+			"run_backfill=true",
+		}, fsys)
+	})
+
+	finishedIdx := strings.Index(stdout, "Finished ")
+	postInstallIdx := strings.Index(stdout, "Complete setup for [\"invoice.paid\"]")
+	require.NotEqual(t, -1, finishedIdx)
+	require.NotEqual(t, -1, postInstallIdx)
+	assert.Greater(t, postInstallIdx, finishedIdx)
+	assert.Contains(t, stdout, "Call: http://localhost:54321/functions/v1/stripe-setup")
+	assert.Contains(t, stdout, "run_backfill=true")
+}
+
+func captureStdout(t *testing.T, run func() error) string {
+	t.Helper()
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = w
+	t.Cleanup(func() {
+		os.Stdout = oldStdout
+	})
+
+	runErr := run()
+	require.NoError(t, runErr)
+	require.NoError(t, w.Close())
+
+	var out bytes.Buffer
+	_, err = io.Copy(&out, r)
+	require.NoError(t, err)
+	require.NoError(t, r.Close())
+	return out.String()
+}
+
+func readEnvMap(t *testing.T, fsys afero.Fs, path string) map[string]string {
+	t.Helper()
+	f, err := fsys.Open(path)
+	require.NoError(t, err)
+	defer f.Close()
+	envMap, err := godotenv.Parse(f)
+	require.NoError(t, err)
+	return envMap
 }
