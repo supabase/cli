@@ -17,3 +17,6 @@ export type { Database } from '../types/database.ts'
 export type {
   Json
 } from '../types/database.ts'
+
+// Non-braced default type import - exercises the [\s\S]*? branch on single-line
+import type Database from '../types/database.ts'
