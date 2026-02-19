@@ -4678,7 +4678,8 @@ type V1ServiceHealthResponseInfo1 struct {
 
 	// Healthy Deprecated. Use `status` instead.
 	// Deprecated:
-	Healthy bool `json:"healthy"`
+	Healthy              bool `json:"healthy"`
+	ReplicationConnected bool `json:"replication_connected"`
 }
 
 // V1ServiceHealthResponseInfo2 defines model for .
