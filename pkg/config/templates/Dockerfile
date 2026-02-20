@@ -11,9 +11,9 @@ FROM supabase/edge-runtime:v1.70.3 AS edgeruntime
 FROM timberio/vector:0.28.1-alpine AS vector
 FROM supabase/supavisor:2.7.4 AS supavisor
 FROM supabase/gotrue:v2.186.0 AS gotrue
-FROM supabase/realtime:v2.76.5 AS realtime
-FROM supabase/storage-api:v1.37.8 AS storage
-FROM supabase/logflare:1.31.2 AS logflare
+FROM supabase/realtime:v2.76.7 AS realtime
+FROM supabase/storage-api:v1.37.11 AS storage
+FROM supabase/logflare:1.32.3 AS logflare
 # Append to JobImages when adding new dependencies below
 FROM supabase/pgadmin-schema-diff:cli-0.0.5 AS differ
 FROM supabase/migra:3.0.1663481299 AS migra
