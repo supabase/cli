@@ -129,7 +129,22 @@ func GetRootCA(ctx context.Context, dbURL string, options ...func(*pgx.ConnConfi
 }
 
 func isRequireSSL(ctx context.Context, dbUrl string, options ...func(*pgx.ConnConfig)) (bool, error) {
-	conn, err := utils.ConnectByUrl(ctx, dbUrl+"&sslmode=require", options...)
+
+	// pgx v4's sslmode=require verifies the server certificate against system CAs,
+	// unlike libpq where require skips verification. When SUPABASE_CA_SKIP_VERIFY=true,
+	// skip verification for this probe only (detects whether the server speaks TLS).
+	// Cert validation happens downstream in the migra/pgdelta Deno scripts using GetRootCA.
+	opts := options
+	if os.Getenv("SUPABASE_CA_SKIP_VERIFY") == "true" {
+		opts = append(opts, func(cc *pgx.ConnConfig) {
+			if cc.TLSConfig != nil {
+				// #nosec G402 -- Intentionally skipped for this TLS capability probe only.
+				// Downstream migra/pgdelta flows still validate certificates using GetRootCA.
+				cc.TLSConfig.InsecureSkipVerify = true
+			}
+		})
+	}
+	conn, err := utils.ConnectByUrl(ctx, dbUrl+"&sslmode=require", opts...)
 	if err != nil {
 		if strings.HasSuffix(err.Error(), "(server refused TLS connection)") {
 			return false, nil
