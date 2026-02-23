@@ -138,6 +138,8 @@ func isRequireSSL(ctx context.Context, dbUrl string, options ...func(*pgx.ConnCo
 	if os.Getenv("SUPABASE_CA_SKIP_VERIFY") == "true" {
 		opts = append(opts, func(cc *pgx.ConnConfig) {
 			if cc.TLSConfig != nil {
+				// #nosec G402 -- Intentionally skipped for this TLS capability probe only.
+				// Downstream migra/pgdelta flows still validate certificates using GetRootCA.
 				cc.TLSConfig.InsecureSkipVerify = true
 			}
 		})
