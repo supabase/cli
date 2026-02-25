@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -69,6 +71,9 @@ func DiffSchemaMigraBash(ctx context.Context, source, target pgconn.Config, sche
 		"SOURCE=" + utils.ToPostgresURL(source),
 		"TARGET=" + utils.ToPostgresURL(target),
 	}
+	if v := os.Getenv("SUPABASE_SSL_DEBUG"); strings.EqualFold(v, "true") {
+		env = append(env, "SUPABASE_SSL_DEBUG="+v)
+	}
 	// Passing in script string means command line args must be set manually, ie. "$@"
 	args := "set -- " + strings.Join(schema, " ") + ";"
 	cmd := []string{"/bin/sh", "-c", args + diffSchemaScript}
@@ -108,10 +113,30 @@ func DiffSchemaMigra(ctx context.Context, source, target pgconn.Config, schema [
 		"SOURCE=" + utils.ToPostgresURL(source),
 		"TARGET=" + utils.ToPostgresURL(target),
 	}
+	sslDebug := strings.EqualFold(os.Getenv("SUPABASE_SSL_DEBUG"), "true")
+	if sslDebug {
+		env = append(env, "SUPABASE_SSL_DEBUG=true")
+	}
+	if sslDebug {
+		fmt.Fprintf(os.Stderr, "[ssl-debug] DiffSchemaMigra source_host=%s source_port=%d target_host=%s target_port=%d target_db=%s\n",
+			source.Host,
+			source.Port,
+			target.Host,
+			target.Port,
+			target.Database,
+		)
+		fmt.Fprintf(os.Stderr, "[ssl-debug] DiffSchemaMigra docker_daemon=%s image=%s\n", utils.Docker.DaemonHost(), utils.Config.EdgeRuntime.Image)
+	}
 	if ca, err := types.GetRootCA(ctx, utils.ToPostgresURL(target), options...); err != nil {
+		if sslDebug {
+			fmt.Fprintf(os.Stderr, "[ssl-debug] DiffSchemaMigra GetRootCA error=%v\n", err)
+		}
 		return "", err
 	} else if len(ca) > 0 {
 		env = append(env, "SSL_CA="+ca)
+		if sslDebug {
+			fmt.Fprintf(os.Stderr, "[ssl-debug] DiffSchemaMigra GetRootCA ca_bundle_len=%d\n", len(ca))
+		}
 	}
 	if len(schema) > 0 {
 		env = append(env, "INCLUDED_SCHEMAS="+strings.Join(schema, ","))
