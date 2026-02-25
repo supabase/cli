@@ -1819,6 +1819,8 @@ type ApplyProjectAddonBody_AddonVariant struct {
 // AuthConfigResponse defines model for AuthConfigResponse.
 type AuthConfigResponse struct {
 	ApiMaxRequestDuration                                 nullable.Nullable[int]                                          `json:"api_max_request_duration"`
+	CustomOauthEnabled                                    bool                                                            `json:"custom_oauth_enabled"`
+	CustomOauthMaxProviders                               int                                                             `json:"custom_oauth_max_providers"`
 	DbMaxPoolSize                                         nullable.Nullable[int]                                          `json:"db_max_pool_size"`
 	DbMaxPoolSizeUnit                                     nullable.Nullable[AuthConfigResponseDbMaxPoolSizeUnit]          `json:"db_max_pool_size_unit"`
 	DisableSignup                                         nullable.Nullable[bool]                                         `json:"disable_signup"`
@@ -3733,6 +3735,7 @@ type UpdateApiKeyBody struct {
 // UpdateAuthConfigBody defines model for UpdateAuthConfigBody.
 type UpdateAuthConfigBody struct {
 	ApiMaxRequestDuration                                 nullable.Nullable[int]                                            `json:"api_max_request_duration,omitempty"`
+	CustomOauthEnabled                                    *bool                                                             `json:"custom_oauth_enabled,omitempty"`
 	DbMaxPoolSize                                         nullable.Nullable[int]                                            `json:"db_max_pool_size,omitempty"`
 	DbMaxPoolSizeUnit                                     nullable.Nullable[UpdateAuthConfigBodyDbMaxPoolSizeUnit]          `json:"db_max_pool_size_unit,omitempty"`
 	DisableSignup                                         nullable.Nullable[bool]                                           `json:"disable_signup,omitempty"`

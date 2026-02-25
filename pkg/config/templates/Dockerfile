@@ -10,10 +10,10 @@ FROM darthsim/imgproxy:v3.8.0 AS imgproxy
 FROM supabase/edge-runtime:v1.70.5 AS edgeruntime
 FROM timberio/vector:0.28.1-alpine AS vector
 FROM supabase/supavisor:2.7.4 AS supavisor
-FROM supabase/gotrue:v2.186.0 AS gotrue
+FROM supabase/gotrue:v2.187.0 AS gotrue
 FROM supabase/realtime:v2.78.0 AS realtime
-FROM supabase/storage-api:v1.38.0 AS storage
-FROM supabase/logflare:1.32.5 AS logflare
+FROM supabase/storage-api:v1.39.1 AS storage
+FROM supabase/logflare:1.33.1 AS logflare
 # Append to JobImages when adding new dependencies below
 FROM supabase/pgadmin-schema-diff:cli-0.0.5 AS differ
 FROM supabase/migra:3.0.1663481299 AS migra
