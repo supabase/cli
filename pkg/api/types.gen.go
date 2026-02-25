@@ -444,7 +444,17 @@ const (
 
 // Defines values for DiskRequestBodyAttributes1Type.
 const (
-	Io2 DiskRequestBodyAttributes1Type = "io2"
+	DiskRequestBodyAttributes1TypeIo2 DiskRequestBodyAttributes1Type = "io2"
+)
+
+// Defines values for DiskResponseAttributes0Type.
+const (
+	DiskResponseAttributes0TypeGp3 DiskResponseAttributes0Type = "gp3"
+)
+
+// Defines values for DiskResponseAttributes1Type.
+const (
+	DiskResponseAttributes1TypeIo2 DiskResponseAttributes1Type = "io2"
 )
 
 // Defines values for FunctionResponseStatus.
@@ -730,8 +740,8 @@ const (
 
 // Defines values for OrganizationProjectsResponseProjectsDatabasesDiskType.
 const (
-	OrganizationProjectsResponseProjectsDatabasesDiskTypeGp3 OrganizationProjectsResponseProjectsDatabasesDiskType = "gp3"
-	OrganizationProjectsResponseProjectsDatabasesDiskTypeIo2 OrganizationProjectsResponseProjectsDatabasesDiskType = "io2"
+	Gp3 OrganizationProjectsResponseProjectsDatabasesDiskType = "gp3"
+	Io2 OrganizationProjectsResponseProjectsDatabasesDiskType = "io2"
 )
 
 // Defines values for OrganizationProjectsResponseProjectsDatabasesInfraComputeSize.
@@ -1809,6 +1819,8 @@ type ApplyProjectAddonBody_AddonVariant struct {
 // AuthConfigResponse defines model for AuthConfigResponse.
 type AuthConfigResponse struct {
 	ApiMaxRequestDuration                                 nullable.Nullable[int]                                          `json:"api_max_request_duration"`
+	CustomOauthEnabled                                    bool                                                            `json:"custom_oauth_enabled"`
+	CustomOauthMaxProviders                               int                                                             `json:"custom_oauth_max_providers"`
 	DbMaxPoolSize                                         nullable.Nullable[int]                                          `json:"db_max_pool_size"`
 	DbMaxPoolSizeUnit                                     nullable.Nullable[AuthConfigResponseDbMaxPoolSizeUnit]          `json:"db_max_pool_size_unit"`
 	DisableSignup                                         nullable.Nullable[bool]                                         `json:"disable_signup"`
@@ -2568,6 +2580,38 @@ type DiskRequestBodyAttributes1Type string
 
 // DiskRequestBody_Attributes defines model for DiskRequestBody.Attributes.
 type DiskRequestBody_Attributes struct {
+	union json.RawMessage
+}
+
+// DiskResponse defines model for DiskResponse.
+type DiskResponse struct {
+	Attributes     DiskResponse_Attributes `json:"attributes"`
+	LastModifiedAt *string                 `json:"last_modified_at,omitempty"`
+}
+
+// DiskResponseAttributes0 defines model for .
+type DiskResponseAttributes0 struct {
+	Iops            int                         `json:"iops"`
+	SizeGb          int                         `json:"size_gb"`
+	ThroughputMibps *int                        `json:"throughput_mibps,omitempty"`
+	Type            DiskResponseAttributes0Type `json:"type"`
+}
+
+// DiskResponseAttributes0Type defines model for DiskResponse.Attributes.0.Type.
+type DiskResponseAttributes0Type string
+
+// DiskResponseAttributes1 defines model for .
+type DiskResponseAttributes1 struct {
+	Iops   int                         `json:"iops"`
+	SizeGb int                         `json:"size_gb"`
+	Type   DiskResponseAttributes1Type `json:"type"`
+}
+
+// DiskResponseAttributes1Type defines model for DiskResponse.Attributes.1.Type.
+type DiskResponseAttributes1Type string
+
+// DiskResponse_Attributes defines model for DiskResponse.Attributes.
+type DiskResponse_Attributes struct {
 	union json.RawMessage
 }
 
@@ -3691,6 +3735,7 @@ type UpdateApiKeyBody struct {
 // UpdateAuthConfigBody defines model for UpdateAuthConfigBody.
 type UpdateAuthConfigBody struct {
 	ApiMaxRequestDuration                                 nullable.Nullable[int]                                            `json:"api_max_request_duration,omitempty"`
+	CustomOauthEnabled                                    *bool                                                             `json:"custom_oauth_enabled,omitempty"`
 	DbMaxPoolSize                                         nullable.Nullable[int]                                            `json:"db_max_pool_size,omitempty"`
 	DbMaxPoolSizeUnit                                     nullable.Nullable[UpdateAuthConfigBodyDbMaxPoolSizeUnit]          `json:"db_max_pool_size_unit,omitempty"`
 	DisableSignup                                         nullable.Nullable[bool]                                           `json:"disable_signup,omitempty"`
@@ -4678,7 +4723,8 @@ type V1ServiceHealthResponseInfo1 struct {
 
 	// Healthy Deprecated. Use `status` instead.
 	// Deprecated:
-	Healthy bool `json:"healthy"`
+	Healthy              bool `json:"healthy"`
+	ReplicationConnected bool `json:"replication_connected"`
 }
 
 // V1ServiceHealthResponseInfo2 defines model for .
@@ -5706,6 +5752,68 @@ func (t DiskRequestBody_Attributes) MarshalJSON() ([]byte, error) {
 }
 
 func (t *DiskRequestBody_Attributes) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsDiskResponseAttributes0 returns the union data inside the DiskResponse_Attributes as a DiskResponseAttributes0
+func (t DiskResponse_Attributes) AsDiskResponseAttributes0() (DiskResponseAttributes0, error) {
+	var body DiskResponseAttributes0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDiskResponseAttributes0 overwrites any union data inside the DiskResponse_Attributes as the provided DiskResponseAttributes0
+func (t *DiskResponse_Attributes) FromDiskResponseAttributes0(v DiskResponseAttributes0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDiskResponseAttributes0 performs a merge with any union data inside the DiskResponse_Attributes, using the provided DiskResponseAttributes0
+func (t *DiskResponse_Attributes) MergeDiskResponseAttributes0(v DiskResponseAttributes0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsDiskResponseAttributes1 returns the union data inside the DiskResponse_Attributes as a DiskResponseAttributes1
+func (t DiskResponse_Attributes) AsDiskResponseAttributes1() (DiskResponseAttributes1, error) {
+	var body DiskResponseAttributes1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDiskResponseAttributes1 overwrites any union data inside the DiskResponse_Attributes as the provided DiskResponseAttributes1
+func (t *DiskResponse_Attributes) FromDiskResponseAttributes1(v DiskResponseAttributes1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDiskResponseAttributes1 performs a merge with any union data inside the DiskResponse_Attributes, using the provided DiskResponseAttributes1
+func (t *DiskResponse_Attributes) MergeDiskResponseAttributes1(v DiskResponseAttributes1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t DiskResponse_Attributes) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *DiskResponse_Attributes) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
