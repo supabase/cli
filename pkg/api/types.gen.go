@@ -4818,6 +4818,9 @@ type V1DeleteABranchParams struct {
 // V1DiffABranchParams defines parameters for V1DiffABranch.
 type V1DiffABranchParams struct {
 	IncludedSchemas *string `form:"included_schemas,omitempty" json:"included_schemas,omitempty"`
+
+	// Pgdelta Use pg-delta instead of Migra for diffing when true
+	Pgdelta *bool `form:"pgdelta,omitempty" json:"pgdelta,omitempty"`
 }
 
 // V1AuthorizeUserParams defines parameters for V1AuthorizeUser.
