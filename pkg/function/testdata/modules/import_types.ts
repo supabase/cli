@@ -1,5 +1,5 @@
 // Test file for multiline import type statements
-// This pattern was broken before the [\s\S]*? fix
+// This pattern requires (?:type\s+)? to route braced imports into the {[^{}]+} branch
 
 // Multiline import type - should be matched by the regex
 import type {
@@ -18,5 +18,5 @@ export type {
   Json
 } from '../types/database.ts'
 
-// Non-braced default type import - exercises the [\s\S]*? branch on single-line
+// Non-braced default type import - exercises the .*? branch on single-line
 import type Database from '../types/database.ts'

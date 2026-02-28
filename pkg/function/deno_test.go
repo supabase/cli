@@ -88,8 +88,8 @@ func TestImportPaths(t *testing.T) {
 	})
 
 	t.Run("iterates multiline import type statements", func(t *testing.T) {
-		// This test verifies that multiline import type statements are correctly parsed
-		// The regex must use [\s\S]*? instead of .*? to match newlines
+		// This test verifies that multiline import type statements are correctly parsed.
+		// The (?:type\s+)? group consumes the type keyword so braced imports hit the {[^{}]+} branch.
 		// Setup in-memory fs
 		fsys := MockFS{}
 		fsys.On("ReadFile", "testdata/modules/import_types.ts").Once()
