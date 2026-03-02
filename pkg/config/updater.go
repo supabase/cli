@@ -107,6 +107,9 @@ func (u *ConfigUpdater) UpdateDbConfig(ctx context.Context, projectRef string, c
 }
 
 func (u *ConfigUpdater) UpdateDbNetworkRestrictionsConfig(ctx context.Context, projectRef string, n networkRestrictions, filter ...func(string) bool) error {
+	if !n.Enabled {
+		return nil
+	}
 	networkRestrictionsConfig, err := u.client.V1GetNetworkRestrictionsWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to read network restrictions config: %w", err)
