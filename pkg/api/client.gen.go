@@ -3417,6 +3417,22 @@ func NewV1DiffABranchRequest(server string, branchIdOrRef string, params *V1Diff
 
 		}
 
+		if params.Pgdelta != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "pgdelta", runtime.ParamLocationQuery, *params.Pgdelta); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
 		queryURL.RawQuery = queryValues.Encode()
 	}
 
