@@ -86,6 +86,21 @@ func TestImportPaths(t *testing.T) {
 		assert.NoError(t, err)
 		fsys.AssertExpectations(t)
 	})
+
+	t.Run("iterates multiline import type statements", func(t *testing.T) {
+		// This test verifies that multiline import type statements are correctly parsed.
+		// The (?:type\s+)? group consumes the type keyword so braced imports hit the {[^{}]+} branch.
+		// Setup in-memory fs
+		fsys := MockFS{}
+		fsys.On("ReadFile", "testdata/modules/import_types.ts").Once()
+		fsys.On("ReadFile", "testdata/types/database.ts").Once()
+		// Run test
+		im := ImportMap{}
+		err := im.WalkImportPaths("testdata/modules/import_types.ts", fsys.ReadFile)
+		// Check error
+		assert.NoError(t, err)
+		fsys.AssertExpectations(t)
+	})
 }
 
 func TestResolveImports(t *testing.T) {
