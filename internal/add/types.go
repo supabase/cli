@@ -42,7 +42,6 @@ type TemplateComponent struct {
 	Path   TemplatePath      `json:"path"`
 	Key    string            `json:"key"`
 	Value  string            `json:"value"`
-	Schema string            `json:"schema"`
 	Output map[string]string `json:"output"`
 }
 

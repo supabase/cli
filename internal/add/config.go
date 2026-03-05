@@ -1,10 +1,8 @@
 package add
 
 import (
-	"bytes"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -17,10 +15,7 @@ const (
 	sectionFunctionsPrefix = "functions."
 	sectionEdgeSecrets     = "edge_runtime.secrets"
 	sectionDbVault         = "db.vault"
-	sectionDbMigrations    = "db.migrations"
 )
-
-var schemaPathsPattern = regexp.MustCompile(`(?s)\nschema_paths = \[(.*?)\]\n`)
 
 type configEditor struct {
 	data    []byte
@@ -60,30 +55,6 @@ func (e *configEditor) ensureSecretConfig(section, key string) {
 	e.ensureKV(section, key, fmt.Sprintf("env(%s)", key), true)
 }
 
-func (e *configEditor) ensureDefaultSchemaPaths() {
-	paths := []string{
-		"./schemas/types.sql",
-		"./schemas/tables/*.sql",
-		"./schemas/functions/*.sql",
-		"./schemas/triggers/*.sql",
-		"./schemas/policies/*.sql",
-		"./schemas/*.sql",
-	}
-	lines := []string{"schema_paths = ["}
-	for _, fp := range paths {
-		lines = append(lines, fmt.Sprintf(`  "%s",`, filepath.ToSlash(fp)))
-	}
-	lines = append(lines, "]")
-	block := strings.Join(lines, "\n")
-	if out := schemaPathsPattern.ReplaceAllLiteral(e.data, []byte("\n"+block+"\n")); !bytes.Equal(out, e.data) {
-		e.data = out
-		e.changed = true
-		return
-	}
-	inserted := e.insertSectionContent(sectionDbMigrations, block+"\n")
-	e.changed = e.changed || inserted
-}
-
 func (e *configEditor) ensureKV(section, key, value string, quoted bool) {
 	valueExpr := value
 	if quoted {
@@ -105,26 +76,6 @@ func (e *configEditor) insertKVLine(section, key, line string) bool {
 		return false
 	}
 	insert := line
-	if len(sectionBody) > 0 && !strings.HasSuffix(sectionBody, "\n") {
-		insert = "\n" + insert
-	}
-	updated := append([]byte{}, e.data[:end]...)
-	updated = append(updated, []byte(insert)...)
-	updated = append(updated, e.data[end:]...)
-	e.data = updated
-	return true
-}
-
-func (e *configEditor) insertSectionContent(section, content string) bool {
-	start, end, found := findSectionBounds(string(e.data), section)
-	if !found {
-		return e.appendSection(section, content)
-	}
-	sectionBody := string(e.data[start:end])
-	if strings.Contains(sectionBody, content) {
-		return false
-	}
-	insert := content
 	if len(sectionBody) > 0 && !strings.HasSuffix(sectionBody, "\n") {
 		insert = "\n" + insert
 	}
