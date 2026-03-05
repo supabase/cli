@@ -65,9 +65,7 @@ func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	if !function.ShouldUsePackageJsonDiscovery(entrypoint, importMap, afero.NewIOFS(b.fsys)) {
 		env = append(env, "DENO_NO_PACKAGE_JSON=1")
 	}
-	if custom_registry := os.Getenv("NPM_CONFIG_REGISTRY"); custom_registry != "" {
-		env = append(env, "NPM_CONFIG_REGISTRY="+custom_registry)
-	}
+	env = append(env, getNpmEnv()...)
 	// Run bundle
 	if err := utils.DockerRunOnceWithConfig(
 		ctx,
@@ -94,6 +92,16 @@ func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	}
 	defer eszipBytes.Close()
 	return meta, function.Compress(eszipBytes, output)
+}
+
+func getNpmEnv() []string {
+	env := []string{}
+	for _, name := range []string{"NPM_CONFIG_REGISTRY", "NPM_AUTH_TOKEN"} {
+		if value := os.Getenv(name); value != "" {
+			env = append(env, name+"="+value)
+		}
+	}
+	return env
 }
 
 func GetBindMounts(cwd, hostFuncDir, hostOutputDir, hostEntrypointPath, hostImportMapPath string, fsys afero.Fs) ([]string, error) {

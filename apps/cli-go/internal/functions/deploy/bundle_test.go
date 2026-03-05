@@ -98,3 +98,22 @@ func TestDockerBundle(t *testing.T) {
 		assert.Nil(t, meta.VerifyJwt)
 	})
 }
+
+func TestGetNpmEnv(t *testing.T) {
+	t.Run("forwards configured npm environment", func(t *testing.T) {
+		t.Setenv("NPM_CONFIG_REGISTRY", "https://npm.pkg.github.com")
+		t.Setenv("NPM_AUTH_TOKEN", "test-token")
+
+		assert.Equal(t, []string{
+			"NPM_CONFIG_REGISTRY=https://npm.pkg.github.com",
+			"NPM_AUTH_TOKEN=test-token",
+		}, getNpmEnv())
+	})
+
+	t.Run("skips unset npm environment", func(t *testing.T) {
+		t.Setenv("NPM_CONFIG_REGISTRY", "")
+		t.Setenv("NPM_AUTH_TOKEN", "")
+
+		assert.Empty(t, getNpmEnv())
+	})
+}
