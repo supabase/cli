@@ -9,5 +9,3 @@ Requires your local project to be linked to a remote database by running `supaba
 Optionally, a new row can be inserted into the migration history table to reflect the current state of the remote database.
 
 If no entries exist in the migration history table, `pg_dump` will be used to capture all contents of the remote schemas you have created. Otherwise, this command will only diff schema changes against the remote database, similar to running `db diff --linked`.
-
-When using `--experimental`, SQL objects are written as declarative schema files. You can customize where new schema files are written via `[db.migrations.schema_placement]` in `supabase/config.toml`, while `[db.migrations].schema_paths` still controls execution order.

@@ -56,14 +56,6 @@ enabled = true
 # Specifies an ordered list of schema files that describe your database.
 # Supports glob patterns relative to supabase directory: "./schemas/*.sql"
 schema_paths = []
-# Maps schema object types to file placement for db pull --experimental and template installs.
-# Supports placeholders:
-#   {schema} for schema name
-#   {name} for object name
-#   {basename} for the default filename (eg. extensions.sql)
-# [db.migrations.schema_placement]
-# "tables" = "./schemas/tables/{name}.sql"
-# "functions" = "./schemas/functions/{name}.sql"
 
 [db.seed]
 # If enabled, seeds the database after migrations during a db reset.
