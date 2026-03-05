@@ -13,6 +13,7 @@ var (
 		GroupID: groupLocalDev,
 		Use:     "add <template-url-or-path>",
 		Short:   "Add a template package to your project",
+		Hidden:  true,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return add.Run(cmd.Context(), args[0], templateInputs, afero.NewOsFs())

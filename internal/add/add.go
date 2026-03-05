@@ -1,9 +1,11 @@
 package add
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path"
@@ -11,7 +13,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/go-errors/errors"
 	"github.com/joho/godotenv"
@@ -23,10 +24,10 @@ import (
 )
 
 type runtimeState struct {
+	ctx           context.Context
 	contextValues map[string]string
 	refs          map[string]string
 	config        *configEditor
-	migrationSeq  int
 }
 
 func Run(ctx context.Context, source string, inputArgs []string, fsys afero.Fs) error {
@@ -37,12 +38,9 @@ func Run(ctx context.Context, source string, inputArgs []string, fsys afero.Fs) 
 	if err != nil {
 		return err
 	}
-	var tmpl Template
-	if err := json.Unmarshal(templateBody, &tmpl); err != nil {
-		return errors.Errorf("failed to parse template manifest: %w", err)
-	}
-	if len(tmpl.Name) == 0 {
-		return errors.New("template manifest missing name")
+	tmpl, err := parseTemplateManifest(templateBody)
+	if err != nil {
+		return err
 	}
 	overrides, err := parseInputArgs(inputArgs)
 	if err != nil {
@@ -57,6 +55,7 @@ func Run(ctx context.Context, source string, inputArgs []string, fsys afero.Fs) 
 		return err
 	}
 	state := runtimeState{
+		ctx:           ctx,
 		contextValues: values,
 		refs:          map[string]string{},
 		config:        editor,
@@ -80,6 +79,60 @@ func Run(ctx context.Context, source string, inputArgs []string, fsys afero.Fs) 
 	fmt.Println("Finished " + utils.Aqua("supabase add") + ".")
 	if err := showPostInstallMessage(tmpl.PostInstall, state.contextValues, state.refs); err != nil {
 		return err
+	}
+	return nil
+}
+
+func parseTemplateManifest(data []byte) (Template, error) {
+	var tmpl Template
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&tmpl); err != nil {
+		return tmpl, errors.Errorf("template manifest has invalid JSON format: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return tmpl, errors.New("template manifest must contain a single JSON object")
+		}
+		return tmpl, errors.Errorf("template manifest has invalid JSON format: %w", err)
+	}
+	if err := validateTemplateManifest(tmpl); err != nil {
+		return tmpl, err
+	}
+	return tmpl, nil
+}
+
+func validateTemplateManifest(tmpl Template) error {
+	if len(strings.TrimSpace(tmpl.Name)) == 0 {
+		return errors.New("template manifest missing name")
+	}
+	inputKeys := make([]string, 0, len(tmpl.Inputs))
+	for key := range tmpl.Inputs {
+		inputKeys = append(inputKeys, key)
+	}
+	sort.Strings(inputKeys)
+	for _, key := range inputKeys {
+		spec := tmpl.Inputs[key]
+		typ := strings.ToLower(strings.TrimSpace(spec.Type))
+		switch typ {
+		case "", "string", "number", "password", "boolean", "bool":
+		case "select":
+			if len(spec.Options) == 0 {
+				return errors.Errorf("template input %q of type select requires at least one option", key)
+			}
+			for i, option := range spec.Options {
+				if len(strings.TrimSpace(option)) == 0 {
+					return errors.Errorf("template input %q has an empty option at index %d", key, i)
+				}
+			}
+		}
+	}
+	for i, step := range tmpl.Steps {
+		for j, component := range step.Components {
+			if len(strings.TrimSpace(component.Type)) == 0 {
+				return errors.Errorf("template step %d component %d requires type", i+1, j+1)
+			}
+		}
 	}
 	return nil
 }
@@ -227,6 +280,10 @@ func validateInputValue(key string, spec TemplateInput, value string) (string, e
 		if _, err := strconv.ParseFloat(value, 64); err != nil {
 			return "", errors.Errorf("template input %q must be a number: %w", key, err)
 		}
+	case "boolean", "bool":
+		if _, err := strconv.ParseBool(value); err != nil {
+			return "", errors.Errorf("template input %q must be a boolean: %w", key, err)
+		}
 	case "select":
 		if len(spec.Options) == 0 {
 			return "", errors.Errorf("template input %q has no select options", key)
@@ -268,14 +325,6 @@ func executeComponent(ctx context.Context, src *templateSource, c TemplateCompon
 	}
 }
 
-// migrationTimestamp returns a timestamp string for migration file naming.
-// Each call increments the sequence counter to ensure unique timestamps
-// when multiple migrations are added in the same operation.
-var migrationTimestamp = func(seq int) string {
-	t := time.Now().UTC().Add(time.Duration(seq) * time.Second)
-	return t.Format("20060102150405")
-}
-
 func executeMigrationComponent(src *templateSource, c TemplateComponent, fsys afero.Fs, state *runtimeState) error {
 	templatePaths, err := renderComponentPaths(c.Path, state.contextValues, state.refs)
 	if err != nil {
@@ -307,11 +356,15 @@ func executeMigrationComponent(src *templateSource, c TemplateComponent, fsys af
 	if len(name) == 0 {
 		return errors.New("migration component requires a name")
 	}
-	timestamp := migrationTimestamp(state.migrationSeq)
-	state.migrationSeq++
-	filename := fmt.Sprintf("%s_%s.sql", timestamp, name)
+	filename := name
+	if !strings.EqualFold(filepath.Ext(filename), ".sql") {
+		filename += ".sql"
+	}
 	destPath := filepath.Join(utils.MigrationsDir, filename)
 	if err := utils.MkdirIfNotExistFS(fsys, utils.MigrationsDir); err != nil {
+		return err
+	}
+	if err := confirmComponentFileOverwrite(state.ctx, fsys, "migration", name, []string{destPath}); err != nil {
 		return err
 	}
 	content := strings.TrimSpace(sqlContent) + "\n"
@@ -358,7 +411,7 @@ func executeEdgeFunctionComponent(src *templateSource, c TemplateComponent, fsys
 		if len(paths) == 1 && path.Ext(refPathKey(paths[0])) == "" {
 			return errors.New("remote edge_function path must be a file or file array; for directories, provide path as an array of files")
 		}
-		if err := copyFunctionFilesFromRemoteRefs(src, paths, destDir, state.contextValues, state.refs, fsys); err != nil {
+		if err := copyFunctionFilesFromRemoteRefs(state.ctx, src, paths, destDir, slug, state.contextValues, state.refs, fsys); err != nil {
 			return err
 		}
 	} else {
@@ -366,7 +419,7 @@ func executeEdgeFunctionComponent(src *templateSource, c TemplateComponent, fsys
 		if len(paths) == 1 {
 			if localPath, err := src.resolveLocalPath(paths[0]); err == nil {
 				if info, err := src.fsys.Stat(localPath); err == nil && info.IsDir() {
-					if err := copyLocalFunctionDirectory(src, paths[0], destDir, state.contextValues, state.refs, fsys); err != nil {
+					if err := copyLocalFunctionDirectory(state.ctx, src, paths[0], destDir, slug, state.contextValues, state.refs, fsys); err != nil {
 						return err
 					}
 					copiedDirectory = true
@@ -374,7 +427,7 @@ func executeEdgeFunctionComponent(src *templateSource, c TemplateComponent, fsys
 			}
 		}
 		if !copiedDirectory {
-			if err := copyFunctionFilesFromLocalRefs(src, paths, destDir, state.contextValues, state.refs, fsys); err != nil {
+				if err := copyFunctionFilesFromLocalRefs(state.ctx, src, paths, destDir, slug, state.contextValues, state.refs, fsys); err != nil {
 				return err
 			}
 		}
@@ -512,42 +565,133 @@ func inferFunctionSlugFromPaths(paths []string) string {
 	return path.Base(ref)
 }
 
-func copyLocalFunctionDirectory(src *templateSource, componentPath, destDir string, context map[string]string, refs map[string]string, fsys afero.Fs) error {
+type plannedFileWrite struct {
+	target string
+	data   []byte
+	mode   os.FileMode
+	rel    string
+}
+
+func confirmComponentFileOverwrite(ctx context.Context, fsys afero.Fs, componentType, componentName string, targets []string) error {
+	seen := make(map[string]struct{}, len(targets))
+	existing := make([]string, 0, len(targets))
+	for _, target := range targets {
+		target = filepath.Clean(strings.TrimSpace(target))
+		if len(target) == 0 {
+			continue
+		}
+		if _, ok := seen[target]; ok {
+			continue
+		}
+		seen[target] = struct{}{}
+		info, err := fsys.Stat(target)
+		if err == nil {
+			if !info.IsDir() {
+				existing = append(existing, target)
+			}
+			continue
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return errors.Errorf("failed to check existing file %s: %w", target, err)
+		}
+	}
+	if len(existing) == 0 {
+		return nil
+	}
+	sort.Strings(existing)
+	name := strings.TrimSpace(componentName)
+	if len(name) == 0 {
+		name = componentType
+	}
+	message := fmt.Sprintf("Component %s (%s) will overwrite %d file(s):", componentType, utils.Bold(name), len(existing))
+	showCount := len(existing)
+	if showCount > 5 {
+		showCount = 5
+	}
+	for _, target := range existing[:showCount] {
+		message += "\n - " + target
+	}
+	if len(existing) > showCount {
+		message += fmt.Sprintf("\n - ...and %d more", len(existing)-showCount)
+	}
+	message += "\nContinue?"
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	shouldOverwrite, err := utils.NewConsole().PromptYesNo(ctx, message, false)
+	if err != nil {
+		return err
+	}
+	if !shouldOverwrite {
+		return errors.New(context.Canceled)
+	}
+	return nil
+}
+
+func writePlannedFiles(planned []plannedFileWrite, fsys afero.Fs) error {
+	for _, file := range planned {
+		if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(file.target)); err != nil {
+			return err
+		}
+		if err := afero.WriteFile(fsys, file.target, file.data, file.mode); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func copyLocalFunctionDirectory(ctx context.Context, src *templateSource, componentPath, destDir, componentName string, context map[string]string, refs map[string]string, fsys afero.Fs) error {
 	sourceDir, err := src.resolveLocalPath(componentPath)
 	if err != nil {
 		return err
 	}
-	return afero.Walk(src.fsys, sourceDir, func(fp string, info os.FileInfo, err error) error {
+	planned := make([]plannedFileWrite, 0)
+	if err := afero.Walk(src.fsys, sourceDir, func(fp string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
+		}
+		if info.IsDir() {
+			return nil
 		}
 		rel, err := filepath.Rel(sourceDir, fp)
 		if err != nil {
 			return err
 		}
+		rel = filepath.ToSlash(rel)
 		target := filepath.Join(destDir, rel)
-		if info.IsDir() {
-			return utils.MkdirIfNotExistFS(fsys, target)
-		}
 		data, err := afero.ReadFile(src.fsys, fp)
 		if err != nil {
 			return err
 		}
-		if shouldRenderFile(fp) {
+		if shouldRenderFile(rel) {
 			if rendered, err := renderValue(string(data), context, refs); err == nil {
 				data = []byte(rendered)
 			}
 		}
-		if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(target)); err != nil {
-			return err
-		}
-		return afero.WriteFile(fsys, target, data, info.Mode())
-	})
+		planned = append(planned, plannedFileWrite{
+			target: target,
+			data:   data,
+			mode:   info.Mode(),
+			rel:    rel,
+		})
+		return nil
+	}); err != nil {
+		return err
+	}
+	targets := make([]string, 0, len(planned))
+	for _, file := range planned {
+		targets = append(targets, file.target)
+	}
+	if err := confirmComponentFileOverwrite(ctx, fsys, "edge_function", componentName, targets); err != nil {
+		return err
+	}
+	return writePlannedFiles(planned, fsys)
 }
 
-func copyFunctionFilesFromLocalRefs(src *templateSource, refsList []string, destDir string, context map[string]string, refs map[string]string, fsys afero.Fs) error {
+func copyFunctionFilesFromLocalRefs(ctx context.Context, src *templateSource, refsList []string, destDir, componentName string, context map[string]string, refs map[string]string, fsys afero.Fs) error {
 	normalized, baseDir := normalizeFunctionRefs(refsList)
 	entrypointPrefix := inferEntrypointPrefix(normalized, baseDir)
+	planned := make([]plannedFileWrite, 0, len(refsList))
 	wroteEntrypoint := false
 	for i, ref := range refsList {
 		sourcePath, err := src.resolveLocalPath(ref)
@@ -578,12 +722,12 @@ func copyFunctionFilesFromLocalRefs(src *templateSource, refsList []string, dest
 				data = []byte(rendered)
 			}
 		}
-		if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(dest)); err != nil {
-			return err
-		}
-		if err := afero.WriteFile(fsys, dest, data, info.Mode()); err != nil {
-			return err
-		}
+		planned = append(planned, plannedFileWrite{
+			target: dest,
+			data:   data,
+			mode:   info.Mode(),
+			rel:    rel,
+		})
 		if rel == "index.ts" {
 			wroteEntrypoint = true
 		}
@@ -591,12 +735,20 @@ func copyFunctionFilesFromLocalRefs(src *templateSource, refsList []string, dest
 	if !wroteEntrypoint {
 		return errors.New("missing edge function entrypoint index.ts")
 	}
-	return nil
+	targets := make([]string, 0, len(planned))
+	for _, file := range planned {
+		targets = append(targets, file.target)
+	}
+	if err := confirmComponentFileOverwrite(ctx, fsys, "edge_function", componentName, targets); err != nil {
+		return err
+	}
+	return writePlannedFiles(planned, fsys)
 }
 
-func copyFunctionFilesFromRemoteRefs(src *templateSource, refsList []string, destDir string, context map[string]string, refs map[string]string, fsys afero.Fs) error {
+func copyFunctionFilesFromRemoteRefs(ctx context.Context, src *templateSource, refsList []string, destDir, componentName string, context map[string]string, refs map[string]string, fsys afero.Fs) error {
 	normalized, baseDir := normalizeFunctionRefs(refsList)
 	entrypointPrefix := inferEntrypointPrefix(normalized, baseDir)
+	planned := make([]plannedFileWrite, 0, len(refsList))
 	wroteEntrypoint := false
 	for i, ref := range refsList {
 		data, err := src.readTemplatePath(ref, true)
@@ -616,12 +768,12 @@ func copyFunctionFilesFromRemoteRefs(src *templateSource, refsList []string, des
 				data = []byte(rendered)
 			}
 		}
-		if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(dest)); err != nil {
-			return err
-		}
-		if err := afero.WriteFile(fsys, dest, data, 0644); err != nil {
-			return err
-		}
+		planned = append(planned, plannedFileWrite{
+			target: dest,
+			data:   data,
+			mode:   0644,
+			rel:    rel,
+		})
 		if rel == "index.ts" {
 			wroteEntrypoint = true
 		}
@@ -629,7 +781,14 @@ func copyFunctionFilesFromRemoteRefs(src *templateSource, refsList []string, des
 	if !wroteEntrypoint {
 		return errors.New("missing edge function entrypoint index.ts")
 	}
-	return nil
+	targets := make([]string, 0, len(planned))
+	for _, file := range planned {
+		targets = append(targets, file.target)
+	}
+	if err := confirmComponentFileOverwrite(ctx, fsys, "edge_function", componentName, targets); err != nil {
+		return err
+	}
+	return writePlannedFiles(planned, fsys)
 }
 
 func normalizeFunctionRefs(refsList []string) ([]string, string) {

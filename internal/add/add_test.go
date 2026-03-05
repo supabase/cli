@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -50,15 +51,6 @@ func TestRenderValueMissingEnvLeavesPlaceholder(t *testing.T) {
 func TestAddRunWithLocalTemplate(t *testing.T) {
 	fsys := afero.NewMemMapFs()
 	require.NoError(t, utils.WriteConfig(fsys, false))
-
-	// Override timestamp to produce deterministic filenames.
-	origTimestamp := migrationTimestamp
-	seq := 0
-	migrationTimestamp = func(_ int) string {
-		seq++
-		return "20260305120000"
-	}
-	t.Cleanup(func() { migrationTimestamp = origTimestamp })
 
 	template := `{
   "name": "add-embeddings",
@@ -99,8 +91,8 @@ func TestAddRunWithLocalTemplate(t *testing.T) {
 		"embedding_function_secret=test-secret",
 	}, fsys))
 
-	// Migration file should be in migrations dir with timestamp prefix.
-	migrationPath := filepath.Join(utils.MigrationsDir, "20260305120000_add-embedding-column.sql")
+	// Migration file should be in migrations dir using the migration name.
+	migrationPath := filepath.Join(utils.MigrationsDir, "add-embedding-column.sql")
 	sql, err := afero.ReadFile(fsys, migrationPath)
 	require.NoError(t, err)
 	assert.Contains(t, string(sql), "alter table documents")
@@ -123,12 +115,6 @@ func TestAddRunWithLocalTemplate(t *testing.T) {
 func TestAddRunWithMultipleMigrations(t *testing.T) {
 	fsys := afero.NewMemMapFs()
 	require.NoError(t, utils.WriteConfig(fsys, false))
-
-	origTimestamp := migrationTimestamp
-	migrationTimestamp = func(seq int) string {
-		return strings.Replace("20260305120000", "0000", strings.Repeat("0", 4-len(string(rune('0'+seq))))+string(rune('0'+seq)), 1)
-	}
-	t.Cleanup(func() { migrationTimestamp = origTimestamp })
 
 	template := `{
   "name": "multi-migration",
@@ -153,10 +139,9 @@ func TestAddRunWithMultipleMigrations(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, entries, 2)
 
-	// Files should have different timestamps due to sequence counter.
+	// Files should use migration component names.
 	names := []string{entries[0].Name(), entries[1].Name()}
-	assert.Contains(t, names[0], "enable-extensions")
-	assert.Contains(t, names[1], "create-tables")
+	assert.ElementsMatch(t, []string{"enable-extensions.sql", "create-tables.sql"}, names)
 }
 
 func TestAddRunWithEdgeFunctionPathArray(t *testing.T) {
@@ -261,6 +246,67 @@ func TestAddRunUnsupportedComponentTypeReturnsError(t *testing.T) {
 	err := Run(context.Background(), "templates/bad.json", nil, fsys)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported component type: schema")
+}
+
+func TestAddRunInvalidTemplateFormatReturnsError(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	require.NoError(t, utils.WriteConfig(fsys, false))
+
+	template := `{
+  "name": "bad-template",
+  "stepz": []
+}`
+	require.NoError(t, afero.WriteFile(fsys, "templates/bad-format.json", []byte(template), 0644))
+
+	err := Run(context.Background(), "templates/bad-format.json", nil, fsys)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "template manifest has invalid JSON format")
+	assert.Contains(t, err.Error(), "unknown field \"stepz\"")
+}
+
+func TestAddRunEdgeFunctionOverwriteRequiresConfirmation(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	require.NoError(t, utils.WriteConfig(fsys, false))
+
+	template := `{
+  "name": "overwrite-fn",
+  "steps": [
+    {
+      "name": "deploy_function",
+      "components": [
+        {
+          "name": "my-fn",
+          "type": "edge_function",
+          "path": "./functions/my-fn/index.ts"
+        }
+      ]
+    }
+  ]
+}`
+	require.NoError(t, afero.WriteFile(fsys, "templates/overwrite-fn.json", []byte(template), 0644))
+	require.NoError(t, afero.WriteFile(fsys, "templates/functions/my-fn/index.ts", []byte(`export const value = "new";`), 0644))
+	require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, "my-fn", "index.ts"), []byte(`export const value = "old";`), 0644))
+
+	t.Run("aborts when overwrite is declined", func(t *testing.T) {
+		t.Cleanup(fstest.MockStdin(t, "n\n"))
+		err := Run(context.Background(), "templates/overwrite-fn.json", nil, fsys)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), context.Canceled.Error())
+
+		index, readErr := afero.ReadFile(fsys, filepath.Join(utils.FunctionsDir, "my-fn", "index.ts"))
+		require.NoError(t, readErr)
+		assert.Contains(t, string(index), `"old"`)
+	})
+
+	t.Run("overwrites when confirmed", func(t *testing.T) {
+		t.Cleanup(fstest.MockStdin(t, "y\n"))
+		err := Run(context.Background(), "templates/overwrite-fn.json", nil, fsys)
+		require.NoError(t, err)
+
+		index, readErr := afero.ReadFile(fsys, filepath.Join(utils.FunctionsDir, "my-fn", "index.ts"))
+		require.NoError(t, readErr)
+		assert.Contains(t, string(index), `"new"`)
+	})
 }
 
 func TestAddRunSecretAppendsToExistingFunctionsEnv(t *testing.T) {
