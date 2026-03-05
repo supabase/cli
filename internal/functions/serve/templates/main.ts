@@ -53,6 +53,7 @@ const GENERIC_FUNCTION_SERVE_MESSAGE = `Serving functions on http://127.0.0.1:${
 interface FunctionConfig {
   entrypointPath: string;
   importMapPath: string;
+  staticFiles: string[];
   verifyJWT: boolean;
 }
 

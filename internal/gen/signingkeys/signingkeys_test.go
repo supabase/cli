@@ -1,8 +1,16 @@
 package signingkeys
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/spf13/afero"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/testing/fstest"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/config"
 )
 
@@ -109,4 +117,70 @@ func TestGetSupportedAlgorithms(t *testing.T) {
 			t.Errorf("GetSupportedAlgorithms()[%d] = %s, expected %s", i, alg, expected[i])
 		}
 	}
+}
+
+func TestSigningKey(t *testing.T) {
+	t.Run("generates signing key", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		err := Run(context.Background(), "ES256", false, fsys)
+		assert.NoError(t, err)
+	})
+
+	t.Run("throws error on permission denied", func(t *testing.T) {
+		fsys := &fstest.OpenErrorFs{DenyPath: utils.ConfigPath}
+		err := Run(context.Background(), "ES256", false, fsys)
+		assert.ErrorIs(t, err, os.ErrPermission)
+	})
+
+	t.Run("throws error on encode failure", func(t *testing.T) {
+		oldStdout := os.Stdout
+		t.Cleanup(func() { os.Stdout = oldStdout })
+		os.Stdout = nil
+		// Run test
+		fsys := afero.NewMemMapFs()
+		err := Run(context.Background(), "ES256", false, fsys)
+		assert.ErrorIs(t, err, os.ErrInvalid)
+	})
+}
+
+func TestAppendKey(t *testing.T) {
+	// Setup in-memory fs
+	fsys := afero.NewMemMapFs()
+	keyPath := filepath.Join(utils.SupabaseDirPath, "signing_keys.json")
+	require.NoError(t, utils.WriteFile(keyPath, []byte(`[]`), fsys))
+	require.NoError(t, utils.WriteFile(utils.ConfigPath, []byte(`
+[auth]
+signing_keys_path = "./signing_keys.json"
+`), fsys))
+
+	t.Run("overwrites signing key", func(t *testing.T) {
+		t.Cleanup(fstest.MockStdin(t, "y"))
+		err := Run(context.Background(), "ES256", false, fsys)
+		assert.NoError(t, err)
+	})
+
+	t.Run("throws error on context cancelled", func(t *testing.T) {
+		t.Cleanup(fstest.MockStdin(t, "y"))
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		// Run test
+		err := Run(ctx, "ES256", false, afero.NewReadOnlyFs(fsys))
+		assert.ErrorIs(t, err, context.Canceled)
+	})
+
+	t.Run("throws error on no answer", func(t *testing.T) {
+		t.Cleanup(fstest.MockStdin(t, "n"))
+		err := Run(context.Background(), "ES256", false, afero.NewReadOnlyFs(fsys))
+		assert.ErrorIs(t, err, context.Canceled)
+	})
+
+	t.Run("appends signing key", func(t *testing.T) {
+		err := Run(context.Background(), "ES256", true, fsys)
+		assert.NoError(t, err)
+	})
+
+	t.Run("throws error on write failure", func(t *testing.T) {
+		err := Run(context.Background(), "ES256", true, afero.NewReadOnlyFs(fsys))
+		assert.ErrorIs(t, err, os.ErrPermission)
+	})
 }

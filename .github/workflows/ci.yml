@@ -63,6 +63,7 @@ jobs:
         with:
           args: --timeout 3m --verbose
           version: latest
+          only-new-issues: true
 
   start:
     name: Start

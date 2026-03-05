@@ -627,7 +627,9 @@ EOF
 		if keys, err := json.Marshal(utils.Config.Auth.SigningKeys); err == nil {
 			env = append(env, "GOTRUE_JWT_KEYS="+string(keys))
 			// TODO: deprecate HS256 when it's no longer supported
+			// TODO: remove VALIDMETHODS after a while to avoid breaking changes
 			env = append(env, "GOTRUE_JWT_VALIDMETHODS=HS256,RS256,ES256")
+			env = append(env, "GOTRUE_JWT_VALID_METHODS=HS256,RS256,ES256")
 		}
 
 		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.Enabled {
@@ -1173,6 +1175,7 @@ EOF
 					"SNIPPETS_MANAGEMENT_FOLDER=" + containerSnippetsPath,
 					// Ref: https://github.com/vercel/next.js/issues/51684#issuecomment-1612834913
 					"HOSTNAME=0.0.0.0",
+					"POSTGRES_USER_READ_WRITE=postgres",
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD-SHELL", `node --eval="fetch('http://127.0.0.1:3000/api/platform/profile').then((r) => {if (!r.ok) throw new Error(r.status)})"`},

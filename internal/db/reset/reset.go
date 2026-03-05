@@ -21,7 +21,6 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
-	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/migration/down"
 	"github.com/supabase/cli/internal/migration/list"
@@ -73,7 +72,7 @@ func Run(ctx context.Context, version string, last uint, config pgconn.Config, f
 			return err
 		}
 	}
-	branch := keys.GetGitBranch(fsys)
+	branch := utils.GetGitBranch(fsys)
 	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db reset")+" on branch "+utils.Aqua(branch)+".")
 	return nil
 }
