@@ -7,22 +7,23 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
 )
 
+const templatesAPIURLEnv = "SUPABASE_TEMPLATES_API_URL"
+
 type templateSource struct {
-	fsys        afero.Fs
-	baseDir     string
-	manifestURL *url.URL
-	client      *http.Client
-	ctx         context.Context
-	isRemote    bool
+	fsys     afero.Fs
+	baseDir  string
+	client   *http.Client
+	ctx      context.Context
+	isRemote bool
 }
 
 func newTemplateSource(ctx context.Context, source string, fsys afero.Fs) (*templateSource, []byte, error) {
@@ -33,22 +34,32 @@ func newTemplateSource(ctx context.Context, source string, fsys afero.Fs) (*temp
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if !strings.Contains(source, "://") && isLikelyRemotePath(source, fsys) {
-		source = "https://" + source
+	if isLocalTemplatePath(source, fsys) {
+		return newLocalTemplateSource(ctx, source, fsys)
 	}
 	if parsed, err := url.Parse(source); err == nil && len(parsed.Scheme) > 0 && len(parsed.Host) > 0 {
-		body, err := fetchURLWithContext(ctx, http.DefaultClient, parsed.String(), true)
-		if err != nil {
-			return nil, nil, err
-		}
-		return &templateSource{
-			fsys:        fsys,
-			manifestURL: parsed,
-			client:      http.DefaultClient,
-			ctx:         ctx,
-			isRemote:    true,
-		}, body, nil
+		return nil, nil, errors.New("remote template URLs are unsupported; pass a template slug instead")
 	}
+	if err := utils.ValidateFunctionSlug(source); err != nil {
+		return nil, nil, errors.Errorf("invalid template slug %q: %w", source, err)
+	}
+	return newRemoteTemplateSource(ctx, source, fsys, http.DefaultClient)
+}
+
+func isLocalTemplatePath(source string, fsys afero.Fs) bool {
+	if filepath.IsAbs(source) {
+		return true
+	}
+	if _, err := fsys.Stat(source); err == nil {
+		return true
+	}
+	if _, err := fsys.Stat(filepath.Join(utils.CurrentDirAbs, source)); err == nil {
+		return true
+	}
+	return false
+}
+
+func newLocalTemplateSource(ctx context.Context, source string, fsys afero.Fs) (*templateSource, []byte, error) {
 	if !filepath.IsAbs(source) {
 		if _, err := fsys.Stat(source); err != nil {
 			source = filepath.Join(utils.CurrentDirAbs, source)
@@ -66,12 +77,41 @@ func newTemplateSource(ctx context.Context, source string, fsys afero.Fs) (*temp
 	}, body, nil
 }
 
-func isLikelyRemotePath(source string, fsys afero.Fs) bool {
-	if _, err := fsys.Stat(source); err == nil {
-		return false
+func newRemoteTemplateSource(ctx context.Context, slug string, fsys afero.Fs, client *http.Client) (*templateSource, []byte, error) {
+	manifestURL, err := resolveTemplateManifestURL(slug)
+	if err != nil {
+		return nil, nil, err
 	}
-	head := strings.Split(source, "/")[0]
-	return strings.Contains(head, ".")
+	body, err := fetchURLWithContext(ctx, client, manifestURL.String(), true)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &templateSource{
+		fsys:     fsys,
+		client:   client,
+		ctx:      ctx,
+		isRemote: true,
+	}, body, nil
+}
+
+func resolveTemplateManifestURL(slug string) (*url.URL, error) {
+	baseURL := strings.TrimSpace(viper.GetString("TEMPLATES_API_URL"))
+	if len(baseURL) == 0 {
+		baseURL = strings.TrimSpace(os.Getenv(templatesAPIURLEnv))
+	}
+	if len(baseURL) == 0 {
+		return nil, errors.Errorf("missing %s environment variable", templatesAPIURLEnv)
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, errors.Errorf("failed to parse %s: %w", templatesAPIURLEnv, err)
+	}
+	if len(parsed.Scheme) == 0 || len(parsed.Host) == 0 {
+		return nil, errors.Errorf("%s must be an absolute URL", templatesAPIURLEnv)
+	}
+	manifestURL := *parsed
+	manifestURL.Path = strings.TrimSuffix(parsed.Path, "/") + "/" + url.PathEscape(slug)
+	return &manifestURL, nil
 }
 
 func (s *templateSource) readTemplatePath(ref string, required bool) ([]byte, error) {
@@ -119,20 +159,14 @@ func (s *templateSource) resolveURL(ref string) (string, error) {
 	if !s.isRemote {
 		return "", errors.New("template source is local")
 	}
-	if parsed, err := url.Parse(ref); err == nil && len(parsed.Scheme) > 0 && len(parsed.Host) > 0 {
-		return parsed.String(), nil
-	}
-	base := s.manifestURL
-	if base == nil {
-		return "", errors.New("missing template base url")
-	}
-	root := *base
-	root.Path = path.Dir(base.Path) + "/"
-	rel, err := url.Parse(ref)
+	parsed, err := url.Parse(ref)
 	if err != nil {
 		return "", errors.Errorf("failed to parse component path %s: %w", ref, err)
 	}
-	return root.ResolveReference(rel).String(), nil
+	if len(parsed.Scheme) == 0 || len(parsed.Host) == 0 {
+		return "", errors.Errorf("remote template component path must be an absolute URL: %s", ref)
+	}
+	return parsed.String(), nil
 }
 
 func fetchURLWithContext(ctx context.Context, client *http.Client, target string, required bool) ([]byte, error) {

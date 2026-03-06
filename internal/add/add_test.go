@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -110,6 +112,120 @@ func TestAddRunWithLocalTemplate(t *testing.T) {
 	functionEnv := readEnvMap(t, fsys, utils.FallbackEnvFilePath)
 	assert.Equal(t, "test-key", functionEnv["OPENAI_API_KEY"])
 	assert.NotContains(t, functionEnv, "EMBEDDING_FUNCTION_SECRET")
+}
+
+func TestAddRunWithRemoteTemplateSlug(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	require.NoError(t, utils.WriteConfig(fsys, false))
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/templates/automatic-embeddings":
+			_, _ = w.Write([]byte(`{
+  "name": "automatic-embeddings",
+  "inputs": {
+    "table_name": {"label": "Table", "type": "string", "required": true}
+  },
+  "steps": [
+    {
+      "name": "provision_database",
+      "components": [
+        {"name": "add-embedding-column", "type": "migration", "path": "` + server.URL + `/assets/automatic-embeddings/sql/add-embedding-column.sql"}
+      ]
+    },
+    {
+      "name": "deploy_function",
+      "components": [
+        {
+          "name": "generate-embedding",
+          "type": "edge_function",
+          "path": [
+            "` + server.URL + `/assets/automatic-embeddings/functions/generate-embedding/index.ts",
+            "` + server.URL + `/assets/automatic-embeddings/functions/generate-embedding/lib/helper.ts"
+          ]
+        }
+      ]
+    }
+  ]
+}`))
+		case "/assets/automatic-embeddings/sql/add-embedding-column.sql":
+			_, _ = w.Write([]byte(`alter table {{context.table_name}} add column embedding vector(1536);`))
+		case "/assets/automatic-embeddings/functions/generate-embedding/index.ts":
+			_, _ = w.Write([]byte(`import { helper } from "./lib/helper.ts"; export default helper("{{context.table_name}}");`))
+		case "/assets/automatic-embeddings/functions/generate-embedding/lib/helper.ts":
+			_, _ = w.Write([]byte(`export const helper = (value: string) => value;`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv(templatesAPIURLEnv, server.URL+"/templates")
+	require.NoError(t, Run(context.Background(), "automatic-embeddings", []string{
+		"table_name=documents",
+	}, fsys))
+
+	migrationPath := filepath.Join(utils.MigrationsDir, "add-embedding-column.sql")
+	sql, err := afero.ReadFile(fsys, migrationPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(sql), "alter table documents")
+
+	index, err := afero.ReadFile(fsys, filepath.Join(utils.FunctionsDir, "generate-embedding", "index.ts"))
+	require.NoError(t, err)
+	assert.Contains(t, string(index), `helper("documents")`)
+
+	helper, err := afero.ReadFile(fsys, filepath.Join(utils.FunctionsDir, "generate-embedding", "lib", "helper.ts"))
+	require.NoError(t, err)
+	assert.Contains(t, string(helper), "export const helper")
+}
+
+func TestAddRunWithRemoteTemplateSlugRejectsRelativeComponentPaths(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	require.NoError(t, utils.WriteConfig(fsys, false))
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/templates/automatic-embeddings":
+			_, _ = w.Write([]byte(`{
+  "name": "automatic-embeddings",
+  "steps": [
+    {
+      "name": "provision_database",
+      "components": [
+        {"name": "add-embedding-column", "type": "migration", "path": "./sql/add-embedding-column.sql"}
+      ]
+    }
+  ]
+}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv(templatesAPIURLEnv, server.URL+"/templates")
+	err := Run(context.Background(), "automatic-embeddings", nil, fsys)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "remote template component path must be an absolute URL")
+}
+
+func TestAddRunWithTemplateSlugMissingAPIURL(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	require.NoError(t, utils.WriteConfig(fsys, false))
+
+	err := Run(context.Background(), "automatic-embeddings", nil, fsys)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing "+templatesAPIURLEnv+" environment variable")
+}
+
+func TestAddRunRejectsRemoteTemplateURL(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	require.NoError(t, utils.WriteConfig(fsys, false))
+
+	err := Run(context.Background(), "https://example.com/templates/automatic-embeddings.json", nil, fsys)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "remote template URLs are unsupported")
 }
 
 func TestAddRunWithMultipleMigrations(t *testing.T) {

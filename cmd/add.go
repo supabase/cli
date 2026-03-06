@@ -11,7 +11,7 @@ var (
 
 	addCmd = &cobra.Command{
 		GroupID: groupLocalDev,
-		Use:     "add <template-url-or-path>",
+		Use:     "add <template-slug-or-path>",
 		Short:   "Add a template package to your project",
 		Hidden:  true,
 		Args:    cobra.ExactArgs(1),
