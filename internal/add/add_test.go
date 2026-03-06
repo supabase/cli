@@ -213,6 +213,7 @@ func TestAddRunWithRemoteTemplateSlugRejectsRelativeComponentPaths(t *testing.T)
 func TestAddRunWithTemplateSlugMissingAPIURL(t *testing.T) {
 	fsys := afero.NewMemMapFs()
 	require.NoError(t, utils.WriteConfig(fsys, false))
+	t.Setenv(templatesAPIURLEnv, "")
 
 	err := Run(context.Background(), "automatic-embeddings", nil, fsys)
 	require.Error(t, err)
