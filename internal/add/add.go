@@ -30,13 +30,23 @@ type runtimeState struct {
 	config        *configEditor
 }
 
-func Run(ctx context.Context, source string, inputArgs []string, fsys afero.Fs) error {
+func Run(ctx context.Context, source string, inputArgs []string, raw bool, fsys afero.Fs) error {
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
 	src, templateBody, err := newTemplateSource(ctx, source, fsys)
 	if err != nil {
 		return err
+	}
+	if raw {
+		var buf bytes.Buffer
+		if err := json.Indent(&buf, templateBody, "", "  "); err != nil {
+			// fallback to raw bytes if not valid JSON
+			fmt.Println(string(templateBody))
+			return nil
+		}
+		fmt.Println(buf.String())
+		return nil
 	}
 	tmpl, err := parseTemplateManifest(templateBody)
 	if err != nil {

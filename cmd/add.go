@@ -8,6 +8,7 @@ import (
 
 var (
 	templateInputs []string
+	templateRaw    bool
 
 	addCmd = &cobra.Command{
 		GroupID: groupLocalDev,
@@ -16,7 +17,7 @@ var (
 		Hidden:  true,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return add.Run(cmd.Context(), args[0], templateInputs, afero.NewOsFs())
+			return add.Run(cmd.Context(), args[0], templateInputs, templateRaw, afero.NewOsFs())
 		},
 	}
 )
@@ -24,5 +25,6 @@ var (
 func init() {
 	flags := addCmd.Flags()
 	flags.StringArrayVarP(&templateInputs, "input", "i", []string{}, "Set template input values as key=value.")
+	flags.BoolVar(&templateRaw, "raw", false, "Print the raw template JSON and exit without applying it.")
 	rootCmd.AddCommand(addCmd)
 }

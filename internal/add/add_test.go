@@ -91,7 +91,7 @@ func TestAddRunWithLocalTemplate(t *testing.T) {
 		"table_name=documents",
 		"openai_api_key=test-key",
 		"embedding_function_secret=test-secret",
-	}, fsys))
+	}, false, fsys))
 
 	// Migration file should be in migrations dir using the migration name.
 	migrationPath := filepath.Join(utils.MigrationsDir, "add-embedding-column.sql")
@@ -164,7 +164,7 @@ func TestAddRunWithRemoteTemplateSlug(t *testing.T) {
 	t.Setenv(templatesAPIURLEnv, server.URL+"/templates")
 	require.NoError(t, Run(context.Background(), "automatic-embeddings", []string{
 		"table_name=documents",
-	}, fsys))
+	}, false, fsys))
 
 	migrationPath := filepath.Join(utils.MigrationsDir, "add-embedding-column.sql")
 	sql, err := afero.ReadFile(fsys, migrationPath)
@@ -205,7 +205,7 @@ func TestAddRunWithRemoteTemplateSlugRejectsRelativeComponentPaths(t *testing.T)
 	defer server.Close()
 
 	t.Setenv(templatesAPIURLEnv, server.URL+"/templates")
-	err := Run(context.Background(), "automatic-embeddings", nil, fsys)
+	err := Run(context.Background(), "automatic-embeddings", nil, false, fsys)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "remote template component path must be an absolute URL")
 }
@@ -215,7 +215,7 @@ func TestAddRunWithTemplateSlugMissingAPIURL(t *testing.T) {
 	require.NoError(t, utils.WriteConfig(fsys, false))
 	t.Setenv(templatesAPIURLEnv, "")
 
-	err := Run(context.Background(), "automatic-embeddings", nil, fsys)
+	err := Run(context.Background(), "automatic-embeddings", nil, false, fsys)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing "+templatesAPIURLEnv+" environment variable")
 }
@@ -224,7 +224,7 @@ func TestAddRunRejectsRemoteTemplateURL(t *testing.T) {
 	fsys := afero.NewMemMapFs()
 	require.NoError(t, utils.WriteConfig(fsys, false))
 
-	err := Run(context.Background(), "https://example.com/templates/automatic-embeddings.json", nil, fsys)
+	err := Run(context.Background(), "https://example.com/templates/automatic-embeddings.json", nil, false, fsys)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "remote template URLs are unsupported")
 }
@@ -249,7 +249,7 @@ func TestAddRunWithMultipleMigrations(t *testing.T) {
 	require.NoError(t, afero.WriteFile(fsys, "templates/sql/extensions.sql", []byte(`create extension if not exists vector;`), 0644))
 	require.NoError(t, afero.WriteFile(fsys, "templates/sql/tables.sql", []byte(`create table public.items (id bigint primary key);`), 0644))
 
-	require.NoError(t, Run(context.Background(), "templates/multi.json", nil, fsys))
+	require.NoError(t, Run(context.Background(), "templates/multi.json", nil, false, fsys))
 
 	// Both migration files should exist.
 	entries, err := afero.ReadDir(fsys, utils.MigrationsDir)
@@ -290,7 +290,7 @@ func TestAddRunWithEdgeFunctionPathArray(t *testing.T) {
 	require.NoError(t, afero.WriteFile(fsys, "templates/functions/generate-embedding/index.ts", []byte(`import { helper } from "./lib/helper.ts"; export const model = "{{context.model}}"`), 0644))
 	require.NoError(t, afero.WriteFile(fsys, "templates/functions/generate-embedding/lib/helper.ts", []byte(`export const helper = "{{context.model}}"`), 0644))
 
-	require.NoError(t, Run(context.Background(), "templates/path-array.json", nil, fsys))
+	require.NoError(t, Run(context.Background(), "templates/path-array.json", nil, false, fsys))
 
 	index, err := afero.ReadFile(fsys, filepath.Join(utils.FunctionsDir, "generate-embedding", "index.ts"))
 	require.NoError(t, err)
@@ -327,7 +327,7 @@ func TestAddRunWithEdgeFunctionPathArraySharedSibling(t *testing.T) {
 	require.NoError(t, afero.WriteFile(fsys, "templates/functions/stripe-webhook/index.ts", []byte(`import { db } from "../_shared/db.ts"; export const handler = () => db;`), 0644))
 	require.NoError(t, afero.WriteFile(fsys, "templates/functions/_shared/db.ts", []byte(`export const db = "ok"`), 0644))
 
-	require.NoError(t, Run(context.Background(), "templates/path-array-shared-sibling.json", nil, fsys))
+	require.NoError(t, Run(context.Background(), "templates/path-array-shared-sibling.json", nil, false, fsys))
 
 	index, err := afero.ReadFile(fsys, filepath.Join(utils.FunctionsDir, "stripe-webhook", "index.ts"))
 	require.NoError(t, err)
@@ -360,7 +360,7 @@ func TestAddRunUnsupportedComponentTypeReturnsError(t *testing.T) {
 	require.NoError(t, afero.WriteFile(fsys, "templates/bad.json", []byte(template), 0644))
 	require.NoError(t, afero.WriteFile(fsys, "templates/schemas/stripe-schema.sql", []byte(`create schema if not exists stripe;`), 0644))
 
-	err := Run(context.Background(), "templates/bad.json", nil, fsys)
+	err := Run(context.Background(), "templates/bad.json", nil, false, fsys)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported component type: schema")
 }
@@ -375,7 +375,7 @@ func TestAddRunInvalidTemplateFormatReturnsError(t *testing.T) {
 }`
 	require.NoError(t, afero.WriteFile(fsys, "templates/bad-format.json", []byte(template), 0644))
 
-	err := Run(context.Background(), "templates/bad-format.json", nil, fsys)
+	err := Run(context.Background(), "templates/bad-format.json", nil, false, fsys)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "template manifest has invalid JSON format")
 	assert.Contains(t, err.Error(), "unknown field \"stepz\"")
@@ -406,7 +406,7 @@ func TestAddRunEdgeFunctionOverwriteRequiresConfirmation(t *testing.T) {
 
 	t.Run("aborts when overwrite is declined", func(t *testing.T) {
 		t.Cleanup(fstest.MockStdin(t, "n\n"))
-		err := Run(context.Background(), "templates/overwrite-fn.json", nil, fsys)
+		err := Run(context.Background(), "templates/overwrite-fn.json", nil, false, fsys)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), context.Canceled.Error())
 
@@ -417,7 +417,7 @@ func TestAddRunEdgeFunctionOverwriteRequiresConfirmation(t *testing.T) {
 
 	t.Run("overwrites when confirmed", func(t *testing.T) {
 		t.Cleanup(fstest.MockStdin(t, "y\n"))
-		err := Run(context.Background(), "templates/overwrite-fn.json", nil, fsys)
+		err := Run(context.Background(), "templates/overwrite-fn.json", nil, false, fsys)
 		require.NoError(t, err)
 
 		index, readErr := afero.ReadFile(fsys, filepath.Join(utils.FunctionsDir, "my-fn", "index.ts"))
@@ -449,7 +449,7 @@ func TestAddRunSecretAppendsToExistingFunctionsEnv(t *testing.T) {
 
 	require.NoError(t, Run(context.Background(), "templates/secret-env-append.json", []string{
 		"secret_value=appended-value",
-	}, fsys))
+	}, false, fsys))
 
 	functionEnv := readEnvMap(t, fsys, utils.FallbackEnvFilePath)
 	assert.Equal(t, "1", functionEnv["EXISTING"])
@@ -479,7 +479,7 @@ func TestAddRunShowsPostInstallMessage(t *testing.T) {
 		return Run(context.Background(), "templates/post-install-template.json", []string{
 			"webhook_events=[\"invoice.paid\"]",
 			"run_backfill=true",
-		}, fsys)
+		}, false, fsys)
 	})
 
 	finishedIdx := strings.Index(stdout, "Finished ")
