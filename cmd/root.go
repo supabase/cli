@@ -88,6 +88,12 @@ var (
 		Short:   "Supabase CLI " + utils.Version,
 		Version: utils.Version,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// pg-delta flows are currently marked experimental. When users opt in via
+			// EXPERIMENTAL_PG_DELTA, mirror that into EXPERIMENTAL so command gating
+			// remains consistent.
+			if viper.GetBool("EXPERIMENTAL_PG_DELTA") {
+				viper.Set("EXPERIMENTAL", true)
+			}
 			if IsExperimental(cmd) && !viper.GetBool("EXPERIMENTAL") {
 				return errors.New("must set the --experimental flag to run this command")
 			}

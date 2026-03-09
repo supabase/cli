@@ -89,6 +89,9 @@ var (
 		Use:   "diff",
 		Short: "Diffs the local database for schema changes",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// EXPERIMENTAL_PG_DELTA enables pg-delta without requiring every command
+			// invocation to pass --use-pg-delta, which is useful for branch-wide testing.
+			useDelta := usePgDelta || viper.GetBool("EXPERIMENTAL_PG_DELTA")
 			if usePgAdmin {
 				return diff.RunPgAdmin(cmd.Context(), schema, file, flags.DbConfig, afero.NewOsFs())
 			}
@@ -96,7 +99,7 @@ var (
 			if usePgSchema {
 				differ = diff.DiffPgSchema
 				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "--use-pg-schema flag is experimental and may not include all entities, such as views and grants.")
-			} else if usePgDelta {
+			} else if useDelta {
 				differ = diff.DiffPgDelta
 			}
 			return diff.Run(cmd.Context(), schema, file, flags.DbConfig, differ, afero.NewOsFs())
@@ -158,7 +161,10 @@ var (
 			if len(args) > 0 {
 				name = args[0]
 			}
-			return pull.Run(cmd.Context(), schema, flags.DbConfig, name, afero.NewOsFs())
+			// pull now has an opt-in pg-delta declarative mode, gated by experimental
+			// checks in pull.Run.
+			useDelta := usePgDelta || viper.GetBool("EXPERIMENTAL_PG_DELTA")
+			return pull.Run(cmd.Context(), schema, flags.DbConfig, name, useDelta, afero.NewOsFs())
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Finished " + utils.Aqua("supabase db pull") + ".")
@@ -186,7 +192,10 @@ var (
 		Use:        "commit",
 		Short:      "Commit remote changes as a new migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return pull.Run(cmd.Context(), schema, flags.DbConfig, "remote_commit", afero.NewOsFs())
+			// Keep remote commit behavior consistent with db pull when pg-delta mode
+			// is enabled through flag or environment.
+			useDelta := usePgDelta || viper.GetBool("EXPERIMENTAL_PG_DELTA")
+			return pull.Run(cmd.Context(), schema, flags.DbConfig, "remote_commit", useDelta, afero.NewOsFs())
 		},
 	}
 
@@ -298,6 +307,9 @@ func init() {
 	dbCmd.AddCommand(dbPushCmd)
 	// Build pull command
 	pullFlags := dbPullCmd.Flags()
+	// This flag activates declarative pull output through pg-delta instead of the
+	// legacy migration SQL pull path.
+	pullFlags.BoolVar(&usePgDelta, "use-pg-delta", false, "Use pg-delta to pull declarative schema.")
 	pullFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	pullFlags.String("db-url", "", "Pulls from the database specified by the connection string (must be percent-encoded).")
 	pullFlags.Bool("linked", true, "Pulls from the linked project.")

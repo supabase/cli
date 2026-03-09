@@ -16,8 +16,10 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/db/declarative"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
+	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/migration/format"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/new"
@@ -32,13 +34,18 @@ var (
 	errConflict = errors.Errorf("The remote database's migration history does not match local files in %s directory.", utils.MigrationsDir)
 )
 
-func Run(ctx context.Context, schema []string, config pgconn.Config, name string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, schema []string, config pgconn.Config, name string, usePgDelta bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// 1. Check postgres connection
 	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(context.Background())
+	// In experimental mode, allow db pull to switch from migration-file output to
+	// declarative-file output through pg-delta when explicitly requested.
+	if viper.GetBool("EXPERIMENTAL") && usePgDelta {
+		return pullDeclarativePgDelta(ctx, schema, config, fsys, options...)
+	}
 	if viper.GetBool("EXPERIMENTAL") {
 		var buf bytes.Buffer
 		if err := migration.DumpRole(ctx, config, &buf, dump.DockerExec); err != nil {
@@ -63,6 +70,39 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 	} else if shouldUpdate {
 		return repair.UpdateMigrationTable(ctx, conn, []string{timestamp}, repair.Applied, false, fsys)
 	}
+	return nil
+}
+
+// pullDeclarativePgDelta exports remote schema into declarative SQL files by
+// diffing against an empty shadow baseline with pg-delta declarative export.
+//
+// This path is separate from run() because it does not produce or update
+// timestamped migration files.
+func pullDeclarativePgDelta(ctx context.Context, schema []string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	fmt.Fprintln(os.Stderr, "Preparing declarative schema export using pg-delta...")
+	shadow, err := diff.CreateShadowDatabase(ctx, utils.Config.Db.ShadowPort)
+	if err != nil {
+		return err
+	}
+	defer utils.DockerRemove(shadow)
+	if err := start.WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, shadow); err != nil {
+		return err
+	}
+	shadowConfig := pgconn.Config{
+		Host:     utils.Config.Hostname,
+		Port:     utils.Config.Db.ShadowPort,
+		User:     "postgres",
+		Password: utils.Config.Db.Password,
+		Database: "postgres",
+	}
+	exported, err := diff.DeclarativeExportPgDelta(ctx, shadowConfig, config, schema, options...)
+	if err != nil {
+		return err
+	}
+	if err := declarative.WriteDeclarativeSchemas(exported, fsys); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "Declarative schema written to "+utils.Bold(utils.DeclarativeDir))
 	return nil
 }
 

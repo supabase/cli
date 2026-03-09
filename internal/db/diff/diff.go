@@ -2,13 +2,13 @@ package diff
 
 import (
 	"context"
-	_ "embed"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -69,6 +69,9 @@ func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
 	}); err != nil {
 		return nil, errors.Errorf("failed to walk dir: %w", err)
 	}
+	// Keep file application order deterministic so diff output stays stable across
+	// filesystems and operating systems. This is only if no schema paths in config are set.
+	sort.Strings(declared)
 	return declared, nil
 }
 
