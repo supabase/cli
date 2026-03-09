@@ -119,10 +119,19 @@ async function isValidLegacyJWT(jwtSecret: string, jwt: string): Promise<boolean
 }
 
 // Lazy-loading JWKs
-let jwks = null;
+let jwks = (() => {
+  try {
+    // using injected JWKS from cli
+    return jose.createLocalJWKSet(JSON.parse(Deno.env.get('SUPABASE_INTERNAL_JWKS')));
+  } catch (error) {
+    return null
+  }
+})();
+
 async function isValidJWT(jwksUrl: string, jwt: string): Promise<boolean> {
   try {
     if (!jwks) {
+      // Loading from remote-url on fly
       jwks = jose.createRemoteJWKSet(new URL(jwksUrl));
     }
     await jose.jwtVerify(jwt, jwks);
