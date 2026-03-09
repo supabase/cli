@@ -21,6 +21,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/supabase/cli/internal/utils/flags"
+	"golang.org/x/term"
 )
 
 type runtimeState struct {
@@ -31,6 +32,9 @@ type runtimeState struct {
 }
 
 func Run(ctx context.Context, source string, inputArgs []string, raw bool, fsys afero.Fs) error {
+	if !raw && len(inputArgs) == 0 && !term.IsTerminal(int(os.Stdin.Fd())) {
+		raw = true
+	}
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
@@ -39,6 +43,10 @@ func Run(ctx context.Context, source string, inputArgs []string, raw bool, fsys 
 		return err
 	}
 	if raw {
+		if tmpl, err := parseTemplateManifest(templateBody); err == nil {
+			fmt.Printf("To install, re-run with inputs supplied as flags: supabase add %s --input key=value. Files are written into your local supabase/ directory (e.g. functions/, migrations/). Alternatively, fetch the file URLs in the schema directly to use as reference.\n\n",
+				tmpl.Name)
+		}
 		var buf bytes.Buffer
 		if err := json.Indent(&buf, templateBody, "", "  "); err != nil {
 			// fallback to raw bytes if not valid JSON
