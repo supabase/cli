@@ -8,6 +8,7 @@ import (
 	"github.com/supabase/cli/internal/hostnames/delete"
 	"github.com/supabase/cli/internal/hostnames/get"
 	"github.com/supabase/cli/internal/hostnames/reverify"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 )
 
@@ -32,7 +33,10 @@ Use of custom domains and vanity subdomains is mutually exclusive.
 
 Expects your custom hostname to have a CNAME record to your Supabase project's subdomain.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return create.Run(cmd.Context(), flags.ProjectRef, customHostname, rawOutput, afero.NewOsFs())
+			if rawOutput && utils.OutputFormat.Value == utils.OutputPretty {
+				utils.OutputFormat.Value = utils.OutputJson
+			}
+			return create.Run(cmd.Context(), flags.ProjectRef, customHostname, afero.NewOsFs())
 		},
 	}
 
@@ -41,7 +45,10 @@ Expects your custom hostname to have a CNAME record to your Supabase project's s
 		Short: "Get the current custom hostname config",
 		Long:  "Retrieve the custom hostname config for your project, as stored in the Supabase platform.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return get.Run(cmd.Context(), flags.ProjectRef, rawOutput, afero.NewOsFs())
+			if rawOutput && utils.OutputFormat.Value == utils.OutputPretty {
+				utils.OutputFormat.Value = utils.OutputJson
+			}
+			return get.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
 		},
 	}
 
@@ -49,7 +56,10 @@ Expects your custom hostname to have a CNAME record to your Supabase project's s
 		Use:   "reverify",
 		Short: "Re-verify the custom hostname config for your project",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return reverify.Run(cmd.Context(), flags.ProjectRef, rawOutput, afero.NewOsFs())
+			if rawOutput && utils.OutputFormat.Value == utils.OutputPretty {
+				utils.OutputFormat.Value = utils.OutputJson
+			}
+			return reverify.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
 		},
 	}
 
@@ -61,7 +71,10 @@ Expects your custom hostname to have a CNAME record to your Supabase project's s
 This reconfigures your Supabase project to respond to requests on your custom hostname.
 After the custom hostname is activated, your project's auth services will no longer function on the Supabase-provisioned subdomain.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return activate.Run(cmd.Context(), flags.ProjectRef, rawOutput, afero.NewOsFs())
+			if rawOutput && utils.OutputFormat.Value == utils.OutputPretty {
+				utils.OutputFormat.Value = utils.OutputJson
+			}
+			return activate.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
 		},
 	}
 
@@ -69,6 +82,9 @@ After the custom hostname is activated, your project's auth services will no lon
 		Use:   "delete",
 		Short: "Deletes the custom hostname config for your project",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if rawOutput && utils.OutputFormat.Value == utils.OutputPretty {
+				utils.OutputFormat.Value = utils.OutputJson
+			}
 			return delete.Run(cmd.Context(), flags.ProjectRef, afero.NewOsFs())
 		},
 	}
@@ -78,12 +94,14 @@ func init() {
 	persistentFlags := customHostnamesCmd.PersistentFlags()
 	persistentFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	persistentFlags.BoolVar(&rawOutput, "include-raw-output", false, "Include raw output (useful for debugging).")
-	customHostnamesCreateCmd.Flags().StringVar(&customHostname, "custom-hostname", "", "The custom hostname to use for your Supabase project.")
+	cobra.CheckErr(persistentFlags.MarkDeprecated("include-raw-output", "use -o json instead"))
+	createFlags := customHostnamesCreateCmd.Flags()
+	createFlags.StringVar(&customHostname, "custom-hostname", "", "The custom hostname to use for your Supabase project.")
+	cobra.CheckErr(customHostnamesCreateCmd.MarkFlagRequired("custom-hostname"))
 	customHostnamesCmd.AddCommand(customHostnamesGetCmd)
 	customHostnamesCmd.AddCommand(customHostnamesCreateCmd)
 	customHostnamesCmd.AddCommand(customHostnamesReverifyCmd)
 	customHostnamesCmd.AddCommand(customHostnamesActivateCmd)
 	customHostnamesCmd.AddCommand(customHostnamesDeleteCmd)
-
 	rootCmd.AddCommand(customHostnamesCmd)
 }

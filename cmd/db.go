@@ -3,16 +3,11 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/db/branch/create"
-	"github.com/supabase/cli/internal/db/branch/delete"
-	"github.com/supabase/cli/internal/db/branch/list"
-	"github.com/supabase/cli/internal/db/branch/switch_"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
 	"github.com/supabase/cli/internal/db/lint"
@@ -23,6 +18,11 @@ import (
 	"github.com/supabase/cli/internal/db/test"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/legacy/branch/create"
+	"github.com/supabase/cli/legacy/branch/delete"
+	"github.com/supabase/cli/legacy/branch/list"
+	"github.com/supabase/cli/legacy/branch/switch_"
+	legacy "github.com/supabase/cli/legacy/diff"
 	"github.com/supabase/cli/pkg/migration"
 )
 
@@ -31,11 +31,6 @@ var (
 		GroupID: groupLocalDev,
 		Use:     "db",
 		Short:   "Manage Postgres databases",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			cmd.SetContext(ctx)
-			return cmd.Root().PersistentPreRunE(cmd, args)
-		},
 	}
 
 	dbBranchCmd = &cobra.Command{
@@ -96,7 +91,7 @@ var (
 		Short: "Diffs the local database for schema changes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if usePgAdmin {
-				return diff.RunPgAdmin(cmd.Context(), schema, file, flags.DbConfig, afero.NewOsFs())
+				return legacy.RunPgAdmin(cmd.Context(), schema, file, flags.DbConfig, afero.NewOsFs())
 			}
 			differ := diff.DiffSchemaMigra
 			if usePgSchema {

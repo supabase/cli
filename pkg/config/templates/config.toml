@@ -29,6 +29,8 @@ enabled = false
 port = 54322
 # Port used by db diff command to initialize the shadow database.
 shadow_port = 54320
+# Maximum amount of time to wait for health check when starting the local database.
+health_timeout = "2m"
 # The database major version to use. This has to be the same as your remote database's. Run `SHOW
 # server_version;` on the remote database to check.
 major_version = 17
@@ -71,6 +73,10 @@ allowed_cidrs = ["0.0.0.0/0"]
 # List of IPv6 CIDR blocks allowed to connect to the database.
 # Defaults to allow all IPv6 connections. Set empty array to block all IPs.
 allowed_cidrs_v6 = ["::/0"]
+
+# Uncomment to reject non-secure connections to the database.
+# [db.ssl_enforcement]
+# enabled = true
 
 [realtime]
 enabled = true

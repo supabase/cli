@@ -21,7 +21,6 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
-	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/migration/down"
 	"github.com/supabase/cli/internal/migration/list"
@@ -73,7 +72,7 @@ func Run(ctx context.Context, version string, last uint, config pgconn.Config, f
 			return err
 		}
 	}
-	branch := keys.GetGitBranch(fsys)
+	branch := utils.GetGitBranch(fsys)
 	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db reset")+" on branch "+utils.Aqua(branch)+".")
 	return nil
 }
@@ -131,7 +130,7 @@ func resetDatabase15(ctx context.Context, version string, fsys afero.Fs, options
 	if _, err := utils.DockerStart(ctx, config, hostConfig, networkingConfig, utils.DbId); err != nil {
 		return err
 	}
-	if err := start.WaitForHealthyService(ctx, start.HealthTimeout, utils.DbId); err != nil {
+	if err := start.WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, utils.DbId); err != nil {
 		return err
 	}
 	if err := start.SetupLocalDatabase(ctx, version, fsys, os.Stderr, options...); err != nil {
@@ -215,7 +214,7 @@ func RestartDatabase(ctx context.Context, w io.Writer) error {
 	if err := utils.Docker.ContainerRestart(ctx, utils.DbId, container.StopOptions{}); err != nil {
 		return errors.Errorf("failed to restart container: %w", err)
 	}
-	if err := start.WaitForHealthyService(ctx, start.HealthTimeout, utils.DbId); err != nil {
+	if err := start.WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, utils.DbId); err != nil {
 		return err
 	}
 	return restartServices(ctx)

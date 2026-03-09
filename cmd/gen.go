@@ -3,7 +3,6 @@ package cmd
 import (
 	"encoding/json"
 	"os"
-	"os/signal"
 	"strings"
 	"time"
 
@@ -14,11 +13,11 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/gen/bearerjwt"
-	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/gen/signingkeys"
 	"github.com/supabase/cli/internal/gen/types"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/legacy/keys"
 	"github.com/supabase/cli/pkg/config"
 )
 
@@ -88,7 +87,7 @@ var (
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			ctx := cmd.Context()
 			if flags.DbConfig.Host == "" {
 				// If no flag is specified, prompt for project id.
 				if err := flags.ParseProjectRef(ctx, afero.NewMemMapFs()); errors.Is(err, utils.ErrNotLinked) {

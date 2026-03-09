@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -123,6 +124,8 @@ func PromptChoice(ctx context.Context, title string, items []PromptItem, opts ..
 	// Create our model
 	ctx, cancel := context.WithCancel(ctx)
 	initial := model{cancel: cancel, list: l}
+	// Interactive prompts should always be written to stderr
+	opts = append(opts, tea.WithOutput(os.Stderr))
 	prog := tea.NewProgram(initial, opts...)
 	state, err := prog.Run()
 	if err != nil {

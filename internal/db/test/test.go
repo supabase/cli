@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/docker/docker/api/types/container"
@@ -26,24 +27,33 @@ const (
 
 func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// Build test command
-	cmd := []string{"pg_prove", "--ext", ".pg", "--ext", ".sql", "-r"}
-	for _, fp := range testFiles {
-		relPath, err := filepath.Rel(utils.DbTestsDir, fp)
+	if len(testFiles) == 0 {
+		absTestsDir, err := filepath.Abs(utils.DbTestsDir)
 		if err != nil {
-			return errors.Errorf("failed to resolve relative path: %w", err)
+			return errors.Errorf("failed to resolve tests dir: %w", err)
 		}
-		cmd = append(cmd, relPath)
+		testFiles = append(testFiles, absTestsDir)
+	}
+	binds := make([]string, len(testFiles))
+	cmd := []string{"pg_prove", "--ext", ".pg", "--ext", ".sql", "-r"}
+	var workingDir string
+	for i, fp := range testFiles {
+		if !filepath.IsAbs(fp) {
+			fp = filepath.Join(utils.CurrentDirAbs, fp)
+		}
+		dockerPath := utils.ToDockerPath(fp)
+		cmd = append(cmd, dockerPath)
+		binds[i] = fmt.Sprintf("%s:%s:ro", fp, dockerPath)
+		if workingDir == "" {
+			workingDir = dockerPath
+			if path.Ext(dockerPath) != "" {
+				workingDir = path.Dir(dockerPath)
+			}
+		}
 	}
 	if viper.GetBool("DEBUG") {
 		cmd = append(cmd, "--verbose")
 	}
-	// Mount tests directory into container as working directory
-	srcPath, err := filepath.Abs(utils.DbTestsDir)
-	if err != nil {
-		return errors.Errorf("failed to resolve absolute path: %w", err)
-	}
-	dstPath := "/tmp"
-	binds := []string{fmt.Sprintf("%s:%s:ro", srcPath, dstPath)}
 	// Enable pgTAP if not already exists
 	alreadyExists := false
 	options = append(options, func(cc *pgx.ConnConfig) {
@@ -88,7 +98,7 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 				"PGDATABASE=" + config.Database,
 			},
 			Cmd:        cmd,
-			WorkingDir: dstPath,
+			WorkingDir: workingDir,
 		},
 		hostConfig,
 		network.NetworkingConfig{},

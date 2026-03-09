@@ -580,6 +580,7 @@ EOF
 			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !utils.Config.Auth.Email.EnableConfirmations),
 			fmt.Sprintf("GOTRUE_MAILER_OTP_LENGTH=%v", utils.Config.Auth.Email.OtpLength),
 			fmt.Sprintf("GOTRUE_MAILER_OTP_EXP=%v", utils.Config.Auth.Email.OtpExpiry),
+			"GOTRUE_MAILER_TEMPLATE_RELOADING_ENABLED=true",
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED=%v", utils.Config.Auth.EnableAnonymousSignIns),
 
@@ -626,6 +627,8 @@ EOF
 		if keys, err := json.Marshal(utils.Config.Auth.SigningKeys); err == nil {
 			env = append(env, "GOTRUE_JWT_KEYS="+string(keys))
 			// TODO: deprecate HS256 when it's no longer supported
+			// TODO: remove VALIDMETHODS after a while to avoid breaking changes
+			env = append(env, "GOTRUE_JWT_VALIDMETHODS=HS256,RS256,ES256")
 			env = append(env, "GOTRUE_JWT_VALID_METHODS=HS256,RS256,ES256")
 		}
 
@@ -1165,6 +1168,9 @@ EOF
 					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
 					"LOGFLARE_PRIVATE_ACCESS_TOKEN=" + utils.Config.Analytics.ApiKey,
 					"OPENAI_API_KEY=" + utils.Config.Studio.OpenaiApiKey.Value,
+					"PGRST_DB_SCHEMAS=" + strings.Join(utils.Config.Api.Schemas, ","),
+					"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(utils.Config.Api.ExtraSearchPath, ","),
+					fmt.Sprintf("PGRST_DB_MAX_ROWS=%d", utils.Config.Api.MaxRows),
 					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
 					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
 					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
@@ -1172,6 +1178,7 @@ EOF
 					"SNIPPETS_MANAGEMENT_FOLDER=" + containerSnippetsPath,
 					// Ref: https://github.com/vercel/next.js/issues/51684#issuecomment-1612834913
 					"HOSTNAME=0.0.0.0",
+					"POSTGRES_USER_READ_WRITE=postgres",
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD-SHELL", `node --eval="fetch('http://127.0.0.1:3000/api/platform/profile').then((r) => {if (!r.ok) throw new Error(r.status)})"`},

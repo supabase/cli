@@ -1,9 +1,6 @@
 package cmd
 
 import (
-	"os"
-	"os/signal"
-
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/inspect"
@@ -33,11 +30,6 @@ var (
 	inspectDBCmd = &cobra.Command{
 		Use:   "db",
 		Short: "Tools to inspect your Supabase database",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
-			cmd.SetContext(ctx)
-			return cmd.Root().PersistentPreRunE(cmd, args)
-		},
 	}
 
 	inspectDBStatsCmd = &cobra.Command{

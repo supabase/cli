@@ -93,7 +93,7 @@ var (
 			}
 			cmd.SilenceUsage = true
 			// Load profile before changing workdir
-			ctx := cmd.Context()
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			fsys := afero.NewOsFs()
 			if err := utils.LoadProfile(ctx, fsys); err != nil {
 				return err
@@ -106,7 +106,6 @@ var (
 				if err := promptLogin(fsys); err != nil {
 					return err
 				}
-				ctx, _ = signal.NotifyContext(ctx, os.Interrupt)
 				if cmd.Flags().Lookup("project-ref") != nil {
 					if err := flags.ParseProjectRef(ctx, fsys); err != nil {
 						return err
