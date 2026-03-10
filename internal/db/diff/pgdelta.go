@@ -41,6 +41,20 @@ type DeclarativeOutput struct {
 	Files   []DeclarativeFile `json:"files"`
 }
 
+func isPostgresURL(ref string) bool {
+	return strings.HasPrefix(ref, "postgres://") || strings.HasPrefix(ref, "postgresql://")
+}
+
+// containerRef translates a host-relative catalog file path into the absolute
+// path where it appears inside the edge runtime container (CWD mounted at
+// /workspace). Postgres URLs and empty strings pass through unchanged.
+func containerRef(ref string) string {
+	if ref == "" || isPostgresURL(ref) {
+		return ref
+	}
+	return "/workspace/" + ref
+}
+
 // DiffPgDelta diffs source and target Postgres configs via pg-delta.
 //
 // This wrapper preserves the old config-based interface while delegating to
@@ -53,12 +67,12 @@ func DiffPgDelta(ctx context.Context, source, target pgconn.Config, schema []str
 // on-disk catalog references used by declarative sync commands.
 func DiffPgDeltaRef(ctx context.Context, sourceRef, targetRef string, schema []string, options ...func(*pgx.ConnConfig)) (string, error) {
 	env := []string{
-		"TARGET=" + targetRef,
+		"TARGET=" + containerRef(targetRef),
 	}
 	if len(sourceRef) > 0 {
-		env = append(env, "SOURCE="+sourceRef)
+		env = append(env, "SOURCE="+containerRef(sourceRef))
 	}
-	if strings.HasPrefix(targetRef, "postgres://") || strings.HasPrefix(targetRef, "postgresql://") {
+	if isPostgresURL(targetRef) {
 		if ca, err := types.GetRootCA(ctx, targetRef, options...); err != nil {
 			return "", err
 		} else if len(ca) > 0 {
@@ -69,6 +83,9 @@ func DiffPgDeltaRef(ctx context.Context, sourceRef, targetRef string, schema []s
 		env = append(env, "INCLUDED_SCHEMAS="+strings.Join(schema, ","))
 	}
 	binds := []string{utils.EdgeRuntimeId + ":/root/.cache/deno:rw"}
+	if cwd, err := os.Getwd(); err == nil {
+		binds = append(binds, cwd+":/workspace")
+	}
 	var stdout, stderr bytes.Buffer
 	if err := utils.RunEdgeRuntimeScript(ctx, env, pgDeltaScript, binds, "error diffing schema", &stdout, &stderr); err != nil {
 		return "", err
@@ -86,12 +103,12 @@ func DeclarativeExportPgDelta(ctx context.Context, source, target pgconn.Config,
 // live URLs or catalog references as source/target inputs.
 func DeclarativeExportPgDeltaRef(ctx context.Context, sourceRef, targetRef string, schema []string, options ...func(*pgx.ConnConfig)) (DeclarativeOutput, error) {
 	env := []string{
-		"TARGET=" + targetRef,
+		"TARGET=" + containerRef(targetRef),
 	}
 	if len(sourceRef) > 0 {
-		env = append(env, "SOURCE="+sourceRef)
+		env = append(env, "SOURCE="+containerRef(sourceRef))
 	}
-	if strings.HasPrefix(targetRef, "postgres://") || strings.HasPrefix(targetRef, "postgresql://") {
+	if isPostgresURL(targetRef) {
 		if ca, err := types.GetRootCA(ctx, targetRef, options...); err != nil {
 			return DeclarativeOutput{}, err
 		} else if len(ca) > 0 {
@@ -102,6 +119,9 @@ func DeclarativeExportPgDeltaRef(ctx context.Context, sourceRef, targetRef strin
 		env = append(env, "INCLUDED_SCHEMAS="+strings.Join(schema, ","))
 	}
 	binds := []string{utils.EdgeRuntimeId + ":/root/.cache/deno:rw"}
+	if cwd, err := os.Getwd(); err == nil {
+		binds = append(binds, cwd+":/workspace")
+	}
 	var stdout, stderr bytes.Buffer
 	if err := utils.RunEdgeRuntimeScript(ctx, env, pgDeltaDeclarativeExportScript, binds, "error diffing schema", &stdout, &stderr); err != nil {
 		return DeclarativeOutput{}, err
@@ -122,7 +142,7 @@ func ExportCatalogPgDelta(ctx context.Context, targetRef, role string, options .
 	if len(role) > 0 {
 		env = append(env, "ROLE="+role)
 	}
-	if strings.HasPrefix(targetRef, "postgres://") || strings.HasPrefix(targetRef, "postgresql://") {
+	if isPostgresURL(targetRef) {
 		if ca, err := types.GetRootCA(ctx, targetRef, options...); err != nil {
 			return "", err
 		} else if len(ca) > 0 {
@@ -132,8 +152,6 @@ func ExportCatalogPgDelta(ctx context.Context, targetRef, role string, options .
 	binds := []string{
 		utils.EdgeRuntimeId + ":/root/.cache/deno:rw",
 	}
-	// Mount CWD as /workspace so catalog reference paths resolve when targetRef
-	// points to a local JSON catalog file.
 	if cwd, err := os.Getwd(); err == nil {
 		binds = append(binds, cwd+":/workspace")
 	}

@@ -1,5 +1,20 @@
-import { createPlan } from "npm:@supabase/pg-delta@1.0.0-alpha.5";
-import { supabase } from "npm:@supabase/pg-delta@1.0.0-alpha.5/integrations/supabase";
+import {
+  createPlan,
+  deserializeCatalog,
+} from "npm:@supabase/pg-delta@1.0.0-alpha.7";
+import { supabase } from "npm:@supabase/pg-delta@1.0.0-alpha.7/integrations/supabase";
+
+async function resolveInput(ref: string | undefined) {
+  if (
+    !ref ||
+    ref.startsWith("postgres://") ||
+    ref.startsWith("postgresql://")
+  ) {
+    return ref;
+  }
+  const json = await Deno.readTextFile(ref);
+  return deserializeCatalog(JSON.parse(json));
+}
 
 const source = Deno.env.get("SOURCE");
 const target = Deno.env.get("TARGET");
@@ -8,10 +23,13 @@ const includedSchemas = Deno.env.get("INCLUDED_SCHEMAS");
 if (includedSchemas) {
   supabase.filter = { schema: includedSchemas.split(",") };
 }
-supabase.role = "postgres";
 
 try {
-  const result = await createPlan(source, target, supabase);
+  const result = await createPlan(
+    await resolveInput(source),
+    await resolveInput(target),
+    supabase,
+  );
   const statements = result?.plan.statements ?? [];
   for (const sql of statements) {
     console.log(`${sql};`);

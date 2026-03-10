@@ -3,7 +3,7 @@
 import {
   applyDeclarativeSchema,
   loadDeclarativeSchema,
-} from "npm:@supabase/pg-delta@1.0.0-alpha.5/declarative";
+} from "npm:@supabase/pg-delta@1.0.0-alpha.7/declarative";
 
 const schemaPath = Deno.env.get("SCHEMA_PATH");
 const target = Deno.env.get("TARGET");
@@ -27,15 +27,18 @@ try {
       targetUrl: target,
     });
     console.log(
-      JSON.stringify({
-        status: result.apply.status,
-        totalStatements: result.totalStatements,
-        totalRounds: result.apply.totalRounds,
-        totalApplied: result.apply.totalApplied,
-        totalSkipped: result.apply.totalSkipped,
-        errors: result.apply.errors ?? [],
-        stuckStatements: result.apply.stuckStatements ?? [],
-      }),
+      JSON.stringify(
+        {
+          status: result.apply.status,
+          totalStatements: result.totalStatements,
+          totalRounds: result.apply.totalRounds,
+          totalApplied: result.apply.totalApplied,
+          totalSkipped: result.apply.totalSkipped,
+          errors: result.apply.errors ?? [],
+          stuckStatements: result.apply.stuckStatements ?? [],
+        },
+        (_key, value) => (typeof value === "bigint" ? Number(value) : value),
+      ),
     );
     if (result.apply.status !== "success") {
       throw new Error("");

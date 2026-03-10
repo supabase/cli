@@ -4,7 +4,8 @@ import {
   createManagedPool,
   extractCatalog,
   serializeCatalog,
-} from "npm:@supabase/pg-delta@1.0.0-alpha.5";
+  stringifyCatalogSnapshot,
+} from "npm:@supabase/pg-delta@1.0.0-alpha.7";
 
 const target = Deno.env.get("TARGET");
 const role = Deno.env.get("ROLE") ?? undefined;
@@ -13,15 +14,14 @@ if (!target) {
   console.error("TARGET is required");
   throw new Error("");
 }
-
-const pool = createManagedPool(target);
+const { pool, close } = await createManagedPool(target, { role });
 
 try {
-  const catalog = await extractCatalog(pool, { role });
-  console.log(JSON.stringify(serializeCatalog(catalog)));
+  const catalog = await extractCatalog(pool);
+  console.log(stringifyCatalogSnapshot(serializeCatalog(catalog)));
 } catch (e) {
   console.error(e);
   throw new Error("");
 } finally {
-  await pool.end();
+  await close();
 }
