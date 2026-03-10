@@ -63,6 +63,7 @@ jobs:
         with:
           args: --timeout 3m --verbose
           version: latest
+          only-new-issues: true
 
   start:
     name: Start
@@ -88,6 +89,7 @@ jobs:
 
   link:
     name: Link
+    if: ${{ !github.event.pull_request.head.repo.fork }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
