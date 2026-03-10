@@ -176,7 +176,7 @@ func WriteDeclarativeSchemas(output diff.DeclarativeOutput, fsys afero.Fs) error
 		}
 	}
 	utils.Config.Db.Migrations.SchemaPaths = []string{
-		filepath.Join(utils.DeclarativeDir, "**", "*.sql"),
+		filepath.Join(utils.DeclarativeDir),
 	}
 	return updateDeclarativeSchemaPathsConfig(fsys)
 }
@@ -187,7 +187,8 @@ func WriteDeclarativeSchemas(output diff.DeclarativeOutput, fsys afero.Fs) error
 // This makes declarative output the active source of truth for commands that
 // read schema paths from config.
 func updateDeclarativeSchemaPathsConfig(fsys afero.Fs) error {
-	declarativeDir := filepath.Join("declarative", "**", "*.sql")
+	// Remove the `supabase` prefix from the declarative directory
+	declarativeDir := strings.TrimPrefix(utils.DeclarativeDir, "supabase/")
 	lines := []string{
 		"\nschema_paths = [",
 		fmt.Sprintf(`  "%s",`, declarativeDir),

@@ -73,6 +73,7 @@ func init() {
 	syncFlags.BoolVar(&declarativeToMigrations, "to-migrations", false, "Generate a new migration to match declarative schema.")
 	syncFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	syncFlags.StringVarP(&declarativeFile, "file", "f", "declarative_sync", "Saves schema diff to a new migration file.")
+	syncFlags.Bool("local", true, "Sync using the local database configuration.")
 
 	generateFlags := dbDeclarativeGenerateCmd.Flags()
 	generateFlags.BoolVar(&declarativeOverwrite, "overwrite", false, "Overwrite declarative schema files without confirmation.")

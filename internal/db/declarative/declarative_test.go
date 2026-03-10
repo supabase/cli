@@ -37,7 +37,7 @@ func TestWriteDeclarativeSchemas(t *testing.T) {
 
 	cfg, err := afero.ReadFile(fsys, utils.ConfigPath)
 	require.NoError(t, err)
-	assert.Contains(t, string(cfg), `declarative/**/*.sql`)
+	assert.Contains(t, string(cfg), `declarative/`)
 }
 
 func TestWriteDeclarativeSchemasRejectsUnsafePath(t *testing.T) {

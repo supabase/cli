@@ -102,7 +102,7 @@ var (
 			} else if useDelta {
 				differ = diff.DiffPgDelta
 			}
-			return diff.Run(cmd.Context(), schema, file, flags.DbConfig, differ, afero.NewOsFs())
+			return diff.Run(cmd.Context(), schema, file, flags.DbConfig, differ, useDelta, afero.NewOsFs())
 		},
 	}
 
@@ -183,7 +183,7 @@ var (
 		Short:      "Show changes on the remote database",
 		Long:       "Show changes on the remote database since last migration.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return diff.Run(cmd.Context(), schema, file, flags.DbConfig, diff.DiffSchemaMigra, afero.NewOsFs())
+			return diff.Run(cmd.Context(), schema, file, flags.DbConfig, diff.DiffSchemaMigra, false, afero.NewOsFs())
 		},
 	}
 

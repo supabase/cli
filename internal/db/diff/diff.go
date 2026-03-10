@@ -23,6 +23,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/gen/keys"
+	"github.com/supabase/cli/internal/pgdelta"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/parser"
@@ -30,8 +31,8 @@ import (
 
 type DiffFunc func(context.Context, pgconn.Config, pgconn.Config, []string, ...func(*pgx.ConnConfig)) (string, error)
 
-func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
-	out, err := DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, options...)
+func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, usePgDelta bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
+	out, err := DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, usePgDelta, options...)
 	if err != nil {
 		return err
 	}
@@ -139,7 +140,7 @@ func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs,
 	return migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys))
 }
 
-func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ DiffFunc, options ...func(*pgx.ConnConfig)) (string, error) {
+func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ DiffFunc, usePgDelta bool, options ...func(*pgx.ConnConfig)) (string, error) {
 	fmt.Fprintln(w, "Creating shadow database...")
 	shadow, err := CreateShadowDatabase(ctx, utils.Config.Db.ShadowPort)
 	if err != nil {
@@ -163,8 +164,14 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 		if declared, err := loadDeclaredSchemas(fsys); len(declared) > 0 {
 			config = shadowConfig
 			config.Database = "contrib_regression"
-			if err := migrateBaseDatabase(ctx, config, declared, fsys, options...); err != nil {
-				return "", err
+			if usePgDelta {
+				if err := pgdelta.ApplyDeclarative(ctx, config, fsys); err != nil {
+					return "", err
+				}
+			} else {
+				if err := migrateBaseDatabase(ctx, config, declared, fsys, options...); err != nil {
+					return "", err
+				}
 			}
 		} else if err != nil {
 			return "", err

@@ -142,7 +142,7 @@ func dumpRemoteSchema(ctx context.Context, path string, config pgconn.Config, fs
 
 func diffRemoteSchema(ctx context.Context, schema []string, path string, config pgconn.Config, fsys afero.Fs) error {
 	// Diff remote db (source) & shadow db (target) and write it as a new migration.
-	output, err := diff.DiffDatabase(ctx, schema, config, os.Stderr, fsys, diff.DiffSchemaMigra)
+	output, err := diff.DiffDatabase(ctx, schema, config, os.Stderr, fsys, diff.DiffSchemaMigra, false)
 	if err != nil {
 		return err
 	}
