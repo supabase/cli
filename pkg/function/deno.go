@@ -111,7 +111,7 @@ func resolveHostPath(jsonPath, hostPath string) string {
 }
 
 // Ref: https://regex101.com/r/DfBdJA/1
-var importPathPattern = regexp.MustCompile(`(?i)(?:import|export)\s+(?:{[^{}]+}|.*?)\s*(?:from)?\s*['"](.*?)['"]|import\(\s*['"](.*?)['"]\)`)
+var importPathPattern = regexp.MustCompile(`(?i)(?:import|export)\s+(?:type\s+)?(?:{[^{}]+}|.*?)\s*(?:from)?\s*['"](.*?)['"]|import\(\s*['"](.*?)['"]\)`)
 
 func (importMap *ImportMap) WalkImportPaths(srcPath string, readFile func(curr string, w io.Writer) error) error {
 	seen := map[string]struct{}{}

@@ -828,11 +828,11 @@ const (
 
 // Defines values for ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion.
 const (
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersionN13       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "13"
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersionN14       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "14"
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersionN15       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "15"
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersionN17       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "17"
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersionN17Oriole ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "17-oriole"
+	N13       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "13"
+	N14       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "14"
+	N15       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "15"
+	N17       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "17"
+	N17Oriole ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "17-oriole"
 )
 
 // Defines values for ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel.
@@ -1299,7 +1299,6 @@ const (
 	V1CreateProjectBodyDesiredInstanceSizeN4xlarge                 V1CreateProjectBodyDesiredInstanceSize = "4xlarge"
 	V1CreateProjectBodyDesiredInstanceSizeN8xlarge                 V1CreateProjectBodyDesiredInstanceSize = "8xlarge"
 	V1CreateProjectBodyDesiredInstanceSizeNano                     V1CreateProjectBodyDesiredInstanceSize = "nano"
-	V1CreateProjectBodyDesiredInstanceSizePico                     V1CreateProjectBodyDesiredInstanceSize = "pico"
 	V1CreateProjectBodyDesiredInstanceSizeSmall                    V1CreateProjectBodyDesiredInstanceSize = "small"
 	V1CreateProjectBodyDesiredInstanceSizeXlarge                   V1CreateProjectBodyDesiredInstanceSize = "xlarge"
 )
@@ -1308,13 +1307,6 @@ const (
 const (
 	V1CreateProjectBodyPlanFree V1CreateProjectBodyPlan = "free"
 	V1CreateProjectBodyPlanPro  V1CreateProjectBodyPlan = "pro"
-)
-
-// Defines values for V1CreateProjectBodyPostgresEngine.
-const (
-	V1CreateProjectBodyPostgresEngineN15       V1CreateProjectBodyPostgresEngine = "15"
-	V1CreateProjectBodyPostgresEngineN17       V1CreateProjectBodyPostgresEngine = "17"
-	V1CreateProjectBodyPostgresEngineN17Oriole V1CreateProjectBodyPostgresEngine = "17-oriole"
 )
 
 // Defines values for V1CreateProjectBodyRegion.
@@ -1378,24 +1370,14 @@ const (
 	SmartGroup V1CreateProjectBodyRegionSelection1Type = "smartGroup"
 )
 
-// Defines values for V1CreateProjectBodyReleaseChannel.
-const (
-	V1CreateProjectBodyReleaseChannelAlpha     V1CreateProjectBodyReleaseChannel = "alpha"
-	V1CreateProjectBodyReleaseChannelBeta      V1CreateProjectBodyReleaseChannel = "beta"
-	V1CreateProjectBodyReleaseChannelGa        V1CreateProjectBodyReleaseChannel = "ga"
-	V1CreateProjectBodyReleaseChannelInternal  V1CreateProjectBodyReleaseChannel = "internal"
-	V1CreateProjectBodyReleaseChannelPreview   V1CreateProjectBodyReleaseChannel = "preview"
-	V1CreateProjectBodyReleaseChannelWithdrawn V1CreateProjectBodyReleaseChannel = "withdrawn"
-)
-
 // Defines values for V1OrganizationSlugResponseAllowedReleaseChannels.
 const (
-	Alpha     V1OrganizationSlugResponseAllowedReleaseChannels = "alpha"
-	Beta      V1OrganizationSlugResponseAllowedReleaseChannels = "beta"
-	Ga        V1OrganizationSlugResponseAllowedReleaseChannels = "ga"
-	Internal  V1OrganizationSlugResponseAllowedReleaseChannels = "internal"
-	Preview   V1OrganizationSlugResponseAllowedReleaseChannels = "preview"
-	Withdrawn V1OrganizationSlugResponseAllowedReleaseChannels = "withdrawn"
+	V1OrganizationSlugResponseAllowedReleaseChannelsAlpha     V1OrganizationSlugResponseAllowedReleaseChannels = "alpha"
+	V1OrganizationSlugResponseAllowedReleaseChannelsBeta      V1OrganizationSlugResponseAllowedReleaseChannels = "beta"
+	V1OrganizationSlugResponseAllowedReleaseChannelsGa        V1OrganizationSlugResponseAllowedReleaseChannels = "ga"
+	V1OrganizationSlugResponseAllowedReleaseChannelsInternal  V1OrganizationSlugResponseAllowedReleaseChannels = "internal"
+	V1OrganizationSlugResponseAllowedReleaseChannelsPreview   V1OrganizationSlugResponseAllowedReleaseChannels = "preview"
+	V1OrganizationSlugResponseAllowedReleaseChannelsWithdrawn V1OrganizationSlugResponseAllowedReleaseChannels = "withdrawn"
 )
 
 // Defines values for V1OrganizationSlugResponseOptInTags.
@@ -1625,7 +1607,6 @@ const (
 	V1GetAvailableRegionsParamsDesiredInstanceSizeN4xlarge                 V1GetAvailableRegionsParamsDesiredInstanceSize = "4xlarge"
 	V1GetAvailableRegionsParamsDesiredInstanceSizeN8xlarge                 V1GetAvailableRegionsParamsDesiredInstanceSize = "8xlarge"
 	V1GetAvailableRegionsParamsDesiredInstanceSizeNano                     V1GetAvailableRegionsParamsDesiredInstanceSize = "nano"
-	V1GetAvailableRegionsParamsDesiredInstanceSizePico                     V1GetAvailableRegionsParamsDesiredInstanceSize = "pico"
 	V1GetAvailableRegionsParamsDesiredInstanceSizeSmall                    V1GetAvailableRegionsParamsDesiredInstanceSize = "small"
 	V1GetAvailableRegionsParamsDesiredInstanceSizeXlarge                   V1GetAvailableRegionsParamsDesiredInstanceSize = "xlarge"
 )
@@ -3416,10 +3397,13 @@ type RealtimeConfigResponse struct {
 	// MaxPresenceEventsPerSecond Sets maximum number of presence events per second rate limit
 	MaxPresenceEventsPerSecond nullable.Nullable[int] `json:"max_presence_events_per_second"`
 
+	// PresenceEnabled Whether to enable presence
+	PresenceEnabled bool `json:"presence_enabled"`
+
 	// PrivateOnly Whether to only allow private channels
 	PrivateOnly nullable.Nullable[bool] `json:"private_only"`
 
-	// Suspend Whether to suspend realtime
+	// Suspend Disables the Realtime service for this project when true. Set to false to re-enable it.
 	Suspend nullable.Nullable[bool] `json:"suspend"`
 }
 
@@ -4171,10 +4155,13 @@ type UpdateRealtimeConfigBody struct {
 	// MaxPresenceEventsPerSecond Sets maximum number of presence events per second rate limit
 	MaxPresenceEventsPerSecond *int `json:"max_presence_events_per_second,omitempty"`
 
+	// PresenceEnabled Whether to enable presence
+	PresenceEnabled *bool `json:"presence_enabled,omitempty"`
+
 	// PrivateOnly Whether to only allow private channels
 	PrivateOnly *bool `json:"private_only,omitempty"`
 
-	// Suspend Whether to suspend realtime
+	// Suspend Disables the Realtime service for this project when true. Set to false to re-enable it.
 	Suspend *bool `json:"suspend,omitempty"`
 }
 
@@ -4319,7 +4306,9 @@ type V1CreateMigrationBody struct {
 // V1CreateProjectBody defines model for V1CreateProjectBody.
 type V1CreateProjectBody struct {
 	// DbPass Database password
-	DbPass              string                                  `json:"db_pass"`
+	DbPass string `json:"db_pass"`
+
+	// DesiredInstanceSize Desired instance size. Omit this field to always default to the smallest possible size.
 	DesiredInstanceSize *V1CreateProjectBodyDesiredInstanceSize `json:"desired_instance_size,omitempty"`
 
 	// KpsEnabled This field is deprecated and is ignored in this request
@@ -4340,10 +4329,6 @@ type V1CreateProjectBody struct {
 	// Deprecated:
 	Plan *V1CreateProjectBodyPlan `json:"plan,omitempty"`
 
-	// PostgresEngine Postgres engine version. If not provided, the latest version will be used.
-	// Deprecated:
-	PostgresEngine *V1CreateProjectBodyPostgresEngine `json:"postgres_engine,omitempty"`
-
 	// Region Region you want your server to reside in. Use region_selection instead.
 	// Deprecated:
 	Region *V1CreateProjectBodyRegion `json:"region,omitempty"`
@@ -4351,22 +4336,15 @@ type V1CreateProjectBody struct {
 	// RegionSelection Region selection. Only one of region or region_selection can be specified.
 	RegionSelection *V1CreateProjectBody_RegionSelection `json:"region_selection,omitempty"`
 
-	// ReleaseChannel Release channel. If not provided, GA will be used.
-	// Deprecated:
-	ReleaseChannel *V1CreateProjectBodyReleaseChannel `json:"release_channel,omitempty"`
-
 	// TemplateUrl Template URL used to create the project from the CLI.
 	TemplateUrl *string `json:"template_url,omitempty"`
 }
 
-// V1CreateProjectBodyDesiredInstanceSize defines model for V1CreateProjectBody.DesiredInstanceSize.
+// V1CreateProjectBodyDesiredInstanceSize Desired instance size. Omit this field to always default to the smallest possible size.
 type V1CreateProjectBodyDesiredInstanceSize string
 
 // V1CreateProjectBodyPlan Subscription Plan is now set on organization level and is ignored in this request
 type V1CreateProjectBodyPlan string
-
-// V1CreateProjectBodyPostgresEngine Postgres engine version. If not provided, the latest version will be used.
-type V1CreateProjectBodyPostgresEngine string
 
 // V1CreateProjectBodyRegion Region you want your server to reside in. Use region_selection instead.
 type V1CreateProjectBodyRegion string
@@ -4401,9 +4379,6 @@ type V1CreateProjectBodyRegionSelection1Type string
 type V1CreateProjectBody_RegionSelection struct {
 	union json.RawMessage
 }
-
-// V1CreateProjectBodyReleaseChannel Release channel. If not provided, GA will be used.
-type V1CreateProjectBodyReleaseChannel string
 
 // V1GetMigrationResponse defines model for V1GetMigrationResponse.
 type V1GetMigrationResponse struct {
@@ -4897,7 +4872,7 @@ type V1GetAvailableRegionsParams struct {
 	// Continent Continent code to determine regional recommendations: NA (North America), SA (South America), EU (Europe), AF (Africa), AS (Asia), OC (Oceania), AN (Antarctica)
 	Continent *V1GetAvailableRegionsParamsContinent `form:"continent,omitempty" json:"continent,omitempty"`
 
-	// DesiredInstanceSize Desired instance size
+	// DesiredInstanceSize Desired instance size. Omit this field to always default to the smallest possible size.
 	DesiredInstanceSize *V1GetAvailableRegionsParamsDesiredInstanceSize `form:"desired_instance_size,omitempty" json:"desired_instance_size,omitempty"`
 }
 
