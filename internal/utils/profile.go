@@ -3,6 +3,8 @@ package utils
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -121,13 +123,32 @@ func getProfileName(fsys afero.Fs) string {
 	if prof := viper.GetString("PROFILE"); viper.IsSet("PROFILE") {
 		fmt.Fprintln(debuglogger, "Loading profile from flag:", prof)
 		return prof
-	} else if content, err := afero.ReadFile(fsys, ProfilePath); err == nil {
-		fmt.Fprintln(debuglogger, "Loading profile from file:", ProfilePath)
+	} else if profilePath, err := getProfilePath(); err != nil {
+		fmt.Fprintln(debuglogger, err)
+		return prof
+	} else if content, err := afero.ReadFile(fsys, profilePath); err == nil {
+		fmt.Fprintln(debuglogger, "Loading profile from file:", profilePath)
 		return string(content)
 	} else {
 		fmt.Fprintln(debuglogger, err)
 		return prof
 	}
+}
+
+func getProfilePath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", errors.Errorf("failed to get $HOME directory: %w", err)
+	}
+	return filepath.Join(home, ".supabase", "profile"), nil
+}
+
+func SaveProfileName(prof string, fsys afero.Fs) error {
+	profilePath, err := getProfilePath()
+	if err != nil {
+		return err
+	}
+	return WriteFile(profilePath, []byte(prof), fsys)
 }
 
 func AwsRegions() []string {
