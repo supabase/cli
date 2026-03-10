@@ -31,7 +31,7 @@ const EXCLUDED_ENVS = ["HOME", "HOSTNAME", "PATH", "PWD"];
 
 const HOST_PORT = Deno.env.get("SUPABASE_INTERNAL_HOST_PORT")!;
 const JWT_SECRET = Deno.env.get("SUPABASE_INTERNAL_JWT_SECRET")!;
-const JWKS_ENDPOINT = Deno.env.get("SUPABASE_URL")! + "/auth/v1/.well-known/jwks.json";
+const JWKS_ENDPOINT = new URL('/auth/v1/.well-known/jwks.json', Deno.env.get("SUPABASE_URL")!)
 const DEBUG = Deno.env.get("SUPABASE_INTERNAL_DEBUG") === "true";
 const FUNCTIONS_CONFIG_STRING = Deno.env.get(
   "SUPABASE_INTERNAL_FUNCTIONS_CONFIG",
