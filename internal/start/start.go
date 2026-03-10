@@ -627,7 +627,9 @@ EOF
 		if keys, err := json.Marshal(utils.Config.Auth.SigningKeys); err == nil {
 			env = append(env, "GOTRUE_JWT_KEYS="+string(keys))
 			// TODO: deprecate HS256 when it's no longer supported
+			// TODO: remove VALIDMETHODS after a while to avoid breaking changes
 			env = append(env, "GOTRUE_JWT_VALIDMETHODS=HS256,RS256,ES256")
+			env = append(env, "GOTRUE_JWT_VALID_METHODS=HS256,RS256,ES256")
 		}
 
 		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.Enabled {
@@ -1166,6 +1168,9 @@ EOF
 					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
 					"LOGFLARE_PRIVATE_ACCESS_TOKEN=" + utils.Config.Analytics.ApiKey,
 					"OPENAI_API_KEY=" + utils.Config.Studio.OpenaiApiKey.Value,
+					"PGRST_DB_SCHEMAS=" + strings.Join(utils.Config.Api.Schemas, ","),
+					"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(utils.Config.Api.ExtraSearchPath, ","),
+					fmt.Sprintf("PGRST_DB_MAX_ROWS=%d", utils.Config.Api.MaxRows),
 					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
 					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
 					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),

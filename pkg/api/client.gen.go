@@ -372,6 +372,9 @@ type ClientInterface interface {
 
 	V1UpdatePostgresConfig(ctx context.Context, ref string, body V1UpdatePostgresConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1GetDatabaseDisk request
+	V1GetDatabaseDisk(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1ModifyDatabaseDiskWithBody request with any body
 	V1ModifyDatabaseDiskWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1888,6 +1891,18 @@ func (c *Client) V1UpdatePostgresConfig(ctx context.Context, ref string, body V1
 	return c.Client.Do(req)
 }
 
+func (c *Client) V1GetDatabaseDisk(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetDatabaseDiskRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) V1ModifyDatabaseDiskWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1ModifyDatabaseDiskRequestWithBody(c.Server, ref, contentType, body)
 	if err != nil {
@@ -3389,6 +3404,22 @@ func NewV1DiffABranchRequest(server string, branchIdOrRef string, params *V1Diff
 		if params.IncludedSchemas != nil {
 
 			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "included_schemas", runtime.ParamLocationQuery, *params.IncludedSchemas); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Pgdelta != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "pgdelta", runtime.ParamLocationQuery, *params.Pgdelta); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -7010,6 +7041,40 @@ func NewV1UpdatePostgresConfigRequestWithBody(server string, ref string, content
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1GetDatabaseDiskRequest generates requests for V1GetDatabaseDisk
+func NewV1GetDatabaseDiskRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/disk", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -10993,6 +11058,9 @@ type ClientWithResponsesInterface interface {
 
 	V1UpdatePostgresConfigWithResponse(ctx context.Context, ref string, body V1UpdatePostgresConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdatePostgresConfigResponse, error)
 
+	// V1GetDatabaseDiskWithResponse request
+	V1GetDatabaseDiskWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetDatabaseDiskResponse, error)
+
 	// V1ModifyDatabaseDiskWithBodyWithResponse request with any body
 	V1ModifyDatabaseDiskWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ModifyDatabaseDiskResponse, error)
 
@@ -12994,6 +13062,28 @@ func (r V1UpdatePostgresConfigResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1UpdatePostgresConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetDatabaseDiskResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *DiskResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetDatabaseDiskResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetDatabaseDiskResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -15598,6 +15688,15 @@ func (c *ClientWithResponses) V1UpdatePostgresConfigWithResponse(ctx context.Con
 		return nil, err
 	}
 	return ParseV1UpdatePostgresConfigResponse(rsp)
+}
+
+// V1GetDatabaseDiskWithResponse request returning *V1GetDatabaseDiskResponse
+func (c *ClientWithResponses) V1GetDatabaseDiskWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetDatabaseDiskResponse, error) {
+	rsp, err := c.V1GetDatabaseDisk(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetDatabaseDiskResponse(rsp)
 }
 
 // V1ModifyDatabaseDiskWithBodyWithResponse request with arbitrary body returning *V1ModifyDatabaseDiskResponse
@@ -18475,6 +18574,32 @@ func ParseV1UpdatePostgresConfigResponse(rsp *http.Response) (*V1UpdatePostgresC
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest PostgresConfigResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetDatabaseDiskResponse parses an HTTP response from a V1GetDatabaseDiskWithResponse call
+func ParseV1GetDatabaseDiskResponse(rsp *http.Response) (*V1GetDatabaseDiskResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetDatabaseDiskResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DiskResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

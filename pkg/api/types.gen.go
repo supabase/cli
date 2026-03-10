@@ -444,7 +444,17 @@ const (
 
 // Defines values for DiskRequestBodyAttributes1Type.
 const (
-	Io2 DiskRequestBodyAttributes1Type = "io2"
+	DiskRequestBodyAttributes1TypeIo2 DiskRequestBodyAttributes1Type = "io2"
+)
+
+// Defines values for DiskResponseAttributes0Type.
+const (
+	DiskResponseAttributes0TypeGp3 DiskResponseAttributes0Type = "gp3"
+)
+
+// Defines values for DiskResponseAttributes1Type.
+const (
+	DiskResponseAttributes1TypeIo2 DiskResponseAttributes1Type = "io2"
 )
 
 // Defines values for FunctionResponseStatus.
@@ -730,8 +740,8 @@ const (
 
 // Defines values for OrganizationProjectsResponseProjectsDatabasesDiskType.
 const (
-	OrganizationProjectsResponseProjectsDatabasesDiskTypeGp3 OrganizationProjectsResponseProjectsDatabasesDiskType = "gp3"
-	OrganizationProjectsResponseProjectsDatabasesDiskTypeIo2 OrganizationProjectsResponseProjectsDatabasesDiskType = "io2"
+	Gp3 OrganizationProjectsResponseProjectsDatabasesDiskType = "gp3"
+	Io2 OrganizationProjectsResponseProjectsDatabasesDiskType = "io2"
 )
 
 // Defines values for OrganizationProjectsResponseProjectsDatabasesInfraComputeSize.
@@ -818,11 +828,11 @@ const (
 
 // Defines values for ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion.
 const (
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersionN13       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "13"
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersionN14       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "14"
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersionN15       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "15"
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersionN17       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "17"
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersionN17Oriole ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "17-oriole"
+	N13       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "13"
+	N14       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "14"
+	N15       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "15"
+	N17       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "17"
+	N17Oriole ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "17-oriole"
 )
 
 // Defines values for ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel.
@@ -1289,7 +1299,6 @@ const (
 	V1CreateProjectBodyDesiredInstanceSizeN4xlarge                 V1CreateProjectBodyDesiredInstanceSize = "4xlarge"
 	V1CreateProjectBodyDesiredInstanceSizeN8xlarge                 V1CreateProjectBodyDesiredInstanceSize = "8xlarge"
 	V1CreateProjectBodyDesiredInstanceSizeNano                     V1CreateProjectBodyDesiredInstanceSize = "nano"
-	V1CreateProjectBodyDesiredInstanceSizePico                     V1CreateProjectBodyDesiredInstanceSize = "pico"
 	V1CreateProjectBodyDesiredInstanceSizeSmall                    V1CreateProjectBodyDesiredInstanceSize = "small"
 	V1CreateProjectBodyDesiredInstanceSizeXlarge                   V1CreateProjectBodyDesiredInstanceSize = "xlarge"
 )
@@ -1298,13 +1307,6 @@ const (
 const (
 	V1CreateProjectBodyPlanFree V1CreateProjectBodyPlan = "free"
 	V1CreateProjectBodyPlanPro  V1CreateProjectBodyPlan = "pro"
-)
-
-// Defines values for V1CreateProjectBodyPostgresEngine.
-const (
-	V1CreateProjectBodyPostgresEngineN15       V1CreateProjectBodyPostgresEngine = "15"
-	V1CreateProjectBodyPostgresEngineN17       V1CreateProjectBodyPostgresEngine = "17"
-	V1CreateProjectBodyPostgresEngineN17Oriole V1CreateProjectBodyPostgresEngine = "17-oriole"
 )
 
 // Defines values for V1CreateProjectBodyRegion.
@@ -1368,24 +1370,14 @@ const (
 	SmartGroup V1CreateProjectBodyRegionSelection1Type = "smartGroup"
 )
 
-// Defines values for V1CreateProjectBodyReleaseChannel.
-const (
-	V1CreateProjectBodyReleaseChannelAlpha     V1CreateProjectBodyReleaseChannel = "alpha"
-	V1CreateProjectBodyReleaseChannelBeta      V1CreateProjectBodyReleaseChannel = "beta"
-	V1CreateProjectBodyReleaseChannelGa        V1CreateProjectBodyReleaseChannel = "ga"
-	V1CreateProjectBodyReleaseChannelInternal  V1CreateProjectBodyReleaseChannel = "internal"
-	V1CreateProjectBodyReleaseChannelPreview   V1CreateProjectBodyReleaseChannel = "preview"
-	V1CreateProjectBodyReleaseChannelWithdrawn V1CreateProjectBodyReleaseChannel = "withdrawn"
-)
-
 // Defines values for V1OrganizationSlugResponseAllowedReleaseChannels.
 const (
-	Alpha     V1OrganizationSlugResponseAllowedReleaseChannels = "alpha"
-	Beta      V1OrganizationSlugResponseAllowedReleaseChannels = "beta"
-	Ga        V1OrganizationSlugResponseAllowedReleaseChannels = "ga"
-	Internal  V1OrganizationSlugResponseAllowedReleaseChannels = "internal"
-	Preview   V1OrganizationSlugResponseAllowedReleaseChannels = "preview"
-	Withdrawn V1OrganizationSlugResponseAllowedReleaseChannels = "withdrawn"
+	V1OrganizationSlugResponseAllowedReleaseChannelsAlpha     V1OrganizationSlugResponseAllowedReleaseChannels = "alpha"
+	V1OrganizationSlugResponseAllowedReleaseChannelsBeta      V1OrganizationSlugResponseAllowedReleaseChannels = "beta"
+	V1OrganizationSlugResponseAllowedReleaseChannelsGa        V1OrganizationSlugResponseAllowedReleaseChannels = "ga"
+	V1OrganizationSlugResponseAllowedReleaseChannelsInternal  V1OrganizationSlugResponseAllowedReleaseChannels = "internal"
+	V1OrganizationSlugResponseAllowedReleaseChannelsPreview   V1OrganizationSlugResponseAllowedReleaseChannels = "preview"
+	V1OrganizationSlugResponseAllowedReleaseChannelsWithdrawn V1OrganizationSlugResponseAllowedReleaseChannels = "withdrawn"
 )
 
 // Defines values for V1OrganizationSlugResponseOptInTags.
@@ -1615,7 +1607,6 @@ const (
 	V1GetAvailableRegionsParamsDesiredInstanceSizeN4xlarge                 V1GetAvailableRegionsParamsDesiredInstanceSize = "4xlarge"
 	V1GetAvailableRegionsParamsDesiredInstanceSizeN8xlarge                 V1GetAvailableRegionsParamsDesiredInstanceSize = "8xlarge"
 	V1GetAvailableRegionsParamsDesiredInstanceSizeNano                     V1GetAvailableRegionsParamsDesiredInstanceSize = "nano"
-	V1GetAvailableRegionsParamsDesiredInstanceSizePico                     V1GetAvailableRegionsParamsDesiredInstanceSize = "pico"
 	V1GetAvailableRegionsParamsDesiredInstanceSizeSmall                    V1GetAvailableRegionsParamsDesiredInstanceSize = "small"
 	V1GetAvailableRegionsParamsDesiredInstanceSizeXlarge                   V1GetAvailableRegionsParamsDesiredInstanceSize = "xlarge"
 )
@@ -1809,6 +1800,8 @@ type ApplyProjectAddonBody_AddonVariant struct {
 // AuthConfigResponse defines model for AuthConfigResponse.
 type AuthConfigResponse struct {
 	ApiMaxRequestDuration                                 nullable.Nullable[int]                                          `json:"api_max_request_duration"`
+	CustomOauthEnabled                                    bool                                                            `json:"custom_oauth_enabled"`
+	CustomOauthMaxProviders                               int                                                             `json:"custom_oauth_max_providers"`
 	DbMaxPoolSize                                         nullable.Nullable[int]                                          `json:"db_max_pool_size"`
 	DbMaxPoolSizeUnit                                     nullable.Nullable[AuthConfigResponseDbMaxPoolSizeUnit]          `json:"db_max_pool_size_unit"`
 	DisableSignup                                         nullable.Nullable[bool]                                         `json:"disable_signup"`
@@ -2568,6 +2561,38 @@ type DiskRequestBodyAttributes1Type string
 
 // DiskRequestBody_Attributes defines model for DiskRequestBody.Attributes.
 type DiskRequestBody_Attributes struct {
+	union json.RawMessage
+}
+
+// DiskResponse defines model for DiskResponse.
+type DiskResponse struct {
+	Attributes     DiskResponse_Attributes `json:"attributes"`
+	LastModifiedAt *string                 `json:"last_modified_at,omitempty"`
+}
+
+// DiskResponseAttributes0 defines model for .
+type DiskResponseAttributes0 struct {
+	Iops            int                         `json:"iops"`
+	SizeGb          int                         `json:"size_gb"`
+	ThroughputMibps *int                        `json:"throughput_mibps,omitempty"`
+	Type            DiskResponseAttributes0Type `json:"type"`
+}
+
+// DiskResponseAttributes0Type defines model for DiskResponse.Attributes.0.Type.
+type DiskResponseAttributes0Type string
+
+// DiskResponseAttributes1 defines model for .
+type DiskResponseAttributes1 struct {
+	Iops   int                         `json:"iops"`
+	SizeGb int                         `json:"size_gb"`
+	Type   DiskResponseAttributes1Type `json:"type"`
+}
+
+// DiskResponseAttributes1Type defines model for DiskResponse.Attributes.1.Type.
+type DiskResponseAttributes1Type string
+
+// DiskResponse_Attributes defines model for DiskResponse.Attributes.
+type DiskResponse_Attributes struct {
 	union json.RawMessage
 }
 
@@ -3372,10 +3397,13 @@ type RealtimeConfigResponse struct {
 	// MaxPresenceEventsPerSecond Sets maximum number of presence events per second rate limit
 	MaxPresenceEventsPerSecond nullable.Nullable[int] `json:"max_presence_events_per_second"`
 
+	// PresenceEnabled Whether to enable presence
+	PresenceEnabled bool `json:"presence_enabled"`
+
 	// PrivateOnly Whether to only allow private channels
 	PrivateOnly nullable.Nullable[bool] `json:"private_only"`
 
-	// Suspend Whether to suspend realtime
+	// Suspend Disables the Realtime service for this project when true. Set to false to re-enable it.
 	Suspend nullable.Nullable[bool] `json:"suspend"`
 }
 
@@ -3691,6 +3719,7 @@ type UpdateApiKeyBody struct {
 // UpdateAuthConfigBody defines model for UpdateAuthConfigBody.
 type UpdateAuthConfigBody struct {
 	ApiMaxRequestDuration                                 nullable.Nullable[int]                                            `json:"api_max_request_duration,omitempty"`
+	CustomOauthEnabled                                    *bool                                                             `json:"custom_oauth_enabled,omitempty"`
 	DbMaxPoolSize                                         nullable.Nullable[int]                                            `json:"db_max_pool_size,omitempty"`
 	DbMaxPoolSizeUnit                                     nullable.Nullable[UpdateAuthConfigBodyDbMaxPoolSizeUnit]          `json:"db_max_pool_size_unit,omitempty"`
 	DisableSignup                                         nullable.Nullable[bool]                                           `json:"disable_signup,omitempty"`
@@ -4126,10 +4155,13 @@ type UpdateRealtimeConfigBody struct {
 	// MaxPresenceEventsPerSecond Sets maximum number of presence events per second rate limit
 	MaxPresenceEventsPerSecond *int `json:"max_presence_events_per_second,omitempty"`
 
+	// PresenceEnabled Whether to enable presence
+	PresenceEnabled *bool `json:"presence_enabled,omitempty"`
+
 	// PrivateOnly Whether to only allow private channels
 	PrivateOnly *bool `json:"private_only,omitempty"`
 
-	// Suspend Whether to suspend realtime
+	// Suspend Disables the Realtime service for this project when true. Set to false to re-enable it.
 	Suspend *bool `json:"suspend,omitempty"`
 }
 
@@ -4274,7 +4306,9 @@ type V1CreateMigrationBody struct {
 // V1CreateProjectBody defines model for V1CreateProjectBody.
 type V1CreateProjectBody struct {
 	// DbPass Database password
-	DbPass              string                                  `json:"db_pass"`
+	DbPass string `json:"db_pass"`
+
+	// DesiredInstanceSize Desired instance size. Omit this field to always default to the smallest possible size.
 	DesiredInstanceSize *V1CreateProjectBodyDesiredInstanceSize `json:"desired_instance_size,omitempty"`
 
 	// KpsEnabled This field is deprecated and is ignored in this request
@@ -4295,10 +4329,6 @@ type V1CreateProjectBody struct {
 	// Deprecated:
 	Plan *V1CreateProjectBodyPlan `json:"plan,omitempty"`
 
-	// PostgresEngine Postgres engine version. If not provided, the latest version will be used.
-	// Deprecated:
-	PostgresEngine *V1CreateProjectBodyPostgresEngine `json:"postgres_engine,omitempty"`
-
 	// Region Region you want your server to reside in. Use region_selection instead.
 	// Deprecated:
 	Region *V1CreateProjectBodyRegion `json:"region,omitempty"`
@@ -4306,22 +4336,15 @@ type V1CreateProjectBody struct {
 	// RegionSelection Region selection. Only one of region or region_selection can be specified.
 	RegionSelection *V1CreateProjectBody_RegionSelection `json:"region_selection,omitempty"`
 
-	// ReleaseChannel Release channel. If not provided, GA will be used.
-	// Deprecated:
-	ReleaseChannel *V1CreateProjectBodyReleaseChannel `json:"release_channel,omitempty"`
-
 	// TemplateUrl Template URL used to create the project from the CLI.
 	TemplateUrl *string `json:"template_url,omitempty"`
 }
 
-// V1CreateProjectBodyDesiredInstanceSize defines model for V1CreateProjectBody.DesiredInstanceSize.
+// V1CreateProjectBodyDesiredInstanceSize Desired instance size. Omit this field to always default to the smallest possible size.
 type V1CreateProjectBodyDesiredInstanceSize string
 
 // V1CreateProjectBodyPlan Subscription Plan is now set on organization level and is ignored in this request
 type V1CreateProjectBodyPlan string
-
-// V1CreateProjectBodyPostgresEngine Postgres engine version. If not provided, the latest version will be used.
-type V1CreateProjectBodyPostgresEngine string
 
 // V1CreateProjectBodyRegion Region you want your server to reside in. Use region_selection instead.
 type V1CreateProjectBodyRegion string
@@ -4356,9 +4379,6 @@ type V1CreateProjectBodyRegionSelection1Type string
 type V1CreateProjectBody_RegionSelection struct {
 	union json.RawMessage
 }
-
-// V1CreateProjectBodyReleaseChannel Release channel. If not provided, GA will be used.
-type V1CreateProjectBodyReleaseChannel string
 
 // V1GetMigrationResponse defines model for V1GetMigrationResponse.
 type V1GetMigrationResponse struct {
@@ -4678,7 +4698,8 @@ type V1ServiceHealthResponseInfo1 struct {
 
 	// Healthy Deprecated. Use `status` instead.
 	// Deprecated:
-	Healthy bool `json:"healthy"`
+	Healthy              bool `json:"healthy"`
+	ReplicationConnected bool `json:"replication_connected"`
 }
 
 // V1ServiceHealthResponseInfo2 defines model for .
@@ -4772,6 +4793,9 @@ type V1DeleteABranchParams struct {
 // V1DiffABranchParams defines parameters for V1DiffABranch.
 type V1DiffABranchParams struct {
 	IncludedSchemas *string `form:"included_schemas,omitempty" json:"included_schemas,omitempty"`
+
+	// Pgdelta Use pg-delta instead of Migra for diffing when true
+	Pgdelta *bool `form:"pgdelta,omitempty" json:"pgdelta,omitempty"`
 }
 
 // V1AuthorizeUserParams defines parameters for V1AuthorizeUser.
@@ -4848,7 +4872,7 @@ type V1GetAvailableRegionsParams struct {
 	// Continent Continent code to determine regional recommendations: NA (North America), SA (South America), EU (Europe), AF (Africa), AS (Asia), OC (Oceania), AN (Antarctica)
 	Continent *V1GetAvailableRegionsParamsContinent `form:"continent,omitempty" json:"continent,omitempty"`
 
-	// DesiredInstanceSize Desired instance size
+	// DesiredInstanceSize Desired instance size. Omit this field to always default to the smallest possible size.
 	DesiredInstanceSize *V1GetAvailableRegionsParamsDesiredInstanceSize `form:"desired_instance_size,omitempty" json:"desired_instance_size,omitempty"`
 }
 
@@ -5706,6 +5730,68 @@ func (t DiskRequestBody_Attributes) MarshalJSON() ([]byte, error) {
 }
 
 func (t *DiskRequestBody_Attributes) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsDiskResponseAttributes0 returns the union data inside the DiskResponse_Attributes as a DiskResponseAttributes0
+func (t DiskResponse_Attributes) AsDiskResponseAttributes0() (DiskResponseAttributes0, error) {
+	var body DiskResponseAttributes0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDiskResponseAttributes0 overwrites any union data inside the DiskResponse_Attributes as the provided DiskResponseAttributes0
+func (t *DiskResponse_Attributes) FromDiskResponseAttributes0(v DiskResponseAttributes0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDiskResponseAttributes0 performs a merge with any union data inside the DiskResponse_Attributes, using the provided DiskResponseAttributes0
+func (t *DiskResponse_Attributes) MergeDiskResponseAttributes0(v DiskResponseAttributes0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsDiskResponseAttributes1 returns the union data inside the DiskResponse_Attributes as a DiskResponseAttributes1
+func (t DiskResponse_Attributes) AsDiskResponseAttributes1() (DiskResponseAttributes1, error) {
+	var body DiskResponseAttributes1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDiskResponseAttributes1 overwrites any union data inside the DiskResponse_Attributes as the provided DiskResponseAttributes1
+func (t *DiskResponse_Attributes) FromDiskResponseAttributes1(v DiskResponseAttributes1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDiskResponseAttributes1 performs a merge with any union data inside the DiskResponse_Attributes, using the provided DiskResponseAttributes1
+func (t *DiskResponse_Attributes) MergeDiskResponseAttributes1(v DiskResponseAttributes1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t DiskResponse_Attributes) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *DiskResponse_Attributes) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
