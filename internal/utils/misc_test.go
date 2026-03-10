@@ -156,6 +156,18 @@ func TestAssertProjectRefIsValid(t *testing.T) {
 	})
 }
 
+func TestGetHostname(t *testing.T) {
+	t.Run("returns SUPABASE_HOSTNAME when set", func(t *testing.T) {
+		t.Setenv("SUPABASE_HOSTNAME", "host.docker.internal")
+		assert.Equal(t, "host.docker.internal", GetHostname())
+	})
+
+	t.Run("returns 127.0.0.1 when SUPABASE_HOSTNAME is not set", func(t *testing.T) {
+		t.Setenv("SUPABASE_HOSTNAME", "")
+		assert.Equal(t, "127.0.0.1", GetHostname())
+	})
+}
+
 func TestWriteFile(t *testing.T) {
 	t.Run("writes file with directories", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
