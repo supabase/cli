@@ -75,7 +75,6 @@ var (
 	PoolerVersionPath     = filepath.Join(TempDir, "pooler-version")
 	RealtimeVersionPath   = filepath.Join(TempDir, "realtime-version")
 	CliVersionPath        = filepath.Join(TempDir, "cli-latest")
-	ProfilePath           = filepath.Join(TempDir, "profile")
 	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
 	ClusterDir            = filepath.Join(SupabaseDirPath, "cluster")
 	SchemasDir            = filepath.Join(SupabaseDirPath, "schemas")
