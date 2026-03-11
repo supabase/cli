@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Fiber, Layer } from "effect";
+import type { StackServiceStatus } from "@supabase/stack";
 import type { StackInfo } from "@supabase/stack/internals";
 import { start } from "./start.handler.ts";
 import { startForegroundWithStopSignal } from "./flows/foreground.flow.ts";
@@ -30,7 +31,7 @@ function setupInteractive(
 function setupNonInteractive(
   opts: {
     info?: Partial<StackInfo>;
-    stateChanges?: Array<{ name: string; status: string }>;
+    stateChanges?: Array<{ name: string; status: StackServiceStatus }>;
   } = {},
 ) {
   const stack = mockStack({ info: opts.info, stateChanges: opts.stateChanges });

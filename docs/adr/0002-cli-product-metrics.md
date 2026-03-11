@@ -48,7 +48,7 @@ We define 5 metric categories with specific signals to track. All metrics are de
 | Metric | Definition | Why it matters |
 |--------|-----------|----------------|
 | Time to first successful command | Duration from install to first exit code 0 | Measures onboarding friction |
-| Drop-off funnel | install → first run → login → first meaningful command (`supa dev` or `supa link`) | Identifies where new users get stuck |
+| Drop-off funnel | install → first run → login → first meaningful command (`supabase dev` or `supabase link`) | Identifies where new users get stuck |
 
 ## Rationale
 
@@ -58,7 +58,7 @@ We define 5 metric categories with specific signals to track. All metrics are de
 
 **LLM vs human split**: this is unique to our CLI. If LLMs aren't using the non-TTY auto-JSON path, the investment in LLM-native design (Pillar 7) isn't paying off. If they are, it validates the architecture.
 
-**Churn by command**: most retention analysis looks at users holistically. For a CLI, the granularity is at the command level — a user might love `supa dev` but churn after hitting `supa migrations push`. Command-level churn identifies specific pain points.
+**Churn by command**: most retention analysis looks at users holistically. For a CLI, the granularity is at the command level — a user might love `supabase dev` but churn after hitting `supabase migrations push`. Command-level churn identifies specific pain points.
 
 ## Implementation
 
@@ -81,10 +81,10 @@ type TelemetryEvent = {
   schema_version: 1;
 
   // Identity
-  device_id: string;       // random UUID, persisted in ~/.supa/telemetry.json
+  device_id: string;       // random UUID, persisted in ~/.supabase/telemetry.json
   session_id: string;      // rotates on 30-min idle
   is_first_run: boolean;   // true on very first CLI execution
-  user_id?: string;        // Supabase account UUID, present after `supa login`
+  user_id?: string;        // Supabase account UUID, present after `supabase login`
 
   // Command
   command: string;         // e.g. "dev", "projects list"
@@ -117,11 +117,11 @@ One event per command completion. No PII. The `spans` field connects to ADR 0007
 
 ### Consent Model
 
-Three-state model: `"pending" | "granted" | "denied"`, stored in `~/.supa/telemetry.json`.
+Three-state model: `"pending" | "granted" | "denied"`, stored in `~/.supabase/telemetry.json`.
 
 - Non-TTY defaults to `denied` without prompting (LLM agents and CI never see a prompt)
 - `SUPA_TELEMETRY=off` env var overrides consent
-- `supa telemetry enable/disable/status` commands for user control
+- `supabase telemetry enable/disable/status` commands for user control
 
 ## Consequences
 

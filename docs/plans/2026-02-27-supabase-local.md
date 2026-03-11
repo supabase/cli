@@ -79,7 +79,7 @@
 
 **Step 4: Install dependencies**
 
-Run: `cd /Users/jgoux/Code/supabase/supa && bun install`
+Run: `cd /Users/jgoux/Code/supabase/dx-labs && bun install`
 Expected: Dependencies resolve, no errors.
 
 **Step 5: Verify quality checks pass**
@@ -1607,7 +1607,7 @@ Add to `apps/cli/package.json` dependencies:
 "@supabase/local": "workspace:*"
 ```
 
-Run: `cd /Users/jgoux/Code/supabase/supa && bun install`
+Run: `cd /Users/jgoux/Code/supabase/dx-labs && bun install`
 
 **Step 2: Create the handler**
 

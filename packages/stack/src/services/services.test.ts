@@ -98,7 +98,7 @@ describe("makePostgresServiceDocker", () => {
     expect(def.command).toBe("docker");
     expect(def.args).toContain("run");
     expect(def.args).toContain("--rm");
-    expect(def.args).toContain(`supa-postgres-${API_PORT}`);
+    expect(def.args).toContain(`supabase-postgres-${API_PORT}`);
     expect(def.args).toContain("--network=host");
     expect(def.args).toContain("public.ecr.aws/supabase/postgres:17");
     expect(def.args).toContain("/tmp/supabase/data:/var/lib/postgresql/data");
@@ -108,12 +108,20 @@ describe("makePostgresServiceDocker", () => {
     expect(def.healthCheck?.probe).toEqual({
       _tag: "Exec",
       command: "docker",
-      args: ["exec", `supa-postgres-${API_PORT}`, "pg_isready", "-p", "54322", "-U", "postgres"],
+      args: [
+        "exec",
+        `supabase-postgres-${API_PORT}`,
+        "pg_isready",
+        "-p",
+        "54322",
+        "-U",
+        "postgres",
+      ],
     });
     expect(def.dependencies).toBeUndefined();
     expect(def.restart).toBe("unless-stopped");
     expect(def.supervision).toEqual({
-      orphanCleanup: [{ _tag: "DockerRemove", containerName: `supa-postgres-${API_PORT}` }],
+      orphanCleanup: [{ _tag: "DockerRemove", containerName: `supabase-postgres-${API_PORT}` }],
     });
   });
 });
@@ -200,11 +208,11 @@ describe("makeAuthServiceDocker", () => {
     expect(def.command).toBe("docker");
     expect(def.args).toContain("run");
     expect(def.args).toContain("--rm");
-    expect(def.args).toContain(`supa-auth-${API_PORT}`);
+    expect(def.args).toContain(`supabase-auth-${API_PORT}`);
     expect(def.args).toContain("--network=host");
     expect(def.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
     expect(def.supervision).toEqual({
-      orphanCleanup: [{ _tag: "DockerRemove", containerName: `supa-auth-${API_PORT}` }],
+      orphanCleanup: [{ _tag: "DockerRemove", containerName: `supabase-auth-${API_PORT}` }],
     });
   });
 });

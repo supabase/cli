@@ -1,14 +1,14 @@
 import { Effect, Layer, ServiceMap, Stream, SubscriptionRef } from "effect";
-import type { ServiceState } from "@supabase/stack";
+import type { StackServiceState } from "@supabase/stack";
 import type { StackInfo } from "@supabase/stack/internals";
 import { Stack } from "@supabase/stack/internals";
 
 export type StartPhase = "starting" | "running" | "failed" | "stopping";
 
 function updateServiceStates(
-  current: ReadonlyArray<ServiceState>,
-  state: ServiceState,
-): ReadonlyArray<ServiceState> {
+  current: ReadonlyArray<StackServiceState>,
+  state: StackServiceState,
+): ReadonlyArray<StackServiceState> {
   return current.some((entry) => entry.name === state.name)
     ? current.map((entry) => (entry.name === state.name ? state : entry))
     : [...current, state];
@@ -18,7 +18,7 @@ export class StartDashboardState extends ServiceMap.Service<
   StartDashboardState,
   {
     readonly stackInfoRef: SubscriptionRef.SubscriptionRef<StackInfo | null>;
-    readonly serviceStatesRef: SubscriptionRef.SubscriptionRef<ReadonlyArray<ServiceState>>;
+    readonly serviceStatesRef: SubscriptionRef.SubscriptionRef<ReadonlyArray<StackServiceState>>;
     readonly phaseRef: SubscriptionRef.SubscriptionRef<StartPhase>;
     readonly errorRef: SubscriptionRef.SubscriptionRef<string | null>;
   }
@@ -32,7 +32,7 @@ export class StartDashboardState extends ServiceMap.Service<
       const initialStates = yield* stack.getAllStates();
       const stackInfoRef = yield* SubscriptionRef.make<StackInfo | null>(info);
       const serviceStatesRef =
-        yield* SubscriptionRef.make<ReadonlyArray<ServiceState>>(initialStates);
+        yield* SubscriptionRef.make<ReadonlyArray<StackServiceState>>(initialStates);
       const phaseRef = yield* SubscriptionRef.make<StartPhase>("starting");
       const errorRef = yield* SubscriptionRef.make<string | null>(null);
 

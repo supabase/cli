@@ -1,4 +1,4 @@
-# Supa
+# Supabase
 
 Bun monorepo with workspaces under `apps/` and `packages/`.
 

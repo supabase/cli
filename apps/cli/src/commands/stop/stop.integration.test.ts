@@ -9,7 +9,7 @@ import { join } from "node:path";
 
 function setup() {
   const out = mockOutput();
-  const home = mkdtempSync(join(tmpdir(), "supa-stop-test-"));
+  const home = mkdtempSync(join(tmpdir(), "supabase-stop-test-"));
   const layer = Layer.mergeAll(out.layer, BunServices.layer);
   return { layer, out, home };
 }

@@ -67,7 +67,7 @@ beforeEach(() => {
   throwOnSetPassword = false;
   throwOnGetPasswordAccounts.clear();
   returnNullForAccounts.clear();
-  tempHome = mkdtempSync(join(tmpdir(), "supa-creds-test-"));
+  tempHome = mkdtempSync(join(tmpdir(), "supabase-creds-test-"));
 });
 
 afterEach(() => {

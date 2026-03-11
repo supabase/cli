@@ -1,10 +1,11 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { ServiceNotFoundError, ServiceState, type LogEntry } from "@supabase/process-compose";
+import { ServiceNotFoundError, type LogEntry } from "@supabase/process-compose";
 import { Effect, Layer, ManagedRuntime, Stream } from "effect";
 import * as http from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { DaemonServer } from "./DaemonServer.ts";
 import { Stack, type StackInfo } from "./Stack.ts";
+import { StackServiceState } from "./StackServiceState.ts";
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -17,10 +18,10 @@ const MOCK_INFO: StackInfo = {
   secretKey: "sk_test",
   anonJwt: "anon_jwt",
   serviceRoleJwt: "service_role_jwt",
-  dockerContainerNames: ["supa-postgres-54321"],
+  dockerContainerNames: ["supabase-postgres-54321"],
 };
 
-const POSTGRES_STATE = new ServiceState({
+const POSTGRES_STATE = new StackServiceState({
   name: "postgres",
   status: "Running",
   pid: 1234,
@@ -30,7 +31,7 @@ const POSTGRES_STATE = new ServiceState({
   error: null,
 });
 
-const MOCK_STATES: ReadonlyArray<ServiceState> = [POSTGRES_STATE];
+const MOCK_STATES: ReadonlyArray<StackServiceState> = [POSTGRES_STATE];
 
 const MOCK_LOGS: ReadonlyArray<LogEntry> = [
   { timestamp: 1000, service: "postgres", stream: "stdout", line: "starting" },
@@ -178,7 +179,7 @@ describe("DaemonServer", () => {
   test("GET /status returns info and service states", async () => {
     const res = await fetch(`${url}/status`);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { info: StackInfo; services: ServiceState[] };
+    const body = (await res.json()) as { info: StackInfo; services: StackServiceState[] };
     expect(body.info).toEqual(MOCK_INFO);
     expect(body.services).toHaveLength(1);
     expect(body.services.at(0)?.name).toBe("postgres");

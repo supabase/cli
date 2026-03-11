@@ -1,4 +1,4 @@
-import type { LogEntry, ServiceNotFoundError, ServiceState } from "@supabase/process-compose";
+import type { LogEntry, ServiceNotFoundError } from "@supabase/process-compose";
 import { mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -22,6 +22,7 @@ import {
 } from "./layers.ts";
 import { StackAlreadyRunningError } from "./StateManager.ts";
 import { Stack } from "./Stack.ts";
+import type { StackServiceState } from "./StackServiceState.ts";
 import { allocatePorts, type AllocatedPorts } from "./PortAllocator.ts";
 import {
   type AuthConfig,
@@ -79,9 +80,9 @@ export interface StackHandle extends AsyncDisposable {
   serviceReady(name: string, opts?: ReadyOptions): Promise<void>;
 
   // Status
-  getStatus(): Promise<ReadonlyArray<ServiceState>>;
-  getServiceStatus(name: string): Promise<ServiceState>;
-  statusChanges(): AsyncIterable<ServiceState>;
+  getStatus(): Promise<ReadonlyArray<StackServiceState>>;
+  getServiceStatus(name: string): Promise<StackServiceState>;
+  statusChanges(): AsyncIterable<StackServiceState>;
 
   // Logs
   logs(): AsyncIterable<LogEntry>;
@@ -132,7 +133,7 @@ export async function resolveConfig(input?: StackConfig): Promise<ResolvedStackC
   const authInput = config.auth !== false ? (config.auth ?? undefined) : undefined;
 
   const autoManagedDataDir = postgresInput.dataDir == null;
-  const dataDir = postgresInput.dataDir ?? mkdtempSync(join(tmpdir(), "supa-local-"));
+  const dataDir = postgresInput.dataDir ?? mkdtempSync(join(tmpdir(), "supabase-local-"));
 
   const ports = await Effect.runPromise(
     allocatePorts({
@@ -214,9 +215,9 @@ export const projectDaemonLayer = (opts: {
 
 /** Compute all possible Docker container names from a resolved config (for error-path cleanup). */
 function dockerContainerNamesFor(config: ResolvedStackConfig): string[] {
-  const names = [`supa-postgres-${config.apiPort}`];
-  if (config.postgrest !== false) names.push(`supa-postgrest-${config.apiPort}`);
-  if (config.auth !== false) names.push(`supa-auth-${config.apiPort}`);
+  const names = [`supabase-postgres-${config.apiPort}`];
+  if (config.postgrest !== false) names.push(`supabase-postgrest-${config.apiPort}`);
+  if (config.auth !== false) names.push(`supabase-auth-${config.apiPort}`);
   return names;
 }
 
@@ -283,7 +284,7 @@ export async function createStack(
 
       getStatus: () => run(localStack.getAllStates()),
       getServiceStatus: (name: string) =>
-        run(localStack.getState(name) as Effect.Effect<ServiceState, ServiceNotFoundError>),
+        run(localStack.getState(name) as Effect.Effect<StackServiceState, ServiceNotFoundError>),
 
       statusChanges: () => Stream.toAsyncIterableWith(localStack.allStateChanges(), services),
 

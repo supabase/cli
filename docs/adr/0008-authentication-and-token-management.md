@@ -7,16 +7,16 @@
 
 Auth is referenced in ADRs 0001 (error codes 3/AUTH_*), 0002 (identity lifecycle), 0004 (command surface), and 0006 (user_id for env management) — but no ADR captures the actual design decisions for how login, token storage, and multi-profile work.
 
-The new `supa` CLI should be compatible with the existing Go CLI's credential store so users don't need to re-login when switching between CLIs.
+The new `supabase` CLI should be compatible with the existing Go CLI's credential store so users don't need to re-login when switching between CLIs.
 
 ## Key Decisions to Cover
 
 - **Login flow**: Keep the browser-based ECDH login flow? Or switch to standard OAuth device flow?
 - **Token storage**: Keep keyring-first storage with file fallback? Token loading priority (env var → keyring → legacy keyring → token file)?
 - **Token format**: Keep the `sbp_` token format validation (`^sbp_(oauth_)?[a-f0-9]{40}$`)?
-- **Directory migration**: How to handle `~/.supabase/` → `~/.supa/` migration while reading old tokens?
+- **Legacy token migration**: How should the CLI handle any legacy on-disk token formats while reading old tokens?
 - **Profile system**: Keep built-in profiles (supabase, supabase-staging, supabase-local, snap) or simplify to user-defined profiles?
-- **Backward compatibility**: Should `supa login` detect an existing Go CLI token and reuse it?
+- **Backward compatibility**: Should `supabase login` detect an existing Go CLI token and reuse it?
 - **Token refresh**: Keep the no-refresh model (long-lived, server-managed expiry) or add refresh tokens?
 
 ## Context: How Auth Works in the Go CLI

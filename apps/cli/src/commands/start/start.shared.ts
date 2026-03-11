@@ -1,65 +1,43 @@
 import { Effect, Fiber, Stream } from "effect";
 import { Stack } from "@supabase/stack/internals";
 import { Output } from "../../output/output.service.ts";
-import { toDisplayStates } from "../../stack/display-states.ts";
 
 export const startStackWithProgress = Effect.fnUntraced(function* () {
   const output = yield* Output;
   const stack = yield* Stack;
 
-  const initialRawStates = yield* stack.getAllStates();
-  const initialDisplayStates = toDisplayStates(initialRawStates);
-  const displayNames = new Set(initialDisplayStates.map((state) => state.name));
-  const rawStatesByName = new Map(initialRawStates.map((state) => [state.name, state]));
-  const displayStatesByName = new Map(
-    initialDisplayStates.map((state) => [state.name, state] as const),
-  );
+  const initialStates = yield* stack.getAllStates();
+  const stateNames = new Set(initialStates.map((state) => state.name));
+  const statesByName = new Map(initialStates.map((state) => [state.name, state] as const));
   const readyNames = new Set(
-    initialDisplayStates.filter((state) => state.status === "Healthy").map((state) => state.name),
+    initialStates.filter((state) => state.status === "Healthy").map((state) => state.name),
   );
-  const prog = yield* output.progress({ max: initialDisplayStates.length });
+  const prog = yield* output.progress({ max: initialStates.length });
   yield* prog.start("Waiting for services...");
 
   const fiber = yield* Stream.runForEach(stack.allStateChanges(), (state) =>
     Effect.sync(() => {
-      rawStatesByName.set(state.name, state);
-
-      const nextDisplayStates = toDisplayStates([...rawStatesByName.values()]);
-      const nextDisplayStatesByName = new Map(
-        nextDisplayStates.map((displayState) => [displayState.name, displayState] as const),
-      );
-      const changedDisplayStates = [...displayNames]
-        .map((name) => nextDisplayStatesByName.get(name))
-        .filter((displayState) => displayState !== undefined)
-        .filter(
-          (displayState) =>
-            displayStatesByName.get(displayState.name)?.status !== displayState.status,
-        );
-
-      displayStatesByName.clear();
-      for (const name of displayNames) {
-        const nextDisplayState = nextDisplayStatesByName.get(name);
-        if (nextDisplayState !== undefined) {
-          displayStatesByName.set(name, nextDisplayState);
-        }
+      const previousState = statesByName.get(state.name);
+      statesByName.set(state.name, state);
+      if (!stateNames.has(state.name) || previousState?.status === state.status) {
+        return [];
       }
-
-      return changedDisplayStates;
+      return [state];
     }).pipe(
-      Effect.flatMap((changedDisplayStates) =>
+      Effect.flatMap((changedStates) =>
         Effect.forEach(
-          changedDisplayStates,
-          (displayState) => {
-            if (displayState.status === "Healthy") {
-              if (readyNames.has(displayState.name)) {
+          changedStates,
+          (serviceState) => {
+            if (serviceState.status === "Healthy") {
+              if (readyNames.has(serviceState.name)) {
                 return Effect.void;
               }
 
-              readyNames.add(displayState.name);
-              return prog.advance(1, `${displayState.name} is ready`);
+              readyNames.add(serviceState.name);
+              return prog.advance(1, `${serviceState.name} is ready`);
             }
 
-            return prog.message(`${displayState.name}: ${displayState.status}`);
+            return prog.message(`${serviceState.name}: ${serviceState.status}`);
           },
           { discard: true },
         ),

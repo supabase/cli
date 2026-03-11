@@ -53,7 +53,7 @@ describe("StackBuilder", () => {
 
     return Effect.gen(function* () {
       const builder = yield* StackBuilder;
-      const { graph, dockerContainerNames } = yield* builder.build(baseConfig);
+      const { graph, dockerContainerNames, serviceProjection } = yield* builder.build(baseConfig);
 
       expect(graph.startOrder.length).toBe(4);
       expect(dockerContainerNames).toEqual([]);
@@ -68,6 +68,13 @@ describe("StackBuilder", () => {
       expect(names.indexOf("postgres")).toBeLessThan(names.indexOf("postgres-init"));
       expect(names.indexOf("postgres-init")).toBeLessThan(names.indexOf("postgrest"));
       expect(names.indexOf("postgres-init")).toBeLessThan(names.indexOf("auth"));
+
+      expect(serviceProjection.get("postgres")).toEqual({ visibility: "public" });
+      expect(serviceProjection.get("postgres-init")).toEqual({
+        visibility: "internal",
+        owner: "postgres",
+        ownerStatusWhileActive: "Initializing",
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -97,8 +104,7 @@ describe("StackBuilder", () => {
       const builder = yield* StackBuilder;
       const { graph } = yield* builder.build(baseConfig);
 
-      // No postgres-init when postgres falls back to Docker (3 services after
-      // removing auth-migrate from the graph)
+      // No postgres-init when postgres falls back to Docker.
       expect(graph.startOrder.length).toBe(3);
 
       const postgresDef = graph.startOrder.find((s) => s.name === "postgres");
@@ -178,9 +184,9 @@ describe("StackBuilder", () => {
 
       // Docker container names are collected for cleanup
       expect(dockerContainerNames).toEqual([
-        `supa-postgres-${dockerConfig.apiPort}`,
-        `supa-postgrest-${dockerConfig.apiPort}`,
-        `supa-auth-${dockerConfig.apiPort}`,
+        `supabase-postgres-${dockerConfig.apiPort}`,
+        `supabase-postgrest-${dockerConfig.apiPort}`,
+        `supabase-auth-${dockerConfig.apiPort}`,
       ]);
     }).pipe(Effect.provide(layer));
   });

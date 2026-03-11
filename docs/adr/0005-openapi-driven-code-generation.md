@@ -110,7 +110,7 @@ Three GitHub Actions workflows keep the checked-in `v1.d.ts` in sync with the li
 
 4. **Continuous codegen (regenerate command files on every build)** — Generated command files can't be customized — descriptions, flag names, and error messages all need hand-editing. One-shot scaffold followed by hand-ownership is more flexible.
 
-5. **Mirror the API hierarchy as the CLI surface** — The API is organized by resource (`/v1/projects/{ref}/secrets`), but the CLI should be organized by workflow (`supa secrets list --project <ref>`). The mapping config in the scaffold generator prevents API-mirroring.
+5. **Mirror the API hierarchy as the CLI surface** — The API is organized by resource (`/v1/projects/{ref}/secrets`), but the CLI should be organized by workflow (`supabase secrets list --project <ref>`). The mapping config in the scaffold generator prevents API-mirroring.
 
 ## Related Decisions
 

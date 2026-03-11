@@ -67,7 +67,7 @@ export const makeAuthServiceNative = (opts: NativeAuthOptions): ServiceDef => ({
 export const makeAuthServiceDocker = (opts: DockerAuthOptions): ServiceDef => {
   const env = authEnv(opts, opts.dbHost);
   const envArgs = Object.entries(env).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
-  const containerName = `supa-auth-${opts.apiPort}`;
+  const containerName = `supabase-auth-${opts.apiPort}`;
 
   return {
     name: "auth",

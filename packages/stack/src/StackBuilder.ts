@@ -10,6 +10,7 @@ import { makeAuthServiceDocker, makeAuthServiceNative } from "./services/auth.ts
 import { makePostgresService, makePostgresServiceDocker } from "./services/postgres.ts";
 import { makePostgresInitService } from "./services/postgres-init.ts";
 import { makePostgrestService, makePostgrestServiceDocker } from "./services/postgrest.ts";
+import type { StackServiceProjectionCatalog } from "./StackStateProjection.ts";
 
 // -- User-facing per-service config types --
 
@@ -275,6 +276,7 @@ function buildAuthDefs(
 interface BuildResult {
   readonly graph: ResolvedGraph;
   readonly dockerContainerNames: ReadonlyArray<string>;
+  readonly serviceProjection: StackServiceProjectionCatalog;
 }
 
 export class StackBuilder extends ServiceMap.Service<
@@ -381,17 +383,34 @@ export class StackBuilder extends ServiceMap.Service<
             // 5. Collect Docker container names for cleanup
             const dockerContainerNames: string[] = [];
             if (postgresResolution.type === "docker") {
-              dockerContainerNames.push(`supa-postgres-${config.apiPort}`);
+              dockerContainerNames.push(`supabase-postgres-${config.apiPort}`);
             }
             if (postgrestResolution !== false && postgrestResolution.type === "docker") {
-              dockerContainerNames.push(`supa-postgrest-${config.apiPort}`);
+              dockerContainerNames.push(`supabase-postgrest-${config.apiPort}`);
             }
             if (authResolution !== false && authResolution.type === "docker") {
-              dockerContainerNames.push(`supa-auth-${config.apiPort}`);
+              dockerContainerNames.push(`supabase-auth-${config.apiPort}`);
             }
 
             // 6. Concat all defs
             const allDefs = [...postgresDefs, ...postgrestDefs, ...authDefs];
+            const serviceProjection: Map<
+              string,
+              {
+                visibility: "public" | "internal";
+                owner?: string;
+                ownerStatusWhileActive?: "Initializing";
+              }
+            > = new Map(
+              allDefs.map((def) => [def.name, { visibility: "public" as const }] as const),
+            );
+            if (hasPostgresInit) {
+              serviceProjection.set("postgres-init", {
+                visibility: "internal",
+                owner: "postgres",
+                ownerStatusWhileActive: "Initializing",
+              });
+            }
 
             // 7. Build the dependency graph
             const graph = yield* buildGraph(allDefs).pipe(
@@ -404,7 +423,7 @@ export class StackBuilder extends ServiceMap.Service<
               ),
             );
 
-            return { graph, dockerContainerNames };
+            return { graph, dockerContainerNames, serviceProjection };
           }),
       };
     }),

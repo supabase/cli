@@ -1,15 +1,13 @@
 import { LogBuffer, Orchestrator } from "@supabase/process-compose";
-import type {
-  LogEntry,
-  ServiceNotFoundError,
-  ServiceReadyError,
-  ServiceState,
-} from "@supabase/process-compose";
+import { ServiceNotFoundError } from "@supabase/process-compose";
+import type { LogEntry, ServiceReadyError } from "@supabase/process-compose";
 import { Effect, Layer, ServiceMap, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { cleanupLocalStackResources } from "./cleanup.ts";
 import { StackBuildError } from "./errors.ts";
+import { changedProjectedStates, projectStackStates } from "./StackStateProjection.ts";
 import { StackBuilder, type ResolvedStackConfig } from "./StackBuilder.ts";
+import { type StackServiceState } from "./StackServiceState.ts";
 
 export interface StackInfo {
   readonly url: string;
@@ -35,12 +33,12 @@ export class Stack extends ServiceMap.Service<
     ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError>;
     readonly stopService: (name: string) => Effect.Effect<void, ServiceNotFoundError>;
     readonly restartService: (name: string) => Effect.Effect<void, ServiceNotFoundError>;
-    readonly getState: (name: string) => Effect.Effect<ServiceState, ServiceNotFoundError>;
-    readonly getAllStates: () => Effect.Effect<ReadonlyArray<ServiceState>>;
+    readonly getState: (name: string) => Effect.Effect<StackServiceState, ServiceNotFoundError>;
+    readonly getAllStates: () => Effect.Effect<ReadonlyArray<StackServiceState>>;
     readonly stateChanges: (
       name: string,
-    ) => Effect.Effect<Stream.Stream<ServiceState>, ServiceNotFoundError>;
-    readonly allStateChanges: () => Stream.Stream<ServiceState>;
+    ) => Effect.Effect<Stream.Stream<StackServiceState>, ServiceNotFoundError>;
+    readonly allStateChanges: () => Stream.Stream<StackServiceState>;
     readonly waitReady: (
       name: string,
     ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError>;
@@ -61,7 +59,7 @@ export class Stack extends ServiceMap.Service<
       this,
       Effect.gen(function* () {
         const builder = yield* StackBuilder;
-        const { graph, dockerContainerNames } = yield* builder.build(config);
+        const { graph, dockerContainerNames, serviceProjection } = yield* builder.build(config);
 
         // Get the current scope so sub-layers' scoped resources (FiberMap,
         // PubSub, etc.) stay alive for the lifetime of Stack.
@@ -96,6 +94,42 @@ export class Stack extends ServiceMap.Service<
             yield* cleanupLocalStackResources({ stack, info, config });
           });
 
+        const getProjectedStates = (): Effect.Effect<ReadonlyArray<StackServiceState>> =>
+          Effect.map(orchestrator.getAllStates(), (states) =>
+            projectStackStates(states, serviceProjection),
+          );
+
+        const projectedStateChanges = (): Stream.Stream<StackServiceState> =>
+          Stream.unwrap(
+            Effect.gen(function* () {
+              const initialStates = yield* orchestrator.getAllStates();
+              const initialProjected = projectStackStates(initialStates, serviceProjection);
+              let rawStates = new Map(initialStates.map((state) => [state.name, state] as const));
+              let projectedByName = new Map(
+                initialProjected.map((state) => [state.name, state] as const),
+              );
+
+              return Stream.concat(
+                Stream.fromIterable(initialProjected),
+                orchestrator.allStateChanges().pipe(
+                  Stream.map((rawState) => {
+                    rawStates.set(rawState.name, rawState);
+                    const nextProjected = projectStackStates(
+                      [...rawStates.values()],
+                      serviceProjection,
+                    );
+                    const changed = changedProjectedStates(projectedByName, nextProjected);
+                    projectedByName = new Map(
+                      nextProjected.map((state) => [state.name, state] as const),
+                    );
+                    return changed;
+                  }),
+                  Stream.flatMap((states) => Stream.fromIterable(states)),
+                ),
+              );
+            }),
+          );
+
         const stack: StackService = {
           getInfo: () => Effect.succeed(info),
           start: () =>
@@ -112,10 +146,25 @@ export class Stack extends ServiceMap.Service<
             }),
           stopService: (name) => orchestrator.stopService(name),
           restartService: (name) => orchestrator.restartService(name),
-          getState: (name) => orchestrator.getState(name),
-          getAllStates: () => orchestrator.getAllStates(),
-          stateChanges: (name) => orchestrator.stateChanges(name),
-          allStateChanges: () => orchestrator.allStateChanges(),
+          getState: (name) =>
+            Effect.gen(function* () {
+              const projected = yield* getProjectedStates();
+              const match = projected.find((state) => state.name === name);
+              if (match === undefined) {
+                return yield* Effect.fail(new ServiceNotFoundError({ name }));
+              }
+              return match;
+            }),
+          getAllStates: getProjectedStates,
+          stateChanges: (name) =>
+            Effect.gen(function* () {
+              const projected = yield* getProjectedStates();
+              if (!projected.some((state) => state.name === name)) {
+                return yield* Effect.fail(new ServiceNotFoundError({ name }));
+              }
+              return projectedStateChanges().pipe(Stream.filter((state) => state.name === name));
+            }),
+          allStateChanges: projectedStateChanges,
           waitReady: (name) => orchestrator.waitReady(name),
           waitAllReady: () => orchestrator.waitAllReady(),
           subscribeLogs: (name) => logBuffer.subscribe(name),

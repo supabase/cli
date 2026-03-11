@@ -1,7 +1,9 @@
 // @supabase/stack — local Supabase stack management
 
 // Re-exports from process-compose
-export type { LogEntry, ServiceState } from "@supabase/process-compose";
+export type { LogEntry } from "@supabase/process-compose";
+export type { StackServiceStatus } from "./StackServiceState.ts";
+export { StackServiceState } from "./StackServiceState.ts";
 
 // Public error types
 export { StackError, toStackError } from "./errors.ts";

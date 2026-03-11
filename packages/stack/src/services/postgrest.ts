@@ -65,7 +65,7 @@ export const makePostgrestServiceDocker = (opts: DockerPostgrestOptions): Servic
     PGRST_ADMIN_SERVER_PORT: String(opts.adminPort),
   };
   const envArgs = Object.entries(env).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
-  const containerName = `supa-postgrest-${opts.apiPort}`;
+  const containerName = `supabase-postgrest-${opts.apiPort}`;
 
   return {
     name: "postgrest",

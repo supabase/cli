@@ -10,7 +10,7 @@ export function createApiClient(options: {
     baseUrl: options.baseUrl,
     headers: {
       Authorization: `Bearer ${options.accessToken}`,
-      "User-Agent": `supa-cli/${options.version ?? "unknown"}`,
+      "User-Agent": `supabase-cli/${options.version ?? "unknown"}`,
     },
   });
 }

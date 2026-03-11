@@ -5,7 +5,7 @@
 
 ## Problem Statement
 
-supa is the primary entry point to Supabase, consumed by both humans and LLM agents. Traditional CLIs are designed for humans; modern CLIs must serve both without compromise.
+supabase is the primary entry point to Supabase, consumed by both humans and LLM agents. Traditional CLIs are designed for humans; modern CLIs must serve both without compromise.
 
 Problems we're solving:
 
@@ -82,7 +82,7 @@ type CommandResult<T> = { ok: true; data: T } | { ok: false; error: CommandError
 type CommandError = {
   code: string; // machine-stable: "AUTH_TOKEN_EXPIRED"
   message: string; // human-readable: "Your access token has expired"
-  suggestion?: string; // actionable: "Run `supa login` to refresh"
+  suggestion?: string; // actionable: "Run `supabase login` to refresh"
   metadata?: unknown; // extra context for debugging
 };
 ```
@@ -100,9 +100,9 @@ async function listProjects(flags: ProjectFlags): Promise<CommandResult<Project[
 **Why this matters**:
 
 - **For humans**: the renderer shows tables, colors, spinners, interactive prompts
-- **For LLMs**: `supa projects --output json` returns structured, parseable data
+- **For LLMs**: `supabase projects --output json` returns structured, parseable data
 - **For testing**: handlers are pure functions — test logic without terminal mocking
-- **For piping**: `supa projects --output json | jq '.[] | .name'` just works
+- **For piping**: `supabase projects --output json | jq '.[] | .name'` just works
 
 ### Pillar 2: Input Design
 
@@ -110,10 +110,10 @@ async function listProjects(flags: ProjectFlags): Promise<CommandResult<Project[
 
 | Use                   | For                                                       |
 | --------------------- | --------------------------------------------------------- |
-| Positional arguments  | The primary "what": `supa branches create my-branch`      |
+| Positional arguments  | The primary "what": `supabase branches create my-branch`      |
 | Flags                 | Modifiers and options: `--target docker`, `--output json` |
-| Stdin                 | Bulk data: `cat migration.sql \| supa db execute`         |
-| Config file           | Persistent defaults: `supa.config.json`                   |
+| Stdin                 | Bulk data: `cat migration.sql \| supabase db execute`         |
+| Config file           | Persistent defaults: `supabase.config.json`                   |
 | Environment variables | Secrets and CI overrides: `SUPABASE_ACCESS_TOKEN`         |
 
 **Precedence** (highest to lowest):
@@ -144,8 +144,8 @@ CLI flags → Environment variables → Config file → Intelligent defaults
 Show the minimum needed, with escape hatches to see more.
 
 ```
-$ supa dev
-✓ Loaded config from supa.config.json
+$ supabase dev
+✓ Loaded config from supabase.config.json
 ✓ Starting Docker containers...
 ✓ Database ready on localhost:54322
 ✓ API ready on localhost:54321
@@ -178,7 +178,7 @@ Every command's JSON output is a stable contract. Treat it like an API.
   "error": {
     "code": "AUTH_TOKEN_EXPIRED",
     "message": "Your access token has expired",
-    "suggestion": "Run `supa login` to refresh your token"
+    "suggestion": "Run `supabase login` to refresh your token"
   }
 }
 ```
@@ -195,14 +195,14 @@ Every command's JSON output is a stable contract. Treat it like an API.
 **For shell scripting — env output**:
 
 ```
-$ supa status --output env
+$ supabase status --output env
 SUPA_DB_URL=postgresql://postgres:postgres@localhost:54322/postgres
 SUPA_API_URL=http://localhost:54321
 SUPA_ANON_KEY=eyJ...
 SUPA_SERVICE_KEY=eyJ...
 ```
 
-Enables `eval $(supa status --output env)` for instant environment setup.
+Enables `eval $(supabase status --output env)` for instant environment setup.
 
 **Output format detection** (priority order):
 
@@ -210,7 +210,7 @@ Enables `eval $(supa status --output env)` for instant environment setup.
 2. `SUPA_OUTPUT` env var (CI/automation default)
 3. `stdout.isTTY` check: TTY = "human", not TTY = "json"
 
-The TTY detection is critical: when an LLM agent runs `supa projects`, stdout is not a TTY, so it automatically gets JSON. No `--json` flag needed. This matches the `gh` CLI gold standard.
+The TTY detection is critical: when an LLM agent runs `supabase projects`, stdout is not a TTY, so it automatically gets JSON. No `--json` flag needed. This matches the `gh` CLI gold standard.
 
 ### Pillar 4: Error Design
 
@@ -219,20 +219,20 @@ Errors are the most important output a CLI produces — they're the only output 
 **Error anatomy**:
 
 ```
-$ supa dev --target linked
+$ supabase dev --target linked
 
 ✗ Project not linked
 
   No project is linked to this directory.
-  Run `supa link` to connect to a Supabase project,
-  or use `supa dev --target docker` for local development.
+  Run `supabase link` to connect to a Supabase project,
+  or use `supabase dev --target docker` for local development.
 ```
 
 Every error has three parts:
 
 1. **What failed** (bold/red, one line): "Project not linked"
 2. **Why it failed** (normal text): "No project is linked to this directory"
-3. **How to fix it** (dim text, actionable): "Run `supa link` to connect..."
+3. **How to fix it** (dim text, actionable): "Run `supabase link` to connect..."
 
 **Error codes**:
 
@@ -290,7 +290,7 @@ Observability is not logging — it's the ability to understand what happened du
      ▼         ▼         ▼
   Local      Debug     Remote
   file       output    export
-  (~/.supa/  (--debug  (opt-in
+  (~/.supabase/  (--debug  (opt-in
    traces/)   flag)    telemetry)
 ```
 
@@ -309,7 +309,7 @@ Observability is not logging — it's the ability to understand what happened du
 **Per-phase spans** (trace-level detail):
 
 ```
-supa dev (total: 1.2s)
+supabase dev (total: 1.2s)
 ├── config.load: 12ms
 ├── target.resolve: 3ms
 ├── docker.check: 45ms
@@ -331,7 +331,7 @@ span.end(); // records duration
 
 **Telemetry consent**:
 
-Local diagnostics (traces written to `~/.supa/traces/`, `--debug` output) are always available — they stay on the user's machine and require no consent.
+Local diagnostics (traces written to `~/.supabase/traces/`, `--debug` output) are always available — they stay on the user's machine and require no consent.
 
 Remote telemetry is **opt-in by default** — it is never sent unless the user explicitly consents. See [ADR 0002](0002-cli-product-metrics.md) for consent implementation details.
 
@@ -340,11 +340,11 @@ Remote telemetry is **opt-in by default** — it is never sent unless the user e
 | Operation                            | Budget               |
 | ------------------------------------ | -------------------- |
 | CLI startup (parse args, no command) | < 50ms               |
-| `supa --help`                        | < 100ms              |
-| `supa status` (local, no network)    | < 200ms              |
-| `supa projects` (network call)       | < 1s (excl. network) |
+| `supabase --help`                        | < 100ms              |
+| `supabase status` (local, no network)    | < 200ms              |
+| `supabase projects` (network call)       | < 1s (excl. network) |
 
-**Lazy loading is essential**: use dynamic imports so `supa branches list` doesn't load Docker modules or migration logic. Startup stays fast regardless of how many commands exist.
+**Lazy loading is essential**: use dynamic imports so `supabase branches list` doesn't load Docker modules or migration logic. Startup stays fast regardless of how many commands exist.
 
 ```typescript
 func: async (flags: DevFlags) => {
@@ -395,7 +395,7 @@ test("listProjects returns error when not authenticated", async () => {
 **Layer 2: Integration tests** (medium speed) — test in-process command execution: arg parsing, flag combinations, output rendering, and return values. Uses mocked I/O (captured buffers, mock API server). No real subprocess.
 
 ```typescript
-test("supa projects --output json returns valid JSON", async () => {
+test("supabase projects --output json returns valid JSON", async () => {
   const { stdout, exitCode } = await runCommand(["projects", "--output", "json"], {
     env: { SUPABASE_ACCESS_TOKEN: "test-token" },
     api: mockApiServer(),
@@ -480,7 +480,7 @@ test("LLM workflow: list projects, then get status", async () => {
 **d) Interactive and long-running flows** (CI only):
 
 ```typescript
-test("supa dev starts and shows ready status", async () => {
+test("supabase dev starts and shows ready status", async () => {
   const proc = Bun.spawn(["bun", "run", "apps/cli/src/index.ts", "dev"], {
     env: { ...process.env, SUPA_TARGET: "docker" },
   });
@@ -515,14 +515,14 @@ Use `bun test --coverage` to generate coverage reports. Enforce minimum coverage
 
 Beyond `--json`, specific patterns make a CLI excellent for LLM agents.
 
-**Auto-detection** (the most important feature): when an LLM agent runs `supa projects`, stdout is piped (not a TTY). The CLI automatically switches to JSON output. Agents never need to remember `--output json`.
+**Auto-detection** (the most important feature): when an LLM agent runs `supabase projects`, stdout is piped (not a TTY). The CLI automatically switches to JSON output. Agents never need to remember `--output json`.
 
 **Discoverable via `--help`**: LLMs read help text to understand commands. Make it structured and complete:
 
 ```
-$ supa projects --help
+$ supabase projects --help
 
-Usage: supa projects [subcommand]
+Usage: supabase projects [subcommand]
 
 Subcommands:
   list     List all projects (default)
@@ -533,15 +533,15 @@ Flags:
   --org <id>          Filter by organization ID
 
 Examples:
-  supa projects                     # List all projects
-  supa projects --output json       # JSON output for scripting
-  supa projects create --org abc    # Create project in org
+  supabase projects                     # List all projects
+  supabase projects --output json       # JSON output for scripting
+  supabase projects create --org abc    # Create project in org
 ```
 
 **Idempotent where possible**: LLMs retry on failure. Commands should be safe to retry:
 
-- `supa link --project abc` — links to project, no-op if already linked
-- `supa migrations push` — pushes only unapplied migrations
+- `supabase link --project abc` — links to project, no-op if already linked
+- `supabase migrations push` — pushes only unapplied migrations
 
 **Error recovery hints in JSON**:
 
@@ -551,7 +551,7 @@ Examples:
   "error": {
     "code": "AUTH_TOKEN_EXPIRED",
     "message": "Access token expired",
-    "suggestion": "Run `supa login` to refresh",
+    "suggestion": "Run `supabase login` to refresh",
     "retry": false,
     "docs_url": "https://supabase.com/docs/cli/auth"
   }
@@ -589,13 +589,13 @@ The `retry` field tells agents whether retrying might help (e.g., network timeou
 
 To validate these pillars are working:
 
-1. Write one command end-to-end (e.g., `supa projects list`) implementing all pillars
+1. Write one command end-to-end (e.g., `supabase projects list`) implementing all pillars
 2. Run in terminal — human-readable output with colors and table formatting
-3. Pipe to jq — `supa projects | jq .` produces valid, stable JSON
+3. Pipe to jq — `supabase projects | jq .` produces valid, stable JSON
 4. Run with `--debug` — shows timing spans inline
 5. Run tests — unit, integration, E2E tests all pass
-6. Check performance — `time supa --help` completes in < 100ms
-7. Simulate LLM — `echo "" | supa projects` auto-detects non-TTY, outputs JSON
+6. Check performance — `time supabase --help` completes in < 100ms
+7. Simulate LLM — `echo "" | supabase projects` auto-detects non-TTY, outputs JSON
 
 ## Related Decisions
 

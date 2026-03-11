@@ -21,61 +21,61 @@ Before building commands, we need to establish _what_ we're building and _why_ �
 
 No local infrastructure. All changes go through the Management API to a project branch — never production.
 
-- **For humans**: `supa dev` watches local files (migrations, functions, config) and automatically syncs changes to a remote branch. The developer writes code locally, and `dev` pushes it to a hosted Supabase branch in real time.
-- **For LLMs**: They chain subcommands directly (`supa migrations push`, `supa functions deploy`, etc.) against a remote branch. No orchestrator needed — the subcommands are the API.
+- **For humans**: `supabase dev` watches local files (migrations, functions, config) and automatically syncs changes to a remote branch. The developer writes code locally, and `dev` pushes it to a hosted Supabase branch in real time.
+- **For LLMs**: They chain subcommands directly (`supabase migrations push`, `supabase functions deploy`, etc.) against a remote branch. No orchestrator needed — the subcommands are the API.
 - **Goal**: Develop against hosted Supabase without running anything locally. Works everywhere — laptops, cloud IDEs, sandboxes.
 
 #### Local-first workflow
 
 Services run locally via a unified process manager that manages both embedded binaries and Docker containers (for services not yet embedded). No Docker Compose — the CLI owns the process lifecycle directly.
 
-- **For humans**: `supa dev` starts local services and watches for changes. Same command, different target.
+- **For humans**: `supabase dev` starts local services and watches for changes. Same command, different target.
 - **For LLMs**: Same subcommands, pointed at local services.
-- **Goal**: Full local development environment with explicit `supa push` / `supa pull` to sync with the platform.
+- **Goal**: Full local development environment with explicit `supabase push` / `supabase pull` to sync with the platform.
 
-The workflow is selected via `supa dev --target <remote|local>` (or equivalent config). The subcommands underneath are identical — only the target changes.
+The workflow is selected via `supabase dev --target <remote|local>` (or equivalent config). The subcommands underneath are identical — only the target changes.
 
 ### Two Audiences
 
 #### Humans
 
-The primary entry point is `supa dev` — an orchestrator that watches files and calls subcommands. It provides an interactive TUI (via React-Ink) showing service status, file watch events, sync progress, and errors. Humans interact with `dev`; `dev` interacts with subcommands.
+The primary entry point is `supabase dev` — an orchestrator that watches files and calls subcommands. It provides an interactive TUI (via React-Ink) showing service status, file watch events, sync progress, and errors. Humans interact with `dev`; `dev` interacts with subcommands.
 
 #### LLMs
 
-The primary entry point is the subcommands directly — `supa migrations push`, `supa functions deploy`, `supa config pull`, etc. LLMs don't need the orchestrator; they compose subcommands via JSON output (auto-detected via TTY, per [ADR 0001](0001-cli-dx-architecture-pillars.md) Pillar 7).
+The primary entry point is the subcommands directly — `supabase migrations push`, `supabase functions deploy`, `supabase config pull`, etc. LLMs don't need the orchestrator; they compose subcommands via JSON output (auto-detected via TTY, per [ADR 0001](0001-cli-dx-architecture-pillars.md) Pillar 7).
 
 The key insight: **the subcommands that `dev` orchestrates are the same ones LLMs call**. Designing `dev` tells us which subcommands to build first. There is one set of commands, not two CLIs.
 
 ### Outside-in Command Surface
 
-Starting from `supa dev` and working outward, these are the commands to build:
+Starting from `supabase dev` and working outward, these are the commands to build:
 
 **The orchestrator**:
 
-- `supa dev` — watches files, calls subcommands, shows TUI. Defines which subcommands matter.
+- `supabase dev` — watches files, calls subcommands, shows TUI. Defines which subcommands matter.
 
 **Subcommands that `dev` orchestrates** (build these first):
 
 | Command group | Subcommands | Purpose |
 |--------------|-------------|---------|
-| `supa migrations` | `new`, `push`, `pull`, `list`, `diff` | Schema migration lifecycle |
-| `supa functions` | `new`, `push`, `pull`, `list`, `serve` | Edge Function lifecycle |
-| `supa config` | `push`, `pull`, `diff` | Project configuration sync |
-| `supa env` | `pull`, `push`, `list`, `set`, `unset`, `seed` | Environment variable lifecycle |
-| `supa gen types` | — | TypeScript type generation from schema |
+| `supabase migrations` | `new`, `push`, `pull`, `list`, `diff` | Schema migration lifecycle |
+| `supabase functions` | `new`, `push`, `pull`, `list`, `serve` | Edge Function lifecycle |
+| `supabase config` | `push`, `pull`, `diff` | Project configuration sync |
+| `supabase env` | `pull`, `push`, `list`, `set`, `unset`, `seed` | Environment variable lifecycle |
+| `supabase gen types` | — | TypeScript type generation from schema |
 
 **Supporting commands** (needed for the workflows to function):
 
 | Command | Purpose |
 |---------|---------|
-| `supa login` / `supa logout` | Authentication |
-| `supa init` | Initialize a new project directory |
-| `supa link` | Link directory to a Supabase project |
-| `supa branches` (`create`, `switch`, `list`, `delete`) | Branch management for remote-first workflow |
-| `supa push` / `supa pull` | Global sync — runs all sub-syncs in parallel |
-| `supa env` (`list-environments`, `create`, `delete`) | Environment CRUD — see [ADR 0006](0006-environment-management.md) |
-| `supa orgs` / `supa projects` | Organization and project management |
+| `supabase login` / `supabase logout` | Authentication |
+| `supabase init` | Initialize a new project directory |
+| `supabase link` | Link directory to a Supabase project |
+| `supabase branches` (`create`, `switch`, `list`, `delete`) | Branch management for remote-first workflow |
+| `supabase push` / `supabase pull` | Global sync — runs all sub-syncs in parallel |
+| `supabase env` (`list-environments`, `create`, `delete`) | Environment CRUD — see [ADR 0006](0006-environment-management.md) |
+| `supabase orgs` / `supabase projects` | Organization and project management |
 
 ### Safety Model
 
@@ -85,11 +85,11 @@ Starting from `supa dev` and working outward, these are the commands to build:
 
 ## Rationale
 
-**Outside-in design**: Starting from `supa dev` and deriving subcommands ensures we build what matters first. Every subcommand exists because `dev` needs it or because a developer workflow requires it — not because we're mirroring an API surface.
+**Outside-in design**: Starting from `supabase dev` and deriving subcommands ensures we build what matters first. Every subcommand exists because `dev` needs it or because a developer workflow requires it — not because we're mirroring an API surface.
 
 **Two workflows, one command set**: The remote-first and local-first workflows use the same subcommands with different targets. This avoids maintaining two parallel command surfaces and means LLMs learn one set of commands that works everywhere.
 
-**`dev` as orchestrator, not monolith**: `supa dev` doesn't contain business logic — it watches files and calls subcommands. This means each subcommand is independently testable, independently usable by LLMs, and independently documentable.
+**`dev` as orchestrator, not monolith**: `supabase dev` doesn't contain business logic — it watches files and calls subcommands. This means each subcommand is independently testable, independently usable by LLMs, and independently documentable.
 
 **No Docker Compose**: The old CLI's Docker Compose dependency is the single biggest barrier to adoption in sandboxed environments. A unified process manager that the CLI controls directly removes this dependency while still supporting Docker containers for services not yet embedded as binaries.
 
@@ -99,7 +99,7 @@ Starting from `supa dev` and working outward, these are the commands to build:
 
 - Developers can start with remote-first (zero setup) and move to local-first when they need it
 - LLMs get composable, structured subcommands without needing a special mode
-- `supa dev` provides a single entry point that works for both workflows
+- `supabase dev` provides a single entry point that works for both workflows
 - The command surface is derived from real workflows, not API mirroring
 - No Docker Compose dependency opens the door to sandboxed environments
 - Building subcommands first means the CLI is useful before `dev` is complete
@@ -109,7 +109,7 @@ Starting from `supa dev` and working outward, these are the commands to build:
 - Two workflows means more testing surface — every subcommand must work against both remote and local targets
 - Remote-first depends on the Management API and branching being reliable and fast
 - The process manager (for local-first) is a significant piece of infrastructure to build and maintain
-- `supa dev` is complex — file watching, TUI rendering, orchestrating multiple subcommands, error aggregation
+- `supabase dev` is complex — file watching, TUI rendering, orchestrating multiple subcommands, error aggregation
 
 ## Alternatives Considered
 

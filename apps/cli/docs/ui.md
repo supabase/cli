@@ -248,19 +248,18 @@ function DataComponent() {
 
 ```ts
 import * as Atom from "effect/unstable/reactivity/Atom";
-import type { ServiceState } from "@supabase/process-compose";
+import type { StackServiceState } from "@supabase/stack";
 import type { StackInfo } from "@supabase/stack/internals";
-import { toDisplayStates } from "../lib/display-states.ts";
 
 export type StartPhase = "starting" | "running" | "failed" | "stopping";
 
 export function createDashboardModel() {
-  const serviceStatesAtom = Atom.make<ReadonlyArray<ServiceState>>([]);
+  const serviceStatesAtom = Atom.make<ReadonlyArray<StackServiceState>>([]);
   const stackInfoAtom = Atom.make<StackInfo | null>(null);
   const phaseAtom = Atom.make<StartPhase>("starting");
   const errorAtom = Atom.make<string | null>(null);
 
-  const displayStatesAtom = Atom.make((get) => toDisplayStates(get(serviceStatesAtom)));
+  const displayStatesAtom = Atom.make((get) => get(serviceStatesAtom));
   const allHealthyAtom = Atom.make(
     (get) =>
       get(displayStatesAtom).length > 0 &&

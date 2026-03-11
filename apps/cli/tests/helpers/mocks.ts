@@ -1,5 +1,6 @@
 import { ConfigProvider, Deferred, Effect, Layer, Option, PubSub, Stream } from "effect";
 import type { ReactElement } from "react";
+import { StackServiceState } from "@supabase/stack";
 import { Stack, type StackInfo } from "@supabase/stack/internals";
 import { Api } from "../../src/auth/api.service.ts";
 import type { LoginSessionResponse } from "../../src/auth/api.service.ts";
@@ -292,7 +293,7 @@ export function mockApi(opts: { failTimes?: number } = {}) {
 export function mockStack(
   opts: {
     info?: Partial<StackInfo>;
-    stateChanges?: Array<{ name: string; status: string }>;
+    stateChanges?: Array<{ name: string; status: StackServiceState["status"] }>;
     startError?: unknown;
     startPending?: boolean;
     stopPending?: boolean;
@@ -305,12 +306,23 @@ export function mockStack(
   const stopDeferred = Deferred.makeUnsafe<void>();
   const stateHistory = [...(opts.stateChanges ?? [])];
   const statePubSub = Effect.runSync(
-    PubSub.unbounded<any>({
+    PubSub.unbounded<StackServiceState>({
       replay: Math.max(stateHistory.length, 1) + 8,
     }),
   );
   for (const change of stateHistory) {
-    PubSub.publishUnsafe(statePubSub, change as any);
+    PubSub.publishUnsafe(
+      statePubSub,
+      new StackServiceState({
+        name: change.name,
+        status: change.status,
+        pid: null,
+        exitCode: null,
+        restartCount: 0,
+        startedAt: null,
+        error: null,
+      }),
+    );
   }
   const info: StackInfo = {
     url: "http://127.0.0.1:54321",
@@ -353,7 +365,18 @@ export function mockStack(
       startService: () => Effect.void,
       stopService: () => Effect.void,
       restartService: () => Effect.void,
-      getState: () => Effect.succeed({ name: "postgres", status: "Healthy" } as any),
+      getState: () =>
+        Effect.succeed(
+          new StackServiceState({
+            name: "postgres",
+            status: "Healthy",
+            pid: null,
+            exitCode: null,
+            restartCount: 0,
+            startedAt: null,
+            error: null,
+          }),
+        ),
       getAllStates: () => {
         const serviceNames = opts.stateChanges
           ? [...new Set(opts.stateChanges.map((s) => s.name))]
@@ -361,7 +384,7 @@ export function mockStack(
         return Effect.succeed(
           serviceNames.map(
             (name) =>
-              ({
+              new StackServiceState({
                 name,
                 status: "Pending",
                 pid: null,
@@ -369,7 +392,7 @@ export function mockStack(
                 restartCount: 0,
                 startedAt: null,
                 error: null,
-              }) as any,
+              }),
           ),
         );
       },
@@ -378,7 +401,20 @@ export function mockStack(
         opts.liveStateChanges
           ? Stream.fromPubSub(statePubSub)
           : opts.stateChanges
-            ? (Stream.fromIterable(opts.stateChanges) as any)
+            ? Stream.fromIterable(
+                opts.stateChanges.map(
+                  (change) =>
+                    new StackServiceState({
+                      name: change.name,
+                      status: change.status,
+                      pid: null,
+                      exitCode: null,
+                      restartCount: 0,
+                      startedAt: null,
+                      error: null,
+                    }),
+                ),
+              )
             : Stream.empty,
       waitReady: () => Effect.void,
       waitAllReady: () => Effect.void,
@@ -393,9 +429,20 @@ export function mockStack(
     get stopped() {
       return stopped;
     },
-    emitStateChange(change: { name: string; status: string }) {
+    emitStateChange(change: { name: string; status: StackServiceState["status"] }) {
       stateHistory.push(change);
-      PubSub.publishUnsafe(statePubSub, change as any);
+      PubSub.publishUnsafe(
+        statePubSub,
+        new StackServiceState({
+          name: change.name,
+          status: change.status,
+          pid: null,
+          exitCode: null,
+          restartCount: 0,
+          startedAt: null,
+          error: null,
+        }),
+      );
     },
     resolveStart() {
       Effect.runSync(Deferred.succeed(startDeferred, void 0));

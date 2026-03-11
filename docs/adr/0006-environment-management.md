@@ -22,7 +22,7 @@ We adopt the environment management model described in the [Environments Managem
 | # | Decision | Summary |
 |---|----------|---------|
 | 1 | Flat, independent environments | Three non-deletable defaults (`development`, `preview`, `production`) plus user-created custom environments. No inheritance — values are explicitly copied via seeding. |
-| 2 | `supa env` command group | CRUD subcommands auto-generated per ADR 0005. Workflow subcommands (`pull`, `push`, `seed`) hand-written. |
+| 2 | `supabase env` command group | CRUD subcommands auto-generated per ADR 0005. Workflow subcommands (`pull`, `push`, `seed`) hand-written. |
 | 3 | Pull/push sync model | `pull` = full replacement of `.env` from platform (secrets excluded). `push` = diff-based upsert (secrets on remote skipped, optional `--prune`). Both default to `development`. |
 | 4 | Secrets as a flag, not a separate system | All variables encrypted at rest. `secret` flag makes a variable write-only. Auto-classified from `"x-secret": true` in config schema. Set on platform directly, never pushed from `.env`. |
 | 5 | Resolution order for local dev | OS env → `.env.local` → `.env`. No variable expansion in `.env` files. |
@@ -44,7 +44,7 @@ For full operational details — CLI command reference, workflows, branch-specif
 
 **`development` excluded from branch mapping**: `development` is for local execution, not deployment. Including it in the branch mapping would conflate "what runs on my machine" with "what gets deployed," which is exactly the confusion environments are designed to eliminate.
 
-**Explicit secret management over file-based annotation**: Secrets are set directly on the platform via `supa env set --secret` rather than annotated in `.env` files. This eliminates a non-standard annotation format, avoids secrets flowing through local files and push, and makes the security boundary clear: secrets go to the platform via a dedicated command, not through a file sync workflow. For platform variables, schema-driven auto-classification (`"x-sensitive": true`) handles the common case automatically.
+**Explicit secret management over file-based annotation**: Secrets are set directly on the platform via `supabase env set --secret` rather than annotated in `.env` files. This eliminates a non-standard annotation format, avoids secrets flowing through local files and push, and makes the security boundary clear: secrets go to the platform via a dedicated command, not through a file sync workflow. For platform variables, schema-driven auto-classification (`"x-sensitive": true`) handles the common case automatically.
 
 ## Consequences
 
@@ -70,7 +70,7 @@ For full operational details — CLI command reference, workflows, branch-specif
 
 2. **Separate `.env.development`, `.env.preview`, `.env.production` files** — Multiple files sitting on disk, one per environment. Creates confusion about which file is active, risks committing the wrong file, and doesn't match the platform model (environments live on the platform, not in local files). A single `.env` representing the current working environment is cleaner.
 
-3. **Separate secrets storage (e.g., `supa secrets` command group)** — A dedicated system for secrets with its own commands and storage. Doubles the surface area for what is fundamentally the same operation (set a key-value pair). The `secret` flag on a unified variable system is simpler.
+3. **Separate secrets storage (e.g., `supabase secrets` command group)** — A dedicated system for secrets with its own commands and storage. Doubles the surface area for what is fundamentally the same operation (set a key-value pair). The `secret` flag on a unified variable system is simpler.
 
 4. **Variable expansion in `.env` files** — Supporting `${VAR}` syntax for composing values. Adds implicit dependencies between variables, makes files harder to debug, and creates divergence from platform behavior (the platform doesn't expand variables). Literal values are predictable.
 
@@ -79,7 +79,7 @@ For full operational details — CLI command reference, workflows, branch-specif
 ## Related Decisions
 
 - [ADR 0001](0001-cli-dx-architecture-pillars.md): CLI DX Architecture — The 7 Pillars (handler purity, typed results, error design)
-- [ADR 0004](0004-cli-design-goals-and-workflows.md): CLI Design Goals & Development Workflows (remote-first and local-first workflows, `supa dev` orchestration)
+- [ADR 0004](0004-cli-design-goals-and-workflows.md): CLI Design Goals & Development Workflows (remote-first and local-first workflows, `supabase dev` orchestration)
 - [ADR 0005](0005-openapi-driven-code-generation.md): OpenAPI-Driven Code Generation (CRUD vs workflow command classification)
 
 ## See Also

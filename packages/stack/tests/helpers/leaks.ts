@@ -78,7 +78,7 @@ function readStackStateDir(homeDir: string): {
 
 function listTempDataDirs(): Array<string> {
   return readdirSync(tmpdir(), { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name.startsWith("supa-local-"))
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith("supabase-local-"))
     .map((entry) => path.join(tmpdir(), entry.name))
     .sort();
 }
@@ -123,7 +123,7 @@ function listContainers(apiPort?: number): Array<string> {
     });
 
     return parseLines(output)
-      .filter((name) => name.startsWith("supa-") && name.endsWith(`-${apiPort}`))
+      .filter((name) => name.startsWith("supabase-") && name.endsWith(`-${apiPort}`))
       .sort();
   } catch {
     return [];

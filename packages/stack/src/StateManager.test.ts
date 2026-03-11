@@ -22,7 +22,7 @@ function makeState(overrides: Partial<StackState> = {}): StackState {
     secretKey: "sk_test",
     anonJwt: "anon_jwt",
     serviceRoleJwt: "service_role_jwt",
-    dockerContainerNames: ["supa-postgres-54321"],
+    dockerContainerNames: ["supabase-postgres-54321"],
     ...overrides,
   };
 }

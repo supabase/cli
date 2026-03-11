@@ -10,7 +10,7 @@ import type { TelemetryConfig } from "./types.ts";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 function makeTempDir(): string {
-  return mkdtempSync(path.join(tmpdir(), "supa-identity-test-"));
+  return mkdtempSync(path.join(tmpdir(), "supabase-identity-test-"));
 }
 
 function writeConfig(dir: string, config: TelemetryConfig): void {

@@ -178,7 +178,9 @@ await stack.restartService("auth"); // Stop + start in one call
 
 Service names: `"postgres"`, `"postgrest"`, `"auth"`.
 
-Internal one-shot services (`"postgres-init"`, `"auth-migrate"`) are also accessible but typically managed automatically.
+Internal helper processes are projected away from the public stack API. For example, `postgres-init`
+is treated as an implementation detail of `postgres`, so callers only see the public `postgres`
+service and its projected status.
 
 ### Readiness
 
@@ -194,8 +196,8 @@ Note: `start()` already blocks until all services are ready. Use `ready()` and `
 ### Status
 
 ```typescript
-const statuses = await stack.getStatus(); // All services
-const status = await stack.getServiceStatus("auth"); // One service
+const statuses = await stack.getStatus(); // All public services
+const status = await stack.getServiceStatus("auth"); // One public service
 
 // Stream real-time state changes
 for await (const state of stack.statusChanges()) {
@@ -203,7 +205,8 @@ for await (const state of stack.statusChanges()) {
 }
 ```
 
-`ServiceState` includes the service `name`, `status` (e.g. `"running"`, `"stopped"`, `"exited"`), and `health`.
+`StackServiceState` includes the public service `name`, projected `status` (for example
+`"Healthy"` or `"Initializing"`), process metadata, and any surfaced error.
 
 ### Logs
 

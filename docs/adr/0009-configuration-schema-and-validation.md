@@ -14,7 +14,7 @@
 - **Schema versioning**: How to handle schema evolution, what happens when a user's config is from an older schema version
 - **Validation**: When does it run (on load? on push?), error messages, partial validation
 - **Platform variables vs user variables**: Implicit binding from config paths (ADR 0006 Section 6) vs explicit `env()`
-- **Default config generation**: What `supa init` produces
+- **Default config generation**: What `supabase init` produces
 - **Migration**: From old `supabase/config.toml` to new `supabase/config.json`
 - **`@supabase/config` package architecture**: How it exports schema, types, and template (from PLAN.md)
 

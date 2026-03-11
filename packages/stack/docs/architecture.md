@@ -742,7 +742,7 @@ Three private helper functions contain the service definition construction logic
 
 - **`buildPostgresDefs(resolution, config, needsDockerAccess, platformOs)`** — builds the postgres and postgres-init `ServiceDef` objects. `postgres-init` is only added when the native binary path is available (not for Docker). In Docker mode, a custom entrypoint injects `schema.sql` to configure role passwords and JWT settings.
 - **`buildPostgrestDefs(resolution, config, hasPostgresInit, dbHost, platformOs)`** — returns an empty array when `config.postgrest === false`; otherwise builds one PostgREST `ServiceDef`. Supports both binary and Docker variants.
-- **`buildAuthDefs(resolution, config, hasPostgresInit, dbHost, platformOs)`** — returns an empty array when `config.auth === false`; otherwise builds auth-migrate and auth `ServiceDef` objects. In native mode, auth-migrate runs as a native subprocess; in Docker mode it runs as a separate short-lived container (`gotrue migrate`).
+- **`buildAuthDefs(resolution, config, hasPostgresInit, dbHost, platformOs)`** — returns an empty array when `config.auth === false`; otherwise builds the long-lived `auth` `ServiceDef`. Auth waits on `postgres-init` when native Postgres is used, or directly on Postgres health in Docker-backed flows.
 
 `StackBuilder` sits between `BinaryResolver` (its dependency) and `LocalStack` (its consumer). This separation is deliberate: `StackBuilder.build()` can be tested in isolation by providing a mocked `BinaryResolver` layer without touching filesystem, network, or process spawning.
 
@@ -768,12 +768,12 @@ class LocalStack extends ServiceMap.Service<
     ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError>;
     readonly stopService: (name: string) => Effect.Effect<void, ServiceNotFoundError>;
     readonly restartService: (name: string) => Effect.Effect<void, ServiceNotFoundError>;
-    readonly getState: (name: string) => Effect.Effect<ServiceState, ServiceNotFoundError>;
-    readonly getAllStates: () => Effect.Effect<ReadonlyArray<ServiceState>>;
+    readonly getState: (name: string) => Effect.Effect<StackServiceState, ServiceNotFoundError>;
+    readonly getAllStates: () => Effect.Effect<ReadonlyArray<StackServiceState>>;
     readonly stateChanges: (
       name: string,
-    ) => Effect.Effect<Stream.Stream<ServiceState>, ServiceNotFoundError>;
-    readonly allStateChanges: () => Stream.Stream<ServiceState>;
+    ) => Effect.Effect<Stream.Stream<StackServiceState>, ServiceNotFoundError>;
+    readonly allStateChanges: () => Stream.Stream<StackServiceState>;
     readonly waitReady: (
       name: string,
     ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError>;
@@ -819,6 +819,11 @@ graph TB
 ```
 
 The `LogBuffer` is created at `LocalStack` level and shared with the `Orchestrator`. This gives `LocalStack` direct access to `logBuffer.subscribe(name)`, `logBuffer.subscribeAll()`, and `logBuffer.history(name, limit)` — powering the `subscribeLogs`, `subscribeAllLogs`, and `logHistory` methods without going through the Orchestrator.
+
+Public status is projected in `@supabase/stack`, not exposed raw from `@supabase/process-compose`.
+Helper jobs like `postgres-init` remain part of the process graph, but the public stack API hides
+them and instead projects their lifecycle onto the owning service. While `postgres-init` is active,
+callers see `postgres: Initializing`.
 
 The Orchestrator layer is constructed inside `LocalStack.layer` using `Layer.buildWithScope`. This means the Orchestrator lives within `LocalStack`'s scope: when `LocalStack`'s layer is torn down (when the runtime is disposed), the Orchestrator's scope closes, which triggers `FiberMap` to interrupt all service fibers and run their shutdown finalizers.
 
@@ -873,9 +878,9 @@ interface Stack extends AsyncDisposable {
   restartService(name: string): Promise<void>;
 
   // Status
-  getStatus(): Promise<ReadonlyArray<ServiceState>>;
-  getServiceStatus(name: string): Promise<ServiceState>;
-  statusChanges(): AsyncIterable<ServiceState>;
+  getStatus(): Promise<ReadonlyArray<StackServiceState>>;
+  getServiceStatus(name: string): Promise<StackServiceState>;
+  statusChanges(): AsyncIterable<StackServiceState>;
 
   // Logs
   logs(): AsyncIterable<LogEntry>;

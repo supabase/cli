@@ -1,17 +1,16 @@
 import * as Atom from "effect/unstable/reactivity/Atom";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
-import type { ServiceState } from "@supabase/stack";
+import type { StackServiceState } from "@supabase/stack";
 import type { StackInfo } from "@supabase/stack/internals";
 import { Effect, Layer } from "effect";
 import { StartDashboardState, type StartPhase } from "./dashboard-state.ts";
-import { toDisplayStates } from "../../../stack/display-states.ts";
 
 export type { StartPhase } from "./dashboard-state.ts";
 
 export interface StartDashboardModel {
   readonly serviceStatesStateAtom: Atom.Writable<
-    AsyncResult.AsyncResult<ReadonlyArray<ServiceState>, never>,
-    ReadonlyArray<ServiceState>
+    AsyncResult.AsyncResult<ReadonlyArray<StackServiceState>, never>,
+    ReadonlyArray<StackServiceState>
   >;
   readonly stackInfoStateAtom: Atom.Writable<
     AsyncResult.AsyncResult<StackInfo | null, never>,
@@ -22,11 +21,11 @@ export interface StartDashboardModel {
     AsyncResult.AsyncResult<string | null, never>,
     string | null
   >;
-  readonly serviceStatesAtom: Atom.Writable<ReadonlyArray<ServiceState>>;
+  readonly serviceStatesAtom: Atom.Writable<ReadonlyArray<StackServiceState>>;
   readonly stackInfoAtom: Atom.Writable<StackInfo | null>;
   readonly phaseAtom: Atom.Writable<StartPhase>;
   readonly errorAtom: Atom.Writable<string | null>;
-  readonly displayStatesAtom: Atom.Atom<ReadonlyArray<ServiceState>>;
+  readonly displayStatesAtom: Atom.Atom<ReadonlyArray<StackServiceState>>;
   readonly allHealthyAtom: Atom.Atom<boolean>;
   readonly statusLineAtom: Atom.Atom<string>;
 }
@@ -64,7 +63,7 @@ export function createStartDashboardModel(
   const stackInfoAtom = fromResultAtom(stackInfoStateAtom, null);
   const phaseAtom = fromResultAtom(phaseStateAtom, "starting");
   const errorAtom = fromResultAtom(errorStateAtom, null);
-  const displayStatesAtom = Atom.make((get) => toDisplayStates(get(serviceStatesAtom)));
+  const displayStatesAtom = Atom.make((get) => get(serviceStatesAtom));
   const allHealthyAtom = Atom.make(
     (get) =>
       get(displayStatesAtom).length > 0 &&

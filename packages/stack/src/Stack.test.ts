@@ -176,32 +176,40 @@ describe("Stack", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("getAllStates returns states for all services in initial Pending state", () => {
+  it.effect("getAllStates returns projected public states", () => {
     const { layer } = setupLayer();
 
     return Effect.gen(function* () {
       const stack = yield* Stack;
       const states = yield* stack.getAllStates();
 
-      // With defaultConfig, the graph contains 4 services.
-      expect(states).toHaveLength(4);
+      expect(states).toHaveLength(3);
 
-      // All services should be in Pending state before start() is called
+      const names = states.map((s) => s.name);
+      expect(names).toContain("postgres");
+      expect(names).toContain("postgrest");
+      expect(names).toContain("auth");
+
+      const postgres = states.find((state) => state.name === "postgres");
+      expect(postgres?.status).toBe("Initializing");
+
       for (const state of states) {
-        expect(state.status).toBe("Pending");
         expect(state.pid).toBeNull();
         expect(state.exitCode).toBeNull();
         expect(state.restartCount).toBe(0);
         expect(state.startedAt).toBeNull();
         expect(state.error).toBeNull();
       }
+    }).pipe(Effect.provide(layer));
+  });
 
-      // Verify known services are present
-      const names = states.map((s) => s.name);
-      expect(names).toContain("postgres");
-      expect(names).toContain("postgres-init");
-      expect(names).toContain("postgrest");
-      expect(names).toContain("auth");
+  it.effect("getState fails for internal helper services", () => {
+    const { layer } = setupLayer();
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      const exit = yield* stack.getState("postgres-init").pipe(Effect.exit);
+      expect(exit._tag).toBe("Failure");
     }).pipe(Effect.provide(layer));
   });
 

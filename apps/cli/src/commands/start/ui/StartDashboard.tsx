@@ -1,6 +1,6 @@
 import { Box, Text } from "ink";
 import { useAtomValue } from "@effect/atom-react";
-import type { ServiceState } from "@supabase/stack";
+import type { StackServiceState } from "@supabase/stack";
 import type { StackInfo } from "@supabase/stack/internals";
 import { ServiceTable } from "./ServiceTable.tsx";
 import { ConnectionInfo } from "./ConnectionInfo.tsx";
@@ -32,7 +32,7 @@ export function StartDashboardView({
   phase,
   statusLine,
 }: {
-  states: ReadonlyArray<ServiceState>;
+  states: ReadonlyArray<StackServiceState>;
   info: StackInfo | null;
   showConnectionInfo: boolean;
   phase: StartPhase;

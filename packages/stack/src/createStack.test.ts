@@ -45,15 +45,15 @@ describe("createStack types", () => {
 
   it("resolveDaemonConfig derives project name and projectDir from cwd", async () => {
     const config = await resolveDaemonConfig({
-      home: "/tmp/supa-home",
+      home: "/tmp/supabase-home",
       cwd: "/Users/test/Code/myapp",
       postgres: {
-        dataDir: "/tmp/supa-data",
+        dataDir: "/tmp/supabase-data",
       },
     });
 
     expect(config.name).toBe("myapp");
     expect(config.projectDir).toBe("/Users/test/Code/myapp");
-    expect(config.home).toBe("/tmp/supa-home");
+    expect(config.home).toBe("/tmp/supabase-home");
   });
 });

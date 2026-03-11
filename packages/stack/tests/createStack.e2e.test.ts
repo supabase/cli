@@ -12,7 +12,7 @@ describe("createStack e2e", () => {
   let supabase: SupabaseClient;
 
   beforeAll(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), "supa-e2e-"));
+    dataDir = mkdtempSync(join(tmpdir(), "supabase-e2e-"));
 
     stack = await createStack({
       jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",

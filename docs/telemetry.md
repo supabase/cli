@@ -27,7 +27,7 @@ ADR 0001 Pillar 5 and ADR 0002 share infrastructure. No separate metrics SDK and
      ┌─────────────┼─────────────┐
      ▼             ▼             ▼
 Local file      --debug       Remote
-~/.supa/        output        export
+~/.supabase/        output        export
 traces/         (always)      (opt-in)
 (always)           │               │
      │             │         ┌─────┴─────┐
@@ -56,7 +56,7 @@ Pattern:
 ```typescript
 function withTelemetry<T>(handler: CommandHandler<T>): CommandHandler<T> {
   return async (flags) => {
-    const tracer = trace.getTracer("supa-cli");
+    const tracer = trace.getTracer("supabase-cli");
     return tracer.startActiveSpan(`cli.command.${flags.__command}`, async (span) => {
       const start = performance.now();
       span.setAttributes({
@@ -112,7 +112,7 @@ command({
 
 **Anonymous phase** — before login:
 
-`device_id`: random UUID generated on first run, persisted in `~/.supa/telemetry.json`. Never changes unless the file is deleted. This is the only identity before the user runs `supa login`. It is attached to every span as the `cli.device_id` resource attribute.
+`device_id`: random UUID generated on first run, persisted in `~/.supabase/telemetry.json`. Never changes unless the file is deleted. This is the only identity before the user runs `supabase login`. It is attached to every span as the `cli.device_id` resource attribute.
 
 `session_id`: random UUID that rotates after 30 minutes of inactivity (no CLI commands). This defines "session" for the Engagement metrics.
 
@@ -125,7 +125,7 @@ Note: `user_id` (Supabase account UUID) is a future enhancement, pending a profi
 ```typescript
 // Resource attributes set once at SDK initialization
 const resource = new Resource({
-  "service.name": "supa-cli",
+  "service.name": "supabase-cli",
   "service.version": CLI_VERSION,
   "cli.device_id": getDeviceId(),   // always present, never rotates
   "os.type": process.platform,
@@ -156,7 +156,7 @@ Privacy guarantees:
 
 ## Local Storage
 
-NDJSON files in `~/.supa/traces/`:
+NDJSON files in `~/.supabase/traces/`:
 
 - One file per day: `2025-01-15.ndjson`
 - 7-day automatic retention (older files deleted on CLI startup)
@@ -182,7 +182,7 @@ import * as Sentry from "@sentry/bun";
 
 Sentry.init({
   dsn: SENTRY_DSN,
-  release: `supa-cli@${CLI_VERSION}`,
+  release: `supabase-cli@${CLI_VERSION}`,
   tracesSampleRate: 1.0,
   beforeSendTransaction(event) {
     return stripPii(event);
@@ -208,9 +208,9 @@ Sentry.init({
 
 Performance: total overhead < 1ms per command (span construction + non-blocking SDK calls).
 
-### End-to-end example: `supa projects list`
+### End-to-end example: `supabase projects list`
 
-**Success path** — user runs `supa projects list` and gets a list of projects:
+**Success path** — user runs `supabase projects list` and gets a list of projects:
 
 ```typescript
 // 1. withTelemetry() creates a root span
@@ -246,13 +246,13 @@ span.setStatus({ code: SpanStatusCode.OK });
 span.end();
 
 // 5. Always: append to local trace file
-// ~/.supa/traces/2025-01-15.ndjson += JSON.stringify(spanData) + "\n"
+// ~/.supabase/traces/2025-01-15.ndjson += JSON.stringify(spanData) + "\n"
 
 // 6. If consent === "granted": Sentry SDK exports the span
 // Non-blocking — SDK batches internally
 ```
 
-**Error path** — user runs `supa projects list` but their token has expired:
+**Error path** — user runs `supabase projects list` but their token has expired:
 
 ```typescript
 // 1. withTelemetry() creates a root span (same as success)
@@ -291,7 +291,7 @@ span.end();
 // Sentry alerts if AUTH_TOKEN_EXPIRED spikes across devices
 ```
 
-**Workflow command** — `supa dev` with child spans (connects to ADR 0007):
+**Workflow command** — `supabase dev` with child spans (connects to ADR 0007):
 
 ```typescript
 // Root span for the command
@@ -325,8 +325,8 @@ rootSpan.end();
 // Sentry receives a full trace with parent + child spans:
 // enables per-phase latency dashboards (e.g. "p95 cli.phase.docker.start duration")
 
-// Local trace file shows the same data via `supa dev --debug`:
-//   supa dev (total: 1.2s)
+// Local trace file shows the same data via `supabase dev --debug`:
+//   supabase dev (total: 1.2s)
 //   ├── config.load: 12ms
 //   ├── docker.start: 890ms
 //   └── healthcheck.wait: 230ms
@@ -334,7 +334,7 @@ rootSpan.end();
 
 ## Consent Implementation
 
-Three-state model stored in `~/.supa/telemetry.json`:
+Three-state model stored in `~/.supabase/telemetry.json`:
 
 ```typescript
 type ConsentState = "pending" | "granted" | "denied";
@@ -352,22 +352,22 @@ Is TTY? ──No──→ consent = "denied" (no prompt for CI/LLMs)
      │
      ▼
 Prompt user (via Clack):
-"Help improve supa by sending anonymous usage data? (y/N)"
+"Help improve the Supabase CLI by sending anonymous usage data? (y/N)"
      │
      ├─ y → consent = "granted"
      └─ N → consent = "denied"
 
 At any time:
-  supa telemetry enable   → "granted"
-  supa telemetry disable  → "denied"
-  supa telemetry status   → show current state
+  supabase telemetry enable   → "granted"
+  supabase telemetry disable  → "denied"
+  supabase telemetry status   → show current state
 
 Environment override:
   SUPA_TELEMETRY=off      → treated as "denied" (skips prompt)
   SUPA_TELEMETRY=on       → treated as "granted" (skips prompt)
 ```
 
-Non-TTY defaults to `denied` without prompting — this means LLM agents and CI pipelines never see a consent prompt, and no data is sent unless explicitly enabled via env var or `supa telemetry enable`.
+Non-TTY defaults to `denied` without prompting — this means LLM agents and CI pipelines never see a consent prompt, and no data is sent unless explicitly enabled via env var or `supabase telemetry enable`.
 
 ## Deriving Metrics from Events
 

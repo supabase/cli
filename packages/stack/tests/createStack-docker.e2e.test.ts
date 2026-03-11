@@ -14,7 +14,7 @@ describe("createStack e2e (docker mode)", () => {
   let supabase: SupabaseClient;
 
   beforeAll(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), "supa-e2e-docker-"));
+    dataDir = mkdtempSync(join(tmpdir(), "supabase-e2e-docker-"));
 
     stack = await createStack({
       mode: "docker",
@@ -41,7 +41,9 @@ describe("createStack e2e (docker mode)", () => {
     await stack?.dispose();
 
     // Verify all Docker containers are cleaned up after dispose
-    const remaining = execSync(`docker ps -q --filter name=supa-.*-${apiPort}`).toString().trim();
+    const remaining = execSync(`docker ps -q --filter name=supabase-.*-${apiPort}`)
+      .toString()
+      .trim();
     expect(remaining).toBe("");
 
     try {

@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
-import { ServiceNotFoundError, ServiceState, type LogEntry } from "@supabase/process-compose";
+import { ServiceNotFoundError, type LogEntry } from "@supabase/process-compose";
 import { Duration, Effect, Layer, ManagedRuntime, Stream } from "effect";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,6 +9,7 @@ import { describe, expect, test } from "vitest";
 import { DaemonServer } from "./DaemonServer.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { Stack, type StackInfo } from "./Stack.ts";
+import { StackServiceState } from "./StackServiceState.ts";
 
 const IDLE_TIMEOUT_WINDOW = Duration.seconds(11);
 
@@ -19,10 +20,10 @@ const MOCK_INFO: StackInfo = {
   secretKey: "sk_test",
   anonJwt: "anon_jwt",
   serviceRoleJwt: "service_role_jwt",
-  dockerContainerNames: ["supa-postgres-54321"],
+  dockerContainerNames: ["supabase-postgres-54321"],
 };
 
-const POSTGRES_STATE = new ServiceState({
+const POSTGRES_STATE = new StackServiceState({
   name: "postgres",
   status: "Running",
   pid: 1234,
@@ -40,7 +41,7 @@ const DELAYED_LOG: LogEntry = {
 };
 
 function makeSocketFixture() {
-  const dir = mkdtempSync(join(tmpdir(), "supa-"));
+  const dir = mkdtempSync(join(tmpdir(), "supabase-"));
   return {
     dir,
     socketPath: join(dir, "d.sock"),

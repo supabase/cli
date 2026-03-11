@@ -53,7 +53,11 @@ describe("startup timing", () => {
   }, 15_000);
 
   const healthCheckDuration = (name: string) => {
-    const running = transitions.find((t) => t.name === name && t.status === "Running");
+    const running = transitions.find(
+      (t) =>
+        t.name === name &&
+        (t.status === "Running" || t.status === "Starting" || t.status === "Initializing"),
+    );
     const healthy = transitions.find((t) => t.name === name && t.status === "Healthy");
     if (!running || !healthy) return Infinity;
     return healthy.elapsed - running.elapsed;

@@ -5,7 +5,7 @@
 
 ## Problem Statement
 
-[ADR 0001](0001-cli-dx-architecture-pillars.md) (Pillar 1: Command as Typed Function) establishes that handlers are pure functions returning `CommandResult<T>` — no `console.log`, no `process.exit`, no rendering. This works perfectly for simple request/response commands like `supa projects list`, but leaves a gap for long-running workflow commands (`supa dev`, `supa migrations push`) that need to communicate progress in real-time: loading config, starting containers, waiting for healthchecks, etc.
+[ADR 0001](0001-cli-dx-architecture-pillars.md) (Pillar 1: Command as Typed Function) establishes that handlers are pure functions returning `CommandResult<T>` — no `console.log`, no `process.exit`, no rendering. This works perfectly for simple request/response commands like `supabase projects list`, but leaves a gap for long-running workflow commands (`supabase dev`, `supabase migrations push`) that need to communicate progress in real-time: loading config, starting containers, waiting for healthchecks, etc.
 
 The simple `handler → CommandResult<T> → render` flow assumes the handler runs, finishes, and then the result is rendered. For workflow commands with multiple phases that take seconds or minutes, users (both humans and LLMs) need feedback _during_ execution, not just at the end.
 
@@ -149,7 +149,7 @@ Ready on localhost:54322
 import * as p from "@clack/prompts";
 
 async function renderDev(flags: DevFlags) {
-  p.intro("supa dev");
+  p.intro("supabase dev");
 
   const s = p.spinner();
 
@@ -311,7 +311,7 @@ function createClackContext(): CommandContext {
 }
 
 async function renderDev(flags: DevFlags) {
-  p.intro("supa dev");
+  p.intro("supabase dev");
   const ctx = createClackContext();
   const result = await runDev(flags, ctx);
   if (result.ok) {
@@ -375,7 +375,7 @@ test("runDev reports correct phases", async () => {
 Both patterns map 1:1 to trace spans from Pillar 5 (ADR 0001). Each `step`/`done` pair _is_ a span:
 
 ```
-supa dev (total: 1.2s)
+supabase dev (total: 1.2s)
 ├── config: 12ms       ← step → done
 ├── docker: 890ms      ← step → done
 └── health: 230ms      ← step → done
@@ -411,7 +411,7 @@ This is left for team discussion during PR review.
 
 ## Alternatives Considered
 
-1. **No progress — just return the final result**: Works for CRUD commands but creates a poor experience for `supa dev` where users stare at a blank terminal for seconds. Unacceptable for workflow commands.
+1. **No progress — just return the final result**: Works for CRUD commands but creates a poor experience for `supabase dev` where users stare at a blank terminal for seconds. Unacceptable for workflow commands.
 
 2. **Console.log inside handlers**: Violates Pillar 1 entirely. Makes handlers untestable, couples them to terminal output, and breaks JSON/NDJSON output for LLMs.
 
@@ -423,4 +423,4 @@ This is left for team discussion during PR review.
 
 - [ADR 0001](0001-cli-dx-architecture-pillars.md): CLI DX Architecture — Pillar 1 (Command as Typed Function), Pillar 3 (Output Design), Pillar 5 (Observability)
 - [ADR 0002](0002-cli-product-metrics.md): CLI Product Metrics — progress events map to telemetry spans
-- [ADR 0004](0004-cli-design-goals-and-workflows.md): CLI Design Goals — defines `supa dev` as the primary orchestrator and the workflow commands that need real-time progress
+- [ADR 0004](0004-cli-design-goals-and-workflows.md): CLI Design Goals — defines `supabase dev` as the primary orchestrator and the workflow commands that need real-time progress

@@ -322,7 +322,7 @@ describe("Orchestrator", () => {
         command: "docker",
         args: ["run", "--rm", "postgres"],
         supervision: {
-          orphanCleanup: [{ _tag: "DockerRemove", containerName: "supa-postgres-test" }],
+          orphanCleanup: [{ _tag: "DockerRemove", containerName: "supabase-postgres-test" }],
         },
       }),
     ]);

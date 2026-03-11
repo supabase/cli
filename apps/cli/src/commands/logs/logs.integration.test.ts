@@ -9,7 +9,7 @@ import { join } from "node:path";
 
 function setup() {
   const out = mockOutput();
-  const home = mkdtempSync(join(tmpdir(), "supa-logs-test-"));
+  const home = mkdtempSync(join(tmpdir(), "supabase-logs-test-"));
   const layer = Layer.mergeAll(out.layer, BunServices.layer);
   return { layer, out, home };
 }
@@ -35,7 +35,7 @@ describe("logs handler", () => {
 
   it.live("rejects json output format with a targeted error", () => {
     const out = mockOutput({ format: "json", interactive: false });
-    const home = mkdtempSync(join(tmpdir(), "supa-logs-test-"));
+    const home = mkdtempSync(join(tmpdir(), "supabase-logs-test-"));
     const layer = Layer.mergeAll(out.layer, BunServices.layer);
 
     return Effect.gen(function* () {

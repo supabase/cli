@@ -1,12 +1,8 @@
-import {
-  ServiceNotFoundError,
-  ServiceReadyError,
-  ServiceState,
-  type LogEntry,
-} from "@supabase/process-compose";
+import { ServiceNotFoundError, ServiceReadyError, type LogEntry } from "@supabase/process-compose";
 import { Effect, Layer, Stream } from "effect";
 import * as Sse from "effect/unstable/encoding/Sse";
 import { Stack, type StackInfo } from "./Stack.ts";
+import { StackServiceState } from "./StackServiceState.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -104,10 +100,10 @@ function sseStream<A>(
 }
 
 /** Deserialize a plain JSON object into a ServiceState Data.Class instance. */
-function toServiceState(raw: StatusResponse["services"][number]): ServiceState {
-  return new ServiceState({
+function toServiceState(raw: StatusResponse["services"][number]): StackServiceState {
+  return new StackServiceState({
     name: raw.name,
-    status: raw.status as ServiceState["status"],
+    status: raw.status as StackServiceState["status"],
     pid: raw.pid,
     exitCode: raw.exitCode,
     restartCount: raw.restartCount,

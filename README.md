@@ -1,4 +1,4 @@
-# Supa
+# Supabase
 
 Bun monorepo for exploring the next generation of the Supabase CLI and local development stack.
 

@@ -1,6 +1,6 @@
 # Architecture Decision Records (ADRs)
 
-We record architecture decisions for the supa CLI using the MADR (Markdown Any Decision Records) format.
+We record architecture decisions for the supabase CLI using the MADR (Markdown Any Decision Records) format.
 
 ## What is an ADR?
 

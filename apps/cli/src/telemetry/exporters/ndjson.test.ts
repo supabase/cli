@@ -10,7 +10,7 @@ const fsLayer = BunServices.layer;
 
 describe("initNdjsonExporter", () => {
   it.live("does not fail when traces directory does not exist", () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "supa-ndjson-test-"));
+    const dir = mkdtempSync(path.join(tmpdir(), "supabase-ndjson-test-"));
     const tracesDir = path.join(dir, "traces");
     return Effect.gen(function* () {
       yield* initNdjsonExporter(tracesDir);

@@ -1,6 +1,6 @@
 import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
-import type { ServiceState } from "@supabase/stack";
+import type { StackServiceState } from "@supabase/stack";
 
 function statusIcon(status: string) {
   switch (status) {
@@ -28,7 +28,7 @@ function statusIcon(status: string) {
 
 const nameWidth = 20;
 
-export function ServiceTable({ states }: { states: ReadonlyArray<ServiceState> }) {
+export function ServiceTable({ states }: { states: ReadonlyArray<StackServiceState> }) {
   return (
     <Box flexDirection="column">
       {states.map((s) => (

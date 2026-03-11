@@ -1,20 +1,20 @@
 import { describe, expect, test } from "vitest";
 import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry";
 import { Effect, Layer, SubscriptionRef } from "effect";
-import type { ServiceState } from "@supabase/stack";
+import { StackServiceState, type StackServiceStatus } from "@supabase/stack";
 import type { StackInfo } from "@supabase/stack/internals";
 import { StartDashboardState } from "./dashboard-state.ts";
 
-function state(name: string, status: string) {
-  return {
+function state(name: string, status: StackServiceStatus) {
+  return new StackServiceState({
     name,
-    status,
+    status: status as StackServiceState["status"],
     pid: null,
     exitCode: null,
     restartCount: 0,
     startedAt: null,
     error: null,
-  } as any;
+  });
 }
 
 describe("createStartDashboardModel", () => {
@@ -23,7 +23,7 @@ describe("createStartDashboardModel", () => {
     Effect.gen(function* () {
       return {
         stackInfoRef: yield* SubscriptionRef.make<StackInfo | null>(null),
-        serviceStatesRef: yield* SubscriptionRef.make<ReadonlyArray<ServiceState>>([]),
+        serviceStatesRef: yield* SubscriptionRef.make<ReadonlyArray<StackServiceState>>([]),
         phaseRef: yield* SubscriptionRef.make<"starting" | "running" | "failed" | "stopping">(
           "starting",
         ),
@@ -44,8 +44,7 @@ describe("createStartDashboardModel", () => {
     expect(registry.get(model.phaseAtom)).toBe("starting");
 
     registry.set(model.serviceStatesAtom, [
-      state("postgres", "Healthy"),
-      state("postgres-init", "Stopped"),
+      state("postgres", "Initializing"),
       state("auth", "Healthy"),
     ]);
 
@@ -53,7 +52,10 @@ describe("createStartDashboardModel", () => {
       "postgres",
       "auth",
     ]);
-    expect(registry.get(model.allHealthyAtom)).toBe(true);
+    expect(
+      registry.get(model.displayStatesAtom).find((entry) => entry.name === "postgres")?.status,
+    ).toBe("Initializing");
+    expect(registry.get(model.allHealthyAtom)).toBe(false);
 
     registry.set(model.phaseAtom, "running");
     expect(registry.get(model.statusLineAtom)).toContain("Interrupt to stop");

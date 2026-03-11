@@ -5,7 +5,7 @@
 
 ## Problem Statement
 
-supa is a CLI serving as the primary entry point to the Supabase platform. Architectural decisions around developer experience, performance, testing, error handling, and observability are made frequently.
+supabase is a CLI serving as the primary entry point to the Supabase platform. Architectural decisions around developer experience, performance, testing, error handling, and observability are made frequently.
 
 Without a formal process for recording these decisions:
 

@@ -21,7 +21,7 @@ The local stack currently runs in the foreground, blocking the terminal. Users (
 ## Architecture
 
 ```
-User runs: supa start --detach
+User runs: supabase start --detach
                 │
                 ▼
         ┌──────────────┐
@@ -71,13 +71,17 @@ User runs: supa start --detach
   "secretKey": "eyJ...",
   "anonJwt": "eyJ...",
   "serviceRoleJwt": "eyJ...",
-  "dockerContainerNames": ["supa-postgres-54321", "supa-postgrest-54321", "supa-auth-54321"]
+  "dockerContainerNames": [
+    "supabase-postgres-54321",
+    "supabase-postgrest-54321",
+    "supabase-auth-54321"
+  ]
 }
 ```
 
 The `publishableKey`, `secretKey`, `anonJwt`, and `serviceRoleJwt` fields are needed so CLI
 commands like `status` can display connection info without querying the daemon. The
-`dockerContainerNames` field enables crash recovery — `supa stop` can force-remove orphaned
+`dockerContainerNames` field enables crash recovery — `supabase stop` can force-remove orphaned
 Docker containers even when the daemon process is dead and unreachable via the socket.
 
 ---
@@ -250,7 +254,7 @@ and the CLI displays the error and exits with a non-zero code.
 
 ### Stack name resolution
 
-When a command like `supa stop` or `supa logs` is run without an explicit `--name`,
+When a command like `supabase stop` or `supabase logs` is run without an explicit `--name`,
 the CLI needs to figure out which stack the user is referring to. This must work from
 any subdirectory within the project (e.g. `src/components/`), and must be zero-config
 (no anchor file required).
@@ -279,15 +283,15 @@ any subdirectory within the project (e.g. `src/components/`), and must be zero-c
 
 ## Error Handling
 
-| Scenario                                | Behavior                                                                                                                                                                                                   |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Port already in use                     | Daemon sends IPC error before parent exits; CLI shows error                                                                                                                                                |
-| Name collision (already running)        | State file exists + daemon alive → error with connection info                                                                                                                                              |
-| Daemon crashes                          | State becomes stale. `status` detects dead PID, shows "crashed". `stop` cleans up state + Docker containers                                                                                                |
-| Orphaned Docker containers              | `stack.dispose()` calls `dockerForceRemove()`. On crash, `stop` reads state, force-removes known containers                                                                                                |
-| Ctrl+C during `start --detach`          | If daemon hasn't started: kill child. If started: daemon keeps running                                                                                                                                     |
-| Foreground start while detached running | `supa start` (foreground) checks StateManager first. If a daemon is running for the same project, error with "Stack already running in detached mode. Use `supa stop` first or `supa logs` to see output." |
-| Detached start while foreground running | Port allocation will fail (ports already bound), daemon sends IPC error. No special detection needed — the existing port conflict handling covers this.                                                    |
+| Scenario                                | Behavior                                                                                                                                                                                                               |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Port already in use                     | Daemon sends IPC error before parent exits; CLI shows error                                                                                                                                                            |
+| Name collision (already running)        | State file exists + daemon alive → error with connection info                                                                                                                                                          |
+| Daemon crashes                          | State becomes stale. `status` detects dead PID, shows "crashed". `stop` cleans up state + Docker containers                                                                                                            |
+| Orphaned Docker containers              | `stack.dispose()` calls `dockerForceRemove()`. On crash, `stop` reads state, force-removes known containers                                                                                                            |
+| Ctrl+C during `start --detach`          | If daemon hasn't started: kill child. If started: daemon keeps running                                                                                                                                                 |
+| Foreground start while detached running | `supabase start` (foreground) checks StateManager first. If a daemon is running for the same project, error with "Stack already running in detached mode. Use `supabase stop` first or `supabase logs` to see output." |
+| Detached start while foreground running | Port allocation will fail (ports already bound), daemon sends IPC error. No special detection needed — the existing port conflict handling covers this.                                                                |
 
 ---
 
@@ -296,31 +300,31 @@ any subdirectory within the project (e.g. `src/components/`), and must be zero-c
 1. **Unit tests** on `StateManager` — pure file operations, mock filesystem
 2. **Integration tests** on `RemoteStack`/`DaemonServer` — test HTTP API with real Unix socket, verify Effect/Stream round-trip
 3. **Integration tests** on CLI handlers — mock `LocalStack` via `Layer.succeed`, assert on output/state (same pattern as existing CLI tests)
-4. **E2e tests** — spawn real `supa start --detach`, verify startup, `supa status` shows it, `supa stop` stops it
+4. **E2e tests** — spawn real `supabase start --detach`, verify startup, `supabase status` shows it, `supabase stop` stops it
 
 ---
 
 ## Verification
 
-1. `supa start --detach` — daemon starts, connection info printed, terminal returns
-2. `supa status` — shows running stack with name, ports, uptime
-3. `supa logs` — streams real-time logs from daemon
-4. `supa stop` — graceful shutdown, Docker containers removed, state cleaned up
-5. `supa start --detach && supa start --detach` — second invocation shows "already running"
-6. Kill daemon with `kill <pid>`, then `supa status` — shows "crashed", `supa stop` cleans up
+1. `supabase start --detach` — daemon starts, connection info printed, terminal returns
+2. `supabase status` — shows running stack with name, ports, uptime
+3. `supabase logs` — streams real-time logs from daemon
+4. `supabase stop` — graceful shutdown, Docker containers removed, state cleaned up
+5. `supabase start --detach && supabase start --detach` — second invocation shows "already running"
+6. Kill daemon with `kill <pid>`, then `supabase status` — shows "crashed", `supabase stop` cleans up
 
 ---
 
 ## Future Improvements
 
-### Reattach (`supa attach [name]`)
+### Reattach (`supabase attach [name]`)
 
 Reconnects an interactive TUI to a running detached daemon. The HTTP daemon design
 makes this straightforward — the attach command is just an HTTP client rendering a TUI,
-connecting to the same endpoints that `supa status` and `supa logs` use.
+connecting to the same endpoints that `supabase status` and `supabase logs` use.
 
 ```
-supa attach [name]
+supabase attach [name]
      │
      ▼
   1. Read state file → find daemon socket
@@ -339,13 +343,13 @@ Key difference from foreground mode:
 - **Attached**: TUI consumes `RemoteStack` Effect Service (same `Stream` interface, backed by SSE over Unix socket)
 
 Ctrl+C when attached means **detach** (daemon keeps running), not stop. The user ran
-detached intentionally — if they want to stop, they use `supa stop`. This matches
+detached intentionally — if they want to stop, they use `supabase stop`. This matches
 `tmux`/`screen` behavior.
 
 No additional daemon-side work is required — the management API already exposes
 everything the TUI needs.
 
-### Restart (`supa restart [name]`)
+### Restart (`supabase restart [name]`)
 
 Restart all services in a running detached stack without tearing down the daemon.
 Requires a new `POST /restart` endpoint on the management API that calls
@@ -355,9 +359,9 @@ Requires a new `POST /restart` endpoint on the management API that calls
 
 Expose per-service start/stop/restart for detached stacks:
 
-- `supa service start <service> [--name <stack>]`
-- `supa service stop <service> [--name <stack>]`
-- `supa service restart <service> [--name <stack>]`
+- `supabase service start <service> [--name <stack>]`
+- `supabase service stop <service> [--name <stack>]`
+- `supabase service restart <service> [--name <stack>]`
 
 Requires new management API endpoints: `POST /services/:name/start`, `/stop`, `/restart`.
 The underlying `stack.startService()`, `stack.stopService()`, `stack.restartService()`
@@ -366,7 +370,7 @@ methods already exist.
 ### File-based log persistence
 
 Optionally write logs to disk in addition to in-memory buffering, for post-crash analysis.
-Could be enabled via a `--persist-logs` flag on `supa start --detach`. Logs would go to
+Could be enabled via a `--persist-logs` flag on `supabase start --detach`. Logs would go to
 `~/.supabase/stacks/<name>/logs/`.
 
 ---

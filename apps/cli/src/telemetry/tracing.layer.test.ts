@@ -25,7 +25,7 @@ import { tracingLayer } from "./tracing.layer.ts";
 const fsLayer = BunServices.layer;
 
 function makeTempDir(): string {
-  return mkdtempSync(path.join(tmpdir(), "supa-tracing-test-"));
+  return mkdtempSync(path.join(tmpdir(), "supabase-tracing-test-"));
 }
 
 function writeConfig(dir: string, config: TelemetryConfig): void {

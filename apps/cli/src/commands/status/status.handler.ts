@@ -4,7 +4,6 @@ import { CliConfig } from "../../config/cli-config.service.ts";
 import { Output } from "../../output/output.service.ts";
 import { RuntimeInfo } from "../../runtime/runtime-info.service.ts";
 import type { StatusFlags } from "./status.command.ts";
-import { toDisplayStates } from "../../stack/display-states.ts";
 
 const READY_STATUSES = new Set(["Healthy", "Running"]);
 
@@ -43,10 +42,8 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
 
   const stack = yield* Effect.provide(Stack.asEffect(), layer.value);
   const [info, services] = yield* Effect.all([stack.getInfo(), stack.getAllStates()]);
-  const displayServices = [...toDisplayStates(services)].sort((a, b) =>
-    a.name.localeCompare(b.name),
-  );
-  const allReady = displayServices.every((service) => READY_STATUSES.has(service.status));
+  const sortedServices = [...services].sort((a, b) => a.name.localeCompare(b.name));
+  const allReady = sortedServices.every((service) => READY_STATUSES.has(service.status));
   const message = allReady
     ? "Local Supabase stack is running."
     : "Local Supabase stack is running, but some services are not ready.";
@@ -56,7 +53,7 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
     db_url: info.dbUrl,
     anon_key: info.anonJwt,
     service_role_key: info.serviceRoleJwt,
-    services: displayServices.map((service) => ({
+    services: sortedServices.map((service) => ({
       name: service.name,
       status: service.status,
       pid: service.pid,
@@ -83,7 +80,7 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
   yield* output.info(`anon key: ${info.anonJwt}`);
   yield* output.info(`service_role key: ${info.serviceRoleJwt}`);
 
-  for (const service of displayServices) {
+  for (const service of sortedServices) {
     yield* output.info(formatServiceStateLine(service));
   }
 });

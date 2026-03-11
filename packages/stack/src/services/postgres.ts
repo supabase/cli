@@ -157,7 +157,7 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => 
 export const makePostgresServiceDocker = (opts: DockerPostgresOptions): ServiceDef => {
   const env = postgresDockerEnv(opts);
   const envArgs = Object.entries(env).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
-  const containerName = `supa-postgres-${opts.apiPort}`;
+  const containerName = `supabase-postgres-${opts.apiPort}`;
   const dockerArgs = [
     "run",
     "--rm",
