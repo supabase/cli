@@ -1,12 +1,7 @@
-import { beforeAll, describe, expect, test } from "vitest";
-import { prefetch } from "@supabase/stack/bun";
+import { describe, expect, test } from "vitest";
 import { makeTempHome, runSupabase } from "../../../tests/helpers/cli.ts";
 
 const START_TIMEOUT_MS = 60_000;
-
-beforeAll(async () => {
-  await prefetch();
-});
 
 describe("supabase start", () => {
   test(

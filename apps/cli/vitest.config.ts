@@ -2,9 +2,8 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    include: ["src/**/*.test.ts", "src/**/*.e2e.test.ts"],
     coverage: {
-      enabled: true,
+      enabled: false,
       provider: "istanbul",
       include: ["src/**/*.ts"],
       reporter: ["text", "lcov"],
@@ -21,5 +20,25 @@ export default defineConfig({
         "src/supabase.ts",
       ],
     },
+    projects: [
+      {
+        test: {
+          name: "core",
+          include: ["src/**/*.test.ts"],
+          exclude: ["src/**/*.e2e.test.ts"],
+        },
+      },
+      {
+        test: {
+          name: "e2e",
+          include: ["src/**/*.e2e.test.ts"],
+          fileParallelism: false,
+          maxWorkers: 1,
+          globalSetup: ["tests/e2e-global-setup.ts"],
+          testTimeout: 120_000,
+          hookTimeout: 120_000,
+        },
+      },
+    ],
   },
 });

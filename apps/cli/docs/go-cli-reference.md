@@ -1,7 +1,7 @@
-# Supabase CLI Reference
+# Old Go CLI Reference
 
-> Complete help output for all `supabase` CLI commands and subcommands.
-> This document serves as a migration reference for building the new CLI.
+> Complete help output for the old Go-based `supabase` CLI.
+> Use this document as the raw parity reference when tracking the TypeScript CLI port in [`go-cli-porting-status.md`](./go-cli-porting-status.md).
 
 ## Global Flags
 

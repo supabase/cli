@@ -35,14 +35,14 @@ Manual dispatch with `go_cli_version`, `version`, and `dry_run` inputs. Builds o
 
 ### New files
 
-| Path | Purpose |
-|------|---------|
-| `apps/cli/scripts/build.ts` | Cross-compile + package all targets |
-| `apps/cli/scripts/publish.ts` | Publish to npm |
-| `apps/cli/scripts/sync-versions.ts` | Stamp version across all packages |
-| `apps/cli/scripts/update-homebrew.ts` | Generate + push Homebrew formula |
-| `apps/cli/scripts/update-scoop.ts` | Generate + push Scoop manifest |
-| `apps/cli/tests/smoke-test*.ts` | Per-OS smoke test files + shared helpers |
-| `packages/cli-{os}-{arch}/` | 7 platform packages |
-| `.github/workflows/release.yml` | CI release workflow |
-| `docs/cli-distribution.md` | Architecture documentation |
+| Path                                  | Purpose                                  |
+| ------------------------------------- | ---------------------------------------- |
+| `apps/cli/scripts/build.ts`           | Cross-compile + package all targets      |
+| `apps/cli/scripts/publish.ts`         | Publish to npm                           |
+| `apps/cli/scripts/sync-versions.ts`   | Stamp version across all packages        |
+| `apps/cli/scripts/update-homebrew.ts` | Generate + push Homebrew formula         |
+| `apps/cli/scripts/update-scoop.ts`    | Generate + push Scoop manifest           |
+| `apps/cli/tests/smoke-test*.ts`       | Per-OS smoke test files + shared helpers |
+| `packages/cli-{os}-{arch}/`           | 7 platform packages                      |
+| `.github/workflows/release.yml`       | CI release workflow                      |
+| `docs/cli-distribution.md`            | Architecture documentation               |
