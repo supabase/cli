@@ -1,18 +1,35 @@
 # Supa
 
-Bun monorepo with workspaces under `packages/`.
+Bun monorepo with workspaces under `apps/` and `packages/`.
+
+## Workspace Layout
+
+- `apps/cli` — main `@supabase/cli` package
+- `apps/docs` — internal Next.js docs site
+- `packages/api` — typed Supabase Management API client
+- `packages/config` — config schema and generated types
+- `packages/process-compose` — process orchestration library
+- `packages/stack` — programmatic local Supabase stack runtime
+- `packages/cli-*` — platform-specific published CLI binary wrappers
 
 ## Package Structure
 
-All packages should follow this standard structure (see `packages/process-compose` as reference):
+Use `packages/process-compose` as the reference for internal TypeScript/Bun workspaces such as `apps/cli`, `packages/api`, `packages/config`, `packages/process-compose`, and `packages/stack`.
+
+These workspaces should generally follow this structure:
 
 **package.json:**
 
 - `name`: `@supabase/<package-name>`
-- `private`: true
-- `type`: "module"
+- `type`: `"module"`
 - Standard scripts: `test`, `types:check`, `lint:check`, `lint:fix`, `fmt:check`, `fmt:fix`, `knip:check`, `knip:fix`
 - Standard devDependencies: `@tsconfig/bun`, `@types/bun`, `@typescript/native-preview`, `knip`, `oxfmt`, `oxlint`, `oxlint-tsgolint`
+
+Expected exceptions:
+
+- `apps/cli` is published, so it is not `private`
+- `apps/docs` is a Next.js app and does not follow the standard package template
+- `packages/cli-*` are binary wrapper packages and do not follow the standard TypeScript workspace template
 
 **tsconfig.json:**
 
@@ -26,26 +43,35 @@ All packages should follow this standard structure (see `packages/process-compos
 
 The complete source code for the `effect` library (V4) is in `.repos/effect/`. Study types, APIs, and patterns there instead of `node_modules/`.
 
-If `.repos/effect/` is missing in a fresh clone, run `git submodule update --init --recursive` from the repo root first.
+If `.repos/effect/` is missing in a fresh clone, run this from the repo root first:
 
-Key packages:
+```sh
+bun run repos:install
+```
+
+Key references:
+
 - `.repos/effect/packages/effect/` — core `effect` library
 - `.repos/effect/packages/vitest/` — `@effect/vitest` test helpers
-- `.repos/effect/MIGRATION.md` — V3 → V4 migration guide
+- `.repos/effect/MIGRATION.md` — V3 to V4 migration guide
 
 ## Code Quality
 
-Always run these scripts from the package directory after making any changes — do not consider a task complete until all pass:
+Run quality checks from the workspace directory you changed. Do not consider a task complete until all relevant scripts pass.
+
+For the standard Bun/TypeScript workspaces:
 
 ```sh
-bun run --parallel "*:check"   # Run all quality checks in parallel
-bun run --parallel "*:fix"     # Auto-fix lint, format, and unused exports in parallel
-bun run test                   # Run tests via the package's Vitest script
+bun run --parallel "*:check"
+bun run --parallel "*:fix"
+bun run test
 ```
+
+If a workspace exposes a different script set, use that workspace's `package.json` as the source of truth.
 
 ## Refactoring Policy
 
-None of this code is published, so backward compatibility is not a constraint. Prefer the simplest correct design, including substantial refactors, API reshaping, and deleting obsolete code when it improves the codebase.
+None of this code is published as a stable internal platform API, so backward compatibility is not a constraint. Prefer the simplest correct design, including substantial refactors, API reshaping, and deleting obsolete code when it improves the codebase.
 
 ## Testing
 
@@ -56,35 +82,38 @@ See `apps/cli/src/commands/login/` as the canonical example.
 - `*.test.ts` — unit tests, colocated next to source
 - `*.integration.test.ts` — integration tests, colocated next to source
 - `*.e2e.test.ts` — end-to-end tests, colocated next to source
-- `tests/` — shared test helpers (e.g. `tests/helpers/cli.ts`)
+- `tests/` — shared test helpers (for example `tests/helpers/cli.ts`)
 
 ### Testing pyramid for CLI commands
 
 1. **Unit tests** on `lib/` — pure functions, no Effect context needed
-2. **Integration tests** on handlers — business logic with mocked Effect services via `Layer.succeed` (bulk of tests)
-3. **E2e tests** — 2–4 per command covering the golden path and basic error output
+2. **Integration tests** on handlers — business logic with mocked Effect services via `Layer.succeed`
+3. **E2e tests** — 2 to 4 tests per command covering the golden path and basic error output
 
 ### Integration test pattern
 
-Uses `@effect/vitest` with `it.live` — stateful mock factories return `{ layer, state }`. No `vi.fn()` spies; assert on accumulated state after the effect runs:
+Uses `@effect/vitest` with `it.live` — stateful mock factories return `{ layer, state }`. Avoid `vi.fn()` spies; assert on accumulated state after the effect runs:
 
 ```ts
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer } from "effect";
 
-// Mock factories return layer + observable state
 function mockCredentials(opts: { existingToken?: string } = {}) {
   let savedToken: string | undefined;
   return {
     layer: Layer.succeed(Credentials, {
       getAccessToken: Effect.sync(() => opts.existingToken ?? savedToken),
-      saveAccessToken: (token: string) => Effect.sync(() => { savedToken = token; }),
+      saveAccessToken: (token: string) =>
+        Effect.sync(() => {
+          savedToken = token;
+        }),
     }),
-    get savedToken() { return savedToken; },
+    get savedToken() {
+      return savedToken;
+    },
   };
 }
 
-// Setup helpers compose layers and return all state
 function setupTty(opts = {}) {
   const creds = mockCredentials(opts);
   const out = mockOutput(opts);
@@ -93,7 +122,6 @@ function setupTty(opts = {}) {
   return { layer, creds, out, api };
 }
 
-// Success path — assert on state
 it.live("saves the token on login", () => {
   const { layer, creds, out } = setupTty();
   return Effect.gen(function* () {
@@ -105,7 +133,6 @@ it.live("saves the token on login", () => {
   }).pipe(Effect.provide(layer));
 });
 
-// Error path
 it.live("fails with SomeError", () => {
   const { layer } = setupTty();
   return Effect.gen(function* () {
@@ -117,7 +144,7 @@ it.live("fails with SomeError", () => {
 
 ### E2e test pattern
 
-Use the `runSupabase()` helper from `tests/helpers/cli.ts` which spawns a real CLI subprocess with an isolated temp HOME:
+Use the `runSupabase()` helper from `tests/helpers/cli.ts`, which spawns a real CLI subprocess with an isolated temp HOME:
 
 ```ts
 import { describe, expect, test } from "vitest";
