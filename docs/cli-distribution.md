@@ -14,7 +14,7 @@ The Bun binary uses `spawnSync` with `stdio: "inherit"` to forward all arguments
 
 ## Build Process
 
-A single build script (`packages/cli/scripts/build.ts`) produces all artifacts from one machine (Ubuntu in CI). It takes two arguments:
+A single build script (`apps/cli/scripts/build.ts`) produces all artifacts from one machine (Ubuntu in CI). It takes two arguments:
 
 - `--go-version` — the supabase/cli release to wrap (e.g. `2.75.0`)
 - `--version` — the version to stamp on packages
@@ -43,17 +43,17 @@ Uses the platform-specific `optionalDependencies` pattern (same as esbuild):
 - **Platform packages** — `@supabase/cli-darwin-arm64`, `@supabase/cli-darwin-x64`, `@supabase/cli-linux-arm64`, `@supabase/cli-linux-arm64-musl`, `@supabase/cli-linux-x64`, `@supabase/cli-linux-x64-musl`, `@supabase/cli-windows-x64`. Each declares `os` and `cpu` fields so npm only installs the matching one. Linux packages additionally use the `libc` field (`["glibc"]` or `["musl"]`) so npm auto-selects the correct variant for the host C library (e.g. Alpine Linux gets the musl package).
 - **Umbrella package** — `@supabase/cli` lists all platform packages as `optionalDependencies` and includes a Node.js ESM bin shim (`bin/supabase.js`, built from `src/bin.ts` via `bun build --target node`) that resolves the correct platform binary via `createRequire` + `require.resolve`. On Linux, it tries glibc first, then falls back to musl.
 
-Published by `packages/cli/scripts/publish.ts` using `bun publish`: platform packages first (in parallel), then the umbrella package. Supports `--dry-run`.
+Published by `apps/cli/scripts/publish.ts` using `bun publish`: platform packages first (in parallel), then the umbrella package. Supports `--dry-run`.
 
 ### Homebrew
 
-`packages/cli/scripts/update-homebrew.ts` generates a formula (`dist/supabase.rb`) from the checksums file. The formula installs both `supabase` and `supabase-backend`.
+`apps/cli/scripts/update-homebrew.ts` generates a formula (`dist/supabase.rb`) from the checksums file. The formula installs both `supabase` and `supabase-backend`.
 
 In production, it clones the `supabase/homebrew-tap` repo, updates `Formula/supabase.rb`, commits, and pushes. With `--local`, it writes the formula with `file://` URLs for local testing.
 
 ### Scoop
 
-`packages/cli/scripts/update-scoop.ts` generates a manifest (`dist/supabase.json`) with the Windows amd64 zip URL and hash.
+`apps/cli/scripts/update-scoop.ts` generates a manifest (`dist/supabase.json`) with the Windows amd64 zip URL and hash.
 
 In production, it pushes to `supabase/scoop-bucket`. With `--local`, it writes the manifest with `file:///` URLs for local testing.
 
@@ -74,7 +74,7 @@ The release is first created as a draft with all assets attached, then published
 Smoke tests are organized into per-OS files so it's immediately clear which tests run on which platform. An entry point (`smoke-test.ts`) detects the OS and delegates to the matching file.
 
 ```
-packages/cli/tests/
+apps/cli/tests/
   smoke-test.ts              # entry point: detects OS, delegates to per-OS file
   smoke-test-linux.ts        # native + docker + npm
   smoke-test-macos.ts        # native + npm + brew
@@ -87,7 +87,7 @@ packages/cli/tests/
 
 ```bash
 # Run the tests for your current OS
-cd packages/cli && bun run test:smoke
+cd apps/cli && bun run test:smoke
 
 # With a specific version (must match the version used to build dist/ artifacts)
 bun run test:smoke --version 2.75.0
@@ -152,4 +152,4 @@ update-homebrew + update-scoop (parallel, ubuntu-latest)
 
 ## Version Management
 
-`packages/cli/scripts/sync-versions.ts` updates the `version` field across all 8 package.json files (7 platform + 1 umbrella) and replaces `workspace:*` references in `optionalDependencies` with explicit versions. Run before build and before publish.
+`apps/cli/scripts/sync-versions.ts` updates the `version` field across all 8 package.json files (7 platform + 1 umbrella) and replaces `workspace:*` references in `optionalDependencies` with explicit versions. Run before build and before publish.

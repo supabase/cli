@@ -31,7 +31,7 @@ await Promise.all(
 );
 
 // Build the umbrella package bin shim, then publish
-const cliDir = path.join(root, "packages/cli");
+const cliDir = path.join(root, "apps/cli");
 console.log("\nBuilding umbrella package...");
 await $`bun run build`.cwd(cliDir);
 

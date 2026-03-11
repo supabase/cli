@@ -1593,15 +1593,15 @@ git commit -m "feat(local): add createStack() convenience API for testing"
 ## Task 9: CLI Start Command
 
 **Files:**
-- Create: `packages/cli/src/commands/start/start.command.ts`
-- Create: `packages/cli/src/commands/start/start.handler.ts`
-- Create: `packages/cli/src/commands/start/index.ts`
-- Modify: `packages/cli/src/app.ts`
-- Modify: `packages/cli/package.json` (add `@supabase/local` dependency)
+- Create: `apps/cli/src/commands/start/start.command.ts`
+- Create: `apps/cli/src/commands/start/start.handler.ts`
+- Create: `apps/cli/src/commands/start/index.ts`
+- Modify: `apps/cli/src/app.ts`
+- Modify: `apps/cli/package.json` (add `@supabase/local` dependency)
 
 **Step 1: Add @supabase/local dependency to CLI**
 
-Add to `packages/cli/package.json` dependencies:
+Add to `apps/cli/package.json` dependencies:
 
 ```json
 "@supabase/local": "workspace:*"
@@ -1611,7 +1611,7 @@ Run: `cd /Users/jgoux/Code/supabase/supa && bun install`
 
 **Step 2: Create the handler**
 
-File: `packages/cli/src/commands/start/start.handler.ts`
+File: `apps/cli/src/commands/start/start.handler.ts`
 
 ```ts
 import { Effect, Stream } from "effect";
@@ -1649,7 +1649,7 @@ export const start = Effect.fnUntraced(function* (_flags: StartFlags) {
 
 **Step 3: Create the command definition**
 
-File: `packages/cli/src/commands/start/start.command.ts`
+File: `apps/cli/src/commands/start/start.command.ts`
 
 ```ts
 import { Effect } from "effect";
@@ -1686,7 +1686,7 @@ export const startCommand = Command.make("start", flags).pipe(
 
 **Step 4: Create the index barrel**
 
-File: `packages/cli/src/commands/start/index.ts`
+File: `apps/cli/src/commands/start/index.ts`
 
 ```ts
 export { startCommand } from "./start.command.ts";
@@ -1694,7 +1694,7 @@ export { startCommand } from "./start.command.ts";
 
 **Step 5: Wire into app.ts**
 
-Modify `packages/cli/src/app.ts`:
+Modify `apps/cli/src/app.ts`:
 
 ```ts
 import { Effect, Layer } from "effect";
@@ -1726,12 +1726,12 @@ export const cli = Command.run(root, { version: "0.1.0" });
 **Step 6: Verify quality checks on both packages**
 
 Run: `cd packages/local && bun run --parallel "*:check"`
-Run: `cd packages/cli && bun run --parallel "*:check"`
+Run: `cd apps/cli && bun run --parallel "*:check"`
 
 **Step 7: Commit**
 
 ```bash
-git add packages/cli/src/commands/start/ packages/cli/src/app.ts packages/cli/package.json
+git add apps/cli/src/commands/start/ apps/cli/src/app.ts apps/cli/package.json
 git commit -m "feat(cli): add start command skeleton with LocalStack integration"
 ```
 
@@ -1740,12 +1740,12 @@ git commit -m "feat(cli): add start command skeleton with LocalStack integration
 ## Task 10: Integration Tests for Start Command
 
 **Files:**
-- Create: `packages/cli/src/commands/start/start.integration.test.ts`
-- Modify: `packages/cli/tests/helpers/mocks.ts` (add LocalStack mock)
+- Create: `apps/cli/src/commands/start/start.integration.test.ts`
+- Modify: `apps/cli/tests/helpers/mocks.ts` (add LocalStack mock)
 
 **Step 1: Add LocalStack mock factory**
 
-Add to `packages/cli/tests/helpers/mocks.ts`:
+Add to `apps/cli/tests/helpers/mocks.ts`:
 
 ```ts
 import { LocalStack, type StackInfo } from "@supabase/local";
@@ -1798,7 +1798,7 @@ export function mockLocalStack(
 
 **Step 2: Write integration tests**
 
-File: `packages/cli/src/commands/start/start.integration.test.ts`
+File: `apps/cli/src/commands/start/start.integration.test.ts`
 
 ```ts
 import { describe, expect, it } from "@effect/vitest";
@@ -1834,17 +1834,17 @@ describe("start handler", () => {
 
 **Step 3: Run tests**
 
-Run: `cd packages/cli && bun run test`
+Run: `cd apps/cli && bun run test`
 Expected: All tests PASS.
 
 **Step 4: Verify quality checks**
 
-Run: `cd packages/cli && bun run --parallel "*:check"`
+Run: `cd apps/cli && bun run --parallel "*:check"`
 
 **Step 5: Commit**
 
 ```bash
-git add packages/cli/src/commands/start/start.integration.test.ts packages/cli/tests/helpers/mocks.ts
+git add apps/cli/src/commands/start/start.integration.test.ts apps/cli/tests/helpers/mocks.ts
 git commit -m "test(cli): add integration tests for start command handler"
 ```
 
@@ -1855,7 +1855,7 @@ git commit -m "test(cli): add integration tests for start command handler"
 **Step 1: Run full quality checks on both packages**
 
 Run: `cd packages/local && bun run --parallel "*:check" && bun run test`
-Run: `cd packages/cli && bun run --parallel "*:check" && bun run test`
+Run: `cd apps/cli && bun run --parallel "*:check" && bun run test`
 
 **Step 2: Fix any remaining issues**
 
@@ -1880,10 +1880,10 @@ git commit -m "chore: final wiring and quality fixes for @supabase/local"
 | `packages/process-compose/src/Orchestrator.e2e.test.ts` | How to wire BunChildProcessSpawner + LogBuffer layers |
 | `packages/process-compose/src/DependencyGraph.ts` | `buildGraph()` return type and error handling |
 | `packages/process-compose/src/errors.ts` | TaggedError pattern |
-| `packages/cli/src/commands/login/login.command.ts` | Command definition pattern |
-| `packages/cli/src/commands/login/login.handler.ts` | Handler pattern with Effect.fnUntraced |
-| `packages/cli/src/commands/login/login.integration.test.ts` | Integration test pattern |
-| `packages/cli/tests/helpers/mocks.ts` | Mock factory pattern |
+| `apps/cli/src/commands/login/login.command.ts` | Command definition pattern |
+| `apps/cli/src/commands/login/login.handler.ts` | Handler pattern with Effect.fnUntraced |
+| `apps/cli/src/commands/login/login.integration.test.ts` | Integration test pattern |
+| `apps/cli/tests/helpers/mocks.ts` | Mock factory pattern |
 | `.repos/effect/packages/effect/src/ServiceMap.ts` | ServiceMap.Service API |
 | `.repos/effect/MIGRATION.md` | V3 → V4 migration reference |
 

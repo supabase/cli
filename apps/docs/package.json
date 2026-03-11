@@ -4,11 +4,10 @@
   "type": "module",
   "scripts": {
     "dev": "bun run generate && next dev",
-    "generate": "bun ../../packages/cli/scripts/generate-docs.ts",
+    "generate": "bun ../../apps/cli/scripts/generate-docs.ts",
     "build": "bun run generate && next build"
   },
   "dependencies": {
-    "@supabase/cli": "workspace:*",
     "fumadocs-core": "^16.6.15",
     "fumadocs-mdx": "^14.2.9",
     "fumadocs-ui": "^16.6.15",

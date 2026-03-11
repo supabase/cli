@@ -76,7 +76,7 @@ if (!hasBrew) {
   try {
     // Generate the formula with local file:// URLs
     console.log("Generating Homebrew formula...");
-    await $`bun run packages/cli/scripts/update-homebrew.ts --version ${version} --local`.cwd(root);
+    await $`bun run apps/cli/scripts/update-homebrew.ts --version ${version} --local`.cwd(root);
 
     // Create a local git-backed tap
     await using tap = await createTmpDir("brew-smoke-");

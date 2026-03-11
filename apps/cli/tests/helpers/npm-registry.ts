@@ -96,7 +96,7 @@ listen: 0.0.0.0:${PORT}
 
   // Sync versions across all packages
   console.log(`Syncing versions to ${version}...`);
-  await $`bun run packages/cli/scripts/sync-versions.ts --version ${version}`.cwd(root).quiet();
+  await $`bun run apps/cli/scripts/sync-versions.ts --version ${version}`.cwd(root).quiet();
 
   console.log("Starting local npm registry...");
   await using registry = await startVerdaccio(configPath, PORT);
@@ -114,7 +114,7 @@ listen: 0.0.0.0:${PORT}
   );
 
   // Build and publish umbrella package
-  const cliDir = path.join(root, "packages", "cli");
+  const cliDir = path.join(root, "apps", "cli");
   console.log("\nBuilding umbrella package...");
   await $`bun run build`.cwd(cliDir).quiet();
 

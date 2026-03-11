@@ -49,7 +49,7 @@ None of this code is published, so backward compatibility is not a constraint. P
 
 ## Testing
 
-See `packages/cli/src/commands/login/` as the canonical example.
+See `apps/cli/src/commands/login/` as the canonical example.
 
 ### File naming
 

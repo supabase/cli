@@ -409,7 +409,7 @@ test("supa projects --output json returns valid JSON", async () => {
 
 **Layer 3: E2E tests** (the primary test layer) — spawn the CLI as a real child process via `Bun.spawn`, exercising the same interface that humans and LLMs interact with. This tests the full surface: process boot, arg parsing, TTY detection, stdout/stderr streams, exit codes, and signal handling.
 
-Running from source (`bun run packages/cli/src/index.ts`) is the right default — it exercises identical code paths to a compiled binary while keeping the feedback loop fast. A single smoke test on the compiled artifact in CI covers bundling edge cases.
+Running from source (`bun run apps/cli/src/index.ts`) is the right default — it exercises identical code paths to a compiled binary while keeping the feedback loop fast. A single smoke test on the compiled artifact in CI covers bundling edge cases.
 
 E2E tests must cover three categories:
 
@@ -417,7 +417,7 @@ E2E tests must cover three categories:
 
 ```typescript
 test("non-TTY stdout produces JSON automatically", async () => {
-  const proc = Bun.spawn(["bun", "run", "packages/cli/src/index.ts", "projects"], {
+  const proc = Bun.spawn(["bun", "run", "apps/cli/src/index.ts", "projects"], {
     env: { ...process.env, SUPABASE_ACCESS_TOKEN: "test-token" },
     stdout: "pipe", // not a TTY → should auto-detect JSON
   });
@@ -431,7 +431,7 @@ test("non-TTY stdout produces JSON automatically", async () => {
 
 ```typescript
 test("auth failure returns exit code 1 and structured error", async () => {
-  const proc = Bun.spawn(["bun", "run", "packages/cli/src/index.ts", "projects"], {
+  const proc = Bun.spawn(["bun", "run", "apps/cli/src/index.ts", "projects"], {
     env: { ...process.env, SUPABASE_ACCESS_TOKEN: "" },
     stdout: "pipe",
   });
@@ -444,7 +444,7 @@ test("auth failure returns exit code 1 and structured error", async () => {
 });
 
 test("invalid flag returns exit code 1", async () => {
-  const proc = Bun.spawn(["bun", "run", "packages/cli/src/index.ts", "--bogus"], {
+  const proc = Bun.spawn(["bun", "run", "apps/cli/src/index.ts", "--bogus"], {
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -458,7 +458,7 @@ test("invalid flag returns exit code 1", async () => {
 ```typescript
 test("LLM workflow: list projects, then get status", async () => {
   // Step 1: list projects
-  const list = Bun.spawn(["bun", "run", "packages/cli/src/index.ts", "projects"], {
+  const list = Bun.spawn(["bun", "run", "apps/cli/src/index.ts", "projects"], {
     stdout: "pipe",
     env: { ...process.env, SUPABASE_ACCESS_TOKEN: "test-token" },
   });
@@ -469,7 +469,7 @@ test("LLM workflow: list projects, then get status", async () => {
   // Step 2: use output from step 1 to query a specific project
   const ref = projects.data[0].ref;
   const status = Bun.spawn(
-    ["bun", "run", "packages/cli/src/index.ts", "status", "--project", ref],
+    ["bun", "run", "apps/cli/src/index.ts", "status", "--project", ref],
     { stdout: "pipe", env: { ...process.env, SUPABASE_ACCESS_TOKEN: "test-token" } },
   );
   const result = JSON.parse(await new Response(status.stdout).text());
@@ -481,7 +481,7 @@ test("LLM workflow: list projects, then get status", async () => {
 
 ```typescript
 test("supa dev starts and shows ready status", async () => {
-  const proc = Bun.spawn(["bun", "run", "packages/cli/src/index.ts", "dev"], {
+  const proc = Bun.spawn(["bun", "run", "apps/cli/src/index.ts", "dev"], {
     env: { ...process.env, SUPA_TARGET: "docker" },
   });
   const output = await readUntil(proc.stdout, "Ready", { timeout: 30_000 });

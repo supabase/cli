@@ -272,7 +272,7 @@ export { createEnv as env };
 **Usage in CLI**:
 
 ```typescript
-// packages/cli/src/env.ts
+// apps/cli/src/env.ts
 import { createEnv } from "@supa/config";
 
 // Define all environment variables used by the CLI
@@ -345,7 +345,7 @@ export default {
 
 ### React-Ink Terminal UI
 
-**File**: `packages/cli/src/commands/dev.tsx`
+**File**: `apps/cli/src/commands/dev.tsx`
 
 ```tsx
 import React, { useState, useEffect } from "react";
@@ -415,7 +415,7 @@ export function Dev({ local, linked }: DevProps) {
 }
 ```
 
-**File**: `packages/cli/src/components/StatusBar.tsx`
+**File**: `apps/cli/src/components/StatusBar.tsx`
 
 ```tsx
 import React from "react";
@@ -454,7 +454,7 @@ export function StatusBar({ target, status, watching }: StatusBarProps) {
 
 We use [Stricli](https://bloomberg.github.io/stricli/) for type-safe CLI argument parsing with zero dependencies.
 
-**File**: `packages/cli/src/commands/dev/dev.command.ts`
+**File**: `apps/cli/src/commands/dev/dev.command.ts`
 
 ```typescript
 import { buildCommand } from "@stricli/core";
@@ -497,7 +497,7 @@ export const command = buildCommand({
 });
 ```
 
-**File**: `packages/cli/src/commands/dev/dev.handler.tsx`
+**File**: `apps/cli/src/commands/dev/dev.handler.tsx`
 
 ```tsx
 import React from "react";
@@ -571,7 +571,7 @@ When `supa dev` is run without a config, it guides the user through setup:
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**File**: `packages/cli/src/components/Onboarding.tsx`
+**File**: `apps/cli/src/components/Onboarding.tsx`
 
 ```tsx
 import React, { useState } from "react";
@@ -632,7 +632,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
 }
 ```
 
-**File**: `packages/cli/src/components/flows/TargetSelection.tsx`
+**File**: `apps/cli/src/components/flows/TargetSelection.tsx`
 
 ```tsx
 import React from "react";
@@ -670,7 +670,7 @@ export function TargetSelection({ onSelect }: TargetSelectionProps) {
 }
 ```
 
-**File**: `packages/cli/src/commands/branches/branches.command.ts`
+**File**: `apps/cli/src/commands/branches/branches.command.ts`
 
 ```typescript
 import { buildCommand, buildRouteMap } from "@stricli/core";
@@ -726,7 +726,7 @@ export const branches = buildRouteMap({
 });
 ```
 
-**File**: `packages/cli/src/app.ts`
+**File**: `apps/cli/src/app.ts`
 
 ```typescript
 import { buildApplication, buildRouteMap } from "@stricli/core";
@@ -769,7 +769,7 @@ export const app = buildApplication(root, {
 });
 ```
 
-**File**: `packages/cli/src/index.ts`
+**File**: `apps/cli/src/index.ts`
 
 ```typescript
 #!/usr/bin/env bun
@@ -787,7 +787,7 @@ run(app, process.argv.slice(2), {
 
 1. Initialize Bun workspace in `/Users/jgoux/Code/supabase/supa`
 2. Create `packages/config` with jsonv-ts schema definitions
-3. Create `packages/cli` with React-Ink setup
+3. Create `apps/cli` with React-Ink setup
 4. Configure shared TypeScript settings
 
 **Root `package.json`:**
@@ -913,14 +913,14 @@ During onboarding, the user is asked to choose their preferred target.
 ### Target Architecture
 
 ```
-packages/cli/src/targets/
+apps/cli/src/targets/
 ├── base.ts           # Target interface
 ├── docker.ts         # Docker-based local target
 ├── embedded.ts       # Embedded binaries target (npm packages)
 └── remote.ts         # Remote/linked target
 ```
 
-**File**: `packages/cli/src/targets/base.ts`
+**File**: `apps/cli/src/targets/base.ts`
 
 ```typescript
 export interface Target {
@@ -945,7 +945,7 @@ export interface TargetFactory {
 }
 ```
 
-**File**: `packages/cli/src/targets/embedded.ts`
+**File**: `apps/cli/src/targets/embedded.ts`
 
 ```typescript
 // Embedded target uses npm-published binaries for:
@@ -1156,7 +1156,7 @@ async function resolveTarget(
 
 ### API Client Structure
 
-**File**: `packages/cli/src/api/client.ts`
+**File**: `apps/cli/src/api/client.ts`
 
 ```typescript
 interface ManagementAPIClient {
@@ -1243,22 +1243,22 @@ interface ManagementAPIClient {
 | `package.json`                               | Monorepo workspace config       |
 | `packages/config/src/base.ts`                | Root config schema              |
 | `packages/config/src/dev.ts`                 | Dev command schema              |
-| `packages/cli/src/index.tsx`                 | CLI entry point                 |
-| `packages/cli/src/commands/login.tsx`        | Login command                   |
-| `packages/cli/src/commands/orgs.tsx`         | Organization management         |
-| `packages/cli/src/commands/projects.tsx`     | Project management              |
-| `packages/cli/src/commands/dev.tsx`          | Dev command React-Ink UI        |
-| `packages/cli/src/components/StatusBar.tsx`  | Status display component        |
-| `packages/cli/src/components/SelectList.tsx` | Interactive selection component |
-| `packages/cli/src/hooks/useWatcher.ts`       | File watching hook              |
-| `packages/cli/src/targets/base.ts`           | Target interface                |
-| `packages/cli/src/targets/docker.ts`         | Local Docker target             |
-| `packages/cli/src/targets/embedded.ts`       | Embedded binaries target        |
-| `packages/cli/src/targets/remote.ts`         | Remote branch target            |
-| `packages/cli/src/api/client.ts`             | Base API client with auth       |
-| `packages/cli/src/api/orgs.ts`               | Organization API operations     |
-| `packages/cli/src/api/projects.ts`           | Project API operations          |
-| `packages/cli/src/api/branches.ts`           | Branch API operations           |
-| `packages/cli/src/sync/migrations.ts`        | Migration sync logic            |
-| `packages/cli/src/sync/functions.ts`         | Functions sync logic            |
-| `packages/cli/src/sync/config.ts`            | Config sync logic               |
+| `apps/cli/src/index.tsx`                 | CLI entry point                 |
+| `apps/cli/src/commands/login.tsx`        | Login command                   |
+| `apps/cli/src/commands/orgs.tsx`         | Organization management         |
+| `apps/cli/src/commands/projects.tsx`     | Project management              |
+| `apps/cli/src/commands/dev.tsx`          | Dev command React-Ink UI        |
+| `apps/cli/src/components/StatusBar.tsx`  | Status display component        |
+| `apps/cli/src/components/SelectList.tsx` | Interactive selection component |
+| `apps/cli/src/hooks/useWatcher.ts`       | File watching hook              |
+| `apps/cli/src/targets/base.ts`           | Target interface                |
+| `apps/cli/src/targets/docker.ts`         | Local Docker target             |
+| `apps/cli/src/targets/embedded.ts`       | Embedded binaries target        |
+| `apps/cli/src/targets/remote.ts`         | Remote branch target            |
+| `apps/cli/src/api/client.ts`             | Base API client with auth       |
+| `apps/cli/src/api/orgs.ts`               | Organization API operations     |
+| `apps/cli/src/api/projects.ts`           | Project API operations          |
+| `apps/cli/src/api/branches.ts`           | Branch API operations           |
+| `apps/cli/src/sync/migrations.ts`        | Migration sync logic            |
+| `apps/cli/src/sync/functions.ts`         | Functions sync logic            |
+| `apps/cli/src/sync/config.ts`            | Config sync logic               |

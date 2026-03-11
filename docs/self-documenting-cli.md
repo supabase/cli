@@ -14,13 +14,13 @@ Three global flags power the documentation pipeline:
 | `--skill` | Auto-detect installed AI agents and write SKILL.md files to each agent's skills directory |
 | `--skill-dir <path>` | Write SKILL.md files to a custom directory (useful when no agent is detected or for testing) |
 
-These flags are defined in `packages/cli/src/lib/global-flags.ts` and work from any subcommand position. For example, both `supabase --usage` and `supabase login --usage` emit the same full CLI spec.
+These flags are defined in `apps/cli/src/lib/global-flags.ts` and work from any subcommand position. For example, both `supabase --usage` and `supabase login --usage` emit the same full CLI spec.
 
 ### `--usage`
 
 Outputs the entire command tree as a [usage spec](https://usage.jdx.dev/spec/) in KDL format. This is consumed by shell completion engines and documentation generators.
 
-Implementation: `packages/cli/src/lib/usage-formatter.ts`
+Implementation: `apps/cli/src/lib/usage-formatter.ts`
 
 ### `--skill` and `--skill-dir`
 
@@ -36,17 +36,17 @@ Key files:
 
 | File | Role |
 |------|------|
-| `packages/cli/src/lib/agent-detect.ts` | Filesystem-based agent detection (40+ agents) |
-| `packages/cli/src/lib/skill-writer.ts` | Writes `SKILL.md` files with YAML frontmatter |
-| `packages/cli/src/lib/guide-injector.ts` | Injects auto-generated sections into guide templates |
-| `packages/cli/src/lib/guide-registry.ts` | Maps command paths to guide entries |
+| `apps/cli/src/lib/agent-detect.ts` | Filesystem-based agent detection (40+ agents) |
+| `apps/cli/src/lib/skill-writer.ts` | Writes `SKILL.md` files with YAML frontmatter |
+| `apps/cli/src/lib/guide-injector.ts` | Injects auto-generated sections into guide templates |
+| `apps/cli/src/lib/guide-registry.ts` | Maps command paths to guide entries |
 
 ## Guide files
 
 Each command can have an optional `.guide.md` file colocated with its source:
 
 ```
-packages/cli/src/commands/login/
+apps/cli/src/commands/login/
 ├── login.command.ts
 ├── login.handler.ts
 ├── login.guide.md      ← hand-authored skill template
@@ -85,7 +85,7 @@ This lets authors control the narrative structure (intro, "When to use", "Tips")
 
 ### Registering a guide
 
-Guides are registered in `packages/cli/src/lib/guide-registry.ts`:
+Guides are registered in `apps/cli/src/lib/guide-registry.ts`:
 
 ```ts
 const guides = new Map<string, GuideEntry>([

@@ -1,6 +1,6 @@
 # Effect V4 Platform API Gaps — Supabase CLI Audit
 
-After moving `packages/cli` behind a local platform boundary, the remaining upstream gaps are narrower than they first appeared.
+After moving `apps/cli` behind a local platform boundary, the remaining upstream gaps are narrower than they first appeared.
 
 ## Already Covered by Effect Platform
 

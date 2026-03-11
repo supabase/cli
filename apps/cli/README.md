@@ -5,7 +5,7 @@ CLI for local development and interaction with Supabase. Built with `@stricli/co
 ## Usage
 
 ```sh
-bun run packages/cli/src/index.ts
+bun run apps/cli/src/index.ts
 ```
 
 ## Development

@@ -84,7 +84,7 @@ async function buildTarget(target: (typeof TARGETS)[number]) {
   await mkdir(binDir, { recursive: true });
 
   const outfile = path.join(binDir, `supabase${target.ext}`);
-  const entrypoint = path.join(root, "packages/cli/src/index.ts");
+  const entrypoint = path.join(root, "apps/cli/src/index.ts");
 
   console.log(`[${target.pkg}] Compiling Bun CLI...`);
   await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --outfile=${outfile}`;
@@ -135,7 +135,7 @@ async function archiveTarget(target: (typeof TARGETS)[number]) {
 }
 
 async function buildMuslBinaries() {
-  const entrypoint = path.join(root, "packages/cli/src/index.ts");
+  const entrypoint = path.join(root, "apps/cli/src/index.ts");
 
   await Promise.all(
     MUSL_TARGETS.map(async (target) => {

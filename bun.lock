@@ -5,43 +5,7 @@
     "": {
       "name": "@supabase/root",
     },
-    "apps/docs": {
-      "name": "@supabase/docs",
-      "dependencies": {
-        "@supabase/cli": "workspace:*",
-        "fumadocs-core": "^16.6.15",
-        "fumadocs-mdx": "^14.2.9",
-        "fumadocs-ui": "^16.6.15",
-        "next": "^16.1.6",
-        "react": "^19.2.0",
-        "react-dom": "^19.2.0",
-      },
-      "devDependencies": {
-        "@types/mdx": "^2.0.13",
-        "@types/node": "^25.4.0",
-        "@types/react": "^19.1.8",
-        "@types/react-dom": "^19.1.6",
-        "typescript": "^5.8.3",
-      },
-    },
-    "packages/api": {
-      "name": "@supabase/api",
-      "version": "0.1.0",
-      "dependencies": {
-        "openapi-fetch": "^0.17.0",
-      },
-      "devDependencies": {
-        "@tsconfig/bun": "catalog:",
-        "@types/bun": "catalog:",
-        "@typescript/native-preview": "catalog:",
-        "knip": "catalog:",
-        "openapi-typescript": "^7.13.0",
-        "oxfmt": "catalog:",
-        "oxlint": "catalog:",
-        "oxlint-tsgolint": "catalog:",
-      },
-    },
-    "packages/cli": {
+    "apps/cli": {
       "name": "@supabase/cli",
       "bin": {
         "supabase": "dist/supabase.js",
@@ -80,6 +44,41 @@
         "@supabase/cli-linux-x64": "workspace:*",
         "@supabase/cli-linux-x64-musl": "workspace:*",
         "@supabase/cli-windows-x64": "workspace:*",
+      },
+    },
+    "apps/docs": {
+      "name": "@supabase/docs",
+      "dependencies": {
+        "fumadocs-core": "^16.6.15",
+        "fumadocs-mdx": "^14.2.9",
+        "fumadocs-ui": "^16.6.15",
+        "next": "^16.1.6",
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0",
+      },
+      "devDependencies": {
+        "@types/mdx": "^2.0.13",
+        "@types/node": "^25.4.0",
+        "@types/react": "^19.1.8",
+        "@types/react-dom": "^19.1.6",
+        "typescript": "^5.8.3",
+      },
+    },
+    "packages/api": {
+      "name": "@supabase/api",
+      "version": "0.1.0",
+      "dependencies": {
+        "openapi-fetch": "^0.17.0",
+      },
+      "devDependencies": {
+        "@tsconfig/bun": "catalog:",
+        "@types/bun": "catalog:",
+        "@typescript/native-preview": "catalog:",
+        "knip": "catalog:",
+        "openapi-typescript": "^7.13.0",
+        "oxfmt": "catalog:",
+        "oxlint": "catalog:",
+        "oxlint-tsgolint": "catalog:",
       },
     },
     "packages/cli-darwin-arm64": {
@@ -715,7 +714,7 @@
 
     "@supabase/auth-js": ["@supabase/auth-js@2.99.1", "", { "dependencies": { "tslib": "2.8.1" } }, "sha512-x7lKKTvKjABJt/FYcRSPiTT01Xhm2FF8RhfL8+RHMkmlwmRQ88/lREupIHKwFPW0W6pTCJqkZb7Yhpw/EZ+fNw=="],
 
-    "@supabase/cli": ["@supabase/cli@workspace:packages/cli"],
+    "@supabase/cli": ["@supabase/cli@workspace:apps/cli"],
 
     "@supabase/cli-darwin-arm64": ["@supabase/cli-darwin-arm64@workspace:packages/cli-darwin-arm64"],
 
