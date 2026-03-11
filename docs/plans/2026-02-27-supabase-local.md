@@ -1631,14 +1631,14 @@ export const start = Effect.fnUntraced(function* (_flags: StartFlags) {
   yield* output.success("Local Supabase started", {
     api_url: info.url,
     db_url: info.dbUrl,
-    anon_key: info.anonKey,
-    service_role_key: info.serviceRoleKey,
+    publishable_key: info.publishableKey,
+    secret_key: info.secretKey,
   });
 
   yield* output.info(`API URL: ${info.url}`);
   yield* output.info(`DB URL: ${info.dbUrl}`);
-  yield* output.info(`anon key: ${info.anonKey}`);
-  yield* output.info(`service_role key: ${info.serviceRoleKey}`);
+  yield* output.info(`Publishable key: ${info.publishableKey}`);
+  yield* output.info(`Secret key: ${info.secretKey}`);
 
   // Stream state changes until interrupted
   yield* stack

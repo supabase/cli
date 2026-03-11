@@ -4,8 +4,8 @@ import type { StackInfo } from "@supabase/stack/internals";
 const rows = [
   { emoji: "🌐", label: "API URL", key: "url" },
   { emoji: "🗄️", label: "DB URL", key: "dbUrl" },
-  { emoji: "🔑", label: "anon key", key: "anonJwt" },
-  { emoji: "🔐", label: "service_role key", key: "serviceRoleJwt" },
+  { emoji: "🔑", label: "Publishable key", key: "publishableKey" },
+  { emoji: "🔐", label: "Secret key", key: "secretKey" },
 ] as const;
 
 const labelWidth = 20;

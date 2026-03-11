@@ -864,8 +864,8 @@ interface Stack extends AsyncDisposable {
   // Connection info
   readonly url: string; // proxy listener URL
   readonly dbUrl: string;
-  readonly publishableKey: string; // opaque — use as SDK "anon key"
-  readonly secretKey: string; // opaque — use as SDK "service role key"
+  readonly publishableKey: string; // opaque publishable API key for SDK consumers
+  readonly secretKey: string; // opaque secret API key for privileged SDK consumers
 
   // Stack lifecycle
   start(): Promise<void>;

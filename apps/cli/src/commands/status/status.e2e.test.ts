@@ -21,8 +21,8 @@ describe("supabase status", () => {
         expect(result.stdout).toContain("Local Supabase stack is running.");
         expect(result.stdout).toContain("API URL:");
         expect(result.stdout).toContain("DB URL:");
-        expect(result.stdout).toContain("anon key:");
-        expect(result.stdout).toContain("service_role key:");
+        expect(result.stdout).toContain("Publishable key:");
+        expect(result.stdout).toContain("Secret key:");
         expect(result.stdout).toContain("auth:");
         expect(result.stdout).toContain("postgres:");
         expect(result.stdout).not.toContain("Stack status");
@@ -54,8 +54,8 @@ describe("supabase status", () => {
           readonly running: boolean;
           readonly api_url: string;
           readonly db_url: string;
-          readonly anon_key: string;
-          readonly service_role_key: string;
+          readonly publishable_key: string;
+          readonly secret_key: string;
           readonly services: ReadonlyArray<{ readonly name: string; readonly status: string }>;
         };
 
@@ -65,8 +65,8 @@ describe("supabase status", () => {
         expect(body.db_url).toMatch(
           /^postgresql:\/\/postgres:postgres@127\.0\.0\.1:\d+\/postgres$/,
         );
-        expect(body.anon_key).toBeTruthy();
-        expect(body.service_role_key).toBeTruthy();
+        expect(body.publishable_key).toBeTruthy();
+        expect(body.secret_key).toBeTruthy();
         expect(body.services).toEqual(
           expect.arrayContaining([
             expect.objectContaining({ name: "auth" }),

@@ -51,8 +51,8 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
     running: true,
     api_url: info.url,
     db_url: info.dbUrl,
-    anon_key: info.anonJwt,
-    service_role_key: info.serviceRoleJwt,
+    publishable_key: info.publishableKey,
+    secret_key: info.secretKey,
     services: sortedServices.map((service) => ({
       name: service.name,
       status: service.status,
@@ -77,8 +77,8 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
 
   yield* output.info(`API URL: ${info.url}`);
   yield* output.info(`DB URL: ${info.dbUrl}`);
-  yield* output.info(`anon key: ${info.anonJwt}`);
-  yield* output.info(`service_role key: ${info.serviceRoleJwt}`);
+  yield* output.info(`Publishable key: ${info.publishableKey}`);
+  yield* output.info(`Secret key: ${info.secretKey}`);
 
   for (const service of sortedServices) {
     yield* output.info(formatServiceStateLine(service));
