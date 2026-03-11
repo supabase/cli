@@ -18,14 +18,14 @@
     "knip:fix": "knip-bun --fix"
   },
   "dependencies": {
-    "openapi-fetch": "^0.13.5"
+    "openapi-fetch": "^0.17.0"
   },
   "devDependencies": {
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@typescript/native-preview": "catalog:",
     "knip": "catalog:",
-    "openapi-typescript": "^7.6.1",
+    "openapi-typescript": "^7.13.0",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:"

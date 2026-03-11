@@ -1,0 +1,26 @@
+{
+  "name": "@supabase/docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run generate && next dev",
+    "generate": "bun ../../packages/cli/scripts/generate-docs.ts",
+    "build": "bun run generate && next build"
+  },
+  "dependencies": {
+    "@supabase/cli": "workspace:*",
+    "fumadocs-core": "^16.6.15",
+    "fumadocs-mdx": "^14.2.9",
+    "fumadocs-ui": "^16.6.15",
+    "next": "^16.1.6",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/mdx": "^2.0.13",
+    "@types/node": "^25.4.0",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "typescript": "^5.8.3"
+  }
+}

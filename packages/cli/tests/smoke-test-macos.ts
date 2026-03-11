@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import process from "node:process";
 import { parseArgs } from "node:util";
 import { createTmpDir, runNpmTest } from "./helpers/npm-registry.ts";
 

@@ -1,0 +1,30 @@
+// @supabase/stack — local Supabase stack management
+
+// Re-exports from process-compose
+export type { LogEntry, ServiceState } from "@supabase/process-compose";
+
+// Public error types
+export { StackError, toStackError } from "./errors.ts";
+
+// Stack configuration types
+export type { AuthConfig, PostgresConfig, PostgrestConfig, StackConfig } from "./StackBuilder.ts";
+
+// Service versioning
+export type { ServiceName, VersionManifest } from "./versions.ts";
+export { DEFAULT_VERSIONS } from "./versions.ts";
+
+// Service resolution (for prefetch result type)
+export type { ServiceResolution } from "./resolve.ts";
+
+// Prefetching
+export type { PrefetchOptions, PrefetchResult } from "./prefetch.ts";
+
+// Public API
+export type {
+  PlatformFactory,
+  PlatformLayer,
+  PlatformServices,
+  ReadyOptions,
+  StackHandle,
+} from "./createStack.ts";
+export { createStack } from "./createStack.ts";

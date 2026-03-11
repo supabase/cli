@@ -2,7 +2,8 @@
   "name": "@supabase/cli",
   "private": false,
   "bin": {
-    "supabase": "dist/bin.js"
+    "supabase": "dist/supabase.js",
+    "supabase-proxy": "dist/bin.js"
   },
   "files": [
     "dist/"
@@ -12,8 +13,8 @@
     "access": "public"
   },
   "scripts": {
-    "build": "bun build src/bin.ts --outdir dist --target node",
-    "test": "bun test --concurrent",
+    "build": "bun build src/cli/bin.ts --outfile dist/supabase.js --target node && bun build src/cli/proxy.ts --outfile dist/bin.js --target node",
+    "test": "bun --bun vitest run",
     "test:smoke": "bun run tests/smoke-test.ts",
     "types:check": "tsgo --noEmit",
     "lint:check": "oxlint --deny-warnings",
@@ -23,15 +24,30 @@
     "knip:check": "knip-bun",
     "knip:fix": "knip-bun --fix"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@clack/prompts": "^1.1.0",
+    "@effect/atom-react": "catalog:",
+    "@effect/platform-bun": "catalog:",
+    "@napi-rs/keyring": "^1.1.2",
+    "@supabase/api": "workspace:*",
+    "@supabase/stack": "workspace:*",
+    "effect": "catalog:",
+    "ink": "^6.8.0",
+    "ink-spinner": "^5.0.0",
+    "react": "^19.2.4"
+  },
   "devDependencies": {
+    "@effect/vitest": "catalog:",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
+    "@types/react": "^19.2.14",
     "@typescript/native-preview": "catalog:",
+    "@vitest/coverage-istanbul": "catalog:",
     "knip": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
-    "oxlint-tsgolint": "catalog:"
+    "oxlint-tsgolint": "catalog:",
+    "vitest": "catalog:"
   },
   "optionalDependencies": {
     "@supabase/cli-darwin-arm64": "workspace:*",
@@ -44,8 +60,10 @@
   },
   "knip": {
     "entry": [
-      "src/index.ts",
-      "src/bin.ts",
+      "src/cli/proxy.ts",
+      "src/cli/bin.ts",
+      "src/**/*.test.ts",
+      "src/**/*.e2e.test.ts",
       "scripts/*.ts",
       "tests/*.ts"
     ],
@@ -56,6 +74,10 @@
       "brew",
       "scoop",
       "supabase"
+    ],
+    "ignoreDependencies": [
+      "@supabase/api",
+      "@supabase/stack"
     ]
   }
 }

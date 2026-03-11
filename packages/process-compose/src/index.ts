@@ -1,94 +1,42 @@
-// Main exports
-export { loadConfig, parseEnvironment } from "./config/loader.ts";
-export { createOrchestrator, type Orchestrator } from "./core/orchestrator.ts";
-export { createApiServer, type ApiServer } from "./api/server.ts";
-export { createLogger, type Logger } from "./logging/logger.ts";
-
-// Type exports
 export type {
-  ProjectConfig,
-  ProcessConfig,
-  DependencyConfig,
+  DependencyCondition,
+  Dependency,
+  ExternalCleanupAction,
   ProbeConfig,
-  ExecProbeConfig,
-  HttpProbeConfig,
+  HealthCheckConfig,
   ShutdownConfig,
-  AvailabilityConfig,
-  ProcessStatus,
-  HealthStatus,
-  ProcessState,
-  ProcessesState,
-  LogsResponse,
-  ProcessEvent,
-} from "./types.ts";
+  RestartPolicy,
+  SupervisionConfig,
+  HookTrigger,
+  HookLog,
+  LifecycleHook,
+  OrchestratorConfig,
+  ServiceDef,
+} from "./ServiceDef.ts";
+export { defaults } from "./ServiceDef.ts";
 
-// Convenience function to start everything
-export interface ProcessComposeOptions {
-  configPath: string;
-  apiPort?: number;
-  startApi?: boolean;
-}
+export type { ServiceStatus } from "./ServiceState.ts";
+export { ServiceState, initial } from "./ServiceState.ts";
 
-export interface ProcessCompose {
-  orchestrator: import("./core/orchestrator.ts").Orchestrator;
-  api: import("./api/server.ts").ApiServer | null;
-  start(): Promise<void>;
-  stop(): Promise<void>;
-}
+export {
+  CyclicDependencyError,
+  MissingDependencyError,
+  ServiceNotFoundError,
+  ServiceReadyError,
+  SpawnError,
+  ShutdownTimeoutError,
+} from "./errors.ts";
 
-/**
- * Create and start a process-compose instance from a YAML file
- */
-export async function createProcessCompose(
-  options: ProcessComposeOptions,
-): Promise<ProcessCompose> {
-  const { loadConfig } = await import("./config/loader.ts");
-  const { createOrchestrator } = await import("./core/orchestrator.ts");
-  const { createApiServer } = await import("./api/server.ts");
+export type { LogEntry } from "./LogBuffer.ts";
+export { LogBuffer } from "./LogBuffer.ts";
 
-  const config = await loadConfig(options.configPath);
-  const orchestrator = createOrchestrator(config);
+export type { ResolvedGraph } from "./DependencyGraph.ts";
+export { buildGraph } from "./DependencyGraph.ts";
 
-  const api =
-    options.startApi !== false ? createApiServer(orchestrator, options.apiPort ?? 8080) : null;
+export type { HealthProbeCallbacks } from "./HealthProbe.ts";
+export { makeSupervisedCommand, supervisorRuntimePath, usesSupervisor } from "./Supervisor.ts";
 
-  let stopped = false;
+export type { ServiceEvent } from "./ServiceTransition.ts";
+export { applyEvent, transition } from "./ServiceTransition.ts";
 
-  async function stop(): Promise<void> {
-    if (stopped) return;
-    stopped = true;
-
-    // Remove signal handlers to allow process to exit
-    process.off("SIGINT", handleSignal);
-    process.off("SIGTERM", handleSignal);
-
-    await orchestrator.stop();
-    if (api) {
-      api.stop();
-    }
-  }
-
-  async function handleSignal(): Promise<void> {
-    console.log("\nReceived shutdown signal, stopping...");
-    await stop();
-    process.exit(0);
-  }
-
-  async function start(): Promise<void> {
-    if (api) {
-      api.start();
-    }
-    await orchestrator.start();
-  }
-
-  // Handle shutdown signals
-  process.on("SIGINT", handleSignal);
-  process.on("SIGTERM", handleSignal);
-
-  return {
-    orchestrator,
-    api,
-    start,
-    stop,
-  };
-}
+export { Orchestrator } from "./Orchestrator.ts";

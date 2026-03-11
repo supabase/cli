@@ -1,5 +1,6 @@
 import { $ } from "bun";
 import path from "node:path";
+import process from "node:process";
 import { parseArgs } from "node:util";
 
 const { values } = parseArgs({

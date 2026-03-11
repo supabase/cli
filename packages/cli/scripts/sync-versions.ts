@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import path from "node:path";
+import process from "node:process";
 
 const ALL_PACKAGES = [
   "cli",

@@ -1,5 +1,6 @@
 import { $ } from "bun";
 import path from "node:path";
+import process from "node:process";
 import { parseArgs } from "node:util";
 import { runNpmTest } from "./helpers/npm-registry.ts";
 

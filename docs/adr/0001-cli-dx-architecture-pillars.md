@@ -256,14 +256,13 @@ Error codes enable LLM agents to handle errors programmatically, documentation t
 
 **Exit codes**:
 
-| Code | Meaning                                   |
-| ---- | ----------------------------------------- |
-| 0    | Success                                   |
-| 1    | General error (command failed)            |
-| 2    | Usage error (invalid arguments/flags)     |
-| 3    | Auth error (not logged in, token expired) |
-| 4    | Network error (API unreachable)           |
-| 130  | Interrupted (Ctrl+C)                      |
+| Code | Meaning            |
+| ---- | ------------------ |
+| 0    | Success            |
+| 1    | Any error          |
+| 130  | Interrupted (Ctrl+C) |
+
+Error categorization (auth vs network vs usage) is communicated through the structured error output (`error.code` field in JSON), not through exit codes. This matches the convention used by most production CLIs (Terraform, kubectl, Wrangler, Vercel).
 
 ### Pillar 5: Observability & Performance
 
@@ -431,26 +430,26 @@ test("non-TTY stdout produces JSON automatically", async () => {
 **b) Error paths** — LLMs hit errors constantly and rely on structured error output to recover:
 
 ```typescript
-test("auth failure returns exit code 3 and structured error", async () => {
+test("auth failure returns exit code 1 and structured error", async () => {
   const proc = Bun.spawn(["bun", "run", "packages/cli/src/index.ts", "projects"], {
     env: { ...process.env, SUPABASE_ACCESS_TOKEN: "" },
     stdout: "pipe",
   });
   const stdout = await new Response(proc.stdout).text();
   const parsed = JSON.parse(stdout);
-  expect(proc.exitCode).toBe(3);
+  expect(proc.exitCode).toBe(1);
   expect(parsed.ok).toBe(false);
   expect(parsed.error.code).toBe("AUTH_TOKEN_MISSING");
   expect(parsed.error.suggestion).toBeDefined();
 });
 
-test("invalid flag returns exit code 2", async () => {
+test("invalid flag returns exit code 1", async () => {
   const proc = Bun.spawn(["bun", "run", "packages/cli/src/index.ts", "--bogus"], {
     stdout: "pipe",
     stderr: "pipe",
   });
   await proc.exited;
-  expect(proc.exitCode).toBe(2);
+  expect(proc.exitCode).toBe(1);
 });
 ```
 

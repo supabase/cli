@@ -1,0 +1,55 @@
+import { NodeServices } from "@effect/platform-node";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import { createServer } from "node:http";
+import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { Effect, Layer } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
+import { BinaryResolver } from "./BinaryResolver.ts";
+import {
+  createStack as createStackCore,
+  type PlatformFactory,
+  type StackHandle,
+} from "./createStack.ts";
+import {
+  prefetch as prefetchEffect,
+  type PrefetchOptions,
+  type PrefetchResult,
+} from "./prefetch.ts";
+import type { StackConfig } from "./StackBuilder.ts";
+
+// ---------------------------------------------------------------------------
+// Platform values — for use with Effect layer factories
+// ---------------------------------------------------------------------------
+
+/** Node platform factory for use with foregroundLayer / daemonLayer. */
+export const platformFactory: PlatformFactory = (apiPort) =>
+  Layer.mergeAll(
+    NodeServices.layer,
+    NodeHttpServer.layer(() => createServer(), { port: apiPort }).pipe(Layer.orDie),
+  );
+
+/** Path to the Node daemon entry point for use with daemonLayer. */
+export const daemonEntryPoint: string = fileURLToPath(new URL("./daemon-node.ts", import.meta.url));
+
+// ---------------------------------------------------------------------------
+// Promise API — convenience wrappers for non-Effect consumers
+// ---------------------------------------------------------------------------
+
+export async function createStack(config?: StackConfig): Promise<StackHandle> {
+  return createStackCore(config, platformFactory);
+}
+
+export async function prefetch(options?: PrefetchOptions): Promise<PrefetchResult> {
+  const home = `${homedir()}/.supabase`;
+  const resolverLayer = BinaryResolver.make(home).pipe(Layer.provide(FetchHttpClient.layer));
+  return Effect.runPromise(
+    prefetchEffect(options).pipe(Effect.provide(resolverLayer), Effect.provide(NodeServices.layer)),
+  );
+}
+
+export type { PlatformFactory, PlatformLayer, StackHandle } from "./createStack.ts";
+export type { PrefetchOptions, PrefetchResult } from "./prefetch.ts";
+export type { ServiceResolution } from "./resolve.ts";
+export type { AuthConfig, PostgresConfig, PostgrestConfig, StackConfig } from "./StackBuilder.ts";
+export type { VersionManifest } from "./versions.ts";

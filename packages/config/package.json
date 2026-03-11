@@ -18,7 +18,7 @@
     "knip:fix": "knip-bun --fix"
   },
   "dependencies": {
-    "dedent": "^1.7.1",
+    "dedent": "^1.7.2",
     "jsonv-ts": "^0.10.1"
   },
   "devDependencies": {

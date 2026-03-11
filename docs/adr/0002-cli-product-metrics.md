@@ -64,14 +64,14 @@ We define 5 metric categories with specific signals to track. All metrics are de
 
 ### Infrastructure
 
-Two remote services handle distinct concerns:
+A single OpenTelemetry-based pipeline handles all concerns — product analytics, performance traces, and error diagnostics. The backend evolves in phases:
 
-| Service | Purpose | Data | Consent |
+| Phase | Backend | Purpose | Status |
 |---|---|---|---|
-| **PostHog** | Product analytics — all 5 metric categories | `TelemetryEvent` (anonymous usage) | Opt-in |
-| **Sentry** | Product health — crash reporting, error diagnostics | Errors with stack traces and context | Opt-in (same consent) |
+| **Phase 1** | **Sentry** (via `@sentry/bun`) | All 5 metric categories + error diagnostics + performance traces | Now |
+| **Phase 2** | **Grafana** (company-owned) | Long-term analytics + custom observability dashboards | Future |
 
-ADR 0001 Pillar 5 and this ADR share infrastructure. No separate metrics SDK and tracing SDK — one telemetry event schema, one write path, one consent model.
+Both phases consume the same OTel spans with the same attributes. The CLI code does not change between phases — only the exporter configuration. ADR 0001 Pillar 5 and this ADR share infrastructure — one telemetry event schema, one write path, one consent model.
 
 ### Telemetry Event Schema
 

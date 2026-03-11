@@ -2,30 +2,39 @@
   "name": "@supabase/process-compose",
   "version": "0.1.0",
   "private": true,
-  "bin": {
-    "process-compose": "./src/cli.ts"
-  },
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "bun test --concurrent",
+    "test": "bun --bun vitest run",
     "types:check": "tsgo --noEmit",
-    "lint:check": "oxlint --type-aware --deny-warnings",
-    "lint:fix": "oxlint --type-aware --deny-warnings --fix",
+    "lint:check": "oxlint --deny-warnings",
+    "lint:fix": "oxlint --deny-warnings --fix",
     "fmt:check": "oxfmt --check",
     "fmt:fix": "oxfmt",
     "knip:check": "knip-bun",
     "knip:fix": "knip-bun --fix"
   },
+  "dependencies": {
+    "@effect/platform-bun": "catalog:",
+    "effect": "catalog:"
+  },
   "devDependencies": {
+    "@effect/vitest": "catalog:",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@typescript/native-preview": "catalog:",
     "knip": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
-    "oxlint-tsgolint": "catalog:"
+    "oxlint-tsgolint": "catalog:",
+    "vitest": "catalog:"
+  },
+  "knip": {
+    "entry": [
+      "src/**/*.test.ts",
+      "tests/**/*.ts"
+    ]
   }
 }
