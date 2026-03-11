@@ -24,6 +24,7 @@
     }
   },
   "scripts": {
-    "repos:pull": "for d in .repos/*/; do (cd \"$d\" && git pull) || true; done"
+    "repos:install": "git submodule update --init --recursive",
+    "repos:pull": "git submodule update --remote"
   }
 }

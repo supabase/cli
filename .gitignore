@@ -1,7 +1,6 @@
 node_modules
 dist
 .env
-.repos/
 .claude/
 .agents/.repos/effect-v3
 .worktrees/

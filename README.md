@@ -2,6 +2,18 @@
 
 Playground for exploring the next version of the Supabase CLI.
 
+## Setup
+
+```sh
+bun install
+```
+
+Optional: clone the reference repos in `.repos/` for local learning and development:
+
+```sh
+git submodule update --init --recursive
+```
+
 ## Packages
 
 | Package | Description |

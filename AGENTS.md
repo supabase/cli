@@ -26,6 +26,8 @@ All packages should follow this standard structure (see `packages/process-compos
 
 The complete source code for the `effect` library (V4) is in `.repos/effect/`. Study types, APIs, and patterns there instead of `node_modules/`.
 
+If `.repos/effect/` is missing in a fresh clone, run `git submodule update --init --recursive` from the repo root first.
+
 Key packages:
 - `.repos/effect/packages/effect/` — core `effect` library
 - `.repos/effect/packages/vitest/` — `@effect/vitest` test helpers
