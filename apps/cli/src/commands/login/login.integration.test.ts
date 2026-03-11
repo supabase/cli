@@ -121,6 +121,9 @@ describe("login", () => {
         yield* login({ ...NO_FLAGS, token: Option.some(VALID_TOKEN) });
         expect(creds.savedToken).toBe(VALID_TOKEN);
         expect(out.messages).toContainEqual(
+          expect.objectContaining({ type: "intro", message: "Log in to Supabase" }),
+        );
+        expect(out.messages).toContainEqual(
           expect.objectContaining({ type: "success", message: "Logged in successfully." }),
         );
       }).pipe(Effect.provide(layer));

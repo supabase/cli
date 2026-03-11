@@ -65,6 +65,9 @@ describe("start", () => {
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "Local Supabase started" }),
       );
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({ type: "outro", message: "Local Supabase stack is ready." }),
+      );
 
       const infoMessages = out.messages.filter((message) => message.type === "info");
       expect(infoMessages).toContainEqual(

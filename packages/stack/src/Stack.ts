@@ -46,8 +46,12 @@ export class Stack extends ServiceMap.Service<
     ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError>;
     readonly waitAllReady: () => Effect.Effect<void, ServiceReadyError>;
     readonly subscribeLogs: (name: string) => Stream.Stream<LogEntry>;
-    readonly subscribeAllLogs: () => Stream.Stream<LogEntry>;
+    readonly subscribeAllLogs: (services?: ReadonlyArray<string>) => Stream.Stream<LogEntry>;
     readonly logHistory: (name: string, limit?: number) => Effect.Effect<ReadonlyArray<LogEntry>>;
+    readonly logHistoryAll: (
+      limit?: number,
+      services?: ReadonlyArray<string>,
+    ) => Effect.Effect<ReadonlyArray<LogEntry>>;
   }
 >()("stack/Stack") {
   static layer = (
@@ -115,8 +119,14 @@ export class Stack extends ServiceMap.Service<
           waitReady: (name) => orchestrator.waitReady(name),
           waitAllReady: () => orchestrator.waitAllReady(),
           subscribeLogs: (name) => logBuffer.subscribe(name),
-          subscribeAllLogs: () => logBuffer.subscribeAll(),
+          subscribeAllLogs: (services) =>
+            services === undefined || services.length === 0
+              ? logBuffer.subscribeAll()
+              : logBuffer
+                  .subscribeAll()
+                  .pipe(Stream.filter((entry) => services.includes(entry.service))),
           logHistory: (name, limit) => logBuffer.history(name, limit),
+          logHistoryAll: (limit, services) => logBuffer.historyAll(limit, services),
         };
 
         yield* Effect.addFinalizer(disposeOnce);

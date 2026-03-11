@@ -1,32 +1,89 @@
 import { Effect } from "effect";
-import { listStacks } from "@supabase/stack/internals";
+import { connectLayer, Stack } from "@supabase/stack/internals";
 import { CliConfig } from "../../config/cli-config.service.ts";
 import { Output } from "../../output/output.service.ts";
+import { RuntimeInfo } from "../../runtime/runtime-info.service.ts";
 import type { StatusFlags } from "./status.command.ts";
+import { toDisplayStates } from "../../stack/display-states.ts";
+
+const READY_STATUSES = new Set(["Healthy", "Running"]);
+
+function formatServiceStateLine(service: {
+  readonly name: string;
+  readonly status: string;
+  readonly error: string | null;
+}) {
+  return service.error == null
+    ? `${service.name}: ${service.status}`
+    : `${service.name}: ${service.status} (${service.error})`;
+}
 
 export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
   const output = yield* Output;
   const cliConfig = yield* CliConfig;
-  const stacks = yield* listStacks({ home: cliConfig.supabaseHome });
+  const runtimeInfo = yield* RuntimeInfo;
 
-  if (stacks.length === 0) {
-    yield* output.info("No local Supabase stacks found.");
+  yield* output.intro("Show local Supabase stack status");
+
+  const layer = yield* connectLayer({
+    cwd: runtimeInfo.cwd,
+    home: cliConfig.supabaseHome,
+  }).pipe(Effect.option);
+
+  if (layer._tag === "None") {
+    const message = "No local Supabase stack is running for this project.";
+    if (output.format === "text") {
+      yield* output.outro(message);
+      return;
+    }
+
+    yield* output.success(message, { running: false });
     return;
   }
 
-  for (const stack of stacks) {
-    const state = stack.alive ? "running" : "stopped";
-    yield* output.info(`${stack.name} (${state}) - ${stack.url}`);
+  const stack = yield* Effect.provide(Stack.asEffect(), layer.value);
+  const [info, services] = yield* Effect.all([stack.getInfo(), stack.getAllStates()]);
+  const displayServices = [...toDisplayStates(services)].sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
+  const allReady = displayServices.every((service) => READY_STATUSES.has(service.status));
+  const message = allReady
+    ? "Local Supabase stack is running."
+    : "Local Supabase stack is running, but some services are not ready.";
+  const data = {
+    running: true,
+    api_url: info.url,
+    db_url: info.dbUrl,
+    anon_key: info.anonJwt,
+    service_role_key: info.serviceRoleJwt,
+    services: displayServices.map((service) => ({
+      name: service.name,
+      status: service.status,
+      pid: service.pid,
+      exit_code: service.exitCode,
+      restart_count: service.restartCount,
+      started_at: service.startedAt,
+      error: service.error,
+    })),
+  };
+
+  if (output.format !== "text") {
+    yield* output.success(message, data);
+    return;
   }
 
-  yield* output.success("Stack status", {
-    stacks: stacks.map((s) => ({
-      name: s.name,
-      alive: s.alive,
-      pid: s.pid,
-      url: s.url,
-      db_url: s.dbUrl,
-      started_at: s.startedAt,
-    })),
-  });
+  if (allReady) {
+    yield* output.success(message);
+  } else {
+    yield* output.warn(message);
+  }
+
+  yield* output.info(`API URL: ${info.url}`);
+  yield* output.info(`DB URL: ${info.dbUrl}`);
+  yield* output.info(`anon key: ${info.anonJwt}`);
+  yield* output.info(`service_role key: ${info.serviceRoleJwt}`);
+
+  for (const service of displayServices) {
+    yield* output.info(formatServiceStateLine(service));
+  }
 });

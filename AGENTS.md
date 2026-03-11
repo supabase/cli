@@ -58,6 +58,7 @@ Key references:
 ## Code Quality
 
 Run quality checks from the workspace directory you changed. Do not consider a task complete until all relevant scripts pass.
+Do not waive or defer failing checks in a changed workspace as "pre-existing". If a required check fails, fix it before closing the task. Only treat a failure as an external blocker when it cannot be resolved within the workspace, and in that case call it out explicitly.
 
 For the standard Bun/TypeScript workspaces:
 

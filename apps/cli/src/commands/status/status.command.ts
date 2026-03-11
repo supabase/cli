@@ -9,8 +9,8 @@ const flags = {} as const;
 export type StatusFlags = CliCommand.Command.Config.Infer<typeof flags>;
 
 export const statusCommand = Command.make("status", flags).pipe(
-  Command.withDescription("Show status of local Supabase stacks."),
-  Command.withShortDescription("Show local stack status"),
+  Command.withDescription("Show the current local Supabase stack status."),
+  Command.withShortDescription("Show local stack connection info and service status"),
   Command.withHandler((flags) =>
     status(flags).pipe(Effect.withSpan("command.status"), withJsonErrorHandling),
   ),

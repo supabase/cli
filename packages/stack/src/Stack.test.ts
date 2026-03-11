@@ -216,6 +216,17 @@ describe("Stack", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("logHistoryAll returns empty array initially", () => {
+    const { layer } = setupLayer();
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      const logs = yield* stack.logHistoryAll();
+
+      expect(logs).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("startService fails with ServiceNotFoundError for unknown service", () => {
     const { layer } = setupLayer();
 

@@ -20,7 +20,13 @@ describe("status handler", () => {
     return Effect.gen(function* () {
       yield* status({});
       expect(out.messages).toContainEqual(
-        expect.objectContaining({ type: "info", message: "No local Supabase stacks found." }),
+        expect.objectContaining({ type: "intro", message: "Show local Supabase stack status" }),
+      );
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "outro",
+          message: "No local Supabase stack is running for this project.",
+        }),
       );
     }).pipe(Effect.provide(layer), Effect.provide(withEnv({ SUPABASE_HOME: home })));
   });

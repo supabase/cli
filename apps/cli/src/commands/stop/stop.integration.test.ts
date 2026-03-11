@@ -21,7 +21,7 @@ describe("stop handler", () => {
       // Will fail with NoRunningStackError since no stacks exist, but intro should be emitted
       yield* stop({}).pipe(Effect.exit);
       expect(out.messages).toContainEqual(
-        expect.objectContaining({ type: "intro", message: "Stopping local Supabase stack..." }),
+        expect.objectContaining({ type: "intro", message: "Stop local Supabase stack" }),
       );
     }).pipe(Effect.provide(layer), Effect.provide(withEnv({ SUPABASE_HOME: home })));
   });

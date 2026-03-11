@@ -47,6 +47,24 @@ function fetchJson<A>(socketPath: string, path: string, method = "GET"): Effect.
   });
 }
 
+function encodeSearchParams(
+  params: Record<string, string | number | ReadonlyArray<string> | undefined>,
+): string {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        searchParams.append(key, item);
+      }
+      continue;
+    }
+    searchParams.set(key, String(value));
+  }
+  const query = searchParams.toString();
+  return query.length > 0 ? `?${query}` : "";
+}
+
 /** Convert a ReadableStream SSE body into an Effect Stream of parsed events. */
 function sseStream<A>(
   socketPath: string,
@@ -267,12 +285,23 @@ export const RemoteStack = {
       subscribeLogs: (name: string) =>
         sseStream<LogEntry>(socketPath, `/logs/${name}`, (data) => JSON.parse(data) as LogEntry),
 
-      subscribeAllLogs: () =>
-        sseStream<LogEntry>(socketPath, "/logs", (data) => JSON.parse(data) as LogEntry),
+      subscribeAllLogs: (services) => {
+        const query = encodeSearchParams({ service: services });
+        return sseStream<LogEntry>(
+          socketPath,
+          `/logs${query}`,
+          (data) => JSON.parse(data) as LogEntry,
+        );
+      },
 
       logHistory: (name: string, limit?: number) => {
         const query = limit !== undefined ? `?limit=${limit}` : "";
         return fetchJson<ReadonlyArray<LogEntry>>(socketPath, `/logs/${name}/history${query}`);
+      },
+
+      logHistoryAll: (limit?: number, services?: ReadonlyArray<string>) => {
+        const query = encodeSearchParams({ limit, service: services });
+        return fetchJson<ReadonlyArray<LogEntry>>(socketPath, `/logs/history${query}`);
       },
     }),
 };

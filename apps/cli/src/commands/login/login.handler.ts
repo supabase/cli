@@ -61,8 +61,6 @@ const browserOAuthFlow = Effect.fnUntraced(function* (flags: LoginFlags) {
   const browser = yield* Browser;
   const output = yield* Output;
 
-  yield* output.intro("Log in to Supabase");
-
   // Check if already logged in
   const existingToken = yield* credentials.getAccessToken;
   if (Option.isSome(existingToken)) {
@@ -154,6 +152,9 @@ const browserOAuthFlow = Effect.fnUntraced(function* (flags: LoginFlags) {
 // ---------------------------------------------------------------------------
 
 export const login = Effect.fnUntraced(function* (flags: LoginFlags) {
+  const output = yield* Output;
+  yield* output.intro("Log in to Supabase");
+
   const resolved = yield* resolveToken(flags.token);
   if (Option.isSome(resolved)) {
     return yield* saveDirectToken(resolved.value);

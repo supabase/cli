@@ -8,6 +8,14 @@ export type StreamEvent =
       readonly timestamp: string;
     }
   | {
+      readonly type: "log-entry";
+      readonly timestamp: string;
+      readonly service: string;
+      readonly stream: "stdout" | "stderr";
+      readonly line: string;
+      readonly source: "history" | "live";
+    }
+  | {
       readonly type: "result";
       readonly data: unknown;
       readonly timestamp: string;

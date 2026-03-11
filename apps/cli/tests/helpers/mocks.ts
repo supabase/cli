@@ -195,6 +195,16 @@ export function mockOutput(
         Effect.sync(() => {
           messages.push({ type: "error", message });
         }),
+      event: (event) =>
+        Effect.sync(() => {
+          messages.push({
+            type: "info",
+            message:
+              event.type === "log-entry"
+                ? `[${event.service}] ${event.line}`
+                : JSON.stringify(event),
+          });
+        }),
       success: (message: string, data?: Record<string, unknown>) =>
         Effect.sync(() => {
           messages.push({ type: "success", message, data });
@@ -375,6 +385,7 @@ export function mockStack(
       subscribeLogs: () => Stream.empty,
       subscribeAllLogs: () => Stream.empty,
       logHistory: () => Effect.succeed([]),
+      logHistoryAll: () => Effect.succeed([]),
     }),
     get started() {
       return started;

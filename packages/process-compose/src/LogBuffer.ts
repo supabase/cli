@@ -20,6 +20,10 @@ export class LogBuffer extends ServiceMap.Service<
     readonly subscribe: (service: string) => Stream.Stream<LogEntry>;
     readonly subscribeAll: () => Stream.Stream<LogEntry>;
     readonly history: (service: string, limit?: number) => Effect.Effect<ReadonlyArray<LogEntry>>;
+    readonly historyAll: (
+      limit?: number,
+      services?: ReadonlyArray<string>,
+    ) => Effect.Effect<ReadonlyArray<LogEntry>>;
     readonly truncate: (service: string) => Effect.Effect<void>;
   }
 >()("process-compose/LogBuffer") {
@@ -76,6 +80,22 @@ export class LogBuffer extends ServiceMap.Service<
             const { buffer } = yield* getOrCreate(service);
             const all = Ref.getUnsafe(buffer);
             return all.slice(-limit);
+          }),
+
+        historyAll: (limit = 100, services) =>
+          Effect.gen(function* () {
+            const selectedServices =
+              services === undefined || services.length === 0
+                ? [...serviceBuffers.keys()]
+                : services;
+
+            const entries: Array<LogEntry> = [];
+            for (const service of selectedServices) {
+              const { buffer } = yield* getOrCreate(service);
+              entries.push(...Ref.getUnsafe(buffer));
+            }
+
+            return entries.sort((a, b) => a.timestamp - b.timestamp).slice(-limit);
           }),
 
         truncate: (service) =>

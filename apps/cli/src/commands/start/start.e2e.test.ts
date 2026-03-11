@@ -24,6 +24,33 @@ describe("supabase start", () => {
   );
 
   test(
+    "shows the intro and normalized error when detached start is already running",
+    { timeout: START_TIMEOUT_MS },
+    async () => {
+      const home = makeTempHome();
+
+      try {
+        const first = await runSupabase(["start", "--detach"], { home: home.dir });
+        expect(first.exitCode).toBe(0);
+
+        const second = await runSupabase(["start", "--detach"], { home: home.dir });
+        const output = `${second.stdout}${second.stderr}`;
+
+        expect(second.exitCode).toBe(1);
+        expect(output).toContain("Start local Supabase stack");
+        expect(output).toContain('A Supabase stack "cli" is already running');
+        expect(output).not.toContain('Use "supabase stop" first.');
+        expect(output).toContain(
+          "Use `supabase stop` before starting another stack for this project.",
+        );
+      } finally {
+        await runSupabase(["stop"], { home: home.dir }).catch(() => {});
+        home[Symbol.dispose]();
+      }
+    },
+  );
+
+  test(
     "starts in foreground mode and streams startup output",
     { timeout: START_TIMEOUT_MS },
     async () => {
@@ -36,7 +63,7 @@ describe("supabase start", () => {
           untilTimeoutMs: START_TIMEOUT_MS,
         });
         expect(exitCode).toBe(0);
-        expect(stdout).toContain("Starting local Supabase stack...");
+        expect(stdout).toContain("Start local Supabase stack");
         expect(stdout).toContain("Local Supabase started");
         expect(stdout).toContain("API URL:");
       } finally {

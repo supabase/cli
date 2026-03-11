@@ -104,9 +104,21 @@ function mockStack() {
     waitAllReady: () => Effect.void,
     subscribeLogs: (name: string) =>
       Stream.fromIterable(MOCK_LOGS.filter((l) => l.service === name)),
-    subscribeAllLogs: () => Stream.fromIterable(MOCK_LOGS),
+    subscribeAllLogs: (services?: ReadonlyArray<string>) =>
+      Stream.fromIterable(
+        services === undefined || services.length === 0
+          ? MOCK_LOGS
+          : MOCK_LOGS.filter((l) => services.includes(l.service)),
+      ),
     logHistory: (name: string, limit?: number) =>
       Effect.succeed(MOCK_LOGS.filter((l) => l.service === name).slice(-(limit ?? 100))),
+    logHistoryAll: (limit?: number, services?: ReadonlyArray<string>) =>
+      Effect.succeed(
+        (services === undefined || services.length === 0
+          ? MOCK_LOGS
+          : MOCK_LOGS.filter((l) => services.includes(l.service))
+        ).slice(-(limit ?? 100)),
+      ),
   });
 
   return {
@@ -235,6 +247,17 @@ describe("RemoteStack integration", () => {
             const res = await fetch(`${url}/logs/${name}/history${query}`);
             return (await res.json()) as ReadonlyArray<LogEntry>;
           }),
+        logHistoryAll: (limit?: number, services?: ReadonlyArray<string>) =>
+          Effect.promise(async () => {
+            const searchParams = new URLSearchParams();
+            if (limit !== undefined) searchParams.set("limit", String(limit));
+            for (const service of services ?? []) {
+              searchParams.append("service", service);
+            }
+            const query = searchParams.toString();
+            const res = await fetch(`${url}/logs/history${query.length > 0 ? `?${query}` : ""}`);
+            return (await res.json()) as ReadonlyArray<LogEntry>;
+          }),
       }),
     );
   });
@@ -317,6 +340,21 @@ describe("RemoteStack integration", () => {
     );
     expect(entries).toHaveLength(1);
     expect(entries.at(0)?.line).toBe("ready");
+  });
+
+  test("logHistoryAll returns merged entries", async () => {
+    const entries = await clientRuntime.runPromise(
+      Effect.flatMap(Stack.asEffect(), (stack) => stack.logHistoryAll(3)),
+    );
+    expect(entries.map((entry) => entry.line)).toEqual(["starting", "ready", "auth started"]);
+  });
+
+  test("logHistoryAll respects service filters", async () => {
+    const entries = await clientRuntime.runPromise(
+      Effect.flatMap(Stack.asEffect(), (stack) => stack.logHistoryAll(10, ["auth"])),
+    );
+    expect(entries).toHaveLength(1);
+    expect(entries.at(0)?.service).toBe("auth");
   });
 
   test("stop calls through to daemon", async () => {

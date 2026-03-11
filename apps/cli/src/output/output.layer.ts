@@ -9,6 +9,7 @@ import {
   progress as clackProgress,
   text,
 } from "@clack/prompts";
+import { styleText } from "node:util";
 import { Effect, Layer, Stdio, Stream } from "effect";
 
 import { Tty } from "../runtime/tty.service.ts";
@@ -35,6 +36,10 @@ export const textOutputLayer = Layer.effect(
       info: (message: string) => Effect.sync(() => log.info(message)),
       warn: (message: string) => Effect.sync(() => log.warn(message)),
       error: (message: string) => Effect.sync(() => log.error(message)),
+      event: (event: StreamEvent) =>
+        event.type === "log-entry"
+          ? Effect.sync(() => log.info(`[${event.service}] ${event.line}`))
+          : Effect.sync(() => log.info(JSON.stringify(event))),
       promptText: (
         message: string,
         opts?: { validate?: (v: string) => string | undefined; defaultValue?: string },
@@ -84,7 +89,18 @@ export const textOutputLayer = Layer.effect(
           };
         }),
       success: (message: string) => Effect.sync(() => log.success(message)),
-      fail: () => Effect.void,
+      fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
+        Effect.gen(function* () {
+          yield* Effect.sync(() => log.error(styleText("red", err.message)));
+          const detail = err.detail;
+          if (detail) {
+            yield* Effect.sync(() => log.message(styleText("gray", detail)));
+          }
+          const suggestion = err.suggestion;
+          if (suggestion) {
+            yield* Effect.sync(() => outro(suggestion));
+          }
+        }),
     });
   }),
 );
@@ -116,6 +132,7 @@ export const jsonOutputLayer = Layer.effect(
       info: (message: string) => writeStderr(`${message}\n`),
       warn: (message: string) => writeStderr(`${message}\n`),
       error: (message: string) => writeStderr(`${message}\n`),
+      event: (event: StreamEvent) => writeStderr(`${JSON.stringify(event)}\n`),
       promptText: () => nonInteractive("prompt for input"),
       promptPassword: () => nonInteractive("prompt for password"),
       promptConfirm: () => nonInteractive("prompt for confirmation"),
@@ -174,6 +191,7 @@ export const streamJsonOutputLayer = Layer.effect(
       info: (message: string) => emitLog("info", message),
       warn: (message: string) => emitLog("warn", message),
       error: (message: string) => emitLog("error", message),
+      event: (event: StreamEvent) => writeStdout(JSON.stringify(event) + "\n"),
       promptText: () => nonInteractive("prompt for input"),
       promptPassword: () => nonInteractive("prompt for password"),
       promptConfirm: () => nonInteractive("prompt for confirmation"),

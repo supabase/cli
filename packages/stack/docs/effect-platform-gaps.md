@@ -29,11 +29,11 @@ Effect has process spawning, but not a reusable abstraction for the currently ru
 **Suggested API**
 
 ```ts
-const currentProcess = yield* CurrentProcess.CurrentProcess;
+const currentProcess = yield * CurrentProcess.CurrentProcess;
 
-yield* currentProcess.awaitSignal(["SIGINT", "SIGTERM"]);
-yield* currentProcess.setExitCode(1);
-yield* currentProcess.exit(1);
+yield * currentProcess.awaitSignal(["SIGINT", "SIGTERM"]);
+yield * currentProcess.setExitCode(1);
+yield * currentProcess.exit(1);
 ```
 
 Useful extras:
@@ -61,7 +61,7 @@ These values are stable runtime facts, but today they come from `node:process` /
 **Suggested API**
 
 ```ts
-const runtime = yield* RuntimeInfo.RuntimeInfo;
+const runtime = yield * RuntimeInfo.RuntimeInfo;
 
 const platform = runtime.platform;
 const arch = runtime.arch;
@@ -90,7 +90,7 @@ Effect exposes stdio streams and terminal operations, but not simple injectable 
 **Suggested API**
 
 ```ts
-const tty = yield* Tty.Tty;
+const tty = yield * Tty.Tty;
 
 if (tty.stdoutIsTty) {
   // interactive formatter
@@ -111,7 +111,7 @@ if (tty.stdoutIsTty) {
 **Suggested API**
 
 ```ts
-const workingDirectory = yield* WorkingDirectory.WorkingDirectory;
+const workingDirectory = yield * WorkingDirectory.WorkingDirectory;
 const cwd = workingDirectory.current;
 ```
 

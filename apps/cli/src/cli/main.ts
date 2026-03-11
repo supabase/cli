@@ -1,10 +1,14 @@
 #!/usr/bin/env bun
 import { BunServices } from "@effect/platform-bun";
-import { Cause, Console, Effect, Exit, Fiber, Layer, Stdio } from "effect";
-import { CliOutput } from "effect/unstable/cli";
-import { cli } from "./root.ts";
+import { Cause, Effect, Exit, Fiber, Layer, Stdio } from "effect";
+import { CliOutput, Command } from "effect/unstable/cli";
+import { root } from "./root.ts";
 import { skillWriterLayer } from "../agents/skill-writer.layer.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
+import { outputLayerFor } from "../output/output.layer.ts";
+import { normalizeCause } from "../output/normalize-error.ts";
+import type { OutputFormat } from "../output/types.ts";
+import { Output } from "../output/output.service.ts";
 import { cliConfigLayer } from "../config/cli-config.layer.ts";
 import { processControlLayer } from "../runtime/process-control.layer.ts";
 import { runtimeInfoLayer } from "../runtime/runtime-info.layer.ts";
@@ -12,9 +16,21 @@ import { ttyLayer } from "../runtime/tty.layer.ts";
 import { ProcessControl } from "../runtime/process-control.service.ts";
 import { tracingLayer } from "../telemetry/tracing.layer.ts";
 
-function formatterLayerFor(args: ReadonlyArray<string>) {
+function outputFormatFor(args: ReadonlyArray<string>): OutputFormat {
+  const inline = args.find((arg) => arg.startsWith("--output-format="));
+  if (inline) {
+    const value = inline.slice("--output-format=".length);
+    if (value === "json" || value === "stream-json" || value === "text") {
+      return value;
+    }
+  }
   const formatIdx = args.indexOf("--output-format");
   const format = formatIdx !== -1 ? args[formatIdx + 1] : undefined;
+  return format === "json" || format === "stream-json" ? format : "text";
+}
+
+function formatterLayerFor(args: ReadonlyArray<string>) {
+  const format = outputFormatFor(args);
   return format === "json" || format === "stream-json"
     ? CliOutput.layer(jsonCliOutputFormatter())
     : Layer.empty;
@@ -22,7 +38,7 @@ function formatterLayerFor(args: ReadonlyArray<string>) {
 
 function cliProgramFor(args: ReadonlyArray<string>) {
   const runtimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
-  return cli.pipe(
+  return Command.runWith(root, { version: "0.1.0" })(args).pipe(
     Effect.provide(formatterLayerFor(args)),
     Effect.provide(skillWriterLayer.pipe(Layer.provide(BunServices.layer))),
     Effect.provide(
@@ -69,26 +85,29 @@ const signalAwareProgram = Effect.scoped(
   Effect.provide(BunServices.layer),
 );
 
-const startProgram = Effect.gen(function* () {
-  const processControl = yield* ProcessControl;
-  const exit = yield* cliProgram.pipe(Effect.exit);
-  if (Exit.isFailure(exit)) {
-    const code = Cause.hasInterruptsOnly(exit.cause) ? 130 : 1;
-    if (!Cause.hasInterruptsOnly(exit.cause)) {
-      yield* Console.error(Cause.pretty(exit.cause));
+const handledProgram = <A, E, R>(program: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const processControl = yield* ProcessControl;
+    const output = yield* Output;
+    const exit = yield* program.pipe(Effect.exit);
+    if (Exit.isFailure(exit)) {
+      const interrupted = Cause.hasInterruptsOnly(exit.cause);
+      if (!interrupted) {
+        yield* output.fail(normalizeCause(exit.cause));
+      }
+      return yield* processControl.exit(interrupted ? 130 : 1);
     }
-    return yield* processControl.exit(code);
-  }
-  return yield* processControl.exit(0);
-}).pipe(
-  Effect.provide(processControlLayer),
-  Effect.provide(runtimeInfoLayer),
-  Effect.provide(ttyLayer),
-  Effect.provide(BunServices.layer),
-);
+    return yield* processControl.exit(0);
+  }).pipe(
+    Effect.provide(outputLayerFor(outputFormatFor(args))),
+    Effect.provide(processControlLayer),
+    Effect.provide(runtimeInfoLayer),
+    Effect.provide(ttyLayer),
+    Effect.provide(BunServices.layer),
+  );
 
 if (useGlobalSignalInterrupt) {
-  await Effect.runPromise(signalAwareProgram);
+  await Effect.runPromise(handledProgram(signalAwareProgram));
 } else {
-  await Effect.runPromise(startProgram);
+  await Effect.runPromise(handledProgram(cliProgram));
 }

@@ -2,7 +2,7 @@ import type { Effect } from "effect";
 import { ServiceMap } from "effect";
 
 import type { NonInteractiveError } from "./errors.ts";
-import type { OutputFormat } from "./types.ts";
+import type { OutputFormat, StreamEvent } from "./types.ts";
 
 /**
  * Output - User-facing CLI output boundary.
@@ -18,6 +18,7 @@ interface OutputShape {
   readonly info: (message: string) => Effect.Effect<void>;
   readonly warn: (message: string) => Effect.Effect<void>;
   readonly error: (message: string) => Effect.Effect<void>;
+  readonly event: (event: StreamEvent) => Effect.Effect<void>;
   readonly promptText: (
     message: string,
     opts?: { validate?: (v: string) => string | undefined; defaultValue?: string },

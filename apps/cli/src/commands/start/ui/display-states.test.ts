@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { toDisplayStates } from "./display-states.ts";
+import { toDisplayStates } from "../../../stack/display-states.ts";
 
 function state(name: string, status: string) {
   return {

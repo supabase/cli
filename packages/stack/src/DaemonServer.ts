@@ -26,6 +26,7 @@ export class DaemonServer extends ServiceMap.Service<
       const stack = yield* Stack;
       const server = yield* HttpServer.HttpServer;
       const shutdownDeferred = yield* Deferred.make<void>();
+      const textEncoder = new TextEncoder();
 
       // Helper: wrap an Effect Stream as a text/event-stream response
       const sseResponse = <A>(
@@ -36,7 +37,7 @@ export class DaemonServer extends ServiceMap.Service<
         HttpServerResponse.stream(
           stream.pipe(
             Stream.map((a) =>
-              new TextEncoder().encode(
+              textEncoder.encode(
                 Sse.encoder.write({ _tag: "Event", event, id: undefined, data: toData(a) }),
               ),
             ),
@@ -100,7 +101,24 @@ export class DaemonServer extends ServiceMap.Service<
         HttpRouter.route(
           "GET",
           "/logs",
-          Effect.sync(() => sseResponse(stack.subscribeAllLogs(), "log", (e) => JSON.stringify(e))),
+          Effect.gen(function* () {
+            const searchParams = yield* HttpServerRequest.ParsedSearchParams.asEffect();
+            const services = parseServices(searchParams.service);
+            return sseResponse(stack.subscribeAllLogs(services), "log", (e) => JSON.stringify(e));
+          }),
+        ),
+
+        // Merged log history across all services
+        HttpRouter.route(
+          "GET",
+          "/logs/history",
+          Effect.gen(function* () {
+            const searchParams = yield* HttpServerRequest.ParsedSearchParams.asEffect();
+            const limit = parseLimit(searchParams.limit);
+            const services = parseServices(searchParams.service);
+            const entries = yield* stack.logHistoryAll(limit, services);
+            return HttpServerResponse.jsonUnsafe(entries);
+          }),
         ),
 
         // Log history for a service (registered before /logs/:service to avoid shadowing)
@@ -110,9 +128,8 @@ export class DaemonServer extends ServiceMap.Service<
           Effect.gen(function* () {
             const routeParams = yield* HttpRouter.params;
             const searchParams = yield* HttpServerRequest.ParsedSearchParams.asEffect();
-            const service = routeParams.service!;
-            const limitStr = searchParams.limit;
-            const limit = typeof limitStr === "string" ? parseInt(limitStr, 10) : undefined;
+            const service = parseSingleParam(routeParams.service)!;
+            const limit = parseLimit(searchParams.limit);
             const entries = yield* stack.logHistory(service, limit);
             return HttpServerResponse.jsonUnsafe(entries);
           }),
@@ -124,7 +141,7 @@ export class DaemonServer extends ServiceMap.Service<
           "/logs/:service",
           Effect.gen(function* () {
             const routeParams = yield* HttpRouter.params;
-            const service = routeParams.service!;
+            const service = parseSingleParam(routeParams.service)!;
             return sseResponse(stack.subscribeLogs(service), "log", (e) => JSON.stringify(e));
           }),
         ),
@@ -200,4 +217,23 @@ export class DaemonServer extends ServiceMap.Service<
       };
     }),
   );
+}
+
+function parseLimit(value: string | ReadonlyArray<string> | undefined): number | undefined {
+  const raw = Array.isArray(value) ? value.at(0) : value;
+  if (raw === undefined) return undefined;
+  const parsed = parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseServices(
+  value: string | ReadonlyArray<string> | undefined,
+): ReadonlyArray<string> | undefined {
+  if (value === undefined) return undefined;
+  return typeof value === "string" ? [value] : value;
+}
+
+function parseSingleParam(value: string | ReadonlyArray<string> | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  return typeof value === "string" ? value : value[0];
 }

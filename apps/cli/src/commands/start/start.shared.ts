@@ -1,13 +1,11 @@
 import { Effect, Fiber, Stream } from "effect";
 import { Stack } from "@supabase/stack/internals";
 import { Output } from "../../output/output.service.ts";
-import { toDisplayStates } from "./ui/display-states.ts";
+import { toDisplayStates } from "../../stack/display-states.ts";
 
 export const startStackWithProgress = Effect.fnUntraced(function* () {
   const output = yield* Output;
   const stack = yield* Stack;
-
-  yield* output.intro("Starting local Supabase stack...");
 
   const initialRawStates = yield* stack.getAllStates();
   const initialDisplayStates = toDisplayStates(initialRawStates);

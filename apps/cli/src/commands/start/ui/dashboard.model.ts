@@ -4,7 +4,7 @@ import type { ServiceState } from "@supabase/stack";
 import type { StackInfo } from "@supabase/stack/internals";
 import { Effect, Layer } from "effect";
 import { StartDashboardState, type StartPhase } from "./dashboard-state.ts";
-import { toDisplayStates } from "./display-states.ts";
+import { toDisplayStates } from "../../../stack/display-states.ts";
 
 export type { StartPhase } from "./dashboard-state.ts";
 

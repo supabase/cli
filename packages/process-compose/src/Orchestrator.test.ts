@@ -31,6 +31,20 @@ function mockLogBuffer() {
             line: e.line,
           }));
         }),
+      historyAll: (limit = 100, services?: ReadonlyArray<string>) =>
+        Effect.sync(() => {
+          const filtered =
+            services === undefined || services.length === 0
+              ? entries
+              : entries.filter((entry) => services.includes(entry.service));
+          const sliced = filtered.slice(-limit);
+          return sliced.map((entry) => ({
+            timestamp: Date.now(),
+            service: entry.service,
+            stream: entry.stream as "stdout" | "stderr",
+            line: entry.line,
+          }));
+        }),
       truncate: () => Effect.void,
     }),
     get entries() {

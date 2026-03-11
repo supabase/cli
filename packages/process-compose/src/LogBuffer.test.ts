@@ -124,4 +124,23 @@ describe("LogBuffer", () => {
       expect(entriesB[1]?.line).toBe("line-b2");
     }).pipe(Effect.provide(layer)),
   );
+
+  it.live("historyAll returns merged entries in timestamp order and respects filters", () =>
+    Effect.gen(function* () {
+      const log = yield* LogBuffer;
+      yield* log.append("a", "stdout", "line-a1");
+      yield* Effect.sleep("1 millis");
+      yield* log.append("b", "stderr", "line-b1");
+      yield* Effect.sleep("1 millis");
+      yield* log.append("a", "stdout", "line-a2");
+
+      const merged = yield* log.historyAll(10);
+      expect(merged.map((entry) => entry.line)).toEqual(["line-a1", "line-b1", "line-a2"]);
+
+      const filtered = yield* log.historyAll(10, ["b"]);
+      expect(filtered).toHaveLength(1);
+      expect(filtered[0]?.service).toBe("b");
+      expect(filtered[0]?.line).toBe("line-b1");
+    }).pipe(Effect.provide(layer)),
+  );
 });

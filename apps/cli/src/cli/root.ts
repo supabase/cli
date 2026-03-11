@@ -23,5 +23,3 @@ export const root = Command.make("supabase").pipe(
   ),
   Command.withGlobalFlags([OutputFormatFlag, UsageFlag, SkillFlag, SkillDirFlag]),
 );
-
-export const cli = Command.run(root, { version: "0.1.0" });

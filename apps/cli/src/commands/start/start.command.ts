@@ -7,6 +7,7 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { cliConfigLayer } from "../../config/cli-config.layer.ts";
 import { CliConfig } from "../../config/cli-config.service.ts";
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
+import { Output } from "../../output/output.service.ts";
 import { inkLayer } from "../../runtime/ink.layer.ts";
 import { runtimeInfoLayer } from "../../runtime/runtime-info.layer.ts";
 import { RuntimeInfo } from "../../runtime/runtime-info.service.ts";
@@ -68,8 +69,12 @@ export const startCommand = Command.make("start", flags).pipe(
   ),
   Command.provide((flags) => {
     const daemonLayerEffect = Effect.gen(function* () {
+      const output = yield* Output;
       const cliConfig = yield* CliConfig;
       const runtimeInfo = yield* RuntimeInfo;
+
+      yield* output.intro("Start local Supabase stack");
+
       return yield* projectDaemonLayer({
         home: cliConfig.supabaseHome,
         cwd: runtimeInfo.cwd,

@@ -90,9 +90,21 @@ function mockStack() {
     waitAllReady: () => Effect.void,
     subscribeLogs: (name: string) =>
       Stream.fromIterable(MOCK_LOGS.filter((l) => l.service === name)),
-    subscribeAllLogs: () => Stream.fromIterable(MOCK_LOGS),
+    subscribeAllLogs: (services?: ReadonlyArray<string>) =>
+      Stream.fromIterable(
+        services === undefined || services.length === 0
+          ? MOCK_LOGS
+          : MOCK_LOGS.filter((l) => services.includes(l.service)),
+      ),
     logHistory: (name: string, limit?: number) =>
       Effect.succeed(MOCK_LOGS.filter((l) => l.service === name).slice(-(limit ?? 100))),
+    logHistoryAll: (limit?: number, services?: ReadonlyArray<string>) =>
+      Effect.succeed(
+        (services === undefined || services.length === 0
+          ? MOCK_LOGS
+          : MOCK_LOGS.filter((l) => services.includes(l.service))
+        ).slice(-(limit ?? 100)),
+      ),
   });
 
   return {
@@ -200,6 +212,14 @@ describe("DaemonServer", () => {
     expect(text).toContain("auth started");
   });
 
+  test("GET /logs filters SSE log events by repeated service query params", async () => {
+    const res = await fetch(`${url}/logs?service=auth`);
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("auth started");
+    expect(text).not.toContain("starting");
+  });
+
   test("GET /logs/:service returns SSE log events for one service", async () => {
     const res = await fetch(`${url}/logs/postgres`);
     expect(res.status).toBe(200);
@@ -228,6 +248,22 @@ describe("DaemonServer", () => {
     const body = (await res.json()) as LogEntry[];
     expect(body).toHaveLength(1);
     expect(body.at(0)?.line).toBe("ready");
+  });
+
+  test("GET /logs/history returns merged log entries", async () => {
+    const res = await fetch(`${url}/logs/history?limit=3`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as LogEntry[];
+    expect(body).toHaveLength(3);
+    expect(body.map((entry) => entry.line)).toEqual(["starting", "ready", "auth started"]);
+  });
+
+  test("GET /logs/history respects repeated service filters", async () => {
+    const res = await fetch(`${url}/logs/history?service=auth`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as LogEntry[];
+    expect(body).toHaveLength(1);
+    expect(body.at(0)?.service).toBe("auth");
   });
 
   // -------------------------------------------------------------------------

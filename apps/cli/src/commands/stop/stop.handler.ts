@@ -10,9 +10,10 @@ export const stop = Effect.fnUntraced(function* (_flags: StopFlags) {
   const cliConfig = yield* CliConfig;
   const runtimeInfo = yield* RuntimeInfo;
 
-  yield* output.intro("Stopping local Supabase stack...");
+  yield* output.intro("Stop local Supabase stack");
 
   yield* stopDaemon({ cwd: runtimeInfo.cwd, home: cliConfig.supabaseHome });
 
   yield* output.success("Local Supabase stopped");
+  yield* output.outro("Local Supabase stack stopped.");
 });

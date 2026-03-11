@@ -47,7 +47,7 @@ function killProcessGroup(pid: number, signal: NodeJS.Signals): void {
   } catch {}
 }
 
-function spawnSupabase(
+export function spawnSupabase(
   args: string[],
   options?: {
     env?: Record<string, string>;

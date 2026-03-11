@@ -14,11 +14,14 @@ import {
 const mockClack = vi.hoisted(() => ({
   intro: vi.fn(),
   outro: vi.fn(),
+  note: vi.fn(),
   log: {
+    message: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
     success: vi.fn(),
+    step: vi.fn(),
   },
   text: vi.fn(),
   password: vi.fn(),
@@ -30,6 +33,7 @@ const mockClack = vi.hoisted(() => ({
 vi.mock("@clack/prompts", () => ({
   intro: (a: unknown) => mockClack.intro(a),
   outro: (a: unknown) => mockClack.outro(a),
+  note: (a: unknown, b?: unknown, c?: unknown) => mockClack.note(a, b, c),
   log: mockClack.log,
   text: (a: unknown) => mockClack.text(a),
   password: (a: unknown) => mockClack.password(a),
@@ -134,10 +138,18 @@ describe("Output", () => {
       }).pipe(Effect.provide(layer)),
     );
 
-    it.effect("fail is a no-op", () =>
+    it.effect("fail renders an error, gray context, and closing suggestion", () =>
       Effect.gen(function* () {
         const out = yield* Output;
-        yield* out.fail({ code: "E_TEST", message: "test error" });
+        yield* out.fail({
+          code: "E_TEST",
+          message: "test error",
+          detail: "extra detail",
+          suggestion: "try again",
+        });
+        expect(mockClack.log.error).toHaveBeenCalledWith("\x1B[31mtest error\x1B[39m");
+        expect(mockClack.log.message).toHaveBeenCalledWith("\x1B[90mextra detail\x1B[39m");
+        expect(mockClack.outro).toHaveBeenCalledWith("try again");
       }).pipe(Effect.provide(layer)),
     );
 
@@ -289,6 +301,25 @@ describe("Output", () => {
       }).pipe(Effect.provide(layer));
     });
 
+    it.effect("event writes structured data to stderr", () => {
+      const mock = mockStdio();
+      const layer = jsonOutputLayer.pipe(Layer.provide(mock.layer));
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.event({
+          type: "log-entry",
+          timestamp: "2026-03-11T00:00:00.000Z",
+          service: "auth",
+          stream: "stdout",
+          line: "hello",
+          source: "history",
+        });
+        expect(mock.stderr).toContainEqual(
+          '{"type":"log-entry","timestamp":"2026-03-11T00:00:00.000Z","service":"auth","stream":"stdout","line":"hello","source":"history"}\n',
+        );
+      }).pipe(Effect.provide(layer));
+    });
+
     it.effect("promptText fails with NonInteractiveError", () => {
       const mock = mockStdio();
       const layer = jsonOutputLayer.pipe(Layer.provide(mock.layer));
@@ -425,6 +456,31 @@ describe("Output", () => {
         expect(parsed.type).toBe("log");
         expect(parsed.level).toBe("error");
         expect(parsed.message).toBe("stream error");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("event emits structured NDJSON event", () => {
+      const mock = mockStdio();
+      const layer = streamJsonOutputLayer.pipe(Layer.provide(mock.layer));
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.event({
+          type: "log-entry",
+          timestamp: "2026-03-11T00:00:00.000Z",
+          service: "postgres",
+          stream: "stderr",
+          line: "checkpoint complete",
+          source: "live",
+        });
+        const parsed = JSON.parse(mock.stdout[0]!);
+        expect(parsed).toEqual({
+          type: "log-entry",
+          timestamp: "2026-03-11T00:00:00.000Z",
+          service: "postgres",
+          stream: "stderr",
+          line: "checkpoint complete",
+          source: "live",
+        });
       }).pipe(Effect.provide(layer));
     });
 

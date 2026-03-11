@@ -5,5 +5,5 @@ import { runDaemon } from "./daemon.ts";
 
 runDaemon(
   (apiPort) => Layer.mergeAll(BunServices.layer, BunHttpServer.layer({ port: apiPort })),
-  (socketPath) => BunHttpServer.layer({ unix: socketPath }),
+  (socketPath) => BunHttpServer.layer({ idleTimeout: 0, unix: socketPath }),
 );
