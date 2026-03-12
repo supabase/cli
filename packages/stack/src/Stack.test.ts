@@ -4,6 +4,7 @@ import { Effect, Layer } from "effect";
 import { mockChildProcessSpawner } from "../../process-compose/tests/helpers/mocks.ts";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
+import type { AllocatedPorts } from "./PortAllocator.ts";
 import { Stack } from "./Stack.ts";
 import { StackBuilder } from "./StackBuilder.ts";
 import type { ResolvedStackConfig } from "./StackBuilder.ts";
@@ -11,15 +12,37 @@ import { DEFAULT_VERSIONS } from "./versions.ts";
 
 const testJwtSecret = "super-secret-jwt-token-with-at-least-32-characters-long";
 
+const defaultPorts: AllocatedPorts = {
+  apiPort: 54321,
+  dbPort: 54322,
+  authPort: 9999,
+  postgrestPort: 54323,
+  postgrestAdminPort: 54324,
+  realtimePort: 54330,
+  storagePort: 54331,
+  imgproxyPort: 54332,
+  mailpitPort: 54333,
+  mailpitSmtpPort: 54334,
+  mailpitPop3Port: 54335,
+  pgmetaPort: 54336,
+  studioPort: 54337,
+  analyticsPort: 54338,
+  poolerPort: 54339,
+  poolerApiPort: 54340,
+};
+
 const defaultConfig: ResolvedStackConfig = {
-  home: "/tmp/supabase-test",
-  mode: "auto",
+  cacheRoot: "/tmp/supabase-cache",
+  stackRoot: "/tmp/supabase-stack",
+  runtimeRoot: "/tmp/supabase-runtime",
+  mode: "native",
   jwtSecret: testJwtSecret,
+  ports: defaultPorts,
   apiPort: 54321,
   dbPort: 54322,
   publishableKey: defaultPublishableKey,
   secretKey: defaultSecretKey,
-  autoManagedDataDir: false,
+  autoManagedPaths: [],
   anonJwt: generateJwt(testJwtSecret, "anon"),
   serviceRoleJwt: generateJwt(testJwtSecret, "service_role"),
   postgres: {
@@ -42,6 +65,15 @@ const defaultConfig: ResolvedStackConfig = {
     externalUrl: "http://127.0.0.1:54321",
     version: DEFAULT_VERSIONS.auth,
   },
+  realtime: false,
+  storage: false,
+  imgproxy: false,
+  mailpit: false,
+  pgmeta: false,
+  studio: false,
+  analytics: false,
+  vector: false,
+  pooler: false,
 };
 
 function setupLayer(config: ResolvedStackConfig = defaultConfig) {

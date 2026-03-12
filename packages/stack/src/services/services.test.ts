@@ -2,10 +2,15 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { makeAnalyticsServiceDocker } from "./analytics.ts";
 import { makeAuthServiceNative, makeAuthServiceDocker } from "./auth.ts";
+import { makeImgproxyServiceDocker } from "./imgproxy.ts";
+import { makeMailpitServiceDocker } from "./mailpit.ts";
 import { makePostgresInitService } from "./postgres-init.ts";
 import { makePostgresService, makePostgresServiceDocker } from "./postgres.ts";
 import { makePostgrestService } from "./postgrest.ts";
+import { makePoolerServiceDocker, poolerContainerPorts } from "./pooler.ts";
+import { makeVectorServiceDocker } from "./vector.ts";
 import { DEFAULT_VERSIONS, dockerImageForService } from "../versions.ts";
 
 const JWT_SECRET = "super-secret-jwt-token-with-at-least-32-characters-long";
@@ -29,6 +34,12 @@ describe("makePostgresService", () => {
       `${POSTGRES_BIN_PATH}/share/supabase-cli/bin/supabase-postgres-init.sh`,
       "-p",
       "54322",
+      "-c",
+      "wal_level=logical",
+      "-c",
+      "max_wal_senders=5",
+      "-c",
+      "max_replication_slots=5",
     ]);
     expect(def.env?.PGDATA).toBe("/tmp/supabase/data");
     expect(def.env?.POSTGRES_PASSWORD).toBe("postgres");
@@ -67,6 +78,12 @@ describe("makePostgresService (dockerAccessible)", () => {
         `${POSTGRES_BIN_PATH}/share/supabase-cli/bin/supabase-postgres-init.sh`,
         "-p",
         "54322",
+        "-c",
+        "wal_level=logical",
+        "-c",
+        "max_wal_senders=5",
+        "-c",
+        "max_replication_slots=5",
         "-c",
         "listen_addresses=*",
         "-c",
@@ -258,6 +275,20 @@ describe("makePostgresInitService", () => {
     expect(script).toContain("already initialized");
   });
 
+  it("backfills auxiliary service schemas and internal databases", () => {
+    const def = makePostgresInitService({
+      postgresDir: "/cache/postgres/17/darwin-arm64",
+      dbPort: DB_PORT,
+    });
+    const script = def.args?.[1] as string;
+
+    expect(script).toContain("CREATE SCHEMA IF NOT EXISTS _realtime");
+    expect(script).toContain("SELECT 1 FROM pg_database WHERE datname = '_supabase'");
+    expect(script).toContain("CREATE DATABASE _supabase WITH OWNER postgres");
+    expect(script).toContain("CREATE SCHEMA IF NOT EXISTS _analytics");
+    expect(script).toContain("CREATE SCHEMA IF NOT EXISTS _supavisor");
+  });
+
   it("batches SQL files via chained -f flags instead of shelling out to migrate.sh", () => {
     const def = makePostgresInitService({
       postgresDir: "/cache/postgres/17/darwin-arm64",
@@ -268,5 +299,133 @@ describe("makePostgresInitService", () => {
     expect(script).toContain("-f $sql");
     expect(script).toContain("init-scripts/*.sql");
     expect(script).toContain("migrations/*.sql");
+  });
+});
+
+describe("docker-backed auxiliary services", () => {
+  it("uses a host HTTP readiness probe for mailpit", () => {
+    const def = makeMailpitServiceDocker({
+      image: dockerImageForService("mailpit", DEFAULT_VERSIONS.mailpit),
+      apiPort: API_PORT,
+      webPort: 54323,
+      smtpPort: 54324,
+      pop3Port: 54325,
+      networkArgs: ["--network=host"],
+    });
+
+    expect(def.healthCheck?.probe).toEqual({
+      _tag: "Http",
+      host: "127.0.0.1",
+      port: 54323,
+      path: "/readyz",
+      scheme: "http",
+    });
+  });
+
+  it("uses a host HTTP health probe for imgproxy", () => {
+    const def = makeImgproxyServiceDocker({
+      image: dockerImageForService("imgproxy", DEFAULT_VERSIONS.imgproxy),
+      apiPort: API_PORT,
+      port: 54326,
+      dataDir: "/tmp/supabase/storage",
+      networkArgs: ["--network=host"],
+      dependencies: [{ service: "storage", condition: "healthy" }],
+    });
+
+    expect(def.healthCheck?.probe).toEqual({
+      _tag: "Http",
+      host: "127.0.0.1",
+      port: 54326,
+      path: "/health",
+      scheme: "http",
+    });
+    expect(def.args).toContain("/tmp/supabase/storage:/var/lib/storage");
+  });
+
+  it("uses docker exec for vector health because its admin port is not published", () => {
+    const def = makeVectorServiceDocker({
+      image: dockerImageForService("vector", DEFAULT_VERSIONS.vector),
+      apiPort: API_PORT,
+      serviceHost: "127.0.0.1",
+      analyticsPort: 54327,
+      analyticsApiKey: "test-api-key",
+      networkArgs: [],
+      dependencies: [{ service: "analytics", condition: "healthy" }],
+    });
+
+    expect(def.healthCheck?.probe).toEqual({
+      _tag: "Exec",
+      command: "docker",
+      args: [
+        "exec",
+        `supabase-vector-${API_PORT}`,
+        "sh",
+        "-ec",
+        "wget -q -O /dev/null http://127.0.0.1:9001/health",
+      ],
+    });
+  });
+
+  it("binds analytics on all interfaces so published ports and proxy health checks work", () => {
+    const def = makeAnalyticsServiceDocker({
+      image: dockerImageForService("analytics", DEFAULT_VERSIONS.analytics),
+      apiPort: API_PORT,
+      hostPort: 54328,
+      dbHost: "127.0.0.1",
+      dbPort: DB_PORT,
+      apiKey: "test-api-key",
+      backend: "postgres",
+      networkArgs: ["-p", "54328:4000"],
+      dependencies: [{ service: "postgres", condition: "healthy" }],
+    });
+
+    expect(def.healthCheck?.probe).toEqual({
+      _tag: "Http",
+      host: "127.0.0.1",
+      port: 54328,
+      path: "/health",
+      scheme: "http",
+    });
+    expect(def.healthCheck?.initialDelaySeconds).toBe(10);
+    expect(def.args).toContain("PORT=4000");
+    expect(def.args).toContain("54328:4000");
+    expect(def.args).toContain("LOGFLARE_NODE_HOST=0.0.0.0");
+  });
+
+  it("keeps pooler container ports fixed and maps only the selected proxy port outward", () => {
+    const def = makePoolerServiceDocker({
+      image: dockerImageForService("pooler", DEFAULT_VERSIONS.pooler),
+      apiPort: API_PORT,
+      hostAdminPort: 54329,
+      dbHost: "127.0.0.1",
+      dbPort: DB_PORT,
+      poolMode: "transaction",
+      defaultPoolSize: 20,
+      maxClientConn: 100,
+      jwtSecret: JWT_SECRET,
+      tenantId: "pooler-dev",
+      encryptionKey: "12345678901234567890123456789012",
+      secretKeyBase: "1234567890123456789012345678901234567890123456789012345678901234",
+      networkArgs: [
+        "-p",
+        `54329:${poolerContainerPorts.admin}`,
+        "-p",
+        `54330:${poolerContainerPorts.transaction}`,
+      ],
+      dependencies: [{ service: "postgres", condition: "healthy" }],
+    });
+
+    expect(def.healthCheck?.probe).toEqual({
+      _tag: "Http",
+      host: "127.0.0.1",
+      port: 54329,
+      path: "/api/health",
+      scheme: "http",
+    });
+    expect(def.args).toContain(`PORT=${poolerContainerPorts.admin}`);
+    expect(def.args).toContain(`PROXY_PORT_SESSION=${poolerContainerPorts.session}`);
+    expect(def.args).toContain(`PROXY_PORT_TRANSACTION=${poolerContainerPorts.transaction}`);
+    expect(def.args).toContain(`54329:${poolerContainerPorts.admin}`);
+    expect(def.args).toContain(`54330:${poolerContainerPorts.transaction}`);
   });
 });

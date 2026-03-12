@@ -63,6 +63,23 @@ EOSQL
   ${psql} ${psqlOpts} -U supabase_admin -d postgres -c 'SELECT extensions.pg_stat_statements_reset(); SELECT pg_stat_reset();' || true
 fi
 
+# Backfill schemas/databases used by docker-backed auxiliary services.
+${psql} ${psqlOpts} -U postgres -d postgres <<'EOSQL'
+CREATE SCHEMA IF NOT EXISTS _realtime;
+ALTER SCHEMA _realtime OWNER TO postgres;
+EOSQL
+
+if ! ${psql} -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '_supabase'" 2>/dev/null | grep -q 1; then
+  ${psql} ${psqlOpts} -U postgres -d postgres -c "CREATE DATABASE _supabase WITH OWNER postgres"
+fi
+
+${psql} ${psqlOpts} -U postgres -d _supabase <<'EOSQL'
+CREATE SCHEMA IF NOT EXISTS _analytics;
+ALTER SCHEMA _analytics OWNER TO postgres;
+CREATE SCHEMA IF NOT EXISTS _supavisor;
+ALTER SCHEMA _supavisor OWNER TO postgres;
+EOSQL
+
 # Always update role passwords (idempotent)
 ${psql} -U supabase_admin -d postgres -c "
 DO \\$\\$

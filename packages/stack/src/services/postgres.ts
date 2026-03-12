@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import type { ServiceDef } from "@supabase/process-compose";
 import {
   dockerServiceCleanup,
@@ -40,6 +40,15 @@ const postgresDockerEnv = (opts: DockerPostgresOptions): Record<string, string> 
   JWT_SECRET: opts.jwtSecret,
   JWT_EXP: String(opts.jwtExpiry),
 });
+
+const NATIVE_POSTGRES_RUNTIME_ARGS = [
+  "-c",
+  "wal_level=logical",
+  "-c",
+  "max_wal_senders=5",
+  "-c",
+  "max_replication_slots=5",
+] as const;
 
 const orphanCleanup = (opts: PostgresServiceOptions) =>
   opts.cleanupDataDirOnExit ? removePathOnOrphanCleanup(opts.dataDir) : [];
@@ -105,6 +114,7 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => 
     // that allows connections from any IP, and use postgres -c flags to override
     // listen_addresses and hba_file. This avoids mutating the shared binary cache.
     const customHbaPath = `${opts.dataDir}_pg_hba_docker.conf`;
+    mkdirSync(opts.dataDir, { recursive: true });
     writeFileSync(
       customHbaPath,
       [
@@ -124,6 +134,7 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => 
         initScript,
         "-p",
         String(opts.port),
+        ...NATIVE_POSTGRES_RUNTIME_ARGS,
         "-c",
         "listen_addresses=*",
         "-c",
@@ -145,7 +156,7 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => 
   return {
     name: "postgres",
     command: "bash",
-    args: [initScript, "-p", String(opts.port)],
+    args: [initScript, "-p", String(opts.port), ...NATIVE_POSTGRES_RUNTIME_ARGS],
     env: postgresEnv(opts),
     healthCheck: postgresHealthCheck(opts.binPath, opts.port),
     shutdown: { signal: "SIGTERM", timeoutSeconds: 10 },

@@ -1,6 +1,7 @@
 import { Data, Duration, Effect } from "effect";
 import { FileSystem, Path } from "effect";
-import { NoRunningStackError, StateManager } from "./StateManager.ts";
+import { defaultManagedStackName } from "./createStack.ts";
+import { NoRunningStackError, StateManager, managedStateManagerPaths } from "./StateManager.ts";
 import { resolveManagedStack } from "./managed-stack.ts";
 
 // ---------------------------------------------------------------------------
@@ -30,12 +31,11 @@ export class DaemonStillRunningError extends Data.TaggedError("DaemonStillRunnin
  * Reads state files from the stacks directory and checks each PID.
  */
 export const listStacks = (opts: {
-  home: string;
+  cacheRoot: string;
 }): Effect.Effect<ReadonlyArray<StackSummary>, never, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
-    const { home } = opts;
     const stateManager = yield* StateManager.asEffect().pipe(
-      Effect.provide(StateManager.make(home)),
+      Effect.provide(StateManager.make(managedStateManagerPaths(opts.cacheRoot))),
     );
     const states = yield* stateManager.scan();
 
@@ -63,16 +63,15 @@ export const listStacks = (opts: {
 export const stopDaemon = (opts: {
   name?: string;
   cwd?: string;
-  home: string;
+  cacheRoot: string;
 }): Effect.Effect<
   void,
   NoRunningStackError | DaemonStillRunningError,
   FileSystem.FileSystem | Path.Path
 > =>
   Effect.gen(function* () {
-    const { home } = opts;
     const stateManager = yield* StateManager.asEffect().pipe(
-      Effect.provide(StateManager.make(home)),
+      Effect.provide(StateManager.make(managedStateManagerPaths(opts.cacheRoot))),
     );
     const { state, alive } = yield* resolveManagedStack(opts);
     if (!alive) {
@@ -108,4 +107,24 @@ export const stopDaemon = (opts: {
 
     // Clean up any state the daemon did not remove for itself.
     yield* stateManager.remove(state.name);
+  });
+
+export const deleteManagedStackPersistence = (opts: {
+  name?: string;
+  cwd?: string;
+  cacheRoot: string;
+}): Effect.Effect<void, NoRunningStackError, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* () {
+    const cwd = opts.cwd ?? process.cwd();
+    const stateManager = yield* StateManager.asEffect().pipe(
+      Effect.provide(StateManager.make(managedStateManagerPaths(opts.cacheRoot))),
+    );
+
+    const name = opts.name ?? defaultManagedStackName(cwd);
+    const exists = yield* stateManager.stackExists(name);
+    if (!exists) {
+      return yield* new NoRunningStackError({ cwd });
+    }
+
+    yield* stateManager.deleteStack(name);
   });

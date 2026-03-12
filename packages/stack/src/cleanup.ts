@@ -16,32 +16,32 @@ export function dockerForceRemove(containerNames: ReadonlyArray<string>): void {
   }
 }
 
-export function cleanupAutoManagedDataDir(config: ResolvedStackConfig): void {
-  if (!config.autoManagedDataDir) {
+export function cleanupAutoManagedPaths(config: ResolvedStackConfig): void {
+  if (config.autoManagedPaths.length === 0) {
     return;
   }
 
-  try {
-    rmSync(config.postgres.dataDir, { recursive: true, force: true });
-  } catch {
-    // Best-effort — temp dir will be cleaned by OS eventually.
+  for (const dir of config.autoManagedPaths) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Best-effort — temp dir will be cleaned by OS eventually.
+    }
   }
 
   try {
     rmSync(`${config.postgres.dataDir}_pg_hba_docker.conf`, { force: true });
-  } catch {
-    // Best-effort — temp file will be cleaned by OS eventually.
-  }
+  } catch {}
 }
 
-const cleanupAutoManagedDataDirWithRetry = (config: ResolvedStackConfig): Effect.Effect<void> =>
+const cleanupAutoManagedPathsWithRetry = (config: ResolvedStackConfig): Effect.Effect<void> =>
   Effect.gen(function* () {
-    if (!config.autoManagedDataDir) {
+    if (config.autoManagedPaths.length === 0) {
       return;
     }
 
     const cleanupTargets = [
-      { path: config.postgres.dataDir, recursive: true as const },
+      ...config.autoManagedPaths.map((path) => ({ path, recursive: true as const })),
       { path: `${config.postgres.dataDir}_pg_hba_docker.conf`, recursive: false as const },
     ];
 
@@ -80,5 +80,5 @@ export const cleanupLocalStackResources = (opts: {
     yield* Effect.sync(() => {
       dockerForceRemove(opts.info.dockerContainerNames);
     });
-    yield* cleanupAutoManagedDataDirWithRetry(opts.config);
+    yield* cleanupAutoManagedPathsWithRetry(opts.config);
   });

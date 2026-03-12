@@ -2,7 +2,7 @@ import { Effect, Layer, ManagedRuntime } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import type { PlatformFactory } from "./createStack.ts";
 import { DaemonServer } from "./DaemonServer.ts";
-import { foregroundLayer } from "./layers.ts";
+import { foregroundDaemonLayer } from "./layers.ts";
 import { Stack } from "./Stack.ts";
 import type { ResolvedStackConfig } from "./StackBuilder.ts";
 import { StateManager, type StackState, type StateManagerService } from "./StateManager.ts";
@@ -52,7 +52,7 @@ export async function runDaemon(
 
   try {
     // Build the app layer (Stack + ApiProxy)
-    const appLayer = foregroundLayer(config, platformFactory);
+    const appLayer = foregroundDaemonLayer({ ...config, name, projectDir }, platformFactory);
 
     appRuntime = ManagedRuntime.make(appLayer);
 
@@ -78,6 +78,7 @@ export async function runDaemon(
       projectDir,
       apiPort: config.apiPort,
       dbPort: config.dbPort,
+      ports: config.ports,
       socketPath,
       startedAt: new Date().toISOString(),
       url: info.url,
@@ -87,9 +88,11 @@ export async function runDaemon(
       anonJwt: info.anonJwt,
       serviceRoleJwt: info.serviceRoleJwt,
       dockerContainerNames: Array.from(info.dockerContainerNames),
+      serviceEndpoints: info.serviceEndpoints,
     };
     daemonState = state;
     await Effect.runPromise(stateManager.write(state));
+    await Effect.runPromise(stateManager.writePorts(name, config.ports));
 
     const response: DaemonStartedMessage = { type: "started", state };
     process.send!(response);
@@ -137,7 +140,7 @@ function waitForSignal(): Promise<"SIGINT" | "SIGTERM"> {
 }
 
 async function shutdownDaemon(opts: {
-  readonly appRuntime?: ManagedRuntime.ManagedRuntime<Stack | StateManager, never>;
+  readonly appRuntime?: ManagedRuntime.ManagedRuntime<Stack, never>;
   readonly daemonRuntime?: ManagedRuntime.ManagedRuntime<DaemonServer, never>;
   readonly stateManager?: StateManagerService;
   readonly daemonState?: StackState;

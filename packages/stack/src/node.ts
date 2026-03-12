@@ -1,7 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { createServer } from "node:http";
-import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { Effect, Layer } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
@@ -16,6 +15,7 @@ import {
   type PrefetchOptions,
   type PrefetchResult,
 } from "./prefetch.ts";
+import { defaultCacheRoot } from "./paths.ts";
 import type { StackConfig } from "./StackBuilder.ts";
 
 // ---------------------------------------------------------------------------
@@ -41,8 +41,9 @@ export async function createStack(config?: StackConfig): Promise<StackHandle> {
 }
 
 export async function prefetch(options?: PrefetchOptions): Promise<PrefetchResult> {
-  const home = `${homedir()}/.supabase`;
-  const resolverLayer = BinaryResolver.make(home).pipe(Layer.provide(FetchHttpClient.layer));
+  const resolverLayer = BinaryResolver.make(defaultCacheRoot()).pipe(
+    Layer.provide(FetchHttpClient.layer),
+  );
   return Effect.runPromise(
     prefetchEffect(options).pipe(Effect.provide(resolverLayer), Effect.provide(NodeServices.layer)),
   );

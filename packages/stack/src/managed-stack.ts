@@ -1,6 +1,11 @@
 import { Effect } from "effect";
 import { FileSystem, Path } from "effect";
-import { NoRunningStackError, StateManager, type StackState } from "./StateManager.ts";
+import {
+  NoRunningStackError,
+  StateManager,
+  managedStateManagerPaths,
+  type StackState,
+} from "./StateManager.ts";
 
 export interface ManagedStack {
   readonly state: StackState;
@@ -8,14 +13,13 @@ export interface ManagedStack {
 }
 
 export const resolveManagedStack = (opts: {
-  readonly home: string;
+  readonly cacheRoot: string;
   readonly name?: string;
   readonly cwd?: string;
 }): Effect.Effect<ManagedStack, NoRunningStackError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
-    const { home } = opts;
     const stateManager = yield* StateManager.asEffect().pipe(
-      Effect.provide(StateManager.make(home)),
+      Effect.provide(StateManager.make(managedStateManagerPaths(opts.cacheRoot))),
     );
 
     const cwd = opts.cwd ?? process.cwd();

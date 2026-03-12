@@ -3,6 +3,12 @@ import { Data, Effect } from "effect";
 
 export const DEFAULT_API_PORT = 54321;
 export const DEFAULT_DB_PORT = 54322;
+const DEFAULT_STUDIO_PORT = 54323;
+const DEFAULT_MAILPIT_PORT = 54324;
+const DEFAULT_MAILPIT_SMTP_PORT = 54325;
+const DEFAULT_MAILPIT_POP3_PORT = 54326;
+const DEFAULT_ANALYTICS_PORT = 54327;
+const DEFAULT_POOLER_PORT = 54329;
 
 export class PortAllocationError extends Data.TaggedError("PortAllocationError")<{
   readonly detail: string;
@@ -15,6 +21,17 @@ export interface PortInput {
   readonly authPort?: number;
   readonly postgrestPort?: number;
   readonly postgrestAdminPort?: number;
+  readonly realtimePort?: number;
+  readonly storagePort?: number;
+  readonly imgproxyPort?: number;
+  readonly mailpitPort?: number;
+  readonly mailpitSmtpPort?: number;
+  readonly mailpitPop3Port?: number;
+  readonly pgmetaPort?: number;
+  readonly studioPort?: number;
+  readonly analyticsPort?: number;
+  readonly poolerPort?: number;
+  readonly poolerApiPort?: number;
 }
 
 export interface AllocatedPorts {
@@ -23,6 +40,54 @@ export interface AllocatedPorts {
   readonly authPort: number;
   readonly postgrestPort: number;
   readonly postgrestAdminPort: number;
+  readonly realtimePort: number;
+  readonly storagePort: number;
+  readonly imgproxyPort: number;
+  readonly mailpitPort: number;
+  readonly mailpitSmtpPort: number;
+  readonly mailpitPop3Port: number;
+  readonly pgmetaPort: number;
+  readonly studioPort: number;
+  readonly analyticsPort: number;
+  readonly poolerPort: number;
+  readonly poolerApiPort: number;
+}
+
+export const PORT_FIELDS = [
+  "apiPort",
+  "dbPort",
+  "authPort",
+  "postgrestPort",
+  "postgrestAdminPort",
+  "realtimePort",
+  "storagePort",
+  "imgproxyPort",
+  "mailpitPort",
+  "mailpitSmtpPort",
+  "mailpitPop3Port",
+  "pgmetaPort",
+  "studioPort",
+  "analyticsPort",
+  "poolerPort",
+  "poolerApiPort",
+] as const satisfies ReadonlyArray<keyof AllocatedPorts>;
+
+type PortField = (typeof PORT_FIELDS)[number];
+
+export const DEFAULT_PORTS: Partial<AllocatedPorts> = {
+  apiPort: DEFAULT_API_PORT,
+  dbPort: DEFAULT_DB_PORT,
+  studioPort: DEFAULT_STUDIO_PORT,
+  mailpitPort: DEFAULT_MAILPIT_PORT,
+  mailpitSmtpPort: DEFAULT_MAILPIT_SMTP_PORT,
+  mailpitPop3Port: DEFAULT_MAILPIT_POP3_PORT,
+  analyticsPort: DEFAULT_ANALYTICS_PORT,
+  poolerPort: DEFAULT_POOLER_PORT,
+};
+
+interface PortAllocationOptions {
+  readonly reserved?: ReadonlySet<number>;
+  readonly preferred?: Partial<AllocatedPorts>;
 }
 
 /** Bind port 0 to get an OS-assigned random port, then close immediately. */
@@ -60,10 +125,31 @@ const probeExactPort = (port: number): Effect.Effect<number, PortAllocationError
     return Effect.void;
   });
 
+const chooseExactPort = (
+  port: number,
+  exclude: ReadonlySet<number>,
+): Effect.Effect<number, PortAllocationError> =>
+  exclude.has(port)
+    ? Effect.fail(new PortAllocationError({ detail: `Port ${port} is not available` }))
+    : probeExactPort(port);
+
+const choosePreferredPort = (
+  port: number,
+  exclude: ReadonlySet<number>,
+): Effect.Effect<number, PortAllocationError> =>
+  exclude.has(port)
+    ? probeRandomPort(exclude)
+    : probeExactPort(port).pipe(
+        Effect.catchTag("PortAllocationError", () => probeRandomPort(exclude)),
+      );
+
 export const allocatePorts = (
   input: PortInput,
+  options: PortAllocationOptions = {},
 ): Effect.Effect<AllocatedPorts, PortAllocationError> =>
   Effect.gen(function* () {
+    const reserved = options.reserved ?? new Set<number>();
+    const preferred = options.preferred ?? {};
     const allocated = new Set<number>();
 
     const alloc = (port: number) => {
@@ -71,34 +157,26 @@ export const allocatePorts = (
       return port;
     };
 
-    // Explicit port → error if unavailable. No port → random.
-    const apiPort = alloc(
-      yield* input.apiPort !== undefined
-        ? probeExactPort(input.apiPort)
-        : probeRandomPort(allocated),
-    );
+    const exclude = () => new Set([...reserved, ...allocated]);
 
-    const dbPort = alloc(
-      yield* input.dbPort !== undefined ? probeExactPort(input.dbPort) : probeRandomPort(allocated),
-    );
+    const resolvePort = (field: PortField) => {
+      const explicit = input[field];
+      if (explicit !== undefined) {
+        return chooseExactPort(explicit, exclude());
+      }
 
-    const authPort = alloc(
-      yield* input.authPort !== undefined
-        ? probeExactPort(input.authPort)
-        : probeRandomPort(allocated),
-    );
+      const preferredPort = preferred[field];
+      if (preferredPort !== undefined) {
+        return choosePreferredPort(preferredPort, exclude());
+      }
 
-    const postgrestPort = alloc(
-      yield* input.postgrestPort !== undefined
-        ? probeExactPort(input.postgrestPort)
-        : probeRandomPort(allocated),
-    );
+      return probeRandomPort(exclude());
+    };
 
-    const postgrestAdminPort = alloc(
-      yield* input.postgrestAdminPort !== undefined
-        ? probeExactPort(input.postgrestAdminPort)
-        : probeRandomPort(allocated),
-    );
+    const resolved = {} as Record<PortField, number>;
+    for (const field of PORT_FIELDS) {
+      resolved[field] = alloc(yield* resolvePort(field));
+    }
 
-    return { apiPort, dbPort, authPort, postgrestPort, postgrestAdminPort };
+    return resolved as AllocatedPorts;
   });

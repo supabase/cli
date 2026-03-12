@@ -13,14 +13,26 @@ import { runtimeInfoLayer } from "../../runtime/runtime-info.layer.ts";
 import { RuntimeInfo } from "../../runtime/runtime-info.service.ts";
 import { start } from "./start.handler.ts";
 
-const excludedStartServices = ["auth", "postgrest"] as const;
+const excludedStartServices = [
+  "auth",
+  "postgrest",
+  "realtime",
+  "storage",
+  "imgproxy",
+  "mailpit",
+  "pgmeta",
+  "studio",
+  "analytics",
+  "vector",
+  "pooler",
+] as const;
 
 type ExcludedStartService = (typeof excludedStartServices)[number];
 
 export const excludeFlag = Flag.choice("exclude", excludedStartServices).pipe(
-  Flag.atMost(2),
+  Flag.atMost(excludedStartServices.length),
   Flag.withDescription(
-    "Services to exclude. Repeat the flag for multiple values (for example: --exclude auth --exclude postgrest)",
+    "Services to exclude from the local stack. Repeat the flag for multiple values.",
   ),
   Flag.withDefault([] as ReadonlyArray<ExcludedStartService>),
 );
@@ -28,6 +40,16 @@ export const excludeFlag = Flag.choice("exclude", excludedStartServices).pipe(
 export function toStartStackConfig(exclude: ReadonlyArray<ExcludedStartService>) {
   const excluded = new Set(exclude);
   return {
+    mode: "auto" as const,
+    realtime: excluded.has("realtime") ? (false as const) : {},
+    storage: excluded.has("storage") ? (false as const) : {},
+    imgproxy: excluded.has("imgproxy") || excluded.has("storage") ? (false as const) : {},
+    mailpit: excluded.has("mailpit") ? (false as const) : {},
+    pgmeta: excluded.has("pgmeta") ? (false as const) : {},
+    studio: excluded.has("studio") || excluded.has("pgmeta") ? (false as const) : {},
+    analytics: excluded.has("analytics") ? (false as const) : {},
+    vector: excluded.has("vector") || excluded.has("analytics") ? (false as const) : {},
+    pooler: excluded.has("pooler") ? (false as const) : {},
     ...(excluded.has("auth") ? { auth: false as const } : {}),
     ...(excluded.has("postgrest") ? { postgrest: false as const } : {}),
   };
@@ -46,8 +68,8 @@ export type StartFlags = CliCommand.Command.Config.Infer<typeof flags>;
 export const startCommand = Command.make("start", flags).pipe(
   Command.withDescription(
     "Start the local Supabase development stack.\n\n" +
-      "Downloads required binaries on first use and starts Postgres, PostgREST, and Auth services.\n\n" +
-      "Use --exclude auth --exclude postgrest to skip optional services. Use --detach to run in the background.",
+      "Starts the full local Supabase stack. Core services prefer native binaries when available and fall back to Docker; legacy services run in Docker for now.\n\n" +
+      "Named CLI stacks persist their service data under SUPABASE_HOME/stacks/<name>/data. Use --exclude to skip optional services. Use --detach to run in the background.",
   ),
   Command.withShortDescription("Start local Supabase stack"),
   Command.withExamples([
@@ -60,8 +82,8 @@ export const startCommand = Command.make("start", flags).pipe(
       description: "Start the stack in the background and return to the shell",
     },
     {
-      command: "supabase start --exclude auth --exclude postgrest",
-      description: "Start only the core services you need",
+      command: "supabase start --exclude studio --exclude analytics",
+      description: "Start a slimmer stack without Studio or analytics services",
     },
   ]),
   Command.withHandler((flags) =>
@@ -76,7 +98,7 @@ export const startCommand = Command.make("start", flags).pipe(
       yield* output.intro("Start local Supabase stack");
 
       return yield* projectDaemonLayer({
-        home: cliConfig.supabaseHome,
+        cacheRoot: cliConfig.supabaseHome,
         cwd: runtimeInfo.cwd,
         daemonEntryPoint,
         stackConfig: toStartStackConfig(flags.exclude),

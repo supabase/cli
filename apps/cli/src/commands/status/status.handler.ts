@@ -26,7 +26,7 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
 
   const layer = yield* connectLayer({
     cwd: runtimeInfo.cwd,
-    home: cliConfig.supabaseHome,
+    cacheRoot: cliConfig.supabaseHome,
   }).pipe(Effect.option);
 
   if (layer._tag === "None") {
@@ -53,6 +53,7 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
     db_url: info.dbUrl,
     publishable_key: info.publishableKey,
     secret_key: info.secretKey,
+    service_endpoints: info.serviceEndpoints,
     services: sortedServices.map((service) => ({
       name: service.name,
       status: service.status,
@@ -79,6 +80,11 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
   yield* output.info(`DB URL: ${info.dbUrl}`);
   yield* output.info(`Publishable key: ${info.publishableKey}`);
   yield* output.info(`Secret key: ${info.secretKey}`);
+  for (const [name, endpoint] of Object.entries(info.serviceEndpoints).sort(([a], [b]) =>
+    a.localeCompare(b),
+  )) {
+    yield* output.info(`${name}: ${endpoint}`);
+  }
 
   for (const service of sortedServices) {
     yield* output.info(formatServiceStateLine(service));

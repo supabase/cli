@@ -1,12 +1,12 @@
 import type { LogEntry, ServiceNotFoundError } from "@supabase/process-compose";
+import { readdir, readFile } from "node:fs/promises";
 import { mkdtempSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { Duration, Effect, type Layer, ManagedRuntime, Stream } from "effect";
 import { FileSystem, Path } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { cleanupAutoManagedDataDir, dockerForceRemove } from "./cleanup.ts";
+import { cleanupAutoManagedPaths, dockerForceRemove } from "./cleanup.ts";
 import { toStackError } from "./errors.ts";
 import {
   defaultJwtSecret,
@@ -20,74 +20,187 @@ import {
   type DaemonConfig,
   type DaemonStartError,
 } from "./layers.ts";
+import {
+  defaultCacheRoot,
+  defaultManagedRuntimeRoot,
+  defaultManagedStackRoot,
+  defaultManagedStacksRoot,
+  shortTempPrefixRoot,
+} from "./paths.ts";
+import { allocatePorts, DEFAULT_PORTS, PORT_FIELDS, type AllocatedPorts } from "./PortAllocator.ts";
 import { StackAlreadyRunningError } from "./StateManager.ts";
 import { Stack } from "./Stack.ts";
 import type { StackServiceState } from "./StackServiceState.ts";
-import { allocatePorts, type AllocatedPorts } from "./PortAllocator.ts";
-import {
-  type AuthConfig,
-  type PostgrestConfig,
-  type ResolvedAuthConfig,
-  type ResolvedPostgrestConfig,
-  type ResolvedStackConfig,
-  type StackConfig,
+import type {
+  AnalyticsConfig,
+  AuthConfig,
+  ImgproxyConfig,
+  MailpitConfig,
+  PgmetaConfig,
+  PoolerConfig,
+  PostgrestConfig,
+  RealtimeConfig,
+  ResolvedAnalyticsConfig,
+  ResolvedAuthConfig,
+  ResolvedImgproxyConfig,
+  ResolvedMailpitConfig,
+  ResolvedPgmetaConfig,
+  ResolvedPoolerConfig,
+  ResolvedPostgrestConfig,
+  ResolvedRealtimeConfig,
+  ResolvedStackConfig,
+  ResolvedStorageConfig,
+  ResolvedStudioConfig,
+  ResolvedVectorConfig,
+  StackConfig,
+  StorageConfig,
+  StudioConfig,
+  VectorConfig,
 } from "./StackBuilder.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 
-/**
- * The minimum set of platform services required to run a local stack.
- * Platform entry points (bun.ts, node.ts) provide layers that satisfy this type.
- */
 export type PlatformServices =
   | FileSystem.FileSystem
   | Path.Path
   | ChildProcessSpawner.ChildProcessSpawner
   | HttpServer.HttpServer;
 
-/**
- * A layer that provides all required platform services.
- * Platform-specific layers may provide additional services (e.g. BunServices)
- * beyond the minimum required set.
- */
 export type PlatformLayer = Layer.Layer<PlatformServices>;
-
-/** Factory that creates a platform layer given the resolved API port. */
 export type PlatformFactory = (apiPort: number) => PlatformLayer;
 
 export interface ReadyOptions {
   readonly timeout?: number;
 }
 
+export function defaultManagedStackName(cwd: string): string {
+  return basename(cwd) || "default";
+}
+
 export interface StackHandle extends AsyncDisposable {
-  // Connection info
   readonly url: string;
   readonly dbUrl: string;
   readonly publishableKey: string;
   readonly secretKey: string;
-
-  // Stack lifecycle
   start(): Promise<void>;
   stop(): Promise<void>;
   dispose(): Promise<void>;
-
-  // Per-service lifecycle
   startService(name: string): Promise<void>;
   stopService(name: string): Promise<void>;
   restartService(name: string): Promise<void>;
-
-  // Readiness
   ready(opts?: ReadyOptions): Promise<void>;
   serviceReady(name: string, opts?: ReadyOptions): Promise<void>;
-
-  // Status
   getStatus(): Promise<ReadonlyArray<StackServiceState>>;
   getServiceStatus(name: string): Promise<StackServiceState>;
   statusChanges(): AsyncIterable<StackServiceState>;
-
-  // Logs
   logs(): AsyncIterable<LogEntry>;
   serviceLogs(name: string): AsyncIterable<LogEntry>;
   logHistory(name: string, limit?: number): Promise<ReadonlyArray<LogEntry>>;
+}
+
+interface ResolveConfigOptions {
+  readonly stackRoot?: string;
+  readonly runtimeRoot?: string;
+  readonly preferredPorts?: Partial<AllocatedPorts>;
+  readonly reservedPorts?: ReadonlySet<number>;
+}
+
+interface ResolvedRoots {
+  readonly cacheRoot: string;
+  readonly stackRoot: string;
+  readonly runtimeRoot: string;
+  readonly autoManagedPaths: ReadonlyArray<string>;
+}
+
+const makeTempRoot = (prefix: string) => mkdtempSync(join(shortTempPrefixRoot(), prefix));
+
+const resolveRoots = (config: StackConfig, opts: ResolveConfigOptions): ResolvedRoots => {
+  const cacheRoot = config.cacheRoot ?? defaultCacheRoot();
+  const autoManagedPaths: string[] = [];
+
+  const stackRoot =
+    opts.stackRoot ??
+    config.stackRoot ??
+    (() => {
+      const dir = makeTempRoot("sb-stack-");
+      autoManagedPaths.push(dir);
+      return dir;
+    })();
+
+  const runtimeRoot =
+    opts.runtimeRoot ??
+    config.runtimeRoot ??
+    (() => {
+      const dir = makeTempRoot("sb-run-");
+      autoManagedPaths.push(dir);
+      return dir;
+    })();
+
+  return {
+    cacheRoot,
+    stackRoot,
+    runtimeRoot,
+    autoManagedPaths,
+  };
+};
+
+const resolveDataDir = (
+  explicitDir: string | undefined,
+  stackRoot: string,
+  suffix: string,
+): string => explicitDir ?? join(stackRoot, "data", suffix);
+
+async function readPortsFile(filePath: string): Promise<AllocatedPorts | undefined> {
+  try {
+    const content = await readFile(filePath, "utf8");
+    return JSON.parse(content) as AllocatedPorts;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readOwnedPorts(stackRoot: string): Promise<AllocatedPorts | undefined> {
+  return readPortsFile(join(stackRoot, "ports.json"));
+}
+
+async function readReservedPorts(
+  stacksRoot: string,
+  currentStackRoot: string,
+): Promise<ReadonlySet<number>> {
+  const reserved = new Set<number>();
+
+  let entries: Array<{ isDirectory(): boolean; name: string }>;
+  try {
+    entries = (await readdir(stacksRoot, {
+      withFileTypes: true,
+      encoding: "utf8",
+    })) as Array<{ isDirectory(): boolean; name: string }>;
+  } catch {
+    return reserved;
+  }
+
+  await Promise.all(
+    entries.map(async (entry) => {
+      if (!entry.isDirectory()) {
+        return;
+      }
+
+      const stackRoot = join(stacksRoot, entry.name);
+      if (stackRoot === currentStackRoot) {
+        return;
+      }
+
+      const ports = await readPortsFile(join(stackRoot, "ports.json"));
+      if (ports === undefined) {
+        return;
+      }
+
+      for (const field of PORT_FIELDS) {
+        reserved.add(ports[field]);
+      }
+    }),
+  );
+
+  return reserved;
 }
 
 function resolvePostgrestConfig(
@@ -100,7 +213,7 @@ function resolvePostgrestConfig(
   return {
     port: ports.postgrestPort,
     adminPort: ports.postgrestAdminPort,
-    schemas: cfg.schemas ?? ["public"],
+    schemas: cfg.schemas ?? ["public", "graphql_public"],
     extraSearchPath: cfg.extraSearchPath ?? ["public", "extensions"],
     maxRows: cfg.maxRows ?? 1000,
     version: cfg.version ?? DEFAULT_VERSIONS.postgrest,
@@ -124,27 +237,203 @@ function resolveAuthConfig(
   };
 }
 
-/** Resolve user-facing StackConfig into a fully resolved ResolvedStackConfig. */
-export async function resolveConfig(input?: StackConfig): Promise<ResolvedStackConfig> {
+function resolveRealtimeConfig(
+  input: RealtimeConfig | undefined,
+  raw: RealtimeConfig | false | undefined,
+  ports: AllocatedPorts,
+): ResolvedRealtimeConfig | false {
+  if (raw === false) return false;
+  const cfg = input ?? {};
+  return {
+    port: ports.realtimePort,
+    version: cfg.version ?? DEFAULT_VERSIONS.realtime,
+    tenantId: cfg.tenantId ?? "realtime-dev",
+    encryptionKey: cfg.encryptionKey ?? "supabaserealtime",
+    secretKeyBase:
+      cfg.secretKeyBase ?? "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
+    maxHeaderLength: cfg.maxHeaderLength ?? 4096,
+  };
+}
+
+function resolveStorageConfig(
+  input: StorageConfig | undefined,
+  raw: StorageConfig | false | undefined,
+  ports: AllocatedPorts,
+  opts: ResolveConfigOptions,
+): ResolvedStorageConfig | false {
+  if (raw === false) return false;
+  const cfg = input ?? {};
+  return {
+    port: ports.storagePort,
+    version: cfg.version ?? DEFAULT_VERSIONS.storage,
+    dataDir: resolveDataDir(cfg.dataDir, opts.stackRoot!, "storage"),
+    fileSizeLimit: cfg.fileSizeLimit ?? "50MiB",
+    s3ProtocolEnabled: cfg.s3ProtocolEnabled ?? true,
+  };
+}
+
+function resolveImgproxyConfig(
+  input: ImgproxyConfig | undefined,
+  raw: ImgproxyConfig | false | undefined,
+  ports: AllocatedPorts,
+): ResolvedImgproxyConfig | false {
+  if (raw === false) return false;
+  const cfg = input ?? {};
+  return {
+    port: ports.imgproxyPort,
+    version: cfg.version ?? DEFAULT_VERSIONS.imgproxy,
+  };
+}
+
+function resolveMailpitConfig(
+  input: MailpitConfig | undefined,
+  raw: MailpitConfig | false | undefined,
+  ports: AllocatedPorts,
+): ResolvedMailpitConfig | false {
+  if (raw === false) return false;
+  const cfg = input ?? {};
+  return {
+    port: ports.mailpitPort,
+    smtpPort: ports.mailpitSmtpPort,
+    pop3Port: ports.mailpitPop3Port,
+    version: cfg.version ?? DEFAULT_VERSIONS.mailpit,
+    adminEmail: cfg.adminEmail ?? "admin@email.com",
+    senderName: cfg.senderName ?? "Admin",
+  };
+}
+
+function resolvePgmetaConfig(
+  input: PgmetaConfig | undefined,
+  raw: PgmetaConfig | false | undefined,
+  ports: AllocatedPorts,
+): ResolvedPgmetaConfig | false {
+  if (raw === false) return false;
+  const cfg = input ?? {};
+  return {
+    port: ports.pgmetaPort,
+    version: cfg.version ?? DEFAULT_VERSIONS.pgmeta,
+  };
+}
+
+function resolveStudioConfig(
+  input: StudioConfig | undefined,
+  raw: StudioConfig | false | undefined,
+  ports: AllocatedPorts,
+  apiPort: number,
+): ResolvedStudioConfig | false {
+  if (raw === false) return false;
+  const cfg = input ?? {};
+  return {
+    port: ports.studioPort,
+    version: cfg.version ?? DEFAULT_VERSIONS.studio,
+    apiUrl: cfg.apiUrl ?? `http://127.0.0.1:${apiPort}`,
+  };
+}
+
+function resolveAnalyticsConfig(
+  input: AnalyticsConfig | undefined,
+  raw: AnalyticsConfig | false | undefined,
+  ports: AllocatedPorts,
+): ResolvedAnalyticsConfig | false {
+  if (raw === false) return false;
+  const cfg = input ?? {};
+  return {
+    port: ports.analyticsPort,
+    version: cfg.version ?? DEFAULT_VERSIONS.analytics,
+    backend: cfg.backend ?? "postgres",
+    apiKey: cfg.apiKey ?? "api-key",
+  };
+}
+
+function resolveVectorConfig(
+  input: VectorConfig | undefined,
+  raw: VectorConfig | false | undefined,
+): ResolvedVectorConfig | false {
+  if (raw === false) return false;
+  const cfg = input ?? {};
+  return {
+    version: cfg.version ?? DEFAULT_VERSIONS.vector,
+  };
+}
+
+function resolvePoolerConfig(
+  input: PoolerConfig | undefined,
+  raw: PoolerConfig | false | undefined,
+  ports: AllocatedPorts,
+): ResolvedPoolerConfig | false {
+  if (raw === false) return false;
+  const cfg = input ?? {};
+  return {
+    port: ports.poolerPort,
+    apiPort: ports.poolerApiPort,
+    mode: cfg.mode ?? "transaction",
+    version: cfg.version ?? DEFAULT_VERSIONS.pooler,
+    tenantId: cfg.tenantId ?? "pooler-dev",
+    encryptionKey: cfg.encryptionKey ?? "12345678901234567890123456789032",
+    secretKeyBase:
+      cfg.secretKeyBase ?? "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
+    defaultPoolSize: cfg.defaultPoolSize ?? 20,
+    maxClientConn: cfg.maxClientConn ?? 100,
+  };
+}
+
+export async function resolveConfig(
+  input?: StackConfig,
+  opts: ResolveConfigOptions = {},
+): Promise<ResolvedStackConfig> {
   const config = input ?? {};
-  const home = config.home ?? join(homedir(), ".supabase");
+  const roots = resolveRoots(config, opts);
   const postgresInput = config.postgres ?? {};
   const postgrestInput = config.postgrest !== false ? (config.postgrest ?? undefined) : undefined;
   const authInput = config.auth !== false ? (config.auth ?? undefined) : undefined;
+  const realtimeEnabled = config.realtime !== undefined && config.realtime !== false;
+  const storageEnabled = config.storage !== undefined && config.storage !== false;
+  const imgproxyEnabled = config.imgproxy !== undefined && config.imgproxy !== false;
+  const mailpitEnabled = config.mailpit !== undefined && config.mailpit !== false;
+  const pgmetaEnabled = config.pgmeta !== undefined && config.pgmeta !== false;
+  const studioEnabled = config.studio !== undefined && config.studio !== false;
+  const analyticsEnabled = config.analytics !== undefined && config.analytics !== false;
+  const vectorEnabled = config.vector !== undefined && config.vector !== false;
+  const poolerEnabled = config.pooler !== undefined && config.pooler !== false;
+  const realtimeInput = realtimeEnabled ? (config.realtime ?? undefined) : undefined;
+  const storageInput = storageEnabled ? (config.storage ?? undefined) : undefined;
+  const imgproxyInput = imgproxyEnabled ? (config.imgproxy ?? undefined) : undefined;
+  const mailpitInput = mailpitEnabled ? (config.mailpit ?? undefined) : undefined;
+  const pgmetaInput = pgmetaEnabled ? (config.pgmeta ?? undefined) : undefined;
+  const studioInput = studioEnabled ? (config.studio ?? undefined) : undefined;
+  const analyticsInput = analyticsEnabled ? (config.analytics ?? undefined) : undefined;
+  const vectorInput = vectorEnabled ? (config.vector ?? undefined) : undefined;
+  const poolerInput = poolerEnabled ? (config.pooler ?? undefined) : undefined;
 
-  const autoManagedDataDir = postgresInput.dataDir == null;
-  const dataDir = postgresInput.dataDir ?? mkdtempSync(join(tmpdir(), "supabase-local-"));
+  const postgresDataDir = resolveDataDir(postgresInput.dataDir, roots.stackRoot, "postgres");
 
   const ports = await Effect.runPromise(
-    allocatePorts({
-      apiPort: config.port,
-      dbPort: postgresInput.port,
-      authPort: authInput?.port,
-      postgrestPort: undefined,
-      postgrestAdminPort: undefined,
-    }),
-  ).catch((e: unknown) => {
-    throw toStackError(e);
+    allocatePorts(
+      {
+        apiPort: config.port,
+        dbPort: postgresInput.port,
+        authPort: authInput?.port,
+        postgrestPort: undefined,
+        postgrestAdminPort: undefined,
+        realtimePort: realtimeInput?.port,
+        storagePort: storageInput?.port,
+        imgproxyPort: imgproxyInput?.port,
+        mailpitPort: mailpitInput?.port,
+        mailpitSmtpPort: mailpitInput?.smtpPort,
+        mailpitPop3Port: mailpitInput?.pop3Port,
+        pgmetaPort: pgmetaInput?.port,
+        studioPort: studioInput?.port,
+        analyticsPort: analyticsInput?.port,
+        poolerPort: poolerInput?.port,
+        poolerApiPort: poolerInput?.apiPort,
+      },
+      {
+        preferred: opts.preferredPorts,
+        reserved: opts.reservedPorts,
+      },
+    ),
+  ).catch((error: unknown) => {
+    throw toStackError(error);
   });
 
   const jwtSecret = config.jwtSecret ?? defaultJwtSecret;
@@ -152,26 +441,48 @@ export async function resolveConfig(input?: StackConfig): Promise<ResolvedStackC
   const serviceRoleJwt = generateJwt(jwtSecret, "service_role");
 
   return {
-    home,
-    mode: config.mode ?? "auto",
+    cacheRoot: roots.cacheRoot,
+    stackRoot: roots.stackRoot,
+    runtimeRoot: roots.runtimeRoot,
+    mode: config.mode ?? "native",
     jwtSecret,
+    ports,
     apiPort: ports.apiPort,
     dbPort: ports.dbPort,
     publishableKey: config.publishableKey ?? defaultPublishableKey,
     secretKey: config.secretKey ?? defaultSecretKey,
-    autoManagedDataDir,
+    autoManagedPaths: roots.autoManagedPaths,
     anonJwt,
     serviceRoleJwt,
-
     postgres: {
       port: ports.dbPort,
-      dataDir,
+      dataDir: postgresDataDir,
       version: postgresInput.version ?? DEFAULT_VERSIONS.postgres,
     },
-
     postgrest: resolvePostgrestConfig(postgrestInput, config.postgrest, ports),
-
     auth: resolveAuthConfig(authInput, config.auth, ports, ports.apiPort),
+    realtime: realtimeEnabled
+      ? resolveRealtimeConfig(realtimeInput, config.realtime, ports)
+      : false,
+    storage: storageEnabled
+      ? resolveStorageConfig(storageInput, config.storage, ports, {
+          ...opts,
+          stackRoot: roots.stackRoot,
+        })
+      : false,
+    imgproxy: imgproxyEnabled
+      ? resolveImgproxyConfig(imgproxyInput, config.imgproxy, ports)
+      : false,
+    mailpit: mailpitEnabled ? resolveMailpitConfig(mailpitInput, config.mailpit, ports) : false,
+    pgmeta: pgmetaEnabled ? resolvePgmetaConfig(pgmetaInput, config.pgmeta, ports) : false,
+    studio: studioEnabled
+      ? resolveStudioConfig(studioInput, config.studio, ports, ports.apiPort)
+      : false,
+    analytics: analyticsEnabled
+      ? resolveAnalyticsConfig(analyticsInput, config.analytics, ports)
+      : false,
+    vector: vectorEnabled ? resolveVectorConfig(vectorInput, config.vector) : false,
+    pooler: poolerEnabled ? resolvePoolerConfig(poolerInput, config.pooler, ports) : false,
   };
 }
 
@@ -183,20 +494,42 @@ export async function resolveDaemonConfig(
   },
 ): Promise<DaemonConfig> {
   const { cwd, name, projectDir, ...stackConfig } = input;
-  const resolved = await resolveConfig(stackConfig);
+  if (stackConfig.stackRoot !== undefined || stackConfig.runtimeRoot !== undefined) {
+    throw new Error("Managed daemon stacks derive stackRoot and runtimeRoot automatically");
+  }
   const effectiveProjectDir = projectDir ?? cwd;
+  const resolvedName = name ?? defaultManagedStackName(effectiveProjectDir);
+  const cacheRoot = stackConfig.cacheRoot ?? defaultCacheRoot();
+  const stackRoot = defaultManagedStackRoot(cacheRoot, resolvedName);
+  const runtimeRoot = defaultManagedRuntimeRoot(stackRoot);
+  const savedPorts = await readOwnedPorts(stackRoot);
+  const reservedPorts = await readReservedPorts(defaultManagedStacksRoot(cacheRoot), stackRoot);
+  const resolved = await resolveConfig(
+    {
+      ...stackConfig,
+      cacheRoot,
+      stackRoot,
+      runtimeRoot,
+    },
+    {
+      stackRoot,
+      runtimeRoot,
+      preferredPorts: savedPorts ?? DEFAULT_PORTS,
+      reservedPorts,
+    },
+  );
   return {
     ...resolved,
-    name: name ?? (basename(effectiveProjectDir) || "default"),
+    name: resolvedName,
     projectDir: effectiveProjectDir,
   };
 }
 
 export const projectDaemonLayer = (opts: {
-  readonly home: string;
+  readonly cacheRoot: string;
   readonly cwd: string;
   readonly daemonEntryPoint: string;
-  readonly stackConfig?: Omit<StackConfig, "home">;
+  readonly stackConfig?: Omit<StackConfig, "cacheRoot" | "stackRoot" | "runtimeRoot">;
 }): Effect.Effect<
   Layer.Layer<Stack>,
   DaemonStartError | StackAlreadyRunningError,
@@ -205,7 +538,7 @@ export const projectDaemonLayer = (opts: {
   Effect.gen(function* () {
     const config = yield* Effect.promise(() =>
       resolveDaemonConfig({
-        home: opts.home,
+        cacheRoot: opts.cacheRoot,
         cwd: opts.cwd,
         ...opts.stackConfig,
       }),
@@ -213,11 +546,19 @@ export const projectDaemonLayer = (opts: {
     return yield* daemonLayer(config, opts.daemonEntryPoint);
   });
 
-/** Compute all possible Docker container names from a resolved config (for error-path cleanup). */
 function dockerContainerNamesFor(config: ResolvedStackConfig): string[] {
   const names = [`supabase-postgres-${config.apiPort}`];
   if (config.postgrest !== false) names.push(`supabase-postgrest-${config.apiPort}`);
   if (config.auth !== false) names.push(`supabase-auth-${config.apiPort}`);
+  if (config.realtime !== false) names.push(`supabase-realtime-${config.apiPort}`);
+  if (config.storage !== false) names.push(`supabase-storage-${config.apiPort}`);
+  if (config.imgproxy !== false) names.push(`supabase-imgproxy-${config.apiPort}`);
+  if (config.mailpit !== false) names.push(`supabase-mailpit-${config.apiPort}`);
+  if (config.pgmeta !== false) names.push(`supabase-pgmeta-${config.apiPort}`);
+  if (config.studio !== false) names.push(`supabase-studio-${config.apiPort}`);
+  if (config.analytics !== false) names.push(`supabase-analytics-${config.apiPort}`);
+  if (config.vector !== false) names.push(`supabase-vector-${config.apiPort}`);
+  if (config.pooler !== false) names.push(`supabase-pooler-${config.apiPort}`);
   return names;
 }
 
@@ -230,23 +571,17 @@ export async function createStack(
   const runtime = ManagedRuntime.make(fullLayer);
 
   try {
-    // Get the services map for Stream bridging (materializes layers, binds HttpServer)
     const services = await runtime.services();
-
-    // Get Stack instance once — its methods return Effects/Streams directly
     const localStack = await runtime.runPromise(
       Effect.gen(function* () {
         return yield* Stack;
       }),
     );
-
-    // Get stack info
     const info = await runtime.runPromise(localStack.getInfo());
 
-    // Helper to run effects with error mapping
     const run = <A>(effect: Effect.Effect<A, unknown>) =>
-      runtime.runPromise(effect).catch((e: unknown) => {
-        throw toStackError(e);
+      runtime.runPromise(effect).catch((error: unknown) => {
+        throw toStackError(error);
       });
 
     const gracefulDispose = async () => {
@@ -258,54 +593,41 @@ export async function createStack(
       dbUrl: info.dbUrl,
       publishableKey: info.publishableKey,
       secretKey: info.secretKey,
-
       start: () => run(localStack.start()),
       stop: () => run(localStack.stop()),
       dispose: gracefulDispose,
-
-      startService: (name: string) => run(localStack.startService(name)),
-      stopService: (name: string) => run(localStack.stopService(name)),
-      restartService: (name: string) => run(localStack.restartService(name)),
-
-      ready: (opts?: ReadyOptions) => {
+      startService: (name) => run(localStack.startService(name)),
+      stopService: (name) => run(localStack.stopService(name)),
+      restartService: (name) => run(localStack.restartService(name)),
+      ready: (opts) => {
         const effect =
           opts?.timeout != null
             ? localStack.waitAllReady().pipe(Effect.timeout(Duration.millis(opts.timeout)))
             : localStack.waitAllReady();
         return run(effect);
       },
-      serviceReady: (name: string, opts?: ReadyOptions) => {
+      serviceReady: (name, opts) => {
         const effect =
           opts?.timeout != null
             ? localStack.waitReady(name).pipe(Effect.timeout(Duration.millis(opts.timeout)))
             : localStack.waitReady(name);
         return run(effect);
       },
-
       getStatus: () => run(localStack.getAllStates()),
-      getServiceStatus: (name: string) =>
+      getServiceStatus: (name) =>
         run(localStack.getState(name) as Effect.Effect<StackServiceState, ServiceNotFoundError>),
-
       statusChanges: () => Stream.toAsyncIterableWith(localStack.allStateChanges(), services),
-
       logs: () => Stream.toAsyncIterableWith(localStack.subscribeAllLogs(), services),
-
-      serviceLogs: (name: string) =>
-        Stream.toAsyncIterableWith(localStack.subscribeLogs(name), services),
-
-      logHistory: (name: string, limit?: number) => run(localStack.logHistory(name, limit)),
-
+      serviceLogs: (name) => Stream.toAsyncIterableWith(localStack.subscribeLogs(name), services),
+      logHistory: (name, limit) => run(localStack.logHistory(name, limit)),
       [Symbol.asyncDispose]: gracefulDispose,
     };
 
     return stack;
-  } catch (e: unknown) {
-    // Dispose the runtime to clean up any partially-materialized layers
-    // (e.g. spawned postgres/docker processes) before propagating the error.
+  } catch (error: unknown) {
     await runtime.dispose().catch(() => {});
-    // Clean up any Docker containers from partial startup
     dockerForceRemove(dockerContainerNamesFor(resolved));
-    cleanupAutoManagedDataDir(resolved);
-    throw toStackError(e);
+    cleanupAutoManagedPaths(resolved);
+    throw toStackError(error);
   }
 }

@@ -45,4 +45,18 @@ export const dockerHostAddress = (os: string): string =>
  * On macOS/Windows, we use explicit port mapping since --network=host doesn't work.
  */
 export const dockerNetworkArgs = (os: string, ports: readonly number[]): readonly string[] =>
-  os === "linux" ? ["--network=host"] : ports.flatMap((p) => ["-p", `${p}:${p}`]);
+  dockerPortMapArgs(
+    os,
+    ports.map((port) => ({ host: port, container: port })),
+  );
+
+export const dockerPortMapArgs = (
+  os: string,
+  mappings: ReadonlyArray<{
+    readonly host: number;
+    readonly container: number;
+  }>,
+): readonly string[] =>
+  os === "linux"
+    ? ["--network=host"]
+    : mappings.flatMap(({ host, container }) => ["-p", `${host}:${container}`]);

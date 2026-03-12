@@ -21,6 +21,7 @@ const MOCK_INFO: StackInfo = {
   anonJwt: "anon_jwt",
   serviceRoleJwt: "service_role_jwt",
   dockerContainerNames: ["supabase-postgres-54321"],
+  serviceEndpoints: {},
 };
 
 const POSTGRES_STATE = new StackServiceState({

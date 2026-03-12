@@ -22,14 +22,14 @@ interface SpawnedSupabase {
 }
 
 export function makeTempHome() {
-  const dir = mkdtempSync(path.join(tmpdir(), "supabase-test-"));
+  const tempRoot = process.platform === "win32" ? tmpdir() : "/tmp";
+  const dir = mkdtempSync(path.join(tempRoot, "sb-test-"));
 
   // Share the real binary cache so tests don't re-download binaries.
   const realBinDir = path.join(homedir(), ".supabase", "bin");
   if (existsSync(realBinDir)) {
-    const supaDir = path.join(dir, ".supabase");
-    mkdirSync(supaDir, { recursive: true });
-    symlinkSync(realBinDir, path.join(supaDir, "bin"));
+    mkdirSync(dir, { recursive: true });
+    symlinkSync(realBinDir, path.join(dir, "bin"));
   }
 
   return {
@@ -51,7 +51,7 @@ export function spawnSupabase(
   args: string[],
   options?: {
     env?: Record<string, string>;
-    /** Reuse a temp HOME directory instead of creating a new one per call. */
+    /** Reuse a temp SUPABASE_HOME directory instead of creating a new one per call. */
     home?: string;
     /** Whether to kill the whole process group once the root process exits. */
     cleanupProcessGroupOnClose?: boolean;
@@ -70,7 +70,7 @@ export function spawnSupabase(
     {
       env: {
         ...process.env,
-        HOME: homeDir,
+        SUPABASE_HOME: homeDir,
         SUPABASE_NO_KEYRING: "1",
         ...options?.env,
       },
@@ -161,7 +161,7 @@ export async function runSupabase(
   args: string[],
   options?: {
     env?: Record<string, string>;
-    /** Reuse a temp HOME directory instead of creating a new one per call. */
+    /** Reuse a temp SUPABASE_HOME directory instead of creating a new one per call. */
     home?: string;
     /** Kill the process as soon as stdout matches this pattern. */
     until?: RegExp;

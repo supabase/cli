@@ -69,6 +69,7 @@ describe("StartDashboardView", () => {
         anonJwt: "anon",
         serviceRoleJwt: "service-role",
         dockerContainerNames: [],
+        serviceEndpoints: {},
       },
       showConnectionInfo: false,
       phase: "failed",

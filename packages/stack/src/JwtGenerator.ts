@@ -28,13 +28,26 @@ export function generateJwt(secret: string, role: string): string {
   return `${data}.${signature}`;
 }
 
+export function generateJwks(secret: string): string {
+  return JSON.stringify({
+    keys: [
+      {
+        kty: "oct",
+        k: Buffer.from(secret).toString("base64url"),
+      },
+    ],
+  });
+}
+
 export class JwtGenerator extends ServiceMap.Service<
   JwtGenerator,
   {
     readonly generate: (secret: string, role: string) => Effect.Effect<string>;
+    readonly generateJwks: (secret: string) => Effect.Effect<string>;
   }
 >()("local/JwtGenerator") {
   static layer: Layer.Layer<JwtGenerator> = Layer.succeed(this, {
     generate: (secret: string, role: string) => Effect.sync(() => generateJwt(secret, role)),
+    generateJwks: (secret: string) => Effect.sync(() => generateJwks(secret)),
   });
 }

@@ -1,8 +1,28 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { FileSystem, Path } from "effect";
+import type { AllocatedPorts } from "./PortAllocator.ts";
 import { resolveManagedStack } from "./managed-stack.ts";
-import { StateManager, type StackState } from "./StateManager.ts";
+import { StateManager, managedStateManagerPaths, type StackState } from "./StateManager.ts";
+
+const DEFAULT_PORTS: AllocatedPorts = {
+  apiPort: 54321,
+  dbPort: 54322,
+  authPort: 54330,
+  postgrestPort: 54331,
+  postgrestAdminPort: 54332,
+  realtimePort: 54333,
+  storagePort: 54334,
+  imgproxyPort: 54335,
+  mailpitPort: 54324,
+  mailpitSmtpPort: 54325,
+  mailpitPop3Port: 54326,
+  pgmetaPort: 54336,
+  studioPort: 54323,
+  analyticsPort: 54327,
+  poolerPort: 54329,
+  poolerApiPort: 54337,
+};
 
 function makeState(overrides: Partial<StackState> = {}): StackState {
   return {
@@ -11,7 +31,8 @@ function makeState(overrides: Partial<StackState> = {}): StackState {
     projectDir: "/Users/test/Code/myapp",
     apiPort: 54321,
     dbPort: 54322,
-    socketPath: "/Users/test/.supabase/stacks/my-project/daemon.sock",
+    ports: DEFAULT_PORTS,
+    socketPath: "/tmp/supabase/s-123456789abc/daemon.sock",
     startedAt: "2026-03-04T10:00:00Z",
     url: "http://127.0.0.1:54321",
     dbUrl: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
@@ -20,6 +41,7 @@ function makeState(overrides: Partial<StackState> = {}): StackState {
     anonJwt: "anon_jwt",
     serviceRoleJwt: "service_role_jwt",
     dockerContainerNames: ["supabase-postgres-54321"],
+    serviceEndpoints: {},
     ...overrides,
   };
 }
@@ -96,7 +118,7 @@ function setup() {
 }
 
 const makeStateManager = StateManager.asEffect().pipe(
-  Effect.provide(StateManager.make("/test-home")),
+  Effect.provide(StateManager.make(managedStateManagerPaths("/test-home"))),
 );
 
 describe("resolveManagedStack", () => {
@@ -107,7 +129,7 @@ describe("resolveManagedStack", () => {
       yield* mgr.write(makeState({ pid: process.pid }));
 
       const result = yield* resolveManagedStack({
-        home: "/test-home",
+        cacheRoot: "/test-home",
         name: "my-project",
       });
 
@@ -123,7 +145,7 @@ describe("resolveManagedStack", () => {
       yield* mgr.write(makeState({ pid: process.pid, projectDir: "/Users/test/Code/myapp" }));
 
       const result = yield* resolveManagedStack({
-        home: "/test-home",
+        cacheRoot: "/test-home",
         cwd: "/Users/test/Code/myapp/src/components",
       });
 
@@ -139,7 +161,7 @@ describe("resolveManagedStack", () => {
       yield* mgr.write(makeState({ pid: 999999 }));
 
       const result = yield* resolveManagedStack({
-        home: "/test-home",
+        cacheRoot: "/test-home",
         name: "my-project",
       });
 
@@ -153,7 +175,7 @@ describe("resolveManagedStack", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* resolveManagedStack({
-        home: "/test-home",
+        cacheRoot: "/test-home",
         cwd: "/Users/test/Code/myapp",
       }).pipe(Effect.exit);
 

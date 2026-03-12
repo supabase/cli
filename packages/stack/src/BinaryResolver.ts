@@ -40,6 +40,8 @@ const downloadUrl = (info: AssetInfo): string => {
     }
     case "auth":
       return `https://github.com/supabase/auth/releases/download/${authReleaseTag(version)}/auth-v${version}-${assetName}.tar.gz`;
+    default:
+      throw new Error(`No native binary download available for service: ${service}`);
   }
 };
 
@@ -104,7 +106,7 @@ export class BinaryResolver extends ServiceMap.Service<
   static cachePath = cachePath;
 
   static make(
-    home: string,
+    cacheRoot: string,
   ): Layer.Layer<
     BinaryResolver,
     never,
@@ -118,7 +120,7 @@ export class BinaryResolver extends ServiceMap.Service<
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const binDir = path.join(home, "bin");
+        const binDir = path.join(cacheRoot, "bin");
         const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
@@ -138,6 +140,9 @@ export class BinaryResolver extends ServiceMap.Service<
                   break;
                 case "auth":
                   assetName = authAssetName(platform);
+                  break;
+                default:
+                  assetName = null;
                   break;
               }
 

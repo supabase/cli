@@ -1,11 +1,36 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { FileSystem, Path } from "effect";
-import { StateManager, type StackState } from "./StateManager.ts";
+import {
+  StateManager,
+  managedStateManagerPaths,
+  singleStackStateManagerPaths,
+  type StackState,
+} from "./StateManager.ts";
+import type { AllocatedPorts } from "./PortAllocator.ts";
 
 // ---------------------------------------------------------------------------
 // Test fixtures
 // ---------------------------------------------------------------------------
+
+const DEFAULT_PORTS: AllocatedPorts = {
+  apiPort: 54321,
+  dbPort: 54322,
+  authPort: 54330,
+  postgrestPort: 54331,
+  postgrestAdminPort: 54332,
+  realtimePort: 54333,
+  storagePort: 54334,
+  imgproxyPort: 54335,
+  mailpitPort: 54324,
+  mailpitSmtpPort: 54325,
+  mailpitPop3Port: 54326,
+  pgmetaPort: 54336,
+  studioPort: 54323,
+  analyticsPort: 54327,
+  poolerPort: 54329,
+  poolerApiPort: 54337,
+};
 
 function makeState(overrides: Partial<StackState> = {}): StackState {
   return {
@@ -14,7 +39,8 @@ function makeState(overrides: Partial<StackState> = {}): StackState {
     projectDir: "/Users/test/Code/myapp",
     apiPort: 54321,
     dbPort: 54322,
-    socketPath: "/Users/test/.supabase/stacks/my-project/daemon.sock",
+    ports: DEFAULT_PORTS,
+    socketPath: "/tmp/supabase/s-123456789abc/daemon.sock",
     startedAt: "2026-03-04T10:00:00Z",
     url: "http://127.0.0.1:54321",
     dbUrl: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
@@ -23,6 +49,7 @@ function makeState(overrides: Partial<StackState> = {}): StackState {
     anonJwt: "anon_jwt",
     serviceRoleJwt: "service_role_jwt",
     dockerContainerNames: ["supabase-postgres-54321"],
+    serviceEndpoints: {},
     ...overrides,
   };
 }
@@ -100,7 +127,7 @@ function mockPath() {
 
 function setup() {
   const fsm = mockFileSystem();
-  const layer = StateManager.make("/test-home").pipe(
+  const layer = StateManager.make(managedStateManagerPaths("/test-home")).pipe(
     Layer.provide(Layer.merge(fsm.layer, mockPath())),
   );
   return { layer, files: fsm.files, dirs: fsm.dirs };
@@ -111,6 +138,27 @@ function setup() {
 // ---------------------------------------------------------------------------
 
 describe("StateManager", () => {
+  describe("path layout", () => {
+    it.live("keeps persistent state and runtime socket in separate roots", () => {
+      const fsm = mockFileSystem();
+      const layer = StateManager.make(
+        singleStackStateManagerPaths(
+          "/persist/stacks/my-project",
+          "/tmp/supabase/custom",
+          "my-project",
+        ),
+      ).pipe(Layer.provide(Layer.merge(fsm.layer, mockPath())));
+
+      return Effect.gen(function* () {
+        const mgr = yield* StateManager;
+        expect(mgr.stackDir("my-project")).toBe("/persist/stacks/my-project");
+        expect(mgr.dataDir("my-project")).toBe("/persist/stacks/my-project/data");
+        expect(mgr.runtimeDir("my-project")).toBe("/tmp/supabase/custom");
+        expect(mgr.socketPath("my-project")).toBe("/tmp/supabase/custom/daemon.sock");
+      }).pipe(Effect.provide(layer));
+    });
+  });
+
   describe("write + read round-trip", () => {
     it.live("writes and reads back a state file", () => {
       const { layer } = setup();
@@ -163,14 +211,17 @@ describe("StateManager", () => {
   });
 
   describe("remove", () => {
-    it.live("removes a state directory", () => {
+    it.live("removes runtime state but keeps durable ports", () => {
       const { layer } = setup();
       return Effect.gen(function* () {
         const mgr = yield* StateManager;
         yield* mgr.write(makeState());
+        yield* mgr.writePorts("my-project", DEFAULT_PORTS);
         yield* mgr.remove("my-project");
         const exit = yield* mgr.read("my-project").pipe(Effect.exit);
         expect(exit._tag).toBe("Failure");
+        const ports = yield* mgr.readPorts("my-project");
+        expect(ports).toEqual(DEFAULT_PORTS);
       }).pipe(Effect.provide(layer));
     });
 
@@ -179,6 +230,75 @@ describe("StateManager", () => {
       return Effect.gen(function* () {
         const mgr = yield* StateManager;
         yield* mgr.remove("nonexistent");
+      }).pipe(Effect.provide(layer));
+    });
+  });
+
+  describe("deleteStack", () => {
+    it.live("removes the entire persisted stack directory", () => {
+      const { layer, dirs } = setup();
+      return Effect.gen(function* () {
+        const mgr = yield* StateManager;
+        yield* mgr.write(makeState());
+        yield* mgr.writePorts("my-project", DEFAULT_PORTS);
+        yield* mgr.remove("my-project");
+        expect(dirs.has(mgr.runtimeDir("my-project"))).toBe(false);
+        yield* mgr.deleteStack("my-project");
+        expect(yield* mgr.stackExists("my-project")).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("removes the stack directory after a normal stop left durable files behind", () => {
+      const { layer } = setup();
+      return Effect.gen(function* () {
+        const mgr = yield* StateManager;
+        yield* mgr.write(makeState());
+        yield* mgr.writePorts("my-project", DEFAULT_PORTS);
+        yield* mgr.remove("my-project");
+        expect(yield* mgr.stackExists("my-project")).toBe(true);
+        yield* mgr.deleteStack("my-project");
+        expect(yield* mgr.stackExists("my-project")).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+  });
+
+  describe("ports", () => {
+    it.live("writes and reads back durable ports metadata", () => {
+      const { layer } = setup();
+      return Effect.gen(function* () {
+        const mgr = yield* StateManager;
+        yield* mgr.writePorts("my-project", DEFAULT_PORTS);
+        const ports = yield* mgr.readPorts("my-project");
+        expect(ports).toEqual(DEFAULT_PORTS);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("scans durable ports for all stacks", () => {
+      const { layer } = setup();
+      return Effect.gen(function* () {
+        const mgr = yield* StateManager;
+        yield* mgr.writePorts("project-a", DEFAULT_PORTS);
+        yield* mgr.writePorts("project-b", {
+          ...DEFAULT_PORTS,
+          apiPort: 55001,
+          dbPort: 55002,
+        });
+
+        const ports = yield* mgr.scanPorts();
+        expect(Array.from(ports.keys()).sort()).toEqual(["project-a", "project-b"]);
+        expect(ports.get("project-a")).toEqual(DEFAULT_PORTS);
+        expect(ports.get("project-b")?.apiPort).toBe(55001);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("removePorts deletes durable ownership metadata", () => {
+      const { layer } = setup();
+      return Effect.gen(function* () {
+        const mgr = yield* StateManager;
+        yield* mgr.writePorts("my-project", DEFAULT_PORTS);
+        yield* mgr.removePorts("my-project");
+        const exit = yield* mgr.readPorts("my-project").pipe(Effect.exit);
+        expect(exit._tag).toBe("Failure");
       }).pipe(Effect.provide(layer));
     });
   });

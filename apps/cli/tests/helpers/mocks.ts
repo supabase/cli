@@ -332,6 +332,7 @@ export function mockStack(
     anonJwt: "test-anon-jwt",
     serviceRoleJwt: "test-service-role-jwt",
     dockerContainerNames: [],
+    serviceEndpoints: {},
     ...opts.info,
   };
 

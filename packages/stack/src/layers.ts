@@ -12,6 +12,7 @@ import {
   NoRunningStackError,
   StackAlreadyRunningError,
   StateManager,
+  singleStackStateManagerPaths,
   type StateManagerService,
 } from "./StateManager.ts";
 import { StackBuilder, type ResolvedStackConfig } from "./StackBuilder.ts";
@@ -21,16 +22,16 @@ import { terminateChildProcess } from "./terminateChild.ts";
 /**
  * Build a foreground layer that runs the stack in-process.
  *
- * Wires: BinaryResolver → StackBuilder → Stack + ApiProxy + StateManager + platform.
+ * Wires: BinaryResolver → StackBuilder → Stack + ApiProxy + platform.
  * Returns a fully self-contained layer with no remaining requirements.
  */
 export const foregroundLayer = (
   config: ResolvedStackConfig,
   platformFactory: PlatformFactory,
-): Layer.Layer<Stack | StateManager> => {
+): Layer.Layer<Stack> => {
   const platform = platformFactory(config.apiPort);
 
-  const binaryResolverLayer = BinaryResolver.make(config.home).pipe(
+  const binaryResolverLayer = BinaryResolver.make(config.cacheRoot).pipe(
     Layer.provide(FetchHttpClient.layer),
   );
   const stackBuilderLayer = StackBuilder.layer.pipe(Layer.provide(binaryResolverLayer));
@@ -41,6 +42,12 @@ export const foregroundLayer = (
     gotruePort: config.auth !== false ? config.auth.port : 0,
     postgrestPort: config.postgrest !== false ? config.postgrest.port : 0,
     postgrestAdminPort: config.postgrest !== false ? config.postgrest.adminPort : 0,
+    realtimePort: config.realtime !== false ? config.realtime.port : 0,
+    storagePort: config.storage !== false ? config.storage.port : 0,
+    pgmetaPort: config.pgmeta !== false ? config.pgmeta.port : 0,
+    analyticsPort: config.analytics !== false ? config.analytics.port : 0,
+    poolerPort: config.pooler !== false ? config.pooler.apiPort : 0,
+    studioPort: config.studio !== false ? config.studio.port : 0,
     publishableKey: config.publishableKey,
     secretKey: config.secretKey,
     anonJwt: config.anonJwt,
@@ -48,10 +55,7 @@ export const foregroundLayer = (
   };
   const apiProxyLayer = ApiProxy.layer(proxyConfig).pipe(Layer.provide(FetchHttpClient.layer));
 
-  return Layer.mergeAll(stackLayer, apiProxyLayer, StateManager.make(config.home)).pipe(
-    Layer.provide(platform),
-    Layer.orDie,
-  );
+  return Layer.mergeAll(stackLayer, apiProxyLayer).pipe(Layer.provide(platform), Layer.orDie);
 };
 
 // ---------------------------------------------------------------------------
@@ -70,6 +74,45 @@ export interface DaemonConfig extends ResolvedStackConfig {
   readonly name: string;
   readonly projectDir: string;
 }
+
+export const foregroundDaemonLayer = (
+  config: DaemonConfig,
+  platformFactory: PlatformFactory,
+): Layer.Layer<Stack | StateManager> => {
+  const platform = platformFactory(config.apiPort);
+
+  const binaryResolverLayer = BinaryResolver.make(config.cacheRoot).pipe(
+    Layer.provide(FetchHttpClient.layer),
+  );
+  const stackBuilderLayer = StackBuilder.layer.pipe(Layer.provide(binaryResolverLayer));
+  const stackLayer = Stack.layer(config).pipe(Layer.provide(stackBuilderLayer));
+
+  const proxyConfig: ProxyConfig = {
+    listenPort: config.apiPort,
+    gotruePort: config.auth !== false ? config.auth.port : 0,
+    postgrestPort: config.postgrest !== false ? config.postgrest.port : 0,
+    postgrestAdminPort: config.postgrest !== false ? config.postgrest.adminPort : 0,
+    realtimePort: config.realtime !== false ? config.realtime.port : 0,
+    storagePort: config.storage !== false ? config.storage.port : 0,
+    pgmetaPort: config.pgmeta !== false ? config.pgmeta.port : 0,
+    analyticsPort: config.analytics !== false ? config.analytics.port : 0,
+    poolerPort: config.pooler !== false ? config.pooler.apiPort : 0,
+    studioPort: config.studio !== false ? config.studio.port : 0,
+    publishableKey: config.publishableKey,
+    secretKey: config.secretKey,
+    anonJwt: config.anonJwt,
+    serviceRoleJwt: config.serviceRoleJwt,
+  };
+  const apiProxyLayer = ApiProxy.layer(proxyConfig).pipe(Layer.provide(FetchHttpClient.layer));
+  const stateManagerLayer = StateManager.make(
+    singleStackStateManagerPaths(config.stackRoot, config.runtimeRoot, config.name),
+  );
+
+  return Layer.mergeAll(stackLayer, apiProxyLayer, stateManagerLayer).pipe(
+    Layer.provide(platform),
+    Layer.orDie,
+  );
+};
 
 /**
  * Fork a daemon process and return a RemoteStack layer connected to it.
@@ -91,7 +134,11 @@ export const daemonLayer = (
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const stateManager = yield* StateManager.asEffect().pipe(
-      Effect.provide(StateManager.make(config.home)),
+      Effect.provide(
+        StateManager.make(
+          singleStackStateManagerPaths(config.stackRoot, config.runtimeRoot, config.name),
+        ),
+      ),
     );
 
     // Check if a stack with this name is already running
@@ -109,10 +156,14 @@ export const daemonLayer = (
       yield* stateManager.remove(config.name);
     }
 
-    // Compute socket path via StateManager (centralizes ~/.supabase/stacks/ logic)
+    // Compute socket path via StateManager conventions
     const dir = stateManager.stackDir(config.name);
     yield* fs
       .makeDirectory(dir, { recursive: true })
+      .pipe(Effect.catchTag("PlatformError", (e) => Effect.die(e)));
+    const runtimeDir = stateManager.runtimeDir(config.name);
+    yield* fs
+      .makeDirectory(runtimeDir, { recursive: true })
       .pipe(Effect.catchTag("PlatformError", (e) => Effect.die(e)));
     const socketPath = stateManager.socketPath(config.name);
 
@@ -225,7 +276,7 @@ const cleanupPendingDaemonStartup = (
 export const connectLayer = (opts: {
   name?: string;
   cwd?: string;
-  home: string;
+  cacheRoot: string;
 }): Effect.Effect<Layer.Layer<Stack>, NoRunningStackError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     const cwd = opts.cwd ?? process.cwd();

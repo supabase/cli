@@ -9,7 +9,21 @@ export { StackServiceState } from "./StackServiceState.ts";
 export { StackError, toStackError } from "./errors.ts";
 
 // Stack configuration types
-export type { AuthConfig, PostgresConfig, PostgrestConfig, StackConfig } from "./StackBuilder.ts";
+export type {
+  AnalyticsConfig,
+  AuthConfig,
+  ImgproxyConfig,
+  MailpitConfig,
+  PgmetaConfig,
+  PoolerConfig,
+  PostgresConfig,
+  PostgrestConfig,
+  RealtimeConfig,
+  StackConfig,
+  StorageConfig,
+  StudioConfig,
+  VectorConfig,
+} from "./StackBuilder.ts";
 
 // Service versioning
 export type { ServiceName, VersionManifest } from "./versions.ts";

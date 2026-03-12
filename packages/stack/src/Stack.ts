@@ -17,6 +17,7 @@ export interface StackInfo {
   readonly anonJwt: string;
   readonly serviceRoleJwt: string;
   readonly dockerContainerNames: ReadonlyArray<string>;
+  readonly serviceEndpoints: Readonly<Record<string, string>>;
 }
 
 export type StackService = ServiceMap.Service.Shape<typeof Stack>;
@@ -84,6 +85,46 @@ export class Stack extends ServiceMap.Service<
           anonJwt: config.anonJwt,
           serviceRoleJwt: config.serviceRoleJwt,
           dockerContainerNames,
+          serviceEndpoints: {
+            ...(config.auth === false ? {} : { auth: `http://127.0.0.1:${config.auth.port}` }),
+            ...(config.postgrest === false
+              ? {}
+              : { postgrest: `http://127.0.0.1:${config.postgrest.port}` }),
+            ...(config.realtime === false
+              ? {}
+              : { realtime: `http://127.0.0.1:${config.realtime.port}` }),
+            ...(config.storage === false
+              ? {}
+              : {
+                  storage: `http://127.0.0.1:${config.storage.port}`,
+                  storage_s3: `http://127.0.0.1:${config.apiPort}/storage/v1/s3`,
+                }),
+            ...(config.imgproxy === false
+              ? {}
+              : { imgproxy: `http://127.0.0.1:${config.imgproxy.port}` }),
+            ...(config.mailpit === false
+              ? {}
+              : {
+                  mailpit: `http://127.0.0.1:${config.mailpit.port}`,
+                  mailpit_smtp: `smtp://127.0.0.1:${config.mailpit.smtpPort}`,
+                  mailpit_pop3: `pop3://127.0.0.1:${config.mailpit.pop3Port}`,
+                }),
+            ...(config.pgmeta === false
+              ? {}
+              : { pgmeta: `http://127.0.0.1:${config.pgmeta.port}` }),
+            ...(config.studio === false
+              ? {}
+              : { studio: `http://127.0.0.1:${config.studio.port}` }),
+            ...(config.analytics === false
+              ? {}
+              : { analytics: `http://127.0.0.1:${config.analytics.port}` }),
+            ...(config.pooler === false
+              ? {}
+              : {
+                  pooler: `postgresql://postgres:postgres@127.0.0.1:${config.pooler.port}/postgres`,
+                  pooler_admin: `http://127.0.0.1:${config.pooler.apiPort}`,
+                }),
+          },
         };
 
         let disposed = false;

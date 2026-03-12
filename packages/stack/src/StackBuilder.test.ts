@@ -4,19 +4,42 @@ import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
 import { StackBuilder } from "./StackBuilder.ts";
 import type { ResolvedStackConfig } from "./StackBuilder.ts";
+import type { AllocatedPorts } from "./PortAllocator.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 
 const testJwtSecret = "super-secret-jwt-token-with-at-least-32-characters";
 
+const basePorts: AllocatedPorts = {
+  apiPort: 3000,
+  dbPort: 5432,
+  authPort: 9999,
+  postgrestPort: 3001,
+  postgrestAdminPort: 3002,
+  realtimePort: 3010,
+  storagePort: 3011,
+  imgproxyPort: 3012,
+  mailpitPort: 3013,
+  mailpitSmtpPort: 3014,
+  mailpitPop3Port: 3015,
+  pgmetaPort: 3016,
+  studioPort: 3017,
+  analyticsPort: 3018,
+  poolerPort: 3019,
+  poolerApiPort: 3020,
+};
+
 const baseConfig: ResolvedStackConfig = {
-  home: "/tmp/supabase-test",
+  cacheRoot: "/tmp/supabase-cache",
+  stackRoot: "/tmp/supabase-stack",
+  runtimeRoot: "/tmp/supabase-runtime",
   mode: "auto",
   jwtSecret: testJwtSecret,
+  ports: basePorts,
   apiPort: 3000,
   dbPort: 5432,
   publishableKey: defaultPublishableKey,
   secretKey: defaultSecretKey,
-  autoManagedDataDir: false,
+  autoManagedPaths: [],
   anonJwt: generateJwt(testJwtSecret, "anon"),
   serviceRoleJwt: generateJwt(testJwtSecret, "service_role"),
   postgres: {
@@ -39,6 +62,15 @@ const baseConfig: ResolvedStackConfig = {
     externalUrl: "http://localhost:9999",
     version: DEFAULT_VERSIONS.auth,
   },
+  realtime: false,
+  storage: false,
+  imgproxy: false,
+  mailpit: false,
+  pgmeta: false,
+  studio: false,
+  analytics: false,
+  vector: false,
+  pooler: false,
 };
 
 const dockerConfig: ResolvedStackConfig = {

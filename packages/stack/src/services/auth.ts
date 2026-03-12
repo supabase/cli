@@ -8,6 +8,10 @@ interface AuthServiceOptions {
   readonly jwtSecret: string;
   readonly jwtExpiry: number;
   readonly externalUrl: string;
+  readonly smtpHost?: string;
+  readonly smtpPort?: number;
+  readonly smtpAdminEmail?: string;
+  readonly smtpSenderName?: string;
   readonly dependencies: ReadonlyArray<{
     readonly service: string;
     readonly condition: "healthy" | "completed";
@@ -40,6 +44,18 @@ const authEnv = (opts: AuthServiceOptions, dbHost = "127.0.0.1"): Record<string,
   GOTRUE_EXTERNAL_EMAIL_ENABLED: "true",
   GOTRUE_MAILER_AUTOCONFIRM: "true",
   GOTRUE_DISABLE_SIGNUP: "false",
+  ...(opts.smtpHost === undefined
+    ? {}
+    : {
+        GOTRUE_SMTP_HOST: opts.smtpHost,
+        GOTRUE_SMTP_PORT: String(opts.smtpPort ?? 1025),
+        ...(opts.smtpAdminEmail === undefined
+          ? {}
+          : { GOTRUE_SMTP_ADMIN_EMAIL: opts.smtpAdminEmail }),
+        ...(opts.smtpSenderName === undefined
+          ? {}
+          : { GOTRUE_SMTP_SENDER_NAME: opts.smtpSenderName }),
+      }),
 });
 
 const authHealthCheck = (port: number) => ({

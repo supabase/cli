@@ -57,16 +57,24 @@ export const printStackConnectionInfo = Effect.fnUntraced(function* () {
   const output = yield* Output;
   const stack = yield* Stack;
   const info = yield* stack.getInfo();
+  const serviceEndpoints = Object.entries(info.serviceEndpoints).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
 
   yield* output.success("Local Supabase started", {
     api_url: info.url,
     db_url: info.dbUrl,
     publishable_key: info.publishableKey,
     secret_key: info.secretKey,
+    services: Object.fromEntries(serviceEndpoints),
   });
 
   yield* output.info(`API URL: ${info.url}`);
   yield* output.info(`DB URL: ${info.dbUrl}`);
   yield* output.info(`Publishable key: ${info.publishableKey}`);
   yield* output.info(`Secret key: ${info.secretKey}`);
+
+  for (const [name, endpoint] of serviceEndpoints) {
+    yield* output.info(`${name}: ${endpoint}`);
+  }
 });

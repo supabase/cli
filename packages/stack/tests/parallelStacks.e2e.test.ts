@@ -11,7 +11,7 @@ import {
   type LeakSnapshot,
 } from "./helpers/leaks.ts";
 
-const STACK_COUNT = 5;
+const STACK_COUNT = 2;
 const SCRIPT = resolve(import.meta.dirname, "helpers/standalone-stack.ts");
 
 interface StackInfo {

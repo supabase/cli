@@ -58,7 +58,7 @@ export const logs = Effect.fnUntraced(function* (flags: LogsFlags) {
     });
   }
 
-  const layer = yield* connectLayer({ cwd: runtimeInfo.cwd, home: cliConfig.supabaseHome });
+  const layer = yield* connectLayer({ cwd: runtimeInfo.cwd, cacheRoot: cliConfig.supabaseHome });
   const stack = yield* Effect.provide(Stack.asEffect(), layer);
   const services = flags.service.length === 0 ? undefined : flags.service;
   const history = flags.tail > 0 ? yield* stack.logHistoryAll(flags.tail, services) : [];

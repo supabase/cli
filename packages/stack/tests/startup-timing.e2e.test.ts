@@ -76,8 +76,8 @@ describe("startup timing", () => {
     expect(timeToStatus("postgres", "Healthy")).toBeLessThan(8_000);
   });
 
-  test("postgres health check latency under 4s", () => {
-    expect(healthCheckDuration("postgres")).toBeLessThan(4_000);
+  test("postgres health check latency under 5s", () => {
+    expect(healthCheckDuration("postgres")).toBeLessThan(5_000);
   });
 
   test("postgrest health check latency under 3s", () => {

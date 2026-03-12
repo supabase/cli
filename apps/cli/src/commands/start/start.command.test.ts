@@ -32,8 +32,12 @@ describe("start command exclude flag", () => {
   });
 
   test("dedupes excluded services when building stack config", () => {
-    expect(toStartStackConfig(["auth", "auth"])).toEqual({ auth: false });
-    expect(toStartStackConfig(["auth", "postgrest"])).toEqual({
+    expect(toStartStackConfig(["auth", "auth"])).toMatchObject({
+      mode: "auto",
+      auth: false,
+    });
+    expect(toStartStackConfig(["auth", "postgrest"])).toMatchObject({
+      mode: "auto",
       auth: false,
       postgrest: false,
     });

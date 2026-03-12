@@ -57,10 +57,19 @@ export { ApiProxy } from "./ApiProxy.ts";
 
 // Stack builder
 export type {
+  ResolvedAnalyticsConfig,
   ResolvedAuthConfig,
+  ResolvedImgproxyConfig,
+  ResolvedMailpitConfig,
+  ResolvedPgmetaConfig,
+  ResolvedPoolerConfig,
   ResolvedPostgresConfig,
   ResolvedPostgrestConfig,
+  ResolvedRealtimeConfig,
   ResolvedStackConfig,
+  ResolvedStorageConfig,
+  ResolvedStudioConfig,
+  ResolvedVectorConfig,
 } from "./StackBuilder.ts";
 export { StackBuilder } from "./StackBuilder.ts";
 
@@ -87,7 +96,12 @@ export { DaemonServer } from "./DaemonServer.ts";
 export { RemoteStack } from "./RemoteStack.ts";
 
 // Config resolution
-export { projectDaemonLayer, resolveConfig, resolveDaemonConfig } from "./createStack.ts";
+export {
+  defaultManagedStackName,
+  projectDaemonLayer,
+  resolveConfig,
+  resolveDaemonConfig,
+} from "./createStack.ts";
 
 // Layer factories
 export type { DaemonConfig } from "./layers.ts";
@@ -97,7 +111,12 @@ export { resolveManagedStack } from "./managed-stack.ts";
 
 // Discovery
 export type { StackSummary } from "./discovery.ts";
-export { DaemonStillRunningError, listStacks, stopDaemon } from "./discovery.ts";
+export {
+  DaemonStillRunningError,
+  deleteManagedStackPersistence,
+  listStacks,
+  stopDaemon,
+} from "./discovery.ts";
 
 // Daemon IPC types and factories (used by CLI to fork daemon process)
 export type {
