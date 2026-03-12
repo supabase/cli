@@ -1,6 +1,7 @@
 import { Effect, Layer } from "effect";
 import { BinaryResolver } from "../../src/BinaryResolver.ts";
 import { BinaryNotFoundError } from "../../src/errors.ts";
+import { DEFAULT_VERSIONS } from "../../src/versions.ts";
 
 export function mockBinaryResolver(
   opts: {
@@ -10,9 +11,9 @@ export function mockBinaryResolver(
 ) {
   const resolved: Array<{ service: string; version: string }> = [];
   const binaries = opts.binaries ?? {
-    postgres: "/cache/postgres/17/darwin-arm64",
-    postgrest: "/cache/postgrest/14.5/macos-aarch64",
-    auth: "/cache/auth/2.187.0/arm64",
+    postgres: `/cache/postgres/${DEFAULT_VERSIONS.postgres}/darwin-arm64`,
+    postgrest: `/cache/postgrest/${DEFAULT_VERSIONS.postgrest}/macos-aarch64`,
+    auth: `/cache/auth/${DEFAULT_VERSIONS.auth}/arm64`,
   };
 
   return {

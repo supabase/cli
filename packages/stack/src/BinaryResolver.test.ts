@@ -1,48 +1,53 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BinaryResolver } from "./BinaryResolver.ts";
+import { DEFAULT_VERSIONS } from "./versions.ts";
+
+const postgresVersion = DEFAULT_VERSIONS.postgres;
+const postgrestVersion = DEFAULT_VERSIONS.postgrest;
+const authRcVersion = DEFAULT_VERSIONS.auth;
 
 describe("BinaryResolver.downloadUrl", () => {
   it("constructs postgres URL (appends -cli suffix for native binaries)", () => {
     const url = BinaryResolver.downloadUrl({
       service: "postgres",
-      version: "17.6.1.081",
+      version: postgresVersion,
       assetName: "darwin-arm64",
     });
     expect(url).toBe(
-      "https://github.com/supabase/postgres/releases/download/v17.6.1.081-cli/supabase-postgres-v17.6.1.081-cli-darwin-arm64.tar.gz",
+      `https://github.com/supabase/postgres/releases/download/v${postgresVersion}-cli/supabase-postgres-v${postgresVersion}-cli-darwin-arm64.tar.gz`,
     );
   });
 
   it("constructs postgrest URL", () => {
     const url = BinaryResolver.downloadUrl({
       service: "postgrest",
-      version: "14.5",
+      version: postgrestVersion,
       assetName: "macos-aarch64",
     });
     expect(url).toBe(
-      "https://github.com/PostgREST/postgrest/releases/download/v14.5/postgrest-v14.5-macos-aarch64.tar.xz",
+      `https://github.com/PostgREST/postgrest/releases/download/v${postgrestVersion}/postgrest-v${postgrestVersion}-macos-aarch64.tar.xz`,
     );
   });
 
   it("constructs postgrest Windows URL with .zip extension", () => {
     const url = BinaryResolver.downloadUrl({
       service: "postgrest",
-      version: "14.5",
+      version: postgrestVersion,
       assetName: "windows-x86-64",
     });
     expect(url).toBe(
-      "https://github.com/PostgREST/postgrest/releases/download/v14.5/postgrest-v14.5-windows-x86-64.zip",
+      `https://github.com/PostgREST/postgrest/releases/download/v${postgrestVersion}/postgrest-v${postgrestVersion}-windows-x86-64.zip`,
     );
   });
 
-  it("constructs auth URL", () => {
+  it("constructs auth URL for rc releases", () => {
     const url = BinaryResolver.downloadUrl({
       service: "auth",
-      version: "2.187.0",
+      version: authRcVersion,
       assetName: "arm64",
     });
     expect(url).toBe(
-      "https://github.com/supabase/auth/releases/download/v2.187.0/auth-v2.187.0-arm64.tar.gz",
+      `https://github.com/supabase/auth/releases/download/rc${authRcVersion}/auth-v${authRcVersion}-arm64.tar.gz`,
     );
   });
 });
@@ -51,11 +56,11 @@ describe("BinaryResolver.checksumUrl", () => {
   it("appends .sha256 for postgres", () => {
     const url = BinaryResolver.checksumUrl({
       service: "postgres",
-      version: "17.6.1.081",
+      version: postgresVersion,
       assetName: "darwin-arm64",
     });
     expect(url).toBe(
-      "https://github.com/supabase/postgres/releases/download/v17.6.1.081-cli/supabase-postgres-v17.6.1.081-cli-darwin-arm64.tar.gz.sha256",
+      `https://github.com/supabase/postgres/releases/download/v${postgresVersion}-cli/supabase-postgres-v${postgresVersion}-cli-darwin-arm64.tar.gz.sha256`,
     );
   });
 
@@ -63,7 +68,7 @@ describe("BinaryResolver.checksumUrl", () => {
     expect(
       BinaryResolver.checksumUrl({
         service: "postgrest",
-        version: "14.5",
+        version: postgrestVersion,
         assetName: "macos-aarch64",
       }),
     ).toBeNull();
@@ -73,7 +78,7 @@ describe("BinaryResolver.checksumUrl", () => {
     expect(
       BinaryResolver.checksumUrl({
         service: "auth",
-        version: "2.187.0",
+        version: authRcVersion,
         assetName: "arm64",
       }),
     ).toBeNull();
@@ -84,9 +89,9 @@ describe("BinaryResolver.cachePath", () => {
   it("constructs cache path", () => {
     const path = BinaryResolver.cachePath("/home/user/.supabase/bin", {
       service: "postgres",
-      version: "17.6.1.081",
+      version: postgresVersion,
       assetName: "darwin-arm64",
     });
-    expect(path).toBe("/home/user/.supabase/bin/postgres/17.6.1.081/darwin-arm64");
+    expect(path).toBe(`/home/user/.supabase/bin/postgres/${postgresVersion}/darwin-arm64`);
   });
 });

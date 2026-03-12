@@ -20,20 +20,20 @@ describe("DEFAULT_VERSIONS", () => {
 
 describe("dockerImageForService", () => {
   it("returns correct image for postgres", () => {
-    expect(dockerImageForService("postgres", "17.6.1.090")).toBe(
-      "public.ecr.aws/supabase/postgres:17.6.1.090",
+    expect(dockerImageForService("postgres", DEFAULT_VERSIONS.postgres)).toBe(
+      `public.ecr.aws/supabase/postgres:${DEFAULT_VERSIONS.postgres}`,
     );
   });
 
   it("returns correct image for postgrest (with v prefix)", () => {
-    expect(dockerImageForService("postgrest", "14.5")).toBe(
-      "public.ecr.aws/supabase/postgrest:v14.5",
+    expect(dockerImageForService("postgrest", DEFAULT_VERSIONS.postgrest)).toBe(
+      `public.ecr.aws/supabase/postgrest:v${DEFAULT_VERSIONS.postgrest}`,
     );
   });
 
   it("returns correct image for auth (with v prefix)", () => {
-    expect(dockerImageForService("auth", "2.187.0")).toBe(
-      "public.ecr.aws/supabase/gotrue:v2.187.0",
+    expect(dockerImageForService("auth", DEFAULT_VERSIONS.auth)).toBe(
+      `public.ecr.aws/supabase/gotrue:v${DEFAULT_VERSIONS.auth}`,
     );
   });
 });

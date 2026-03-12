@@ -6,15 +6,19 @@ import { makeAuthServiceNative, makeAuthServiceDocker } from "./auth.ts";
 import { makePostgresInitService } from "./postgres-init.ts";
 import { makePostgresService, makePostgresServiceDocker } from "./postgres.ts";
 import { makePostgrestService } from "./postgrest.ts";
+import { DEFAULT_VERSIONS, dockerImageForService } from "../versions.ts";
 
 const JWT_SECRET = "super-secret-jwt-token-with-at-least-32-characters-long";
 const DB_PORT = 54322;
 const API_PORT = 54321;
+const POSTGRES_BIN_PATH = `/cache/postgres/${DEFAULT_VERSIONS.postgres}/darwin-arm64`;
+const POSTGREST_BIN_PATH = `/cache/postgrest/${DEFAULT_VERSIONS.postgrest}/macos-aarch64`;
+const AUTH_BIN_PATH = `/cache/auth/${DEFAULT_VERSIONS.auth}/arm64`;
 
 describe("makePostgresService", () => {
   it("creates a postgres ServiceDef with correct defaults", () => {
     const def = makePostgresService({
-      binPath: "/cache/postgres/17/darwin-arm64",
+      binPath: POSTGRES_BIN_PATH,
       dataDir: "/tmp/supabase/data",
       port: DB_PORT,
     });
@@ -22,20 +26,20 @@ describe("makePostgresService", () => {
     expect(def.name).toBe("postgres");
     expect(def.command).toBe("bash");
     expect(def.args).toEqual([
-      "/cache/postgres/17/darwin-arm64/share/supabase-cli/bin/supabase-postgres-init.sh",
+      `${POSTGRES_BIN_PATH}/share/supabase-cli/bin/supabase-postgres-init.sh`,
       "-p",
       "54322",
     ]);
     expect(def.env?.PGDATA).toBe("/tmp/supabase/data");
     expect(def.env?.POSTGRES_PASSWORD).toBe("postgres");
-    expect(def.env?.DYLD_LIBRARY_PATH).toBe("/cache/postgres/17/darwin-arm64/lib");
+    expect(def.env?.DYLD_LIBRARY_PATH).toBe(`${POSTGRES_BIN_PATH}/lib`);
     expect(def.healthCheck?.probe).toEqual({
       _tag: "Exec",
-      command: "/cache/postgres/17/darwin-arm64/bin/pg_isready",
+      command: `${POSTGRES_BIN_PATH}/bin/pg_isready`,
       args: ["-h", "127.0.0.1", "-p", "54322", "-U", "postgres"],
       env: {
-        DYLD_LIBRARY_PATH: "/cache/postgres/17/darwin-arm64/lib",
-        LD_LIBRARY_PATH: "/cache/postgres/17/darwin-arm64/lib",
+        DYLD_LIBRARY_PATH: `${POSTGRES_BIN_PATH}/lib`,
+        LD_LIBRARY_PATH: `${POSTGRES_BIN_PATH}/lib`,
       },
     });
     expect(def.dependencies).toBeUndefined();
@@ -48,7 +52,7 @@ describe("makePostgresService (dockerAccessible)", () => {
   it("creates per-run pg_hba.conf instead of mutating shared cache", () => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "stack-postgres-service-"));
     const def = makePostgresService({
-      binPath: "/cache/postgres/17/darwin-arm64",
+      binPath: POSTGRES_BIN_PATH,
       dataDir: path.join(tempDir, "data"),
       port: DB_PORT,
       dockerAccessible: true,
@@ -60,7 +64,7 @@ describe("makePostgresService (dockerAccessible)", () => {
       expect(def.name).toBe("postgres");
       expect(def.command).toBe("bash");
       expect(def.args).toEqual([
-        "/cache/postgres/17/darwin-arm64/share/supabase-cli/bin/supabase-postgres-init.sh",
+        `${POSTGRES_BIN_PATH}/share/supabase-cli/bin/supabase-postgres-init.sh`,
         "-p",
         "54322",
         "-c",
@@ -85,7 +89,7 @@ describe("makePostgresService (dockerAccessible)", () => {
 describe("makePostgresServiceDocker", () => {
   it("creates a docker-based postgres ServiceDef", () => {
     const def = makePostgresServiceDocker({
-      image: "public.ecr.aws/supabase/postgres:17",
+      image: dockerImageForService("postgres", DEFAULT_VERSIONS.postgres),
       dataDir: "/tmp/supabase/data",
       port: DB_PORT,
       networkArgs: ["--network=host"],
@@ -100,7 +104,7 @@ describe("makePostgresServiceDocker", () => {
     expect(def.args).toContain("--rm");
     expect(def.args).toContain(`supabase-postgres-${API_PORT}`);
     expect(def.args).toContain("--network=host");
-    expect(def.args).toContain("public.ecr.aws/supabase/postgres:17");
+    expect(def.args).toContain(dockerImageForService("postgres", DEFAULT_VERSIONS.postgres));
     expect(def.args).toContain("/tmp/supabase/data:/var/lib/postgresql/data");
     // Verify port is passed to postgres inside the container
     expect(def.args?.[def.args.length - 1]).toContain(`-p ${DB_PORT}`);
@@ -129,7 +133,7 @@ describe("makePostgresServiceDocker", () => {
 describe("makePostgrestService", () => {
   it("creates a postgrest ServiceDef depending on healthy postgres", () => {
     const def = makePostgrestService({
-      binPath: "/cache/postgrest/14.5/macos-aarch64",
+      binPath: POSTGREST_BIN_PATH,
       dbPort: DB_PORT,
       port: API_PORT,
       schemas: ["public", "storage"],
@@ -139,7 +143,7 @@ describe("makePostgrestService", () => {
     });
 
     expect(def.name).toBe("postgrest");
-    expect(def.command).toBe("/cache/postgrest/14.5/macos-aarch64/postgrest");
+    expect(def.command).toBe(`${POSTGREST_BIN_PATH}/postgrest`);
     expect(def.env?.PGRST_DB_URI).toBe(
       `postgresql://authenticator:postgres@127.0.0.1:${DB_PORT}/postgres`,
     );
@@ -161,7 +165,7 @@ describe("makePostgrestService", () => {
 describe("makeAuthServiceNative", () => {
   it("creates a native auth ServiceDef depending on healthy postgres", () => {
     const def = makeAuthServiceNative({
-      binPath: "/cache/auth/2.187.0/arm64",
+      binPath: AUTH_BIN_PATH,
       dbPort: DB_PORT,
       authPort: 9999,
       siteUrl: "http://localhost:3000",
@@ -172,7 +176,7 @@ describe("makeAuthServiceNative", () => {
     });
 
     expect(def.name).toBe("auth");
-    expect(def.command).toBe("/cache/auth/2.187.0/arm64/auth");
+    expect(def.command).toBe(`${AUTH_BIN_PATH}/auth`);
     expect(def.env?.GOTRUE_DB_DATABASE_URL).toContain(`127.0.0.1:${DB_PORT}`);
     expect(def.env?.GOTRUE_SITE_URL).toBe("http://localhost:3000");
     expect(def.env?.GOTRUE_JWT_SECRET).toBe(JWT_SECRET);
@@ -191,7 +195,7 @@ describe("makeAuthServiceNative", () => {
 describe("makeAuthServiceDocker", () => {
   it("creates a docker-based auth ServiceDef", () => {
     const def = makeAuthServiceDocker({
-      image: "public.ecr.aws/supabase/gotrue:v2.187.0",
+      image: dockerImageForService("auth", DEFAULT_VERSIONS.auth),
       dbPort: DB_PORT,
       authPort: 9999,
       siteUrl: "http://localhost:3000",
@@ -220,7 +224,7 @@ describe("makeAuthServiceDocker", () => {
 describe("makePostgresInitService", () => {
   it("creates a one-shot postgres-init ServiceDef", () => {
     const def = makePostgresInitService({
-      postgresDir: "/cache/postgres/17/darwin-arm64",
+      postgresDir: POSTGRES_BIN_PATH,
       dbPort: DB_PORT,
     });
 
@@ -230,14 +234,14 @@ describe("makePostgresInitService", () => {
     expect(def.restart).toBe("no");
     expect(def.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
     expect(def.healthCheck).toBeUndefined();
-    expect(def.env?.DYLD_LIBRARY_PATH).toBe("/cache/postgres/17/darwin-arm64/lib");
-    expect(def.env?.LD_LIBRARY_PATH).toBe("/cache/postgres/17/darwin-arm64/lib");
+    expect(def.env?.DYLD_LIBRARY_PATH).toBe(`${POSTGRES_BIN_PATH}/lib`);
+    expect(def.env?.LD_LIBRARY_PATH).toBe(`${POSTGRES_BIN_PATH}/lib`);
     expect(def.supervision).toBeDefined();
   });
 
   it("does not use set -e (matches Go template approach)", () => {
     const def = makePostgresInitService({
-      postgresDir: "/cache/postgres/17/darwin-arm64",
+      postgresDir: POSTGRES_BIN_PATH,
       dbPort: DB_PORT,
     });
     const script = def.args?.[1] as string;

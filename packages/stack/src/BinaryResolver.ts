@@ -23,6 +23,9 @@ interface AssetInfo {
   readonly assetName: string;
 }
 
+const authReleaseTag = (version: string): string =>
+  version.includes("-rc.") ? `rc${version}` : `v${version}`;
+
 const downloadUrl = (info: AssetInfo): string => {
   const { service, version, assetName } = info;
   switch (service) {
@@ -36,7 +39,7 @@ const downloadUrl = (info: AssetInfo): string => {
       return `https://github.com/PostgREST/postgrest/releases/download/v${version}/postgrest-v${version}-${assetName}.${ext}`;
     }
     case "auth":
-      return `https://github.com/supabase/auth/releases/download/v${version}/auth-v${version}-${assetName}.tar.gz`;
+      return `https://github.com/supabase/auth/releases/download/${authReleaseTag(version)}/auth-v${version}-${assetName}.tar.gz`;
   }
 };
 

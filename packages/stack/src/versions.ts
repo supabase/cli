@@ -9,7 +9,7 @@ export interface VersionManifest {
 export const DEFAULT_VERSIONS: VersionManifest = {
   postgres: "17.6.1.081",
   postgrest: "14.5",
-  auth: "2.187.0",
+  auth: "2.188.0-rc.15",
 } as const;
 
 /** Default registry. Matches the Go CLI default (`public.ecr.aws`). */
