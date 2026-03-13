@@ -22,7 +22,7 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
-	"github.com/supabase/cli/internal/gen/keys"
+	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/parser"
@@ -35,7 +35,7 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 	if err != nil {
 		return err
 	}
-	branch := keys.GetGitBranch(fsys)
+	branch := utils.GetGitBranch(fsys)
 	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db diff")+" on branch "+utils.Aqua(branch)+".\n")
 	if err := SaveDiff(out, file, fsys); err != nil {
 		return err
@@ -44,6 +44,24 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 	if len(drops) > 0 {
 		fmt.Fprintln(os.Stderr, "Found drop statements in schema diff. Please double check if these are expected:")
 		fmt.Fprintln(os.Stderr, utils.Yellow(strings.Join(drops, "\n")))
+	}
+	return nil
+}
+
+var warnDiff = `WARNING: The diff tool is not foolproof, so you may need to manually rearrange and modify the generated migration.
+Run ` + utils.Aqua("supabase db reset") + ` to verify that the new migration does not generate errors.`
+
+func SaveDiff(out, file string, fsys afero.Fs) error {
+	if len(out) < 2 {
+		fmt.Fprintln(os.Stderr, "No schema changes found")
+	} else if len(file) > 0 {
+		path := new.GetMigrationPath(utils.GetCurrentTimestamp(), file)
+		if err := utils.WriteFile(path, []byte(out), fsys); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, warnDiff)
+	} else {
+		fmt.Println(out)
 	}
 	return nil
 }

@@ -24,12 +24,12 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 
 	switch utils.OutputFormat.Value {
 	case utils.OutputPretty:
-		table := `|ID|NAME|VISIBILITY|OWNER|CREATED AT (UTC)|UPDATED AT (UTC)|
+		var table strings.Builder
+		table.WriteString(`|ID|NAME|VISIBILITY|OWNER|CREATED AT (UTC)|UPDATED AT (UTC)|
 |-|-|-|-|-|-|
-`
+`)
 		for _, snippet := range resp.JSON200.Data {
-			table += fmt.Sprintf(
-				"|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
+			fmt.Fprintf(&table, "|`%s`|`%s`|`%s`|`%s`|`%s`|`%s`|\n",
 				snippet.Id,
 				strings.ReplaceAll(snippet.Name, "|", "\\|"),
 				strings.ReplaceAll(string(snippet.Visibility), "|", "\\|"),
@@ -38,7 +38,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 				utils.FormatTimestamp(snippet.UpdatedAt),
 			)
 		}
-		return utils.RenderTable(table)
+		return utils.RenderTable(table.String())
 	case utils.OutputEnv:
 		return errors.New(utils.ErrEnvNotSupported)
 	}

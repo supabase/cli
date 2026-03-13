@@ -28,7 +28,7 @@ jobs:
           go tool gotestsum -- -race -v -count=1 ./... \
           -coverpkg="./cmd/...,./internal/...,${pkgs}" -coverprofile=coverage.out
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: code-coverage-report
           path: coverage.out
@@ -39,7 +39,7 @@ jobs:
       - test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: code-coverage-report
       - uses: coverallsapp/github-action@v2
@@ -63,6 +63,7 @@ jobs:
         with:
           args: --timeout 3m --verbose
           version: latest
+          only-new-issues: true
 
   start:
     name: Start
@@ -76,12 +77,19 @@ jobs:
       - run: go build main.go
       - run: ./main init
       - run: sed -i '/\[db.pooler\]/{n;s/.*/enabled = true/}' supabase/config.toml
-      - run: ./main start
+      - run: ./main start --workdir tests
         env:
           SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
+      - name: Install websocat
+        run: |
+          sudo wget -qO /usr/local/bin/websocat https://github.com/vi/websocat/releases/latest/download/websocat.x86_64-unknown-linux-musl
+          sudo chmod a+x /usr/local/bin/websocat
+          websocat --version
+      - run: ./e2e-test.sh ./main
 
   link:
     name: Link
+    if: ${{ !github.event.pull_request.head.repo.fork }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

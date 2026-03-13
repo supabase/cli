@@ -44,6 +44,8 @@ func ToPostgresURL(config pgconn.Config) string {
 	)
 }
 
+var ErrPrimaryNotFound = errors.New("primary database not found")
+
 func GetPoolerConfigPrimary(ctx context.Context, ref string) (api.SupavisorConfigResponse, error) {
 	var result api.SupavisorConfigResponse
 	resp, err := GetSupabase().V1GetPoolerConfigWithResponse(ctx, ref)
@@ -57,7 +59,7 @@ func GetPoolerConfigPrimary(ctx context.Context, ref string) (api.SupavisorConfi
 			return config, nil
 		}
 	}
-	return result, errors.Errorf("primary database not found: %s", ref)
+	return result, errors.New(ErrPrimaryNotFound)
 }
 
 func GetPoolerConfig(projectRef string) *pgconn.Config {
