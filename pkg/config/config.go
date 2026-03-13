@@ -172,7 +172,6 @@ type (
 		Enabled      bool   `toml:"enabled" json:"enabled"`
 		Image        string `toml:"-" json:"-"`
 		Port         uint16 `toml:"port" json:"port"`
-		ApiUrl       string `toml:"api_url" json:"api_url"`
 		OpenaiApiKey Secret `toml:"openai_api_key" json:"openai_api_key"`
 		PgmetaImage  string `toml:"-" json:"-"`
 	}
@@ -856,11 +855,6 @@ func (c *config) Validate(fsys fs.FS) error {
 	if c.Studio.Enabled {
 		if c.Studio.Port == 0 {
 			return errors.New("Missing required field in config: studio.port")
-		}
-		if parsed, err := url.Parse(c.Studio.ApiUrl); err != nil {
-			return errors.Errorf("Invalid config for studio.api_url: %w", err)
-		} else if parsed.Host == "" || parsed.Host == c.Hostname {
-			c.Studio.ApiUrl = c.Api.ExternalUrl
 		}
 	}
 	// Validate smtp config
