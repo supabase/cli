@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -223,7 +222,7 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 		return !val || !ok
 	}
 
-	jwks, err := utils.Config.Auth.ResolveJWKS(ctx)
+	jwtConfig, err := utils.Config.Auth.BuildLocalJWTConfig(ctx)
 	if err != nil {
 		return err
 	}
@@ -568,13 +567,10 @@ EOF
 			"GOTRUE_URI_ALLOW_LIST=" + strings.Join(utils.Config.Auth.AdditionalRedirectUrls, ","),
 			fmt.Sprintf("GOTRUE_DISABLE_SIGNUP=%v", !utils.Config.Auth.EnableSignup),
 
-			"GOTRUE_JWT_ADMIN_ROLES=service_role",
-			"GOTRUE_JWT_AUD=authenticated",
-			"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
-			fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
-			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
-			"GOTRUE_JWT_ISSUER=" + utils.Config.Auth.JwtIssuer,
-
+			// JWT env vars are centralized in LocalJWTConfig
+		}
+		env = append(env, jwtConfig.GoTrueEnv()...)
+		env = append(env,
 			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", utils.Config.Auth.Email.EnableSignup),
 			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", utils.Config.Auth.Email.DoubleConfirmChanges),
 			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !utils.Config.Auth.Email.EnableConfirmations),
@@ -598,7 +594,7 @@ EOF
 			"GOTRUE_SMS_OTP_EXP=6000",
 			"GOTRUE_SMS_OTP_LENGTH=6",
 			fmt.Sprintf("GOTRUE_SMS_TEMPLATE=%v", utils.Config.Auth.Sms.Template),
-			"GOTRUE_SMS_TEST_OTP=" + testOTP.String(),
+			"GOTRUE_SMS_TEST_OTP="+testOTP.String(),
 
 			fmt.Sprintf("GOTRUE_PASSWORD_MIN_LENGTH=%v", utils.Config.Auth.MinimumPasswordLength),
 			fmt.Sprintf("GOTRUE_PASSWORD_REQUIRED_CHARACTERS=%v", utils.Config.Auth.PasswordRequirements.ToChar()),
@@ -621,14 +617,9 @@ EOF
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_VERIFY=%v", utils.Config.Auth.RateLimit.TokenVerifications),
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_SMS_SENT=%v", utils.Config.Auth.RateLimit.SmsSent),
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_WEB3=%v", utils.Config.Auth.RateLimit.Web3),
-		}
+		)
 
-		// Serialise default or custom signing keys
-		if keys, err := json.Marshal(utils.Config.Auth.SigningKeys); err == nil {
-			env = append(env, "GOTRUE_JWT_KEYS="+string(keys))
-			// TODO: deprecate HS256 when it's no longer supported
-			env = append(env, "GOTRUE_JWT_VALIDMETHODS=HS256,RS256,ES256")
-		}
+
 
 		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.Enabled {
 			env = append(env,
@@ -900,31 +891,29 @@ EOF
 
 	// Start Realtime.
 	if utils.Config.Realtime.Enabled && !isContainerExcluded(utils.Config.Realtime.Image, excluded) {
+		realtimeEnv := append([]string{
+			"PORT=4000",
+			"DB_HOST=" + dbConfig.Host,
+			fmt.Sprintf("DB_PORT=%d", dbConfig.Port),
+			"DB_USER=" + utils.SUPERUSER_ROLE,
+			"DB_PASSWORD=" + dbConfig.Password,
+			"DB_NAME=" + dbConfig.Database,
+			"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
+			"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
+			"APP_NAME=realtime",
+			"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
+			"ERL_AFLAGS=" + utils.ToRealtimeEnv(utils.Config.Realtime.IpVersion),
+			"DNS_NODES=''",
+			"RLIMIT_NOFILE=",
+			"SEED_SELF_HOST=true",
+			"RUN_JANITOR=true",
+			fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
+		}, jwtConfig.RealtimeEnv()...)
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
 				Image: utils.Config.Realtime.Image,
-				Env: []string{
-					"PORT=4000",
-					"DB_HOST=" + dbConfig.Host,
-					fmt.Sprintf("DB_PORT=%d", dbConfig.Port),
-					"DB_USER=" + utils.SUPERUSER_ROLE,
-					"DB_PASSWORD=" + dbConfig.Password,
-					"DB_NAME=" + dbConfig.Database,
-					"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
-					"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
-					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
-					fmt.Sprintf("API_JWT_JWKS=%s", jwks),
-					"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
-					"APP_NAME=realtime",
-					"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
-					"ERL_AFLAGS=" + utils.ToRealtimeEnv(utils.Config.Realtime.IpVersion),
-					"DNS_NODES=''",
-					"RLIMIT_NOFILE=",
-					"SEED_SELF_HOST=true",
-					"RUN_JANITOR=true",
-					fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
-				},
+				Env:   realtimeEnv,
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 				Healthcheck: &container.HealthConfig{
 					// Podman splits command by spaces unless it's quoted, but curl header can't be quoted.
@@ -961,15 +950,14 @@ EOF
 			ctx,
 			container.Config{
 				Image: utils.Config.Api.Image,
-				Env: []string{
+				Env: append([]string{
 					fmt.Sprintf("PGRST_DB_URI=postgresql://authenticator:%s@%s:%d/%s", dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
 					"PGRST_DB_SCHEMAS=" + strings.Join(utils.Config.Api.Schemas, ","),
 					"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(utils.Config.Api.ExtraSearchPath, ","),
 					fmt.Sprintf("PGRST_DB_MAX_ROWS=%d", utils.Config.Api.MaxRows),
 					"PGRST_DB_ANON_ROLE=anon",
-					fmt.Sprintf("PGRST_JWT_SECRET=%s", jwks),
 					"PGRST_ADMIN_SERVER_PORT=3001",
-				},
+				}, jwtConfig.PostgRESTEnv()...),
 				// PostgREST does not expose a shell for health check
 			},
 			container.HostConfig{
@@ -996,12 +984,8 @@ EOF
 			ctx,
 			container.Config{
 				Image: utils.Config.Storage.Image,
-				Env: []string{
-					"DB_MIGRATIONS_FREEZE_AT=" + utils.Config.Storage.TargetMigration,
-					"ANON_KEY=" + utils.Config.Auth.AnonKey.Value,
-					"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
-					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
-					fmt.Sprintf("JWT_JWKS=%s", jwks),
+				Env: append(jwtConfig.StorageEnv(),
+					"DB_MIGRATIONS_FREEZE_AT="+utils.Config.Storage.TargetMigration,
 					fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:%d/%s", dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
 					fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
 					"STORAGE_BACKEND=file",
@@ -1020,7 +1004,7 @@ EOF
 					"UPLOAD_FILE_SIZE_LIMIT=52428800000",
 					"UPLOAD_FILE_SIZE_LIMIT_STANDARD=5242880000",
 					"SIGNED_UPLOAD_URL_EXPIRATION_TIME=7200",
-				},
+				),
 				Healthcheck: &container.HealthConfig{
 					// For some reason, localhost resolves to IPv6 address on GitPod which breaks healthcheck.
 					Test: []string{
@@ -1155,16 +1139,13 @@ EOF
 			ctx,
 			container.Config{
 				Image: utils.Config.Studio.Image,
-				Env: []string{
-					"CURRENT_CLI_VERSION=" + utils.Version,
-					"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
-					"POSTGRES_PASSWORD=" + dbConfig.Password,
-					"SUPABASE_URL=http://" + utils.KongId + ":8000",
-					"SUPABASE_PUBLIC_URL=" + utils.Config.Studio.ApiUrl,
-					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
-					"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey.Value,
-					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
-					"LOGFLARE_PRIVATE_ACCESS_TOKEN=" + utils.Config.Analytics.ApiKey,
+				Env: append(jwtConfig.StudioEnv(),
+					"CURRENT_CLI_VERSION="+utils.Version,
+					"STUDIO_PG_META_URL=http://"+utils.PgmetaId+":8080",
+					"POSTGRES_PASSWORD="+dbConfig.Password,
+					"SUPABASE_URL=http://"+utils.KongId+":8000",
+					"SUPABASE_PUBLIC_URL="+utils.Config.Studio.ApiUrl,
+					"LOGFLARE_PRIVATE_ACCESS_TOKEN="+utils.Config.Analytics.ApiKey,
 					"OPENAI_API_KEY=" + utils.Config.Studio.OpenaiApiKey.Value,
 					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
 					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
@@ -1173,7 +1154,7 @@ EOF
 					"SNIPPETS_MANAGEMENT_FOLDER=" + containerSnippetsPath,
 					// Ref: https://github.com/vercel/next.js/issues/51684#issuecomment-1612834913
 					"HOSTNAME=0.0.0.0",
-				},
+				),
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD-SHELL", `node --eval="fetch('http://127.0.0.1:3000/api/platform/profile').then((r) => {if (!r.ok) throw new Error(r.status)})"`},
 					Interval: 10 * time.Second,
@@ -1228,21 +1209,19 @@ EOF
 			ctx,
 			container.Config{
 				Image: utils.Config.Db.Pooler.Image,
-				Env: []string{
+				Env: append(jwtConfig.PoolerEnv(),
 					"PORT=4000",
 					fmt.Sprintf("PROXY_PORT_SESSION=%d", portSession),
 					fmt.Sprintf("PROXY_PORT_TRANSACTION=%d", portTransaction),
 					fmt.Sprintf("DATABASE_URL=ecto://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, "_supabase"),
 					"CLUSTER_POSTGRES=true",
-					"SECRET_KEY_BASE=" + utils.Config.Db.Pooler.SecretKeyBase,
-					"VAULT_ENC_KEY=" + utils.Config.Db.Pooler.EncryptionKey,
-					"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
-					"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
+					"SECRET_KEY_BASE="+utils.Config.Db.Pooler.SecretKeyBase,
+					"VAULT_ENC_KEY="+utils.Config.Db.Pooler.EncryptionKey,
 					"REGION=local",
 					"RUN_JANITOR=true",
 					"ERL_AFLAGS=-proto_dist inet_tcp",
 					"RLIMIT_NOFILE=",
-				},
+				),
 				Cmd: []string{
 					"/bin/sh", "-c",
 					fmt.Sprintf("/app/bin/migrate && /app/bin/supavisor eval '%s' && /app/bin/server", poolerTenantBuf.String()),

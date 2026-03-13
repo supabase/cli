@@ -30,6 +30,7 @@ const SB_SPECIFIC_ERROR_REASON = {
 const EXCLUDED_ENVS = ["HOME", "HOSTNAME", "PATH", "PWD"];
 
 const JWT_SECRET = Deno.env.get("SUPABASE_INTERNAL_JWT_SECRET")!;
+const JWT_JWKS_STRING = Deno.env.get("SUPABASE_INTERNAL_JWT_JWKS");
 const HOST_PORT = Deno.env.get("SUPABASE_INTERNAL_HOST_PORT")!;
 const DEBUG = Deno.env.get("SUPABASE_INTERNAL_DEBUG") === "true";
 const FUNCTIONS_CONFIG_STRING = Deno.env.get(
@@ -104,16 +105,30 @@ function getAuthToken(req: Request) {
   return token;
 }
 
+const jwksKeySet = (() => {
+  if (JWT_JWKS_STRING) {
+    try {
+      return jose.createLocalJWKSet(JSON.parse(JWT_JWKS_STRING));
+    } catch (e) {
+      console.error("Failed to parse JWKS, falling back to JWT_SECRET:", e);
+    }
+  }
+  return null;
+})();
+
 async function verifyJWT(jwt: string): Promise<boolean> {
-  const encoder = new TextEncoder();
-  const secretKey = encoder.encode(JWT_SECRET);
   try {
+    if (jwksKeySet) {
+      await jose.jwtVerify(jwt, jwksKeySet);
+      return true;
+    }
+    const secretKey = new TextEncoder().encode(JWT_SECRET);
     await jose.jwtVerify(jwt, secretKey);
+    return true;
   } catch (e) {
     console.error(e);
     return false;
   }
-  return true;
 }
 
 // Ref: https://docs.deno.com/examples/checking_file_existence/

@@ -264,44 +264,39 @@ func InitSchema14(ctx context.Context, conn *pgx.Conn) error {
 	return file.ExecBatch(ctx, conn)
 }
 
-func initRealtimeJob(host, jwks string) utils.DockerJob {
+func initRealtimeJob(host string, jwtConfig *config.LocalJWTConfig) utils.DockerJob {
+	env := append([]string{
+		"PORT=4000",
+		"DB_HOST=" + host,
+		"DB_PORT=5432",
+		"DB_USER=" + utils.SUPERUSER_ROLE,
+		"DB_PASSWORD=" + utils.Config.Db.Password,
+		"DB_NAME=postgres",
+		"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
+		"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
+		"APP_NAME=realtime",
+		"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
+		"ERL_AFLAGS=" + utils.ToRealtimeEnv(utils.Config.Realtime.IpVersion),
+		"DNS_NODES=''",
+		"RLIMIT_NOFILE=",
+		"SEED_SELF_HOST=true",
+		"RUN_JANITOR=true",
+		fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
+	}, jwtConfig.RealtimeEnv()...)
 	return utils.DockerJob{
 		Image: utils.Config.Realtime.Image,
-		Env: []string{
-			"PORT=4000",
-			"DB_HOST=" + host,
-			"DB_PORT=5432",
-			"DB_USER=" + utils.SUPERUSER_ROLE,
-			"DB_PASSWORD=" + utils.Config.Db.Password,
-			"DB_NAME=postgres",
-			"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
-			"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,
-			fmt.Sprintf("API_JWT_JWKS=%s", jwks),
-			"API_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
-			"METRICS_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
-			"APP_NAME=realtime",
-			"SECRET_KEY_BASE=" + utils.Config.Realtime.SecretKeyBase,
-			"ERL_AFLAGS=" + utils.ToRealtimeEnv(utils.Config.Realtime.IpVersion),
-			"DNS_NODES=''",
-			"RLIMIT_NOFILE=",
-			"SEED_SELF_HOST=true",
-			"RUN_JANITOR=true",
-			fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
-		},
+		Env:   env,
 		Cmd: []string{"/app/bin/realtime", "eval", fmt.Sprintf(`{:ok, _} = Application.ensure_all_started(:realtime)
 {:ok, _} = Realtime.Tenants.health_check("%s")`, utils.Config.Realtime.TenantId)},
 	}
 }
 
-func initStorageJob(host string) utils.DockerJob {
+func initStorageJob(host string, jwtConfig *config.LocalJWTConfig) utils.DockerJob {
 	return utils.DockerJob{
 		Image: utils.Config.Storage.Image,
-		Env: []string{
+		Env: append(jwtConfig.StorageInitEnv(),
 			"DB_INSTALL_ROLES=false",
-			"DB_MIGRATIONS_FREEZE_AT=" + utils.Config.Storage.TargetMigration,
-			"ANON_KEY=" + utils.Config.Auth.AnonKey.Value,
-			"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
-			"PGRST_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
+			"DB_MIGRATIONS_FREEZE_AT="+utils.Config.Storage.TargetMigration,
 			fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
 			fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
 			"STORAGE_BACKEND=file",
@@ -310,41 +305,40 @@ func initStorageJob(host string) utils.DockerJob {
 			// TODO: https://github.com/supabase/storage-api/issues/55
 			"REGION=stub",
 			"GLOBAL_S3_BUCKET=stub",
-		},
+		),
 		Cmd: []string{"node", "dist/scripts/migrate-call.js"},
 	}
 }
 
-func initAuthJob(host string) utils.DockerJob {
+func initAuthJob(host string, jwtConfig *config.LocalJWTConfig) utils.DockerJob {
 	return utils.DockerJob{
 		Image: utils.Config.Auth.Image,
-		Env: []string{
-			"API_EXTERNAL_URL=" + utils.Config.Api.ExternalUrl,
+		Env: append(jwtConfig.AuthInitEnv(),
+			"API_EXTERNAL_URL="+utils.Config.Api.ExternalUrl,
 			"GOTRUE_LOG_LEVEL=error",
 			"GOTRUE_DB_DRIVER=postgres",
 			fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
-			"GOTRUE_SITE_URL=" + utils.Config.Auth.SiteUrl,
-			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
-		},
+			"GOTRUE_SITE_URL="+utils.Config.Auth.SiteUrl,
+		),
 		Cmd: []string{"gotrue", "migrate"},
 	}
 }
 
 func initSchema15(ctx context.Context, host string) error {
 	// Apply service migrations
+	jwtConfig, err := utils.Config.Auth.BuildLocalJWTConfig(ctx)
+	if err != nil {
+		return err
+	}
 	var initJobs []utils.DockerJob
 	if utils.Config.Realtime.Enabled {
-		jwks, err := utils.Config.Auth.ResolveJWKS(context.Background())
-		if err != nil {
-			return err
-		}
-		initJobs = append(initJobs, initRealtimeJob(host, jwks))
+		initJobs = append(initJobs, initRealtimeJob(host, jwtConfig))
 	}
 	if utils.Config.Storage.Enabled {
-		initJobs = append(initJobs, initStorageJob(host))
+		initJobs = append(initJobs, initStorageJob(host, jwtConfig))
 	}
 	if utils.Config.Auth.Enabled {
-		initJobs = append(initJobs, initAuthJob(host))
+		initJobs = append(initJobs, initAuthJob(host, jwtConfig))
 	}
 	logger := utils.GetDebugLogger()
 	for _, job := range initJobs {
