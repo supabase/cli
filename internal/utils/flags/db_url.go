@@ -81,6 +81,7 @@ func ParseDatabaseConfig(ctx context.Context, flagSet *pflag.FlagSet, fsys afero
 		if err := LoadProjectRef(fsys); err != nil {
 			return err
 		}
+		fmt.Fprintln(os.Stderr, "Linked project:", ProjectRef)
 		if err := LoadConfig(fsys); err != nil {
 			return err
 		}
