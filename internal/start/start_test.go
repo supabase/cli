@@ -31,7 +31,7 @@ func TestStartCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
 		// Run test
-		err := Run(context.Background(), fsys, []string{}, false)
+		err := Run(context.Background(), fsys, []string{}, false, false)
 		// Check error
 		assert.ErrorContains(t, err, "toml: expected = after a key, but the document ends there")
 	})
@@ -47,7 +47,7 @@ func TestStartCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), fsys, []string{}, false)
+		err := Run(context.Background(), fsys, []string{}, false, false)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -84,7 +84,7 @@ func TestStartCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(running)
 		// Run test
-		err := Run(context.Background(), fsys, []string{}, false)
+		err := Run(context.Background(), fsys, []string{}, false, false)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -202,7 +202,7 @@ func TestDatabaseStart(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON([]storage.BucketResponse{})
 		// Run test
-		err := run(context.Background(), fsys, []string{}, pgconn.Config{Host: utils.DbId}, conn.Intercept)
+		err := run(context.Background(), fsys, []string{}, pgconn.Config{Host: utils.DbId}, false, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -248,11 +248,102 @@ func TestDatabaseStart(t *testing.T) {
 		// Run test
 		exclude := ExcludableContainers()
 		exclude = append(exclude, "invalid", exclude[0])
-		err := run(context.Background(), fsys, exclude, pgconn.Config{Host: utils.DbId})
+		err := run(context.Background(), fsys, exclude, pgconn.Config{Host: utils.DbId}, false)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
+
+	t.Run("skips storage seeding when db.seed.enabled is false", func(t *testing.T) {
+		utils.Config.Analytics.Enabled = false
+		utils.Config.Api.Enabled = false
+		utils.Config.Auth.Enabled = false
+		utils.Config.Realtime.Enabled = false
+		utils.Config.Studio.Enabled = false
+		utils.Config.EdgeRuntime.Enabled = false
+		utils.Config.Inbucket.Enabled = false
+		utils.Config.Db.Pooler.Enabled = false
+
+		fsys := afero.NewMemMapFs()
+
+		// Restore global state
+		origSeed := utils.Config.Db.Seed.Enabled
+		t.Cleanup(func() {
+			utils.Config.Db.Seed.Enabled = origSeed
+		})
+		utils.Config.Db.Seed.Enabled = false
+
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+
+		gock.New(utils.Docker.DaemonHost()).
+			Head("/_ping").
+			Reply(http.StatusOK)
+
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/networks/create").
+			Reply(http.StatusCreated).
+			JSON(network.CreateResponse{})
+
+		// 🔑 REQUIRED: cache all images
+		for _, img := range config.Images.Services() {
+			service := utils.GetRegistryImageUrl(img)
+			gock.New(utils.Docker.DaemonHost()).
+				Get("/v" + utils.Docker.ClientVersion() + "/images/" + service + "/json").
+				Reply(http.StatusOK).
+				JSON(image.InspectResponse{})
+		}
+
+		// ALSO mock postgres image (DB is not part of Services())
+		dbImage := utils.GetRegistryImageUrl(utils.Config.Db.Image)
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + dbImage + "/json").
+			Reply(http.StatusOK).
+			JSON(image.InspectResponse{})
+
+		utils.DbId = "test-postgres"
+		utils.Config.Db.Port = 54322
+		utils.Config.Db.MajorVersion = 15
+
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
+			Reply(http.StatusOK).
+			JSON(volume.Volume{})
+
+		apitest.MockDockerStart(
+			utils.Docker,
+			utils.GetRegistryImageUrl(utils.Config.Db.Image),
+			utils.DbId,
+		)
+
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{
+				ContainerJSONBase: &container.ContainerJSONBase{
+					State: &container.State{
+						Running: true,
+						Health:  &container.Health{Status: types.Healthy},
+					},
+				},
+			})
+		exclude := []string{
+			utils.ShortContainerImageName(utils.Config.Api.KongImage),
+			utils.ShortContainerImageName(utils.Config.Storage.Image),
+		}
+
+		err := run(
+			context.Background(),
+			fsys,
+			exclude,
+			pgconn.Config{Host: utils.DbId},
+			false,
+		)
+
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
 }
 
 func TestFormatMapForEnvConfig(t *testing.T) {
