@@ -4655,8 +4655,9 @@ type V1RestorePointPostBody struct {
 
 // V1RestorePointResponse defines model for V1RestorePointResponse.
 type V1RestorePointResponse struct {
-	Name   string                       `json:"name"`
-	Status V1RestorePointResponseStatus `json:"status"`
+	CompletedOn nullable.Nullable[time.Time] `json:"completed_on"`
+	Name        string                       `json:"name"`
+	Status      V1RestorePointResponseStatus `json:"status"`
 }
 
 // V1RestorePointResponseStatus defines model for V1RestorePointResponse.Status.
