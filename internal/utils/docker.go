@@ -106,9 +106,7 @@ func DockerRemoveAll(ctx context.Context, w io.Writer, projectId string) error {
 	// Gracefully shutdown containers
 	var ids []string
 	for _, c := range containers {
-		if c.State == "running" {
-			ids = append(ids, c.ID)
-		}
+		ids = append(ids, c.ID)
 	}
 	result := WaitAll(ids, func(id string) error {
 		if err := Docker.ContainerStop(ctx, id, container.StopOptions{}); err != nil {
