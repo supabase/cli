@@ -26,9 +26,9 @@ var (
 	}
 
 	secretsSetCmd = &cobra.Command{
-		Use:   "set <NAME=VALUE> ...",
+		Use:   "set [NAME=VALUE | NAME] ...",
 		Short: "Set a secret(s) on Supabase",
-		Long:  "Set a secret(s) to the linked Supabase project.",
+		Long:  "Set a secret(s) to the linked Supabase project. When a secret name is provided without a value, you will be prompted to enter it interactively.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return set.Run(cmd.Context(), flags.ProjectRef, envFilePath, args, afero.NewOsFs())
 		},
