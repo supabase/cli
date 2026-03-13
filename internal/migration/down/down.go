@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/vault"
 )
@@ -41,14 +42,23 @@ func Run(ctx context.Context, last uint, config pgconn.Config, fsys afero.Fs, op
 	}
 	version := remoteMigrations[total-last-1]
 	fmt.Fprintln(os.Stderr, "Resetting database to version:", version)
-	return ResetAll(ctx, version, conn, fsys)
+	isLocal := utils.IsLocalDatabase(config)
+	var projectRef string
+	if !isLocal {
+		projectRef = flags.ProjectRef
+	}
+	return ResetAll(ctx, version, projectRef, isLocal, conn, fsys)
 }
 
-func ResetAll(ctx context.Context, version string, conn *pgx.Conn, fsys afero.Fs) error {
+func ResetAll(ctx context.Context, version string, projectRef string, isLocal bool, conn *pgx.Conn, fsys afero.Fs) error {
 	if err := migration.DropUserSchemas(ctx, conn); err != nil {
 		return err
 	}
-	if err := vault.UpsertVaultSecrets(ctx, utils.Config.Db.Vault, conn); err != nil {
+	secrets := utils.Config.Db.Vault
+	if isLocal || len(projectRef) > 0 {
+		secrets = vault.WithEdgeFunctionSecrets(secrets, projectRef, utils.Config.Auth.ServiceRoleKey.Value)
+	}
+	if err := vault.UpsertVaultSecrets(ctx, secrets, conn); err != nil {
 		return err
 	}
 	return apply.MigrateAndSeed(ctx, version, conn, fsys)

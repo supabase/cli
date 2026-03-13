@@ -13,9 +13,11 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/pgtest"
 )
@@ -29,11 +31,13 @@ var dbConfig = pgconn.Config{
 }
 
 func TestMigrationPush(t *testing.T) {
+	flags.ProjectRef = apitest.RandomProjectRef()
+
 	t.Run("dry run", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
-		require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
+		require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0o644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -46,6 +50,9 @@ func TestMigrationPush(t *testing.T) {
 	})
 
 	t.Run("ignores up to date", func(t *testing.T) {
+		origServiceRoleKey := utils.Config.Auth.ServiceRoleKey.Value
+		utils.Config.Auth.ServiceRoleKey.Value = ""
+		t.Cleanup(func() { utils.Config.Auth.ServiceRoleKey.Value = origServiceRoleKey })
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock postgres
@@ -53,6 +60,7 @@ func TestMigrationPush(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
+		helper.MockVaultSetup(conn, flags.ProjectRef)
 		// Run test
 		err := Run(context.Background(), false, false, false, false, dbConfig, fsys, conn.Intercept)
 		// Check error
@@ -89,15 +97,19 @@ func TestMigrationPush(t *testing.T) {
 	})
 
 	t.Run("throws error on push failure", func(t *testing.T) {
+		origServiceRoleKey := utils.Config.Auth.ServiceRoleKey.Value
+		utils.Config.Auth.ServiceRoleKey.Value = ""
+		t.Cleanup(func() { utils.Config.Auth.ServiceRoleKey.Value = origServiceRoleKey })
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
-		require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
+		require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0o644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
+		helper.MockVaultSetup(conn, flags.ProjectRef)
 		helper.MockMigrationHistory(conn).
 			Query("RESET ALL").
 			Reply("RESET").
@@ -112,16 +124,22 @@ func TestMigrationPush(t *testing.T) {
 }
 
 func TestPushAll(t *testing.T) {
+	flags.ProjectRef = apitest.RandomProjectRef()
+
 	t.Run("ignores missing roles and seed", func(t *testing.T) {
+		origServiceRoleKey := utils.Config.Auth.ServiceRoleKey.Value
+		utils.Config.Auth.ServiceRoleKey.Value = ""
+		t.Cleanup(func() { utils.Config.Auth.ServiceRoleKey.Value = origServiceRoleKey })
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
-		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
+		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0o644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
+		helper.MockVaultSetup(conn, flags.ProjectRef)
 		helper.MockMigrationHistory(conn).
 			Query("RESET ALL").
 			Reply("RESET").
@@ -138,7 +156,7 @@ func TestPushAll(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
-		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
+		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0o644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -154,7 +172,7 @@ func TestPushAll(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &fstest.StatErrorFs{DenyPath: utils.CustomRolesPath}
 		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
-		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
+		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0o644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -167,14 +185,17 @@ func TestPushAll(t *testing.T) {
 	})
 
 	t.Run("throws error on seed failure", func(t *testing.T) {
+		origServiceRoleKey := utils.Config.Auth.ServiceRoleKey.Value
+		utils.Config.Auth.ServiceRoleKey.Value = ""
+		t.Cleanup(func() { utils.Config.Auth.ServiceRoleKey.Value = origServiceRoleKey })
 		digest := hex.EncodeToString(sha256.New().Sum(nil))
 		seedPath := filepath.Join(utils.SupabaseDirPath, "seed.sql")
 		utils.Config.Db.Seed.SqlPaths = []string{seedPath}
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		require.NoError(t, afero.WriteFile(fsys, seedPath, []byte{}, 0644))
+		require.NoError(t, afero.WriteFile(fsys, seedPath, []byte{}, 0o644))
 		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
-		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
+		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0o644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -182,6 +203,7 @@ func TestPushAll(t *testing.T) {
 			Reply("SELECT 0").
 			Query(migration.SELECT_SEED_TABLE).
 			Reply("SELECT 0")
+		helper.MockVaultSetup(conn, flags.ProjectRef)
 		helper.MockMigrationHistory(conn).
 			Query("RESET ALL").
 			Reply("RESET").

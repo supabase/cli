@@ -41,6 +41,9 @@ func TestRun(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, flags.LoadConfig(fsys))
+		origServiceRoleKey := utils.Config.Auth.ServiceRoleKey.Value
+		utils.Config.Auth.ServiceRoleKey.Value = ""
+		t.Cleanup(func() { utils.Config.Auth.ServiceRoleKey.Value = origServiceRoleKey })
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -68,9 +71,10 @@ func TestRun(t *testing.T) {
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-migra", diff))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
-		conn.Query(CREATE_TEMPLATE).
-			Reply("CREATE DATABASE")
 		defer conn.Close(t)
+		helper.MockVaultSetup(conn, "").
+			Query(CREATE_TEMPLATE).
+			Reply("CREATE DATABASE")
 		// Run test
 		err := Run(context.Background(), []string{"public"}, "file", dbConfig, DiffSchemaMigra, fsys, func(cc *pgx.ConnConfig) {
 			if cc.Host == dbConfig.Host {
@@ -120,6 +124,12 @@ func TestMigrateShadow(t *testing.T) {
 		utils.Config.Db.ShadowPort = 54320
 		utils.GlobalsSql = "create schema public"
 		utils.InitialSchemaPg14Sql = "create schema private"
+		origWebhookSchema := start.WebhookSchema
+		start.WebhookSchema = "create schema supabase_functions"
+		t.Cleanup(func() { start.WebhookSchema = origWebhookSchema })
+		origServiceRoleKey := utils.Config.Auth.ServiceRoleKey.Value
+		utils.Config.Auth.ServiceRoleKey.Value = ""
+		t.Cleanup(func() { utils.Config.Auth.ServiceRoleKey.Value = origServiceRoleKey })
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
@@ -132,6 +142,9 @@ func TestMigrateShadow(t *testing.T) {
 			Reply("CREATE SCHEMA").
 			Query(utils.InitialSchemaPg14Sql).
 			Reply("CREATE SCHEMA").
+			Query(start.WebhookSchema).
+			Reply("CREATE SCHEMA")
+		helper.MockVaultSetup(conn, "").
 			Query(CREATE_TEMPLATE).
 			Reply("CREATE DATABASE")
 		helper.MockMigrationHistory(conn).
@@ -276,6 +289,12 @@ create schema public`)
 	})
 
 	t.Run("throws error on failure to diff target", func(t *testing.T) {
+		origWebhookSchema := start.WebhookSchema
+		start.WebhookSchema = "create schema supabase_functions"
+		t.Cleanup(func() { start.WebhookSchema = origWebhookSchema })
+		origServiceRoleKey := utils.Config.Auth.ServiceRoleKey.Value
+		utils.Config.Auth.ServiceRoleKey.Value = ""
+		t.Cleanup(func() { utils.Config.Auth.ServiceRoleKey.Value = origServiceRoleKey })
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
@@ -311,6 +330,9 @@ create schema public`)
 			Reply("CREATE SCHEMA").
 			Query(utils.InitialSchemaPg14Sql).
 			Reply("CREATE SCHEMA").
+			Query(start.WebhookSchema).
+			Reply("CREATE SCHEMA")
+		helper.MockVaultSetup(conn, "").
 			Query(CREATE_TEMPLATE).
 			Reply("CREATE DATABASE")
 		helper.MockMigrationHistory(conn).

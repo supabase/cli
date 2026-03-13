@@ -50,6 +50,11 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 		}
 	}
 	if len(pending) == 0 && len(seeds) == 0 && len(globals) == 0 {
+		if !dryRun {
+			if err := syncVaultSecrets(ctx, config, conn); err != nil {
+				return err
+			}
+		}
 		fmt.Println("Remote database is up to date.")
 		return nil
 	}
@@ -67,6 +72,7 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 			fmt.Fprint(os.Stderr, confirmSeedAll(seeds))
 		}
 	} else {
+		var vaultSynced bool
 		if len(globals) > 0 {
 			msg := "Do you want to create custom roles in the database cluster?"
 			if shouldPush, err := utils.NewConsole().PromptYesNo(ctx, msg, true); err != nil {
@@ -74,6 +80,10 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 			} else if !shouldPush {
 				return errors.New(context.Canceled)
 			}
+			if err := syncVaultSecrets(ctx, config, conn); err != nil {
+				return err
+			}
+			vaultSynced = true
 			if err := migration.SeedGlobals(ctx, globals, conn, afero.NewIOFS(fsys)); err != nil {
 				return err
 			}
@@ -85,8 +95,11 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 			} else if !shouldPush {
 				return errors.New(context.Canceled)
 			}
-			if err := vault.UpsertVaultSecrets(ctx, utils.Config.Db.Vault, conn); err != nil {
-				return err
+			if !vaultSynced {
+				if err := syncVaultSecrets(ctx, config, conn); err != nil {
+					return err
+				}
+				vaultSynced = true
 			}
 			if err := migration.ApplyMigrations(ctx, pending, conn, afero.NewIOFS(fsys)); err != nil {
 				return err
@@ -101,6 +114,11 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 			} else if !shouldPush {
 				return errors.New(context.Canceled)
 			}
+			if !vaultSynced {
+				if err := syncVaultSecrets(ctx, config, conn); err != nil {
+					return err
+				}
+			}
 			if err := migration.SeedData(ctx, seeds, conn, afero.NewIOFS(fsys)); err != nil {
 				return err
 			}
@@ -110,6 +128,18 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 	}
 	fmt.Println("Finished " + utils.Aqua("supabase db push") + ".")
 	return nil
+}
+
+func syncVaultSecrets(ctx context.Context, config pgconn.Config, conn *pgx.Conn) error {
+	secrets := utils.Config.Db.Vault
+	if utils.IsLocalDatabase(config) || len(flags.ProjectRef) > 0 {
+		var projectRef string
+		if !utils.IsLocalDatabase(config) {
+			projectRef = flags.ProjectRef
+		}
+		secrets = vault.WithEdgeFunctionSecrets(secrets, projectRef, utils.Config.Auth.ServiceRoleKey.Value)
+	}
+	return vault.UpsertVaultSecrets(ctx, secrets, conn)
 }
 
 func confirmPushAll(pending []string) (msg string) {

@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/migration"
@@ -78,6 +79,10 @@ func TestMigrationsDown(t *testing.T) {
 
 func TestResetRemote(t *testing.T) {
 	t.Run("resets remote database", func(t *testing.T) {
+		projectRef := apitest.RandomProjectRef()
+		origServiceRoleKey := utils.Config.Auth.ServiceRoleKey.Value
+		utils.Config.Auth.ServiceRoleKey.Value = ""
+		t.Cleanup(func() { utils.Config.Auth.ServiceRoleKey.Value = origServiceRoleKey })
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		path := filepath.Join(utils.MigrationsDir, "0_schema.sql")
@@ -87,18 +92,23 @@ func TestResetRemote(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(migration.DropObjects).
 			Reply("INSERT 0")
+		helper.MockVaultSetup(conn, projectRef)
 		helper.MockMigrationHistory(conn).
 			Query("RESET ALL").
 			Reply("RESET").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "schema", nil).
 			Reply("INSERT 0 1")
 		// Run test
-		err := ResetAll(context.Background(), "", conn.MockClient(t), fsys)
+		err := ResetAll(context.Background(), "", projectRef, false, conn.MockClient(t), fsys)
 		// Check error
 		assert.NoError(t, err)
 	})
 
 	t.Run("resets remote database with seed config disabled", func(t *testing.T) {
+		projectRef := apitest.RandomProjectRef()
+		origServiceRoleKey := utils.Config.Auth.ServiceRoleKey.Value
+		utils.Config.Auth.ServiceRoleKey.Value = ""
+		t.Cleanup(func() { utils.Config.Auth.ServiceRoleKey.Value = origServiceRoleKey })
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		path := filepath.Join(utils.MigrationsDir, "0_schema.sql")
@@ -111,6 +121,7 @@ func TestResetRemote(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(migration.DropObjects).
 			Reply("INSERT 0")
+		helper.MockVaultSetup(conn, projectRef)
 		helper.MockMigrationHistory(conn).
 			Query("RESET ALL").
 			Reply("RESET").
@@ -118,7 +129,7 @@ func TestResetRemote(t *testing.T) {
 			Reply("INSERT 0 1")
 		utils.Config.Db.Seed.Enabled = false
 		// Run test
-		err := ResetAll(context.Background(), "", conn.MockClient(t), fsys)
+		err := ResetAll(context.Background(), "", projectRef, false, conn.MockClient(t), fsys)
 		// No error should be raised since we're skipping the seed
 		assert.NoError(t, err)
 	})
@@ -132,7 +143,7 @@ func TestResetRemote(t *testing.T) {
 		conn.Query(migration.DropObjects).
 			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations")
 		// Run test
-		err := ResetAll(context.Background(), "", conn.MockClient(t), fsys)
+		err := ResetAll(context.Background(), "", "", false, conn.MockClient(t), fsys)
 		// Check error
 		assert.ErrorContains(t, err, "ERROR: permission denied for relation supabase_migrations (SQLSTATE 42501)")
 	})

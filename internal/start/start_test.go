@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/pgtest"
@@ -93,6 +94,9 @@ func TestStartCommand(t *testing.T) {
 
 func TestDatabaseStart(t *testing.T) {
 	t.Run("starts database locally", func(t *testing.T) {
+		origServiceRoleKey := utils.Config.Auth.ServiceRoleKey.Value
+		utils.Config.Auth.ServiceRoleKey.Value = ""
+		t.Cleanup(func() { utils.Config.Auth.ServiceRoleKey.Value = origServiceRoleKey })
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
@@ -164,6 +168,7 @@ func TestDatabaseStart(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
+		helper.MockVaultSetup(conn, "")
 		// Setup health probes
 		started := []string{
 			utils.DbId, utils.KongId, utils.GotrueId, utils.InbucketId, utils.RealtimeId,
