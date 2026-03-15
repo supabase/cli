@@ -3397,10 +3397,13 @@ type RealtimeConfigResponse struct {
 	// MaxPresenceEventsPerSecond Sets maximum number of presence events per second rate limit
 	MaxPresenceEventsPerSecond nullable.Nullable[int] `json:"max_presence_events_per_second"`
 
+	// PresenceEnabled Whether to enable presence
+	PresenceEnabled bool `json:"presence_enabled"`
+
 	// PrivateOnly Whether to only allow private channels
 	PrivateOnly nullable.Nullable[bool] `json:"private_only"`
 
-	// Suspend Whether to suspend realtime
+	// Suspend Disables the Realtime service for this project when true. Set to false to re-enable it.
 	Suspend nullable.Nullable[bool] `json:"suspend"`
 }
 
@@ -4152,10 +4155,13 @@ type UpdateRealtimeConfigBody struct {
 	// MaxPresenceEventsPerSecond Sets maximum number of presence events per second rate limit
 	MaxPresenceEventsPerSecond *int `json:"max_presence_events_per_second,omitempty"`
 
+	// PresenceEnabled Whether to enable presence
+	PresenceEnabled *bool `json:"presence_enabled,omitempty"`
+
 	// PrivateOnly Whether to only allow private channels
 	PrivateOnly *bool `json:"private_only,omitempty"`
 
-	// Suspend Whether to suspend realtime
+	// Suspend Disables the Realtime service for this project when true. Set to false to re-enable it.
 	Suspend *bool `json:"suspend,omitempty"`
 }
 
@@ -4649,8 +4655,9 @@ type V1RestorePointPostBody struct {
 
 // V1RestorePointResponse defines model for V1RestorePointResponse.
 type V1RestorePointResponse struct {
-	Name   string                       `json:"name"`
-	Status V1RestorePointResponseStatus `json:"status"`
+	CompletedOn nullable.Nullable[time.Time] `json:"completed_on"`
+	Name        string                       `json:"name"`
+	Status      V1RestorePointResponseStatus `json:"status"`
 }
 
 // V1RestorePointResponseStatus defines model for V1RestorePointResponse.Status.
