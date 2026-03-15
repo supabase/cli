@@ -13,6 +13,7 @@ import (
 	"github.com/supabase/cli/internal/db/lint"
 	"github.com/supabase/cli/internal/db/pull"
 	"github.com/supabase/cli/internal/db/push"
+	"github.com/supabase/cli/internal/db/query"
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/db/test"
@@ -241,6 +242,44 @@ var (
 			return test.Run(cmd.Context(), args, flags.DbConfig, afero.NewOsFs())
 		},
 	}
+
+	queryLinked bool
+	queryFile   string
+	queryOutput = utils.EnumFlag{
+		Allowed: []string{"json", "table", "csv"},
+		Value:   "json",
+	}
+
+	dbQueryCmd = &cobra.Command{
+		Use:   "query [sql]",
+		Short: "Execute a SQL query against the database",
+		Long: `Execute a SQL query against the local or linked database.
+
+The default JSON output includes an untrusted data warning for safe use by AI coding agents.
+Use --output table or --output csv for human-friendly formats.`,
+		Args: cobra.MaximumNArgs(1),
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if queryLinked {
+				fsys := afero.NewOsFs()
+				if _, err := utils.LoadAccessTokenFS(fsys); err != nil {
+					utils.CmdSuggestion = fmt.Sprintf("Run %s first.", utils.Aqua("supabase login"))
+					return err
+				}
+				return flags.LoadProjectRef(fsys)
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sql, err := query.ResolveSQL(args, queryFile, os.Stdin)
+			if err != nil {
+				return err
+			}
+			if queryLinked {
+				return query.RunLinked(cmd.Context(), sql, flags.ProjectRef, queryOutput.Value, os.Stdout)
+			}
+			return query.RunLocal(cmd.Context(), sql, flags.DbConfig, queryOutput.Value, os.Stdout)
+		},
+	}
 )
 
 func init() {
@@ -350,5 +389,11 @@ func init() {
 	testFlags.Bool("linked", false, "Runs pgTAP tests on the linked project.")
 	testFlags.Bool("local", true, "Runs pgTAP tests on the local database.")
 	dbTestCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
+	// Build query command
+	queryFlags := dbQueryCmd.Flags()
+	queryFlags.BoolVar(&queryLinked, "linked", false, "Queries the linked project's database via Management API.")
+	queryFlags.StringVarP(&queryFile, "file", "f", "", "Path to a SQL file to execute.")
+	queryFlags.VarP(&queryOutput, "output", "o", "Output format: table, json, or csv.")
+	dbCmd.AddCommand(dbQueryCmd)
 	rootCmd.AddCommand(dbCmd)
 }
