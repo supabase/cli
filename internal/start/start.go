@@ -1029,9 +1029,10 @@ EOF
 						"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
 						"http://127.0.0.1:5000/status",
 					},
-					Interval: 10 * time.Second,
-					Timeout:  2 * time.Second,
-					Retries:  3,
+					Interval:    10 * time.Second,
+					Timeout:     2 * time.Second,
+					Retries:     3,
+					StartPeriod: 10 * time.Second,
 				},
 			},
 			container.HostConfig{
