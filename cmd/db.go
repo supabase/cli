@@ -243,7 +243,6 @@ var (
 		},
 	}
 
-	queryLinked bool
 	queryFile   string
 	queryOutput = utils.EnumFlag{
 		Allowed: []string{"json", "table", "csv"},
@@ -259,7 +258,7 @@ The default JSON output includes an untrusted data warning for safe use by AI co
 Use --output table or --output csv for human-friendly formats.`,
 		Args: cobra.MaximumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, args []string) error {
-			if queryLinked {
+			if flag := cmd.Flags().Lookup("linked"); flag != nil && flag.Changed {
 				fsys := afero.NewOsFs()
 				if _, err := utils.LoadAccessTokenFS(fsys); err != nil {
 					utils.CmdSuggestion = fmt.Sprintf("Run %s first.", utils.Aqua("supabase login"))
@@ -274,7 +273,7 @@ Use --output table or --output csv for human-friendly formats.`,
 			if err != nil {
 				return err
 			}
-			if queryLinked {
+			if flag := cmd.Flags().Lookup("linked"); flag != nil && flag.Changed {
 				return query.RunLinked(cmd.Context(), sql, flags.ProjectRef, queryOutput.Value, os.Stdout)
 			}
 			return query.RunLocal(cmd.Context(), sql, flags.DbConfig, queryOutput.Value, os.Stdout)
@@ -391,7 +390,10 @@ func init() {
 	dbTestCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	// Build query command
 	queryFlags := dbQueryCmd.Flags()
-	queryFlags.BoolVar(&queryLinked, "linked", false, "Queries the linked project's database via Management API.")
+	queryFlags.String("db-url", "", "Queries the database specified by the connection string (must be percent-encoded).")
+	queryFlags.Bool("linked", false, "Queries the linked project's database via Management API.")
+	queryFlags.Bool("local", true, "Queries the local database.")
+	dbQueryCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	queryFlags.StringVarP(&queryFile, "file", "f", "", "Path to a SQL file to execute.")
 	queryFlags.VarP(&queryOutput, "output", "o", "Output format: table, json, or csv.")
 	dbCmd.AddCommand(dbQueryCmd)

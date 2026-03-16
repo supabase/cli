@@ -253,6 +253,29 @@ func TestRunLinkedSelectCSV(t *testing.T) {
 	assert.Empty(t, apitest.ListUnmatchedRequests())
 }
 
+func TestFormatOutputNilColsJSON(t *testing.T) {
+	var buf bytes.Buffer
+	err := formatOutput(&buf, "json", nil, nil)
+	assert.NoError(t, err)
+	var envelope map[string]interface{}
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &envelope))
+	rows, ok := envelope["rows"].([]interface{})
+	require.True(t, ok)
+	assert.Len(t, rows, 0)
+}
+
+func TestFormatOutputNilColsTable(t *testing.T) {
+	var buf bytes.Buffer
+	err := formatOutput(&buf, "table", nil, nil)
+	assert.NoError(t, err)
+}
+
+func TestFormatOutputNilColsCSV(t *testing.T) {
+	var buf bytes.Buffer
+	err := formatOutput(&buf, "csv", nil, nil)
+	assert.NoError(t, err)
+}
+
 func TestRunLinkedEmptyResult(t *testing.T) {
 	projectRef := apitest.RandomProjectRef()
 	token := apitest.RandomAccessToken(t)

@@ -1,6 +1,7 @@
 package query
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/csv"
@@ -8,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 
@@ -129,7 +129,7 @@ func orderedKeys(body []byte) []string {
 		return nil
 	}
 	// Use a decoder on the first row to get ordered keys
-	dec := json.NewDecoder(jsonReader(rawRows[0]))
+	dec := json.NewDecoder(bytes.NewReader(rawRows[0]))
 	// Read opening brace
 	t, err := dec.Token()
 	if err != nil || t != json.Delim('{') {
@@ -151,24 +151,6 @@ func orderedKeys(body []byte) []string {
 		}
 	}
 	return keys
-}
-
-func jsonReader(data json.RawMessage) io.Reader {
-	return &jsonBytesReader{data: data}
-}
-
-type jsonBytesReader struct {
-	data json.RawMessage
-	off  int
-}
-
-func (r *jsonBytesReader) Read(p []byte) (n int, err error) {
-	if r.off >= len(r.data) {
-		return 0, io.EOF
-	}
-	n = copy(p, r.data[r.off:])
-	r.off += n
-	return n, nil
 }
 
 func formatOutput(w io.Writer, format string, cols []string, data [][]interface{}) error {
@@ -275,9 +257,10 @@ func ResolveSQL(args []string, filePath string, stdin *os.File) (string, error) 
 	if len(args) > 0 {
 		return args[0], nil
 	}
-	// Read from stdin if it's not a terminal
-	fd := stdin.Fd()
-	if fd <= math.MaxInt && !term.IsTerminal(int(fd)) {
+	// Read from stdin if it's not a terminal.
+	// Fd() returns uintptr but IsTerminal() takes int; standard fds (0,1,2) are always safe to cast.
+	fd := int(stdin.Fd()) //nolint:gosec
+	if !term.IsTerminal(fd) {
 		data, err := io.ReadAll(stdin)
 		if err != nil {
 			return "", errors.Errorf("failed to read from stdin: %w", err)
