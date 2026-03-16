@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/docker/docker/api/types"
@@ -81,8 +82,17 @@ func TestStartCommand(t *testing.T) {
 			}})
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
+			Persist().
 			Reply(http.StatusOK).
 			JSON(running)
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/networks").
+			Reply(http.StatusOK).
+			JSON([]network.Summary{})
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/volumes").
+			Reply(http.StatusOK).
+			JSON(volume.ListResponse{})
 		// Run test
 		err := Run(context.Background(), fsys, []string{}, false)
 		// Check error
@@ -253,6 +263,238 @@ func TestDatabaseStart(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
+}
+
+func TestRuntimeContainerHost(t *testing.T) {
+	t.Run("uses container ip on apple for started services", func(t *testing.T) {
+		originalRuntime := utils.Config.Local.Runtime
+		originalResolver := resolveContainerIP
+		t.Cleanup(func() {
+			utils.Config.Local.Runtime = originalRuntime
+			resolveContainerIP = originalResolver
+		})
+		utils.Config.Local.Runtime = config.AppleContainerRuntime
+		resolveContainerIP = func(_ context.Context, containerId, networkName string) (string, error) {
+			assert.Equal(t, utils.NetId, networkName)
+			return "192.168.0.10", nil
+		}
+
+		host, err := runtimeContainerHost(context.Background(), "test-service", true)
+		require.NoError(t, err)
+		assert.Equal(t, "192.168.0.10", host)
+	})
+
+	t.Run("keeps container name when runtime does not need resolution", func(t *testing.T) {
+		originalRuntime := utils.Config.Local.Runtime
+		originalResolver := resolveContainerIP
+		t.Cleanup(func() {
+			utils.Config.Local.Runtime = originalRuntime
+			resolveContainerIP = originalResolver
+		})
+		utils.Config.Local.Runtime = config.DockerRuntime
+		resolveContainerIP = func(_ context.Context, _, _ string) (string, error) {
+			t.Fatal("resolver should not be called")
+			return "", nil
+		}
+
+		host, err := runtimeContainerHost(context.Background(), "test-service", true)
+		require.NoError(t, err)
+		assert.Equal(t, "test-service", host)
+	})
+}
+
+func TestBuildKongConfig(t *testing.T) {
+	originalRuntime := utils.Config.Local.Runtime
+	originalResolver := resolveContainerIP
+	originalIDs := struct {
+		gotrue, rest, realtime, storage, studio, pgmeta, edge, logflare, pooler string
+	}{
+		gotrue:   utils.GotrueId,
+		rest:     utils.RestId,
+		realtime: utils.RealtimeId,
+		storage:  utils.StorageId,
+		studio:   utils.StudioId,
+		pgmeta:   utils.PgmetaId,
+		edge:     utils.EdgeRuntimeId,
+		logflare: utils.LogflareId,
+		pooler:   utils.PoolerId,
+	}
+	t.Cleanup(func() {
+		utils.Config.Local.Runtime = originalRuntime
+		resolveContainerIP = originalResolver
+		utils.GotrueId = originalIDs.gotrue
+		utils.RestId = originalIDs.rest
+		utils.RealtimeId = originalIDs.realtime
+		utils.StorageId = originalIDs.storage
+		utils.StudioId = originalIDs.studio
+		utils.PgmetaId = originalIDs.pgmeta
+		utils.EdgeRuntimeId = originalIDs.edge
+		utils.LogflareId = originalIDs.logflare
+		utils.PoolerId = originalIDs.pooler
+	})
+	utils.Config.Local.Runtime = config.AppleContainerRuntime
+	utils.GotrueId = "test-gotrue"
+	utils.RestId = "test-rest"
+	utils.RealtimeId = "test-realtime"
+	utils.StorageId = "test-storage"
+	utils.StudioId = "test-studio"
+	utils.PgmetaId = "test-pgmeta"
+	utils.EdgeRuntimeId = "test-edge"
+	utils.LogflareId = "test-logflare"
+	utils.PoolerId = "test-pooler"
+	resolveContainerIP = func(_ context.Context, containerId, _ string) (string, error) {
+		return map[string]string{
+			"test-gotrue":   "192.168.0.11",
+			"test-rest":     "192.168.0.12",
+			"test-realtime": "192.168.0.13",
+			"test-storage":  "192.168.0.14",
+			"test-pgmeta":   "192.168.0.15",
+			"test-edge":     "192.168.0.16",
+			"test-logflare": "192.168.0.17",
+			"test-pooler":   "192.168.0.18",
+		}[containerId], nil
+	}
+
+	cfg, err := buildKongConfig(context.Background(), KongDependencies{
+		Gotrue:   true,
+		Rest:     true,
+		Realtime: true,
+		Storage:  true,
+		Studio:   false,
+		Pgmeta:   true,
+		Edge:     true,
+		Logflare: true,
+		Pooler:   true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "192.168.0.11", cfg.GotrueId)
+	assert.Equal(t, "192.168.0.12", cfg.RestId)
+	assert.Equal(t, "192.168.0.13", cfg.RealtimeId)
+	assert.Equal(t, "192.168.0.14", cfg.StorageId)
+	assert.Equal(t, "test-studio", cfg.StudioId)
+	assert.Equal(t, "192.168.0.15", cfg.PgmetaId)
+	assert.Equal(t, "192.168.0.16", cfg.EdgeRuntimeId)
+	assert.Equal(t, "192.168.0.17", cfg.LogflareId)
+	assert.Equal(t, "192.168.0.18", cfg.PoolerId)
+}
+
+func TestRuntimeContainerURL(t *testing.T) {
+	originalRuntime := utils.Config.Local.Runtime
+	originalResolver := resolveContainerIP
+	t.Cleanup(func() {
+		utils.Config.Local.Runtime = originalRuntime
+		resolveContainerIP = originalResolver
+	})
+	utils.Config.Local.Runtime = config.AppleContainerRuntime
+	resolveContainerIP = func(_ context.Context, _, _ string) (string, error) {
+		return "192.168.0.20", nil
+	}
+
+	url, err := runtimeContainerURL(context.Background(), "test-kong", 8000, true)
+	require.NoError(t, err)
+	assert.Equal(t, "http://192.168.0.20:8000", url)
+}
+
+func TestReconcileStaleProjectContainers(t *testing.T) {
+	originalLister := listProjectContainers
+	originalRemover := removeProjectContainer
+	t.Cleanup(func() {
+		listProjectContainers = originalLister
+		removeProjectContainer = originalRemover
+	})
+
+	t.Run("removes only stopped project containers", func(t *testing.T) {
+		var removed []string
+		listProjectContainers = func(_ context.Context, projectId string, all bool) ([]utils.ContainerInfo, error) {
+			assert.Equal(t, "demo", projectId)
+			assert.True(t, all)
+			return []utils.ContainerInfo{
+				{ID: "supabase-db-demo", Running: true},
+				{ID: "supabase-rest-demo", Running: false},
+			}, nil
+		}
+		removeProjectContainer = func(_ context.Context, containerId string, removeVolumes, force bool) error {
+			assert.True(t, removeVolumes)
+			assert.True(t, force)
+			removed = append(removed, containerId)
+			return nil
+		}
+
+		err := reconcileStaleProjectContainers(context.Background(), "demo")
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{"supabase-rest-demo"}, removed)
+	})
+
+	t.Run("returns removal errors", func(t *testing.T) {
+		listProjectContainers = func(_ context.Context, _ string, _ bool) ([]utils.ContainerInfo, error) {
+			return []utils.ContainerInfo{{ID: "supabase-rest-demo", Running: false}}, nil
+		}
+		removeProjectContainer = func(_ context.Context, _ string, _, _ bool) error {
+			return errors.New("boom")
+		}
+
+		err := reconcileStaleProjectContainers(context.Background(), "demo")
+
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "failed to remove stale container")
+	})
+}
+
+func TestBuildStudioEnv(t *testing.T) {
+	originalRuntime := utils.Config.Local.Runtime
+	originalResolver := resolveContainerIP
+	originalIDs := struct {
+		kong, pgmeta, logflare string
+	}{
+		kong:     utils.KongId,
+		pgmeta:   utils.PgmetaId,
+		logflare: utils.LogflareId,
+	}
+	t.Cleanup(func() {
+		utils.Config.Local.Runtime = originalRuntime
+		resolveContainerIP = originalResolver
+		utils.KongId = originalIDs.kong
+		utils.PgmetaId = originalIDs.pgmeta
+		utils.LogflareId = originalIDs.logflare
+	})
+	utils.Config.Local.Runtime = config.AppleContainerRuntime
+	utils.KongId = "test-kong"
+	utils.PgmetaId = "test-pgmeta"
+	utils.LogflareId = "test-logflare"
+	resolveContainerIP = func(_ context.Context, containerId, _ string) (string, error) {
+		return map[string]string{
+			"test-kong":   "192.168.0.30",
+			"test-pgmeta": "192.168.0.31",
+		}[containerId], nil
+	}
+
+	env, err := buildStudioEnv(
+		context.Background(),
+		"/tmp/demo",
+		pgconn.Config{Host: "192.168.0.2", Port: 5432, Database: "postgres", Password: "postgres"},
+		"",
+		true,
+		true,
+		false,
+	)
+	require.NoError(t, err)
+
+	assert.Contains(t, env, "POSTGRES_HOST=192.168.0.2")
+	assert.Contains(t, env, "POSTGRES_PORT=5432")
+	assert.Contains(t, env, "POSTGRES_DB=postgres")
+	assert.Contains(t, env, "STUDIO_PG_META_URL=http://192.168.0.31:8080")
+	assert.Contains(t, env, "SUPABASE_URL=http://192.168.0.30:8000")
+	assert.Contains(t, env, "SNIPPETS_MANAGEMENT_FOLDER=")
+
+	foundFunctionsDir := false
+	for _, item := range env {
+		if strings.HasPrefix(item, "EDGE_FUNCTIONS_MANAGEMENT_FOLDER=") {
+			foundFunctionsDir = true
+			assert.Contains(t, item, "/tmp/demo/")
+		}
+	}
+	assert.True(t, foundFunctionsDir)
 }
 
 func TestFormatMapForEnvConfig(t *testing.T) {

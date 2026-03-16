@@ -110,6 +110,9 @@ services:
       - name: cors
       - name: request-transformer
         config:
+          add:
+            headers:
+              - "Host: {{ .RealtimeTenantId }}"
           replace:
             querystring:
               - "apikey:{{ .QueryToken }}"
@@ -128,9 +131,11 @@ services:
         config:
           add:
             headers:
+              - "Host: {{ .RealtimeTenantId }}"
               - "Authorization: {{ .BearerToken }}"
           replace:
             headers:
+              - "Host: {{ .RealtimeTenantId }}"
               - "Authorization: {{ .BearerToken }}"
   # S3-compatible storage endpoint (no Authorization header transformation)
   - name: storage-v1-s3

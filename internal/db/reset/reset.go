@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -12,22 +13,37 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/supabase/cli/internal/db/start"
+	dbstart "github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/migration/down"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/seed/buckets"
+	stackstart "github.com/supabase/cli/internal/start"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/migration"
+)
+
+var (
+	assertSupabaseDbIsRunning = utils.AssertSupabaseDbIsRunning
+	removeContainer           = utils.RemoveContainer
+	removeVolume              = utils.RemoveVolume
+	startContainer            = utils.DockerStart
+	inspectContainer          = utils.InspectContainer
+	restartContainer          = utils.RestartContainer
+	waitForHealthyService     = dbstart.WaitForHealthyService
+	waitForLocalDatabase      = waitForDatabaseReady
+	waitForLocalAPI           = waitForAPIReady
+	setupLocalDatabase        = dbstart.SetupLocalDatabase
+	restartKong               = stackstart.RestartKong
+	runBucketSeed             = buckets.Run
+	seedBuckets               = seedBucketsWithRetry
 )
 
 func Run(ctx context.Context, version string, last uint, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -54,7 +70,7 @@ func Run(ctx context.Context, version string, last uint, config pgconn.Config, f
 		return resetRemote(ctx, version, config, fsys, options...)
 	}
 	// Config file is loaded before parsing --linked or --local flags
-	if err := utils.AssertSupabaseDbIsRunning(); err != nil {
+	if err := assertSupabaseDbIsRunning(); err != nil {
 		return err
 	}
 	// Reset postgres database because extensions (pg_cron, pg_net) require postgres
@@ -62,19 +78,40 @@ func Run(ctx context.Context, version string, last uint, config pgconn.Config, f
 		return err
 	}
 	// Seed objects from supabase/buckets directory
-	if resp, err := utils.Docker.ContainerInspect(ctx, utils.StorageId); err == nil {
-		if resp.State.Health == nil || resp.State.Health.Status != types.Healthy {
-			if err := start.WaitForHealthyService(ctx, 30*time.Second, utils.StorageId); err != nil {
+	if _, err := inspectContainer(ctx, utils.StorageId); err == nil {
+		if shouldRefreshAPIAfterReset() {
+			// Kong caches upstream addresses; recreate it after the db container gets a new IP.
+			if err := restartKong(ctx, stackstart.KongDependencies{
+				Gotrue:   utils.Config.Auth.Enabled,
+				Rest:     utils.Config.Api.Enabled,
+				Realtime: utils.Config.Realtime.Enabled,
+				Storage:  utils.Config.Storage.Enabled,
+				Studio:   utils.Config.Studio.Enabled,
+				Pgmeta:   utils.Config.Studio.Enabled,
+				Edge:     true,
+				Logflare: utils.Config.Analytics.Enabled,
+				Pooler:   utils.Config.Db.Pooler.Enabled,
+			}); err != nil {
+				return err
+			}
+			if err := waitForLocalAPI(ctx, 30*time.Second); err != nil {
 				return err
 			}
 		}
-		if err := buckets.Run(ctx, "", false, fsys); err != nil {
+		if err := waitForHealthyService(ctx, 30*time.Second, utils.StorageId); err != nil {
+			return err
+		}
+		if err := seedBuckets(ctx, fsys); err != nil {
 			return err
 		}
 	}
 	branch := utils.GetGitBranch(fsys)
 	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db reset")+" on branch "+utils.Aqua(branch)+".")
 	return nil
+}
+
+func shouldRefreshAPIAfterReset() bool {
+	return utils.UsesAppleContainerRuntime() && utils.Config.Api.Enabled
 }
 
 func resetDatabase(ctx context.Context, version string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -111,14 +148,14 @@ func resetDatabase14(ctx context.Context, version string, fsys afero.Fs, options
 }
 
 func resetDatabase15(ctx context.Context, version string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	if err := utils.Docker.ContainerRemove(ctx, utils.DbId, container.RemoveOptions{Force: true}); err != nil {
+	if err := removeContainer(ctx, utils.DbId, true, true); err != nil {
 		return errors.Errorf("failed to remove container: %w", err)
 	}
-	if err := utils.Docker.VolumeRemove(ctx, utils.DbId, true); err != nil {
+	if err := removeVolume(ctx, utils.DbId, true); err != nil {
 		return errors.Errorf("failed to remove volume: %w", err)
 	}
-	config := start.NewContainerConfig()
-	hostConfig := start.NewHostConfig()
+	config := dbstart.NewContainerConfig()
+	hostConfig := dbstart.NewHostConfig()
 	networkingConfig := network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
 			utils.NetId: {
@@ -127,13 +164,16 @@ func resetDatabase15(ctx context.Context, version string, fsys afero.Fs, options
 		},
 	}
 	fmt.Fprintln(os.Stderr, "Recreating database...")
-	if _, err := utils.DockerStart(ctx, config, hostConfig, networkingConfig, utils.DbId); err != nil {
+	if _, err := startContainer(ctx, config, hostConfig, networkingConfig, utils.DbId); err != nil {
 		return err
 	}
-	if err := start.WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, utils.DbId); err != nil {
+	if err := waitForHealthyService(ctx, utils.Config.Db.HealthTimeout, utils.DbId); err != nil {
 		return err
 	}
-	if err := start.SetupLocalDatabase(ctx, version, fsys, os.Stderr, options...); err != nil {
+	if err := waitForLocalDatabase(ctx, utils.Config.Db.HealthTimeout, options...); err != nil {
+		return err
+	}
+	if err := setupLocalDatabase(ctx, version, fsys, os.Stderr, options...); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "Restarting containers...")
@@ -146,7 +186,7 @@ func initDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
 		return err
 	}
 	defer conn.Close(context.Background())
-	return start.InitSchema14(ctx, conn)
+	return dbstart.InitSchema14(ctx, conn)
 }
 
 // Recreate postgres database by connecting to template1
@@ -193,7 +233,7 @@ func DisconnectClients(ctx context.Context, conn *pgx.Conn) error {
 		}
 	}
 	// Wait for WAL senders to drop their replication slots
-	policy := start.NewBackoffPolicy(ctx, 10*time.Second)
+	policy := dbstart.NewBackoffPolicy(ctx, 10*time.Second)
 	waitForDrop := func() error {
 		var count int
 		if err := conn.QueryRow(ctx, COUNT_REPLICATION_SLOTS).Scan(&count); err != nil {
@@ -211,20 +251,50 @@ func RestartDatabase(ctx context.Context, w io.Writer) error {
 	fmt.Fprintln(w, "Restarting containers...")
 	// Some extensions must be manually restarted after pg_terminate_backend
 	// Ref: https://github.com/citusdata/pg_cron/issues/99
-	if err := utils.Docker.ContainerRestart(ctx, utils.DbId, container.StopOptions{}); err != nil {
+	if err := restartContainer(ctx, utils.DbId); err != nil {
 		return errors.Errorf("failed to restart container: %w", err)
 	}
-	if err := start.WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, utils.DbId); err != nil {
+	if err := waitForHealthyService(ctx, utils.Config.Db.HealthTimeout, utils.DbId); err != nil {
 		return err
 	}
 	return restartServices(ctx)
+}
+
+func waitForDatabaseReady(ctx context.Context, timeout time.Duration, options ...func(*pgx.ConnConfig)) error {
+	policy := dbstart.NewBackoffPolicy(ctx, timeout)
+	return backoff.Retry(func() error {
+		conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
+		if err != nil {
+			return err
+		}
+		return conn.Close(ctx)
+	}, policy)
+}
+
+func seedBucketsWithRetry(ctx context.Context, fsys afero.Fs) error {
+	policy := dbstart.NewBackoffPolicy(ctx, 30*time.Second)
+	return backoff.Retry(func() error {
+		return runBucketSeed(ctx, "", false, fsys)
+	}, policy)
+}
+
+func waitForAPIReady(ctx context.Context, timeout time.Duration) error {
+	addr := net.JoinHostPort(utils.Config.Hostname, strconv.FormatUint(uint64(utils.Config.Api.Port), 10))
+	policy := dbstart.NewBackoffPolicy(ctx, timeout)
+	return backoff.Retry(func() error {
+		conn, err := net.DialTimeout("tcp", addr, time.Second)
+		if err != nil {
+			return err
+		}
+		return conn.Close()
+	}, policy)
 }
 
 func restartServices(ctx context.Context) error {
 	// No need to restart PostgREST because it automatically reconnects and listens for schema changes
 	services := listServicesToRestart()
 	result := utils.WaitAll(services, func(id string) error {
-		if err := utils.Docker.ContainerRestart(ctx, id, container.StopOptions{}); err != nil && !errdefs.IsNotFound(err) {
+		if err := restartContainer(ctx, id); err != nil && !errdefs.IsNotFound(err) {
 			return errors.Errorf("failed to restart %s: %w", id, err)
 		}
 		return nil
@@ -234,7 +304,7 @@ func restartServices(ctx context.Context) error {
 }
 
 func listServicesToRestart() []string {
-	return []string{utils.StorageId, utils.GotrueId, utils.RealtimeId, utils.PoolerId}
+	return []string{utils.StorageId, utils.GotrueId, utils.RealtimeId, utils.PoolerId, utils.KongId}
 }
 
 func resetRemote(ctx context.Context, version string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {

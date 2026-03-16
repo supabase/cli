@@ -5,16 +5,22 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/start"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
@@ -35,6 +41,14 @@ func TestResetCommand(t *testing.T) {
 	}
 
 	t.Run("seeds storage after reset", func(t *testing.T) {
+		originalWaitForLocalDatabase := waitForLocalDatabase
+		t.Cleanup(func() {
+			waitForLocalDatabase = originalWaitForLocalDatabase
+		})
+		waitForLocalDatabase = func(context.Context, time.Duration, ...func(*pgx.ConnConfig)) error {
+			return nil
+		}
+
 		utils.DbId = "test-reset"
 		utils.Config.Db.MajorVersion = 15
 		// Setup in-memory fs
@@ -70,6 +84,7 @@ func TestResetCommand(t *testing.T) {
 		utils.GotrueId = "test-auth"
 		utils.RealtimeId = "test-realtime"
 		utils.PoolerId = "test-pooler"
+		utils.KongId = "test-kong"
 		for _, container := range listServicesToRestart() {
 			gock.New(utils.Docker.DaemonHost()).
 				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
@@ -77,6 +92,7 @@ func TestResetCommand(t *testing.T) {
 		}
 		// Seeds storage
 		gock.New(utils.Docker.DaemonHost()).
+			Persist().
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.StorageId + "/json").
 			Reply(http.StatusOK).
 			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
@@ -151,6 +167,136 @@ func TestResetCommand(t *testing.T) {
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("uses runtime helpers on apple container runtime", func(t *testing.T) {
+		originalRuntime := utils.Config.Local.Runtime
+		originalAPIEnabled := utils.Config.Api.Enabled
+		originalAssertRunning := assertSupabaseDbIsRunning
+		originalRemoveContainer := removeContainer
+		originalRemoveVolume := removeVolume
+		originalStartContainer := startContainer
+		originalInspectContainer := inspectContainer
+		originalRestartContainer := restartContainer
+		originalWaitForHealthyService := waitForHealthyService
+		originalWaitForLocalDatabase := waitForLocalDatabase
+		originalWaitForLocalAPI := waitForLocalAPI
+		originalSetupLocalDatabase := setupLocalDatabase
+		originalRestartKong := restartKong
+		originalRunBucketSeed := runBucketSeed
+		originalDbID := utils.DbId
+		originalStorageID := utils.StorageId
+		originalGotrueID := utils.GotrueId
+		originalRealtimeID := utils.RealtimeId
+		originalPoolerID := utils.PoolerId
+		originalKongID := utils.KongId
+
+		t.Cleanup(func() {
+			utils.Config.Local.Runtime = originalRuntime
+			utils.Config.Api.Enabled = originalAPIEnabled
+			assertSupabaseDbIsRunning = originalAssertRunning
+			removeContainer = originalRemoveContainer
+			removeVolume = originalRemoveVolume
+			startContainer = originalStartContainer
+			inspectContainer = originalInspectContainer
+			restartContainer = originalRestartContainer
+			waitForHealthyService = originalWaitForHealthyService
+			waitForLocalDatabase = originalWaitForLocalDatabase
+			waitForLocalAPI = originalWaitForLocalAPI
+			setupLocalDatabase = originalSetupLocalDatabase
+			restartKong = originalRestartKong
+			runBucketSeed = originalRunBucketSeed
+			utils.DbId = originalDbID
+			utils.StorageId = originalStorageID
+			utils.GotrueId = originalGotrueID
+			utils.RealtimeId = originalRealtimeID
+			utils.PoolerId = originalPoolerID
+			utils.KongId = originalKongID
+		})
+
+		utils.Config.Local.Runtime = "apple-container"
+		utils.Config.Db.MajorVersion = 15
+		utils.Config.Api.Enabled = true
+		utils.DbId = "test-reset"
+		utils.StorageId = "test-storage"
+		utils.GotrueId = "test-auth"
+		utils.RealtimeId = "test-realtime"
+		utils.PoolerId = "test-pooler"
+		utils.KongId = "test-kong"
+
+		fsys := afero.NewMemMapFs()
+
+		var removedContainers []string
+		var removedVolumes []string
+		var startedContainers []string
+		var restartedContainers []string
+		var waited []string
+		var mu sync.Mutex
+		restartedKong := false
+		bucketSeeded := false
+
+		assertSupabaseDbIsRunning = func() error { return nil }
+		removeContainer = func(_ context.Context, containerID string, removeVolumes, force bool) error {
+			assert.True(t, removeVolumes)
+			assert.True(t, force)
+			removedContainers = append(removedContainers, containerID)
+			return nil
+		}
+		removeVolume = func(_ context.Context, volumeName string, force bool) error {
+			assert.True(t, force)
+			removedVolumes = append(removedVolumes, volumeName)
+			return nil
+		}
+		startContainer = func(_ context.Context, _ container.Config, _ container.HostConfig, _ network.NetworkingConfig, containerName string) (string, error) {
+			startedContainers = append(startedContainers, containerName)
+			return containerName, nil
+		}
+		inspectContainer = func(_ context.Context, containerID string) (utils.ContainerInfo, error) {
+			if containerID == utils.StorageId || containerID == utils.KongId {
+				return utils.ContainerInfo{ID: containerID, Running: true}, nil
+			}
+			return utils.ContainerInfo{}, errors.New("unexpected inspect")
+		}
+		restartContainer = func(_ context.Context, containerID string) error {
+			mu.Lock()
+			restartedContainers = append(restartedContainers, containerID)
+			mu.Unlock()
+			return nil
+		}
+		waitForHealthyService = func(_ context.Context, _ time.Duration, started ...string) error {
+			waited = append(waited, started...)
+			return nil
+		}
+		waitForLocalDatabase = func(_ context.Context, _ time.Duration, _ ...func(*pgx.ConnConfig)) error {
+			return nil
+		}
+		waitForLocalAPI = func(_ context.Context, _ time.Duration) error {
+			return nil
+		}
+		setupLocalDatabase = func(_ context.Context, version string, _ afero.Fs, _ io.Writer, _ ...func(*pgx.ConnConfig)) error {
+			assert.Empty(t, version)
+			return nil
+		}
+		restartKong = func(_ context.Context, deps start.KongDependencies) error {
+			_ = deps
+			restartedKong = true
+			return nil
+		}
+		runBucketSeed = func(_ context.Context, _ string, _ bool, _ afero.Fs) error {
+			bucketSeeded = true
+			return nil
+		}
+
+		err := Run(context.Background(), "", 0, dbConfig, fsys)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{utils.DbId}, removedContainers)
+		assert.Equal(t, []string{utils.DbId}, removedVolumes)
+		assert.Equal(t, []string{utils.DbId}, startedContainers)
+		assert.True(t, bucketSeeded)
+		assert.True(t, restartedKong)
+		assert.True(t, slices.Contains(waited, utils.DbId))
+		assert.ElementsMatch(t, []string{utils.StorageId, utils.GotrueId, utils.RealtimeId, utils.PoolerId, utils.KongId}, restartedContainers)
 	})
 }
 
@@ -304,6 +450,7 @@ func TestRestartDatabase(t *testing.T) {
 		utils.GotrueId = "test-auth"
 		utils.RealtimeId = "test-realtime"
 		utils.PoolerId = "test-pooler"
+		utils.KongId = "test-kong"
 		for _, container := range listServicesToRestart() {
 			gock.New(utils.Docker.DaemonHost()).
 				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
@@ -339,6 +486,7 @@ func TestRestartDatabase(t *testing.T) {
 		utils.GotrueId = "test-auth"
 		utils.RealtimeId = "test-realtime"
 		utils.PoolerId = "test-pooler"
+		utils.KongId = "test-kong"
 		for _, container := range []string{utils.StorageId, utils.GotrueId, utils.RealtimeId} {
 			gock.New(utils.Docker.DaemonHost()).
 				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
@@ -347,6 +495,9 @@ func TestRestartDatabase(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.PoolerId + "/restart").
 			Reply(http.StatusNotFound)
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.KongId + "/restart").
+			Reply(http.StatusOK)
 		// Run test
 		err := RestartDatabase(context.Background(), io.Discard)
 		// Check error

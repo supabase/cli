@@ -20,6 +20,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/compose-spec/compose-go/v2/types"
+	"github.com/containerd/errdefs"
 	"github.com/docker/cli/cli/command"
 	dockerFlags "github.com/docker/cli/cli/flags"
 	"github.com/docker/compose/v2/pkg/api"
@@ -61,6 +62,9 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 			_ = services.CheckVersions(ctx, fsys)
 		}
 	}
+	if err := reconcileStaleProjectContainers(ctx, utils.Config.ProjectId); err != nil {
+		return err
+	}
 
 	dbConfig := pgconn.Config{
 		Host:     utils.DbId,
@@ -81,24 +85,37 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 	}
 
 	fmt.Fprintf(os.Stderr, "Started %s local development setup.\n\n", utils.Aqua("supabase"))
-	status.PrettyPrint(os.Stdout, excludedContainers...)
+	status.PrettyPrint(ctx, os.Stdout, excludedContainers...)
 	return nil
 }
 
 type kongConfig struct {
-	GotrueId      string
-	RestId        string
-	RealtimeId    string
-	StorageId     string
-	StudioId      string
-	PgmetaId      string
-	EdgeRuntimeId string
-	LogflareId    string
-	PoolerId      string
-	ApiHost       string
-	ApiPort       uint16
-	BearerToken   string
-	QueryToken    string
+	GotrueId         string
+	RestId           string
+	RealtimeId       string
+	RealtimeTenantId string
+	StorageId        string
+	StudioId         string
+	PgmetaId         string
+	EdgeRuntimeId    string
+	LogflareId       string
+	PoolerId         string
+	ApiHost          string
+	ApiPort          uint16
+	BearerToken      string
+	QueryToken       string
+}
+
+type KongDependencies struct {
+	Gotrue   bool
+	Rest     bool
+	Realtime bool
+	Storage  bool
+	Studio   bool
+	Pgmeta   bool
+	Edge     bool
+	Logflare bool
+	Pooler   bool
 }
 
 var (
@@ -151,6 +168,10 @@ var (
 
 var serviceTimeout = 30 * time.Second
 
+var resolveContainerIP = utils.GetContainerIP
+var listProjectContainers = utils.ListProjectContainers
+var removeProjectContainer = utils.RemoveContainer
+
 // RetryClient wraps a Docker client to add retry logic for image pulls
 type RetryClient struct {
 	*client.Client
@@ -165,6 +186,241 @@ func isPermanentError(err error) bool {
 		return false
 	}
 	return true
+}
+
+func reconcileStaleProjectContainers(ctx context.Context, projectId string) error {
+	containers, err := listProjectContainers(ctx, projectId, true)
+	if err != nil {
+		return errors.Errorf("failed to list project containers: %w", err)
+	}
+	for _, item := range containers {
+		if item.Running {
+			continue
+		}
+		if err := removeProjectContainer(ctx, item.ID, true, true); err != nil {
+			return errors.Errorf("failed to remove stale container %s: %w", item.ID, err)
+		}
+	}
+	return nil
+}
+
+func runtimeContainerHost(ctx context.Context, containerId string, resolve bool) (string, error) {
+	if !utils.UsesAppleContainerRuntime() || !resolve {
+		return containerId, nil
+	}
+	return resolveContainerIP(ctx, containerId, utils.NetId)
+}
+
+func runtimeContainerURL(ctx context.Context, containerId string, port uint16, resolve bool) (string, error) {
+	host, err := runtimeContainerHost(ctx, containerId, resolve)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("http://%s", net.JoinHostPort(host, strconv.FormatUint(uint64(port), 10))), nil
+}
+
+func buildKongConfig(ctx context.Context, deps KongDependencies) (kongConfig, error) {
+	gotrueHost, err := runtimeContainerHost(ctx, utils.GotrueId, deps.Gotrue)
+	if err != nil {
+		return kongConfig{}, err
+	}
+	restHost, err := runtimeContainerHost(ctx, utils.RestId, deps.Rest)
+	if err != nil {
+		return kongConfig{}, err
+	}
+	realtimeHost, err := runtimeContainerHost(ctx, utils.RealtimeId, deps.Realtime)
+	if err != nil {
+		return kongConfig{}, err
+	}
+	storageHost, err := runtimeContainerHost(ctx, utils.StorageId, deps.Storage)
+	if err != nil {
+		return kongConfig{}, err
+	}
+	studioHost, err := runtimeContainerHost(ctx, utils.StudioId, deps.Studio)
+	if err != nil {
+		return kongConfig{}, err
+	}
+	pgmetaHost, err := runtimeContainerHost(ctx, utils.PgmetaId, deps.Pgmeta)
+	if err != nil {
+		return kongConfig{}, err
+	}
+	edgeHost, err := runtimeContainerHost(ctx, utils.EdgeRuntimeId, deps.Edge)
+	if err != nil {
+		return kongConfig{}, err
+	}
+	logflareHost, err := runtimeContainerHost(ctx, utils.LogflareId, deps.Logflare)
+	if err != nil {
+		return kongConfig{}, err
+	}
+	poolerHost, err := runtimeContainerHost(ctx, utils.PoolerId, deps.Pooler)
+	if err != nil {
+		return kongConfig{}, err
+	}
+	return kongConfig{
+		GotrueId:         gotrueHost,
+		RestId:           restHost,
+		RealtimeId:       realtimeHost,
+		RealtimeTenantId: utils.Config.Realtime.TenantId,
+		StorageId:        storageHost,
+		StudioId:         studioHost,
+		PgmetaId:         pgmetaHost,
+		EdgeRuntimeId:    edgeHost,
+		LogflareId:       logflareHost,
+		PoolerId:         poolerHost,
+		ApiHost:          utils.Config.Hostname,
+		ApiPort:          utils.Config.Api.Port,
+		BearerToken: fmt.Sprintf(
+			`$((headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) or (headers.apikey == '%s' and 'Bearer %s') or (headers.apikey == '%s' and 'Bearer %s') or headers.apikey)`,
+			utils.Config.Auth.SecretKey.Value,
+			utils.Config.Auth.ServiceRoleKey.Value,
+			utils.Config.Auth.PublishableKey.Value,
+			utils.Config.Auth.AnonKey.Value,
+		),
+		QueryToken: fmt.Sprintf(
+			`$((query_params.apikey == '%s' and '%s') or (query_params.apikey == '%s' and '%s') or query_params.apikey)`,
+			utils.Config.Auth.SecretKey.Value,
+			utils.Config.Auth.ServiceRoleKey.Value,
+			utils.Config.Auth.PublishableKey.Value,
+			utils.Config.Auth.AnonKey.Value,
+		),
+	}, nil
+}
+
+func startKong(ctx context.Context, deps KongDependencies) error {
+	var kongConfigBuf bytes.Buffer
+	kongConfig, err := buildKongConfig(ctx, deps)
+	if err != nil {
+		return err
+	}
+	if err := kongConfigTemplate.Option("missingkey=error").Execute(&kongConfigBuf, kongConfig); err != nil {
+		return errors.Errorf("failed to exec template: %w", err)
+	}
+
+	binds := []string{}
+	for id, tmpl := range utils.Config.Auth.Email.Template {
+		if len(tmpl.ContentPath) == 0 {
+			continue
+		}
+		hostPath := tmpl.ContentPath
+		if !filepath.IsAbs(tmpl.ContentPath) {
+			var err error
+			hostPath, err = filepath.Abs(hostPath)
+			if err != nil {
+				return errors.Errorf("failed to resolve absolute path: %w", err)
+			}
+		}
+		dockerPath := path.Join(nginxEmailTemplateDir, id+filepath.Ext(hostPath))
+		binds = append(binds, fmt.Sprintf("%s:%s:rw", hostPath, dockerPath))
+	}
+
+	dockerPort := uint16(8000)
+	if utils.Config.Api.Tls.Enabled {
+		dockerPort = 8443
+	}
+	_, err = utils.DockerStart(
+		ctx,
+		container.Config{
+			Image: utils.Config.Api.KongImage,
+			Env: []string{
+				"KONG_DATABASE=off",
+				"KONG_DECLARATIVE_CONFIG=/home/kong/kong.yml",
+				"KONG_DNS_ORDER=LAST,A,CNAME", // https://github.com/supabase/cli/issues/14
+				"KONG_PLUGINS=request-transformer,cors",
+				fmt.Sprintf("KONG_PORT_MAPS=%d:8000", utils.Config.Api.Port),
+				// Need to increase the nginx buffers in kong to avoid it rejecting the rather
+				// sizeable response headers azure can generate
+				// Ref: https://github.com/Kong/kong/issues/3974#issuecomment-482105126
+				"KONG_NGINX_PROXY_PROXY_BUFFER_SIZE=160k",
+				"KONG_NGINX_PROXY_PROXY_BUFFERS=64 160k",
+				"KONG_NGINX_WORKER_PROCESSES=1",
+				"KONG_SSL_CERT=/home/kong/localhost.crt",
+				"KONG_SSL_CERT_KEY=/home/kong/localhost.key",
+			},
+			Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && \
+cat <<'EOF' > /home/kong/custom_nginx.template && \
+cat <<'EOF' > /home/kong/localhost.crt && \
+cat <<'EOF' > /home/kong/localhost.key && \
+./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template
+` + kongConfigBuf.String() + `
+EOF
+` + nginxConfigEmbed + `
+EOF
+` + string(utils.Config.Api.Tls.CertContent) + `
+EOF
+` + string(utils.Config.Api.Tls.KeyContent) + `
+EOF
+`},
+			ExposedPorts: nat.PortSet{
+				"8000/tcp": {},
+				"8443/tcp": {},
+				nat.Port(fmt.Sprintf("%d/tcp", nginxTemplateServerPort)): {},
+			},
+		},
+		container.HostConfig{
+			Binds: binds,
+			PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
+				HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10),
+			}}},
+			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
+		},
+		network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				utils.NetId: {
+					Aliases: utils.KongAliases,
+				},
+			},
+		},
+		utils.KongId,
+	)
+	return err
+}
+
+func RestartKong(ctx context.Context, deps KongDependencies) error {
+	if err := utils.RemoveContainer(ctx, utils.KongId, true, true); err != nil && !errdefs.IsNotFound(err) {
+		return errors.Errorf("failed to remove kong container: %w", err)
+	}
+	return startKong(ctx, deps)
+}
+
+func buildStudioEnv(ctx context.Context, workdir string, dbConfig pgconn.Config, snippetsManagementFolder string, isKongEnabled, isPgmetaEnabled, isLogflareEnabled bool) ([]string, error) {
+	pgmetaURL, err := runtimeContainerURL(ctx, utils.PgmetaId, 8080, isPgmetaEnabled)
+	if err != nil {
+		return nil, err
+	}
+	supabaseURL, err := runtimeContainerURL(ctx, utils.KongId, 8000, isKongEnabled)
+	if err != nil {
+		return nil, err
+	}
+	logflareURL, err := runtimeContainerURL(ctx, utils.LogflareId, 4000, isLogflareEnabled)
+	if err != nil {
+		return nil, err
+	}
+	return []string{
+		"CURRENT_CLI_VERSION=" + utils.Version,
+		"STUDIO_PG_META_URL=" + pgmetaURL,
+		"POSTGRES_HOST=" + dbConfig.Host,
+		fmt.Sprintf("POSTGRES_PORT=%d", dbConfig.Port),
+		"POSTGRES_DB=" + dbConfig.Database,
+		"POSTGRES_PASSWORD=" + dbConfig.Password,
+		"SUPABASE_URL=" + supabaseURL,
+		"SUPABASE_PUBLIC_URL=" + utils.Config.Studio.ApiUrl,
+		"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
+		"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey.Value,
+		"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
+		"LOGFLARE_PRIVATE_ACCESS_TOKEN=" + utils.Config.Analytics.ApiKey,
+		"OPENAI_API_KEY=" + utils.Config.Studio.OpenaiApiKey.Value,
+		"PGRST_DB_SCHEMAS=" + strings.Join(utils.Config.Api.Schemas, ","),
+		"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(utils.Config.Api.ExtraSearchPath, ","),
+		fmt.Sprintf("PGRST_DB_MAX_ROWS=%d", utils.Config.Api.MaxRows),
+		"LOGFLARE_URL=" + logflareURL,
+		fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
+		fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
+		"EDGE_FUNCTIONS_MANAGEMENT_FOLDER=" + utils.ToDockerPath(filepath.Join(workdir, utils.FunctionsDir)),
+		"SNIPPETS_MANAGEMENT_FOLDER=" + snippetsManagementFolder,
+		// Ref: https://github.com/vercel/next.js/issues/51684#issuecomment-1612834913
+		"HOSTNAME=0.0.0.0",
+		"POSTGRES_USER_READ_WRITE=postgres",
+	}, nil
 }
 
 // ImagePull wraps the Docker client's ImagePull with retry logic and registry auth
@@ -198,6 +454,9 @@ func (cli *RetryClient) ImageInspect(ctx context.Context, refStr string, options
 
 // pullImagesUsingCompose pulls all required images using docker-compose service
 func pullImagesUsingCompose(ctx context.Context, project types.Project) error {
+	if utils.UsesAppleContainerRuntime() {
+		return nil
+	}
 	// Create Docker CLI
 	cli, err := command.NewDockerCli()
 	if err != nil {
@@ -217,6 +476,13 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 	excluded := make(map[string]bool)
 	for _, name := range excludedContainers {
 		excluded[name] = true
+	}
+	if utils.UsesAppleContainerRuntime() {
+		if !excluded[utils.ShortContainerImageName(utils.Config.Analytics.Image)] || !excluded[utils.ShortContainerImageName(utils.Config.Analytics.VectorImage)] {
+			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "apple-container runtime does not support analytics yet; skipping logflare and vector.")
+			excluded[utils.ShortContainerImageName(utils.Config.Analytics.Image)] = true
+			excluded[utils.ShortContainerImageName(utils.Config.Analytics.VectorImage)] = true
+		}
 	}
 	notExcluded := func(sc types.ServiceConfig) bool {
 		val, ok := excluded[sc.Name]
@@ -242,13 +508,31 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 		if err := start.StartDatabase(ctx, "", fsys, os.Stderr, options...); err != nil {
 			return err
 		}
+		if utils.UsesAppleContainerRuntime() {
+			ip, err := utils.GetContainerIP(ctx, utils.DbId, utils.NetId)
+			if err != nil {
+				return err
+			}
+			dbConfig.Host = ip
+		}
 	}
 
 	var started []string
+	isKongEnabled := !isContainerExcluded(utils.Config.Api.KongImage, excluded)
+	isAuthEnabled := utils.Config.Auth.Enabled && !isContainerExcluded(utils.Config.Auth.Image, excluded)
+	isInbucketEnabled := utils.Config.Inbucket.Enabled && !isContainerExcluded(utils.Config.Inbucket.Image, excluded)
+	isRealtimeEnabled := utils.Config.Realtime.Enabled && !isContainerExcluded(utils.Config.Realtime.Image, excluded)
+	isRestEnabled := utils.Config.Api.Enabled && !isContainerExcluded(utils.Config.Api.Image, excluded)
 	isStorageEnabled := utils.Config.Storage.Enabled && !isContainerExcluded(utils.Config.Storage.Image, excluded)
 	isImgProxyEnabled := utils.Config.Storage.ImageTransformation != nil &&
 		utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImgProxyImage, excluded)
 	isS3ProtocolEnabled := utils.Config.Storage.S3Protocol != nil && utils.Config.Storage.S3Protocol.Enabled
+	isEdgeRuntimeEnabled := utils.Config.EdgeRuntime.Enabled && !isContainerExcluded(utils.Config.EdgeRuntime.Image, excluded)
+	isPgmetaEnabled := utils.Config.Studio.Enabled && !isContainerExcluded(utils.Config.Studio.PgmetaImage, excluded)
+	isStudioEnabled := utils.Config.Studio.Enabled && !isContainerExcluded(utils.Config.Studio.Image, excluded)
+	isLogflareEnabled := utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.Image, excluded)
+	isVectorEnabled := utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.VectorImage, excluded)
+	isPoolerEnabled := utils.Config.Db.Pooler.Enabled && !isContainerExcluded(utils.Config.Db.Pooler.Image, excluded)
 	fmt.Fprintln(os.Stderr, "Starting containers...")
 
 	workdir, err := os.Getwd()
@@ -257,7 +541,7 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 	}
 
 	// Start Logflare
-	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.Image, excluded) {
+	if isLogflareEnabled {
 		env := []string{
 			"DB_DATABASE=_supabase",
 			"DB_HOSTNAME=" + dbConfig.Host,
@@ -340,7 +624,7 @@ EOF
 	}
 
 	// Start vector
-	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.VectorImage, excluded) {
+	if isVectorEnabled {
 		var vectorConfigBuf bytes.Buffer
 		if err := vectorConfigTemplate.Option("missingkey=error").Execute(&vectorConfigBuf, vectorConfig{
 			ApiKey:        utils.Config.Analytics.ApiKey,
@@ -426,130 +710,8 @@ EOF
 		}
 	}
 
-	// Start Kong.
-	if !isContainerExcluded(utils.Config.Api.KongImage, excluded) {
-		var kongConfigBuf bytes.Buffer
-		if err := kongConfigTemplate.Option("missingkey=error").Execute(&kongConfigBuf, kongConfig{
-			GotrueId:      utils.GotrueId,
-			RestId:        utils.RestId,
-			RealtimeId:    utils.Config.Realtime.TenantId,
-			StorageId:     utils.StorageId,
-			StudioId:      utils.StudioId,
-			PgmetaId:      utils.PgmetaId,
-			EdgeRuntimeId: utils.EdgeRuntimeId,
-			LogflareId:    utils.LogflareId,
-			PoolerId:      utils.PoolerId,
-			ApiHost:       utils.Config.Hostname,
-			ApiPort:       utils.Config.Api.Port,
-			BearerToken: fmt.Sprintf(
-				// If Authorization header is set to a self-minted JWT, we want to pass it down.
-				// Legacy supabase-js may set Authorization header to Bearer <apikey>. We must remove it
-				// to avoid failing JWT validation.
-				// If Authorization header is missing, we want to match against apikey header to set the
-				// default JWT for downstream services.
-				// Finally, the apikey header may be set to a legacy JWT. In that case, we want to copy
-				// it to Authorization header for backwards compatibility.
-				`$((headers.authorization ~= nil and headers.authorization:sub(1, 10) ~= 'Bearer sb_' and headers.authorization) or (headers.apikey == '%s' and 'Bearer %s') or (headers.apikey == '%s' and 'Bearer %s') or headers.apikey)`,
-				utils.Config.Auth.SecretKey.Value,
-				utils.Config.Auth.ServiceRoleKey.Value,
-				utils.Config.Auth.PublishableKey.Value,
-				utils.Config.Auth.AnonKey.Value,
-			),
-			QueryToken: fmt.Sprintf(
-				`$((query_params.apikey == '%s' and '%s') or (query_params.apikey == '%s' and '%s') or query_params.apikey)`,
-				utils.Config.Auth.SecretKey.Value,
-				utils.Config.Auth.ServiceRoleKey.Value,
-				utils.Config.Auth.PublishableKey.Value,
-				utils.Config.Auth.AnonKey.Value,
-			),
-		}); err != nil {
-			return errors.Errorf("failed to exec template: %w", err)
-		}
-
-		binds := []string{}
-		for id, tmpl := range utils.Config.Auth.Email.Template {
-			if len(tmpl.ContentPath) == 0 {
-				continue
-			}
-			hostPath := tmpl.ContentPath
-			if !filepath.IsAbs(tmpl.ContentPath) {
-				var err error
-				hostPath, err = filepath.Abs(hostPath)
-				if err != nil {
-					return errors.Errorf("failed to resolve absolute path: %w", err)
-				}
-			}
-			dockerPath := path.Join(nginxEmailTemplateDir, id+filepath.Ext(hostPath))
-			binds = append(binds, fmt.Sprintf("%s:%s:rw", hostPath, dockerPath))
-		}
-
-		dockerPort := uint16(8000)
-		if utils.Config.Api.Tls.Enabled {
-			dockerPort = 8443
-		}
-		if _, err := utils.DockerStart(
-			ctx,
-			container.Config{
-				Image: utils.Config.Api.KongImage,
-				Env: []string{
-					"KONG_DATABASE=off",
-					"KONG_DECLARATIVE_CONFIG=/home/kong/kong.yml",
-					"KONG_DNS_ORDER=LAST,A,CNAME", // https://github.com/supabase/cli/issues/14
-					"KONG_PLUGINS=request-transformer,cors",
-					fmt.Sprintf("KONG_PORT_MAPS=%d:8000", utils.Config.Api.Port),
-					// Need to increase the nginx buffers in kong to avoid it rejecting the rather
-					// sizeable response headers azure can generate
-					// Ref: https://github.com/Kong/kong/issues/3974#issuecomment-482105126
-					"KONG_NGINX_PROXY_PROXY_BUFFER_SIZE=160k",
-					"KONG_NGINX_PROXY_PROXY_BUFFERS=64 160k",
-					"KONG_NGINX_WORKER_PROCESSES=1",
-					// Use modern TLS certificate
-					"KONG_SSL_CERT=/home/kong/localhost.crt",
-					"KONG_SSL_CERT_KEY=/home/kong/localhost.key",
-				},
-				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /home/kong/kong.yml && \
-cat <<'EOF' > /home/kong/custom_nginx.template && \
-cat <<'EOF' > /home/kong/localhost.crt && \
-cat <<'EOF' > /home/kong/localhost.key && \
-./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template
-` + kongConfigBuf.String() + `
-EOF
-` + nginxConfigEmbed + `
-EOF
-` + string(utils.Config.Api.Tls.CertContent) + `
-EOF
-` + string(utils.Config.Api.Tls.KeyContent) + `
-EOF
-`},
-				ExposedPorts: nat.PortSet{
-					"8000/tcp": {},
-					"8443/tcp": {},
-					nat.Port(fmt.Sprintf("%d/tcp", nginxTemplateServerPort)): {},
-				},
-			},
-			container.HostConfig{
-				Binds: binds,
-				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
-					HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10),
-				}}},
-				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
-			},
-			network.NetworkingConfig{
-				EndpointsConfig: map[string]*network.EndpointSettings{
-					utils.NetId: {
-						Aliases: utils.KongAliases,
-					},
-				},
-			},
-			utils.KongId,
-		); err != nil {
-			return err
-		}
-		started = append(started, utils.KongId)
-	}
-
 	// Start GoTrue.
-	if utils.Config.Auth.Enabled && !isContainerExcluded(utils.Config.Auth.Image, excluded) {
+	if isAuthEnabled {
 		var testOTP bytes.Buffer
 		if len(utils.Config.Auth.Sms.TestOTP) > 0 {
 			formatMapForEnvConfig(utils.Config.Auth.Sms.TestOTP, &testOTP)
@@ -851,7 +1013,7 @@ EOF
 	}
 
 	// Start Mailpit
-	if utils.Config.Inbucket.Enabled && !isContainerExcluded(utils.Config.Inbucket.Image, excluded) {
+	if isInbucketEnabled {
 		inbucketPortBindings := nat.PortMap{"8025/tcp": []nat.PortBinding{{
 			HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10),
 		}}}
@@ -901,7 +1063,7 @@ EOF
 	}
 
 	// Start Realtime.
-	if utils.Config.Realtime.Enabled && !isContainerExcluded(utils.Config.Realtime.Image, excluded) {
+	if isRealtimeEnabled {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -958,7 +1120,7 @@ EOF
 	}
 
 	// Start PostgREST.
-	if utils.Config.Api.Enabled && !isContainerExcluded(utils.Config.Api.Image, excluded) {
+	if isRestEnabled {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -1095,7 +1257,7 @@ EOF
 	}
 
 	// Start all functions.
-	if utils.Config.EdgeRuntime.Enabled && !isContainerExcluded(utils.Config.EdgeRuntime.Image, excluded) {
+	if isEdgeRuntimeEnabled {
 		dbUrl := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database)
 		if err := serve.ServeFunctions(ctx, "", nil, "", dbUrl, serve.RuntimeOption{}, fsys); err != nil {
 			return err
@@ -1104,7 +1266,7 @@ EOF
 	}
 
 	// Start pg-meta.
-	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.Config.Studio.PgmetaImage, excluded) {
+	if isPgmetaEnabled {
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -1141,75 +1303,8 @@ EOF
 		started = append(started, utils.PgmetaId)
 	}
 
-	// Start Studio.
-	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.Config.Studio.Image, excluded) {
-		binds, _, err := serve.PopulatePerFunctionConfigs(workdir, "", nil, fsys)
-		if err != nil {
-			return err
-		}
-
-		// Mount snippets directory for Studio to access
-		hostSnippetsPath := filepath.Join(workdir, utils.SnippetsDir)
-		containerSnippetsPath := utils.ToDockerPath(hostSnippetsPath)
-		binds = append(binds, fmt.Sprintf("%s:%s:rw", hostSnippetsPath, containerSnippetsPath))
-		binds = utils.RemoveDuplicates(binds)
-		if _, err := utils.DockerStart(
-			ctx,
-			container.Config{
-				Image: utils.Config.Studio.Image,
-				Env: []string{
-					"CURRENT_CLI_VERSION=" + utils.Version,
-					"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
-					"POSTGRES_PASSWORD=" + dbConfig.Password,
-					"SUPABASE_URL=http://" + utils.KongId + ":8000",
-					"SUPABASE_PUBLIC_URL=" + utils.Config.Studio.ApiUrl,
-					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
-					"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey.Value,
-					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
-					"LOGFLARE_PRIVATE_ACCESS_TOKEN=" + utils.Config.Analytics.ApiKey,
-					"OPENAI_API_KEY=" + utils.Config.Studio.OpenaiApiKey.Value,
-					"PGRST_DB_SCHEMAS=" + strings.Join(utils.Config.Api.Schemas, ","),
-					"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(utils.Config.Api.ExtraSearchPath, ","),
-					fmt.Sprintf("PGRST_DB_MAX_ROWS=%d", utils.Config.Api.MaxRows),
-					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
-					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
-					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
-					"EDGE_FUNCTIONS_MANAGEMENT_FOLDER=" + utils.ToDockerPath(filepath.Join(workdir, utils.FunctionsDir)),
-					"SNIPPETS_MANAGEMENT_FOLDER=" + containerSnippetsPath,
-					// Ref: https://github.com/vercel/next.js/issues/51684#issuecomment-1612834913
-					"HOSTNAME=0.0.0.0",
-					"POSTGRES_USER_READ_WRITE=postgres",
-				},
-				Healthcheck: &container.HealthConfig{
-					Test:     []string{"CMD-SHELL", `node --eval="fetch('http://127.0.0.1:3000/api/platform/profile').then((r) => {if (!r.ok) throw new Error(r.status)})"`},
-					Interval: 10 * time.Second,
-					Timeout:  2 * time.Second,
-					Retries:  3,
-				},
-			},
-			container.HostConfig{
-				Binds: binds,
-				PortBindings: nat.PortMap{"3000/tcp": []nat.PortBinding{{
-					HostPort: strconv.FormatUint(uint64(utils.Config.Studio.Port), 10),
-				}}},
-				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
-			},
-			network.NetworkingConfig{
-				EndpointsConfig: map[string]*network.EndpointSettings{
-					utils.NetId: {
-						Aliases: utils.StudioAliases,
-					},
-				},
-			},
-			utils.StudioId,
-		); err != nil {
-			return err
-		}
-		started = append(started, utils.StudioId)
-	}
-
 	// Start pooler.
-	if utils.Config.Db.Pooler.Enabled && !isContainerExcluded(utils.Config.Db.Pooler.Image, excluded) {
+	if isPoolerEnabled {
 		portSession := uint16(5432)
 		portTransaction := uint16(6543)
 		dockerPort := portTransaction
@@ -1283,6 +1378,79 @@ EOF
 			return err
 		}
 		started = append(started, utils.PoolerId)
+	}
+
+	// Start Kong after its Apple-runtime upstreams exist.
+	if isKongEnabled {
+		if err := startKong(ctx, KongDependencies{
+			Gotrue:   isAuthEnabled,
+			Rest:     isRestEnabled,
+			Realtime: isRealtimeEnabled,
+			Storage:  isStorageEnabled,
+			Studio:   false,
+			Pgmeta:   isPgmetaEnabled,
+			Edge:     isEdgeRuntimeEnabled,
+			Logflare: isLogflareEnabled,
+			Pooler:   isPoolerEnabled,
+		}); err != nil {
+			return err
+		}
+		started = append(started, utils.KongId)
+	}
+
+	// Start Studio.
+	if isStudioEnabled {
+		binds, _, err := serve.PopulatePerFunctionConfigs(workdir, "", nil, fsys)
+		if err != nil {
+			return err
+		}
+
+		snippetsManagementFolder := ""
+		// Mount snippets directory for Studio to access when present.
+		hostSnippetsPath := filepath.Join(workdir, utils.SnippetsDir)
+		if info, err := os.Stat(hostSnippetsPath); err == nil && info.IsDir() {
+			containerSnippetsPath := utils.ToDockerPath(hostSnippetsPath)
+			binds = append(binds, fmt.Sprintf("%s:%s:rw", hostSnippetsPath, containerSnippetsPath))
+			snippetsManagementFolder = containerSnippetsPath
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return errors.Errorf("failed to inspect snippets directory: %w", err)
+		}
+		binds = utils.RemoveDuplicates(binds)
+		env, err := buildStudioEnv(ctx, workdir, dbConfig, snippetsManagementFolder, isKongEnabled, isPgmetaEnabled, isLogflareEnabled)
+		if err != nil {
+			return err
+		}
+		if _, err := utils.DockerStart(
+			ctx,
+			container.Config{
+				Image: utils.Config.Studio.Image,
+				Env:   env,
+				Healthcheck: &container.HealthConfig{
+					Test:     []string{"CMD-SHELL", `node --eval="fetch('http://127.0.0.1:3000/api/platform/profile').then((r) => {if (!r.ok) throw new Error(r.status)})"`},
+					Interval: 10 * time.Second,
+					Timeout:  2 * time.Second,
+					Retries:  3,
+				},
+			},
+			container.HostConfig{
+				Binds: binds,
+				PortBindings: nat.PortMap{"3000/tcp": []nat.PortBinding{{
+					HostPort: strconv.FormatUint(uint64(utils.Config.Studio.Port), 10),
+				}}},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
+			},
+			network.NetworkingConfig{
+				EndpointsConfig: map[string]*network.EndpointSettings{
+					utils.NetId: {
+						Aliases: utils.StudioAliases,
+					},
+				},
+			},
+			utils.StudioId,
+		); err != nil {
+			return err
+		}
+		started = append(started, utils.StudioId)
 	}
 
 	fmt.Fprintln(os.Stderr, "Waiting for health checks...")

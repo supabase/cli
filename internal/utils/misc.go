@@ -111,14 +111,22 @@ func AssertSupabaseDbIsRunning() error {
 }
 
 func AssertServiceIsRunning(ctx context.Context, containerId string) error {
-	if _, err := Docker.ContainerInspect(ctx, containerId); err != nil {
+	info, err := InspectContainer(ctx, containerId)
+	if err != nil {
 		if errdefs.IsNotFound(err) {
 			return errors.New(ErrNotRunning)
 		}
 		if client.IsErrConnectionFailed(err) {
-			CmdSuggestion = suggestDockerInstall
+			if UsesAppleContainerRuntime() {
+				CmdSuggestion = suggestAppleContainerInstall
+			} else {
+				CmdSuggestion = suggestDockerInstall
+			}
 		}
 		return errors.Errorf("failed to inspect service: %w", err)
+	}
+	if UsesAppleContainerRuntime() && !info.Running {
+		return errors.New(ErrNotRunning)
 	}
 	return nil
 }

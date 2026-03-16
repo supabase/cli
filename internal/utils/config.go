@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/go-errors/errors"
@@ -55,7 +56,35 @@ var (
 )
 
 func GetId(name string) string {
+	if UsesAppleContainerRuntime() {
+		return "supabase-" + normalizeAppleContainerName(name) + "-" + normalizeAppleContainerName(Config.ProjectId)
+	}
 	return "supabase_" + name + "_" + Config.ProjectId
+}
+
+func UsesAppleContainerRuntime() bool {
+	return Config.Local.Runtime == config.AppleContainerRuntime
+}
+
+func UsesDockerRuntime() bool {
+	return !UsesAppleContainerRuntime()
+}
+
+func RuntimeServiceHost(alias, containerId string) string {
+	if UsesAppleContainerRuntime() {
+		return containerId
+	}
+	return alias
+}
+
+func normalizeAppleContainerName(value string) string {
+	replacer := strings.NewReplacer("_", "-", ".", "-", " ", "-")
+	value = strings.ToLower(replacer.Replace(value))
+	value = strings.Trim(value, "-")
+	if len(value) == 0 {
+		return "default"
+	}
+	return value
 }
 
 func UpdateDockerIds() {

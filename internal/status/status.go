@@ -11,12 +11,12 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Netflix/go-env"
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
 	"github.com/go-errors/errors"
 	"github.com/olekukonko/tablewriter"
 	"github.com/olekukonko/tablewriter/tw"
@@ -46,6 +46,12 @@ type CustomName struct {
 	StorageS3SecretAccessKey string `env:"storage.s3_secret_access_key,default=S3_PROTOCOL_ACCESS_KEY_SECRET"`
 	StorageS3Region          string `env:"storage.s3_region,default=S3_PROTOCOL_REGION"`
 }
+
+var (
+	listProjectContainers = utils.ListProjectContainers
+	listProjectNetworks   = utils.ListProjectNetworks
+	listProjectVolumes    = utils.ListProjectVolumes
+)
 
 func (c *CustomName) toValues(exclude ...string) map[string]string {
 	values := map[string]string{
@@ -110,28 +116,24 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 	}
 	if format == utils.OutputPretty {
 		fmt.Fprintf(os.Stderr, "%s local development setup is running.\n\n", utils.Aqua("supabase"))
-		PrettyPrint(os.Stdout, stopped...)
+		PrettyPrint(ctx, os.Stdout, stopped...)
 		return nil
 	}
 	return printStatus(names, format, os.Stdout, stopped...)
 }
 
 func checkServiceHealth(ctx context.Context) ([]string, error) {
-	resp, err := utils.Docker.ContainerList(ctx, container.ListOptions{
-		Filters: utils.CliProjectFilter(utils.Config.ProjectId),
-	})
+	resp, err := utils.ListProjectContainers(ctx, utils.Config.ProjectId, false)
 	if err != nil {
 		return nil, errors.Errorf("failed to list running containers: %w", err)
 	}
 	running := make(map[string]struct{}, len(resp))
-	for _, c := range resp {
-		for _, n := range c.Names {
-			running[n] = struct{}{}
-		}
+	for _, item := range resp {
+		running[item.ID] = struct{}{}
 	}
 	var stopped []string
 	for _, containerId := range utils.GetDockerIds() {
-		if _, ok := running["/"+containerId]; !ok {
+		if _, ok := running[containerId]; !ok {
 			stopped = append(stopped, containerId)
 		}
 	}
@@ -139,14 +141,7 @@ func checkServiceHealth(ctx context.Context) ([]string, error) {
 }
 
 func assertContainerHealthy(ctx context.Context, container string) error {
-	if resp, err := utils.Docker.ContainerInspect(ctx, container); err != nil {
-		return errors.Errorf("failed to inspect container health: %w", err)
-	} else if !resp.State.Running {
-		return errors.Errorf("%s container is not running: %s", container, resp.State.Status)
-	} else if resp.State.Health != nil && resp.State.Health.Status != types.Healthy {
-		return errors.Errorf("%s container is not ready: %s", container, resp.State.Health.Status)
-	}
-	return nil
+	return utils.AssertServiceHealthy(ctx, container)
 }
 
 func IsServiceReady(ctx context.Context, container string) error {
@@ -217,7 +212,7 @@ func printStatus(names CustomName, format string, w io.Writer, exclude ...string
 	return utils.EncodeOutput(format, w, values)
 }
 
-func PrettyPrint(w io.Writer, exclude ...string) {
+func PrettyPrint(ctx context.Context, w io.Writer, exclude ...string) {
 	logger := utils.GetDebugLogger()
 
 	names := CustomName{}
@@ -225,8 +220,16 @@ func PrettyPrint(w io.Writer, exclude ...string) {
 		fmt.Fprintln(logger, err)
 	}
 	values := names.toValues(exclude...)
+	runtimeItems, err := buildRuntimeItems(ctx, exclude...)
+	if err != nil {
+		fmt.Fprintln(logger, err)
+	}
 
 	groups := []OutputGroup{
+		{
+			Name:  "🧭 Runtime",
+			Items: runtimeItems,
+		},
 		{
 			Name: "🔧 Development Tools",
 			Items: []OutputItem{
@@ -275,6 +278,64 @@ func PrettyPrint(w io.Writer, exclude ...string) {
 			fmt.Fprintln(w)
 		}
 	}
+}
+
+func buildRuntimeItems(ctx context.Context, exclude ...string) ([]OutputItem, error) {
+	containers, err := listProjectContainers(ctx, utils.Config.ProjectId, true)
+	if err != nil {
+		return nil, err
+	}
+	networks, err := listProjectNetworks(ctx, utils.Config.ProjectId)
+	if err != nil {
+		return nil, err
+	}
+	volumes, err := listProjectVolumes(ctx, utils.Config.ProjectId)
+	if err != nil {
+		return nil, err
+	}
+	containerNames := make([]string, 0, len(containers))
+	for _, item := range containers {
+		containerNames = append(containerNames, item.ID)
+	}
+	networkNames := make([]string, 0, len(networks))
+	for _, item := range networks {
+		networkNames = append(networkNames, item.Name)
+	}
+	volumeNames := make([]string, 0, len(volumes))
+	for _, item := range volumes {
+		volumeNames = append(volumeNames, item.Name)
+	}
+	sort.Strings(containerNames)
+	sort.Strings(networkNames)
+	sort.Strings(volumeNames)
+	items := []OutputItem{
+		{Label: "Runtime", Value: string(utils.Config.Local.Runtime), Type: Text},
+		{Label: "Project", Value: utils.Config.ProjectId, Type: Text},
+		{Label: "Ports", Value: strings.Join(runtimePorts(exclude...), ", "), Type: Text},
+		{Label: "Containers", Value: strings.Join(containerNames, ", "), Type: Text},
+		{Label: "Networks", Value: strings.Join(networkNames, ", "), Type: Text},
+		{Label: "Volumes", Value: strings.Join(volumeNames, ", "), Type: Text},
+	}
+	return items, nil
+}
+
+func runtimePorts(exclude ...string) []string {
+	var ports []string
+	ports = append(ports, fmt.Sprintf("db:%d", utils.Config.Db.Port))
+	if utils.Config.Api.Enabled && !slices.Contains(exclude, utils.RestId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.Api.Image)) {
+		ports = append(ports, fmt.Sprintf("api:%d", utils.Config.Api.Port))
+	}
+	if utils.Config.Studio.Enabled && !slices.Contains(exclude, utils.StudioId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.Studio.Image)) {
+		ports = append(ports, fmt.Sprintf("studio:%d", utils.Config.Studio.Port))
+	}
+	if utils.Config.Inbucket.Enabled && !slices.Contains(exclude, utils.InbucketId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.Inbucket.Image)) {
+		ports = append(ports, fmt.Sprintf("mailpit:%d", utils.Config.Inbucket.Port))
+	}
+	if utils.Config.Db.Pooler.Enabled && !slices.Contains(exclude, utils.PoolerId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.Db.Pooler.Image)) {
+		ports = append(ports, fmt.Sprintf("pooler:%d", utils.Config.Db.Pooler.Port))
+	}
+	sort.Strings(ports)
+	return ports
 }
 
 type OutputType string

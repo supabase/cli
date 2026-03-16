@@ -220,6 +220,27 @@ func TestFileSizeLimitConfigParsing(t *testing.T) {
 	})
 }
 
+func TestLocalRuntimeConfig(t *testing.T) {
+	t.Run("defaults to docker runtime", func(t *testing.T) {
+		config := NewConfig()
+
+		assert.Equal(t, DockerRuntime, config.Local.Runtime)
+	})
+
+	t.Run("parses apple container runtime", func(t *testing.T) {
+		var testConfig config
+
+		_, err := toml.Decode(`
+		[local]
+		runtime = "apple-container"
+		`, &testConfig)
+
+		if assert.NoError(t, err) {
+			assert.Equal(t, AppleContainerRuntime, testConfig.Local.Runtime)
+		}
+	})
+}
+
 func TestSanitizeProjectI(t *testing.T) {
 	// Preserves valid consecutive characters
 	assert.Equal(t, "abc", sanitizeProjectId("abc"))

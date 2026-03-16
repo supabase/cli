@@ -93,7 +93,7 @@ func WaitAll[T any](containers []T, exec func(container T) error) []error {
 // NoBackupVolume TODO: encapsulate this state in a class
 var NoBackupVolume = false
 
-func DockerRemoveAll(ctx context.Context, w io.Writer, projectId string) error {
+func dockerRemoveAll(ctx context.Context, w io.Writer, projectId string) error {
 	fmt.Fprintln(w, "Stopping containers...")
 	args := CliProjectFilter(projectId)
 	containers, err := Docker.ContainerList(ctx, container.ListOptions{
@@ -247,9 +247,9 @@ func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
 	return DockerImagePullWithRetry(ctx, imageUrl, 2)
 }
 
-var suggestDockerInstall = "Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop"
+var suggestDockerInstall = "Docker Desktop is required when using the docker runtime for local development. Follow the official docs to install: https://docs.docker.com/desktop"
 
-func DockerStart(ctx context.Context, config container.Config, hostConfig container.HostConfig, networkingConfig network.NetworkingConfig, containerName string) (string, error) {
+func dockerStart(ctx context.Context, config container.Config, hostConfig container.HostConfig, networkingConfig network.NetworkingConfig, containerName string) (string, error) {
 	// Pull container image
 	if err := DockerPullImageIfNotCached(ctx, config.Image); err != nil {
 		if client.IsErrConnectionFailed(err) {
@@ -259,11 +259,7 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 	}
 	// Setup default config
 	config.Image = GetRegistryImageUrl(config.Image)
-	if config.Labels == nil {
-		config.Labels = make(map[string]string, 2)
-	}
-	config.Labels[CliProjectLabel] = Config.ProjectId
-	config.Labels[composeProjectLabel] = Config.ProjectId
+	applyContainerLabels(&config)
 	// Configure container network
 	hostConfig.ExtraHosts = append(hostConfig.ExtraHosts, extraHosts...)
 	if networkId := viper.GetString("network-id"); len(networkId) > 0 {
@@ -329,7 +325,7 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 	return resp.ID, err
 }
 
-func DockerRemove(containerId string) {
+func dockerRemove(containerId string) {
 	if err := Docker.ContainerRemove(context.Background(), containerId, container.RemoveOptions{
 		RemoveVolumes: true,
 		Force:         true,
@@ -364,21 +360,21 @@ func DockerRunOnceWithStream(ctx context.Context, image string, env, cmd []strin
 	}, container.HostConfig{}, network.NetworkingConfig{}, "", stdout, stderr)
 }
 
-func DockerRunOnceWithConfig(ctx context.Context, config container.Config, hostConfig container.HostConfig, networkingConfig network.NetworkingConfig, containerName string, stdout, stderr io.Writer) error {
+func dockerRunOnceWithConfig(ctx context.Context, config container.Config, hostConfig container.HostConfig, networkingConfig network.NetworkingConfig, containerName string, stdout, stderr io.Writer) error {
 	// Cannot rely on docker's auto remove because
 	//   1. We must inspect exit code after container stops
 	//   2. Context cancellation may happen after start
-	container, err := DockerStart(ctx, config, hostConfig, networkingConfig, containerName)
+	container, err := dockerStart(ctx, config, hostConfig, networkingConfig, containerName)
 	if err != nil {
 		return err
 	}
-	defer DockerRemove(container)
-	return DockerStreamLogs(ctx, container, stdout, stderr)
+	defer dockerRemove(container)
+	return dockerStreamLogs(ctx, container, stdout, stderr)
 }
 
 var ErrContainerKilled = errors.New("exit 137")
 
-func DockerStreamLogs(ctx context.Context, containerId string, stdout, stderr io.Writer, opts ...func(*container.LogsOptions)) error {
+func dockerStreamLogs(ctx context.Context, containerId string, stdout, stderr io.Writer, opts ...func(*container.LogsOptions)) error {
 	logsOptions := container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
@@ -412,7 +408,7 @@ func DockerStreamLogs(ctx context.Context, containerId string, stdout, stderr io
 	return errors.Errorf("error running container: %w", err)
 }
 
-func DockerStreamLogsOnce(ctx context.Context, containerId string, stdout, stderr io.Writer) error {
+func dockerStreamLogsOnce(ctx context.Context, containerId string, stdout, stderr io.Writer) error {
 	logs, err := Docker.ContainerLogs(ctx, containerId, container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
@@ -434,11 +430,11 @@ func DockerExecOnce(ctx context.Context, containerId string, env []string, cmd [
 		stderr = os.Stderr
 	}
 	var out bytes.Buffer
-	err := DockerExecOnceWithStream(ctx, containerId, "", env, cmd, &out, stderr)
+	err := dockerExecOnceWithStream(ctx, containerId, "", env, cmd, &out, stderr)
 	return out.String(), err
 }
 
-func DockerExecOnceWithStream(ctx context.Context, containerId, workdir string, env, cmd []string, stdout, stderr io.Writer) error {
+func dockerExecOnceWithStream(ctx context.Context, containerId, workdir string, env, cmd []string, stdout, stderr io.Writer) error {
 	// Reset shadow database
 	exec, err := Docker.ContainerExecCreate(ctx, containerId, container.ExecOptions{
 		Env:          env,

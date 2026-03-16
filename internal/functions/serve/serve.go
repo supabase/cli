@@ -109,15 +109,19 @@ func restartEdgeRuntime(ctx context.Context, envFilePath string, noVerifyJWT *bo
 		return err
 	}
 	// 2. Remove existing container.
-	_ = utils.Docker.ContainerRemove(ctx, utils.EdgeRuntimeId, container.RemoveOptions{
-		RemoveVolumes: true,
-		Force:         true,
-	})
-	// Use network alias because Deno cannot resolve `_` in hostname
-	dbUrl := fmt.Sprintf("postgresql://postgres:postgres@%s:5432/postgres", utils.DbAliases[0])
+	_ = utils.RemoveContainer(ctx, utils.EdgeRuntimeId, true, true)
+	dbHost := utils.RuntimeServiceHost(utils.DbAliases[0], utils.DbId)
+	dbUrl := fmt.Sprintf("postgresql://postgres:postgres@%s:5432/postgres", dbHost)
 	// 3. Serve and log to console
 	fmt.Fprintln(os.Stderr, "Setting up Edge Functions runtime...")
 	return ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys)
+}
+
+func edgeRuntimeWorkingDir(cwd string) string {
+	if utils.UsesAppleContainerRuntime() {
+		return "/root"
+	}
+	return utils.ToDockerPath(cwd)
 }
 
 func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, runtimeOption RuntimeOption, fsys afero.Fs) error {
@@ -127,8 +131,9 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		return err
 	}
 	jwks, _ := utils.Config.Auth.ResolveJWKS(ctx)
+	kongHost := utils.RuntimeServiceHost(utils.KongAliases[0], utils.KongId)
 	env = append(env,
-		fmt.Sprintf("SUPABASE_URL=http://%s:8000", utils.KongAliases[0]),
+		fmt.Sprintf("SUPABASE_URL=http://%s:8000", kongHost),
 		"SUPABASE_ANON_KEY="+utils.Config.Auth.AnonKey.Value,
 		"SUPABASE_SERVICE_ROLE_KEY="+utils.Config.Auth.ServiceRoleKey.Value,
 		"SUPABASE_DB_URL="+dbUrl,
@@ -208,7 +213,7 @@ EOF
 			Env:          env,
 			Entrypoint:   entrypoint,
 			ExposedPorts: exposedPorts,
-			WorkingDir:   utils.ToDockerPath(cwd),
+			WorkingDir:   edgeRuntimeWorkingDir(cwd),
 			// No tcp health check because edge runtime logs them as client connection error
 		},
 		container.HostConfig{

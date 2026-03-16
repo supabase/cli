@@ -4,6 +4,10 @@
 # working directory name when running `supabase init`.
 project_id = "{{ .ProjectId }}"
 
+[local]
+# Container runtime for local development. Supported values are: `docker`, `apple-container`.
+runtime = "{{ .Local.Runtime }}"
+
 [api]
 enabled = true
 # Port to use for the API URL.

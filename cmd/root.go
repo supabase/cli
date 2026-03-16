@@ -202,7 +202,7 @@ func recoverAndExit() {
 			!viper.GetBool("DEBUG") {
 			utils.CmdSuggestion = utils.SuggestDebugFlag
 		}
-		if e, ok := err.(*errors.Error); ok && len(utils.Version) == 0 {
+		if e, ok := err.(*errors.Error); ok && viper.GetBool("DEBUG") {
 			fmt.Fprintln(os.Stderr, string(e.Stack()))
 		}
 		msg = err.Error()
@@ -239,6 +239,7 @@ func init() {
 	flags.String("workdir", "", "path to a Supabase project directory")
 	flags.Bool("experimental", false, "enable experimental features")
 	flags.String("network-id", "", "use the specified docker network instead of a generated one")
+	flags.String("runtime", "", "container runtime for local development (docker|apple-container)")
 	flags.String("profile", "supabase", "use a specific profile for connecting to Supabase API")
 	flags.VarP(&utils.OutputFormat, "output", "o", "output format of status variables")
 	flags.Var(&utils.DNSResolver, "dns-resolver", "lookup domain names using the specified resolver")

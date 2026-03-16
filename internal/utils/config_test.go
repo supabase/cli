@@ -8,10 +8,18 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	configpkg "github.com/supabase/cli/pkg/config"
 )
 
 func TestGetId(t *testing.T) {
+	t.Cleanup(func() {
+		Config.Local.Runtime = configpkg.DockerRuntime
+		Config.ProjectId = ""
+		UpdateDockerIds()
+	})
+
 	t.Run("generates container id", func(t *testing.T) {
+		Config.Local.Runtime = configpkg.DockerRuntime
 		Config.ProjectId = "test-project"
 		name := "test-service"
 
@@ -19,10 +27,28 @@ func TestGetId(t *testing.T) {
 
 		assert.Equal(t, "supabase_test-service_test-project", id)
 	})
+
+	t.Run("generates apple container id", func(t *testing.T) {
+		Config.Local.Runtime = configpkg.AppleContainerRuntime
+		Config.ProjectId = "test-project"
+		name := "edge_runtime"
+
+		id := GetId(name)
+
+		assert.Equal(t, "supabase-edge-runtime-test-project", id)
+	})
 }
 
 func TestUpdateDockerIds(t *testing.T) {
+	t.Cleanup(func() {
+		viper.Reset()
+		Config.Local.Runtime = configpkg.DockerRuntime
+		Config.ProjectId = ""
+		UpdateDockerIds()
+	})
+
 	t.Run("updates all container ids", func(t *testing.T) {
+		Config.Local.Runtime = configpkg.DockerRuntime
 		Config.ProjectId = "test-project"
 		viper.Set("network-id", "custom-network")
 		defer viper.Reset()
@@ -48,12 +74,48 @@ func TestUpdateDockerIds(t *testing.T) {
 	})
 
 	t.Run("generates network id if not set", func(t *testing.T) {
+		Config.Local.Runtime = configpkg.DockerRuntime
 		Config.ProjectId = "test-project"
 		viper.Reset()
 
 		UpdateDockerIds()
 
 		assert.Equal(t, "supabase_network_test-project", NetId)
+	})
+
+	t.Run("updates all container ids for apple container runtime", func(t *testing.T) {
+		Config.Local.Runtime = configpkg.AppleContainerRuntime
+		Config.ProjectId = "test-project"
+		viper.Reset()
+
+		UpdateDockerIds()
+
+		assert.Equal(t, "supabase-network-test-project", NetId)
+		assert.Equal(t, "supabase-db-test-project", DbId)
+		assert.Equal(t, "supabase-edge-runtime-test-project", EdgeRuntimeId)
+		assert.Equal(t, "supabase-pooler-test-project", PoolerId)
+	})
+}
+
+func TestRuntimeServiceHost(t *testing.T) {
+	t.Cleanup(func() {
+		Config.Local.Runtime = configpkg.DockerRuntime
+	})
+
+	t.Run("uses alias on docker runtime", func(t *testing.T) {
+		Config.Local.Runtime = configpkg.DockerRuntime
+
+		host := RuntimeServiceHost("db", "supabase-db-test")
+
+		assert.Equal(t, "db", host)
+	})
+
+	t.Run("uses container id on apple runtime", func(t *testing.T) {
+		Config.Local.Runtime = configpkg.AppleContainerRuntime
+
+		host := RuntimeServiceHost("db", "supabase-db-test")
+
+		assert.Equal(t, "supabase-db-test", host)
 	})
 }
 
