@@ -497,6 +497,127 @@ func TestBuildStudioEnv(t *testing.T) {
 	assert.True(t, foundFunctionsDir)
 }
 
+func TestBuildVectorConfig(t *testing.T) {
+	originalRuntime := utils.Config.Local.Runtime
+	originalResolver := resolveContainerIP
+	originalIDs := struct {
+		vector, logflare, kong, gotrue, rest, realtime, storage, edge, db string
+	}{
+		vector:   utils.VectorId,
+		logflare: utils.LogflareId,
+		kong:     utils.KongId,
+		gotrue:   utils.GotrueId,
+		rest:     utils.RestId,
+		realtime: utils.RealtimeId,
+		storage:  utils.StorageId,
+		edge:     utils.EdgeRuntimeId,
+		db:       utils.DbId,
+	}
+	t.Cleanup(func() {
+		utils.Config.Local.Runtime = originalRuntime
+		resolveContainerIP = originalResolver
+		utils.VectorId = originalIDs.vector
+		utils.LogflareId = originalIDs.logflare
+		utils.KongId = originalIDs.kong
+		utils.GotrueId = originalIDs.gotrue
+		utils.RestId = originalIDs.rest
+		utils.RealtimeId = originalIDs.realtime
+		utils.StorageId = originalIDs.storage
+		utils.EdgeRuntimeId = originalIDs.edge
+		utils.DbId = originalIDs.db
+	})
+	utils.VectorId = "test-vector"
+	utils.LogflareId = "test-logflare"
+	utils.KongId = "test-kong"
+	utils.GotrueId = "test-gotrue"
+	utils.RestId = "test-rest"
+	utils.RealtimeId = "test-realtime"
+	utils.StorageId = "test-storage"
+	utils.EdgeRuntimeId = "test-edge"
+	utils.DbId = "test-db"
+
+	t.Run("uses docker source by default", func(t *testing.T) {
+		utils.Config.Local.Runtime = config.DockerRuntime
+
+		cfg, err := buildVectorConfig(context.Background())
+
+		require.NoError(t, err)
+		assert.Equal(t, vectorSourceDockerLogs, cfg.SourceType)
+		assert.Equal(t, "docker_host", cfg.SourceName)
+		assert.Empty(t, cfg.SourceInclude)
+		assert.Equal(t, "test-logflare", cfg.LogflareHost)
+	})
+
+	t.Run("uses file source and resolved logflare host on apple", func(t *testing.T) {
+		utils.Config.Local.Runtime = config.AppleContainerRuntime
+		resolveContainerIP = func(_ context.Context, containerId, _ string) (string, error) {
+			assert.Equal(t, "test-logflare", containerId)
+			return "192.168.0.40", nil
+		}
+
+		cfg, err := buildVectorConfig(context.Background())
+
+		require.NoError(t, err)
+		assert.Equal(t, vectorSourceFile, cfg.SourceType)
+		assert.Equal(t, "apple_logs", cfg.SourceName)
+		assert.Equal(t, []string{appleVectorLogGlob}, cfg.SourceInclude)
+		assert.Equal(t, "192.168.0.40", cfg.LogflareHost)
+	})
+}
+
+func TestRenderVectorConfig(t *testing.T) {
+	t.Run("renders docker log source", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := vectorConfigTemplate.Option("missingkey=error").Execute(&buf, vectorConfig{
+			ApiKey:        "api-key",
+			VectorId:      "test-vector",
+			LogflareHost:  "test-logflare",
+			KongId:        "test-kong",
+			GotrueId:      "test-gotrue",
+			RestId:        "test-rest",
+			RealtimeId:    "test-realtime",
+			StorageId:     "test-storage",
+			EdgeRuntimeId: "test-edge",
+			DbId:          "test-db",
+			SourceName:    "docker_host",
+			SourceType:    vectorSourceDockerLogs,
+		})
+		require.NoError(t, err)
+		rendered := buf.String()
+		assert.Contains(t, rendered, "docker_host:")
+		assert.Contains(t, rendered, "type: docker_logs")
+		assert.Contains(t, rendered, "exclude_containers:")
+		assert.Contains(t, rendered, "http://test-logflare:4000/api/logs?source_name=gotrue.logs.prod")
+	})
+
+	t.Run("renders apple file source", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := vectorConfigTemplate.Option("missingkey=error").Execute(&buf, vectorConfig{
+			ApiKey:        "api-key",
+			VectorId:      "test-vector",
+			LogflareHost:  "192.168.0.40",
+			KongId:        "test-kong",
+			GotrueId:      "test-gotrue",
+			RestId:        "test-rest",
+			RealtimeId:    "test-realtime",
+			StorageId:     "test-storage",
+			EdgeRuntimeId: "test-edge",
+			DbId:          "test-db",
+			SourceName:    "apple_logs",
+			SourceType:    vectorSourceFile,
+			SourceInclude: []string{appleVectorLogGlob},
+		})
+		require.NoError(t, err)
+		rendered := buf.String()
+		assert.Contains(t, rendered, "apple_logs:")
+		assert.Contains(t, rendered, "type: file")
+		assert.Contains(t, rendered, appleVectorLogGlob)
+		assert.Contains(t, rendered, "apple_json_logs:")
+		assert.Contains(t, rendered, `. = parse_json!(string!(.message))`)
+		assert.Contains(t, rendered, "http://192.168.0.40:4000/api/logs?source_name=gotrue.logs.prod")
+	})
+}
+
 func TestFormatMapForEnvConfig(t *testing.T) {
 	t.Run("It produces the correct format and removes the trailing comma", func(t *testing.T) {
 		testcases := []struct {

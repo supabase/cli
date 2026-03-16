@@ -22,6 +22,11 @@ func Run(ctx context.Context, backup bool, projectId string, all bool, fsys afer
 		}
 		searchProjectIdFilter = utils.Config.ProjectId
 	}
+	if utils.UsesAppleContainerRuntime() {
+		if err := utils.StopAppleAnalyticsForwarders(fsys); err != nil {
+			return err
+		}
+	}
 
 	// Stop all services
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {

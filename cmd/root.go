@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/getsentry/sentry-go"
@@ -93,7 +94,7 @@ var (
 			}
 			cmd.SilenceUsage = true
 			// Load profile before changing workdir
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			fsys := afero.NewOsFs()
 			if err := utils.LoadProfile(ctx, fsys); err != nil {
 				return err

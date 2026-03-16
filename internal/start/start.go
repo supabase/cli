@@ -134,6 +134,7 @@ type vectorConfig struct {
 	ApiKey        string
 	VectorId      string
 	LogflareId    string
+	LogflareHost  string
 	KongId        string
 	GotrueId      string
 	RestId        string
@@ -141,6 +142,9 @@ type vectorConfig struct {
 	StorageId     string
 	EdgeRuntimeId string
 	DbId          string
+	SourceName    string
+	SourceType    string
+	SourceInclude []string
 }
 
 var (
@@ -167,6 +171,18 @@ var (
 )
 
 var serviceTimeout = 30 * time.Second
+
+var (
+	startAppleAnalyticsForwarders = utils.StartAppleAnalyticsForwarders
+	stopAppleAnalyticsForwarders  = utils.StopAppleAnalyticsForwarders
+)
+
+const (
+	vectorSourceDockerLogs = "docker_logs"
+	vectorSourceFile       = "file"
+	appleVectorLogDir      = "/var/log/supabase"
+	appleVectorLogGlob     = appleVectorLogDir + "/*.jsonl"
+)
 
 var resolveContainerIP = utils.GetContainerIP
 var listProjectContainers = utils.ListProjectContainers
@@ -284,6 +300,35 @@ func buildKongConfig(ctx context.Context, deps KongDependencies) (kongConfig, er
 			utils.Config.Auth.AnonKey.Value,
 		),
 	}, nil
+}
+
+func buildVectorConfig(ctx context.Context) (vectorConfig, error) {
+	cfg := vectorConfig{
+		ApiKey:        utils.Config.Analytics.ApiKey,
+		VectorId:      utils.VectorId,
+		LogflareId:    utils.LogflareId,
+		LogflareHost:  utils.LogflareId,
+		KongId:        utils.KongId,
+		GotrueId:      utils.GotrueId,
+		RestId:        utils.RestId,
+		RealtimeId:    utils.RealtimeId,
+		StorageId:     utils.StorageId,
+		EdgeRuntimeId: utils.EdgeRuntimeId,
+		DbId:          utils.DbId,
+		SourceName:    "docker_host",
+		SourceType:    vectorSourceDockerLogs,
+	}
+	if utils.UsesAppleContainerRuntime() {
+		logflareHost, err := runtimeContainerHost(ctx, utils.LogflareId, true)
+		if err != nil {
+			return vectorConfig{}, err
+		}
+		cfg.LogflareHost = logflareHost
+		cfg.SourceName = "apple_logs"
+		cfg.SourceType = vectorSourceFile
+		cfg.SourceInclude = []string{appleVectorLogGlob}
+	}
+	return cfg, nil
 }
 
 func startKong(ctx context.Context, deps KongDependencies) error {
@@ -477,16 +522,12 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 	for _, name := range excludedContainers {
 		excluded[name] = true
 	}
-	if utils.UsesAppleContainerRuntime() {
-		if !excluded[utils.ShortContainerImageName(utils.Config.Analytics.Image)] || !excluded[utils.ShortContainerImageName(utils.Config.Analytics.VectorImage)] {
-			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "apple-container runtime does not support analytics yet; skipping logflare and vector.")
-			excluded[utils.ShortContainerImageName(utils.Config.Analytics.Image)] = true
-			excluded[utils.ShortContainerImageName(utils.Config.Analytics.VectorImage)] = true
-		}
-	}
 	notExcluded := func(sc types.ServiceConfig) bool {
 		val, ok := excluded[sc.Name]
 		return !val || !ok
+	}
+	if utils.UsesAppleContainerRuntime() && !excluded[utils.ShortContainerImageName(utils.Config.Analytics.VectorImage)] {
+		_ = stopAppleAnalyticsForwarders(afero.NewOsFs())
 	}
 
 	jwks, err := utils.Config.Auth.ResolveJWKS(ctx)
@@ -625,49 +666,54 @@ EOF
 
 	// Start vector
 	if isVectorEnabled {
+		cfg, err := buildVectorConfig(ctx)
+		if err != nil {
+			return err
+		}
 		var vectorConfigBuf bytes.Buffer
-		if err := vectorConfigTemplate.Option("missingkey=error").Execute(&vectorConfigBuf, vectorConfig{
-			ApiKey:        utils.Config.Analytics.ApiKey,
-			VectorId:      utils.VectorId,
-			LogflareId:    utils.LogflareId,
-			KongId:        utils.KongId,
-			GotrueId:      utils.GotrueId,
-			RestId:        utils.RestId,
-			RealtimeId:    utils.RealtimeId,
-			StorageId:     utils.StorageId,
-			EdgeRuntimeId: utils.EdgeRuntimeId,
-			DbId:          utils.DbId,
-		}); err != nil {
+		if err := vectorConfigTemplate.Option("missingkey=error").Execute(&vectorConfigBuf, cfg); err != nil {
 			return errors.Errorf("failed to exec template: %w", err)
 		}
 		var binds, env, securityOpts []string
+		if utils.UsesAppleContainerRuntime() {
+			hostLogDir, err := utils.AppleAnalyticsLogsDirPath()
+			if err != nil {
+				return errors.Errorf("failed to resolve apple analytics log dir: %w", err)
+			}
+			if err := os.MkdirAll(hostLogDir, 0755); err != nil {
+				return errors.Errorf("failed to create apple analytics log dir: %w", err)
+			}
+			binds = append(binds, hostLogDir+":"+appleVectorLogDir+":rw")
+		}
 		// Special case for GitLab pipeline
 		parsed, err := client.ParseHostURL(utils.Docker.DaemonHost())
 		if err != nil {
 			return errors.Errorf("failed to parse docker host: %w", err)
 		}
 		// Ref: https://vector.dev/docs/reference/configuration/sources/docker_logs/#docker_host
-		dindHost := &url.URL{Scheme: "http", Host: net.JoinHostPort(utils.DinDHost, "2375")}
-		switch parsed.Scheme {
-		case "tcp":
-			if _, port, err := net.SplitHostPort(parsed.Host); err == nil {
-				dindHost.Host = net.JoinHostPort(utils.DinDHost, port)
-			}
-			env = append(env, "DOCKER_HOST="+dindHost.String())
-		case "npipe":
-			const dockerDaemonNeededErr = "Analytics on Windows requires Docker daemon exposed on tcp://localhost:2375.\nSee https://supabase.com/docs/guides/local-development/cli/getting-started?queryGroups=platform&platform=windows#running-supabase-locally for more details."
-			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), dockerDaemonNeededErr)
-			env = append(env, "DOCKER_HOST="+dindHost.String())
-		case "unix":
-			if dindHost, err = client.ParseHostURL(client.DefaultDockerHost); err != nil {
-				return errors.Errorf("failed to parse default host: %w", err)
-			} else if strings.HasSuffix(parsed.Host, "/.docker/run/docker.sock") {
-				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires mounting default docker socket:", dindHost.Host)
-				binds = append(binds, fmt.Sprintf("%[1]s:%[1]s:ro", dindHost.Host))
-			} else {
-				// Podman and OrbStack can mount root-less socket without issue
-				binds = append(binds, fmt.Sprintf("%s:%s:ro", parsed.Host, dindHost.Host))
-				securityOpts = append(securityOpts, "label:disable")
+		if !utils.UsesAppleContainerRuntime() {
+			dindHost := &url.URL{Scheme: "http", Host: net.JoinHostPort(utils.DinDHost, "2375")}
+			switch parsed.Scheme {
+			case "tcp":
+				if _, port, err := net.SplitHostPort(parsed.Host); err == nil {
+					dindHost.Host = net.JoinHostPort(utils.DinDHost, port)
+				}
+				env = append(env, "DOCKER_HOST="+dindHost.String())
+			case "npipe":
+				const dockerDaemonNeededErr = "Analytics on Windows requires Docker daemon exposed on tcp://localhost:2375.\nSee https://supabase.com/docs/guides/local-development/cli/getting-started?queryGroups=platform&platform=windows#running-supabase-locally for more details."
+				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), dockerDaemonNeededErr)
+				env = append(env, "DOCKER_HOST="+dindHost.String())
+			case "unix":
+				if dindHost, err = client.ParseHostURL(client.DefaultDockerHost); err != nil {
+					return errors.Errorf("failed to parse default host: %w", err)
+				} else if strings.HasSuffix(parsed.Host, "/.docker/run/docker.sock") {
+					fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires mounting default docker socket:", dindHost.Host)
+					binds = append(binds, fmt.Sprintf("%[1]s:%[1]s:ro", dindHost.Host))
+				} else {
+					// Podman and OrbStack can mount root-less socket without issue
+					binds = append(binds, fmt.Sprintf("%s:%s:ro", parsed.Host, dindHost.Host))
+					securityOpts = append(securityOpts, "label:disable")
+				}
 			}
 		}
 		if _, err := utils.DockerStart(
@@ -1396,6 +1442,12 @@ EOF
 			return err
 		}
 		started = append(started, utils.KongId)
+	}
+
+	if utils.UsesAppleContainerRuntime() && isVectorEnabled {
+		if err := startAppleAnalyticsForwarders(utils.AppleAnalyticsSourceContainers()); err != nil {
+			return err
+		}
 	}
 
 	// Start Studio.
