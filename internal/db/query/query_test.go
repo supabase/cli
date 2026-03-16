@@ -36,7 +36,7 @@ func TestRunSelectTable(t *testing.T) {
 		Reply("SELECT 1", []any{int64(1), "hello"})
 
 	var buf bytes.Buffer
-	err := RunLocal(context.Background(), "SELECT 1 as num, 'hello' as greeting", dbConfig, "table", &buf, conn.Intercept)
+	err := RunLocal(context.Background(), "SELECT 1 as num, 'hello' as greeting", dbConfig, "table", false, &buf, conn.Intercept)
 	assert.NoError(t, err)
 	output := buf.String()
 	assert.Contains(t, output, "c_00")
@@ -55,7 +55,7 @@ func TestRunSelectJSON(t *testing.T) {
 		Reply("SELECT 1", []any{int64(42), "test"})
 
 	var buf bytes.Buffer
-	err := RunLocal(context.Background(), "SELECT 42 as id, 'test' as name", dbConfig, "json", &buf, conn.Intercept)
+	err := RunLocal(context.Background(), "SELECT 42 as id, 'test' as name", dbConfig, "json", true, &buf, conn.Intercept)
 	assert.NoError(t, err)
 
 	var envelope map[string]interface{}
@@ -71,6 +71,28 @@ func TestRunSelectJSON(t *testing.T) {
 	assert.Equal(t, "test", row["c_01"])
 }
 
+func TestRunSelectJSONNoEnvelope(t *testing.T) {
+	utils.Config.Hostname = "127.0.0.1"
+	utils.Config.Db.Port = 5432
+
+	conn := pgtest.NewConn()
+	defer conn.Close(t)
+	conn.Query("SELECT 42 as id, 'test' as name").
+		Reply("SELECT 1", []any{int64(42), "test"})
+
+	var buf bytes.Buffer
+	err := RunLocal(context.Background(), "SELECT 42 as id, 'test' as name", dbConfig, "json", false, &buf, conn.Intercept)
+	assert.NoError(t, err)
+
+	// Non-agent mode: plain JSON array, no envelope
+	var rows []map[string]interface{}
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &rows))
+	assert.Len(t, rows, 1)
+	// pgtest mock generates column names as c_00, c_01
+	assert.Equal(t, float64(42), rows[0]["c_00"])
+	assert.Equal(t, "test", rows[0]["c_01"])
+}
+
 func TestRunSelectCSV(t *testing.T) {
 	utils.Config.Hostname = "127.0.0.1"
 	utils.Config.Db.Port = 5432
@@ -81,7 +103,7 @@ func TestRunSelectCSV(t *testing.T) {
 		Reply("SELECT 1", []any{int64(1), int64(2)})
 
 	var buf bytes.Buffer
-	err := RunLocal(context.Background(), "SELECT 1 as a, 2 as b", dbConfig, "csv", &buf, conn.Intercept)
+	err := RunLocal(context.Background(), "SELECT 1 as a, 2 as b", dbConfig, "csv", false, &buf, conn.Intercept)
 	assert.NoError(t, err)
 	output := buf.String()
 	assert.Contains(t, output, "c_00,c_01")
@@ -98,7 +120,7 @@ func TestRunDDL(t *testing.T) {
 		Reply("CREATE TABLE")
 
 	var buf bytes.Buffer
-	err := RunLocal(context.Background(), "CREATE TABLE test (id int)", dbConfig, "table", &buf, conn.Intercept)
+	err := RunLocal(context.Background(), "CREATE TABLE test (id int)", dbConfig, "table", false, &buf, conn.Intercept)
 	assert.NoError(t, err)
 	assert.Contains(t, buf.String(), "CREATE TABLE")
 }
@@ -113,7 +135,7 @@ func TestRunDMLInsert(t *testing.T) {
 		Reply("INSERT 0 1")
 
 	var buf bytes.Buffer
-	err := RunLocal(context.Background(), "INSERT INTO test VALUES (1)", dbConfig, "table", &buf, conn.Intercept)
+	err := RunLocal(context.Background(), "INSERT INTO test VALUES (1)", dbConfig, "table", false, &buf, conn.Intercept)
 	assert.NoError(t, err)
 	assert.Contains(t, buf.String(), "INSERT 0 1")
 }
@@ -128,7 +150,7 @@ func TestRunQueryError(t *testing.T) {
 		ReplyError("42703", "column \"bad\" does not exist")
 
 	var buf bytes.Buffer
-	err := RunLocal(context.Background(), "SELECT bad", dbConfig, "table", &buf, conn.Intercept)
+	err := RunLocal(context.Background(), "SELECT bad", dbConfig, "table", false, &buf, conn.Intercept)
 	assert.Error(t, err)
 }
 
@@ -193,7 +215,7 @@ func TestRunLinkedSelectJSON(t *testing.T) {
 		BodyString(responseBody)
 
 	var buf bytes.Buffer
-	err := RunLinked(context.Background(), "SELECT 1 as id, 'test' as name", projectRef, "json", &buf)
+	err := RunLinked(context.Background(), "SELECT 1 as id, 'test' as name", projectRef, "json", true, &buf)
 	assert.NoError(t, err)
 
 	var envelope map[string]interface{}
@@ -222,7 +244,7 @@ func TestRunLinkedSelectTable(t *testing.T) {
 		BodyString(responseBody)
 
 	var buf bytes.Buffer
-	err := RunLinked(context.Background(), "SELECT 1 as id, 'test' as name", projectRef, "table", &buf)
+	err := RunLinked(context.Background(), "SELECT 1 as id, 'test' as name", projectRef, "table", false, &buf)
 	assert.NoError(t, err)
 	output := buf.String()
 	assert.Contains(t, output, "id")
@@ -245,7 +267,7 @@ func TestRunLinkedSelectCSV(t *testing.T) {
 		BodyString(responseBody)
 
 	var buf bytes.Buffer
-	err := RunLinked(context.Background(), "SELECT 1 as a, 2 as b", projectRef, "csv", &buf)
+	err := RunLinked(context.Background(), "SELECT 1 as a, 2 as b", projectRef, "csv", false, &buf)
 	assert.NoError(t, err)
 	output := buf.String()
 	assert.Contains(t, output, "a,b")
@@ -255,7 +277,7 @@ func TestRunLinkedSelectCSV(t *testing.T) {
 
 func TestFormatOutputNilColsJSON(t *testing.T) {
 	var buf bytes.Buffer
-	err := formatOutput(&buf, "json", nil, nil)
+	err := formatOutput(&buf, "json", true, nil, nil)
 	assert.NoError(t, err)
 	var envelope map[string]interface{}
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &envelope))
@@ -266,13 +288,13 @@ func TestFormatOutputNilColsJSON(t *testing.T) {
 
 func TestFormatOutputNilColsTable(t *testing.T) {
 	var buf bytes.Buffer
-	err := formatOutput(&buf, "table", nil, nil)
+	err := formatOutput(&buf, "table", false, nil, nil)
 	assert.NoError(t, err)
 }
 
 func TestFormatOutputNilColsCSV(t *testing.T) {
 	var buf bytes.Buffer
-	err := formatOutput(&buf, "csv", nil, nil)
+	err := formatOutput(&buf, "csv", false, nil, nil)
 	assert.NoError(t, err)
 }
 
@@ -288,7 +310,7 @@ func TestRunLinkedEmptyResult(t *testing.T) {
 		BodyString("[]")
 
 	var buf bytes.Buffer
-	err := RunLinked(context.Background(), "SELECT 1 WHERE false", projectRef, "json", &buf)
+	err := RunLinked(context.Background(), "SELECT 1 WHERE false", projectRef, "json", true, &buf)
 	assert.NoError(t, err)
 	// Empty result still returns envelope with empty rows
 	var envelope map[string]interface{}
@@ -312,7 +334,7 @@ func TestRunLinkedAPIError(t *testing.T) {
 		BodyString(`{"message": "syntax error"}`)
 
 	var buf bytes.Buffer
-	err := RunLinked(context.Background(), "INVALID SQL", projectRef, "table", &buf)
+	err := RunLinked(context.Background(), "INVALID SQL", projectRef, "table", false, &buf)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "400")
 	assert.Empty(t, apitest.ListUnmatchedRequests())
