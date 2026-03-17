@@ -126,6 +126,11 @@ func TestHasMigrationFiles(t *testing.T) {
 func TestSaveApplyDebugBundle(t *testing.T) {
 	t.Run("saves debug artifacts with expected content", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
+		// Write a migration file so it can be copied into the debug bundle
+		migrationFile := "20240101000000_init.sql"
+		migrationContent := "create table downloads(id bigint);"
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.MigrationsDir, migrationFile), []byte(migrationContent), 0644))
+
 		result := &declarative.SyncResult{
 			DiffSQL:   "ALTER TABLE downloads ADD COLUMN viewed_at timestamptz;",
 			SourceRef: "",
@@ -143,9 +148,14 @@ func TestSaveApplyDebugBundle(t *testing.T) {
 		assert.Contains(t, string(errorContent), "column \"viewed_at\"")
 
 		// Verify migration SQL file
-		migrationContent, err := afero.ReadFile(fsys, filepath.Join(debugDir, "generated-migration.sql"))
+		generatedSQL, err := afero.ReadFile(fsys, filepath.Join(debugDir, "generated-migration.sql"))
 		require.NoError(t, err)
-		assert.Equal(t, result.DiffSQL, string(migrationContent))
+		assert.Equal(t, result.DiffSQL, string(generatedSQL))
+
+		// Verify migration file was copied with full content
+		copiedMigration, err := afero.ReadFile(fsys, filepath.Join(debugDir, "migrations", migrationFile))
+		require.NoError(t, err)
+		assert.Equal(t, migrationContent, string(copiedMigration))
 	})
 
 	t.Run("returns empty string when save fails", func(t *testing.T) {

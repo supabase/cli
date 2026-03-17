@@ -235,7 +235,7 @@ func runDeclarativeSync(cmd *cobra.Command, args []string) error {
 		if !isTTY() && !viper.GetBool("YES") {
 			return fmt.Errorf("no declarative schema found. Run %s first", utils.Aqua("supabase db declarative generate"))
 		}
-		ok, err := console.PromptYesNo(ctx, "No declarative schema found. Generate from local database?", true)
+		ok, err := console.PromptYesNo(ctx, "No declarative schema found. Generate a new one ?", true)
 		if err != nil {
 			return err
 		}

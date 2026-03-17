@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/spf13/afero"
@@ -62,9 +61,17 @@ func SaveDebugBundle(bundle DebugBundle, fsys afero.Fs) (string, error) {
 		_ = utils.WriteFile(filepath.Join(debugDir, "error.txt"), []byte(bundle.Error.Error()), fsys)
 	}
 
-	// Save migrations list
+	// Copy migration files
 	if len(bundle.Migrations) > 0 {
-		_ = utils.WriteFile(filepath.Join(debugDir, "migrations-list.txt"), []byte(strings.Join(bundle.Migrations, "\n")), fsys)
+		migrationsDir := filepath.Join(debugDir, "migrations")
+		if err := utils.MkdirIfNotExistFS(fsys, migrationsDir); err == nil {
+			for _, name := range bundle.Migrations {
+				src := filepath.Join(utils.MigrationsDir, name)
+				if data, err := afero.ReadFile(fsys, src); err == nil {
+					_ = utils.WriteFile(filepath.Join(migrationsDir, name), data, fsys)
+				}
+			}
+		}
 	}
 
 	return debugDir, nil
@@ -90,12 +97,16 @@ func PrintDebugBundleMessage(debugDir string) {
 	fmt.Fprintln(os.Stderr, utils.Yellow("If unsure, prefer opening a support ticket (option 2) instead."))
 }
 
-// CollectMigrationsList returns a list of local migration file paths for
+// CollectMigrationsList returns a list of local migration filenames for
 // inclusion in a debug bundle.
 func CollectMigrationsList(fsys afero.Fs) []string {
 	migrations, err := migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys))
 	if err != nil {
 		return nil
+	}
+	// Strip directory prefix to return just filenames
+	for i, m := range migrations {
+		migrations[i] = filepath.Base(m)
 	}
 	return migrations
 }

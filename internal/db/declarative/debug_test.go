@@ -21,6 +21,10 @@ func TestSaveDebugBundleCreatesAllFiles(t *testing.T) {
 	require.NoError(t, afero.WriteFile(fsys, sourceRef, []byte(`{"source":true}`), 0644))
 	require.NoError(t, afero.WriteFile(fsys, targetRef, []byte(`{"target":true}`), 0644))
 
+	// Write migration files so they can be copied
+	require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.MigrationsDir, "20240101000000_init.sql"), []byte("create table a();"), 0644))
+	require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.MigrationsDir, "20240102000000_users.sql"), []byte("create table b();"), 0644))
+
 	bundle := DebugBundle{
 		ID:           "20240414-044403",
 		SourceRef:    sourceRef,
@@ -51,9 +55,14 @@ func TestSaveDebugBundleCreatesAllFiles(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "diff failed: something went wrong", string(errorTxt))
 
-	migrationsList, err := afero.ReadFile(fsys, filepath.Join(debugDir, "migrations-list.txt"))
+	// Verify migration files were copied with full content
+	initSQL, err := afero.ReadFile(fsys, filepath.Join(debugDir, "migrations", "20240101000000_init.sql"))
 	require.NoError(t, err)
-	assert.Equal(t, "20240101000000_init.sql\n20240102000000_users.sql", string(migrationsList))
+	assert.Equal(t, "create table a();", string(initSQL))
+
+	usersSQL, err := afero.ReadFile(fsys, filepath.Join(debugDir, "migrations", "20240102000000_users.sql"))
+	require.NoError(t, err)
+	assert.Equal(t, "create table b();", string(usersSQL))
 }
 
 func TestSaveDebugBundlePartialData(t *testing.T) {
