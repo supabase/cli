@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/pgcache"
 	"github.com/supabase/cli/internal/migration/up"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
@@ -89,6 +90,9 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 				return err
 			}
 			if err := migration.ApplyMigrations(ctx, pending, conn, afero.NewIOFS(fsys)); err != nil {
+				return err
+			}
+			if err := pgcache.TryCacheMigrationsCatalog(ctx, config, "", "", fsys, options...); err != nil {
 				return err
 			}
 		} else {

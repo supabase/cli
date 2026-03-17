@@ -2,13 +2,13 @@ package diff
 
 import (
 	"context"
-	_ "embed"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -22,7 +22,7 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
-	"github.com/supabase/cli/internal/migration/new"
+	"github.com/supabase/cli/internal/pgdelta"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/parser"
@@ -30,8 +30,8 @@ import (
 
 type DiffFunc func(context.Context, pgconn.Config, pgconn.Config, []string, ...func(*pgx.ConnConfig)) (string, error)
 
-func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
-	out, err := DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, options...)
+func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, usePgDelta bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
+	out, err := DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, usePgDelta, options...)
 	if err != nil {
 		return err
 	}
@@ -48,25 +48,27 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 	return nil
 }
 
-var warnDiff = `WARNING: The diff tool is not foolproof, so you may need to manually rearrange and modify the generated migration.
-Run ` + utils.Aqua("supabase db reset") + ` to verify that the new migration does not generate errors.`
-
-func SaveDiff(out, file string, fsys afero.Fs) error {
-	if len(out) < 2 {
-		fmt.Fprintln(os.Stderr, "No schema changes found")
-	} else if len(file) > 0 {
-		path := new.GetMigrationPath(utils.GetCurrentTimestamp(), file)
-		if err := utils.WriteFile(path, []byte(out), fsys); err != nil {
-			return err
-		}
-		fmt.Fprintln(os.Stderr, warnDiff)
-	} else {
-		fmt.Println(out)
-	}
-	return nil
-}
-
 func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
+	// When pg-delta is enabled, declarative path is the source of truth (config or default).
+	if utils.IsPgDeltaEnabled() {
+		declDir := utils.GetDeclarativeDir()
+		if exists, err := afero.DirExists(fsys, declDir); err == nil && exists {
+			var declared []string
+			if err := afero.Walk(fsys, declDir, func(path string, info fs.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+				if info.Mode().IsRegular() && filepath.Ext(info.Name()) == ".sql" {
+					declared = append(declared, path)
+				}
+				return nil
+			}); err != nil {
+				return nil, errors.Errorf("failed to walk declarative dir: %w", err)
+			}
+			sort.Strings(declared)
+			return declared, nil
+		}
+	}
 	if schemas := utils.Config.Db.Migrations.SchemaPaths; len(schemas) > 0 {
 		return schemas.Files(afero.NewIOFS(fsys))
 	}
@@ -87,6 +89,9 @@ func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
 	}); err != nil {
 		return nil, errors.Errorf("failed to walk dir: %w", err)
 	}
+	// Keep file application order deterministic so diff output stays stable across
+	// filesystems and operating systems. This is only if no schema paths in config are set.
+	sort.Strings(declared)
 	return declared, nil
 }
 
@@ -154,7 +159,7 @@ func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs,
 	return migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys))
 }
 
-func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ DiffFunc, options ...func(*pgx.ConnConfig)) (string, error) {
+func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ DiffFunc, usePgDelta bool, options ...func(*pgx.ConnConfig)) (string, error) {
 	fmt.Fprintln(w, "Creating shadow database...")
 	shadow, err := CreateShadowDatabase(ctx, utils.Config.Db.ShadowPort)
 	if err != nil {
@@ -178,8 +183,14 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 		if declared, err := loadDeclaredSchemas(fsys); len(declared) > 0 {
 			config = shadowConfig
 			config.Database = "contrib_regression"
-			if err := migrateBaseDatabase(ctx, config, declared, fsys, options...); err != nil {
-				return "", err
+			if usePgDelta {
+				if err := pgdelta.ApplyDeclarative(ctx, config, fsys); err != nil {
+					return "", err
+				}
+			} else {
+				if err := migrateBaseDatabase(ctx, config, declared, fsys, options...); err != nil {
+					return "", err
+				}
 			}
 		} else if err != nil {
 			return "", err

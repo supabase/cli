@@ -1,7 +1,10 @@
+// This script is executed inside Edge Runtime by the CLI to export a target
+// schema as declarative file payloads. It accepts either live DB URLs or
+// catalog-file references for SOURCE/TARGET, which enables cached sync flows.
 import {
   createPlan,
   deserializeCatalog,
-  formatSqlStatements,
+  exportDeclarativeSchema,
 } from "npm:@supabase/pg-delta@1.0.0-alpha.8";
 import { supabase } from "npm:@supabase/pg-delta@1.0.0-alpha.8/integrations/supabase";
 
@@ -21,7 +24,10 @@ const target = Deno.env.get("TARGET");
 
 const includedSchemas = Deno.env.get("INCLUDED_SCHEMAS");
 if (includedSchemas) {
-  supabase.filter = { schema: includedSchemas.split(",") };
+  const schemaFilter = { schema: includedSchemas.split(",") };
+  supabase.filter = supabase.filter
+    ? { and: [supabase.filter, schemaFilter] }
+    : schemaFilter;
 }
 
 const formatOptionsRaw = Deno.env.get("FORMAT_OPTIONS");
@@ -34,14 +40,28 @@ try {
   const result = await createPlan(
     await resolveInput(source),
     await resolveInput(target),
-    supabase,
+    {
+      ...supabase,
+      skipDefaultPrivilegeSubtraction: true,
+    },
   );
-  let statements = result?.plan.statements ?? [];
-  if (formatOptions != null) {
-    statements = formatSqlStatements(statements, formatOptions);
-  }
-  for (const sql of statements) {
-    console.log(`${sql};\n`);
+  if (!result) {
+    console.log(
+      JSON.stringify({
+        version: 1,
+        mode: "declarative",
+        files: [],
+      }),
+    );
+  } else {
+    const output = exportDeclarativeSchema(result, {
+      formatOptions,
+    });
+    console.log(
+      JSON.stringify(output, (_key, value) =>
+        typeof value === "bigint" ? Number(value) : value,
+      ),
+    );
   }
 } catch (e) {
   console.error(e);

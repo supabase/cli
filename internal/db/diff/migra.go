@@ -118,9 +118,14 @@ func DiffSchemaMigra(ctx context.Context, source, target pgconn.Config, schema [
 	} else {
 		env = append(env, "EXCLUDED_SCHEMAS="+strings.Join(managedSchemas, ","))
 	}
-	var out bytes.Buffer
-	if err := diffWithStream(ctx, env, diffSchemaTypeScript, &out); err != nil {
+	// Migra also executes via Edge Runtime because the TypeScript implementation
+	// shares the same containerized execution environment as other diff engines.
+	// The helper remains in package diff to avoid coupling migra code paths to
+	// pg-delta-specific packages.
+	binds := []string{utils.EdgeRuntimeId + ":/root/.cache/deno:rw"}
+	var stdout, stderr bytes.Buffer
+	if err := utils.RunEdgeRuntimeScript(ctx, env, diffSchemaTypeScript, binds, "error diffing schema", &stdout, &stderr); err != nil {
 		return "", err
 	}
-	return out.String(), nil
+	return stdout.String(), nil
 }
