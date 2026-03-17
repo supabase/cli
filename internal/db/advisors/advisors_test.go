@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/h2non/gock"
+	"github.com/jackc/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
@@ -15,6 +16,14 @@ import (
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/pgtest"
 )
+
+var dbConfig = pgconn.Config{
+	Host:     "127.0.0.1",
+	Port:     5432,
+	User:     "admin",
+	Password: "password",
+	Database: "postgres",
+}
 
 func TestQueryLints(t *testing.T) {
 	t.Run("parses lint results from local database", func(t *testing.T) {
@@ -297,5 +306,72 @@ func TestFetchLinkedAdvisors(t *testing.T) {
 			JSON(map[string]string{"error": "internal error"})
 		_, err := fetchSecurityAdvisors(context.Background(), projectRef)
 		assert.Error(t, err)
+	})
+}
+
+func TestRunLocalWithDbUrl(t *testing.T) {
+	t.Run("runs advisors against custom db-url", func(t *testing.T) {
+		utils.Config.Hostname = "127.0.0.1"
+		utils.Config.Db.Port = 5432
+
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query("begin").Reply("BEGIN").
+			Query(lintsSQL).
+			Reply("SELECT 1",
+				[]any{
+					"rls_disabled_in_public",
+					"RLS disabled in public",
+					"ERROR",
+					"EXTERNAL",
+					[]string{"SECURITY"},
+					"Detects tables in the public schema without RLS.",
+					"Table public.users has RLS disabled",
+					"https://supabase.com/docs/guides/database/database-linter?lint=0013_rls_disabled_in_public",
+					[]byte(`{"schema":"public","name":"users","type":"table"}`),
+					"rls_disabled_in_public_public_users",
+				},
+			).
+			Query("rollback").Reply("ROLLBACK")
+
+		err := RunLocal(context.Background(), "all", "info", "none", dbConfig, conn.Intercept)
+		assert.NoError(t, err)
+	})
+
+	t.Run("returns no issues for empty results", func(t *testing.T) {
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query("begin").Reply("BEGIN").
+			Query(lintsSQL).
+			Reply("SELECT 0").
+			Query("rollback").Reply("ROLLBACK")
+
+		err := RunLocal(context.Background(), "all", "info", "none", dbConfig, conn.Intercept)
+		assert.NoError(t, err)
+	})
+
+	t.Run("fails on error level when fail-on is set", func(t *testing.T) {
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query("begin").Reply("BEGIN").
+			Query(lintsSQL).
+			Reply("SELECT 1",
+				[]any{
+					"rls_disabled_in_public",
+					"RLS disabled in public",
+					"ERROR",
+					"EXTERNAL",
+					[]string{"SECURITY"},
+					"Detects tables in the public schema without RLS.",
+					"Table public.users has RLS disabled",
+					"https://supabase.com/docs",
+					[]byte(`{}`),
+					"test_key",
+				},
+			).
+			Query("rollback").Reply("ROLLBACK")
+
+		err := RunLocal(context.Background(), "all", "info", "error", dbConfig, conn.Intercept)
+		assert.ErrorContains(t, err, "fail-on is set to error")
 	})
 }
