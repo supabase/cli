@@ -1,14 +1,18 @@
 # supabase-db-declarative-sync
 
-Sync between migrations and declarative schema.
+Generate a new migration from declarative schema.
 
-This command supports two explicit directions:
+This command diffs your declarative schema files against local migration state and produces a new migration file capturing the delta.
 
-- `--from-migrations`: render declarative files from local migration history.
-- `--to-migrations`: generate a new migration file to match the current declarative schema.
+The migration file name is determined by: `--name` if set, else `--file` if set, else the default `declarative_sync`.
 
-You must choose exactly one direction. Using both flags together is invalid, and omitting both flags is also invalid.
+In interactive mode (TTY), the command will:
+- Prompt to generate declarative files if none exist
+- Prompt for a migration name
+- Prompt to apply the migration to the local database
 
-When syncing to migrations (`--to-migrations`), the migration file name is determined by: `--name` if set, else `--file` if set, else the default `declarative_sync`.
+Use `--name` to set the migration name without prompting. Use `--apply` to automatically apply the generated migration.
 
 Use `--no-cache` to disable cached catalog snapshots and force fresh shadow database setup.
+
+To regenerate declarative schema from migrations, use `supabase db reset && supabase db declarative generate --local`.

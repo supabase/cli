@@ -191,7 +191,7 @@ supabase-db-diff:
 supabase-db-declarative-generate:
   - id: basic-usage
     name: Generate declarative schema from linked project
-    code: supabase db declarative generate --experimental
+    code: supabase db declarative generate --linked --experimental
     response: |
       Creating shadow database...
       Declarative schema written to supabase/declarative
@@ -204,18 +204,18 @@ supabase-db-declarative-generate:
       Declarative schema written to supabase/declarative
       Finished supabase db declarative generate.
 supabase-db-declarative-sync:
-  - id: from-migrations
-    name: Sync declarative files from local migrations
-    code: supabase db declarative sync --from-migrations --experimental
-    response: |
-      Creating shadow database...
-      Declarative schema synced from migrations.
-  - id: to-migrations
+  - id: basic-usage
     name: Generate migration from declarative schema
-    code: supabase db declarative sync --to-migrations -f declarative_sync --experimental
+    code: supabase db declarative sync --experimental
     response: |
       Creating shadow database...
       Created new migration at supabase/migrations/20240414044403_declarative_sync.sql.
+  - id: with-name
+    name: Generate named migration from declarative schema
+    code: supabase db declarative sync --name add_users_table --experimental
+    response: |
+      Creating shadow database...
+      Created new migration at supabase/migrations/20240414044403_add_users_table.sql.
 supabase-db-dump:
   - id: basic-usage
     name: Basic usage

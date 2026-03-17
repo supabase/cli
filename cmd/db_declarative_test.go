@@ -3,11 +3,31 @@ package cmd
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/supabase/cli/internal/utils"
 )
+
+func mockFsys() afero.Fs {
+	return afero.NewMemMapFs()
+}
+
+func mockFsysWithDeclarative() afero.Fs {
+	fsys := afero.NewMemMapFs()
+	path := filepath.Join(utils.GetDeclarativeDir(), "schemas", "public", "tables", "users.sql")
+	_ = afero.WriteFile(fsys, path, []byte("create table users(id bigint);"), 0644)
+	return fsys
+}
+
+func mockFsysWithMigrations() afero.Fs {
+	fsys := afero.NewMemMapFs()
+	path := filepath.Join(utils.MigrationsDir, "20240101000000_init.sql")
+	_ = afero.WriteFile(fsys, path, []byte("create table a();"), 0644)
+	return fsys
+}
 
 func TestResolveDeclarativeMigrationName(t *testing.T) {
 	t.Run("prefers explicit name", func(t *testing.T) {
@@ -70,5 +90,33 @@ func TestEnsureLocalDatabaseStarted(t *testing.T) {
 		})
 
 		assert.ErrorIs(t, err, expected)
+	})
+}
+
+func TestHasDeclarativeFiles(t *testing.T) {
+	t.Run("returns false when dir does not exist", func(t *testing.T) {
+		assert.False(t, hasDeclarativeFiles(mockFsys()))
+	})
+
+	t.Run("returns false when dir is empty", func(t *testing.T) {
+		fsys := mockFsys()
+		fsys.MkdirAll(utils.GetDeclarativeDir(), 0755)
+		assert.False(t, hasDeclarativeFiles(fsys))
+	})
+
+	t.Run("returns true when dir has files", func(t *testing.T) {
+		fsys := mockFsysWithDeclarative()
+		assert.True(t, hasDeclarativeFiles(fsys))
+	})
+}
+
+func TestHasMigrationFiles(t *testing.T) {
+	t.Run("returns false when no migrations", func(t *testing.T) {
+		assert.False(t, hasMigrationFiles(mockFsys()))
+	})
+
+	t.Run("returns true when migrations exist", func(t *testing.T) {
+		fsys := mockFsysWithMigrations()
+		assert.True(t, hasMigrationFiles(fsys))
 	})
 }

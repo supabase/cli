@@ -53,11 +53,7 @@ var (
 	catalogPrefixRegexp = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 	exportCatalog       = diff.ExportCatalogPgDelta
 	applyDeclarative    = pgdelta.ApplyDeclarative
-	// declarativeExportRef is used by SyncFromMigrations so tests can assert baseline semantics.
 	declarativeExportRef = diff.DeclarativeExportPgDeltaRef
-	// baselineCatalogRefResolver allows tests to bypass shadow provisioning when
-	// validating flows that depend on baseline refs.
-	baselineCatalogRefResolver = getBaselineCatalogRef
 	// generateBaselineCatalogRefResolver allows Generate to reuse a freshly
 	// provisioned baseline shadow for declarative cache warmup.
 	generateBaselineCatalogRefResolver = getGenerateBaselineCatalogRef
@@ -114,7 +110,7 @@ func Generate(ctx context.Context, schema []string, config pgconn.Config, overwr
 	if err := WriteDeclarativeSchemas(output, fsys); err != nil {
 		return err
 	}
-	// Warm declarative catalog cache after generate so follow-up --to-migrations
+	// Warm declarative catalog cache after generate so follow-up sync
 	// can reuse it without provisioning another shadow database.
 	if !noCache {
 		if baseline.shadow != nil {
@@ -135,80 +131,59 @@ func Generate(ctx context.Context, schema []string, config pgconn.Config, overwr
 	return nil
 }
 
-// SyncFromMigrations renders declarative files from local migration history.
-//
-// This gives teams a one-way conversion path from ordered migrations to
-// declarative files without touching a remote database.
-func SyncFromMigrations(ctx context.Context, schema []string, noCache bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	sourceRef, err := baselineCatalogRefResolver(ctx, noCache, fsys, options...)
+// SyncResult holds the output of a declarative-to-migrations diff operation.
+type SyncResult struct {
+	DiffSQL      string   // The generated migration SQL
+	SourceRef    string   // Migrations catalog ref (for debug)
+	TargetRef    string   // Declarative catalog ref (for debug)
+	DropWarnings []string // Any DROP statements found
+}
+
+// DiffDeclarativeToMigrations computes the diff between local migrations state
+// and declarative schema files, returning the result without writing anything.
+func DiffDeclarativeToMigrations(ctx context.Context, schema []string, noCache bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (*SyncResult, error) {
+	declarativeDir := utils.GetDeclarativeDir()
+	if exists, err := afero.DirExists(fsys, declarativeDir); err != nil {
+		return nil, err
+	} else if !exists {
+		return nil, errors.Errorf("No declarative schema directory found. Run %s first.", utils.Aqua("supabase db declarative generate"))
+	}
+	sourceRef, err := getMigrationsCatalogRef(ctx, noCache, fsys, "local", options...)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	targetRef, err := getMigrationsCatalogRef(ctx, noCache, fsys, "local", options...)
+	targetRef, err := getDeclarativeCatalogRef(ctx, noCache, fsys, options...)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	extracted, err := declarativeExportRef(ctx, sourceRef, targetRef, schema, pgDeltaFormatOptions(), options...)
+	out, err := diff.DiffPgDeltaRef(ctx, sourceRef, targetRef, schema, pgDeltaFormatOptions(), options...)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if exists, err := afero.DirExists(fsys, utils.GetDeclarativeDir()); err != nil {
-		return err
-	} else if exists {
-		currentRef, err := getDeclarativeCatalogRef(ctx, noCache, fsys, options...)
-		if err != nil {
-			return err
-		}
-		current, err := declarativeExportRef(ctx, sourceRef, currentRef, schema, pgDeltaFormatOptions(), options...)
-		if err != nil {
-			return err
-		}
-		if declarativeOutputsEqual(current, extracted) {
-			fmt.Fprintln(os.Stderr, "No changes detected between current declarative catalog and extracted migrations catalog.")
-			return nil
-		}
-	}
-	if err := WriteDeclarativeSchemas(extracted, fsys); err != nil {
-		return err
-	}
-	fmt.Fprintln(os.Stderr, "Declarative schema synced from migrations.")
-	return nil
+	return &SyncResult{
+		DiffSQL:      out,
+		SourceRef:    sourceRef,
+		TargetRef:    targetRef,
+		DropWarnings: findDropStatements(out),
+	}, nil
 }
 
 // SyncToMigrations diffs local declarative files against migration state and
 // writes the delta as a new migration file.
-//
-// This closes the loop so declarative-first edits can still flow back into the
-// migration-based deployment pipeline.
 func SyncToMigrations(ctx context.Context, schema []string, file string, noCache bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	declarativeDir := utils.GetDeclarativeDir()
-	if exists, err := afero.DirExists(fsys, declarativeDir); err != nil {
-		return err
-	} else if !exists {
-		return errors.Errorf("No declarative schema directory found. Run %s first.", utils.Aqua("supabase db declarative generate"))
-	}
-	sourceRef, err := getMigrationsCatalogRef(ctx, noCache, fsys, "local", options...)
-	if err != nil {
-		return err
-	}
-	targetRef, err := getDeclarativeCatalogRef(ctx, noCache, fsys, options...)
-	if err != nil {
-		return err
-	}
-	out, err := diff.DiffPgDeltaRef(ctx, sourceRef, targetRef, schema, pgDeltaFormatOptions(), options...)
+	result, err := DiffDeclarativeToMigrations(ctx, schema, noCache, fsys, options...)
 	if err != nil {
 		return err
 	}
 	if len(strings.TrimSpace(file)) == 0 {
 		file = "declarative_sync"
 	}
-	if err := diff.SaveDiff(out, file, fsys); err != nil {
+	if err := diff.SaveDiff(result.DiffSQL, file, fsys); err != nil {
 		return err
 	}
-	drops := findDropStatements(out)
-	if len(drops) > 0 {
+	if len(result.DropWarnings) > 0 {
 		fmt.Fprintln(os.Stderr, "Found drop statements in schema diff. Please double check if these are expected:")
-		fmt.Fprintln(os.Stderr, utils.Yellow(strings.Join(drops, "\n")))
+		fmt.Fprintln(os.Stderr, utils.Yellow(strings.Join(result.DropWarnings, "\n")))
 	}
 	return nil
 }
@@ -303,20 +278,6 @@ func updateDeclarativeSchemaPathsConfig(fsys afero.Fs) error {
 	return nil
 }
 
-// getBaselineCatalogRef returns a catalog reference for an empty shadow database.
-//
-// Caching this baseline avoids repeatedly recreating equivalent snapshots.
-func getBaselineCatalogRef(ctx context.Context, noCache bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (string, error) {
-	result, err := getGenerateBaselineCatalogRef(ctx, noCache, fsys, options...)
-	if err != nil {
-		return "", err
-	}
-	if result.shadow != nil {
-		result.shadow.cleanup()
-	}
-	return result.ref, nil
-}
-
 func getGenerateBaselineCatalogRef(ctx context.Context, noCache bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (generateBaselineCatalogRef, error) {
 	cachePath := filepath.Join(pgDeltaTempPath(), fmt.Sprintf(baselineCatalogName, baselineVersionToken()))
 	if !noCache {
@@ -369,7 +330,7 @@ func getMigrationsCatalogRef(ctx context.Context, noCache bool, fsys afero.Fs, p
 	if err != nil {
 		return "", err
 	}
-	// For --to-migrations with no local migrations, reuse an existing baseline
+	// For sync with no local migrations, reuse an existing baseline
 	// snapshot instead of provisioning a fresh shadow database.
 	if !noCache && len(migrations) == 0 {
 		baselinePath := filepath.Join(pgDeltaTempPath(), fmt.Sprintf(baselineCatalogName, baselineVersionToken()))
@@ -642,40 +603,6 @@ func baselineVersionToken() string {
 		image = fmt.Sprintf("pg%d", utils.Config.Db.MajorVersion)
 	}
 	return catalogPrefixRegexp.ReplaceAllString(image, "-")
-}
-
-func declarativeOutputsEqual(a, b diff.DeclarativeOutput) bool {
-	type fileSnapshot struct {
-		path string
-		sql  string
-	}
-	toSnapshot := func(out diff.DeclarativeOutput) []fileSnapshot {
-		files := make([]fileSnapshot, 0, len(out.Files))
-		for _, f := range out.Files {
-			files = append(files, fileSnapshot{
-				path: filepath.ToSlash(filepath.Clean(f.Path)),
-				sql:  f.SQL,
-			})
-		}
-		sort.Slice(files, func(i, j int) bool {
-			if files[i].path == files[j].path {
-				return files[i].sql < files[j].sql
-			}
-			return files[i].path < files[j].path
-		})
-		return files
-	}
-	left := toSnapshot(a)
-	right := toSnapshot(b)
-	if len(left) != len(right) {
-		return false
-	}
-	for i := range left {
-		if left[i] != right[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func sanitizedCatalogPrefix(prefix string) string {
