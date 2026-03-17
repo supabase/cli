@@ -47,14 +47,3 @@ func AssertRequestsDone(t *testing.T) {
 		fmt.Fprintln(os.Stderr, "Pending:", p.Request().Method, p.Request().URLStruct.Path)
 	}
 }
-
-func MockPlatformAPI(t *testing.T) func() {
-	// Setup valid access token
-	token := RandomAccessToken(t)
-	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
-	teardown := func() {
-		AssertRequestsDone(t)
-		gock.OffAll()
-	}
-	return teardown
-}

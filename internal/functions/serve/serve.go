@@ -241,13 +241,6 @@ func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
 	return env, err
 }
 
-type dockerFunction struct {
-	VerifyJWT      bool     `json:"verifyJWT"`
-	EntrypointPath string   `json:"entrypointPath,omitempty"`
-	ImportMapPath  string   `json:"importMapPath,omitempty"`
-	StaticFiles    []string `json:"staticFiles,omitempty"`
-}
-
 func PopulatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) ([]string, string, error) {
 	slugs, err := deploy.GetFunctionSlugs(fsys)
 	if err != nil {
@@ -258,10 +251,10 @@ func PopulatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 		return nil, "", err
 	}
 	binds := []string{}
-	enabledFunctions := map[string]dockerFunction{}
 	for slug, fc := range functionsConfig {
 		if !fc.Enabled {
 			fmt.Fprintln(os.Stderr, "Skipped serving Function:", slug)
+			delete(functionsConfig, slug)
 			continue
 		}
 		modules, err := deploy.GetBindMounts(cwd, utils.FunctionsDir, "", fc.Entrypoint, fc.ImportMap, fsys)
@@ -269,18 +262,14 @@ func PopulatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 			return nil, "", err
 		}
 		binds = append(binds, modules...)
-		enabled := dockerFunction{
-			VerifyJWT:      fc.VerifyJWT,
-			EntrypointPath: utils.ToDockerPath(fc.Entrypoint),
-			ImportMapPath:  utils.ToDockerPath(fc.ImportMap),
-			StaticFiles:    make([]string, len(fc.StaticFiles)),
-		}
+		fc.ImportMap = utils.ToDockerPath(fc.ImportMap)
+		fc.Entrypoint = utils.ToDockerPath(fc.Entrypoint)
+		functionsConfig[slug] = fc
 		for i, val := range fc.StaticFiles {
-			enabled.StaticFiles[i] = utils.ToDockerPath(val)
+			fc.StaticFiles[i] = utils.ToDockerPath(val)
 		}
-		enabledFunctions[slug] = enabled
 	}
-	functionsConfigBytes, err := json.Marshal(enabledFunctions)
+	functionsConfigBytes, err := json.Marshal(functionsConfig)
 	if err != nil {
 		return nil, "", errors.Errorf("failed to marshal config json: %w", err)
 	}

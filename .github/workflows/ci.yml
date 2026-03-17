@@ -63,7 +63,6 @@ jobs:
         with:
           args: --timeout 3m --verbose
           version: latest
-          only-new-issues: true
 
   start:
     name: Start
@@ -77,15 +76,9 @@ jobs:
       - run: go build main.go
       - run: ./main init
       - run: sed -i '/\[db.pooler\]/{n;s/.*/enabled = true/}' supabase/config.toml
-      - run: ./main start --workdir tests
+      - run: ./main start
         env:
           SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
-      - name: Install websocat
-        run: |
-          sudo wget -qO /usr/local/bin/websocat https://github.com/vi/websocat/releases/latest/download/websocat.x86_64-unknown-linux-musl
-          sudo chmod a+x /usr/local/bin/websocat
-          websocat --version
-      - run: ./e2e-test.sh ./main
 
   link:
     name: Link

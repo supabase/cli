@@ -11,53 +11,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
-	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/api"
 )
 
 func TestPushConfig(t *testing.T) {
 	project := apitest.RandomProjectRef()
-
-	t.Run("pushes local config", func(t *testing.T) {
-		errNetwork := errors.New("network error")
-		t.Cleanup(fstest.MockStdin(t, "y"))
-		t.Cleanup(apitest.MockPlatformAPI(t))
-		// Setup in-memory fs
-		fsys := afero.NewMemMapFs()
-		// Setup mock api
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/"+project+"/billing/addons").
-			Reply(http.StatusOK).
-			SetHeader("Content-Type", "application/json").
-			BodyString(`{
-				"available_addons":[{
-					"name": "GraphQL",
-					"type": "api",
-					"variants": [{
-						"id": "api_graphql",
-						"name": "GraphQL",
-						"price": {
-						  "amount": 0.1027,
-						  "description": "$75/month, then $10/month",
-						  "interval": "hourly",
-						  "type": "usage"
-						}
-					}]
-				}]
-			}`)
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/postgrest").
-			Reply(http.StatusOK).
-			JSON(api.V1PostgrestConfigResponse{})
-		gock.New(utils.DefaultApiHost).
-			Patch("/v1/projects/" + project + "/postgrest").
-			ReplyError(errNetwork)
-		// Run test
-		err := Run(context.Background(), project, fsys)
-		// Check error
-		assert.ErrorIs(t, err, errNetwork)
-	})
+	// Setup valid access token
+	token := apitest.RandomAccessToken(t)
+	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 
 	t.Run("throws error on malformed config", func(t *testing.T) {
 		// Setup in-memory fs
@@ -70,10 +31,10 @@ func TestPushConfig(t *testing.T) {
 	})
 
 	t.Run("throws error on service unavailable", func(t *testing.T) {
-		t.Cleanup(apitest.MockPlatformAPI(t))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock api
+		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/billing/addons").
 			Reply(http.StatusServiceUnavailable)
@@ -86,10 +47,13 @@ func TestPushConfig(t *testing.T) {
 
 func TestCostMatrix(t *testing.T) {
 	project := apitest.RandomProjectRef()
+	// Setup valid access token
+	token := apitest.RandomAccessToken(t)
+	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 
 	t.Run("fetches cost matrix", func(t *testing.T) {
-		t.Cleanup(apitest.MockPlatformAPI(t))
 		// Setup mock api
+		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/"+project+"/billing/addons").
 			Reply(http.StatusOK).
@@ -102,10 +66,10 @@ func TestCostMatrix(t *testing.T) {
 						"id": "auth_mfa_phone_default",
 						"name": "Advanced MFA - Phone",
 						"price": {
-						  "amount": 0.1027,
-						  "description": "$75/month, then $10/month",
-						  "interval": "hourly",
-						  "type": "usage"
+						"amount": 0.1027,
+						"description": "$75/month, then $10/month",
+						"interval": "hourly",
+						"type": "usage"
 						}
 					}]
 				}, {
@@ -115,10 +79,10 @@ func TestCostMatrix(t *testing.T) {
 						"id": "auth_mfa_web_authn_default",
 						"name": "Advanced MFA - WebAuthn",
 						"price": {
-						  "amount": 0.1027,
-						  "description": "$75/month, then $10/month",
-						  "interval": "hourly",
-						  "type": "usage"
+						"amount": 0.1027,
+						"description": "$75/month, then $10/month",
+						"interval": "hourly",
+						"type": "usage"
 						}
 					}]
 				}]
@@ -136,8 +100,8 @@ func TestCostMatrix(t *testing.T) {
 
 	t.Run("throws error on network error", func(t *testing.T) {
 		errNetwork := errors.New("network error")
-		t.Cleanup(apitest.MockPlatformAPI(t))
 		// Setup mock api
+		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Get("/v1/projects/" + project + "/billing/addons").
 			ReplyError(errNetwork)
@@ -145,19 +109,6 @@ func TestCostMatrix(t *testing.T) {
 		cost, err := getCostMatrix(context.Background(), project)
 		// Check error
 		assert.ErrorIs(t, err, errNetwork)
-		assert.Nil(t, cost)
-	})
-
-	t.Run("throws error on service unavailable", func(t *testing.T) {
-		t.Cleanup(apitest.MockPlatformAPI(t))
-		// Setup mock api
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + project + "/billing/addons").
-			Reply(http.StatusServiceUnavailable)
-		// Run test
-		cost, err := getCostMatrix(context.Background(), project)
-		// Check error
-		assert.ErrorContains(t, err, "unexpected list addons status 503:")
 		assert.Nil(t, cost)
 	})
 }

@@ -88,9 +88,6 @@ var (
 		Short:   "Supabase CLI " + utils.Version,
 		Version: utils.Version,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			if IsExperimental(cmd) && !viper.GetBool("EXPERIMENTAL") {
-				return errors.New("must set the --experimental flag to run this command")
-			}
 			cmd.SilenceUsage = true
 			// Load profile before changing workdir
 			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
@@ -100,6 +97,18 @@ var (
 			}
 			if err := utils.ChangeWorkDir(fsys); err != nil {
 				return err
+			}
+			if err := flags.LoadConfig(fsys); err != nil {
+				return err
+			}
+			// pg-delta flows are currently marked experimental. Mirror both the
+			// legacy env toggle and the new config toggle into EXPERIMENTAL so
+			// command gating remains consistent.
+			if viper.GetBool("EXPERIMENTAL_PG_DELTA") || utils.IsPgDeltaEnabled() {
+				viper.Set("EXPERIMENTAL", true)
+			}
+			if IsExperimental(cmd) && !viper.GetBool("EXPERIMENTAL") {
+				return errors.New("must set the --experimental flag to run this command")
 			}
 			// Add common flags
 			if IsManagementAPI(cmd) {

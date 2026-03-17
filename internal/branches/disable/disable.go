@@ -17,7 +17,7 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 		return errors.Errorf("failed to disable preview branching: %w", err)
 	}
 	if resp.StatusCode() != http.StatusOK {
-		return errors.Errorf("unexpected disable branching status %d: %s", resp.StatusCode(), string(resp.Body))
+		return errors.New("Unexpected error disabling preview branching: " + string(resp.Body))
 	}
 	fmt.Println("Disabled preview branching for project:", flags.ProjectRef)
 	return nil

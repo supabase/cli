@@ -119,41 +119,6 @@ func TestUpdateDbConfig(t *testing.T) {
 	})
 }
 
-func TestUpdateDbNetworkRestrictionsConfig(t *testing.T) {
-	server := "http://localhost"
-	client, err := v1API.NewClientWithResponses(server)
-	require.NoError(t, err)
-
-	t.Run("skips update if disabled locally", func(t *testing.T) {
-		updater := NewConfigUpdater(*client)
-		// Run test
-		err := updater.UpdateDbNetworkRestrictionsConfig(context.Background(), "test-project", networkRestrictions{})
-		// Check result
-		assert.NoError(t, err)
-		assert.False(t, gock.HasUnmatchedRequest())
-	})
-
-	t.Run("returns error on 400 when enabled locally", func(t *testing.T) {
-		updater := NewConfigUpdater(*client)
-		// Setup mock server
-		defer gock.Off()
-		gock.New(server).
-			Get("/v1/projects/test-project/network-restrictions").
-			Reply(http.StatusBadRequest).
-			JSON(map[string]any{
-				"message": "project not allowed to set up network restrictions",
-			})
-		// Run test
-		err := updater.UpdateDbNetworkRestrictionsConfig(context.Background(), "test-project", networkRestrictions{
-			Enabled: true,
-		})
-		// Check result
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "unexpected status 400")
-		assert.True(t, gock.IsDone())
-	})
-}
-
 func TestUpdateExperimentalConfig(t *testing.T) {
 	server := "http://localhost"
 	client, err := v1API.NewClientWithResponses(server)

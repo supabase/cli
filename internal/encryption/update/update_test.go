@@ -2,55 +2,60 @@ package update
 
 import (
 	"context"
-	"errors"
 	"net/http"
+	"os"
 	"testing"
 
 	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
-	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
 
 func TestUpdateRootKey(t *testing.T) {
-	project := apitest.RandomProjectRef()
-
 	t.Run("updates project encryption key", func(t *testing.T) {
-		t.Cleanup(fstest.MockStdin(t, "test-key"))
-		t.Cleanup(apitest.MockPlatformAPI(t))
-		// Setup mock api
+		// Setup valid project ref
+		project := apitest.RandomProjectRef()
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Setup root key
+		r, w, err := os.Pipe()
+		require.NoError(t, err)
+		_, err = w.WriteString("test-key")
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+		// Flush pending mocks after test execution
+		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Put("/v1/projects/" + project + "/pgsodium").
 			JSON(api.UpdatePgsodiumConfigBody{RootKey: "test-key"}).
 			Reply(http.StatusOK).
 			JSON(api.PgsodiumConfigResponse{RootKey: "test-key"})
 		// Run test
-		err := Run(context.Background(), project)
+		err = Run(context.Background(), project, r)
+		// Check error
 		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
-	t.Run("throws error on network error", func(t *testing.T) {
-		errNetwork := errors.New("network error")
-		t.Cleanup(apitest.MockPlatformAPI(t))
-		// Setup mock api
+	t.Run("throws on invalid credentials", func(t *testing.T) {
+		// Setup valid project ref
+		project := apitest.RandomProjectRef()
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Flush pending mocks after test execution
+		defer gock.OffAll()
 		gock.New(utils.DefaultApiHost).
 			Put("/v1/projects/" + project + "/pgsodium").
-			ReplyError(errNetwork)
+			Reply(http.StatusForbidden)
 		// Run test
-		err := Run(context.Background(), project)
-		assert.ErrorIs(t, err, errNetwork)
-	})
-
-	t.Run("throws error on service unavailable", func(t *testing.T) {
-		t.Cleanup(apitest.MockPlatformAPI(t))
-		// Setup mock api
-		gock.New(utils.DefaultApiHost).
-			Put("/v1/projects/" + project + "/pgsodium").
-			Reply(http.StatusServiceUnavailable)
-		// Run test
-		err := Run(context.Background(), project)
-		assert.ErrorContains(t, err, "unexpected update pgsodium config status 503:")
+		err := Run(context.Background(), project, nil)
+		// Check error
+		assert.ErrorContains(t, err, "Unexpected error updating project root key:")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }

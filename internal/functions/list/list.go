@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/go-errors/errors"
@@ -23,13 +22,13 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 
 	switch utils.OutputFormat.Value {
 	case utils.OutputPretty:
-		var table strings.Builder
-		table.WriteString(`|ID|NAME|SLUG|STATUS|VERSION|UPDATED_AT (UTC)|
+		table := `|ID|NAME|SLUG|STATUS|VERSION|UPDATED_AT (UTC)|
 |-|-|-|-|-|-|
-`)
+`
 		for _, function := range *resp.JSON200 {
 			t := time.UnixMilli(function.UpdatedAt)
-			fmt.Fprintf(&table, "|`%s`|`%s`|`%s`|`%s`|`%d`|`%s`|\n",
+			table += fmt.Sprintf(
+				"|`%s`|`%s`|`%s`|`%s`|`%d`|`%s`|\n",
 				function.Id,
 				function.Name,
 				function.Slug,
@@ -38,7 +37,7 @@ func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
 				t.UTC().Format("2006-01-02 15:04:05"),
 			)
 		}
-		return utils.RenderTable(table.String())
+		return utils.RenderTable(table)
 	case utils.OutputToml:
 		return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, struct {
 			Functions []api.FunctionResponse `toml:"functions"`

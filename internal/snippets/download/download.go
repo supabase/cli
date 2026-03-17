@@ -19,9 +19,12 @@ func Run(ctx context.Context, snippetId string, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().V1GetASnippetWithResponse(ctx, id)
 	if err != nil {
 		return errors.Errorf("failed to download snippet: %w", err)
-	} else if resp.JSON200 == nil {
-		return errors.Errorf("unexpected download snippet status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
+
+	if resp.JSON200 == nil {
+		return errors.New("Unexpected error downloading SQL snippet: " + string(resp.Body))
+	}
+
 	fmt.Println(resp.JSON200.Content.Sql)
 	return nil
 }

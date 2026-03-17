@@ -100,16 +100,10 @@ func (u *ConfigUpdater) UpdateDbConfig(ctx context.Context, projectRef string, c
 	if err := u.UpdateDbNetworkRestrictionsConfig(ctx, projectRef, c.NetworkRestrictions, filter...); err != nil {
 		return err
 	}
-	if c.SslEnforcement != nil {
-		return u.UpdateSslEnforcement(ctx, projectRef, *c.SslEnforcement, filter...)
-	}
 	return nil
 }
 
 func (u *ConfigUpdater) UpdateDbNetworkRestrictionsConfig(ctx context.Context, projectRef string, n networkRestrictions, filter ...func(string) bool) error {
-	if !n.Enabled {
-		return nil
-	}
 	networkRestrictionsConfig, err := u.client.V1GetNetworkRestrictionsWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to read network restrictions config: %w", err)
@@ -133,35 +127,6 @@ func (u *ConfigUpdater) UpdateDbNetworkRestrictionsConfig(ctx context.Context, p
 	if resp, err := u.client.V1UpdateNetworkRestrictionsWithResponse(ctx, projectRef, updateBody); err != nil {
 		return errors.Errorf("failed to update network restrictions config: %w", err)
 	} else if resp.JSON201 == nil {
-		return errors.Errorf("unexpected status %d: %s", resp.StatusCode(), string(resp.Body))
-	}
-	return nil
-}
-
-func (u *ConfigUpdater) UpdateSslEnforcement(ctx context.Context, projectRef string, s sslEnforcement, filter ...func(string) bool) error {
-	sslEnforcementConfig, err := u.client.V1GetSslEnforcementConfigWithResponse(ctx, projectRef)
-	if err != nil {
-		return errors.Errorf("failed to read SSL enforcement config: %w", err)
-	} else if sslEnforcementConfig.JSON200 == nil {
-		return errors.Errorf("unexpected status %d: %s", sslEnforcementConfig.StatusCode(), string(sslEnforcementConfig.Body))
-	}
-	sslEnforcementDiff, err := s.DiffWithRemote(*sslEnforcementConfig.JSON200)
-	if err != nil {
-		return err
-	} else if len(sslEnforcementDiff) == 0 {
-		fmt.Fprintln(os.Stderr, "Remote DB SSL enforcement config is up to date.")
-		return nil
-	}
-	fmt.Fprintln(os.Stderr, "Updating SSL enforcement with config:", string(sslEnforcementDiff))
-	for _, keep := range filter {
-		if !keep("db") {
-			return nil
-		}
-	}
-	updateBody := s.ToUpdateSslEnforcementBody()
-	if resp, err := u.client.V1UpdateSslEnforcementConfigWithResponse(ctx, projectRef, updateBody); err != nil {
-		return errors.Errorf("failed to update SSL enforcement config: %w", err)
-	} else if resp.JSON200 == nil {
 		return errors.Errorf("unexpected status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 	return nil

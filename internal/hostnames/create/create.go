@@ -2,7 +2,8 @@ package create
 
 import (
 	"context"
-	"os"
+	"fmt"
+	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
@@ -11,24 +12,36 @@ import (
 	"github.com/supabase/cli/pkg/api"
 )
 
-func Run(ctx context.Context, projectRef string, customHostname string, fsys afero.Fs) error {
-	// 1. verify that a CNAME is set as it simplifies the checks used for verifying ownership
-	err := hostnames.VerifyCNAME(ctx, projectRef, customHostname)
-	if err != nil {
-		return err
+func Run(ctx context.Context, projectRef string, customHostname string, includeRawOutput bool, fsys afero.Fs) error {
+	// 1. Sanity checks.
+	hostname := strings.TrimSpace(customHostname)
+	{
+		if len(hostname) == 0 {
+			return errors.New("non-empty custom hostname expected")
+		}
+		// we verify that a CNAME is set as it simplifies the checks used for verifying ownership
+		err := hostnames.VerifyCNAME(ctx, projectRef, hostname)
+		if err != nil {
+			return err
+		}
 	}
+
 	// 2. create custom hostname
-	resp, err := utils.GetSupabase().V1UpdateHostnameConfigWithResponse(ctx, projectRef, api.V1UpdateHostnameConfigJSONRequestBody{
-		CustomHostname: customHostname,
-	})
-	if err != nil {
-		return errors.Errorf("failed to create custom hostname: %w", err)
-	} else if resp.JSON201 == nil {
-		return errors.Errorf("unexpected create hostname status %d: %s", resp.StatusCode(), string(resp.Body))
+	{
+		resp, err := utils.GetSupabase().V1UpdateHostnameConfigWithResponse(ctx, projectRef, api.V1UpdateHostnameConfigJSONRequestBody{
+			CustomHostname: hostname,
+		})
+		if err != nil {
+			return errors.Errorf("failed to create custom hostname: %w", err)
+		}
+		if resp.JSON201 == nil {
+			return errors.New("failed to create custom hostname config: " + string(resp.Body))
+		}
+		status, err := hostnames.TranslateStatus(resp.JSON201, includeRawOutput)
+		if err != nil {
+			return err
+		}
+		fmt.Println(status)
+		return nil
 	}
-	hostnames.PrintStatus(resp.JSON201, os.Stderr)
-	if utils.OutputFormat.Value != utils.OutputPretty {
-		return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, *resp.JSON201)
-	}
-	return nil
 }

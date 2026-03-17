@@ -49,6 +49,7 @@ var (
 			string(api.V1CreateProjectBodyDesiredInstanceSizeN48xlargeOptimizedMemory),
 			string(api.V1CreateProjectBodyDesiredInstanceSizeN4xlarge),
 			string(api.V1CreateProjectBodyDesiredInstanceSizeN8xlarge),
+			string(api.V1CreateProjectBodyDesiredInstanceSizePico),
 			string(api.V1CreateProjectBodyDesiredInstanceSizeSmall),
 			string(api.V1CreateProjectBodyDesiredInstanceSizeXlarge),
 		},

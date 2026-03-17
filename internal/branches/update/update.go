@@ -24,7 +24,7 @@ func Run(ctx context.Context, branchId string, body api.UpdateBranchBody, fsys a
 	} else if resp.JSON200 == nil {
 		return errors.Errorf("unexpected update branch status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
-	fmt.Fprintln(os.Stderr, "Updated preview branch:")
+	fmt.Println("Updated preview branch:")
 	if utils.OutputFormat.Value == utils.OutputPretty {
 		table := list.ToMarkdown([]api.BranchResponse{*resp.JSON200})
 		return utils.RenderTable(table)

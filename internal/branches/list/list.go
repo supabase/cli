@@ -37,16 +37,16 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 }
 
 func ToMarkdown(branches []api.BranchResponse) string {
-	var table strings.Builder
-	table.WriteString(`|ID|NAME|DEFAULT|GIT BRANCH|WITH DATA|STATUS|CREATED AT (UTC)|UPDATED AT (UTC)|
+	table := `|ID|NAME|DEFAULT|GIT BRANCH|WITH DATA|STATUS|CREATED AT (UTC)|UPDATED AT (UTC)|
 |-|-|-|-|-|-|-|-|
-`)
+`
 	for _, branch := range branches {
 		gitBranch := " "
 		if branch.GitBranch != nil {
 			gitBranch = *branch.GitBranch
 		}
-		fmt.Fprintf(&table, "|`%s`|`%s`|`%t`|`%s`|`%t`|`%s`|`%s`|`%s`|\n",
+		table += fmt.Sprintf(
+			"|`%s`|`%s`|`%t`|`%s`|`%t`|`%s`|`%s`|`%s`|\n",
 			branch.ProjectRef,
 			strings.ReplaceAll(branch.Name, "|", "\\|"),
 			branch.IsDefault,
@@ -54,9 +54,10 @@ func ToMarkdown(branches []api.BranchResponse) string {
 			branch.WithData,
 			branch.Status,
 			utils.FormatTime(branch.CreatedAt),
-			utils.FormatTime(branch.UpdatedAt))
+			utils.FormatTime(branch.UpdatedAt),
+		)
 	}
-	return table.String()
+	return table
 }
 
 type BranchFilter func(api.BranchResponse) bool

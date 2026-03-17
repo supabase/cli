@@ -190,3 +190,46 @@ func TestGenRemoteCommand(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
+
+func TestWithRequireSSLMode(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:  "adds query when missing",
+			input: "postgresql://postgres:password@example.com:5432/postgres",
+			want:  "postgresql://postgres:password@example.com:5432/postgres?sslmode=require",
+		},
+		{
+			name:  "appends to existing query",
+			input: "postgresql://postgres:password@example.com:5432/postgres?connect_timeout=10",
+			want:  "postgresql://postgres:password@example.com:5432/postgres?connect_timeout=10&sslmode=require",
+		},
+		{
+			name:  "overrides existing sslmode",
+			input: "postgresql://postgres:password@example.com:5432/postgres?sslmode=disable&connect_timeout=10",
+			want:  "postgresql://postgres:password@example.com:5432/postgres?connect_timeout=10&sslmode=require",
+		},
+		{
+			name:    "returns parse error for malformed url",
+			input:   "postgresql://postgres:password@[::1",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := withRequireSSLMode(tt.input)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, result)
+		})
+	}
+}

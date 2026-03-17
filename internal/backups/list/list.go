@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/supabase/cli/internal/utils"
@@ -46,20 +45,21 @@ const (
 )
 
 func listLogicalBackups(resp api.V1BackupsResponse) error {
-	var table strings.Builder
-	table.WriteString(`REGION|BACKUP TYPE|STATUS|CREATED AT (UTC)
+	table := `REGION|BACKUP TYPE|STATUS|CREATED AT (UTC)
 |-|-|-|-|
-`)
+`
 	for _, backup := range resp.Backups {
 		backupType := BACKUP_LOGICAL
 		if backup.IsPhysicalBackup {
 			backupType = BACKUP_PHYSICAL
 		}
-		fmt.Fprintf(&table, "|`%s`|`%s`|`%s`|`%s`|\n",
+		table += fmt.Sprintf(
+			"|`%s`|`%s`|`%s`|`%s`|\n",
 			utils.FormatRegion(resp.Region),
 			backupType,
 			backup.Status,
-			utils.FormatTimestamp(backup.InsertedAt))
+			utils.FormatTimestamp(backup.InsertedAt),
+		)
 	}
-	return utils.RenderTable(table.String())
+	return utils.RenderTable(table)
 }

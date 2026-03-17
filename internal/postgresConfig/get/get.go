@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -13,18 +14,23 @@ import (
 )
 
 func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
+	// 1. get current config
 	config, err := GetCurrentPostgresConfig(ctx, projectRef)
 	if err != nil {
 		return err
 	}
-	return PrintOutPostgresConfigOverrides(config)
+	err = PrintOutPostgresConfigOverrides(config)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func PrintOutPostgresConfigOverrides(config map[string]any) error {
 	if utils.OutputFormat.Value != utils.OutputPretty {
 		return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, config)
 	}
-	fmt.Fprintln(os.Stderr, "- Custom Postgres Config -")
+	fmt.Println("- Custom Postgres Config -")
 	markdownTable := []string{
 		"|Parameter|Value|\n|-|-|\n",
 	}
@@ -37,21 +43,26 @@ func PrintOutPostgresConfigOverrides(config map[string]any) error {
 	if err := utils.RenderTable(strings.Join(markdownTable, "")); err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, "- End of Custom Postgres Config -")
+	fmt.Println("- End of Custom Postgres Config -")
 	return nil
 }
 
 func GetCurrentPostgresConfig(ctx context.Context, projectRef string) (map[string]any, error) {
-	resp, err := utils.GetSupabase().V1GetPostgresConfigWithResponse(ctx, projectRef)
+	resp, err := utils.GetSupabase().V1GetPostgresConfig(ctx, projectRef)
 	if err != nil {
 		return nil, errors.Errorf("failed to retrieve Postgres config overrides: %w", err)
-	} else if resp.JSON200 == nil {
-		return nil, errors.Errorf("unexpected config overrides status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+	if resp.StatusCode != 200 {
+		return nil, errors.Errorf("error in retrieving Postgres config overrides: %s", resp.Status)
+	}
+	contents, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, errors.Errorf("failed to read response body: %w", err)
 	}
 	var config map[string]any
-	err = json.Unmarshal(resp.Body, &config)
+	err = json.Unmarshal(contents, &config)
 	if err != nil {
-		return nil, errors.Errorf("failed to unmarshal response body: %w", err)
+		return nil, errors.Errorf("failed to unmarshal response body: %w. Contents were %s", err, contents)
 	}
 	return config, nil
 }

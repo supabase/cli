@@ -12,9 +12,12 @@ func Run(ctx context.Context, projectRef string) error {
 	resp, err := utils.GetSupabase().V1GetPgsodiumConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to retrieve pgsodium config: %w", err)
-	} else if resp.JSON200 == nil {
-		return errors.Errorf("unexpected get pgsodium config status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
+
+	if resp.JSON200 == nil {
+		return errors.New("Unexpected error retrieving project root key: " + string(resp.Body))
+	}
+
 	fmt.Println(resp.JSON200.RootKey)
 	return nil
 }

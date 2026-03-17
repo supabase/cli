@@ -178,6 +178,44 @@ supabase-db-diff:
       Finished supabase db diff on branch main.
 
       No schema changes found
+  - id: experimental-pg-delta-env
+    name: Use pg-delta via env toggle
+    code: SUPABASE_EXPERIMENTAL_PG_DELTA=1 supabase db diff --experimental
+    response: |
+      Connecting to local database...
+      Creating shadow database...
+      Diffing schemas: auth,extensions,public,storage
+      Finished supabase db diff on branch main.
+
+      No schema changes found
+supabase-db-declarative-generate:
+  - id: basic-usage
+    name: Generate declarative schema from linked project
+    code: supabase db declarative generate --experimental
+    response: |
+      Creating shadow database...
+      Declarative schema written to supabase/declarative
+      Finished supabase db declarative generate.
+  - id: local-database
+    name: Generate from local database
+    code: supabase db declarative generate --local --experimental
+    response: |
+      Creating shadow database...
+      Declarative schema written to supabase/declarative
+      Finished supabase db declarative generate.
+supabase-db-declarative-sync:
+  - id: from-migrations
+    name: Sync declarative files from local migrations
+    code: supabase db declarative sync --from-migrations --experimental
+    response: |
+      Creating shadow database...
+      Declarative schema synced from migrations.
+  - id: to-migrations
+    name: Generate migration from declarative schema
+    code: supabase db declarative sync --to-migrations -f declarative_sync --experimental
+    response: |
+      Creating shadow database...
+      Created new migration at supabase/migrations/20240414044403_declarative_sync.sql.
 supabase-db-dump:
   - id: basic-usage
     name: Basic usage
@@ -255,6 +293,15 @@ supabase-db-pull:
       No schema changes found
       Try rerunning the command with --debug to troubleshoot the error.
       exit status 1
+  - id: declarative-pg-delta
+    name: Pull declarative schema with pg-delta
+    code: supabase db pull --use-pg-delta --experimental
+    response: |
+      Connecting to remote database...
+      Preparing declarative schema export using pg-delta...
+      Creating shadow database...
+      Declarative schema written to supabase/declarative
+      Finished supabase db pull.
 supabase-db-push:
   - id: basic-usage
     name: Basic usage

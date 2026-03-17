@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"os"
+
 	"github.com/spf13/cobra"
 	"github.com/supabase/cli/internal/encryption/get"
 	"github.com/supabase/cli/internal/encryption/update"
@@ -26,7 +28,7 @@ var (
 		Use:   "update-root-key",
 		Short: "Update root encryption key of a Supabase project",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return update.Run(cmd.Context(), flags.ProjectRef)
+			return update.Run(cmd.Context(), flags.ProjectRef, os.Stdin)
 		},
 	}
 )
