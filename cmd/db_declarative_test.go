@@ -8,6 +8,8 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/db/declarative"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -118,5 +120,43 @@ func TestHasMigrationFiles(t *testing.T) {
 	t.Run("returns true when migrations exist", func(t *testing.T) {
 		fsys := mockFsysWithMigrations()
 		assert.True(t, hasMigrationFiles(fsys))
+	})
+}
+
+func TestSaveApplyDebugBundle(t *testing.T) {
+	t.Run("saves debug artifacts with expected content", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		result := &declarative.SyncResult{
+			DiffSQL:   "ALTER TABLE downloads ADD COLUMN viewed_at timestamptz;",
+			SourceRef: "",
+			TargetRef: "",
+		}
+		applyErr := errors.New("ERROR: column \"viewed_at\" of relation \"downloads\" already exists (SQLSTATE 42701)")
+
+		debugDir := saveApplyDebugBundle("test-apply-error", result, applyErr, fsys)
+
+		require.NotEmpty(t, debugDir)
+
+		// Verify error file
+		errorContent, err := afero.ReadFile(fsys, filepath.Join(debugDir, "error.txt"))
+		require.NoError(t, err)
+		assert.Contains(t, string(errorContent), "column \"viewed_at\"")
+
+		// Verify migration SQL file
+		migrationContent, err := afero.ReadFile(fsys, filepath.Join(debugDir, "generated-migration.sql"))
+		require.NoError(t, err)
+		assert.Equal(t, result.DiffSQL, string(migrationContent))
+	})
+
+	t.Run("returns empty string when save fails", func(t *testing.T) {
+		// Use a read-only filesystem to force a save error
+		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
+		result := &declarative.SyncResult{
+			DiffSQL: "SELECT 1;",
+		}
+
+		debugDir := saveApplyDebugBundle("test-fail", result, errors.New("some error"), fsys)
+
+		assert.Empty(t, debugDir)
 	})
 }

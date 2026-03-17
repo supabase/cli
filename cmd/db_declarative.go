@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
@@ -311,17 +312,66 @@ func runDeclarativeSync(cmd *cobra.Command, args []string) error {
 	}
 
 	if shouldApply {
-		if err := applyMigrationToLocal(ctx, path, fsys); err != nil {
-			fmt.Fprintln(os.Stderr, utils.Red("Migration failed to apply: "+err.Error()))
-			fmt.Fprintln(os.Stderr, "You can try:")
-			fmt.Fprintf(os.Stderr, "  - Review and fix the migration at %s\n", utils.Bold(path))
-			fmt.Fprintf(os.Stderr, "  - Run %s to rebuild from all migrations (warning: local data will be lost)\n", utils.Aqua("supabase db reset"))
-			return err
+		if applyErr := applyMigrationToLocal(ctx, path, fsys); applyErr != nil {
+			fmt.Fprintln(os.Stderr, utils.Red("Migration failed to apply: "+applyErr.Error()))
+
+			// Save debug bundle with apply error context
+			ts := time.Now().UTC().Format("20060102-150405")
+			debugDir := saveApplyDebugBundle(ts+"-apply-error", result, applyErr, fsys)
+
+			// In interactive mode, offer to reset and reapply
+			if isTTY() && !viper.GetBool("YES") {
+				shouldReset, promptErr := console.PromptYesNo(ctx, "Would you like to reset the local database and reapply all migrations? (local data will be lost)", false)
+				if promptErr != nil {
+					return promptErr
+				}
+				if shouldReset {
+					configureLocalDbConfig()
+					if resetErr := reset.Run(ctx, "", 0, flags.DbConfig, fsys); resetErr != nil {
+						fmt.Fprintln(os.Stderr, utils.Red("Database reset also failed: "+resetErr.Error()))
+						resetDebugDir := saveApplyDebugBundle(ts+"-after-reset", result, resetErr, fsys)
+						if len(debugDir) > 0 {
+							fmt.Fprintln(os.Stderr, "\nDebug information saved to "+utils.Bold(debugDir))
+						}
+						if len(resetDebugDir) > 0 {
+							fmt.Fprintln(os.Stderr, "Debug information saved to "+utils.Bold(resetDebugDir))
+						}
+						declarative.PrintDebugBundleMessage("")
+						return resetErr
+					}
+					fmt.Fprintln(os.Stderr, "Database reset and all migrations applied successfully.")
+					return nil
+				}
+			}
+
+			// Non-interactive or user declined reset
+			if len(debugDir) > 0 {
+				declarative.PrintDebugBundleMessage(debugDir)
+			}
+			return applyErr
 		}
 		fmt.Fprintln(os.Stderr, "Migration applied successfully.")
 	}
 
 	return nil
+}
+
+// saveApplyDebugBundle saves a debug bundle for apply errors and returns the debug directory path.
+func saveApplyDebugBundle(id string, result *declarative.SyncResult, applyErr error, fsys afero.Fs) string {
+	bundle := declarative.DebugBundle{
+		ID:           id,
+		SourceRef:    result.SourceRef,
+		TargetRef:    result.TargetRef,
+		MigrationSQL: result.DiffSQL,
+		Error:        applyErr,
+		Migrations:   declarative.CollectMigrationsList(fsys),
+	}
+	debugDir, saveErr := declarative.SaveDebugBundle(bundle, fsys)
+	if saveErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to save debug artifacts: %v\n", saveErr)
+		return ""
+	}
+	return debugDir
 }
 
 // applyMigrationToLocal connects to the local database and applies a single migration.
