@@ -94,7 +94,7 @@ func RunLinked(ctx context.Context, advisorType string, level string, failOn str
 		lints = append(lints, perfLints...)
 	}
 
-	filtered := filterByLevel(lints, level)
+	filtered := filterLints(lints, "all", level)
 	return outputAndCheck(filtered, failOn, os.Stdout)
 }
 
@@ -205,17 +205,6 @@ func filterLints(lints []Lint, advisorType string, level string) []Lint {
 			continue
 		}
 		filtered = append(filtered, l)
-	}
-	return filtered
-}
-
-func filterByLevel(lints []Lint, level string) []Lint {
-	minLevel := toEnum(level)
-	var filtered []Lint
-	for _, l := range lints {
-		if toEnum(l.Level) >= minLevel {
-			filtered = append(filtered, l)
-		}
 	}
 	return filtered
 }
