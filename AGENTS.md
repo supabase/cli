@@ -59,6 +59,8 @@ Key references:
 
 Run quality checks from the workspace directory you changed. Do not consider a task complete until all relevant scripts pass.
 Do not waive or defer failing checks in a changed workspace as "pre-existing". If a required check fails, fix it before closing the task. Only treat a failure as an external blocker when it cannot be resolved within the workspace, and in that case call it out explicitly.
+If you run a workspace check command such as `bun run --parallel "*:check"`, you own all failing checks in that workspace for the duration of the task, even if the failing files look unrelated. Do not leave the workspace with unresolved failing checks after running the command.
+Do not use TypeScript `as` casts to silence type errors in production code. If a type does not line up, fix the typing or restructure the code until it type-checks cleanly.
 
 For the standard Bun/TypeScript workspaces:
 
@@ -90,6 +92,13 @@ See `apps/cli/src/commands/login/` as the canonical example.
 1. **Unit tests** on `lib/` — pure functions, no Effect context needed
 2. **Integration tests** on handlers — business logic with mocked Effect services via `Layer.succeed`
 3. **E2e tests** — 2 to 4 tests per command covering the golden path and basic error output
+
+### Test execution policy
+
+- Always run unit and integration tests for the workspace you changed before considering the task done.
+- Do not automatically run the full e2e suite as part of the normal feedback loop.
+- Run e2e tests only when the user asks for them, or when you specifically need them for the command you touched.
+- When you do run e2e tests automatically, run only the targeted e2e file(s) for the command you changed, not unrelated e2e tests.
 
 ### Integration test pattern
 

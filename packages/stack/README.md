@@ -21,7 +21,7 @@ bun add @supabase/local
 ## Quick Start
 
 ```typescript
-import { createStack } from "@supabase/local/bun";
+import { createStack } from "@supabase/local";
 
 // Zero config — all settings have sensible defaults
 const stack = await createStack();
@@ -35,7 +35,7 @@ await stack.dispose();
 ### With explicit config
 
 ```typescript
-import { createStack } from "@supabase/local/bun";
+import { createStack } from "@supabase/local";
 import { createClient } from "@supabase/supabase-js";
 
 const stack = await createStack({
@@ -227,17 +227,13 @@ const history = await stack.logHistory("auth", 100);
 
 ## Platform Support
 
-The package provides platform-specific entry points with identical APIs:
+The package uses export conditions so Bun and Node.js consumers import from the same root:
 
 ```typescript
-// Bun
-import { createStack } from "@supabase/local/bun";
-
-// Node.js
-import { createStack } from "@supabase/local/node";
+import { createStack } from "@supabase/local";
 ```
 
-Both export the same `createStack(config): Promise<Stack>` function. The only difference is the underlying HTTP server implementation used for the API proxy.
+The runtime selects the Bun or Node.js implementation automatically. Both expose the same `createStack(config): Promise<Stack>` API.
 
 ## Prefetching
 
@@ -245,7 +241,7 @@ Pre-download binaries and Docker images before they're needed — useful in test
 
 ```typescript
 // vitest.config.ts globalSetup
-import { prefetch } from "@supabase/local/bun";
+import { prefetch } from "@supabase/local";
 
 export async function setup() {
   await prefetch();
@@ -313,7 +309,7 @@ try {
 
 ```typescript
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { createStack } from "@supabase/local/bun";
+import { createStack } from "@supabase/local";
 import { createClient } from "@supabase/supabase-js";
 
 describe("my app", () => {

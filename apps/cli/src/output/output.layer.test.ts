@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { beforeEach, vi } from "vitest";
+import { afterEach, beforeEach, vi } from "vitest";
 import { Cause, Effect, Exit, Layer, Sink, Stdio, Stream } from "effect";
 import { NonInteractiveError } from "./errors.ts";
 import { mockTty } from "../../tests/helpers/mocks.ts";
@@ -15,6 +15,16 @@ const mockClack = vi.hoisted(() => ({
   intro: vi.fn(),
   outro: vi.fn(),
   note: vi.fn(),
+  spinnerFactory: vi.fn(),
+  spinnerHandle: {
+    start: vi.fn(),
+    stop: vi.fn(),
+    cancel: vi.fn(),
+    error: vi.fn(),
+    message: vi.fn(),
+    clear: vi.fn(),
+    isCancelled: false,
+  },
   log: {
     message: vi.fn(),
     info: vi.fn(),
@@ -26,6 +36,8 @@ const mockClack = vi.hoisted(() => ({
   text: vi.fn(),
   password: vi.fn(),
   confirm: vi.fn(),
+  select: vi.fn(),
+  multiselect: vi.fn(),
   cancel: vi.fn(),
   isCancel: vi.fn((_v: unknown) => false),
 }));
@@ -35,16 +47,25 @@ vi.mock("@clack/prompts", () => ({
   outro: (a: unknown) => mockClack.outro(a),
   note: (a: unknown, b?: unknown, c?: unknown) => mockClack.note(a, b, c),
   log: mockClack.log,
+  spinner: () => mockClack.spinnerFactory(),
   text: (a: unknown) => mockClack.text(a),
   password: (a: unknown) => mockClack.password(a),
   confirm: (a: unknown) => mockClack.confirm(a),
+  select: (a: unknown) => mockClack.select(a),
+  multiselect: (a: unknown) => mockClack.multiselect(a),
   cancel: (a: unknown) => mockClack.cancel(a),
   isCancel: (a: unknown) => mockClack.isCancel(a),
 }));
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.useRealTimers();
   mockClack.isCancel.mockReturnValue(false);
+  mockClack.spinnerFactory.mockReturnValue(mockClack.spinnerHandle);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 function mockStdio() {
@@ -135,6 +156,68 @@ describe("Output", () => {
         const out = yield* Output;
         yield* out.success("done!");
         expect(mockClack.log.success).toHaveBeenCalledWith("done!");
+      }).pipe(Effect.provide(layer)),
+    );
+
+    it.effect("task uses clack spinner and can resolve into info", () =>
+      Effect.gen(function* () {
+        vi.useFakeTimers();
+        const out = yield* Output;
+        const task = yield* out.task("Loading organizations...");
+        yield* task.message("Still loading...");
+        vi.advanceTimersByTime(200);
+        yield* task.info("Loaded organizations.");
+
+        expect(mockClack.spinnerFactory).toHaveBeenCalledTimes(1);
+        expect(mockClack.spinnerHandle.start).toHaveBeenCalledWith("Still loading...");
+        expect(mockClack.spinnerHandle.message).not.toHaveBeenCalled();
+        expect(mockClack.spinnerHandle.clear).toHaveBeenCalledTimes(1);
+        expect(mockClack.log.info).toHaveBeenCalledWith("Loaded organizations.");
+      }).pipe(Effect.provide(layer)),
+    );
+
+    it.effect("task skips the spinner when it completes quickly", () =>
+      Effect.gen(function* () {
+        vi.useFakeTimers();
+        const out = yield* Output;
+        const task = yield* out.task("Loading organizations...");
+        yield* task.succeed("Loaded organizations.");
+        vi.advanceTimersByTime(200);
+
+        expect(mockClack.spinnerFactory).not.toHaveBeenCalled();
+        expect(mockClack.spinnerHandle.start).not.toHaveBeenCalled();
+        expect(mockClack.log.success).toHaveBeenCalledWith("Loaded organizations.");
+      }).pipe(Effect.provide(layer)),
+    );
+
+    it.effect(
+      "task keeps raw multiline formatting when it completes before the spinner shows",
+      () =>
+        Effect.gen(function* () {
+          vi.useFakeTimers();
+          const out = yield* Output;
+          const task = yield* out.task("Loading organizations...");
+          yield* task.succeed("- name: Supabase\n- name: Supabase Dev");
+          vi.advanceTimersByTime(200);
+
+          expect(mockClack.spinnerFactory).not.toHaveBeenCalled();
+          expect(mockClack.log.success).toHaveBeenCalledWith(
+            "- name: Supabase\n- name: Supabase Dev",
+          );
+        }).pipe(Effect.provide(layer)),
+    );
+
+    it.effect("task prefixes continuation lines for multiline completions", () =>
+      Effect.gen(function* () {
+        vi.useFakeTimers();
+        const out = yield* Output;
+        const task = yield* out.task("Loading organizations...");
+        vi.advanceTimersByTime(200);
+        yield* task.succeed("- name: Supabase\n- name: Supabase Dev");
+
+        expect(mockClack.spinnerHandle.stop).toHaveBeenCalledWith(
+          "- name: Supabase\n\x1B[90m│\x1B[39m  - name: Supabase Dev",
+        );
       }).pipe(Effect.provide(layer)),
     );
 
@@ -239,6 +322,30 @@ describe("Output", () => {
         }
       }).pipe(Effect.provide(layer));
     });
+
+    it.effect("promptSelect returns the selected value", () => {
+      mockClack.select.mockResolvedValue("pro");
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        const result = yield* out.promptSelect("Select a plan", [
+          { value: "free", label: "Free" },
+          { value: "pro", label: "Pro", hint: "Recommended" },
+        ]);
+        expect(result).toBe("pro");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("promptMultiSelect returns selected values", () => {
+      mockClack.multiselect.mockResolvedValue(["one", "two"]);
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        const result = yield* out.promptMultiSelect("Choose regions", [
+          { value: "one", label: "One" },
+          { value: "two", label: "Two" },
+        ]);
+        expect(result).toEqual(["one", "two"]);
+      }).pipe(Effect.provide(layer));
+    });
   });
 
   describe("json layer", () => {
@@ -320,6 +427,21 @@ describe("Output", () => {
       }).pipe(Effect.provide(layer));
     });
 
+    it.effect("task writes lifecycle messages to stderr", () => {
+      const mock = mockStdio();
+      const layer = jsonOutputLayer.pipe(Layer.provide(mock.layer));
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        const task = yield* out.task("Loading organizations...");
+        yield* task.succeed("Loaded organizations.");
+
+        expect(mock.stderr).toEqual([
+          "[task] start: Loading organizations...\n",
+          "[task] done: Loaded organizations.\n",
+        ]);
+      }).pipe(Effect.provide(layer));
+    });
+
     it.effect("promptText fails with NonInteractiveError", () => {
       const mock = mockStdio();
       const layer = jsonOutputLayer.pipe(Layer.provide(mock.layer));
@@ -346,6 +468,30 @@ describe("Output", () => {
       return Effect.gen(function* () {
         const out = yield* Output;
         const exit = yield* out.promptConfirm("Confirm?").pipe(Effect.exit);
+        expect(getFailError(exit)).toBeInstanceOf(NonInteractiveError);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("promptSelect fails with NonInteractiveError", () => {
+      const mock = mockStdio();
+      const layer = jsonOutputLayer.pipe(Layer.provide(mock.layer));
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        const exit = yield* out
+          .promptSelect("Select", [{ value: "free", label: "Free" }])
+          .pipe(Effect.exit);
+        expect(getFailError(exit)).toBeInstanceOf(NonInteractiveError);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("promptMultiSelect fails with NonInteractiveError", () => {
+      const mock = mockStdio();
+      const layer = jsonOutputLayer.pipe(Layer.provide(mock.layer));
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        const exit = yield* out
+          .promptMultiSelect("Select", [{ value: "free", label: "Free" }])
+          .pipe(Effect.exit);
         expect(getFailError(exit)).toBeInstanceOf(NonInteractiveError);
       }).pipe(Effect.provide(layer));
     });
@@ -484,6 +630,34 @@ describe("Output", () => {
       }).pipe(Effect.provide(layer));
     });
 
+    it.effect("task emits NDJSON logs", () => {
+      const mock = mockStdio();
+      const layer = streamJsonOutputLayer.pipe(Layer.provide(mock.layer));
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        const task = yield* out.task("Loading organizations...");
+        yield* task.succeed("Loaded organizations.");
+
+        expect(mock.stdout).toHaveLength(2);
+        const started = JSON.parse(mock.stdout[0]!);
+        const finished = JSON.parse(mock.stdout[1]!);
+        expect(started).toEqual(
+          expect.objectContaining({
+            type: "log",
+            level: "info",
+            message: "Loading organizations...",
+          }),
+        );
+        expect(finished).toEqual(
+          expect.objectContaining({
+            type: "log",
+            level: "success",
+            message: "Loaded organizations.",
+          }),
+        );
+      }).pipe(Effect.provide(layer));
+    });
+
     it.effect("promptText fails with NonInteractiveError", () => {
       const mock = mockStdio();
       const layer = streamJsonOutputLayer.pipe(Layer.provide(mock.layer));
@@ -510,6 +684,30 @@ describe("Output", () => {
       return Effect.gen(function* () {
         const out = yield* Output;
         const exit = yield* out.promptConfirm("Confirm?").pipe(Effect.exit);
+        expect(getFailError(exit)).toBeInstanceOf(NonInteractiveError);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("promptSelect fails with NonInteractiveError", () => {
+      const mock = mockStdio();
+      const layer = streamJsonOutputLayer.pipe(Layer.provide(mock.layer));
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        const exit = yield* out
+          .promptSelect("Select", [{ value: "free", label: "Free" }])
+          .pipe(Effect.exit);
+        expect(getFailError(exit)).toBeInstanceOf(NonInteractiveError);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("promptMultiSelect fails with NonInteractiveError", () => {
+      const mock = mockStdio();
+      const layer = streamJsonOutputLayer.pipe(Layer.provide(mock.layer));
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        const exit = yield* out
+          .promptMultiSelect("Select", [{ value: "free", label: "Free" }])
+          .pipe(Effect.exit);
         expect(getFailError(exit)).toBeInstanceOf(NonInteractiveError);
       }).pipe(Effect.provide(layer));
     });

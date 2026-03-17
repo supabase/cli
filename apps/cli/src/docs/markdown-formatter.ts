@@ -1,3 +1,4 @@
+import { Option } from "effect";
 import type { HelpDoc } from "effect/unstable/cli";
 
 export function formatTable(headers: string[], rows: string[][]): string {
@@ -25,7 +26,12 @@ export function formatHelpDocAsMarkdown(doc: HelpDoc.HelpDoc): string {
   if (doc.args && doc.args.length > 0) {
     const rows = doc.args.map((arg) => {
       const name = arg.variadic ? `\`${arg.name}...\`` : `\`${arg.name}\``;
-      return [name, `\`${arg.type}\``, arg.required ? "Yes" : "No", arg.description ?? ""];
+      return [
+        name,
+        `\`${arg.type}\``,
+        arg.required ? "Yes" : "No",
+        Option.getOrUndefined(arg.description) ?? "",
+      ];
     });
     sections.push(
       `## Arguments\n\n${formatTable(["Argument", "Type", "Required", "Description"], rows)}`,
@@ -35,7 +41,7 @@ export function formatHelpDocAsMarkdown(doc: HelpDoc.HelpDoc): string {
   if (doc.flags.length > 0) {
     const rows = doc.flags.map((flag) => {
       const names = [`--${flag.name}`, ...flag.aliases].map((n) => `\`${n}\``).join(", ");
-      return [names, `\`${flag.type}\``, flag.description ?? ""];
+      return [names, `\`${flag.type}\``, Option.getOrUndefined(flag.description) ?? ""];
     });
     sections.push(`## Flags\n\n${formatTable(["Flag", "Type", "Description"], rows)}`);
   }

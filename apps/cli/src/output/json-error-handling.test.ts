@@ -48,6 +48,15 @@ function mockOutput(format: "text" | "json" | "stream-json" = "text") {
       warn: (_message: string) => Effect.void,
       error: (_message: string) => Effect.void,
       event: (_event) => Effect.void,
+      task: (_message: string) =>
+        Effect.succeed({
+          message: (_nextMessage: string) => Effect.void,
+          succeed: (_nextMessage?: string) => Effect.void,
+          fail: (_nextMessage?: string) => Effect.void,
+          info: (_nextMessage?: string) => Effect.void,
+          cancel: (_nextMessage?: string) => Effect.void,
+          clear: () => Effect.void,
+        }),
       success: (_message: string, _data?: Record<string, unknown>) => Effect.void,
       fail: (err: FailCall) =>
         Effect.sync(() => {
@@ -63,6 +72,9 @@ function mockOutput(format: "text" | "json" | "stream-json" = "text") {
       promptText: () => Effect.succeed(""),
       promptPassword: () => Effect.succeed(""),
       promptConfirm: () => Effect.succeed(true),
+      promptSelect: (_message, options) => Effect.succeed(options[0]!.value),
+      promptMultiSelect: (_message, options) =>
+        Effect.succeed(options.map((option) => option.value)),
     }),
     get failCalls() {
       return failCalls;

@@ -24,11 +24,17 @@ const fn = Effect.fnUntraced(function* (param: string) {
 });
 ```
 
+Do not use `as` casts to paper over Effect or CLI typing issues. Fix the type relationships directly, or restructure the code until the compiler is satisfied without assertions.
+
 ## Testing
 
 Use `bun run test` (not `bun test`) to run tests. The package.json `test` script runs all Vitest projects with coverage enabled for the `core` project.
 
 Use `bun run test:core` for the main in-process suite and `bun run test:e2e` for the sequential subprocess suite.
+
+Always run the relevant unit and integration tests automatically for the command or workspace you changed.
+Do not run the full e2e suite automatically. Only run e2e when the user asks, or when you need extra confidence for the command you touched.
+When running e2e automatically, run only the targeted `*.e2e.test.ts` file(s) for the command you changed.
 
 When running the CLI from source, always invoke it as `bun src/supabase.ts ...` directly. Do not use `bun run src/supabase.ts` because of Bun bug #11400.
 

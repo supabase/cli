@@ -18,3 +18,6 @@ See [`docs/architecture.md`](docs/architecture.md) for the full architecture doc
 Use `bun run test` (not `bun test`) to run tests — we use vitest.
 
 Uses `@effect/vitest` with `it.effect` / `it.live`. Mock factories in `tests/helpers/mocks.ts`.
+
+Always run the relevant unit and integration tests for the workspace you changed.
+Do not automatically run unrelated e2e tests. Only run targeted e2e coverage when the user asks, or when the specific command or surface you touched needs it.

@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { ConfigProvider, Effect, Exit, Layer, ServiceMap, Tracer } from "effect";
+import { ConfigProvider, Effect, Exit, Layer, Option, ServiceMap, Tracer } from "effect";
 import { cliConfigLayer } from "../config/cli-config.layer.ts";
 import type { TelemetryConfig } from "./types.ts";
 import { mockRuntimeInfo, mockTty } from "../../tests/helpers/mocks.ts";
@@ -77,12 +77,12 @@ function makeSpanOptions(
   overrides: Partial<{
     name: string;
     sampled: boolean;
-    parent: Tracer.AnySpan | undefined;
+    parent: Option.Option<Tracer.AnySpan>;
   }> = {},
 ) {
   return {
     name: overrides.name ?? "test-span",
-    parent: overrides.parent ?? undefined,
+    parent: overrides.parent ?? Option.none(),
     annotations: ServiceMap.empty(),
     links: [] as Tracer.SpanLink[],
     startTime: BigInt(Date.now()) * 1_000_000n,
@@ -350,7 +350,7 @@ describe("ExportableSpan unit tests", () => {
     return Effect.gen(function* () {
       const tracer = yield* Tracer.Tracer;
       const parent = tracer.span(makeSpanOptions({ name: "parent" }));
-      const child = tracer.span(makeSpanOptions({ name: "child", parent }));
+      const child = tracer.span(makeSpanOptions({ name: "child", parent: Option.some(parent) }));
       expect(child.traceId).toBe(parent.traceId);
     }).pipe(
       Effect.provide(buildTracingLayer({ home })),

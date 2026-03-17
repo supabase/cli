@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, vi } from "vitest";
-import { ConfigProvider, Effect, FileSystem, Layer, Option } from "effect";
+import { ConfigProvider, Effect, FileSystem, Layer, Option, Redacted } from "effect";
 import { mockRuntimeInfo } from "../../tests/helpers/mocks.ts";
 import { cliConfigLayer } from "../config/cli-config.layer.ts";
 import { Credentials } from "./credentials.service.ts";
@@ -75,13 +75,20 @@ afterEach(() => {
 });
 
 describe("Credentials", () => {
+  const expectSomeToken = (token: Option.Option<Redacted.Redacted<string>>, expected: string) => {
+    expect(Option.isSome(token)).toBe(true);
+    if (Option.isSome(token)) {
+      expect(Redacted.value(token.value)).toBe(expected);
+    }
+  };
+
   describe("getAccessToken", () => {
     it.effect("reads from current account", () => {
       passwords.set("Supabase CLI/access-token", "current-token");
       return Effect.gen(function* () {
         const { getAccessToken } = yield* Credentials;
         const token = yield* getAccessToken;
-        expect(token).toEqual(Option.some("current-token"));
+        expectSomeToken(token, "current-token");
       }).pipe(Effect.provide(makeLayer(tempHome)));
     });
 
@@ -90,7 +97,7 @@ describe("Credentials", () => {
       return Effect.gen(function* () {
         const { getAccessToken } = yield* Credentials;
         const token = yield* getAccessToken;
-        expect(token).toEqual(Option.some("legacy-token"));
+        expectSomeToken(token, "legacy-token");
       }).pipe(Effect.provide(makeLayer(tempHome)));
     });
 
@@ -100,7 +107,7 @@ describe("Credentials", () => {
       return Effect.gen(function* () {
         const { getAccessToken } = yield* Credentials;
         const token = yield* getAccessToken;
-        expect(token).toEqual(Option.some("current-token"));
+        expectSomeToken(token, "current-token");
       }).pipe(Effect.provide(makeLayer(tempHome)));
     });
 
@@ -121,7 +128,7 @@ describe("Credentials", () => {
       return Effect.gen(function* () {
         const { getAccessToken } = yield* Credentials;
         const token = yield* getAccessToken;
-        expect(token).toEqual(Option.some("fs-token-123"));
+        expectSomeToken(token, "fs-token-123");
       }).pipe(Effect.provide(makeLayer(tempHome)));
     });
 
@@ -132,7 +139,7 @@ describe("Credentials", () => {
       return Effect.gen(function* () {
         const { getAccessToken } = yield* Credentials;
         const token = yield* getAccessToken;
-        expect(token).toEqual(Option.some("fs-only-token"));
+        expectSomeToken(token, "fs-only-token");
       }).pipe(Effect.provide(makeLayer(tempHome, { SUPABASE_NO_KEYRING: "1" })));
     });
 
@@ -172,7 +179,7 @@ describe("Credentials", () => {
         const { getAccessToken } = yield* Credentials;
         const token = yield* getAccessToken;
         // keyring returns null (falsy) for both → falls through to filesystem
-        expect(token).toEqual(Option.some("fs-fallback-token"));
+        expectSomeToken(token, "fs-fallback-token");
       }).pipe(Effect.provide(makeLayer(tempHome)));
     });
 

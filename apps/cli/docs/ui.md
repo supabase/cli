@@ -248,8 +248,7 @@ function DataComponent() {
 
 ```ts
 import * as Atom from "effect/unstable/reactivity/Atom";
-import type { StackServiceState } from "@supabase/stack";
-import type { StackInfo } from "@supabase/stack/internals";
+import type { StackInfo, StackServiceState } from "@supabase/stack/effect";
 
 export type StartPhase = "starting" | "running" | "failed" | "stopping";
 

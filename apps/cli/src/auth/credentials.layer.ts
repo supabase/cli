@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 
 import { CliConfig } from "../config/cli-config.service.ts";
 import { Credentials } from "./credentials.service.ts";
@@ -32,7 +32,7 @@ const makeCredentials = Effect.gen(function* () {
         try {
           const entry = new keyringModule.value.Entry(SERVICE, ACCOUNT);
           const token = entry.getPassword();
-          if (token) return Option.some(token);
+          if (token) return Option.some(Redacted.make(token));
         } catch {
           /* fall through */
         }
@@ -40,7 +40,7 @@ const makeCredentials = Effect.gen(function* () {
         try {
           const entry = new keyringModule.value.Entry(SERVICE, LEGACY_ACCOUNT);
           const token = entry.getPassword();
-          if (token) return Option.some(token);
+          if (token) return Option.some(Redacted.make(token));
         } catch {
           /* fall through */
         }
@@ -50,19 +50,20 @@ const makeCredentials = Effect.gen(function* () {
       if (exists) {
         const content = yield* fs.readFileString(fallbackPath);
         const trimmed = content.trim();
-        if (trimmed) return Option.some(trimmed);
+        if (trimmed) return Option.some(Redacted.make(trimmed));
       }
 
       return Option.none();
     }).pipe(Effect.orElseSucceed(() => Option.none())),
 
     // Writes follow the same policy: keyring when possible, filesystem when necessary.
-    saveAccessToken: (token: string) =>
+    saveAccessToken: (token: string | Redacted.Redacted<string>) =>
       Effect.gen(function* () {
+        const plainToken = typeof token === "string" ? token : Redacted.value(token);
         if (Option.isSome(keyringModule)) {
           try {
             const entry = new keyringModule.value.Entry(SERVICE, ACCOUNT);
-            entry.setPassword(token);
+            entry.setPassword(plainToken);
             return;
           } catch {
             /* fall through */
@@ -70,7 +71,7 @@ const makeCredentials = Effect.gen(function* () {
         }
 
         yield* fs.makeDirectory(fallbackDir, { recursive: true, mode: 0o700 });
-        yield* fs.writeFileString(fallbackPath, token, { mode: 0o600 });
+        yield* fs.writeFileString(fallbackPath, plainToken, { mode: 0o600 });
       }).pipe(Effect.orDie),
   });
 });

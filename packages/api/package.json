@@ -4,10 +4,15 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "bun": "./src/bun.ts",
+      "default": "./src/node.ts"
+    },
+    "./effect": "./src/effect.ts",
+    "./openapi.json": "./src/generated/openapi.json"
   },
   "scripts": {
-    "generate": "openapi-typescript https://api.supabase.com/api/v1-json -o src/v1.d.ts",
+    "generate": "bun run scripts/generate.ts",
     "test": "bun test --concurrent",
     "types:check": "tsgo --noEmit",
     "lint:check": "oxlint --type-aware --deny-warnings",
@@ -18,16 +23,30 @@
     "knip:fix": "knip-bun --fix"
   },
   "dependencies": {
-    "openapi-fetch": "^0.17.0"
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "effect": "catalog:",
+    "undici": "^7.24.4"
   },
   "devDependencies": {
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@typescript/native-preview": "catalog:",
     "knip": "catalog:",
-    "openapi-typescript": "^7.13.0",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:"
+  },
+  "knip": {
+    "entry": [
+      "src/effect.ts",
+      "src/bun.ts",
+      "src/node.ts",
+      "src/**/*.test.ts",
+      "scripts/generate.ts"
+    ],
+    "ignoreDependencies": [
+      "undici"
+    ]
   }
 }

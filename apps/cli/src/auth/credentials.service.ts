@@ -1,4 +1,4 @@
-import type { Effect, Option } from "effect";
+import type { Effect, Option, Redacted } from "effect";
 import { ServiceMap } from "effect";
 
 /**
@@ -8,8 +8,8 @@ import { ServiceMap } from "effect";
  * filesystem so command handlers can treat token storage as one stable service.
  */
 interface CredentialsShape {
-  readonly getAccessToken: Effect.Effect<Option.Option<string>>;
-  readonly saveAccessToken: (token: string) => Effect.Effect<void>;
+  readonly getAccessToken: Effect.Effect<Option.Option<Redacted.Redacted<string>>>;
+  readonly saveAccessToken: (token: string | Redacted.Redacted<string>) => Effect.Effect<void>;
 }
 
 /**

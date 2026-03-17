@@ -1,7 +1,6 @@
 import * as Atom from "effect/unstable/reactivity/Atom";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
-import type { StackServiceState } from "@supabase/stack";
-import type { StackInfo } from "@supabase/stack/internals";
+import type { StackServiceState, StackInfo } from "@supabase/stack/effect";
 import { Effect, Layer } from "effect";
 import { StartDashboardState, type StartPhase } from "./dashboard-state.ts";
 

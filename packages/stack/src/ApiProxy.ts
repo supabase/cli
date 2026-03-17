@@ -1,4 +1,4 @@
-import { Effect, Layer, ServiceMap } from "effect";
+import { Effect, Layer, Option, ServiceMap } from "effect";
 import {
   Headers,
   HttpBody,
@@ -110,7 +110,7 @@ function makeProxyHandler(
       if (opts.transformAuth === true) {
         outHeaders = transformAuthorization(outHeaders, config);
       }
-      outHeaders = addProxyHeaders(outHeaders, req.remoteAddress);
+      outHeaders = addProxyHeaders(outHeaders, Option.getOrUndefined(req.remoteAddress));
 
       for (const [name, value] of Object.entries(opts.extraHeaders ?? {})) {
         outHeaders = Headers.set(outHeaders, name, value);
@@ -118,7 +118,7 @@ function makeProxyHandler(
 
       const backendUrl = `http://127.0.0.1:${opts.backendPort}${backendPath}`;
       const noBodyMethods = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
-      const contentType = req.headers["content-type"];
+      const contentType = Option.getOrUndefined(Headers.get(req.headers, "content-type"));
       const body = noBodyMethods.has(req.method)
         ? HttpBody.empty
         : HttpBody.stream(req.stream, contentType);

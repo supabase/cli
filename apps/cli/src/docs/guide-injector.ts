@@ -1,3 +1,4 @@
+import { Option } from "effect";
 import type { HelpDoc } from "effect/unstable/cli";
 import { formatTable } from "./markdown-formatter.ts";
 
@@ -14,7 +15,12 @@ export function formatSection(doc: HelpDoc.HelpDoc, section: MarkerSection): str
       if (!doc.args || doc.args.length === 0) return undefined;
       const rows = doc.args.map((arg) => {
         const name = arg.variadic ? `\`${arg.name}...\`` : `\`${arg.name}\``;
-        return [name, `\`${arg.type}\``, arg.required ? "Yes" : "No", arg.description ?? ""];
+        return [
+          name,
+          `\`${arg.type}\``,
+          arg.required ? "Yes" : "No",
+          Option.getOrUndefined(arg.description) ?? "",
+        ];
       });
       return `## Arguments\n\n${formatTable(["Argument", "Type", "Required", "Description"], rows)}`;
     }
@@ -23,7 +29,7 @@ export function formatSection(doc: HelpDoc.HelpDoc, section: MarkerSection): str
       if (doc.flags.length === 0) return undefined;
       const rows = doc.flags.map((flag) => {
         const names = [`--${flag.name}`, ...flag.aliases].map((n) => `\`${n}\``).join(", ");
-        return [names, `\`${flag.type}\``, flag.description ?? ""];
+        return [names, `\`${flag.type}\``, Option.getOrUndefined(flag.description) ?? ""];
       });
       return `## Flags\n\n${formatTable(["Flag", "Type", "Description"], rows)}`;
     }

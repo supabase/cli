@@ -85,7 +85,9 @@ const signalAwareProgram = Effect.scoped(
   Effect.provide(BunServices.layer),
 );
 
-const handledProgram = <A, E, R>(program: Effect.Effect<A, E, R>) =>
+const handledProgram = (
+  program: Effect.Effect<unknown, unknown, never>,
+): Effect.Effect<never, never, never> =>
   Effect.gen(function* () {
     const processControl = yield* ProcessControl;
     const output = yield* Output;

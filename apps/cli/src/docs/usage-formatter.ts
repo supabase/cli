@@ -1,3 +1,4 @@
+import { Option } from "effect";
 import type { Command, HelpDoc } from "effect/unstable/cli";
 import { findCommand, getHelpDoc } from "./command-docs.ts";
 
@@ -22,8 +23,9 @@ function formatFlag(flag: HelpDoc.FlagDoc, level: number, global = false): strin
 
   const flagStr = parts.join(" ");
   const attrs: string[] = [];
-  if (flag.description) {
-    attrs.push(`help="${escapeKdl(flag.description)}"`);
+  const description = Option.getOrUndefined(flag.description);
+  if (description) {
+    attrs.push(`help="${escapeKdl(description)}"`);
   }
   if (flag.required) {
     attrs.push("required=#true");
@@ -45,8 +47,9 @@ function formatArg(arg: HelpDoc.ArgDoc, level: number): string {
   }
 
   const attrs: string[] = [];
-  if (arg.description) {
-    attrs.push(`help="${escapeKdl(arg.description)}"`);
+  const description = Option.getOrUndefined(arg.description);
+  if (description) {
+    attrs.push(`help="${escapeKdl(description)}"`);
   }
 
   const attrStr = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";

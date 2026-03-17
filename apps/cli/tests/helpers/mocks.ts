@@ -1,7 +1,6 @@
-import { ConfigProvider, Deferred, Effect, Layer, Option, PubSub, Stream } from "effect";
+import { ConfigProvider, Deferred, Effect, Layer, Option, PubSub, Redacted, Stream } from "effect";
 import type { ReactElement } from "react";
-import { StackServiceState } from "@supabase/stack";
-import { Stack, type StackInfo } from "@supabase/stack/internals";
+import { Stack, StackServiceState, type StackInfo } from "@supabase/stack/effect";
 import { Api } from "../../src/auth/api.service.ts";
 import type { LoginSessionResponse } from "../../src/auth/api.service.ts";
 import { Credentials } from "../../src/auth/credentials.service.ts";
@@ -60,10 +59,22 @@ export function mockCrypto(token = "sbp_" + "a".repeat(40)): Layer.Layer<Crypto>
   });
 }
 
-export function mockStdin(isTTY: boolean, pipedToken?: string): Layer.Layer<Stdin> {
+export function mockStdin(isTTY: boolean, pipedInput?: string | Uint8Array): Layer.Layer<Stdin> {
+  const pipedBytes =
+    pipedInput === undefined
+      ? Option.none<Uint8Array>()
+      : Option.some(
+          typeof pipedInput === "string" ? new TextEncoder().encode(pipedInput) : pipedInput,
+        );
+
   return Layer.succeed(Stdin, {
     isTTY,
-    readPipedToken: Effect.succeed(pipedToken ? Option.some(pipedToken) : Option.none()),
+    readPipedBytes: Effect.succeed(pipedBytes),
+    readPipedText: Effect.succeed(
+      Option.isSome(pipedBytes)
+        ? Option.some(new TextDecoder().decode(pipedBytes.value))
+        : Option.none<string>(),
+    ),
   });
 }
 
@@ -149,11 +160,11 @@ export function mockCredentials(opts: { existingToken?: string } = {}) {
     layer: Layer.succeed(Credentials, {
       getAccessToken: Effect.sync(() => {
         const token = opts.existingToken ?? savedToken;
-        return token ? Option.some(token) : Option.none();
+        return token ? Option.some(Redacted.make(token)) : Option.none();
       }),
-      saveAccessToken: (token: string) =>
+      saveAccessToken: (token: string | Redacted.Redacted<string>) =>
         Effect.sync(() => {
-          savedToken = token;
+          savedToken = typeof token === "string" ? token : Redacted.value(token);
         }),
     }),
     get savedToken() {
@@ -195,6 +206,41 @@ export function mockOutput(
       error: (message: string) =>
         Effect.sync(() => {
           messages.push({ type: "error", message });
+        }),
+      task: (message: string) =>
+        Effect.sync(() => {
+          progressEvents.push({ type: "start", message });
+          return {
+            message: (nextMessage: string) =>
+              Effect.sync(() => {
+                progressEvents.push({ type: "message", message: nextMessage });
+              }),
+            succeed: (nextMessage?: string) =>
+              Effect.sync(() => {
+                if (nextMessage !== undefined) {
+                  messages.push({ type: "success", message: nextMessage });
+                }
+              }),
+            fail: (nextMessage?: string) =>
+              Effect.sync(() => {
+                if (nextMessage !== undefined) {
+                  messages.push({ type: "error", message: nextMessage });
+                }
+              }),
+            info: (nextMessage?: string) =>
+              Effect.sync(() => {
+                if (nextMessage !== undefined) {
+                  messages.push({ type: "info", message: nextMessage });
+                }
+              }),
+            cancel: (nextMessage?: string) =>
+              Effect.sync(() => {
+                if (nextMessage !== undefined) {
+                  messages.push({ type: "warn", message: nextMessage });
+                }
+              }),
+            clear: () => Effect.void,
+          };
         }),
       event: (event) =>
         Effect.sync(() => {
@@ -259,6 +305,9 @@ export function mockOutput(
       })(),
       promptPassword: () => Effect.succeed(""),
       promptConfirm: () => Effect.succeed(opts.confirmRelogin ?? true),
+      promptSelect: (_message, options) => Effect.succeed(options[0]!.value),
+      promptMultiSelect: (_message, options) =>
+        Effect.succeed(options.map((option) => option.value)),
     }),
     messages,
     progressEvents,

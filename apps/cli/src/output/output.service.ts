@@ -4,6 +4,15 @@ import { ServiceMap } from "effect";
 import type { NonInteractiveError } from "./errors.ts";
 import type { OutputFormat, StreamEvent } from "./types.ts";
 
+interface OutputTask {
+  readonly message: (message: string) => Effect.Effect<void>;
+  readonly succeed: (message?: string) => Effect.Effect<void>;
+  readonly fail: (message?: string) => Effect.Effect<void>;
+  readonly info: (message?: string) => Effect.Effect<void>;
+  readonly cancel: (message?: string) => Effect.Effect<void>;
+  readonly clear: () => Effect.Effect<void>;
+}
+
 /**
  * Output - User-facing CLI output boundary.
  *
@@ -19,12 +28,29 @@ interface OutputShape {
   readonly warn: (message: string) => Effect.Effect<void>;
   readonly error: (message: string) => Effect.Effect<void>;
   readonly event: (event: StreamEvent) => Effect.Effect<void>;
+  readonly task: (message: string) => Effect.Effect<OutputTask>;
   readonly promptText: (
     message: string,
     opts?: { validate?: (v: string) => string | undefined; defaultValue?: string },
   ) => Effect.Effect<string, NonInteractiveError>;
   readonly promptPassword: (message: string) => Effect.Effect<string, NonInteractiveError>;
   readonly promptConfirm: (message: string) => Effect.Effect<boolean, NonInteractiveError>;
+  readonly promptSelect: (
+    message: string,
+    options: ReadonlyArray<{
+      readonly value: string;
+      readonly label: string;
+      readonly hint?: string;
+    }>,
+  ) => Effect.Effect<string, NonInteractiveError>;
+  readonly promptMultiSelect: (
+    message: string,
+    options: ReadonlyArray<{
+      readonly value: string;
+      readonly label: string;
+      readonly hint?: string;
+    }>,
+  ) => Effect.Effect<ReadonlyArray<string>, NonInteractiveError>;
   readonly progress: (opts: { max: number }) => Effect.Effect<{
     readonly start: (msg: string) => Effect.Effect<void>;
     readonly advance: (step: number, msg?: string) => Effect.Effect<void>;

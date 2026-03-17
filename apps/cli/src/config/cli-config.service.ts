@@ -1,10 +1,10 @@
-import type { Option } from "effect";
+import type { Option, Redacted } from "effect";
 import { ServiceMap } from "effect";
 
 interface CliConfigShape {
   readonly apiUrl: string;
   readonly dashboardUrl: string;
-  readonly accessToken: Option.Option<string>;
+  readonly accessToken: Option.Option<Redacted.Redacted<string>>;
   readonly noKeyring: Option.Option<string>;
   readonly supabaseHome: string;
   readonly debug: Option.Option<string>;

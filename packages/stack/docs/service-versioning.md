@@ -1,6 +1,6 @@
 # Service Versioning in the Supabase CLI
 
-How the Go CLI (`supabase-cli-go`) manages Docker image versions for local development services, and suggestions for `@supabase/local`.
+How the Go CLI (`supabase-cli-go`) manages Docker image versions for local development services, and the target versioning design for `@supabase/stack`.
 
 ## Architecture Overview
 
@@ -344,7 +344,7 @@ This fetches remote versions by querying the Supabase Tenant API for each servic
 | Migra       | `supabase/migra`               | `3.0.1663481299` | Migration generation |
 | pg_prove    | `supabase/pg_prove`            | `3.36`           | Database test runner |
 
-## 10. Versioning Design for `@supabase/local`
+## 10. Versioning Design for `@supabase/stack`
 
 ### 10.1. Design Principles
 
@@ -357,7 +357,7 @@ This fetches remote versions by querying the Supabase Tenant API for each servic
 
 ### 10.2. Version Manifest
 
-`@supabase/local` exports a typed `VersionManifest` and a `DEFAULT_VERSIONS` constant — replacing the Go CLI's Dockerfile-as-manifest hack with something transparent and type-safe:
+`@supabase/stack` exports a typed `VersionManifest` and a `DEFAULT_VERSIONS` constant — replacing the Go CLI's Dockerfile-as-manifest hack with something transparent and type-safe:
 
 ```ts
 export interface VersionManifest {
@@ -421,7 +421,7 @@ Resolution: `config.toml version ?? DEFAULT_VERSIONS`. Committed to VCS so the w
 A user runs `supabase init` + `supabase start` with no remote project.
 
 - `supabase init` generates config.toml with an empty/commented `[versions]` section
-- `supabase start` calls `resolveVersions({})` → falls back to `DEFAULT_VERSIONS`
+- `supabase start` resolves each service version as `config.toml value ?? DEFAULT_VERSIONS` → falls back to the CLI defaults when omitted
 - Binaries are downloaded and cached on first run; subsequent starts are offline-capable
 - Every developer with the same CLI version gets the same default versions
 
@@ -508,14 +508,14 @@ config.toml [versions]           CLI DEFAULT_VERSIONS
           \                         /
            \                       /
             v                     v
-      +----------------------------+
-      |    resolveVersions()       |
-      |    explicit ?? default     |
-      +----------------------------+
+      +----------------------------------------------+
+      | CLI config loading                           |
+      | per-service version = explicit ?? default    |
+      +----------------------------------------------+
                    |
-           VersionManifest (fully resolved)
+      per-service versions on StackConfig
                    |
-           StackConfig.versions
+             @supabase/stack
                    |
            +-------+---------+
            |                 |
@@ -534,18 +534,18 @@ config.toml [versions]           CLI DEFAULT_VERSIONS
              process-compose
 ```
 
-The version resolution happens in the CLI's config loading layer, **before** constructing `StackConfig`. The `@supabase/local` library always receives a fully-resolved `VersionManifest` — it never deals with optionality or defaults.
+The version resolution happens in the CLI's config loading layer, **before** constructing `StackConfig`. `@supabase/stack` still exports `VersionManifest` and `DEFAULT_VERSIONS`, but the runtime library currently receives the resolved versions through the per-service `version` fields on `StackConfig`, not via a dedicated `config.versions` object.
 
 ### 10.6. Service Prefetching
 
-`@supabase/local` exports a `prefetch()` function that ensures all service dependencies (native binaries and Docker images) are ready before they're needed. For each service, it tries the native binary first; if unavailable for the current platform, it falls back to pulling the Docker image.
+`@supabase/stack` exports a `prefetch()` function that ensures all service dependencies (native binaries and Docker images) are ready before they're needed. For each service, it tries the native binary first; if unavailable for the current platform, it falls back to pulling the Docker image.
 
 The resolution logic lives in `resolveService()` — a shared helper used by both `prefetch()` and `StackBuilder.build()`, ensuring a single source of truth for the binary/Docker decision.
 
-Available from the platform entry points (`@supabase/local/bun`, `@supabase/local/node`):
+Available from the root package export:
 
 ```ts
-import { prefetch } from "@supabase/local/bun";
+import { prefetch } from "@supabase/stack";
 
 // Prefetch all services (default)
 const result = await prefetch();

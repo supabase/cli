@@ -1,6 +1,6 @@
 import { Effect, Layer } from "effect";
-import { projectDaemonLayer } from "@supabase/stack/internals";
-import { daemonEntryPoint } from "@supabase/stack/bun";
+import { projectDaemonLayer } from "@supabase/stack/effect";
+import { daemonEntryPoint } from "@supabase/stack";
 import { BunServices } from "@effect/platform-bun";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";

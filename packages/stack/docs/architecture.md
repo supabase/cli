@@ -1,4 +1,4 @@
-# Architecture of `@supabase/local`
+# Architecture of `@supabase/stack`
 
 Manages a local Supabase development stack — resolving native binaries, wiring services into a dependency graph, and exposing a single async `createStack()` call that returns running connection details.
 
@@ -19,7 +19,7 @@ Manages a local Supabase development stack — resolving native binaries, wiring
   - [StackBuilder — assemble the dependency graph](#stackbuilder--assemble-the-dependency-graph)
   - [LocalStack — lifecycle management](#localstack--lifecycle-management)
   - [createStack — platform-agnostic core](#createstack--platform-agnostic-core)
-  - [bun.ts / node.ts — platform entry points](#bunts--nodets--platform-entry-points)
+  - [bun.ts / node.ts — runtime implementations behind the root export](#bunts--nodets--runtime-implementations-behind-the-root-export)
 - [Data flow](#data-flow)
 - [Testing](#testing)
 
@@ -27,7 +27,7 @@ Manages a local Supabase development stack — resolving native binaries, wiring
 
 ## High-level overview
 
-`@supabase/local` answers a single question: given a `StackConfig`, start a local Supabase stack and give me the URLs and keys I need to talk to it.
+`@supabase/stack` answers a single question: given a `StackConfig`, start a local Supabase stack and give me the URLs and keys I need to talk to it.
 
 Behind that simple surface, quite a lot happens. Each binary (postgres, postgrest, auth) must be resolved for the current OS and CPU architecture, downloaded from GitHub releases if not already cached, and verified. The binaries are then composed into `ServiceDef` objects and handed to `@supabase/process-compose`, which handles health checks, dependency ordering, log streaming, restart policies, and shutdown. An `ApiProxy` sits in front of GoTrue and PostgREST, translating opaque API keys into JWTs before forwarding requests.
 
@@ -37,7 +37,7 @@ graph TB
         SC["StackConfig<br/><i>ports, versions, secrets, keys</i>"]
     end
 
-    subgraph "@supabase/local"
+    subgraph "@supabase/stack"
         PLT["Platform<br/><i>detect OS + arch</i>"]
         BR["BinaryResolver<br/><i>download + cache</i>"]
         JG["JwtGenerator<br/><i>sign JWT tokens + opaque keys</i>"]
@@ -74,17 +74,17 @@ graph TB
     CS --> SI
 ```
 
-The package has no CLI and no config-file parser. It is a library: callers supply a `StackConfig` object and get back a `Stack` with a rich interface including `dispose()`. The Vitest integration, a future CLI command, or any other host can use `createStack()` from either `bun.ts` or `node.ts` as its entry point.
+The package has no CLI and no config-file parser. It is a library: callers supply a `StackConfig` object and get back a `Stack` with a rich interface including `dispose()`. Bun and Node.js consumers import from the package root, and the export conditions select the appropriate runtime implementation from `bun.ts` or `node.ts`.
 
 ---
 
 ## Relationship to process-compose
 
-`@supabase/local` and `@supabase/process-compose` have a clean boundary: local owns _what_ to run and _where_ to get it; process-compose owns _how_ to run it.
+`@supabase/stack` and `@supabase/process-compose` have a clean boundary: stack owns _what_ to run and _where_ to get it; process-compose owns _how_ to run it.
 
 ```mermaid
 graph LR
-    subgraph "@supabase/local"
+    subgraph "@supabase/stack"
         direction TB
         PLAT["Platform detection"]
         BRES["Binary download + checksum"]
@@ -115,12 +115,12 @@ graph LR
 
 | Concern                          | Owner                       |
 | -------------------------------- | --------------------------- |
-| OS / arch detection              | `@supabase/local`           |
-| Binary download, cache, verify   | `@supabase/local`           |
-| ServiceDef construction          | `@supabase/local`           |
-| JWT generation                   | `@supabase/local`           |
-| Opaque API key translation       | `@supabase/local`           |
-| Reverse proxy (GoTrue/PostgREST) | `@supabase/local`           |
+| OS / arch detection              | `@supabase/stack`           |
+| Binary download, cache, verify   | `@supabase/stack`           |
+| ServiceDef construction          | `@supabase/stack`           |
+| JWT generation                   | `@supabase/stack`           |
+| Opaque API key translation       | `@supabase/stack`           |
+| Reverse proxy (GoTrue/PostgREST) | `@supabase/stack`           |
 | Dependency graph construction    | `@supabase/process-compose` |
 | Process spawning                 | `@supabase/process-compose` |
 | Health checks                    | `@supabase/process-compose` |
@@ -490,7 +490,7 @@ All services are resolved and pulled concurrently (`concurrency: "unbounded"`). 
 
 ```ts
 // vitest.config.ts / globalSetup.ts
-import { prefetch } from "@supabase/local/bun";
+import { prefetch } from "@supabase/stack";
 
 export async function setup() {
   await prefetch(); // downloads postgres + postgrest + auth before any test runs
@@ -934,11 +934,11 @@ Streams (`statusChanges`, `logs`, `serviceLogs`) are converted to `AsyncIterable
 
 ---
 
-### bun.ts / node.ts — platform entry points
+### bun.ts / node.ts — runtime implementations behind the root export
 
 **Files:** `src/bun.ts`, `src/node.ts`
 
-These thin wrappers are the package's public entry points. Each one constructs the platform-specific layer and delegates to `createStack` from `createStack.ts`.
+These thin wrappers are the runtime-specific implementations selected by the package root export conditions. Each one constructs the platform-specific layer and delegates to `createStack` from `createStack.ts`.
 
 ```ts
 // bun.ts
@@ -967,14 +967,10 @@ export async function createStack(config?: StackConfig): Promise<Stack> {
 }
 ```
 
-Callers import from the appropriate entry point:
+Callers import from the package root:
 
 ```ts
-// In a Bun project:
-import { createStack } from "@supabase/local/bun";
-
-// In a Node.js project:
-import { createStack } from "@supabase/local/node";
+import { createStack } from "@supabase/stack";
 ```
 
 The `HttpServer` instance is configured to listen on `apiPort` — this is the port that `ApiProxy` binds to, so the proxy's listener port matches the configured API port.

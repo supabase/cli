@@ -1,9 +1,39 @@
+import { Option, ServiceMap } from "effect";
 import type { HelpDoc } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
 import { formatSection, injectSections } from "./guide-injector.ts";
 
-function makeDoc(overrides: Partial<HelpDoc.HelpDoc> = {}): HelpDoc.HelpDoc {
-  return { usage: "supabase test [flags]", flags: [], ...overrides } as HelpDoc.HelpDoc;
+type RawFlagDoc = Omit<HelpDoc.FlagDoc, "description"> & { readonly description?: string };
+type RawArgDoc = Omit<HelpDoc.ArgDoc, "description"> & { readonly description?: string };
+type RawHelpDoc = Omit<Partial<HelpDoc.HelpDoc>, "flags" | "args"> & {
+  readonly flags?: ReadonlyArray<RawFlagDoc>;
+  readonly args?: ReadonlyArray<RawArgDoc>;
+};
+
+function optionString(value?: string): Option.Option<string> {
+  return value === undefined ? Option.none() : Option.some(value);
+}
+
+function makeDoc(overrides: RawHelpDoc = {}): HelpDoc.HelpDoc {
+  const { flags, args, ...rest } = overrides;
+  return {
+    description: "",
+    usage: "supabase test [flags]",
+    annotations: ServiceMap.empty(),
+    ...rest,
+    flags: (flags ?? []).map((flag) => ({
+      ...flag,
+      description: optionString(flag.description),
+    })),
+    ...(args
+      ? {
+          args: args.map((arg) => ({
+            ...arg,
+            description: optionString(arg.description),
+          })),
+        }
+      : {}),
+  };
 }
 
 describe("formatSection", () => {

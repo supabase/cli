@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { ServiceMap, Tracer } from "effect";
+import { Option, ServiceMap, Tracer } from "effect";
 import { formatSpanForDebugConsole, makeDebugConsoleExporter } from "./debug-console.ts";
 
 function makeEndedSpan(name: string, attrs: Record<string, unknown> = {}): Tracer.Span {
@@ -11,7 +11,7 @@ function makeEndedSpan(name: string, attrs: Record<string, unknown> = {}): Trace
     name,
     spanId: "abc123",
     traceId: "def456",
-    parent: undefined,
+    parent: Option.none(),
     annotations: ServiceMap.empty(),
     links: [],
     sampled: true,

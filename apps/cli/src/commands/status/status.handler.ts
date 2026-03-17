@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { connectLayer, Stack } from "@supabase/stack/internals";
+import { connectLayer, Stack } from "@supabase/stack/effect";
 import { CliConfig } from "../../config/cli-config.service.ts";
 import { Output } from "../../output/output.service.ts";
 import { RuntimeInfo } from "../../runtime/runtime-info.service.ts";

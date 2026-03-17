@@ -49,8 +49,4 @@ export async function prefetch(options?: PrefetchOptions): Promise<PrefetchResul
   );
 }
 
-export type { PlatformFactory, PlatformLayer, StackHandle } from "./createStack.ts";
-export type { PrefetchOptions, PrefetchResult } from "./prefetch.ts";
-export type { ServiceResolution } from "./resolve.ts";
-export type { AuthConfig, PostgresConfig, PostgrestConfig, StackConfig } from "./StackBuilder.ts";
-export type { VersionManifest } from "./versions.ts";
+export * from "./index.ts";

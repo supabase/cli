@@ -4,7 +4,7 @@ import {
   deleteManagedStackPersistence,
   resolveManagedStack,
   stopDaemon,
-} from "@supabase/stack/internals";
+} from "@supabase/stack/effect";
 import { CliConfig } from "../../config/cli-config.service.ts";
 import { Output } from "../../output/output.service.ts";
 import { RuntimeInfo } from "../../runtime/runtime-info.service.ts";

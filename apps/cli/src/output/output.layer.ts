@@ -4,9 +4,12 @@ import {
   intro,
   isCancel,
   log,
+  multiselect,
   outro,
   password,
   progress as clackProgress,
+  select,
+  spinner,
   text,
 } from "@clack/prompts";
 import { styleText } from "node:util";
@@ -16,6 +19,18 @@ import { Tty } from "../runtime/tty.service.ts";
 import { NonInteractiveError } from "./errors.ts";
 import { Output } from "./output.service.ts";
 import type { OutputFormat, StreamEvent } from "./types.ts";
+
+const TASK_SPINNER_DELAY_MS = 200;
+
+function formatTaskMessage(message: string | undefined): string | undefined {
+  if (message === undefined || !message.includes("\n")) {
+    return message;
+  }
+
+  const guide = `${styleText("gray", "│")}  `;
+  const [firstLine, ...rest] = message.split("\n");
+  return [firstLine, ...rest.map((line) => `${guide}${line}`)].join("\n");
+}
 
 /**
  * Output layers - Concrete output mode implementations for the CLI.
@@ -27,6 +42,84 @@ export const textOutputLayer = Layer.effect(
   Output,
   Effect.gen(function* () {
     const tty = yield* Tty;
+    const buildSelectOptions = (
+      options: ReadonlyArray<{
+        readonly value: string;
+        readonly label: string;
+        readonly hint?: string;
+      }>,
+    ): Parameters<typeof select<string>>[0]["options"] =>
+      options.map((option) => {
+        const clackOption: Parameters<typeof select<string>>[0]["options"][number] = {
+          value: option.value,
+          label: option.label,
+        };
+        if (option.hint !== undefined) {
+          clackOption.hint = option.hint;
+        }
+        return clackOption;
+      });
+
+    const buildMultiSelectOptions = (
+      options: ReadonlyArray<{
+        readonly value: string;
+        readonly label: string;
+        readonly hint?: string;
+      }>,
+    ): Parameters<typeof multiselect<string>>[0]["options"] =>
+      options.map((option) => {
+        const clackOption: Parameters<typeof multiselect<string>>[0]["options"][number] = {
+          value: option.value,
+          label: option.label,
+        };
+        if (option.hint !== undefined) {
+          clackOption.hint = option.hint;
+        }
+        return clackOption;
+      });
+    const promptSelect = (
+      message: string,
+      options: ReadonlyArray<{
+        readonly value: string;
+        readonly label: string;
+        readonly hint?: string;
+      }>,
+    ) =>
+      Effect.gen(function* () {
+        const value = yield* Effect.promise(() =>
+          select<string>({
+            message,
+            options: buildSelectOptions(options),
+          }),
+        );
+        if (isCancel(value)) {
+          cancel("Operation cancelled.");
+          return yield* Effect.interrupt;
+        }
+        return value;
+      });
+
+    const promptMultiSelect = (
+      message: string,
+      options: ReadonlyArray<{
+        readonly value: string;
+        readonly label: string;
+        readonly hint?: string;
+      }>,
+    ) =>
+      Effect.gen(function* () {
+        const value = yield* Effect.promise(() =>
+          multiselect<string>({
+            message,
+            options: buildMultiSelectOptions(options),
+          }),
+        );
+        if (isCancel(value)) {
+          cancel("Operation cancelled.");
+          return yield* Effect.interrupt;
+        }
+        return value;
+      });
 
     return Output.of({
       format: "text" as const,
@@ -40,6 +133,105 @@ export const textOutputLayer = Layer.effect(
         event.type === "log-entry"
           ? Effect.sync(() => log.info(`[${event.service}] ${event.line}`))
           : Effect.sync(() => log.info(JSON.stringify(event))),
+      task: (message: string) =>
+        Effect.sync(() => {
+          let shown = false;
+          let settled = false;
+          let currentMessage = message;
+          let task: ReturnType<typeof spinner> | undefined;
+          let timeout: ReturnType<typeof setTimeout> | undefined;
+
+          const cancelPendingStart = () => {
+            if (timeout !== undefined) {
+              clearTimeout(timeout);
+              timeout = undefined;
+            }
+          };
+
+          const finish = (render: () => void) => {
+            settled = true;
+            cancelPendingStart();
+            render();
+          };
+
+          timeout = setTimeout(() => {
+            if (settled) {
+              return;
+            }
+            task = spinner();
+            shown = true;
+            task.start(currentMessage);
+            timeout = undefined;
+          }, TASK_SPINNER_DELAY_MS);
+
+          return {
+            message: (nextMessage: string) =>
+              Effect.sync(() => {
+                if (settled) {
+                  return;
+                }
+                currentMessage = nextMessage;
+                if (shown) {
+                  task?.message(formatTaskMessage(nextMessage));
+                }
+              }),
+            succeed: (nextMessage?: string) =>
+              Effect.sync(() =>
+                finish(() => {
+                  if (shown) {
+                    task?.stop(formatTaskMessage(nextMessage));
+                    return;
+                  }
+                  if (nextMessage !== undefined) {
+                    log.success(nextMessage);
+                  }
+                }),
+              ),
+            fail: (nextMessage?: string) =>
+              Effect.sync(() =>
+                finish(() => {
+                  if (shown) {
+                    task?.error(formatTaskMessage(nextMessage));
+                    return;
+                  }
+                  if (nextMessage !== undefined) {
+                    log.error(nextMessage);
+                  }
+                }),
+              ),
+            info: (nextMessage?: string) =>
+              Effect.sync(() =>
+                finish(() => {
+                  if (shown) {
+                    task?.clear();
+                  }
+                  if (nextMessage !== undefined) {
+                    log.info(nextMessage);
+                  }
+                }),
+              ),
+            cancel: (nextMessage?: string) =>
+              Effect.sync(() =>
+                finish(() => {
+                  if (shown) {
+                    task?.cancel(formatTaskMessage(nextMessage));
+                    return;
+                  }
+                  if (nextMessage !== undefined) {
+                    cancel(nextMessage);
+                  }
+                }),
+              ),
+            clear: () =>
+              Effect.sync(() =>
+                finish(() => {
+                  if (shown) {
+                    task?.clear();
+                  }
+                }),
+              ),
+          };
+        }),
       promptText: (
         message: string,
         opts?: { validate?: (v: string) => string | undefined; defaultValue?: string },
@@ -78,6 +270,8 @@ export const textOutputLayer = Layer.effect(
           }
           return value;
         }),
+      promptSelect,
+      promptMultiSelect,
       progress: (opts: { max: number }) =>
         Effect.sync(() => {
           const bar = clackProgress({ max: opts.max, style: "heavy" });
@@ -133,9 +327,24 @@ export const jsonOutputLayer = Layer.effect(
       warn: (message: string) => writeStderr(`${message}\n`),
       error: (message: string) => writeStderr(`${message}\n`),
       event: (event: StreamEvent) => writeStderr(`${JSON.stringify(event)}\n`),
+      task: (message: string) =>
+        Effect.sync(() => ({
+          message: (nextMessage: string) => writeStderr(`[task] ${nextMessage}\n`),
+          succeed: (nextMessage?: string) =>
+            nextMessage ? writeStderr(`[task] done: ${nextMessage}\n`) : Effect.void,
+          fail: (nextMessage?: string) =>
+            nextMessage ? writeStderr(`[task] failed: ${nextMessage}\n`) : Effect.void,
+          info: (nextMessage?: string) =>
+            nextMessage ? writeStderr(`${nextMessage}\n`) : Effect.void,
+          cancel: (nextMessage?: string) =>
+            nextMessage ? writeStderr(`[task] cancelled: ${nextMessage}\n`) : Effect.void,
+          clear: () => Effect.void,
+        })).pipe(Effect.tap(() => writeStderr(`[task] start: ${message}\n`))),
       promptText: () => nonInteractive("prompt for input"),
       promptPassword: () => nonInteractive("prompt for password"),
       promptConfirm: () => nonInteractive("prompt for confirmation"),
+      promptSelect: () => nonInteractive("prompt for a selection"),
+      promptMultiSelect: () => nonInteractive("prompt for a multi-selection"),
       progress: (opts: { max: number }) =>
         Effect.sync(() => {
           let current = 0;
@@ -192,9 +401,20 @@ export const streamJsonOutputLayer = Layer.effect(
       warn: (message: string) => emitLog("warn", message),
       error: (message: string) => emitLog("error", message),
       event: (event: StreamEvent) => writeStdout(JSON.stringify(event) + "\n"),
+      task: (message: string) =>
+        Effect.sync(() => ({
+          message: (nextMessage: string) => emitLog("info", nextMessage),
+          succeed: (nextMessage?: string) => emitLog("success", nextMessage ?? "Task completed."),
+          fail: (nextMessage?: string) => emitLog("error", nextMessage ?? "Task failed."),
+          info: (nextMessage?: string) => emitLog("info", nextMessage ?? "Task completed."),
+          cancel: (nextMessage?: string) => emitLog("warn", nextMessage ?? "Task cancelled."),
+          clear: () => Effect.void,
+        })).pipe(Effect.tap(() => emitLog("info", message))),
       promptText: () => nonInteractive("prompt for input"),
       promptPassword: () => nonInteractive("prompt for password"),
       promptConfirm: () => nonInteractive("prompt for confirmation"),
+      promptSelect: () => nonInteractive("prompt for a selection"),
+      promptMultiSelect: () => nonInteractive("prompt for a multi-selection"),
       progress: (opts: { max: number }) =>
         Effect.sync(() => {
           let current = 0;

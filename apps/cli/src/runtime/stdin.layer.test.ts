@@ -41,16 +41,17 @@ describe("Stdin", () => {
     });
   });
 
-  describe("readPipedToken", () => {
-    it.effect("returns Some(trimmed) for valid input", () => {
-      const stdin = Stream.fromIterable([encoder.encode("  my-token-123  \n")]);
+  describe("readPipedBytes", () => {
+    it.effect("returns Some(bytes) for valid input", () => {
+      const expected = encoder.encode("  my-token-123  \n");
+      const stdin = Stream.fromIterable([expected]);
       const layer = stdinLayer.pipe(
         Layer.provide(Layer.mergeAll(makeStdioLayer(stdin), mockTty({ stdinIsTty: false }))),
       );
       return Effect.gen(function* () {
-        const { readPipedToken } = yield* Stdin;
-        const result = yield* readPipedToken;
-        expect(result).toEqual(Option.some("my-token-123"));
+        const { readPipedBytes } = yield* Stdin;
+        const result = yield* readPipedBytes;
+        expect(result).toEqual(Option.some(expected));
       }).pipe(Effect.provide(layer));
     });
 
@@ -59,8 +60,8 @@ describe("Stdin", () => {
         Layer.provide(Layer.mergeAll(makeStdioLayer(Stream.empty), mockTty({ stdinIsTty: false }))),
       );
       return Effect.gen(function* () {
-        const { readPipedToken } = yield* Stdin;
-        const result = yield* readPipedToken;
+        const { readPipedBytes } = yield* Stdin;
+        const result = yield* readPipedBytes;
         expect(result).toEqual(Option.none());
       }).pipe(Effect.provide(layer));
     });
@@ -71,8 +72,75 @@ describe("Stdin", () => {
         Layer.provide(Layer.mergeAll(makeStdioLayer(stdin), mockTty({ stdinIsTty: false }))),
       );
       return Effect.gen(function* () {
-        const { readPipedToken } = yield* Stdin;
-        const result = yield* readPipedToken;
+        const { readPipedBytes } = yield* Stdin;
+        const result = yield* readPipedBytes;
+        expect(result).toEqual(Option.none());
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("handles multi-chunk input", () => {
+      const expected = encoder.encode("chunk1-chunk2-chunk3");
+      const stdin = Stream.fromIterable([
+        encoder.encode("chunk1"),
+        encoder.encode("-chunk2"),
+        encoder.encode("-chunk3"),
+      ]);
+      const layer = stdinLayer.pipe(
+        Layer.provide(Layer.mergeAll(makeStdioLayer(stdin), mockTty({ stdinIsTty: false }))),
+      );
+      return Effect.gen(function* () {
+        const { readPipedBytes } = yield* Stdin;
+        const result = yield* readPipedBytes;
+        expect(result).toEqual(Option.some(expected));
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("preserves whitespace-only input", () => {
+      const expected = encoder.encode("   \n  \t  ");
+      const stdin = Stream.fromIterable([expected]);
+      const layer = stdinLayer.pipe(
+        Layer.provide(Layer.mergeAll(makeStdioLayer(stdin), mockTty({ stdinIsTty: false }))),
+      );
+      return Effect.gen(function* () {
+        const { readPipedBytes } = yield* Stdin;
+        const result = yield* readPipedBytes;
+        expect(result).toEqual(Option.some(expected));
+      }).pipe(Effect.provide(layer));
+    });
+  });
+
+  describe("readPipedText", () => {
+    it.effect("returns Some(trimmed) for valid input", () => {
+      const stdin = Stream.fromIterable([encoder.encode("  my-token-123  \n")]);
+      const layer = stdinLayer.pipe(
+        Layer.provide(Layer.mergeAll(makeStdioLayer(stdin), mockTty({ stdinIsTty: false }))),
+      );
+      return Effect.gen(function* () {
+        const { readPipedText } = yield* Stdin;
+        const result = yield* readPipedText;
+        expect(result).toEqual(Option.some("my-token-123"));
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("returns None for empty stream", () => {
+      const layer = stdinLayer.pipe(
+        Layer.provide(Layer.mergeAll(makeStdioLayer(Stream.empty), mockTty({ stdinIsTty: false }))),
+      );
+      return Effect.gen(function* () {
+        const { readPipedText } = yield* Stdin;
+        const result = yield* readPipedText;
+        expect(result).toEqual(Option.none());
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("returns None on stream error", () => {
+      const stdin = Stream.fail(new Error("read error")) as unknown as Stream.Stream<Uint8Array>;
+      const layer = stdinLayer.pipe(
+        Layer.provide(Layer.mergeAll(makeStdioLayer(stdin), mockTty({ stdinIsTty: false }))),
+      );
+      return Effect.gen(function* () {
+        const { readPipedText } = yield* Stdin;
+        const result = yield* readPipedText;
         expect(result).toEqual(Option.none());
       }).pipe(Effect.provide(layer));
     });
@@ -87,8 +155,8 @@ describe("Stdin", () => {
         Layer.provide(Layer.mergeAll(makeStdioLayer(stdin), mockTty({ stdinIsTty: false }))),
       );
       return Effect.gen(function* () {
-        const { readPipedToken } = yield* Stdin;
-        const result = yield* readPipedToken;
+        const { readPipedText } = yield* Stdin;
+        const result = yield* readPipedText;
         expect(result).toEqual(Option.some("chunk1-chunk2-chunk3"));
       }).pipe(Effect.provide(layer));
     });
@@ -99,8 +167,8 @@ describe("Stdin", () => {
         Layer.provide(Layer.mergeAll(makeStdioLayer(stdin), mockTty({ stdinIsTty: false }))),
       );
       return Effect.gen(function* () {
-        const { readPipedToken } = yield* Stdin;
-        const result = yield* readPipedToken;
+        const { readPipedText } = yield* Stdin;
+        const result = yield* readPipedText;
         expect(result).toEqual(Option.none());
       }).pipe(Effect.provide(layer));
     });

@@ -1,6 +1,6 @@
 import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
-import type { StackServiceState } from "@supabase/stack";
+import type { StackServiceState } from "@supabase/stack/effect";
 
 function statusIcon(status: string) {
   switch (status) {

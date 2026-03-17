@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { Stack } from "@supabase/stack/internals";
+import { Stack } from "@supabase/stack/effect";
 import { interruptOnSignal } from "../signal.ts";
 import { makeStartForegroundSession } from "../ui/foreground-session.ts";
 

@@ -1,8 +1,7 @@
 import { describe, expect, test } from "vitest";
 import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry";
 import { Effect, Layer, SubscriptionRef } from "effect";
-import { StackServiceState, type StackServiceStatus } from "@supabase/stack";
-import type { StackInfo } from "@supabase/stack/internals";
+import { StackServiceState, type StackInfo, type StackServiceStatus } from "@supabase/stack/effect";
 import { StartDashboardState } from "./dashboard-state.ts";
 
 function state(name: string, status: StackServiceStatus) {

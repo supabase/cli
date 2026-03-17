@@ -1,7 +1,6 @@
 import { Box, Text } from "ink";
 import { useAtomValue } from "@effect/atom-react";
-import type { StackServiceState } from "@supabase/stack";
-import type { StackInfo } from "@supabase/stack/internals";
+import type { StackServiceState, StackInfo } from "@supabase/stack/effect";
 import { ServiceTable } from "./ServiceTable.tsx";
 import { ConnectionInfo } from "./ConnectionInfo.tsx";
 import type { StartDashboardModel, StartPhase } from "./dashboard.model.ts";

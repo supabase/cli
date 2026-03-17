@@ -1,14 +1,16 @@
-import { Data, Effect, Option } from "effect";
+import { Data, Effect, Option, Redacted } from "effect";
 import { UrlParams } from "effect/unstable/http";
 import { validateToken } from "../../auth/token.ts";
 import { CliConfig } from "../../config/cli-config.service.ts";
 import { Output } from "../../output/output.service.ts";
 import { Api } from "../../auth/api.service.ts";
+import type { LoginSessionResponse } from "../../auth/api.service.ts";
 import type { ApiError } from "../../auth/errors.ts";
 import { Credentials } from "../../auth/credentials.service.ts";
 import { Crypto } from "../../auth/crypto.service.ts";
 import { Browser } from "../../runtime/browser.service.ts";
 import { Stdin } from "../../runtime/stdin.service.ts";
+import type { NonInteractiveError } from "../../output/errors.ts";
 import { LoginFailedError, NoTtyError } from "./login.errors.ts";
 import type { LoginFlags } from "./login.command.ts";
 
@@ -22,25 +24,27 @@ const MAX_LOGIN_VERIFICATION_RETRIES = 2;
 // Helpers
 // ---------------------------------------------------------------------------
 
-const saveDirectToken = Effect.fnUntraced(function* (token: string) {
+const revealToken = (token: Redacted.Redacted<string>): string => Redacted.value(token);
+
+const saveDirectToken = Effect.fnUntraced(function* (token: Redacted.Redacted<string>) {
   const credentials = yield* Credentials;
   const output = yield* Output;
-  yield* validateToken(token);
+  yield* validateToken(revealToken(token));
   yield* credentials.saveAccessToken(token);
   yield* output.success("Logged in successfully.", { command: "login" });
 });
 
 // Token resolution priority: --token flag > SUPABASE_ACCESS_TOKEN env > piped stdin > interactive browser flow
 const resolveToken = Effect.fnUntraced(function* (tokenFlag: Option.Option<string>) {
-  if (Option.isSome(tokenFlag)) return Option.some(tokenFlag.value);
+  if (Option.isSome(tokenFlag)) return Option.some(Redacted.make(tokenFlag.value));
 
   const cliConfig = yield* CliConfig;
   if (Option.isSome(cliConfig.accessToken)) return cliConfig.accessToken;
 
   const stdin = yield* Stdin;
   if (!stdin.isTTY) {
-    const piped = yield* stdin.readPipedToken;
-    if (Option.isSome(piped)) return piped;
+    const piped = yield* stdin.readPipedText;
+    if (Option.isSome(piped)) return Option.some(Redacted.make(piped.value));
     return yield* new NoTtyError({
       detail: "Cannot prompt for token in non-interactive mode",
       suggestion: "Pass --token or set SUPABASE_ACCESS_TOKEN",
@@ -114,23 +118,27 @@ const browserOAuthFlow = Effect.fnUntraced(function* (flags: LoginFlags) {
       .pipe(Effect.mapError((cause) => new LoginVerificationError({ cause })));
   });
 
-  const session = yield* verifyCode.pipe(
-    Effect.tapError((e) =>
-      e._tag === "LoginVerificationError" ? output.error("Verification failed") : Effect.void,
-    ),
-    Effect.retry({
-      times: MAX_LOGIN_VERIFICATION_RETRIES,
-      while: (e) => e._tag === "LoginVerificationError",
-    }),
-    Effect.catchTag("LoginVerificationError", () =>
-      Effect.fail(
-        new LoginFailedError({
-          detail: "Login failed after maximum retries",
-          suggestion: "Try running `supabase login` again",
+  const verifyWithRetries = (
+    remainingRetries: number,
+  ): Effect.Effect<LoginSessionResponse, LoginFailedError | NonInteractiveError> =>
+    verifyCode.pipe(
+      Effect.catchTag("LoginVerificationError", () =>
+        Effect.gen(function* () {
+          yield* output.error("Verification failed");
+          if (remainingRetries <= 0) {
+            return yield* Effect.fail(
+              new LoginFailedError({
+                detail: "Login failed after maximum retries",
+                suggestion: "Try running `supabase login` again",
+              }),
+            );
+          }
+          return yield* verifyWithRetries(remainingRetries - 1);
         }),
       ),
-    ),
-  );
+    );
+
+  const session = yield* verifyWithRetries(MAX_LOGIN_VERIFICATION_RETRIES);
 
   const token = yield* crypto.decryptToken(ecdh, {
     ciphertext: session.access_token,
@@ -138,7 +146,7 @@ const browserOAuthFlow = Effect.fnUntraced(function* (flags: LoginFlags) {
     nonce: session.nonce,
   });
   yield* validateToken(token);
-  yield* credentials.saveAccessToken(token);
+  yield* credentials.saveAccessToken(Redacted.make(token));
 
   yield* output.success(`Token ${tokenName} created successfully.`, {
     command: "login",

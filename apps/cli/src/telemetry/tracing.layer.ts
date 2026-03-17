@@ -32,7 +32,7 @@ class ExportableSpan implements Tracer.Span {
   readonly traceId: string;
   readonly sampled: boolean;
   readonly name: string;
-  readonly parent: Tracer.AnySpan | undefined;
+  readonly parent: Option.Option<Tracer.AnySpan>;
   readonly annotations: ServiceMap.ServiceMap<never>;
   readonly links: ReadonlyArray<Tracer.SpanLink>;
   readonly kind: Tracer.SpanKind;
@@ -45,7 +45,7 @@ class ExportableSpan implements Tracer.Span {
   constructor(
     options: {
       readonly name: string;
-      readonly parent: Tracer.AnySpan | undefined;
+      readonly parent: Option.Option<Tracer.AnySpan>;
       readonly annotations: ServiceMap.ServiceMap<never>;
       readonly links: Array<Tracer.SpanLink>;
       readonly startTime: bigint;
@@ -61,7 +61,10 @@ class ExportableSpan implements Tracer.Span {
     this.kind = options.kind;
     this.sampled = options.sampled;
     this.status = { _tag: "Started", startTime: options.startTime };
-    this.traceId = options.parent?.traceId ?? generateHexId(32);
+    this.traceId = Option.match(options.parent, {
+      onNone: () => generateHexId(32),
+      onSome: (parent) => parent.traceId,
+    });
     this.spanId = generateHexId(16);
     this.onEnd = onEnd;
   }

@@ -4,14 +4,11 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./internals": {
-      "bun": "./src/internals.ts",
-      "default": "./src/internals.ts"
+    ".": {
+      "bun": "./src/bun.ts",
+      "default": "./src/node.ts"
     },
-    "./effect": "./src/effect.ts",
-    "./bun": "./src/bun.ts",
-    "./node": "./src/node.ts"
+    "./effect": "./src/effect.ts"
   },
   "scripts": {
     "test": "bun --bun vitest run",

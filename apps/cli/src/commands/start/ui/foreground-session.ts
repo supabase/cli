@@ -3,7 +3,7 @@ import { createElement } from "react";
 import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry";
 import { Cause, Effect, Layer } from "effect";
 import { RegistryContext } from "@effect/atom-react";
-import { Stack } from "@supabase/stack/internals";
+import { Stack } from "@supabase/stack/effect";
 import { Ink } from "../../../runtime/ink.service.ts";
 import { StartDashboardState } from "./dashboard-state.ts";
 import { StartDashboard } from "./StartDashboard.tsx";

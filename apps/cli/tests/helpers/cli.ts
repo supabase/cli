@@ -53,6 +53,8 @@ export function spawnSupabase(
     env?: Record<string, string>;
     /** Reuse a temp SUPABASE_HOME directory instead of creating a new one per call. */
     home?: string;
+    /** Write this string to stdin, then close it. */
+    stdin?: string;
     /** Whether to kill the whole process group once the root process exits. */
     cleanupProcessGroupOnClose?: boolean;
   },
@@ -74,7 +76,10 @@ export function spawnSupabase(
         SUPABASE_NO_KEYRING: "1",
         ...options?.env,
       },
-      stdio: usesStartWrapper ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],
+      stdio:
+        usesStartWrapper || options?.stdin !== undefined
+          ? ["pipe", "pipe", "pipe"]
+          : ["ignore", "pipe", "pipe"],
       // Own process group so tests can distinguish product cleanup from helper cleanup.
       detached: true,
     },
@@ -96,6 +101,11 @@ export function spawnSupabase(
   stderrStream.on("data", (data: Buffer) => {
     stderr += data.toString();
   });
+
+  if (options?.stdin !== undefined && proc.stdin) {
+    proc.stdin.write(options.stdin);
+    proc.stdin.end();
+  }
 
   const waitForExit = async (): Promise<RunResult> => {
     const result = await new Promise<RunResult>((resolve) => {
@@ -163,6 +173,8 @@ export async function runSupabase(
     env?: Record<string, string>;
     /** Reuse a temp SUPABASE_HOME directory instead of creating a new one per call. */
     home?: string;
+    /** Write this string to stdin, then close it. */
+    stdin?: string;
     /** Kill the process as soon as stdout matches this pattern. */
     until?: RegExp;
     /** How long to wait for the `until` pattern before failing. */

@@ -15,7 +15,7 @@ const makeCliConfig = Effect.gen(function* () {
     dashboardUrl: yield* Config.string("SUPABASE_DASHBOARD_URL").pipe(
       Config.withDefault(SUPABASE_DASHBOARD_URL),
     ),
-    accessToken: yield* Config.option(Config.nonEmptyString("SUPABASE_ACCESS_TOKEN")),
+    accessToken: yield* Config.option(Config.redacted("SUPABASE_ACCESS_TOKEN")),
     noKeyring: yield* Config.option(Config.string("SUPABASE_NO_KEYRING")),
     supabaseHome: Option.getOrElse(configuredHome, () => `${runtimeInfo.homeDir}/.supabase`),
     debug: yield* Config.option(Config.string("SUPABASE_DEBUG")),

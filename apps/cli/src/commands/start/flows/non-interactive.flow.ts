@@ -1,5 +1,5 @@
 import { Effect, Stream } from "effect";
-import { Stack } from "@supabase/stack/internals";
+import { Stack } from "@supabase/stack/effect";
 import { Output } from "../../../output/output.service.ts";
 import { interruptOnSignal } from "../signal.ts";
 import { printStackConnectionInfo, startStackWithProgress } from "../start.shared.ts";

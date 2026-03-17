@@ -1,4 +1,4 @@
-import { prefetch } from "@supabase/stack/bun";
+import { prefetch } from "@supabase/stack";
 
 export default async function globalSetup() {
   await prefetch();

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Fiber, Layer } from "effect";
 import type { StackServiceStatus } from "@supabase/stack";
-import type { StackInfo } from "@supabase/stack/internals";
+import type { StackInfo } from "@supabase/stack/effect";
 import { start } from "./start.handler.ts";
 import { startForegroundWithStopSignal } from "./flows/foreground.flow.ts";
 import { emptyEnv, mockInk, mockOutput, mockStack } from "../../../tests/helpers/mocks.ts";

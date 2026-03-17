@@ -1,5 +1,5 @@
 import { Box, Text } from "ink";
-import type { StackInfo } from "@supabase/stack/internals";
+import type { StackInfo } from "@supabase/stack/effect";
 
 const rows = [
   { emoji: "🌐", label: "API URL", key: "url" },

@@ -1,4 +1,4 @@
-import { connectLayer, Stack } from "@supabase/stack/internals";
+import { connectLayer, Stack } from "@supabase/stack/effect";
 import { Effect, Stream } from "effect";
 import { CliConfig } from "../../config/cli-config.service.ts";
 import { Output } from "../../output/output.service.ts";
