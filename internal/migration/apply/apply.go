@@ -15,10 +15,6 @@ import (
 
 func MigrateAndSeed(ctx context.Context, version string, conn *pgx.Conn, fsys afero.Fs) error {
 	if viper.GetBool("EXPERIMENTAL") && len(version) == 0 {
-		if utils.IsPgDeltaEnabled() {
-			// Show a message that pg-delta is enabled and the user should use `supabase db declarative sync` to generate migrations
-			// for the schema files, then apply the migrations with `db reset`
-		}
 		if err := applySchemaFiles(ctx, conn, afero.NewIOFS(fsys)); err != nil {
 			return err
 		}

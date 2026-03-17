@@ -38,6 +38,17 @@ var (
 	dbDeclarativeCmd = &cobra.Command{
 		Use:   "declarative",
 		Short: "Manage declarative database schemas",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			flags.LoadConfig(afero.NewOsFs())
+			if !utils.IsPgDeltaEnabled() {
+				utils.CmdSuggestion = fmt.Sprintf("Add %s with %s to %s",
+					utils.Aqua("[experimental.pgdelta]"),
+					utils.Aqua("enabled = true"),
+					utils.Bold(utils.ConfigPath))
+				return errors.New("pg-delta must be enabled to use declarative commands")
+			}
+			return nil
+		},
 	}
 
 	// dbDeclarativeSyncCmd generates a new migration from declarative schema.
@@ -417,5 +428,4 @@ func init() {
 	dbDeclarativeCmd.AddCommand(dbDeclarativeSyncCmd)
 	dbDeclarativeCmd.AddCommand(dbDeclarativeGenerateCmd)
 	dbCmd.AddCommand(dbDeclarativeCmd)
-	experimental = append(experimental, dbDeclarativeCmd)
 }
