@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/db/advisors"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
 	"github.com/supabase/cli/internal/db/lint"
@@ -291,6 +292,44 @@ without the envelope.`,
 			return query.RunLocal(cmd.Context(), sql, flags.DbConfig, outputFormat, agentMode, os.Stdout)
 		},
 	}
+
+	advisorType = utils.EnumFlag{
+		Allowed: advisors.AllowedTypes,
+		Value:   advisors.AllowedTypes[0],
+	}
+
+	advisorLevel = utils.EnumFlag{
+		Allowed: advisors.AllowedLevels,
+		Value:   advisors.AllowedLevels[1],
+	}
+
+	advisorFailOn = utils.EnumFlag{
+		Allowed: append([]string{"none"}, advisors.AllowedLevels...),
+		Value:   "none",
+	}
+
+	dbAdvisorsCmd = &cobra.Command{
+		Use:   "advisors",
+		Short: "Checks database for security and performance issues",
+		Long:  "Inspects the database for common security and performance issues such as missing RLS policies, unindexed foreign keys, exposed auth.users, and more.",
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if flag := cmd.Flags().Lookup("linked"); flag != nil && flag.Changed {
+				fsys := afero.NewOsFs()
+				if _, err := utils.LoadAccessTokenFS(fsys); err != nil {
+					utils.CmdSuggestion = fmt.Sprintf("Run %s first.", utils.Aqua("supabase login"))
+					return err
+				}
+				return flags.LoadProjectRef(fsys)
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if flag := cmd.Flags().Lookup("linked"); flag != nil && flag.Changed {
+				return advisors.RunLinked(cmd.Context(), advisorType.Value, advisorLevel.Value, advisorFailOn.Value, flags.ProjectRef)
+			}
+			return advisors.RunLocal(cmd.Context(), advisorType.Value, advisorLevel.Value, advisorFailOn.Value, flags.DbConfig)
+		},
+	}
 )
 
 func init() {
@@ -409,5 +448,15 @@ func init() {
 	queryFlags.StringVarP(&queryFile, "file", "f", "", "Path to a SQL file to execute.")
 	queryFlags.VarP(&queryOutput, "output", "o", "Output format: table, json, or csv.")
 	dbCmd.AddCommand(dbQueryCmd)
+	// Build advisors command
+	advisorsFlags := dbAdvisorsCmd.Flags()
+	advisorsFlags.String("db-url", "", "Checks the database specified by the connection string (must be percent-encoded).")
+	advisorsFlags.Bool("linked", false, "Checks the linked project for issues.")
+	advisorsFlags.Bool("local", true, "Checks the local database for issues.")
+	dbAdvisorsCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
+	advisorsFlags.Var(&advisorType, "type", "Type of advisors to check: all, security, performance.")
+	advisorsFlags.Var(&advisorLevel, "level", "Minimum issue level to display: info, warn, error.")
+	advisorsFlags.Var(&advisorFailOn, "fail-on", "Issue level to exit with non-zero status: none, info, warn, error.")
+	dbCmd.AddCommand(dbAdvisorsCmd)
 	rootCmd.AddCommand(dbCmd)
 }
