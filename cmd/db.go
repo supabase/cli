@@ -254,8 +254,10 @@ var (
 		Short: "Execute a SQL query against the database",
 		Long: `Execute a SQL query against the local or linked database.
 
-The default JSON output includes an untrusted data warning for safe use by AI coding agents.
-Use --output table or --output csv for human-friendly formats.`,
+When used by an AI coding agent (auto-detected or via --agent=yes), the default
+output format is JSON with an untrusted data warning envelope. When used by a
+human (--agent=no or no agent detected), the default output format is table
+without the envelope.`,
 		Args: cobra.MaximumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			if flag := cmd.Flags().Lookup("linked"); flag != nil && flag.Changed {
@@ -273,10 +275,20 @@ Use --output table or --output csv for human-friendly formats.`,
 			if err != nil {
 				return err
 			}
-			if flag := cmd.Flags().Lookup("linked"); flag != nil && flag.Changed {
-				return query.RunLinked(cmd.Context(), sql, flags.ProjectRef, queryOutput.Value, os.Stdout)
+			agentMode := utils.IsAgentMode()
+			// If user didn't explicitly set --output, pick default based on agent mode
+			outputFormat := queryOutput.Value
+			if outputFlag := cmd.Flags().Lookup("output"); outputFlag != nil && !outputFlag.Changed {
+				if agentMode {
+					outputFormat = "json"
+				} else {
+					outputFormat = "table"
+				}
 			}
-			return query.RunLocal(cmd.Context(), sql, flags.DbConfig, queryOutput.Value, os.Stdout)
+			if flag := cmd.Flags().Lookup("linked"); flag != nil && flag.Changed {
+				return query.RunLinked(cmd.Context(), sql, flags.ProjectRef, outputFormat, agentMode, os.Stdout)
+			}
+			return query.RunLocal(cmd.Context(), sql, flags.DbConfig, outputFormat, agentMode, os.Stdout)
 		},
 	}
 )
