@@ -9,3 +9,5 @@ All service containers are started by default. You can exclude those not needed 
 > It is recommended to have at least 7GB of RAM to start all services.
 
 Health checks are automatically added to verify the started containers. Use `--ignore-health-check` flag to ignore these errors.
+
+By default, `supabase start` starts the services and exits. Use `-f` or `--foreground` flag to run in foreground mode, which keeps the command running and automatically stops services when the terminal is closed or interrupted.
