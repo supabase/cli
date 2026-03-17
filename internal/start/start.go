@@ -82,6 +82,7 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 
 	fmt.Fprintf(os.Stderr, "Started %s local development setup.\n\n", utils.Aqua("supabase"))
 	status.PrettyPrint(os.Stdout, excludedContainers...)
+	printSecurityNotice()
 	return nil
 }
 
@@ -1324,4 +1325,12 @@ func formatMapForEnvConfig(input map[string]string, output *bytes.Buffer) {
 			output.WriteString(",")
 		}
 	}
+}
+
+func printSecurityNotice() {
+	fmt.Fprintln(os.Stderr, utils.Yellow("Local dev security notice"))
+	fmt.Fprintln(os.Stderr, "All services bind to 0.0.0.0 (network-accessible, not just localhost)")
+	fmt.Fprintln(os.Stderr, "API keys and JWT secrets are shared defaults. Do not use in production")
+	fmt.Fprintln(os.Stderr, "Studio, pgMeta (/pg/*), and analytics have no authentication")
+	fmt.Fprintln(os.Stderr)
 }
