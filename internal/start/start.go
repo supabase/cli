@@ -1334,4 +1334,3 @@ func printSecurityNotice() {
 	fmt.Fprintln(os.Stderr, "Studio, pgMeta (/pg/*), and analytics have no authentication")
 	fmt.Fprintln(os.Stderr)
 }
-
