@@ -77,7 +77,7 @@ var (
 	CliVersionPath       = filepath.Join(TempDir, "cli-latest")
 	CurrBranchPath       = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
 	// DeclarativeDir is the canonical location for pg-delta declarative schema
-	// files generated or synced by `supabase db declarative` commands.
+	// files generated or synced by `supabase experimental declarative` commands.
 	DeclarativeDir        = filepath.Join(SupabaseDirPath, "declarative")
 	ClusterDir            = filepath.Join(SupabaseDirPath, "cluster")
 	SchemasDir            = filepath.Join(SupabaseDirPath, "schemas")
