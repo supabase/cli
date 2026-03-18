@@ -93,7 +93,7 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 				return err
 			}
 			if err := pgcache.TryCacheMigrationsCatalog(ctx, config, "", "", fsys, options...); err != nil {
-				return err
+				fmt.Fprintln(os.Stderr, "Warning: failed to cache migrations catalog:", err)
 			}
 		} else {
 			fmt.Fprintln(os.Stderr, "Schema migrations are up to date.")

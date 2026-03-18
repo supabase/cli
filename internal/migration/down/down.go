@@ -55,7 +55,10 @@ func ResetAll(ctx context.Context, version string, conn *pgx.Conn, fsys afero.Fs
 	if err := apply.MigrateAndSeed(ctx, version, conn, fsys); err != nil {
 		return err
 	}
-	return pgcache.TryCacheMigrationsCatalog(ctx, conn.Config().Config, "", version, fsys)
+	if err := pgcache.TryCacheMigrationsCatalog(ctx, conn.Config().Config, "", version, fsys); err != nil {
+		fmt.Fprintln(os.Stderr, "Warning: failed to cache migrations catalog:", err)
+	}
+	return nil
 }
 
 func confirmResetAll(pending []string) string {

@@ -184,8 +184,15 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 			config = shadowConfig
 			config.Database = "contrib_regression"
 			if usePgDelta {
-				if err := pgdelta.ApplyDeclarative(ctx, config, fsys); err != nil {
-					return "", err
+				declDir := utils.GetDeclarativeDir()
+				if exists, _ := afero.DirExists(fsys, declDir); exists {
+					if err := pgdelta.ApplyDeclarative(ctx, config, fsys); err != nil {
+						return "", err
+					}
+				} else {
+					if err := migrateBaseDatabase(ctx, config, declared, fsys, options...); err != nil {
+						return "", err
+					}
 				}
 			} else {
 				if err := migrateBaseDatabase(ctx, config, declared, fsys, options...); err != nil {

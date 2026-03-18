@@ -220,7 +220,7 @@ func WriteDeclarativeSchemas(output diff.DeclarativeOutput, fsys afero.Fs) error
 	}
 	for _, file := range output.Files {
 		relPath := filepath.FromSlash(filepath.Clean(file.Path))
-		if strings.HasPrefix(relPath, "..") {
+		if strings.HasPrefix(relPath, "..") || filepath.IsAbs(relPath) {
 			return errors.Errorf("unsafe declarative export path: %s", file.Path)
 		}
 		targetPath := filepath.Join(declarativeDir, relPath)

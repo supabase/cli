@@ -3,7 +3,6 @@ package diff
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
@@ -41,7 +40,7 @@ func RunExplicit(ctx context.Context, fromRef, toRef string, schema []string, ou
 var validTargets = map[string]bool{"local": true, "linked": true, "migrations": true}
 
 func resolveExplicitDatabaseRef(ctx context.Context, ref string, fsys afero.Fs, resolveLinked linkedConfigResolver, resolveMigrations migrationsRefResolver, options ...func(*pgx.ConnConfig)) (string, error) {
-	if !validTargets[ref] && !strings.HasPrefix(ref, "postgres") {
+	if !validTargets[ref] && !isPostgresURL(ref) {
 		return "", errors.Errorf("unknown target %q: must be one of 'local', 'linked', 'migrations', or a postgres:// URL", ref)
 	}
 	switch ref {

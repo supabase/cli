@@ -173,11 +173,29 @@ func runDeclarativeGenerate(cmd *cobra.Command, args []string) error {
 
 	// Check for migrations and offer choices
 	if hasMigrationFiles(fsys) {
-		choice, err := utils.PromptChoice(ctx, "Generate declarative schema from:", []utils.PromptItem{
+		// Try to resolve linked project ref for the prompt
+		var linkedRef string
+		if err := flags.LoadProjectRef(fsys); err == nil {
+			linkedRef = flags.ProjectRef
+		}
+
+		choices := []utils.PromptItem{
 			{Summary: "Local database", Details: "generate from local Postgres", Index: 0},
-			{Summary: "Linked project", Details: "generate from remote linked project", Index: 1},
-			{Summary: "Custom database URL", Details: "enter a connection string", Index: 2},
+		}
+		if len(linkedRef) > 0 {
+			choices = append(choices, utils.PromptItem{
+				Summary: "Linked project",
+				Details: fmt.Sprintf("generate from remote linked project (%s)", linkedRef),
+				Index:   1,
+			})
+		}
+		choices = append(choices, utils.PromptItem{
+			Summary: "Custom database URL",
+			Details: "enter a connection string",
+			Index:   2,
 		})
+
+		choice, err := utils.PromptChoice(ctx, "Generate declarative schema from:", choices)
 		if err != nil {
 			return err
 		}

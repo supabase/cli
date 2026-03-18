@@ -140,7 +140,7 @@ func DeclarativeExportPgDeltaRef(ctx context.Context, sourceRef, targetRef strin
 		binds = append(binds, cwd+":/workspace")
 	}
 	var stdout, stderr bytes.Buffer
-	if err := utils.RunEdgeRuntimeScript(ctx, env, pgDeltaDeclarativeExportScript, binds, "error diffing schema", &stdout, &stderr); err != nil {
+	if err := utils.RunEdgeRuntimeScript(ctx, env, pgDeltaDeclarativeExportScript, binds, "error exporting declarative schema", &stdout, &stderr); err != nil {
 		return DeclarativeOutput{}, err
 	}
 	var result DeclarativeOutput
@@ -173,7 +173,7 @@ func ExportCatalogPgDelta(ctx context.Context, targetRef, role string, options .
 		binds = append(binds, cwd+":/workspace")
 	}
 	var stdout, stderr bytes.Buffer
-	if err := utils.RunEdgeRuntimeScript(ctx, env, pgDeltaCatalogExportScript, binds, "error diffing schema", &stdout, &stderr); err != nil {
+	if err := utils.RunEdgeRuntimeScript(ctx, env, pgDeltaCatalogExportScript, binds, "error exporting pg-delta catalog", &stdout, &stderr); err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(stdout.String()), nil
