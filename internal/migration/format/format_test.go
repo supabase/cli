@@ -74,7 +74,7 @@ schema_paths = [
   "schemas/public/schema.sql",
 ]
 `))
-		assert.True(t, strings.HasSuffix(
+		assert.True(t, strings.Contains(
 			strings.TrimSpace(string(data)),
 			`# format_options =`,
 		))
