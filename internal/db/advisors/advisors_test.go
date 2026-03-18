@@ -29,11 +29,14 @@ func TestQueryLints(t *testing.T) {
 	t.Run("parses lint results from local database", func(t *testing.T) {
 		utils.Config.Hostname = "127.0.0.1"
 		utils.Config.Db.Port = 5432
+		setupSQL, querySQL := splitLintsSQL()
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query("begin").Reply("BEGIN").
-			Query(lintsSQL).
+			Query(setupSQL).
+			Reply("SET").
+			Query(querySQL).
 			Reply("SELECT 1",
 				[]any{
 					"rls_disabled_in_public",
@@ -59,10 +62,13 @@ func TestQueryLints(t *testing.T) {
 	})
 
 	t.Run("handles empty results", func(t *testing.T) {
+		setupSQL, querySQL := splitLintsSQL()
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query("begin").Reply("BEGIN").
-			Query(lintsSQL).
+			Query(setupSQL).
+			Reply("SET").
+			Query(querySQL).
 			Reply("SELECT 0").
 			Query("rollback").Reply("ROLLBACK")
 		// Run test
@@ -72,15 +78,31 @@ func TestQueryLints(t *testing.T) {
 	})
 
 	t.Run("handles query error", func(t *testing.T) {
+		setupSQL, querySQL := splitLintsSQL()
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query("begin").Reply("BEGIN").
-			Query(lintsSQL).
+			Query(setupSQL).
+			Reply("SET").
+			Query(querySQL).
 			ReplyError("42601", "syntax error").
 			Query("rollback").Reply("ROLLBACK")
 		// Run test
 		_, err := queryLints(context.Background(), conn.MockClient(t))
 		assert.Error(t, err)
+	})
+
+	t.Run("handles setup error", func(t *testing.T) {
+		setupSQL, _ := splitLintsSQL()
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query("begin").Reply("BEGIN").
+			Query(setupSQL).
+			ReplyError("42601", "syntax error").
+			Query("rollback").Reply("ROLLBACK")
+		// Run test
+		_, err := queryLints(context.Background(), conn.MockClient(t))
+		assert.ErrorContains(t, err, "failed to prepare lint session")
 	})
 }
 
@@ -313,11 +335,14 @@ func TestRunLocalWithDbUrl(t *testing.T) {
 	t.Run("runs advisors against custom db-url", func(t *testing.T) {
 		utils.Config.Hostname = "127.0.0.1"
 		utils.Config.Db.Port = 5432
+		setupSQL, querySQL := splitLintsSQL()
 
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query("begin").Reply("BEGIN").
-			Query(lintsSQL).
+			Query(setupSQL).
+			Reply("SET").
+			Query(querySQL).
 			Reply("SELECT 1",
 				[]any{
 					"rls_disabled_in_public",
@@ -339,10 +364,13 @@ func TestRunLocalWithDbUrl(t *testing.T) {
 	})
 
 	t.Run("returns no issues for empty results", func(t *testing.T) {
+		setupSQL, querySQL := splitLintsSQL()
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query("begin").Reply("BEGIN").
-			Query(lintsSQL).
+			Query(setupSQL).
+			Reply("SET").
+			Query(querySQL).
 			Reply("SELECT 0").
 			Query("rollback").Reply("ROLLBACK")
 
@@ -351,10 +379,13 @@ func TestRunLocalWithDbUrl(t *testing.T) {
 	})
 
 	t.Run("fails on error level when fail-on is set", func(t *testing.T) {
+		setupSQL, querySQL := splitLintsSQL()
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query("begin").Reply("BEGIN").
-			Query(lintsSQL).
+			Query(setupSQL).
+			Reply("SET").
+			Query(querySQL).
 			Reply("SELECT 1",
 				[]any{
 					"rls_disabled_in_public",
