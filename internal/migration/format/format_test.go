@@ -76,7 +76,7 @@ schema_paths = [
 `))
 		assert.True(t, strings.HasSuffix(
 			strings.TrimSpace(string(data)),
-			`s3_secret_key = "env(S3_SECRET_KEY)"`,
+			`# format_options =`,
 		))
 	})
 

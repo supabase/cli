@@ -39,7 +39,9 @@ var (
 		Use:   "declarative",
 		Short: "Manage declarative database schemas",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			flags.LoadConfig(afero.NewOsFs())
+			if err := flags.LoadConfig(afero.NewOsFs()); err != nil {
+				return err
+			}
 			if !utils.IsPgDeltaEnabled() {
 				utils.CmdSuggestion = fmt.Sprintf("Add %s with %s to %s",
 					utils.Aqua("[experimental.pgdelta]"),
@@ -97,7 +99,7 @@ func hasExplicitTargetFlag(cmd *cobra.Command) bool {
 
 // isTTY returns true if stdin is a terminal.
 func isTTY() bool {
-	return term.IsTerminal(int(os.Stdin.Fd()))
+	return term.IsTerminal(int(os.Stdin.Fd())) //nolint:gosec // G115: stdin fd always fits in int
 }
 
 // hasDeclarativeFiles checks if the declarative schema directory exists and contains files.

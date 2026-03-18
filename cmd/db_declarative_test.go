@@ -102,7 +102,7 @@ func TestHasDeclarativeFiles(t *testing.T) {
 
 	t.Run("returns false when dir is empty", func(t *testing.T) {
 		fsys := mockFsys()
-		fsys.MkdirAll(utils.GetDeclarativeDir(), 0755)
+		require.NoError(t, fsys.MkdirAll(utils.GetDeclarativeDir(), 0755))
 		assert.False(t, hasDeclarativeFiles(fsys))
 	})
 

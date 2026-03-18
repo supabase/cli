@@ -6,12 +6,13 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
-	"os"
-	"path/filepath"
 )
 
 //go:embed templates/pgdelta_declarative_apply.ts

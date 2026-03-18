@@ -49,10 +49,10 @@ var (
 	schemaPathsPattern = regexp.MustCompile(`(?s)\nschema_paths = \[(.*?)\]\n`)
 	// dropStatementRegexp flags potentially destructive statements for UX warnings
 	// when generating migration output from declarative sources.
-	dropStatementRegexp = regexp.MustCompile(`(?i)drop\s+`)
-	catalogPrefixRegexp = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
-	exportCatalog       = diff.ExportCatalogPgDelta
-	applyDeclarative    = pgdelta.ApplyDeclarative
+	dropStatementRegexp  = regexp.MustCompile(`(?i)drop\s+`)
+	catalogPrefixRegexp  = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
+	exportCatalog        = diff.ExportCatalogPgDelta
+	applyDeclarative     = pgdelta.ApplyDeclarative
 	declarativeExportRef = diff.DeclarativeExportPgDeltaRef
 	// generateBaselineCatalogRefResolver allows Generate to reuse a freshly
 	// provisioned baseline shadow for declarative cache warmup.
