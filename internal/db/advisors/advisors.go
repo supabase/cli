@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
@@ -109,7 +110,12 @@ func queryLints(ctx context.Context, conn *pgx.Conn) ([]Lint, error) {
 		}
 	}()
 
-	rows, err := tx.Query(ctx, lintsSQL)
+	setupSQL, querySQL := splitLintsSQL()
+	if _, err := tx.Exec(ctx, setupSQL); err != nil {
+		return nil, errors.Errorf("failed to prepare lint session: %w", err)
+	}
+
+	rows, err := tx.Query(ctx, querySQL)
 	if err != nil {
 		return nil, errors.Errorf("failed to query lints: %w", err)
 	}
@@ -143,6 +149,14 @@ func queryLints(ctx context.Context, conn *pgx.Conn) ([]Lint, error) {
 		return nil, errors.Errorf("failed to parse lint rows: %w", err)
 	}
 	return lints, nil
+}
+
+func splitLintsSQL() (string, string) {
+	setupSQL, querySQL, found := strings.Cut(lintsSQL, ";\n\n")
+	if !found {
+		return "", lintsSQL
+	}
+	return setupSQL, querySQL
 }
 
 func fetchSecurityAdvisors(ctx context.Context, projectRef string) ([]Lint, error) {
