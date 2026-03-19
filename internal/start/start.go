@@ -82,6 +82,7 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 
 	fmt.Fprintf(os.Stderr, "Started %s local development setup.\n\n", utils.Aqua("supabase"))
 	status.PrettyPrint(os.Stdout, excludedContainers...)
+	printSecurityNotice()
 	return nil
 }
 
@@ -1168,6 +1169,9 @@ EOF
 					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
 					"LOGFLARE_PRIVATE_ACCESS_TOKEN=" + utils.Config.Analytics.ApiKey,
 					"OPENAI_API_KEY=" + utils.Config.Studio.OpenaiApiKey.Value,
+					"PGRST_DB_SCHEMAS=" + strings.Join(utils.Config.Api.Schemas, ","),
+					"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(utils.Config.Api.ExtraSearchPath, ","),
+					fmt.Sprintf("PGRST_DB_MAX_ROWS=%d", utils.Config.Api.MaxRows),
 					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
 					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
 					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
@@ -1321,4 +1325,12 @@ func formatMapForEnvConfig(input map[string]string, output *bytes.Buffer) {
 			output.WriteString(",")
 		}
 	}
+}
+
+func printSecurityNotice() {
+	fmt.Fprintln(os.Stderr, utils.Yellow("Local dev security notice"))
+	fmt.Fprintln(os.Stderr, "All services bind to 0.0.0.0 (network-accessible, not just localhost)")
+	fmt.Fprintln(os.Stderr, "API keys and JWT secrets are shared defaults. Do not use in production")
+	fmt.Fprintln(os.Stderr, "Studio, pgMeta (/pg/*), and analytics have no authentication")
+	fmt.Fprintln(os.Stderr)
 }
