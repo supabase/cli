@@ -237,6 +237,8 @@ EOF
 		"",
 		stdout,
 		&stderr,
+	// The "main worker has been destroyed" message may not appear at the start of stderr
+	// (e.g. preceded by other Deno runtime output), so use Contains instead of HasPrefix.
 	); err != nil && !strings.Contains(stderr.String(), "main worker has been destroyed") {
 		return errors.Errorf("error diffing schema: %w:\n%s", err, stderr.String())
 	}

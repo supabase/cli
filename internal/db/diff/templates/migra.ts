@@ -7,7 +7,7 @@ const source = Deno.env.get("SOURCE");
 const target = Deno.env.get("TARGET");
 const sslDebug = Deno.env.get("SUPABASE_SSL_DEBUG")?.toLowerCase() === "true";
 
-function redactUrl(raw: string | undefined): string {
+function redactPostgresUrl(raw: string | undefined): string {
   if (!raw) return "<unset>";
   try {
     const u = new URL(raw);
@@ -23,7 +23,7 @@ if (sslDebug) {
     `[ssl-debug] migra.ts deno=${Deno.version.deno} v8=${Deno.version.v8} os=${Deno.build.os}`,
   );
   console.error(
-    `[ssl-debug] migra.ts source=${redactUrl(source)} target=${redactUrl(target)}`,
+    `[ssl-debug] migra.ts source=${redactPostgresUrl(source)} target=${redactPostgresUrl(target)}`,
   );
   console.error(
     `[ssl-debug] migra.ts ssl_ca_set=${ca != null} ssl_ca_len=${ca?.length ?? 0}`,

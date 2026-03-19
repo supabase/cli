@@ -122,34 +122,36 @@ var (
 )
 
 func GetRootCA(ctx context.Context, dbURL string, options ...func(*pgx.ConnConfig)) (string, error) {
-	if isSSLDebugEnabled() {
-		logSSLDebugf("GetRootCA start db_url=%s", redactPostgresURL(dbURL))
-		logSSLDebugf("env SUPABASE_CA_SKIP_VERIFY=%q SUPABASE_SSL_DEBUG=%q PGSSLROOTCERT=%q SSL_CERT_FILE=%q SSL_CERT_DIR=%q",
-			os.Getenv("SUPABASE_CA_SKIP_VERIFY"),
-			os.Getenv("SUPABASE_SSL_DEBUG"),
-			os.Getenv("PGSSLROOTCERT"),
-			os.Getenv("SSL_CERT_FILE"),
-			os.Getenv("SSL_CERT_DIR"),
-		)
-		logSSLDebugf("runtime goos=%s goarch=%s go=%s", runtime.GOOS, runtime.GOARCH, runtime.Version())
+	debugf := func(string, ...any) {}
+	if IsSSLDebugEnabled() {
+		debugf = LogSSLDebugf
 	}
+	debugf("GetRootCA start db_url=%s", redactPostgresURL(dbURL))
+	debugf("env SUPABASE_CA_SKIP_VERIFY=%q SUPABASE_SSL_DEBUG=%q PGSSLROOTCERT=%q SSL_CERT_FILE=%q SSL_CERT_DIR=%q",
+		os.Getenv("SUPABASE_CA_SKIP_VERIFY"),
+		os.Getenv("SUPABASE_SSL_DEBUG"),
+		os.Getenv("PGSSLROOTCERT"),
+		os.Getenv("SSL_CERT_FILE"),
+		os.Getenv("SSL_CERT_DIR"),
+	)
+	debugf("runtime goos=%s goarch=%s go=%s", runtime.GOOS, runtime.GOARCH, runtime.Version())
 	// node-postgres does not support sslmode=prefer
 	require, err := isRequireSSL(ctx, dbURL, options...)
-	if isSSLDebugEnabled() {
-		logSSLDebugf("GetRootCA probe_result require_ssl=%t err=%v", require, err)
-	}
+	debugf("GetRootCA probe_result require_ssl=%t err=%v", require, err)
 	if !require {
 		return "", err
 	}
 	// Merge all certs to support --db-url flag
 	ca := caStaging + caProd + caSnap
-	if isSSLDebugEnabled() {
-		logSSLDebugf("GetRootCA return ca_bundle_len=%d", len(ca))
-	}
+	debugf("GetRootCA return ca_bundle_len=%d", len(ca))
 	return ca, nil
 }
 
 func isRequireSSL(ctx context.Context, dbUrl string, options ...func(*pgx.ConnConfig)) (bool, error) {
+	debugf := func(string, ...any) {}
+	if IsSSLDebugEnabled() {
+		debugf = LogSSLDebugf
+	}
 	// pgx v4's sslmode=require verifies the server certificate against system CAs,
 	// unlike libpq where require skips verification. When SUPABASE_CA_SKIP_VERIFY=true,
 	// skip verification for this probe only (detects whether the server speaks TLS).
@@ -158,6 +160,7 @@ func isRequireSSL(ctx context.Context, dbUrl string, options ...func(*pgx.ConnCo
 	// Cert validation happens downstream in the migra/pgdelta Deno scripts using GetRootCA.
 	opts := append([]func(*pgx.ConnConfig){}, options...)
 	if os.Getenv("SUPABASE_CA_SKIP_VERIFY") == "true" {
+		fmt.Fprintln(os.Stderr, "WARNING: TLS certificate verification disabled for SSL probe (SUPABASE_CA_SKIP_VERIFY=true)")
 		opts = append(opts, func(cc *pgx.ConnConfig) {
 			// #nosec G402 -- Intentionally skipped for this TLS capability probe only.
 			// Downstream migra/pgdelta flows still validate certificates using GetRootCA.
@@ -176,36 +179,30 @@ func isRequireSSL(ctx context.Context, dbUrl string, options ...func(*pgx.ConnCo
 			}
 		})
 	}
-	if isSSLDebugEnabled() {
-		logSSLDebugf("isRequireSSL probe db_url=%s skip_verify=%t", redactPostgresURL(dbUrl), os.Getenv("SUPABASE_CA_SKIP_VERIFY") == "true")
+	debugf("isRequireSSL probe db_url=%s skip_verify=%t", redactPostgresURL(dbUrl), os.Getenv("SUPABASE_CA_SKIP_VERIFY") == "true")
+	if IsSSLDebugEnabled() {
 		opts = append(opts, logTLSConfigState("isRequireSSL", dbUrl))
 	}
 	conn, err := utils.ConnectByUrl(ctx, dbUrl+"&sslmode=require", opts...)
 	if err != nil {
-		if isSSLDebugEnabled() {
-			logSSLDebugf("isRequireSSL probe_error err=%v", err)
-		}
+		debugf("isRequireSSL probe_error err=%v", err)
 		if strings.HasSuffix(err.Error(), "(server refused TLS connection)") {
-			if isSSLDebugEnabled() {
-				logSSLDebugf("isRequireSSL result require_ssl=false reason=server_refused_tls")
-			}
+			debugf("isRequireSSL result require_ssl=false reason=server_refused_tls")
 			return false, nil
 		}
 		return false, err
 	}
 	// SSL is not supported in debug mode
 	require := !viper.GetBool("DEBUG")
-	if isSSLDebugEnabled() {
-		logSSLDebugf("isRequireSSL result require_ssl=%t debug_mode=%t", require, viper.GetBool("DEBUG"))
-	}
+	debugf("isRequireSSL result require_ssl=%t debug_mode=%t", require, viper.GetBool("DEBUG"))
 	return require, conn.Close(ctx)
 }
 
-func isSSLDebugEnabled() bool {
+func IsSSLDebugEnabled() bool {
 	return strings.EqualFold(os.Getenv("SUPABASE_SSL_DEBUG"), "true")
 }
 
-func logSSLDebugf(format string, args ...any) {
+func LogSSLDebugf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "[ssl-debug] "+format+"\n", args...)
 }
 
@@ -228,10 +225,10 @@ func redactPostgresURL(raw string) string {
 func logTLSConfigState(scope, dbUrl string) func(*pgx.ConnConfig) {
 	return func(cc *pgx.ConnConfig) {
 		if cc.TLSConfig == nil {
-			logSSLDebugf("%s tls_config=nil db_url=%s fallbacks=%d", scope, redactPostgresURL(dbUrl), len(cc.Fallbacks))
+			LogSSLDebugf("%s tls_config=nil db_url=%s fallbacks=%d", scope, redactPostgresURL(dbUrl), len(cc.Fallbacks))
 			return
 		}
-		logSSLDebugf("%s tls_config skip_verify=%t verify_peer_cb=%t verify_conn_cb=%t root_cas=%t server_name=%q fallbacks=%d",
+		LogSSLDebugf("%s tls_config skip_verify=%t verify_peer_cb=%t verify_conn_cb=%t root_cas=%t server_name=%q fallbacks=%d",
 			scope,
 			cc.TLSConfig.InsecureSkipVerify,
 			cc.TLSConfig.VerifyPeerCertificate != nil,
@@ -242,10 +239,10 @@ func logTLSConfigState(scope, dbUrl string) func(*pgx.ConnConfig) {
 		)
 		for i, fc := range cc.Fallbacks {
 			if fc == nil || fc.TLSConfig == nil {
-				logSSLDebugf("%s fallback[%d] tls_config=nil", scope, i)
+				LogSSLDebugf("%s fallback[%d] tls_config=nil", scope, i)
 				continue
 			}
-			logSSLDebugf("%s fallback[%d] skip_verify=%t verify_peer_cb=%t verify_conn_cb=%t root_cas=%t server_name=%q",
+			LogSSLDebugf("%s fallback[%d] skip_verify=%t verify_peer_cb=%t verify_conn_cb=%t root_cas=%t server_name=%q",
 				scope,
 				i,
 				fc.TLSConfig.InsecureSkipVerify,

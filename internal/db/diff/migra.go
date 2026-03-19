@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
-	"fmt"
-	"os"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -71,7 +69,7 @@ func DiffSchemaMigraBash(ctx context.Context, source, target pgconn.Config, sche
 		"SOURCE=" + utils.ToPostgresURL(source),
 		"TARGET=" + utils.ToPostgresURL(target),
 	}
-	if v := os.Getenv("SUPABASE_SSL_DEBUG"); strings.EqualFold(v, "true") {
+	if types.IsSSLDebugEnabled() {
 		env = append(env, "SUPABASE_SSL_DEBUG=true")
 	}
 	// Passing in script string means command line args must be set manually, ie. "$@"
@@ -113,30 +111,25 @@ func DiffSchemaMigra(ctx context.Context, source, target pgconn.Config, schema [
 		"SOURCE=" + utils.ToPostgresURL(source),
 		"TARGET=" + utils.ToPostgresURL(target),
 	}
-	sslDebug := strings.EqualFold(os.Getenv("SUPABASE_SSL_DEBUG"), "true")
-	if sslDebug {
+	debugf := func(string, ...any) {}
+	if types.IsSSLDebugEnabled() {
+		debugf = types.LogSSLDebugf
 		env = append(env, "SUPABASE_SSL_DEBUG=true")
-	}
-	if sslDebug {
-		fmt.Fprintf(os.Stderr, "[ssl-debug] DiffSchemaMigra source_host=%s source_port=%d target_host=%s target_port=%d target_db=%s\n",
+		debugf("DiffSchemaMigra source_host=%s source_port=%d target_host=%s target_port=%d target_db=%s",
 			source.Host,
 			source.Port,
 			target.Host,
 			target.Port,
 			target.Database,
 		)
-		fmt.Fprintf(os.Stderr, "[ssl-debug] DiffSchemaMigra docker_daemon=%s image=%s\n", utils.Docker.DaemonHost(), utils.Config.EdgeRuntime.Image)
+		debugf("DiffSchemaMigra docker_daemon=%s image=%s", utils.Docker.DaemonHost(), utils.Config.EdgeRuntime.Image)
 	}
 	if ca, err := types.GetRootCA(ctx, utils.ToPostgresURL(target), options...); err != nil {
-		if sslDebug {
-			fmt.Fprintf(os.Stderr, "[ssl-debug] DiffSchemaMigra GetRootCA error=%v\n", err)
-		}
+		debugf("DiffSchemaMigra GetRootCA error=%v", err)
 		return "", err
 	} else if len(ca) > 0 {
 		env = append(env, "SSL_CA="+ca)
-		if sslDebug {
-			fmt.Fprintf(os.Stderr, "[ssl-debug] DiffSchemaMigra GetRootCA ca_bundle_len=%d\n", len(ca))
-		}
+		debugf("DiffSchemaMigra GetRootCA ca_bundle_len=%d", len(ca))
 	}
 	if len(schema) > 0 {
 		env = append(env, "INCLUDED_SCHEMAS="+strings.Join(schema, ","))
