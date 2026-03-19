@@ -4997,6 +4997,12 @@ type V1UpsertAMigrationParams struct {
 	IdempotencyKey *string `json:"Idempotency-Key,omitempty"`
 }
 
+// V1GetDatabaseOpenapiParams defines parameters for V1GetDatabaseOpenapi.
+type V1GetDatabaseOpenapiParams struct {
+	// Schema The database schema to generate the OpenAPI spec for
+	Schema *string `form:"schema,omitempty" json:"schema,omitempty"`
+}
+
 // V1CreateAFunctionParams defines parameters for V1CreateAFunction.
 type V1CreateAFunctionParams struct {
 	Slug *string `form:"slug,omitempty" json:"slug,omitempty"`

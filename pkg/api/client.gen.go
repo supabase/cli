@@ -489,6 +489,9 @@ type ClientInterface interface {
 
 	V1PatchAMigration(ctx context.Context, ref string, version string, body V1PatchAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1GetDatabaseOpenapi request
+	V1GetDatabaseOpenapi(ctx context.Context, ref string, params *V1GetDatabaseOpenapiParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1UpdateDatabasePasswordWithBody request with any body
 	V1UpdateDatabasePasswordWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2397,6 +2400,18 @@ func (c *Client) V1PatchAMigrationWithBody(ctx context.Context, ref string, vers
 
 func (c *Client) V1PatchAMigration(ctx context.Context, ref string, version string, body V1PatchAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1PatchAMigrationRequest(c.Server, ref, version, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetDatabaseOpenapi(ctx context.Context, ref string, params *V1GetDatabaseOpenapiParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetDatabaseOpenapiRequest(c.Server, ref, params)
 	if err != nil {
 		return nil, err
 	}
@@ -8346,6 +8361,62 @@ func NewV1PatchAMigrationRequestWithBody(server string, ref string, version stri
 	return req, nil
 }
 
+// NewV1GetDatabaseOpenapiRequest generates requests for V1GetDatabaseOpenapi
+func NewV1GetDatabaseOpenapiRequest(server string, ref string, params *V1GetDatabaseOpenapiParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/openapi", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Schema != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "schema", runtime.ParamLocationQuery, *params.Schema); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewV1UpdateDatabasePasswordRequest calls the generic V1UpdateDatabasePassword builder with application/json body
 func NewV1UpdateDatabasePasswordRequest(server string, ref string, body V1UpdateDatabasePasswordJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -11175,6 +11246,9 @@ type ClientWithResponsesInterface interface {
 
 	V1PatchAMigrationWithResponse(ctx context.Context, ref string, version string, body V1PatchAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*V1PatchAMigrationResponse, error)
 
+	// V1GetDatabaseOpenapiWithResponse request
+	V1GetDatabaseOpenapiWithResponse(ctx context.Context, ref string, params *V1GetDatabaseOpenapiParams, reqEditors ...RequestEditorFn) (*V1GetDatabaseOpenapiResponse, error)
+
 	// V1UpdateDatabasePasswordWithBodyWithResponse request with any body
 	V1UpdateDatabasePasswordWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateDatabasePasswordResponse, error)
 
@@ -13738,6 +13812,28 @@ func (r V1PatchAMigrationResponse) StatusCode() int {
 	return 0
 }
 
+type V1GetDatabaseOpenapiResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *map[string]interface{}
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetDatabaseOpenapiResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetDatabaseOpenapiResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1UpdateDatabasePasswordResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -16063,6 +16159,15 @@ func (c *ClientWithResponses) V1PatchAMigrationWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseV1PatchAMigrationResponse(rsp)
+}
+
+// V1GetDatabaseOpenapiWithResponse request returning *V1GetDatabaseOpenapiResponse
+func (c *ClientWithResponses) V1GetDatabaseOpenapiWithResponse(ctx context.Context, ref string, params *V1GetDatabaseOpenapiParams, reqEditors ...RequestEditorFn) (*V1GetDatabaseOpenapiResponse, error) {
+	rsp, err := c.V1GetDatabaseOpenapi(ctx, ref, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetDatabaseOpenapiResponse(rsp)
 }
 
 // V1UpdateDatabasePasswordWithBodyWithResponse request with arbitrary body returning *V1UpdateDatabasePasswordResponse
@@ -19265,6 +19370,32 @@ func ParseV1PatchAMigrationResponse(rsp *http.Response) (*V1PatchAMigrationRespo
 	response := &V1PatchAMigrationResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1GetDatabaseOpenapiResponse parses an HTTP response from a V1GetDatabaseOpenapiWithResponse call
+func ParseV1GetDatabaseOpenapiResponse(rsp *http.Response) (*V1GetDatabaseOpenapiResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetDatabaseOpenapiResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	}
 
 	return response, nil
