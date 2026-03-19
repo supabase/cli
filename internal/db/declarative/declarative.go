@@ -146,7 +146,7 @@ func DiffDeclarativeToMigrations(ctx context.Context, schema []string, noCache b
 	if exists, err := afero.DirExists(fsys, declarativeDir); err != nil {
 		return nil, err
 	} else if !exists {
-		return nil, errors.Errorf("No declarative schema directory found. Run %s first.", utils.Aqua("supabase experimental declarative generate"))
+		return nil, errors.Errorf("No declarative schema directory found. Run %s first.", utils.Aqua("supabase db schema declarative generate"))
 	}
 	sourceRef, err := getMigrationsCatalogRef(ctx, noCache, fsys, "local", options...)
 	if err != nil {

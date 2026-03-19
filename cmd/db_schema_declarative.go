@@ -34,11 +34,10 @@ var (
 	declarativeFile      string
 	declarativeName      string
 
-	// experimentalCmd is the parent command for experimental features.
-	experimentalCmd = &cobra.Command{
-		GroupID: groupLocalDev,
-		Use:     "experimental",
-		Short:   "Experimental commands (may change or be removed)",
+	// dbSchemaCmd groups schema-related subcommands under `supabase db schema`.
+	dbSchemaCmd = &cobra.Command{
+		Use:   "schema",
+		Short: "Manage database schema",
 	}
 
 	// dbDeclarativeCmd introduces a dedicated command group for declarative workflows.
@@ -49,14 +48,15 @@ var (
 			if err := flags.LoadConfig(afero.NewOsFs()); err != nil {
 				return err
 			}
-			if !utils.IsPgDeltaEnabled() {
-				utils.CmdSuggestion = fmt.Sprintf("Add %s with %s to %s",
-					utils.Aqua("[experimental.pgdelta]"),
-					utils.Aqua("enabled = true"),
-					utils.Bold(utils.ConfigPath))
-				return errors.New("pg-delta must be enabled to use declarative commands")
+			if viper.GetBool("EXPERIMENTAL") || utils.IsPgDeltaEnabled() {
+				return nil
 			}
-			return nil
+			utils.CmdSuggestion = fmt.Sprintf("Either pass %s or add %s with %s to %s",
+				utils.Aqua("--experimental"),
+				utils.Aqua("[experimental.pgdelta]"),
+				utils.Aqua("enabled = true"),
+				utils.Bold(utils.ConfigPath))
+			return errors.New("declarative commands require --experimental flag or pg-delta enabled in config")
 		},
 	}
 
@@ -74,7 +74,7 @@ var (
 		Short: "Generate declarative schema from a database",
 		RunE:  runDeclarativeGenerate,
 		PostRun: func(cmd *cobra.Command, args []string) {
-			fmt.Println("Finished " + utils.Aqua("supabase experimental declarative generate") + ".")
+			fmt.Println("Finished " + utils.Aqua("supabase db schema declarative generate") + ".")
 		},
 	}
 )
@@ -271,14 +271,14 @@ func runDeclarativeSync(cmd *cobra.Command, args []string) error {
 	// Step 1: Check if declarative dir has files
 	if !hasDeclarativeFiles(fsys) {
 		if !isTTY() && !viper.GetBool("YES") {
-			return fmt.Errorf("no declarative schema found. Run %s first", utils.Aqua("supabase experimental declarative generate"))
+			return fmt.Errorf("no declarative schema found. Run %s first", utils.Aqua("supabase db schema declarative generate"))
 		}
 		ok, err := console.PromptYesNo(ctx, "No declarative schema found. Generate a new one ?", true)
 		if err != nil {
 			return err
 		}
 		if !ok {
-			return fmt.Errorf("no declarative schema found. Run %s first", utils.Aqua("supabase experimental declarative generate"))
+			return fmt.Errorf("no declarative schema found. Run %s first", utils.Aqua("supabase db schema declarative generate"))
 		}
 		// Run smart generate flow
 		if err := runDeclarativeGenerate(cmd, args); err != nil {
@@ -454,6 +454,6 @@ func init() {
 
 	dbDeclarativeCmd.AddCommand(dbDeclarativeSyncCmd)
 	dbDeclarativeCmd.AddCommand(dbDeclarativeGenerateCmd)
-	experimentalCmd.AddCommand(dbDeclarativeCmd)
-	rootCmd.AddCommand(experimentalCmd)
+	dbSchemaCmd.AddCommand(dbDeclarativeCmd)
+	dbCmd.AddCommand(dbSchemaCmd)
 }

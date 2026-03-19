@@ -285,17 +285,12 @@ supabase-db-reset:
       Applying migration 20220810154537_create_employees_table.sql...
       Seeding data supabase/seed.sql...
       Finished supabase db reset on branch main.
-supabase-experimental-declarative-sync:
+supabase-db-schema-declarative-sync:
   - id: with-pg-delta
     name: Sync declarative schema with pg-delta
     code: |
-      # Enable pg-delta in config.toml:
-      # [experimental.pgdelta]
-      # enabled = true
-      # declarative_schema_path = "./declarative"
-      #
       # After editing declarative schema files, generate a migration:
-      supabase experimental declarative sync
+      supabase db schema declarative sync --experimental
     response: |
       Creating shadow database...
       Applying declarative schemas via pg-delta...
@@ -309,15 +304,14 @@ supabase-experimental-declarative-sync:
   - id: generate-first
     name: Generate declarative schema from migrations
     code: |
-      # When no declarative schema exists, sync prompts to generate first:
-      supabase experimental declarative sync
+      supabase db schema declarative sync --experimental
     response: |
       No declarative schema found. Generate a new one ? [Y/n]
       Reset local database to match migrations first? (local data will be lost) [y/N] y
       Resetting database...
       ...
       Declarative schema written to supabase/declarative
-      Finished supabase experimental declarative generate.
+      Finished supabase db schema declarative generate.
 supabase-test-db:
   - id: basic-usage
     name: Basic usage
