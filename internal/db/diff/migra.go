@@ -72,7 +72,7 @@ func DiffSchemaMigraBash(ctx context.Context, source, target pgconn.Config, sche
 		"TARGET=" + utils.ToPostgresURL(target),
 	}
 	if v := os.Getenv("SUPABASE_SSL_DEBUG"); strings.EqualFold(v, "true") {
-		env = append(env, "SUPABASE_SSL_DEBUG="+v)
+		env = append(env, "SUPABASE_SSL_DEBUG=true")
 	}
 	// Passing in script string means command line args must be set manually, ie. "$@"
 	args := "set -- " + strings.Join(schema, " ") + ";"
