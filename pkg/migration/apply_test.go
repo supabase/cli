@@ -91,6 +91,55 @@ func TestPendingMigrations(t *testing.T) {
 		assert.ErrorIs(t, err, ErrMissingLocal)
 		assert.ElementsMatch(t, []string{remote[1], remote[3], remote[4]}, missing)
 	})
+
+	t.Run("finds pending folder-based migrations", func(t *testing.T) {
+		local := []string{
+			"20221201000000_test.sql",
+			"20221201000001_test.sql",
+			"20221201000002_drizzle_migration/migration.sql",
+			"20221201000003_another_drizzle/migration.sql",
+		}
+		remote := []string{
+			"20221201000000",
+			"20221201000001",
+		}
+		// Run test
+		pending, err := FindPendingMigrations(local, remote)
+		// Check error
+		assert.NoError(t, err)
+		assert.ElementsMatch(t, local[2:], pending)
+	})
+
+	t.Run("matches remote with local folder-based migration", func(t *testing.T) {
+		local := []string{
+			"20221201000000_test.sql",
+			"20221201000001_drizzle_migration/migration.sql",
+		}
+		remote := []string{
+			"20221201000000",
+			"20221201000001",
+		}
+		// Run test
+		pending, err := FindPendingMigrations(local, remote)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, pending)
+	})
+
+	t.Run("detects missing local for folder-based migrations", func(t *testing.T) {
+		local := []string{
+			"20221201000000_drizzle_one/migration.sql",
+		}
+		remote := []string{
+			"20221201000000",
+			"20221201000001",
+		}
+		// Run test
+		missing, err := FindPendingMigrations(local, remote)
+		// Check error
+		assert.ErrorIs(t, err, ErrMissingLocal)
+		assert.ElementsMatch(t, []string{"20221201000001"}, missing)
+	})
 }
 
 var (
