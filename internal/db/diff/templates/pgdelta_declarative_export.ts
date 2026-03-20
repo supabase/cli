@@ -24,7 +24,10 @@ const target = Deno.env.get("TARGET");
 supabase.filter = {
   // Also allow dropped extensions from migrations to be capted in the declarative schema export
   // TODO: fix upstream bug into pgdelta supabase integration
-  or: [...supabase.filter.or, { type: "extension" }],
+  or: [
+    ...supabase.filter.or,
+    { type: "extension", operation: "drop", scope: "object" },
+  ],
 };
 
 const includedSchemas = Deno.env.get("INCLUDED_SCHEMAS");
