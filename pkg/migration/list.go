@@ -37,23 +37,40 @@ func ListLocalMigrations(migrationsDir string, fsys fs.FS, filter ...func(string
 	}
 	var clean []string
 OUTER:
-	for i, migration := range localMigrations {
-		if migration.IsDir() {
-			continue
+	for i, entry := range localMigrations {
+		var path, version string
+
+		if entry.IsDir() {
+			dirName := entry.Name()
+			matches := migrateDirPattern.FindStringSubmatch(dirName)
+			if len(matches) == 0 {
+				continue
+			}
+			// Look for migration.sql inside the directory (e.g. Drizzle v1 format)
+			sqlPath := filepath.Join(migrationsDir, dirName, "migration.sql")
+			if _, err := fs.Stat(fsys, sqlPath); err != nil {
+				fmt.Fprintf(os.Stderr, "Skipping migration directory %s... (missing migration.sql)\n", dirName)
+				continue
+			}
+			path = sqlPath
+			version = matches[1]
+		} else {
+			filename := entry.Name()
+			if i == 0 && shouldSkip(filename) {
+				fmt.Fprintf(os.Stderr, "Skipping migration %s... (replace \"init\" with a different file name to apply this migration)\n", filename)
+				continue
+			}
+			matches := migrateFilePattern.FindStringSubmatch(filename)
+			if len(matches) == 0 {
+				fmt.Fprintf(os.Stderr, "Skipping migration %s... (file name must match pattern \"<timestamp>_name.sql\")\n", filename)
+				continue
+			}
+			path = filepath.Join(migrationsDir, filename)
+			version = matches[1]
 		}
-		filename := migration.Name()
-		if i == 0 && shouldSkip(filename) {
-			fmt.Fprintf(os.Stderr, "Skipping migration %s... (replace \"init\" with a different file name to apply this migration)\n", filename)
-			continue
-		}
-		matches := migrateFilePattern.FindStringSubmatch(filename)
-		if len(matches) == 0 {
-			fmt.Fprintf(os.Stderr, "Skipping migration %s... (file name must match pattern \"<timestamp>_name.sql\")\n", filename)
-			continue
-		}
-		path := filepath.Join(migrationsDir, filename)
+
 		for _, keep := range filter {
-			if version := matches[1]; !keep(version) {
+			if !keep(version) {
 				continue OUTER
 			}
 		}
