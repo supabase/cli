@@ -386,3 +386,11 @@ s3_region = "env(S3_REGION)"
 s3_access_key = "env(S3_ACCESS_KEY)"
 # Configures AWS_SECRET_ACCESS_KEY for S3 bucket
 s3_secret_key = "env(S3_SECRET_KEY)"
+
+# [experimental.pgdelta]
+# When enabled, pg-delta becomes the active engine for supported schema flows.
+# enabled = false
+# Directory under `supabase/` where declarative files are written.
+# declarative_schema_path = "./declarative"
+# JSON string passed through to pg-delta SQL formatting.
+# format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
