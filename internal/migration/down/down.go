@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/pgcache"
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/migration"
@@ -51,7 +52,13 @@ func ResetAll(ctx context.Context, version string, conn *pgx.Conn, fsys afero.Fs
 	if err := vault.UpsertVaultSecrets(ctx, utils.Config.Db.Vault, conn); err != nil {
 		return err
 	}
-	return apply.MigrateAndSeed(ctx, version, conn, fsys)
+	if err := apply.MigrateAndSeed(ctx, version, conn, fsys); err != nil {
+		return err
+	}
+	if err := pgcache.TryCacheMigrationsCatalog(ctx, conn.Config().Config, "", version, fsys); err != nil {
+		fmt.Fprintln(os.Stderr, "Warning: failed to cache migrations catalog:", err)
+	}
+	return nil
 }
 
 func confirmResetAll(pending []string) string {
