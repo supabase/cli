@@ -106,7 +106,7 @@ func GetMigrationFile(version string, fsys afero.Fs) (string, error) {
 	if len(dirMatches) > 0 {
 		return dirMatches[0], nil
 	}
-	return "", errors.Errorf("glob %s: %w", path, os.ErrNotExist)
+	return "", errors.Errorf("no migration found for version %s: %w", version, os.ErrNotExist)
 }
 
 func NewMigrationFromVersion(version string, fsys afero.Fs) (*migration.MigrationFile, error) {
