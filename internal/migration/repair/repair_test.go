@@ -64,7 +64,7 @@ func TestRepairCommand(t *testing.T) {
 	t.Run("applies folder-based migration version", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
-		sqlPath := filepath.Join(utils.MigrationsDir, "20242409125510_premium_mister_fear", "migration.sql")
+		sqlPath := filepath.Join(utils.MigrationsDir, "20242409125510_premium_mister_fear", "schema.sql")
 		require.NoError(t, afero.WriteFile(fsys, sqlPath, []byte("select 1"), 0644))
 		// Setup mock postgres
 		conn := pgtest.NewConn()
@@ -127,12 +127,22 @@ func TestGetMigrationFile(t *testing.T) {
 
 	t.Run("finds folder-based migration file", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
-		sqlPath := filepath.Join(utils.MigrationsDir, "20242409125510_premium_mister_fear", "migration.sql")
+		sqlPath := filepath.Join(utils.MigrationsDir, "20242409125510_premium_mister_fear", "schema.sql")
 		require.NoError(t, afero.WriteFile(fsys, sqlPath, []byte("select 1"), 0644))
 		// Run test
 		result, err := GetMigrationFile("20242409125510", fsys)
 		assert.NoError(t, err)
 		assert.Equal(t, sqlPath, result)
+	})
+
+	t.Run("returns error for multiple .sql files in directory", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		dir := filepath.Join(utils.MigrationsDir, "20242409125510_premium_mister_fear")
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(dir, "schema.sql"), []byte("select 1"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(dir, "extra.sql"), []byte("select 2"), 0644))
+		// Run test
+		_, err := GetMigrationFile("20242409125510", fsys)
+		assert.ErrorContains(t, err, "multiple .sql files found")
 	})
 
 	t.Run("returns error when version not found", func(t *testing.T) {

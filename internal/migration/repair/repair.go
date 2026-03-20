@@ -97,14 +97,17 @@ func GetMigrationFile(version string, fsys afero.Fs) (string, error) {
 	if len(matches) > 0 {
 		return matches[0], nil
 	}
-	// Try folder-based migration: version_*/migration.sql
-	dirPath := filepath.Join(utils.MigrationsDir, version+"_*", "migration.sql")
+	// Try folder-based migration: version_*/*.sql
+	dirPath := filepath.Join(utils.MigrationsDir, version+"_*", "*.sql")
 	dirMatches, err := afero.Glob(fsys, dirPath)
 	if err != nil {
 		return "", errors.Errorf("failed to glob migration directories: %w", err)
 	}
-	if len(dirMatches) > 0 {
+	if len(dirMatches) == 1 {
 		return dirMatches[0], nil
+	}
+	if len(dirMatches) > 1 {
+		return "", errors.Errorf("multiple .sql files found for version %s", version)
 	}
 	return "", errors.Errorf("no migration found for version %s: %w", version, os.ErrNotExist)
 }

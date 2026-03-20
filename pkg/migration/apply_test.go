@@ -96,8 +96,8 @@ func TestPendingMigrations(t *testing.T) {
 		local := []string{
 			"20221201000000_test.sql",
 			"20221201000001_test.sql",
-			"20221201000002_drizzle_migration/migration.sql",
-			"20221201000003_another_drizzle/migration.sql",
+			"20221201000002_create_users/schema.sql",
+			"20221201000003_add_indexes/schema.sql",
 		}
 		remote := []string{
 			"20221201000000",
@@ -113,7 +113,7 @@ func TestPendingMigrations(t *testing.T) {
 	t.Run("matches remote with local folder-based migration", func(t *testing.T) {
 		local := []string{
 			"20221201000000_test.sql",
-			"20221201000001_drizzle_migration/migration.sql",
+			"20221201000001_create_users/schema.sql",
 		}
 		remote := []string{
 			"20221201000000",
@@ -128,7 +128,7 @@ func TestPendingMigrations(t *testing.T) {
 
 	t.Run("detects missing local for folder-based migrations", func(t *testing.T) {
 		local := []string{
-			"20221201000000_drizzle_one/migration.sql",
+			"20221201000000_create_users/schema.sql",
 		}
 		remote := []string{
 			"20221201000000",

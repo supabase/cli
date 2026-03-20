@@ -48,13 +48,13 @@ func NewMigrationFromFile(path string, fsys fs.FS) (*MigrationFile, error) {
 
 // ParseVersion extracts the version and name from a migration path.
 // Handles both flat files (20220727064247_create_table.sql) and
-// folder-based migrations (20242409125510_premium_mister_fear/migration.sql).
+// folder-based migrations (20242409125510_premium_mister_fear/<file>.sql).
 func ParseVersion(path string) (version, name string, ok bool) {
 	filename := filepath.Base(path)
 	if matches := migrateFilePattern.FindStringSubmatch(filename); len(matches) > 2 {
 		return matches[1], matches[2], true
 	}
-	// Try parent directory for folder-based migrations (e.g. Drizzle v1)
+	// Try parent directory for folder-based migrations
 	dirName := filepath.Base(filepath.Dir(path))
 	if matches := migrateDirPattern.FindStringSubmatch(dirName); len(matches) > 2 {
 		return matches[1], matches[2], true
@@ -64,7 +64,7 @@ func ParseVersion(path string) (version, name string, ok bool) {
 
 // MigrationName returns a human-readable display name for a migration path.
 // For flat files: "20220727064247_create_table.sql"
-// For folder migrations: "20242409125510_premium_mister_fear/migration.sql"
+// For folder migrations: "20242409125510_premium_mister_fear/<file>.sql"
 func MigrationName(path string) string {
 	filename := filepath.Base(path)
 	if migrateFilePattern.MatchString(filename) {

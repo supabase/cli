@@ -103,11 +103,11 @@ func TestMigrationFile(t *testing.T) {
 	t.Run("new from folder-based migration", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := fs.MapFS{
-			"20242409125510_premium_mister_fear/migration.sql": &fs.MapFile{Data: []byte("CREATE TABLE foo (id int)")},
-			"20242409125510_premium_mister_fear/snapshot.json":  &fs.MapFile{Data: []byte("{}")},
+			"20242409125510_premium_mister_fear/schema.sql":   &fs.MapFile{Data: []byte("CREATE TABLE foo (id int)")},
+			"20242409125510_premium_mister_fear/snapshot.json": &fs.MapFile{Data: []byte("{}")},
 		}
 		// Run test
-		migration, err := NewMigrationFromFile("20242409125510_premium_mister_fear/migration.sql", fsys)
+		migration, err := NewMigrationFromFile("20242409125510_premium_mister_fear/schema.sql", fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Equal(t, "20242409125510", migration.Version)
@@ -190,14 +190,14 @@ func TestParseVersion(t *testing.T) {
 	})
 
 	t.Run("extracts version from folder-based migration", func(t *testing.T) {
-		version, name, ok := ParseVersion("supabase/migrations/20242409125510_premium_mister_fear/migration.sql")
+		version, name, ok := ParseVersion("supabase/migrations/20242409125510_premium_mister_fear/schema.sql")
 		assert.True(t, ok)
 		assert.Equal(t, "20242409125510", version)
 		assert.Equal(t, "premium_mister_fear", name)
 	})
 
 	t.Run("extracts version from folder-based migration without parent path", func(t *testing.T) {
-		version, name, ok := ParseVersion("20242409125510_premium_mister_fear/migration.sql")
+		version, name, ok := ParseVersion("20242409125510_premium_mister_fear/schema.sql")
 		assert.True(t, ok)
 		assert.Equal(t, "20242409125510", version)
 		assert.Equal(t, "premium_mister_fear", name)
@@ -208,8 +208,8 @@ func TestParseVersion(t *testing.T) {
 		assert.False(t, ok)
 	})
 
-	t.Run("returns false for migration.sql without matching parent dir", func(t *testing.T) {
-		_, _, ok := ParseVersion("some_dir/migration.sql")
+	t.Run("returns false for .sql without matching parent dir", func(t *testing.T) {
+		_, _, ok := ParseVersion("some_dir/schema.sql")
 		assert.False(t, ok)
 	})
 }
@@ -221,8 +221,8 @@ func TestMigrationName(t *testing.T) {
 
 	t.Run("returns dir/file for folder-based migration", func(t *testing.T) {
 		assert.Equal(t,
-			"20242409125510_premium_mister_fear/migration.sql",
-			MigrationName("supabase/migrations/20242409125510_premium_mister_fear/migration.sql"),
+			"20242409125510_premium_mister_fear/schema.sql",
+			MigrationName("supabase/migrations/20242409125510_premium_mister_fear/schema.sql"),
 		)
 	})
 

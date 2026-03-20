@@ -76,7 +76,7 @@ func squashToVersion(ctx context.Context, version string, fsys afero.Fs, options
 			fmt.Fprintln(os.Stderr, err)
 			continue
 		}
-		// For folder-based migrations, remove the parent directory too (includes snapshot.json)
+		// For folder-based migrations, remove the parent directory and all its contents
 		dir := filepath.Dir(path)
 		if dir != utils.MigrationsDir {
 			if err := fsys.RemoveAll(dir); err != nil {

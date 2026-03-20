@@ -46,13 +46,28 @@ OUTER:
 			if len(matches) == 0 {
 				continue
 			}
-			// Look for migration.sql inside the directory (e.g. Drizzle v1 format)
-			sqlPath := filepath.Join(migrationsDir, dirName, "migration.sql")
-			if _, err := fs.Stat(fsys, sqlPath); err != nil {
-				fmt.Fprintf(os.Stderr, "Skipping migration directory %s... (missing migration.sql)\n", dirName)
+			// Look for exactly one .sql file inside the directory
+			dirPath := filepath.Join(migrationsDir, dirName)
+			entries, err := fs.ReadDir(fsys, dirPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Skipping migration directory %s... (%v)\n", dirName, err)
 				continue
 			}
-			path = sqlPath
+			var sqlFiles []string
+			for _, e := range entries {
+				if !e.IsDir() && filepath.Ext(e.Name()) == ".sql" {
+					sqlFiles = append(sqlFiles, e.Name())
+				}
+			}
+			if len(sqlFiles) != 1 {
+				if len(sqlFiles) == 0 {
+					fmt.Fprintf(os.Stderr, "Skipping migration directory %s... (no .sql file found)\n", dirName)
+				} else {
+					fmt.Fprintf(os.Stderr, "Skipping migration directory %s... (multiple .sql files found)\n", dirName)
+				}
+				continue
+			}
+			path = filepath.Join(migrationsDir, dirName, sqlFiles[0])
 			version = matches[1]
 		} else {
 			filename := entry.Name()
