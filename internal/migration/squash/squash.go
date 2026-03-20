@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -73,6 +74,14 @@ func squashToVersion(ctx context.Context, version string, fsys afero.Fs, options
 	for _, path := range migrations[:len(migrations)-1] {
 		if err := fsys.Remove(path); err != nil {
 			fmt.Fprintln(os.Stderr, err)
+			continue
+		}
+		// For folder-based migrations, remove the parent directory too (includes snapshot.json)
+		dir := filepath.Dir(path)
+		if dir != utils.MigrationsDir {
+			if err := fsys.RemoveAll(dir); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+			}
 		}
 	}
 	return nil
