@@ -5,8 +5,8 @@ import {
   createPlan,
   deserializeCatalog,
   exportDeclarativeSchema,
-} from "npm:@supabase/pg-delta@1.0.0-alpha.8";
-import { supabase } from "npm:@supabase/pg-delta@1.0.0-alpha.8/integrations/supabase";
+} from "npm:@supabase/pg-delta@1.0.0-alpha.9";
+import { supabase } from "npm:@supabase/pg-delta@1.0.0-alpha.9/integrations/supabase";
 
 async function resolveInput(ref: string | undefined) {
   if (!ref) {
@@ -21,6 +21,11 @@ async function resolveInput(ref: string | undefined) {
 
 const source = Deno.env.get("SOURCE");
 const target = Deno.env.get("TARGET");
+supabase.filter = {
+  // Also allow dropped extensions from migrations to be capted in the declarative schema export
+  // TODO: fix upstream bug into pgdelta supabase integration
+  or: [...supabase.filter.or, { type: "extension" }],
+};
 
 const includedSchemas = Deno.env.get("INCLUDED_SCHEMAS");
 if (includedSchemas) {

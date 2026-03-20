@@ -3,7 +3,7 @@
 import {
   applyDeclarativeSchema,
   loadDeclarativeSchema,
-} from "npm:@supabase/pg-delta@1.0.0-alpha.8/declarative";
+} from "npm:@supabase/pg-delta@1.0.0-alpha.9/declarative";
 
 const schemaPath = Deno.env.get("SCHEMA_PATH");
 const target = Deno.env.get("TARGET");

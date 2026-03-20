@@ -2,8 +2,8 @@ import {
   createPlan,
   deserializeCatalog,
   formatSqlStatements,
-} from "npm:@supabase/pg-delta@1.0.0-alpha.8";
-import { supabase } from "npm:@supabase/pg-delta@1.0.0-alpha.8/integrations/supabase";
+} from "npm:@supabase/pg-delta@1.0.0-alpha.9";
+import { supabase } from "npm:@supabase/pg-delta@1.0.0-alpha.9/integrations/supabase";
 
 async function resolveInput(ref: string | undefined) {
   if (!ref) {
@@ -41,7 +41,7 @@ try {
     statements = formatSqlStatements(statements, formatOptions);
   }
   for (const sql of statements) {
-    console.log(`${sql};\n`);
+    console.log(`${sql};`);
   }
 } catch (e) {
   console.error(e);

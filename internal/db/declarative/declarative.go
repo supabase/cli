@@ -38,9 +38,13 @@ const (
 	baselineCatalogName = "catalog-baseline-%s.json"
 	// declarativeCatalogName stores catalogs keyed by declarative-content hash.
 	declarativeCatalogName = "catalog-%s-declarative-%s-%d.json"
-	// noCacheCatalogPath is a throwaway snapshot path used when --no-cache is set.
-	noCacheCatalogPath    = "catalog-nocache.json"
-	catalogRetentionCount = 2
+	// Separate no-cache paths prevent overwrite when both catalogs are
+	// exported in the same sync invocation (getMigrationsCatalogRef then
+	// writeDeclarativeCatalogFromConfig).
+	noCacheBaselineCatalogPath    = "catalog-nocache-baseline.json"
+	noCacheMigrationsCatalogPath  = "catalog-nocache-migrations.json"
+	noCacheDeclarativeCatalogPath = "catalog-nocache-declarative.json"
+	catalogRetentionCount         = 2
 )
 
 var (
@@ -299,7 +303,7 @@ func getGenerateBaselineCatalogRef(ctx context.Context, noCache bool, fsys afero
 		return generateBaselineCatalogRef{}, err
 	}
 	if noCache {
-		path, err := writeTempCatalog(fsys, noCacheCatalogPath, snapshot)
+		path, err := writeTempCatalog(fsys, noCacheBaselineCatalogPath, snapshot)
 		shadow.cleanup()
 		if err != nil {
 			return generateBaselineCatalogRef{}, err
@@ -364,7 +368,7 @@ func getMigrationsCatalogRef(ctx context.Context, noCache bool, fsys afero.Fs, p
 		return "", err
 	}
 	if noCache {
-		return writeTempCatalog(fsys, noCacheCatalogPath, snapshot)
+		return writeTempCatalog(fsys, noCacheMigrationsCatalogPath, snapshot)
 	}
 	return pgcache.WriteMigrationCatalogSnapshot(fsys, prefix, hash, snapshot)
 }
@@ -401,7 +405,7 @@ func writeDeclarativeCatalogFromConfig(ctx context.Context, config pgconn.Config
 		return "", err
 	}
 	if noCache {
-		return writeTempCatalog(fsys, noCacheCatalogPath, snapshot)
+		return writeTempCatalog(fsys, noCacheDeclarativeCatalogPath, snapshot)
 	}
 	if err := ensureTempDir(fsys); err != nil {
 		return "", err

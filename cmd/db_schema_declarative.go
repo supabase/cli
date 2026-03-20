@@ -19,6 +19,7 @@ import (
 	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/migration"
 	"golang.org/x/term"
 )
@@ -48,7 +49,13 @@ var (
 			if err := flags.LoadConfig(afero.NewOsFs()); err != nil {
 				return err
 			}
-			if viper.GetBool("EXPERIMENTAL") || utils.IsPgDeltaEnabled() {
+			// If the user has passed the --experimental flag and pg-delta is not enabled, enable it
+			// so in the rest of the code we can know that we're running pg-delta logic.
+			if viper.GetBool("EXPERIMENTAL") && !utils.IsPgDeltaEnabled() {
+				utils.Config.Experimental.PgDelta = &config.PgDeltaConfig{Enabled: true}
+				return nil
+			}
+			if utils.IsPgDeltaEnabled() {
 				return nil
 			}
 			utils.CmdSuggestion = fmt.Sprintf("Either pass %s or add %s with %s to %s",
@@ -309,6 +316,8 @@ func runDeclarativeSync(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(os.Stderr, "No schema changes found")
 		return nil
 	}
+	fmt.Fprintln(os.Stderr, "Generated migration SQL:")
+	fmt.Fprintln(os.Stderr, utils.Bold(result.DiffSQL))
 
 	// Step 4: Resolve migration name
 	migrationName := resolveDeclarativeMigrationName(declarativeName, declarativeFile)
