@@ -133,7 +133,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		"SUPABASE_SERVICE_ROLE_KEY="+utils.Config.Auth.ServiceRoleKey.Value,
 		"SUPABASE_DB_URL="+dbUrl,
 		"SUPABASE_INTERNAL_JWT_SECRET="+utils.Config.Auth.JwtSecret.Value,
-		"SUPABASE_INTERNAL_JWKS="+jwks,
+		"SUPABASE_JWKS="+jwks,
 		fmt.Sprintf("SUPABASE_INTERNAL_HOST_PORT=%d", utils.Config.Api.Port),
 	)
 	if viper.GetBool("DEBUG") {
