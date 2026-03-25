@@ -392,9 +392,11 @@ EOF
 			container.Config{
 				Image: utils.Config.Analytics.VectorImage,
 				Env:   env,
-				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml && vector --config /etc/vector/vector.yaml
+				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml
 ` + vectorConfigBuf.String() + `
 EOF
+until wget --no-verbose --tries=1 --spider http://` + utils.LogflareId + `:4000/health 2>/dev/null; do sleep 2; done
+vector --config /etc/vector/vector.yaml
 `},
 				Healthcheck: &container.HealthConfig{
 					Test: []string{
