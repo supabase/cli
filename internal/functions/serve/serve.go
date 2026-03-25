@@ -117,7 +117,14 @@ func restartEdgeRuntime(ctx context.Context, envFilePath string, noVerifyJWT *bo
 	dbUrl := fmt.Sprintf("postgresql://postgres:postgres@%s:5432/postgres", utils.DbAliases[0])
 	// 3. Serve and log to console
 	fmt.Fprintln(os.Stderr, "Setting up Edge Functions runtime...")
-	return ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys)
+	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys); err != nil {
+		return err
+	}
+	// 4. Reload Kong to refresh DNS cache for the new Edge Runtime container IP.
+	if err := utils.DockerExecOnceWithStream(ctx, utils.KongId, "", nil, []string{"kong", "reload"}, os.Stderr, os.Stderr); err != nil {
+		fmt.Fprintln(os.Stderr, "Warning: failed to reload Kong:", err)
+	}
+	return nil
 }
 
 func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, runtimeOption RuntimeOption, fsys afero.Fs) error {
