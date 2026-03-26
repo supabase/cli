@@ -7,7 +7,7 @@ Bun monorepo for exploring the next generation of the Supabase CLI and local dev
 Install workspace dependencies:
 
 ```sh
-bun install
+pnpm install
 ```
 
 Clone the reference submodules used during development:
