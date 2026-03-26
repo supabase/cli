@@ -1,0 +1,33 @@
+name: Test
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    if: github.event.pull_request.draft == false
+    name: Check code quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Check code quality
+        run: bun run check

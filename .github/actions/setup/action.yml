@@ -1,0 +1,30 @@
+name: Setup
+
+description: Perform standard setup and install dependencies using pnpm
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Bun
+      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      with:
+        bun-version: latest
+
+    - name: Install Node.js
+      uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+      with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+    - name: Enable Corepack
+      shell: bash
+      run: npm install --global corepack && corepack enable
+
+    - name: Configure dependency cache
+      uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+      with:
+        cache: pnpm
+
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile

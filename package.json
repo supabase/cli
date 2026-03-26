@@ -24,7 +24,9 @@
     }
   },
   "scripts": {
+    "check": "bun run --workspaces --parallel \"*:check\"",
     "repos:install": "git submodule update --init --recursive",
     "repos:pull": "git submodule update --remote"
-  }
+  },
+  "packageManager": "pnpm@10.33.0"
 }

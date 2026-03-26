@@ -1,4 +1,4 @@
-name: Release CLI
+name: Release
 
 on:
   workflow_dispatch:
@@ -40,19 +40,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Setup
+        uses: ./.github/actions/setup
 
       - name: Install nfpm
         run: |
           echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
           sudo apt-get update
           sudo apt-get install -y nfpm
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
 
       - name: Sync versions
         run: bun run packages/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
@@ -70,7 +67,7 @@ jobs:
           ls -la dist/
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cli-build
           path: |
@@ -86,22 +83,19 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+      - name: Setup
+        uses: ./.github/actions/setup
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: cli-build
 
       - name: Setup QEMU for cross-platform Docker
         if: runner.os == 'Linux'
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
 
       - name: Install Scoop
         if: runner.os == 'Windows'
@@ -115,7 +109,7 @@ jobs:
         run: chmod +x packages/cli-*/bin/supabase packages/cli-*/bin/supabase-backend || true
 
       - name: Run smoke tests
-        run: bun run test:smoke --version ${{ inputs.version }}
+        run: pnpm run test:smoke --version ${{ inputs.version }}
         working-directory: packages/cli
 
   publish:
@@ -127,16 +121,13 @@ jobs:
       id-token: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+      - name: Setup
+        uses: ./.github/actions/setup
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: cli-build
 
@@ -150,7 +141,7 @@ jobs:
       #     NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create draft GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
         with:
           tag_name: v${{ inputs.version }}
           name: v${{ inputs.version }}
@@ -184,16 +175,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+      - name: Setup
+        uses: ./.github/actions/setup
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: cli-build
 
@@ -209,16 +197,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+      - name: Setup
+        uses: ./.github/actions/setup
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: cli-build
 
