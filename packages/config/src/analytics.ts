@@ -1,5 +1,6 @@
 import dedent from "dedent";
-import { s } from "jsonv-ts";
+import { Schema } from "effect";
+import { stringEnum } from "./lib/schema.ts";
 
 const links = [
   {
@@ -9,35 +10,57 @@ const links = [
 ];
 
 const tags = ["analytics"];
+const defaultAnalytics = {};
+const defaultEnabled = true;
+const defaultPort = 54327;
+const defaultBackend = "postgres";
 
-export const analytics = s
-  .strictObject({
-    enabled: s.boolean({
-      default: false,
-      description: "Enable the local Logflare service.",
-      tags,
-      links,
-    }),
-    port: s.number({
-      default: 54327,
-      description: "Port to the local Logflare service.",
-      tags,
-    }),
-    vector_port: s.number({
-      default: 54328,
+export const analytics = Schema.Struct({
+  enabled: Schema.Boolean.annotate({
+    default: defaultEnabled,
+    description: "Enable the local Logflare service.",
+    tags,
+    links,
+  }).pipe(Schema.withDecodingDefaultKey(() => defaultEnabled)),
+  port: Schema.Number.annotate({
+    default: defaultPort,
+    description: "Port to the local Logflare service.",
+    tags,
+    links,
+  }).pipe(Schema.withDecodingDefaultKey(() => defaultPort)),
+  backend: stringEnum(["postgres", "bigquery"], {
+    default: defaultBackend,
+    description: dedent`
+      Configure one of the supported backends:
+
+      - \`postgres\`
+      - \`bigquery\`
+    `,
+    tags,
+    links,
+  }).pipe(Schema.withDecodingDefaultKey(() => defaultBackend)),
+  vector_port: Schema.optionalKey(
+    Schema.Number.annotate({
       description: "Port to the local syslog ingest service.",
       tags,
     }),
-    backend: s.string({
-      enum: ["postgres", "bigquery"],
-      default: "postgres",
-      description: dedent`
-         Configure one of the supported backends:
-
-         - \`postgres\`
-         - \`bigquery\``,
+  ),
+  gcp_project_id: Schema.optionalKey(
+    Schema.String.annotate({
+      description: "GCP project ID.",
       tags,
-      links,
     }),
-  })
-  .partial();
+  ),
+  gcp_project_number: Schema.optionalKey(
+    Schema.String.annotate({
+      description: "GCP project number.",
+      tags,
+    }),
+  ),
+  gcp_jwt_path: Schema.optionalKey(
+    Schema.String.annotate({
+      description: "Path to the GCP JWT file.",
+      tags,
+    }),
+  ),
+}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultAnalytics })));

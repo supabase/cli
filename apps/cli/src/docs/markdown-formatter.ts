@@ -1,6 +1,10 @@
 import { Option } from "effect";
 import type { HelpDoc } from "effect/unstable/cli";
 
+function escapeMdxText(value: string): string {
+  return value.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 export function formatTable(headers: string[], rows: string[][]): string {
   const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)));
   const pad = (s: string, w: number) => s + " ".repeat(w - s.length);
@@ -18,7 +22,7 @@ export function formatHelpDocAsMarkdown(doc: HelpDoc.HelpDoc): string {
   const sections: string[] = [];
 
   if (doc.description) {
-    sections.push(doc.description);
+    sections.push(escapeMdxText(doc.description));
   }
 
   sections.push(`## Usage\n\n\`\`\`sh\n${doc.usage}\n\`\`\``);
@@ -30,7 +34,7 @@ export function formatHelpDocAsMarkdown(doc: HelpDoc.HelpDoc): string {
         name,
         `\`${arg.type}\``,
         arg.required ? "Yes" : "No",
-        Option.getOrUndefined(arg.description) ?? "",
+        escapeMdxText(Option.getOrUndefined(arg.description) ?? ""),
       ];
     });
     sections.push(
@@ -41,7 +45,11 @@ export function formatHelpDocAsMarkdown(doc: HelpDoc.HelpDoc): string {
   if (doc.flags.length > 0) {
     const rows = doc.flags.map((flag) => {
       const names = [`--${flag.name}`, ...flag.aliases].map((n) => `\`${n}\``).join(", ");
-      return [names, `\`${flag.type}\``, Option.getOrUndefined(flag.description) ?? ""];
+      return [
+        names,
+        `\`${flag.type}\``,
+        escapeMdxText(Option.getOrUndefined(flag.description) ?? ""),
+      ];
     });
     sections.push(`## Flags\n\n${formatTable(["Flag", "Type", "Description"], rows)}`);
   }
@@ -49,7 +57,7 @@ export function formatHelpDocAsMarkdown(doc: HelpDoc.HelpDoc): string {
   if (doc.examples && doc.examples.length > 0) {
     const exampleBlocks = doc.examples.map((example) => {
       const block = `\`\`\`sh\n${example.command}\n\`\`\``;
-      return example.description ? `${example.description}\n\n${block}` : block;
+      return example.description ? `${escapeMdxText(example.description)}\n\n${block}` : block;
     });
     sections.push(`## Examples\n\n${exampleBlocks.join("\n\n")}`);
   }
@@ -59,7 +67,7 @@ export function formatHelpDocAsMarkdown(doc: HelpDoc.HelpDoc): string {
     for (const group of doc.subcommands) {
       const rows = group.commands.map((sub) => [
         `\`${sub.name}\``,
-        sub.shortDescription ?? sub.description,
+        escapeMdxText(sub.shortDescription ?? sub.description),
       ]);
       const table = formatTable(["Command", "Description"], rows);
       if (group.group) {

@@ -1,7 +1,20 @@
-import { Data } from "effect";
+import { Data, Schema } from "effect";
 import type { ServiceState as RawServiceState } from "@supabase/process-compose";
 
-export type StackServiceStatus = RawServiceState["status"] | "Initializing";
+export const StackServiceStatusSchema = Schema.Union([
+  Schema.Literal("Pending"),
+  Schema.Literal("Starting"),
+  Schema.Literal("Running"),
+  Schema.Literal("Healthy"),
+  Schema.Literal("Unhealthy"),
+  Schema.Literal("Stopping"),
+  Schema.Literal("Stopped"),
+  Schema.Literal("Failed"),
+  Schema.Literal("Restarting"),
+  Schema.Literal("Initializing"),
+]);
+
+export type StackServiceStatus = typeof StackServiceStatusSchema.Type;
 
 export class StackServiceState extends Data.Class<{
   readonly name: string;

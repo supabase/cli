@@ -1,37 +1,89 @@
-import { s } from "jsonv-ts";
-import { env } from "./lib/env";
+import { Schema } from "effect";
+import { secret } from "./lib/env.ts";
 
 const tags = ["experimental"];
+const defaultExperimental = {};
 
-export const experimental = s
-  .strictObject({
-    orioledb_version: s.string({
-      description: "Postgres storage engine to use OrioleDB (S3)",
+const inspectRule = Schema.Struct({
+  query: Schema.optionalKey(
+    Schema.String.annotate({
+      description: "Inspection query.",
       tags,
     }),
-    s3_host: s.string({
+  ),
+  name: Schema.optionalKey(
+    Schema.String.annotate({
+      description: "Inspection rule name.",
+      tags,
+    }),
+  ),
+  pass: Schema.optionalKey(
+    Schema.String.annotate({
+      description: "Success message.",
+      tags,
+    }),
+  ),
+  fail: Schema.optionalKey(
+    Schema.String.annotate({
+      description: "Failure message.",
+      tags,
+    }),
+  ),
+}).pipe(Schema.withDecodingDefaultKey(() => ({})));
+
+export const experimental = Schema.Struct({
+  orioledb_version: Schema.optionalKey(
+    Schema.String.annotate({
+      description: "Postgres storage engine version for OrioleDB.",
+      tags,
+    }),
+  ),
+  s3_host: Schema.optionalKey(
+    Schema.String.annotate({
       description: "S3 bucket URL.",
-      examples: ["<bucket_name>.s3-<region>.amazonaws.com"],
-      default: "env(S3_HOST)",
+      examples: ["<bucket_name>.s3-<region>.amazonaws.com", "env(S3_HOST)"],
       tags,
     }),
-    s3_region: s.string({
+  ),
+  s3_region: Schema.optionalKey(
+    Schema.String.annotate({
       description: "S3 bucket region.",
-      examples: ["us-east-1"],
-      default: "env(S3_REGION)",
+      examples: ["us-east-1", "env(S3_REGION)"],
       tags,
     }),
-    s3_access_key: env({
-      secret: true,
+  ),
+  s3_access_key: Schema.optionalKey(
+    secret({
       description: "S3 access key.",
-      default: "env(S3_ACCESS_KEY)",
+      examples: ["env(S3_ACCESS_KEY)"],
       tags,
     }),
-    s3_secret_key: env({
-      secret: true,
+  ),
+  s3_secret_key: Schema.optionalKey(
+    secret({
       description: "S3 secret key.",
-      default: "env(S3_SECRET_KEY)",
+      examples: ["env(S3_SECRET_KEY)"],
       tags,
     }),
-  })
-  .partial();
+  ),
+  webhooks: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.Boolean.annotate({
+        default: false,
+        description: "Enable experimental webhooks.",
+        tags,
+      }).pipe(Schema.withDecodingDefaultKey(() => false)),
+    }).pipe(Schema.withDecodingDefaultKey(() => ({}))),
+  ),
+  inspect: Schema.optionalKey(
+    Schema.Struct({
+      rules: Schema.Array(inspectRule)
+        .annotate({
+          default: [],
+          description: "Inspection rules.",
+          tags,
+        })
+        .pipe(Schema.withDecodingDefaultKey(() => [])),
+    }).pipe(Schema.withDecodingDefaultKey(() => ({}))),
+  ),
+}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultExperimental })));

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Exit, Layer, Option } from "effect";
 import { BunServices } from "@effect/platform-bun";
 import { SupabaseApiClient } from "@supabase/api/effect";
 
@@ -22,6 +22,97 @@ function findPlatformOperationDescriptor(operationId: string) {
 }
 
 describe("projects create platform handler", () => {
+  it("supports inline --json with dry-run output", async () => {
+    const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
+    const out = mockOutput({ format: "json" });
+
+    const handler = runPlatformOperation({ descriptor });
+
+    await Effect.runPromise(
+      handler({
+        params: Option.none(),
+        json: Option.some(
+          JSON.stringify({
+            name: "from-inline",
+            db_pass: "super-secret",
+            organization_slug: "my-org",
+          }),
+        ),
+        body: Option.none(),
+        bodyFile: Option.none(),
+        upload: [],
+        fields: Option.none(),
+        schema: false,
+        dryRun: true,
+        yes: true,
+      }).pipe(
+        Effect.provide(out.layer),
+        Effect.provide(mockStdin(true)),
+        Effect.provide(unusedApiClientLayer),
+        Effect.provide(BunServices.layer),
+      ),
+    );
+
+    expect(out.messages).toContainEqual(
+      expect.objectContaining({
+        type: "success",
+        message: "",
+        data: expect.objectContaining({
+          dryRun: true,
+          json: expect.objectContaining({
+            name: "from-inline",
+            db_pass: "<redacted>",
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("supports stdin-backed --json with dry-run output", async () => {
+    const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
+    const out = mockOutput({ format: "json" });
+
+    const handler = runPlatformOperation({ descriptor });
+
+    await Effect.runPromise(
+      handler({
+        params: Option.none(),
+        json: Option.some("-"),
+        body: Option.none(),
+        bodyFile: Option.none(),
+        upload: [],
+        fields: Option.none(),
+        schema: false,
+        dryRun: true,
+        yes: true,
+      }).pipe(
+        Effect.provide(out.layer),
+        Effect.provide(
+          mockStdin(
+            true,
+            '{"name":"from-stdin","db_pass":"stdin-secret","organization_slug":"my-org"}',
+          ),
+        ),
+        Effect.provide(unusedApiClientLayer),
+        Effect.provide(BunServices.layer),
+      ),
+    );
+
+    expect(out.messages).toContainEqual(
+      expect.objectContaining({
+        type: "success",
+        message: "",
+        data: expect.objectContaining({
+          dryRun: true,
+          json: expect.objectContaining({
+            name: "from-stdin",
+            db_pass: "<redacted>",
+          }),
+        }),
+      }),
+    );
+  });
+
   it("decodes --json input and projects response fields", async () => {
     const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
     const out = mockOutput({ format: "json" });
@@ -291,5 +382,34 @@ describe("projects create platform handler", () => {
         message: expect.stringContaining("- id: supabase"),
       }),
     );
+  });
+
+  it("returns a structured non-interactive error when required values are missing", async () => {
+    const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
+    const out = mockOutput({ format: "json", interactive: false });
+
+    const handler = runPlatformOperation({ descriptor });
+
+    const exit = await Effect.runPromise(
+      handler({
+        params: Option.none(),
+        json: Option.none(),
+        body: Option.none(),
+        bodyFile: Option.none(),
+        upload: [],
+        fields: Option.none(),
+        schema: false,
+        dryRun: false,
+        yes: true,
+      }).pipe(
+        Effect.provide(out.layer),
+        Effect.provide(mockStdin(false)),
+        Effect.provide(unusedApiClientLayer),
+        Effect.provide(BunServices.layer),
+        Effect.exit,
+      ),
+    );
+
+    expect(Exit.isFailure(exit)).toBe(true);
   });
 });

@@ -4,6 +4,7 @@ import { ServiceMap } from "effect";
 interface CliConfigShape {
   readonly apiUrl: string;
   readonly dashboardUrl: string;
+  readonly projectHost: string;
   readonly accessToken: Option.Option<Redacted.Redacted<string>>;
   readonly noKeyring: Option.Option<string>;
   readonly supabaseHome: string;

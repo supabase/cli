@@ -35,6 +35,7 @@ export default defineConfig({
           fileParallelism: false,
           maxWorkers: 1,
           globalSetup: ["tests/e2e-global-setup.ts"],
+          setupFiles: ["tests/e2e-setup.ts"],
           testTimeout: 120_000,
           hookTimeout: 120_000,
         },

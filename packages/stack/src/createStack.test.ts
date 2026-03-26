@@ -5,6 +5,8 @@ import { join } from "node:path";
 import type { ReadyOptions, StackHandle } from "./createStack.ts";
 import { resolveDaemonConfig } from "./createStack.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
+import { DEFAULT_MANAGED_STACK_NAME, projectKeyForProjectDir } from "./paths.ts";
+import { stackMetadata } from "./StackMetadata.ts";
 import type { AuthConfig, PostgresConfig, PostgrestConfig, StackConfig } from "./StackBuilder.ts";
 
 const DEFAULT_PORTS: AllocatedPorts = {
@@ -33,10 +35,38 @@ function withTempCacheRoot(run: (cacheRoot: string) => Promise<void>) {
   });
 }
 
-function writePorts(cacheRoot: string, name: string, ports: AllocatedPorts) {
-  const stackDir = join(cacheRoot, "stacks", name);
+function writeStackMetadata(
+  cacheRoot: string,
+  projectDir: string,
+  name: string,
+  ports: AllocatedPorts,
+) {
+  const stackDir = join(cacheRoot, "projects", projectKeyForProjectDir(projectDir), "stacks", name);
   mkdirSync(stackDir, { recursive: true });
-  writeFileSync(join(stackDir, "ports.json"), JSON.stringify(ports, null, 2));
+  writeFileSync(
+    join(stackDir, "stack.json"),
+    JSON.stringify(
+      stackMetadata({
+        ports,
+        services: {
+          postgres: "17.6.1.081",
+          postgrest: "14.5",
+          auth: "2.188.0-rc.15",
+          realtime: "2.78.10",
+          storage: "1.41.8",
+          imgproxy: "v3.8.0",
+          mailpit: "v1.22.3",
+          pgmeta: "0.96.1",
+          studio: "2026.03.04-sha-0043607",
+          analytics: "1.34.7",
+          vector: "0.28.1-alpine",
+          pooler: "2.7.4",
+        },
+      }),
+      null,
+      2,
+    ),
+  );
 }
 
 describe("createStack types", () => {
@@ -79,7 +109,7 @@ describe("createStack types", () => {
     expect(check).toBeDefined();
   });
 
-  it("resolveDaemonConfig derives project name and projectDir from cwd", async () => {
+  it("resolveDaemonConfig derives the default stack name and projectDir from cwd", async () => {
     const config = await resolveDaemonConfig({
       cacheRoot: "/tmp/supabase-home",
       cwd: "/Users/test/Code/myapp",
@@ -88,10 +118,18 @@ describe("createStack types", () => {
       },
     });
 
-    expect(config.name).toBe("myapp");
+    expect(config.name).toBe(DEFAULT_MANAGED_STACK_NAME);
     expect(config.projectDir).toBe("/Users/test/Code/myapp");
     expect(config.cacheRoot).toBe("/tmp/supabase-home");
-    expect(config.stackRoot).toBe("/tmp/supabase-home/stacks/myapp");
+    expect(config.stackRoot).toBe(
+      join(
+        "/tmp/supabase-home",
+        "projects",
+        projectKeyForProjectDir("/Users/test/Code/myapp"),
+        "stacks",
+        DEFAULT_MANAGED_STACK_NAME,
+      ),
+    );
   });
 
   it("resolveDaemonConfig prefers legacy defaults for a first named stack", async () => {
@@ -112,7 +150,7 @@ describe("createStack types", () => {
 
   it("a second named stack does not steal another stack's saved legacy ports", async () => {
     await withTempCacheRoot(async (cacheRoot) => {
-      writePorts(cacheRoot, "stack-a", DEFAULT_PORTS);
+      writeStackMetadata(cacheRoot, "/Users/test/Code/stack-a", "stack-a", DEFAULT_PORTS);
 
       const config = await resolveDaemonConfig({
         cacheRoot,
@@ -138,7 +176,12 @@ describe("createStack types", () => {
         authPort: 55123,
         poolerApiPort: 55124,
       };
-      writePorts(cacheRoot, "myapp", savedPorts);
+      writeStackMetadata(
+        cacheRoot,
+        "/Users/test/Code/myapp",
+        DEFAULT_MANAGED_STACK_NAME,
+        savedPorts,
+      );
 
       const config = await resolveDaemonConfig({
         cacheRoot,
@@ -153,7 +196,7 @@ describe("createStack types", () => {
 
   it("explicit user ports cannot override another stack's saved ownership", async () => {
     await withTempCacheRoot(async (cacheRoot) => {
-      writePorts(cacheRoot, "stack-a", DEFAULT_PORTS);
+      writeStackMetadata(cacheRoot, "/Users/test/Code/stack-a", "stack-a", DEFAULT_PORTS);
 
       await expect(
         resolveDaemonConfig({

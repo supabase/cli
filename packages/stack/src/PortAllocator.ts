@@ -1,5 +1,5 @@
 import { createServer } from "node:net";
-import { Data, Effect } from "effect";
+import { Data, Effect, Schema } from "effect";
 
 export const DEFAULT_API_PORT = 54321;
 export const DEFAULT_DB_PORT = 54322;
@@ -52,6 +52,25 @@ export interface AllocatedPorts {
   readonly poolerPort: number;
   readonly poolerApiPort: number;
 }
+
+export const AllocatedPortsSchema = Schema.Struct({
+  apiPort: Schema.Number,
+  dbPort: Schema.Number,
+  authPort: Schema.Number,
+  postgrestPort: Schema.Number,
+  postgrestAdminPort: Schema.Number,
+  realtimePort: Schema.Number,
+  storagePort: Schema.Number,
+  imgproxyPort: Schema.Number,
+  mailpitPort: Schema.Number,
+  mailpitSmtpPort: Schema.Number,
+  mailpitPop3Port: Schema.Number,
+  pgmetaPort: Schema.Number,
+  studioPort: Schema.Number,
+  analyticsPort: Schema.Number,
+  poolerPort: Schema.Number,
+  poolerApiPort: Schema.Number,
+});
 
 export const PORT_FIELDS = [
   "apiPort",
@@ -173,10 +192,10 @@ export const allocatePorts = (
       return probeRandomPort(exclude());
     };
 
-    const resolved = {} as Record<PortField, number>;
+    const partial: Partial<Record<PortField, number>> = {};
     for (const field of PORT_FIELDS) {
-      resolved[field] = alloc(yield* resolvePort(field));
+      partial[field] = alloc(yield* resolvePort(field));
     }
 
-    return resolved as AllocatedPorts;
+    return Schema.decodeUnknownSync(AllocatedPortsSchema)(partial);
   });

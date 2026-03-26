@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./dist/types.d.ts",
+    ".": "./src/index.ts",
+    "./bun": "./src/bun.ts",
+    "./node": "./src/node.ts",
     "./schema.json": "./dist/schema.json"
   },
   "scripts": {
@@ -18,8 +20,11 @@
     "knip:fix": "knip-bun --fix"
   },
   "dependencies": {
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
     "dedent": "^1.7.2",
-    "jsonv-ts": "^0.10.1"
+    "effect": "catalog:",
+    "smol-toml": "^1.6.1"
   },
   "devDependencies": {
     "@tsconfig/bun": "catalog:",

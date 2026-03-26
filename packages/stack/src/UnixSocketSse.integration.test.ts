@@ -10,6 +10,7 @@ import { DaemonServer } from "./DaemonServer.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { Stack, type StackInfo } from "./Stack.ts";
 import { StackServiceState } from "./StackServiceState.ts";
+import { unixHttpClientLayer } from "./bun.ts";
 
 const IDLE_TIMEOUT_WINDOW = Duration.seconds(11);
 
@@ -148,7 +149,9 @@ describe("Unix socket SSE integration", () => {
           socketPath,
         ),
       );
-      const clientRuntime = ManagedRuntime.make(RemoteStack.layer(socketPath));
+      const clientRuntime = ManagedRuntime.make(
+        RemoteStack.layer(socketPath).pipe(Layer.provide(unixHttpClientLayer)),
+      );
 
       try {
         await serverRuntime.runPromise(DaemonServer.asEffect());

@@ -1,12 +1,35 @@
-import { ConfigProvider, Deferred, Effect, Layer, Option, PubSub, Redacted, Stream } from "effect";
+import process from "node:process";
+import { Deferred, Effect, Layer, Option, PubSub, Redacted, Stream } from "effect";
 import type { ReactElement } from "react";
-import { Stack, StackServiceState, type StackInfo } from "@supabase/stack/effect";
+import type { ProjectConfig, ProjectEnvironment, ProjectPaths } from "@supabase/config";
+import {
+  NoRunningStackError,
+  StateNotFoundError,
+  Stack,
+  StackServiceState,
+  StateManager,
+  StackMetadataNotFoundError,
+  type StackInfo,
+  type StackMetadata,
+  type StackState,
+} from "@supabase/stack/effect";
 import { Api } from "../../src/auth/api.service.ts";
 import type { LoginSessionResponse } from "../../src/auth/api.service.ts";
 import { Credentials } from "../../src/auth/credentials.service.ts";
 import { Crypto } from "../../src/auth/crypto.service.ts";
 import { ApiError } from "../../src/auth/errors.ts";
 import { cliConfigLayer } from "../../src/config/cli-config.layer.ts";
+import { ProjectHome } from "../../src/config/project-home.service.ts";
+import {
+  ProjectLocalServiceVersions,
+  type LocalServiceVersionsState,
+} from "../../src/config/project-local-service-versions.service.ts";
+import { ProjectLinkRemote } from "../../src/config/project-link-remote.service.ts";
+import {
+  ProjectLinkState,
+  type ProjectLinkStateValue,
+} from "../../src/config/project-link-state.service.ts";
+import { ProjectContext } from "../../src/config/project-context.service.ts";
 import { NonInteractiveError } from "../../src/output/errors.ts";
 import { Output } from "../../src/output/output.service.ts";
 import type { OutputFormat } from "../../src/output/types.ts";
@@ -35,6 +58,11 @@ type ProgressEvent = {
   message?: string;
   step?: number;
   max?: number;
+};
+
+type OutputEvent = {
+  type: string;
+  [key: string]: unknown;
 };
 
 // ---------------------------------------------------------------------------
@@ -179,10 +207,29 @@ export function mockOutput(
     interactive?: boolean;
     confirmRelogin?: boolean;
     promptTextFail?: boolean;
+    promptSelectResponses?: ReadonlyArray<string>;
   } = {},
 ) {
   const messages: OutputMessage[] = [];
   const progressEvents: ProgressEvent[] = [];
+  const events: OutputEvent[] = [];
+  const promptSelectCalls: Array<{
+    message: string;
+    options: ReadonlyArray<{
+      value: string;
+      label: string;
+      hint?: string;
+    }>;
+    behavior?:
+      | {
+          mode?: "auto" | "select" | "autocomplete";
+          autocompleteThreshold?: number;
+          placeholder?: string;
+          maxItems?: number;
+        }
+      | undefined;
+  }> = [];
+  const promptSelectResponses = [...(opts.promptSelectResponses ?? [])];
   return {
     layer: Layer.succeed(Output, {
       format: opts.format ?? "text",
@@ -244,6 +291,7 @@ export function mockOutput(
         }),
       event: (event) =>
         Effect.sync(() => {
+          events.push(event as OutputEvent);
           messages.push({
             type: "info",
             message:
@@ -305,12 +353,19 @@ export function mockOutput(
       })(),
       promptPassword: () => Effect.succeed(""),
       promptConfirm: () => Effect.succeed(opts.confirmRelogin ?? true),
-      promptSelect: (_message, options) => Effect.succeed(options[0]!.value),
+      promptSelect: (message, options, behavior) =>
+        Effect.sync(() => {
+          promptSelectCalls.push({ message, options, behavior });
+          const response = promptSelectResponses.shift();
+          return response ?? options[0]!.value;
+        }),
       promptMultiSelect: (_message, options) =>
         Effect.succeed(options.map((option) => option.value)),
     }),
     messages,
     progressEvents,
+    events,
+    promptSelectCalls,
   };
 }
 
@@ -548,26 +603,259 @@ export function mockInk(opts: { manualExit?: boolean } = {}) {
 // Environment helpers
 // ---------------------------------------------------------------------------
 
+function applyProcessEnv(values: Readonly<Record<string, string | undefined>>) {
+  const snapshot = { ...process.env };
+
+  for (const key of Object.keys(process.env)) {
+    delete process.env[key];
+  }
+
+  for (const [key, value] of Object.entries(values)) {
+    if (value !== undefined) {
+      process.env[key] = value;
+    }
+  }
+
+  return snapshot;
+}
+
+export function processEnvLayer(
+  values: Readonly<Record<string, string | undefined>> = {},
+): Layer.Layer<never> {
+  return Layer.effectDiscard(
+    Effect.acquireRelease(
+      Effect.sync(() => applyProcessEnv(values)),
+      (snapshot) =>
+        Effect.sync(() => {
+          applyProcessEnv(snapshot);
+        }),
+    ),
+  );
+}
+
+export function mockProjectContext(
+  opts: {
+    paths?: Option.Option<ProjectPaths>;
+    projectEnv?: Option.Option<ProjectEnvironment>;
+    rawProjectConfig?: Option.Option<ProjectConfig>;
+  } = {},
+): Layer.Layer<ProjectContext> {
+  return Layer.succeed(
+    ProjectContext,
+    ProjectContext.of({
+      paths: opts.paths ?? Option.none(),
+      projectEnv: opts.projectEnv ?? Option.none(),
+      rawProjectConfig: opts.rawProjectConfig ?? Option.none(),
+    }),
+  );
+}
+
+function mockProjectHome(
+  opts: {
+    projectRoot?: string;
+    supabaseDir?: string;
+    projectHomeDir?: string;
+  } = {},
+): Layer.Layer<ProjectHome> {
+  const projectRoot = opts.projectRoot ?? "/test/project";
+  const supabaseDir = opts.supabaseDir ?? `${projectRoot}/supabase`;
+  const projectHomeDir = opts.projectHomeDir ?? `${projectRoot}/.supabase`;
+
+  return Layer.succeed(
+    ProjectHome,
+    ProjectHome.of({
+      projectRoot,
+      supabaseDir,
+      projectHomeDir,
+      projectLinkPath: `${projectHomeDir}/project.json`,
+      projectLocalVersionsPath: `${projectHomeDir}/local-versions.json`,
+      ensureProjectHomeDir: Effect.void,
+      stackDir: (name: string) => `${projectHomeDir}/stacks/${name}`,
+      stackStatePath: (name: string) => `${projectHomeDir}/stacks/${name}/state.json`,
+      stackMetadataPath: (name: string) => `${projectHomeDir}/stacks/${name}/stack.json`,
+      stackDataDir: (name: string) => `${projectHomeDir}/stacks/${name}/data`,
+      stackLogsDir: (name: string) => `${projectHomeDir}/stacks/${name}/logs`,
+    }),
+  );
+}
+
+export function mockStateManager(
+  opts: {
+    states?: ReadonlyArray<StackState>;
+    metadata?: ReadonlyArray<{ name: string; metadata: StackMetadata }>;
+  } = {},
+): Layer.Layer<StateManager> {
+  const states = new Map((opts.states ?? []).map((state) => [state.name, state] as const));
+  const metadata = new Map((opts.metadata ?? []).map((entry) => [entry.name, entry.metadata]));
+
+  return Layer.succeed(StateManager, {
+    stackDir: (name: string) => `/test/project/.supabase/stacks/${name}`,
+    dataDir: (name: string) => `/test/project/.supabase/stacks/${name}/data`,
+    runtimeDir: (name: string) => `/tmp/supabase/${name}`,
+    socketPath: (name: string) => `/tmp/supabase/${name}/daemon.sock`,
+    metadataFile: (name: string) => `/test/project/.supabase/stacks/${name}/stack.json`,
+    stackExists: (name: string) => Effect.succeed(states.has(name) || metadata.has(name)),
+    write: (state: StackState) =>
+      Effect.sync(() => {
+        states.set(state.name, state);
+      }),
+    read: (name: string) =>
+      Effect.gen(function* () {
+        const state = states.get(name);
+        if (state === undefined) {
+          return yield* Effect.fail(new StateNotFoundError({ name }));
+        }
+        return state;
+      }),
+    scan: () => Effect.sync(() => Array.from(states.values())),
+    writeMetadata: (name: string, value: StackMetadata) =>
+      Effect.sync(() => {
+        metadata.set(name, value);
+      }),
+    readMetadata: (name: string) =>
+      Effect.gen(function* () {
+        const value = metadata.get(name);
+        if (value === undefined) {
+          return yield* Effect.fail(new StackMetadataNotFoundError({ name }));
+        }
+        return value;
+      }),
+    scanMetadata: () => Effect.sync(() => new Map(metadata)),
+    remove: (name: string) =>
+      Effect.sync(() => {
+        states.delete(name);
+      }),
+    deleteStack: (name: string) =>
+      Effect.sync(() => {
+        states.delete(name);
+        metadata.delete(name);
+      }),
+    resolve: (cwd: string) =>
+      Effect.gen(function* () {
+        const state = Array.from(states.values())[0];
+        if (state === undefined) {
+          return yield* Effect.fail(new NoRunningStackError({ cwd }));
+        }
+        return state;
+      }),
+    isAlive: () => Effect.succeed(true),
+  });
+}
+
+export function mockProjectLinkState(
+  initialState?: ProjectLinkStateValue,
+): Layer.Layer<ProjectLinkState, never, never> {
+  let state = initialState;
+  return Layer.succeed(
+    ProjectLinkState,
+    ProjectLinkState.of({
+      load: Effect.sync(() =>
+        state === undefined ? Option.none<ProjectLinkStateValue>() : Option.some(state),
+      ),
+      save: (nextState: ProjectLinkStateValue) =>
+        Effect.sync(() => {
+          state = nextState;
+        }),
+      clear: Effect.sync(() => {
+        state = undefined;
+      }),
+    }),
+  );
+}
+
+export function mockProjectLinkRemote(
+  opts: {
+    projects?: ReadonlyArray<{
+      ref: string;
+      name: string;
+      region: string;
+      status: string;
+    }>;
+    linkedProject?: {
+      ref: string;
+      name: string;
+      region: string;
+      status: string;
+      versions: {
+        postgres?: string;
+        postgrest?: string;
+        auth?: string;
+        storage?: string;
+      };
+      unavailableServices?: ReadonlyArray<"postgres" | "postgrest" | "auth" | "storage">;
+    };
+  } = {},
+): Layer.Layer<ProjectLinkRemote, never, never> {
+  const projects = opts.projects ?? [];
+  const linkedProject = opts.linkedProject;
+  return Layer.succeed(
+    ProjectLinkRemote,
+    ProjectLinkRemote.of({
+      listAccessibleProjects: Effect.succeed(projects),
+      fetchLinkedProject: (projectRef: string) =>
+        Effect.gen(function* () {
+          if (linkedProject === undefined) {
+            return yield* Effect.fail(new Error(`No linked project mock for ${projectRef}`));
+          }
+          return {
+            ...linkedProject,
+            unavailableServices: linkedProject.unavailableServices ?? [],
+          };
+        }),
+    }),
+  );
+}
+
+export function mockProjectLocalServiceVersions(
+  initialState?: LocalServiceVersionsState,
+): Layer.Layer<ProjectLocalServiceVersions, never, never> {
+  let state = initialState;
+  return Layer.succeed(
+    ProjectLocalServiceVersions,
+    ProjectLocalServiceVersions.of({
+      load: Effect.sync(() =>
+        state === undefined ? Option.none<LocalServiceVersionsState>() : Option.some(state),
+      ),
+    }),
+  );
+}
+
 export function emptyEnv() {
-  const configProviderLayer = ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }));
   const runtimeInfoLayer = mockRuntimeInfo();
+  const projectContextLayer = mockProjectContext();
+  const envLayer = processEnvLayer();
+  const projectHomeLayer = mockProjectHome();
+  const projectLinkStateLayer = mockProjectLinkState();
+  const projectLocalServiceVersionsLayer = mockProjectLocalServiceVersions();
+  const stateManagerLayer = mockStateManager();
   return Layer.mergeAll(
-    configProviderLayer,
     runtimeInfoLayer,
+    projectContextLayer,
+    projectHomeLayer,
+    projectLinkStateLayer,
+    projectLocalServiceVersionsLayer,
+    stateManagerLayer,
+    envLayer,
     mockTty(),
     mockProcessControl().layer,
-    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(configProviderLayer)),
+    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
   );
 }
 
 export function withEnv(env: Record<string, string>) {
-  const configProviderLayer = ConfigProvider.layer(ConfigProvider.fromEnv({ env }));
   const runtimeInfoLayer = mockRuntimeInfo();
+  const projectContextLayer = mockProjectContext();
+  const envLayer = processEnvLayer(env);
+  const projectHomeLayer = mockProjectHome();
+  const stateManagerLayer = mockStateManager();
   return Layer.mergeAll(
-    configProviderLayer,
     runtimeInfoLayer,
+    projectContextLayer,
+    projectHomeLayer,
+    stateManagerLayer,
+    envLayer,
     mockTty(),
     mockProcessControl().layer,
-    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(configProviderLayer)),
+    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
   );
 }

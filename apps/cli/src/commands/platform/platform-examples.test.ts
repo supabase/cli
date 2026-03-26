@@ -99,6 +99,21 @@ describe("platform example generation", () => {
     );
   });
 
+  it("keeps no-input help text aligned for commands without request input", () => {
+    const leaf = findCommand(platformCommand, ["projects", "list"]);
+    expect(leaf).toBeDefined();
+    const helpDoc = getHelpDoc(leaf!, ["supabase", "platform", "projects", "list"]);
+
+    expect(helpDoc.examples).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          description: "Run the command with no additional input.",
+          command: "supabase platform projects list",
+        }),
+      ]),
+    );
+  });
+
   it("generates params-only examples from descriptor shape", () => {
     const descriptor = findPlatformOperationDescriptor("v1DeleteABranch");
     const generated = buildPlatformGeneratedExamples(descriptor);

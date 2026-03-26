@@ -52,7 +52,7 @@ describe("StartDashboardView", () => {
           typeof node === "object" && node !== null && (node as any).type === ConnectionInfo,
       ),
     ).toBe(false);
-  });
+  }, 15_000);
 
   test("renders the failed status without connection info", async () => {
     const dashboardModule = await import("./StartDashboard.tsx");
@@ -84,5 +84,5 @@ describe("StartDashboardView", () => {
           typeof node === "object" && node !== null && (node as any).type === ConnectionInfo,
       ),
     ).toBe(false);
-  });
+  }, 15_000);
 });

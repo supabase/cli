@@ -26,7 +26,7 @@
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
     "effect": "catalog:",
-    "undici": "^7.24.4"
+    "undici": "^7.24.5"
   },
   "devDependencies": {
     "@tsconfig/bun": "catalog:",

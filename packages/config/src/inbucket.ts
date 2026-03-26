@@ -1,5 +1,5 @@
 import dedent from "dedent";
-import { s } from "jsonv-ts";
+import { Schema } from "effect";
 
 const links = [
   {
@@ -9,48 +9,53 @@ const links = [
 ];
 
 const tags = ["local"];
+const defaultInbucket = {};
+const defaultEnabled = true;
+const defaultPort = 54324;
 
-export const inbucket = s
-  .strictObject({
-    enabled: s.boolean({
-      default: true,
-      description: "Enable the local InBucket service.",
+export const inbucket = Schema.Struct({
+  enabled: Schema.Boolean.annotate({
+    default: defaultEnabled,
+    description: "Enable the local Inbucket service.",
+    tags,
+    links,
+  }).pipe(Schema.withDecodingDefaultKey(() => defaultEnabled)),
+  port: Schema.Number.annotate({
+    default: defaultPort,
+    description: dedent`
+      Port to use for the email testing server web interface.
+
+      Emails sent with the local dev setup are monitored and available from the web interface.
+    `,
+    tags,
+    links,
+  }).pipe(Schema.withDecodingDefaultKey(() => defaultPort)),
+  smtp_port: Schema.optionalKey(
+    Schema.Number.annotate({
+      description: "Optional SMTP port to expose for local testing.",
       tags,
       links,
     }),
-    port: s.number({
-      default: 54324,
-      description: dedent`
-         Port to use for the email testing server web interface.
-
-         Emails sent with the local dev setup are not actually sent - rather, they are monitored, and you can view the emails that would have been sent from the web interface.
-      `,
+  ),
+  pop3_port: Schema.optionalKey(
+    Schema.Number.annotate({
+      description: "Optional POP3 port to expose for local testing.",
       tags,
       links,
     }),
-    smtp_port: s.number({
-      default: 54325,
-      description: dedent`
-         Port to use for the email testing server SMTP port.
-
-         Emails sent with the local dev setup are not actually sent - rather, they are monitored, and you can view the emails that would have been sent from the web interface.
-
-         If set, you can access the SMTP server from this port.
-      `,
+  ),
+  admin_email: Schema.optionalKey(
+    Schema.String.annotate({
+      description: "Admin email address for test email sender metadata.",
       tags,
       links,
     }),
-    pop3_port: s.number({
-      default: 54326,
-      description: dedent`
-         Port to use for the email testing server POP3 port.
-
-         Emails sent with the local dev setup are not actually sent - rather, they are monitored, and you can view the emails that would have been sent from the web interface.
-
-         If set, you can access the POP3 server from this port.
-      `,
+  ),
+  sender_name: Schema.optionalKey(
+    Schema.String.annotate({
+      description: "Sender name for test email sender metadata.",
       tags,
       links,
     }),
-  })
-  .partial();
+  ),
+}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultInbucket })));

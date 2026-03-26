@@ -89,9 +89,17 @@ See `apps/cli/src/commands/login/` as the canonical example.
 
 ### Testing pyramid for CLI commands
 
-1. **Unit tests** on `lib/` — pure functions, no Effect context needed
-2. **Integration tests** on handlers — business logic with mocked Effect services via `Layer.succeed`
-3. **E2e tests** — 2 to 4 tests per command covering the golden path and basic error output
+1. **Unit tests** on `lib/` — reserved for pure logic and complicated algorithms that benefit from very tight, fast coverage
+2. **Integration tests** on handlers — the default place for almost all command behavior, including parsing, normalization, output shaping, fallback behavior, error mapping, and feature matrix coverage, with mocked Effect services via `Layer.succeed`
+3. **E2e tests** — a very small golden-path surface only, usually 1 to 3 tests for the most critical subprocess/runtime workflows
+
+### E2e scope policy
+
+- Treat e2e coverage as scarce and expensive. Keep it focused on the most critical user workflows and happy-path smoke coverage.
+- Prefer integration tests for everything that does not require a real subprocess, real runtime wiring, or real cross-boundary behavior.
+- Do not use e2e tests for help text, argument normalization, dry-run payloads, schema rendering, projection formatting, or similar detail coverage unless the real subprocess boundary itself is the thing being validated.
+- If an assertion can be expressed faithfully in an integration test, it should generally live there instead of in e2e.
+- When in doubt, move coverage down the pyramid: e2e -> integration -> unit.
 
 ### Test execution policy
 
@@ -103,6 +111,12 @@ See `apps/cli/src/commands/login/` as the canonical example.
 ### Integration test pattern
 
 Uses `@effect/vitest` with `it.live` — stateful mock factories return `{ layer, state }`. Avoid `vi.fn()` spies; assert on accumulated state after the effect runs:
+
+- Integration tests for CLI commands should be high-level and scenario-oriented.
+- Prefer realistic user flows and user-intent test names over implementation-branch test names.
+- Assert primarily on user-visible behavior and resulting state, not on internal call ordering.
+- Use command-scoped setup helpers that return `{ layer, out, ...state }` so the tests read like command scenarios instead of DI assembly.
+- If a test is mostly validating a pure transformation, formatter, schema descriptor, or other implementation detail, it should usually be a unit test instead.
 
 ```ts
 import { describe, expect, it } from "@effect/vitest";

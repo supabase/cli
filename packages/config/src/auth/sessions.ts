@@ -1,4 +1,4 @@
-import { s } from "jsonv-ts";
+import { Schema } from "effect";
 
 const tags = ["auth"];
 
@@ -9,17 +9,23 @@ const links = [
   },
 ];
 
-export const sessions = s
-  .strictObject({
-    timebox: s.string({
+const defaultSessions = {};
+
+export const sessions = Schema.Struct({
+  timebox: Schema.optionalKey(
+    Schema.String.annotate({
       description: "The timebox for the user session.",
       tags,
       links,
     }),
-    inactivity_timeout: s.string({
+  ),
+  inactivity_timeout: Schema.optionalKey(
+    Schema.String.annotate({
       description: "The inactivity timeout for the user session.",
       tags,
       links,
     }),
-  })
-  .partial();
+  ),
+})
+  .annotate({ default: defaultSessions })
+  .pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultSessions })));

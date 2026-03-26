@@ -6,12 +6,6 @@ export class PlatformInputError extends Data.TaggedError("PlatformInputError")<{
   readonly suggestion?: string;
 }> {}
 
-export class PlatformAuthRequiredError extends Data.TaggedError("PlatformAuthRequiredError")<{
-  readonly message: string;
-  readonly detail?: string;
-  readonly suggestion?: string;
-}> {}
-
 export class PlatformMetadataError extends Data.TaggedError("PlatformMetadataError")<{
   readonly message: string;
   readonly detail?: string;

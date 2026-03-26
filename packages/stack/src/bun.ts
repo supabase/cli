@@ -16,6 +16,25 @@ import {
 } from "./prefetch.ts";
 import { defaultCacheRoot } from "./paths.ts";
 import type { StackConfig } from "./StackBuilder.ts";
+import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
+
+interface BunUnixRequestInit extends RequestInit {
+  readonly unix: string;
+}
+
+export const unixHttpClientLayer = Layer.succeed(UnixHttpClient, {
+  request: (socketPath, path, init) =>
+    Effect.tryPromise({
+      try: () => {
+        const requestInit: BunUnixRequestInit = {
+          ...init,
+          unix: socketPath,
+        };
+        return fetch(`http://localhost${path}`, requestInit);
+      },
+      catch: (cause) => new UnixHttpClientError({ socketPath, path, cause }),
+    }),
+});
 
 // ---------------------------------------------------------------------------
 // Platform values — for use with Effect layer factories

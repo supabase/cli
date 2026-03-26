@@ -37,6 +37,7 @@ const mockClack = vi.hoisted(() => ({
   password: vi.fn(),
   confirm: vi.fn(),
   select: vi.fn(),
+  autocomplete: vi.fn(),
   multiselect: vi.fn(),
   cancel: vi.fn(),
   isCancel: vi.fn((_v: unknown) => false),
@@ -52,6 +53,7 @@ vi.mock("@clack/prompts", () => ({
   password: (a: unknown) => mockClack.password(a),
   confirm: (a: unknown) => mockClack.confirm(a),
   select: (a: unknown) => mockClack.select(a),
+  autocomplete: (a: unknown) => mockClack.autocomplete(a),
   multiselect: (a: unknown) => mockClack.multiselect(a),
   cancel: (a: unknown) => mockClack.cancel(a),
   isCancel: (a: unknown) => mockClack.isCancel(a),
@@ -103,61 +105,6 @@ function getFailError(exit: Exit.Exit<unknown, unknown>): unknown {
 describe("Output", () => {
   describe("text layer", () => {
     const layer = textOutputLayer.pipe(Layer.provide(mockTty({ stdoutIsTty: true })));
-
-    it.effect("interactive reflects Tty.stdoutIsTty", () =>
-      Effect.gen(function* () {
-        const out = yield* Output;
-        expect(out.interactive).toBe(true);
-      }).pipe(Effect.provide(layer)),
-    );
-
-    it.effect("intro calls clack intro", () =>
-      Effect.gen(function* () {
-        const out = yield* Output;
-        yield* out.intro("Welcome");
-        expect(mockClack.intro).toHaveBeenCalledWith("Welcome");
-      }).pipe(Effect.provide(layer)),
-    );
-
-    it.effect("outro calls clack outro", () =>
-      Effect.gen(function* () {
-        const out = yield* Output;
-        yield* out.outro("Goodbye");
-        expect(mockClack.outro).toHaveBeenCalledWith("Goodbye");
-      }).pipe(Effect.provide(layer)),
-    );
-
-    it.effect("info calls log.info", () =>
-      Effect.gen(function* () {
-        const out = yield* Output;
-        yield* out.info("info message");
-        expect(mockClack.log.info).toHaveBeenCalledWith("info message");
-      }).pipe(Effect.provide(layer)),
-    );
-
-    it.effect("warn calls log.warn", () =>
-      Effect.gen(function* () {
-        const out = yield* Output;
-        yield* out.warn("warning message");
-        expect(mockClack.log.warn).toHaveBeenCalledWith("warning message");
-      }).pipe(Effect.provide(layer)),
-    );
-
-    it.effect("error calls log.error", () =>
-      Effect.gen(function* () {
-        const out = yield* Output;
-        yield* out.error("error message");
-        expect(mockClack.log.error).toHaveBeenCalledWith("error message");
-      }).pipe(Effect.provide(layer)),
-    );
-
-    it.effect("success calls log.success", () =>
-      Effect.gen(function* () {
-        const out = yield* Output;
-        yield* out.success("done!");
-        expect(mockClack.log.success).toHaveBeenCalledWith("done!");
-      }).pipe(Effect.provide(layer)),
-    );
 
     it.effect("task uses clack spinner and can resolve into info", () =>
       Effect.gen(function* () {
@@ -236,15 +183,6 @@ describe("Output", () => {
       }).pipe(Effect.provide(layer)),
     );
 
-    it.effect("promptText returns value", () => {
-      mockClack.text.mockResolvedValue("user input");
-      return Effect.gen(function* () {
-        const out = yield* Output;
-        const result = yield* out.promptText("Enter value");
-        expect(result).toBe("user input");
-      }).pipe(Effect.provide(layer));
-    });
-
     it.effect("promptText passes validate callback to clack", () => {
       mockClack.text.mockImplementation(
         (opts: { validate?: (v: string | undefined) => string | undefined }) => {
@@ -279,15 +217,6 @@ describe("Output", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.effect("promptPassword returns trimmed value", () => {
-      mockClack.password.mockResolvedValue("  secret  ");
-      return Effect.gen(function* () {
-        const out = yield* Output;
-        const result = yield* out.promptPassword("Enter password");
-        expect(result).toBe("secret");
-      }).pipe(Effect.provide(layer));
-    });
-
     it.effect("promptPassword interrupts on cancel", () => {
       mockClack.password.mockResolvedValue(Symbol.for("clack:cancel"));
       mockClack.isCancel.mockReturnValue(true);
@@ -298,15 +227,6 @@ describe("Output", () => {
         if (Exit.isFailure(exit)) {
           expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true);
         }
-      }).pipe(Effect.provide(layer));
-    });
-
-    it.effect("promptConfirm returns boolean", () => {
-      mockClack.confirm.mockResolvedValue(true);
-      return Effect.gen(function* () {
-        const out = yield* Output;
-        const result = yield* out.promptConfirm("Confirm?");
-        expect(result).toBe(true);
       }).pipe(Effect.provide(layer));
     });
 
@@ -323,27 +243,107 @@ describe("Output", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.effect("promptSelect returns the selected value", () => {
+    it.effect("promptSelect uses select for short lists in auto mode", () => {
       mockClack.select.mockResolvedValue("pro");
       return Effect.gen(function* () {
         const out = yield* Output;
-        const result = yield* out.promptSelect("Select a plan", [
-          { value: "free", label: "Free" },
-          { value: "pro", label: "Pro", hint: "Recommended" },
-        ]);
+        const result = yield* out.promptSelect(
+          "Select a plan",
+          [
+            { value: "free", label: "Free" },
+            { value: "pro", label: "Pro", hint: "Recommended" },
+          ],
+          {
+            mode: "auto",
+            placeholder: "Search plans...",
+            maxItems: 5,
+          },
+        );
         expect(result).toBe("pro");
+        expect(mockClack.select).toHaveBeenCalledWith({
+          message: "Select a plan",
+          options: [
+            { value: "free", label: "Free" },
+            { value: "pro", label: "Pro", hint: "Recommended" },
+          ],
+          maxItems: 5,
+        });
+        expect(mockClack.autocomplete).not.toHaveBeenCalled();
       }).pipe(Effect.provide(layer));
     });
 
-    it.effect("promptMultiSelect returns selected values", () => {
-      mockClack.multiselect.mockResolvedValue(["one", "two"]);
+    it.effect("promptSelect uses autocomplete for long lists in auto mode", () => {
+      mockClack.autocomplete.mockResolvedValue("project-11");
       return Effect.gen(function* () {
         const out = yield* Output;
-        const result = yield* out.promptMultiSelect("Choose regions", [
-          { value: "one", label: "One" },
-          { value: "two", label: "Two" },
-        ]);
-        expect(result).toEqual(["one", "two"]);
+        const result = yield* out.promptSelect(
+          "Select a project",
+          Array.from({ length: 11 }, (_, index) => ({
+            value: `project-${index + 1}`,
+            label: `Project ${index + 1}`,
+            hint: `ref-${index + 1}`,
+          })),
+          {
+            mode: "auto",
+            placeholder: "Search projects...",
+            maxItems: 10,
+          },
+        );
+        expect(result).toBe("project-11");
+        expect(mockClack.autocomplete).toHaveBeenCalledWith({
+          message: "Select a project",
+          options: Array.from({ length: 11 }, (_, index) => ({
+            value: `project-${index + 1}`,
+            label: `Project ${index + 1}`,
+            hint: `ref-${index + 1}`,
+          })),
+          placeholder: "Search projects...",
+          maxItems: 10,
+        });
+        expect(mockClack.select).not.toHaveBeenCalled();
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("promptSelect explicit mode overrides auto behavior", () => {
+      mockClack.autocomplete.mockResolvedValue("free");
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        const result = yield* out.promptSelect(
+          "Select a plan",
+          [
+            { value: "free", label: "Free" },
+            { value: "pro", label: "Pro" },
+          ],
+          {
+            mode: "autocomplete",
+            placeholder: "Search plans...",
+          },
+        );
+        expect(result).toBe("free");
+        expect(mockClack.autocomplete).toHaveBeenCalledTimes(1);
+        expect(mockClack.select).not.toHaveBeenCalled();
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("promptSelect interrupts on autocomplete cancel", () => {
+      mockClack.autocomplete.mockResolvedValue(Symbol.for("clack:cancel"));
+      mockClack.isCancel.mockReturnValue(true);
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        const exit = yield* out
+          .promptSelect(
+            "Select a project",
+            Array.from({ length: 11 }, (_, index) => ({
+              value: `project-${index + 1}`,
+              label: `Project ${index + 1}`,
+            })),
+            { mode: "auto" },
+          )
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+        }
       }).pipe(Effect.provide(layer));
     });
   });

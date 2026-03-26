@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit } from "effect";
-import { excludeFlag, toStartStackConfig } from "./start.command.ts";
+import { excludeFlag, serviceVersionFlag } from "./start.command.ts";
 
 describe("start command exclude flag", () => {
   test("parses repeated excluded services", async () => {
@@ -31,15 +31,16 @@ describe("start command exclude flag", () => {
     expect(Exit.isFailure(exit)).toBe(true);
   });
 
-  test("dedupes excluded services when building stack config", () => {
-    expect(toStartStackConfig(["auth", "auth"])).toMatchObject({
-      mode: "auto",
-      auth: false,
-    });
-    expect(toStartStackConfig(["auth", "postgrest"])).toMatchObject({
-      mode: "auto",
-      auth: false,
-      postgrest: false,
-    });
+  test("parses repeated service version overrides", async () => {
+    const [, overrides] = await Effect.runPromise(
+      serviceVersionFlag
+        .parse({
+          flags: { "service-version": ["auth=v2.180.0", "postgres=17.4.1.045"] },
+          arguments: [],
+        })
+        .pipe(Effect.provide(BunServices.layer)),
+    );
+
+    expect(overrides).toEqual(["auth=v2.180.0", "postgres=17.4.1.045"]);
   });
 });

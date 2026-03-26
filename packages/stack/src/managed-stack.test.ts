@@ -3,7 +3,7 @@ import { Effect, Layer } from "effect";
 import { FileSystem, Path } from "effect";
 import type { AllocatedPorts } from "./PortAllocator.ts";
 import { resolveManagedStack } from "./managed-stack.ts";
-import { StateManager, managedStateManagerPaths, type StackState } from "./StateManager.ts";
+import { StateManager, projectStateManagerPaths, type StackState } from "./StateManager.ts";
 
 const DEFAULT_PORTS: AllocatedPorts = {
   apiPort: 54321,
@@ -42,6 +42,10 @@ function makeState(overrides: Partial<StackState> = {}): StackState {
     serviceRoleJwt: "service_role_jwt",
     dockerContainerNames: ["supabase-postgres-54321"],
     serviceEndpoints: {},
+    services: {
+      postgres: "17.6.1.081",
+      auth: "2.188.0-rc.15",
+    },
     ...overrides,
   };
 }
@@ -98,6 +102,13 @@ function mockFileSystem() {
           if (key === rmPath || key.startsWith(`${rmPath}/`)) dirs.delete(key);
         }
       }),
+    rename: (oldPath: string, newPath: string) =>
+      Effect.sync(() => {
+        const content = files.get(oldPath);
+        if (content == null) throw new Error(`File not found: ${oldPath}`);
+        files.delete(oldPath);
+        files.set(newPath, content);
+      }),
   } as unknown as FileSystem.FileSystem);
 
   return { layer, files };
@@ -118,7 +129,9 @@ function setup() {
 }
 
 const makeStateManager = StateManager.asEffect().pipe(
-  Effect.provide(StateManager.make(managedStateManagerPaths("/test-home"))),
+  Effect.provide(
+    StateManager.make(projectStateManagerPaths("/test-home", "/Users/test/Code/myapp")),
+  ),
 );
 
 describe("resolveManagedStack", () => {
@@ -151,6 +164,24 @@ describe("resolveManagedStack", () => {
 
       expect(result.alive).toBe(true);
       expect(result.state.projectDir).toBe("/Users/test/Code/myapp");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("resolves the requested named stack within the same project", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      const mgr = yield* makeStateManager;
+      yield* mgr.write(makeState({ name: "default", pid: 999999 }));
+      yield* mgr.write(makeState({ name: "preview", pid: process.pid }));
+
+      const result = yield* resolveManagedStack({
+        cacheRoot: "/test-home",
+        projectDir: "/Users/test/Code/myapp",
+        name: "preview",
+      });
+
+      expect(result.alive).toBe(true);
+      expect(result.state.name).toBe("preview");
     }).pipe(Effect.provide(layer));
   });
 

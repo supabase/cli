@@ -17,3 +17,9 @@ export class ApiError extends Data.TaggedError("ApiError")<{
   readonly statusCode?: number;
   readonly detail: string;
 }> {}
+
+export class PlatformAuthRequiredError extends Data.TaggedError("PlatformAuthRequiredError")<{
+  readonly message: string;
+  readonly detail?: string;
+  readonly suggestion?: string;
+}> {}

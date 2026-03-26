@@ -1,7 +1,9 @@
 import { connectLayer, Stack } from "@supabase/stack/effect";
 import { Effect, Stream } from "effect";
 import { CliConfig } from "../../config/cli-config.service.ts";
+import { ProjectHome } from "../../config/project-home.service.ts";
 import { Output } from "../../output/output.service.ts";
+import { ProcessControl } from "../../runtime/process-control.service.ts";
 import { RuntimeInfo } from "../../runtime/runtime-info.service.ts";
 import type { LogsFlags } from "./logs.command.ts";
 import { UnsupportedLogsOutputFormatError } from "./logs.errors.ts";
@@ -45,36 +47,54 @@ function emitLogEntry(
 }
 
 export const logs = Effect.fnUntraced(function* (flags: LogsFlags) {
-  const output = yield* Output;
-  const cliConfig = yield* CliConfig;
-  const runtimeInfo = yield* RuntimeInfo;
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const output = yield* Output;
+      const cliConfig = yield* CliConfig;
+      const projectHome = yield* ProjectHome;
+      const processControl = yield* ProcessControl;
+      const runtimeInfo = yield* RuntimeInfo;
 
-  yield* output.intro("Show local Supabase logs");
+      yield* output.intro("Show local Supabase logs");
 
-  if (output.format === "json") {
-    return yield* new UnsupportedLogsOutputFormatError({
-      detail: "The logs command does not support --output-format json.",
-      suggestion: "Use --output-format stream-json for machine-readable streaming logs.",
-    });
-  }
+      if (output.format === "json") {
+        return yield* new UnsupportedLogsOutputFormatError({
+          detail: "The logs command does not support --output-format json.",
+          suggestion: "Use --output-format stream-json for machine-readable streaming logs.",
+        });
+      }
 
-  const layer = yield* connectLayer({ cwd: runtimeInfo.cwd, cacheRoot: cliConfig.supabaseHome });
-  const stack = yield* Effect.provide(Stack.asEffect(), layer);
-  const services = flags.service.length === 0 ? undefined : flags.service;
-  const history = flags.tail > 0 ? yield* stack.logHistoryAll(flags.tail, services) : [];
-  const historyStream = Stream.fromIterable(history).pipe(
-    Stream.runForEach((entry) => emitLogEntry(output, entry, "history")),
+      const layer = yield* connectLayer({
+        cwd: runtimeInfo.cwd,
+        cacheRoot: cliConfig.supabaseHome,
+        projectDir: projectHome.projectRoot,
+        projectStateRoot: projectHome.projectHomeDir,
+        name: flags.stack,
+      });
+      const stack = yield* Effect.provide(Stack.asEffect(), layer);
+      const services = flags.service.length === 0 ? undefined : flags.service;
+      const history = flags.tail > 0 ? yield* stack.logHistoryAll(flags.tail, services) : [];
+      const historyStream = Stream.fromIterable(history).pipe(
+        Stream.runForEach((entry) => emitLogEntry(output, entry, "history")),
+      );
+
+      if (flags.noFollow) {
+        yield* historyStream;
+        yield* output.outro("Finished showing local Supabase logs.");
+        return yield* processControl.exit(0);
+      }
+
+      const liveStream = stack
+        .subscribeAllLogs(services)
+        .pipe(Stream.runForEach((entry) => emitLogEntry(output, entry, "live")));
+
+      yield* historyStream;
+      yield* Effect.raceFirst(
+        liveStream,
+        processControl
+          .awaitSignal()
+          .pipe(Effect.flatMap((signal) => processControl.exit(signal === "SIGINT" ? 130 : 0))),
+      );
+    }),
   );
-
-  if (flags.noFollow) {
-    yield* historyStream;
-    return;
-  }
-
-  const liveStream = stack
-    .subscribeAllLogs(services)
-    .pipe(Stream.runForEach((entry) => emitLogEntry(output, entry, "live")));
-
-  yield* historyStream;
-  yield* liveStream;
 });

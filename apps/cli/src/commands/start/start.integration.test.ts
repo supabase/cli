@@ -1,13 +1,119 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Fiber, Layer } from "effect";
 import type { StackServiceStatus } from "@supabase/stack";
-import type { StackInfo } from "@supabase/stack/effect";
+import { stackMetadata, type StackInfo } from "@supabase/stack/effect";
 import { start } from "./start.handler.ts";
+import { StartVersionState } from "./start.command.ts";
 import { startForegroundWithStopSignal } from "./flows/foreground.flow.ts";
-import { emptyEnv, mockInk, mockOutput, mockStack } from "../../../tests/helpers/mocks.ts";
+import type { ResolvedServiceVersionContext } from "../../config/service-version-resolution.ts";
+import {
+  emptyEnv,
+  mockInk,
+  mockOutput,
+  mockProjectLocalServiceVersions,
+  mockStateManager,
+  mockStack,
+} from "../../../tests/helpers/mocks.ts";
 
-const foregroundFlags = { exclude: [], detach: false };
-const backgroundFlags = { exclude: [], detach: true };
+const foregroundFlags = { stack: "default", exclude: [], serviceVersion: [], detach: false };
+const backgroundFlags = { stack: "default", exclude: [], serviceVersion: [], detach: true };
+
+function mockStartVersionState(
+  opts: {
+    metadata?: ReturnType<typeof stackMetadata>;
+    serviceVersionContext?: Partial<ResolvedServiceVersionContext>;
+  } = {},
+) {
+  return Layer.succeed(
+    StartVersionState,
+    StartVersionState.of({
+      metadata:
+        opts.metadata ??
+        stackMetadata({
+          ports: {
+            apiPort: 54321,
+            dbPort: 54322,
+            authPort: 54323,
+            postgrestPort: 54324,
+            postgrestAdminPort: 54325,
+            realtimePort: 54326,
+            storagePort: 54327,
+            imgproxyPort: 54328,
+            mailpitPort: 54329,
+            mailpitSmtpPort: 54330,
+            mailpitPop3Port: 54331,
+            pgmetaPort: 54332,
+            studioPort: 54333,
+            analyticsPort: 54334,
+            poolerPort: 54335,
+            poolerApiPort: 54336,
+          },
+          services: {
+            postgres: "17.6.1.081",
+            postgrest: "14.5",
+            auth: "2.188.0-rc.15",
+            realtime: "2.78.10",
+            storage: "1.41.8",
+            imgproxy: "v3.8.0",
+            mailpit: "v1.22.3",
+            pgmeta: "0.96.1",
+            studio: "2026.03.04-sha-0043607",
+            analytics: "1.34.7",
+            vector: "0.28.1-alpine",
+            pooler: "2.7.4",
+          },
+        }),
+      serviceVersionContext: {
+        candidateBaseline: {
+          postgres: "17.6.1.081",
+          postgrest: "14.5",
+          auth: "2.188.0-rc.15",
+          realtime: "2.78.10",
+          storage: "1.41.8",
+          imgproxy: "v3.8.0",
+          mailpit: "v1.22.3",
+          pgmeta: "0.96.1",
+          studio: "2026.03.04-sha-0043607",
+          analytics: "1.34.7",
+          vector: "0.28.1-alpine",
+          pooler: "2.7.4",
+        },
+        pinnedBaseline: {
+          postgres: "17.6.1.081",
+          postgrest: "14.5",
+          auth: "2.188.0-rc.15",
+          realtime: "2.78.10",
+          storage: "1.41.8",
+          imgproxy: "v3.8.0",
+          mailpit: "v1.22.3",
+          pgmeta: "0.96.1",
+          studio: "2026.03.04-sha-0043607",
+          analytics: "1.34.7",
+          vector: "0.28.1-alpine",
+          pooler: "2.7.4",
+        },
+        runtimeVersions: {
+          postgres: "17.6.1.081",
+          postgrest: "14.5",
+          auth: "2.188.0-rc.15",
+          realtime: "2.78.10",
+          storage: "1.41.8",
+          imgproxy: "v3.8.0",
+          mailpit: "v1.22.3",
+          pgmeta: "0.96.1",
+          studio: "2026.03.04-sha-0043607",
+          analytics: "1.34.7",
+          vector: "0.28.1-alpine",
+          pooler: "2.7.4",
+        },
+        activeOverrides: [],
+        availableUpdates: [],
+        updateFingerprint: undefined,
+        ...opts.serviceVersionContext,
+      },
+    }),
+  );
+}
 
 function setupInteractive(
   opts: {
@@ -24,7 +130,13 @@ function setupInteractive(
   });
   const out = mockOutput({ format: "text", interactive: true });
   const ink = mockInk({ manualExit: opts.manualExit });
-  const layer = Layer.mergeAll(emptyEnv(), stack.layer, out.layer, ink.layer);
+  const layer = Layer.mergeAll(
+    emptyEnv(),
+    stack.layer,
+    out.layer,
+    ink.layer,
+    mockStartVersionState(),
+  );
   return { layer, stack, out, ink };
 }
 
@@ -37,7 +149,13 @@ function setupNonInteractive(
   const stack = mockStack({ info: opts.info, stateChanges: opts.stateChanges });
   const out = mockOutput({ format: "text", interactive: false });
   const ink = mockInk();
-  const layer = Layer.mergeAll(emptyEnv(), stack.layer, out.layer, ink.layer);
+  const layer = Layer.mergeAll(
+    emptyEnv(),
+    stack.layer,
+    out.layer,
+    ink.layer,
+    mockStartVersionState(),
+  );
   return { layer, stack, out, ink };
 }
 
@@ -136,6 +254,191 @@ describe("start", () => {
       const exit = yield* Fiber.await(fiber);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(stack.stopped).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("warns when newer linked or default versions are available for the pinned stack", () => {
+    const { stack, ink } = setupNonInteractive();
+    const out = mockOutput({ format: "text", interactive: false });
+    const layer = Layer.mergeAll(
+      emptyEnv(),
+      stack.layer,
+      out.layer,
+      ink.layer,
+      mockStartVersionState({
+        metadata: stackMetadata({
+          ports: {
+            apiPort: 54321,
+            dbPort: 54322,
+            authPort: 54323,
+            postgrestPort: 54324,
+            postgrestAdminPort: 54325,
+            realtimePort: 54326,
+            storagePort: 54327,
+            imgproxyPort: 54328,
+            mailpitPort: 54329,
+            mailpitSmtpPort: 54330,
+            mailpitPop3Port: 54331,
+            pgmetaPort: 54332,
+            studioPort: 54333,
+            analyticsPort: 54334,
+            poolerPort: 54335,
+            poolerApiPort: 54336,
+          },
+          services: {
+            postgres: "17.6.1.081",
+            postgrest: "14.5",
+            auth: "2.187.0",
+            realtime: "2.78.10",
+            storage: "1.41.8",
+            imgproxy: "v3.8.0",
+            mailpit: "v1.22.3",
+            pgmeta: "0.96.1",
+            studio: "2026.03.04-sha-0043607",
+            analytics: "1.34.7",
+            vector: "0.28.1-alpine",
+            pooler: "2.7.4",
+          },
+        }),
+        serviceVersionContext: {
+          availableUpdates: [
+            {
+              service: "auth",
+              pinnedVersion: "2.187.0",
+              availableVersion: "2.190.0",
+            },
+          ],
+          updateFingerprint: "auth:2.187.0->2.190.0",
+        },
+      }),
+      mockStateManager({
+        metadata: [
+          {
+            name: "default",
+            metadata: stackMetadata({
+              ports: {
+                apiPort: 54321,
+                dbPort: 54322,
+                authPort: 54323,
+                postgrestPort: 54324,
+                postgrestAdminPort: 54325,
+                realtimePort: 54326,
+                storagePort: 54327,
+                imgproxyPort: 54328,
+                mailpitPort: 54329,
+                mailpitSmtpPort: 54330,
+                mailpitPop3Port: 54331,
+                pgmetaPort: 54332,
+                studioPort: 54333,
+                analyticsPort: 54334,
+                poolerPort: 54335,
+                poolerApiPort: 54336,
+              },
+              services: {
+                postgres: "17.6.1.081",
+                postgrest: "14.5",
+                auth: "2.187.0",
+                realtime: "2.78.10",
+                storage: "1.41.8",
+                imgproxy: "v3.8.0",
+                mailpit: "v1.22.3",
+                pgmeta: "0.96.1",
+                studio: "2026.03.04-sha-0043607",
+                analytics: "1.34.7",
+                vector: "0.28.1-alpine",
+                pooler: "2.7.4",
+              },
+            }),
+          },
+        ],
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* start(backgroundFlags);
+      yield* waitFor(
+        () =>
+          out.messages.some(
+            (message) =>
+              message.type === "warn" &&
+              message.message.includes("Updated linked or default service versions are available"),
+          ),
+        "update warning did not render",
+      );
+
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "warn",
+          message: expect.stringContaining("auth: 2.187.0 -> 2.190.0"),
+        }),
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("warns when local service version overrides are active", () => {
+    const { stack, ink } = setupNonInteractive();
+    const out = mockOutput({ format: "text", interactive: false });
+    const layer = Layer.mergeAll(
+      emptyEnv(),
+      stack.layer,
+      out.layer,
+      ink.layer,
+      mockStartVersionState({
+        serviceVersionContext: {
+          activeOverrides: [{ service: "storage", version: "1.40.0", source: "local" }],
+        },
+      }),
+      mockProjectLocalServiceVersions({
+        updatedAt: "2026-03-20T12:00:00.000Z",
+        versions: {
+          storage: "1.40.0",
+        },
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* start(backgroundFlags);
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "warn",
+          message: expect.stringContaining("Local service version overrides are active"),
+        }),
+      );
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "warn",
+          message: expect.stringContaining("storage: 1.40.0 [local]"),
+        }),
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("warns when one-off flag overrides are active", () => {
+    const { stack, ink } = setupNonInteractive();
+    const out = mockOutput({ format: "text", interactive: false });
+    const layer = Layer.mergeAll(
+      emptyEnv(),
+      stack.layer,
+      out.layer,
+      ink.layer,
+      mockStartVersionState({
+        serviceVersionContext: {
+          activeOverrides: [{ service: "auth", version: "2.180.0", source: "flag" }],
+        },
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* start({
+        ...backgroundFlags,
+        serviceVersion: ["auth=v2.180.0"],
+      });
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "warn",
+          message: expect.stringContaining("auth: 2.180.0 [flag]"),
+        }),
+      );
     }).pipe(Effect.provide(layer));
   });
 });

@@ -1,13 +1,16 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { FileSystem, Path } from "effect";
 import {
+  InvalidStackMetadataError,
+  InvalidStackStateError,
   StateManager,
-  managedStateManagerPaths,
+  projectStateManagerPaths,
   singleStackStateManagerPaths,
   type StackState,
 } from "./StateManager.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
+import { stackMetadata } from "./StackMetadata.ts";
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -50,6 +53,10 @@ function makeState(overrides: Partial<StackState> = {}): StackState {
     serviceRoleJwt: "service_role_jwt",
     dockerContainerNames: ["supabase-postgres-54321"],
     serviceEndpoints: {},
+    services: {
+      postgres: "17.6.1.081",
+      auth: "2.188.0-rc.15",
+    },
     ...overrides,
   };
 }
@@ -111,6 +118,13 @@ function mockFileSystem() {
           if (key === rmPath || key.startsWith(`${rmPath}/`)) dirs.delete(key);
         }
       }),
+    rename: (oldPath: string, newPath: string) =>
+      Effect.sync(() => {
+        const content = files.get(oldPath);
+        if (content == null) throw new Error(`File not found: ${oldPath}`);
+        files.delete(oldPath);
+        files.set(newPath, content);
+      }),
   } as unknown as FileSystem.FileSystem);
 
   return { layer, files, dirs };
@@ -127,9 +141,9 @@ function mockPath() {
 
 function setup() {
   const fsm = mockFileSystem();
-  const layer = StateManager.make(managedStateManagerPaths("/test-home")).pipe(
-    Layer.provide(Layer.merge(fsm.layer, mockPath())),
-  );
+  const layer = StateManager.make(
+    projectStateManagerPaths("/test-home", "/Users/test/Code/myapp"),
+  ).pipe(Layer.provide(Layer.merge(fsm.layer, mockPath())));
   return { layer, files: fsm.files, dirs: fsm.dirs };
 }
 
@@ -184,6 +198,24 @@ describe("StateManager", () => {
         }
       }).pipe(Effect.provide(layer));
     });
+
+    it.live("fails with InvalidStackStateError for malformed state files", () => {
+      const { layer, files } = setup();
+      return Effect.gen(function* () {
+        const mgr = yield* StateManager;
+        files.set(`${mgr.stackDir("my-project")}/state.json`, "{");
+
+        const exit = yield* mgr.read("my-project").pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const error = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) {
+            expect(error.value).toBeInstanceOf(InvalidStackStateError);
+          }
+        }
+      }).pipe(Effect.provide(layer));
+    });
   });
 
   describe("scan", () => {
@@ -208,20 +240,58 @@ describe("StateManager", () => {
         expect(names).toEqual(["project-a", "project-b"]);
       }).pipe(Effect.provide(layer));
     });
+
+    it.live("fails with InvalidStackStateError during scans for malformed state files", () => {
+      const { layer, files } = setup();
+      return Effect.gen(function* () {
+        const mgr = yield* StateManager;
+        yield* mgr.write(makeState());
+        files.set(`${mgr.stackDir("my-project")}/state.json`, "{");
+
+        const exit = yield* mgr.scan().pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const error = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) {
+            expect(error.value).toBeInstanceOf(InvalidStackStateError);
+          }
+        }
+      }).pipe(Effect.provide(layer));
+    });
   });
 
   describe("remove", () => {
-    it.live("removes runtime state but keeps durable ports", () => {
+    it.live("removes runtime state but keeps durable stack metadata", () => {
       const { layer } = setup();
       return Effect.gen(function* () {
         const mgr = yield* StateManager;
         yield* mgr.write(makeState());
-        yield* mgr.writePorts("my-project", DEFAULT_PORTS);
+        yield* mgr.writeMetadata(
+          "my-project",
+          stackMetadata({
+            ports: DEFAULT_PORTS,
+            services: {
+              postgres: "17.6.1.081",
+              postgrest: "14.5",
+              auth: "2.188.0-rc.15",
+              realtime: "2.78.10",
+              storage: "1.41.8",
+              imgproxy: "v3.8.0",
+              mailpit: "v1.22.3",
+              pgmeta: "0.96.1",
+              studio: "2026.03.04-sha-0043607",
+              analytics: "1.34.7",
+              vector: "0.28.1-alpine",
+              pooler: "2.7.4",
+            },
+          }),
+        );
         yield* mgr.remove("my-project");
         const exit = yield* mgr.read("my-project").pipe(Effect.exit);
         expect(exit._tag).toBe("Failure");
-        const ports = yield* mgr.readPorts("my-project");
-        expect(ports).toEqual(DEFAULT_PORTS);
+        const metadata = yield* mgr.readMetadata("my-project");
+        expect(metadata.ports).toEqual(DEFAULT_PORTS);
       }).pipe(Effect.provide(layer));
     });
 
@@ -240,7 +310,26 @@ describe("StateManager", () => {
       return Effect.gen(function* () {
         const mgr = yield* StateManager;
         yield* mgr.write(makeState());
-        yield* mgr.writePorts("my-project", DEFAULT_PORTS);
+        yield* mgr.writeMetadata(
+          "my-project",
+          stackMetadata({
+            ports: DEFAULT_PORTS,
+            services: {
+              postgres: "17.6.1.081",
+              postgrest: "14.5",
+              auth: "2.188.0-rc.15",
+              realtime: "2.78.10",
+              storage: "1.41.8",
+              imgproxy: "v3.8.0",
+              mailpit: "v1.22.3",
+              pgmeta: "0.96.1",
+              studio: "2026.03.04-sha-0043607",
+              analytics: "1.34.7",
+              vector: "0.28.1-alpine",
+              pooler: "2.7.4",
+            },
+          }),
+        );
         yield* mgr.remove("my-project");
         expect(dirs.has(mgr.runtimeDir("my-project"))).toBe(false);
         yield* mgr.deleteStack("my-project");
@@ -253,7 +342,26 @@ describe("StateManager", () => {
       return Effect.gen(function* () {
         const mgr = yield* StateManager;
         yield* mgr.write(makeState());
-        yield* mgr.writePorts("my-project", DEFAULT_PORTS);
+        yield* mgr.writeMetadata(
+          "my-project",
+          stackMetadata({
+            ports: DEFAULT_PORTS,
+            services: {
+              postgres: "17.6.1.081",
+              postgrest: "14.5",
+              auth: "2.188.0-rc.15",
+              realtime: "2.78.10",
+              storage: "1.41.8",
+              imgproxy: "v3.8.0",
+              mailpit: "v1.22.3",
+              pgmeta: "0.96.1",
+              studio: "2026.03.04-sha-0043607",
+              analytics: "1.34.7",
+              vector: "0.28.1-alpine",
+              pooler: "2.7.4",
+            },
+          }),
+        );
         yield* mgr.remove("my-project");
         expect(yield* mgr.stackExists("my-project")).toBe(true);
         yield* mgr.deleteStack("my-project");
@@ -262,43 +370,135 @@ describe("StateManager", () => {
     });
   });
 
-  describe("ports", () => {
-    it.live("writes and reads back durable ports metadata", () => {
+  describe("stack metadata", () => {
+    it.live("writes and reads back durable stack metadata", () => {
       const { layer } = setup();
       return Effect.gen(function* () {
         const mgr = yield* StateManager;
-        yield* mgr.writePorts("my-project", DEFAULT_PORTS);
-        const ports = yield* mgr.readPorts("my-project");
-        expect(ports).toEqual(DEFAULT_PORTS);
-      }).pipe(Effect.provide(layer));
-    });
-
-    it.live("scans durable ports for all stacks", () => {
-      const { layer } = setup();
-      return Effect.gen(function* () {
-        const mgr = yield* StateManager;
-        yield* mgr.writePorts("project-a", DEFAULT_PORTS);
-        yield* mgr.writePorts("project-b", {
-          ...DEFAULT_PORTS,
-          apiPort: 55001,
-          dbPort: 55002,
+        const metadata = stackMetadata({
+          ports: DEFAULT_PORTS,
+          services: {
+            postgres: "17.6.1.081",
+            postgrest: "14.5",
+            auth: "2.188.0-rc.15",
+            realtime: "2.78.10",
+            storage: "1.41.8",
+            imgproxy: "v3.8.0",
+            mailpit: "v1.22.3",
+            pgmeta: "0.96.1",
+            studio: "2026.03.04-sha-0043607",
+            analytics: "1.34.7",
+            vector: "0.28.1-alpine",
+            pooler: "2.7.4",
+          },
         });
-
-        const ports = yield* mgr.scanPorts();
-        expect(Array.from(ports.keys()).sort()).toEqual(["project-a", "project-b"]);
-        expect(ports.get("project-a")).toEqual(DEFAULT_PORTS);
-        expect(ports.get("project-b")?.apiPort).toBe(55001);
+        yield* mgr.writeMetadata("my-project", metadata);
+        const readMetadata = yield* mgr.readMetadata("my-project");
+        expect(readMetadata).toEqual(metadata);
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("removePorts deletes durable ownership metadata", () => {
+    it.live("scans durable metadata for all stacks", () => {
       const { layer } = setup();
       return Effect.gen(function* () {
         const mgr = yield* StateManager;
-        yield* mgr.writePorts("my-project", DEFAULT_PORTS);
-        yield* mgr.removePorts("my-project");
-        const exit = yield* mgr.readPorts("my-project").pipe(Effect.exit);
-        expect(exit._tag).toBe("Failure");
+        yield* mgr.writeMetadata(
+          "project-a",
+          stackMetadata({
+            ports: DEFAULT_PORTS,
+            services: {
+              postgres: "17.6.1.081",
+              postgrest: "14.5",
+              auth: "2.188.0-rc.15",
+              realtime: "2.78.10",
+              storage: "1.41.8",
+              imgproxy: "v3.8.0",
+              mailpit: "v1.22.3",
+              pgmeta: "0.96.1",
+              studio: "2026.03.04-sha-0043607",
+              analytics: "1.34.7",
+              vector: "0.28.1-alpine",
+              pooler: "2.7.4",
+            },
+          }),
+        );
+        yield* mgr.writeMetadata(
+          "project-b",
+          stackMetadata({
+            ports: {
+              ...DEFAULT_PORTS,
+              apiPort: 55001,
+              dbPort: 55002,
+            },
+            services: {
+              postgres: "17.6.1.081",
+              postgrest: "14.5",
+              auth: "2.188.0-rc.15",
+              realtime: "2.78.10",
+              storage: "1.41.8",
+              imgproxy: "v3.8.0",
+              mailpit: "v1.22.3",
+              pgmeta: "0.96.1",
+              studio: "2026.03.04-sha-0043607",
+              analytics: "1.34.7",
+              vector: "0.28.1-alpine",
+              pooler: "2.7.4",
+            },
+          }),
+        );
+
+        const metadata = yield* mgr.scanMetadata();
+        expect(Array.from(metadata.keys()).sort()).toEqual(["project-a", "project-b"]);
+        expect(metadata.get("project-a")?.ports).toEqual(DEFAULT_PORTS);
+        expect(metadata.get("project-b")?.ports.apiPort).toBe(55001);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("fails with InvalidStackMetadataError for malformed metadata files", () => {
+      const { layer, files } = setup();
+      return Effect.gen(function* () {
+        const mgr = yield* StateManager;
+        yield* mgr.writeMetadata(
+          "my-project",
+          stackMetadata({
+            ports: DEFAULT_PORTS,
+            services: {
+              postgres: "17.6.1.081",
+              postgrest: "14.5",
+              auth: "2.188.0-rc.15",
+              realtime: "2.78.10",
+              storage: "1.41.8",
+              imgproxy: "v3.8.0",
+              mailpit: "v1.22.3",
+              pgmeta: "0.96.1",
+              studio: "2026.03.04-sha-0043607",
+              analytics: "1.34.7",
+              vector: "0.28.1-alpine",
+              pooler: "2.7.4",
+            },
+          }),
+        );
+        files.set(`${mgr.stackDir("my-project")}/stack.json`, "{");
+
+        const readExit = yield* mgr.readMetadata("my-project").pipe(Effect.exit);
+        expect(Exit.isFailure(readExit)).toBe(true);
+        if (Exit.isFailure(readExit)) {
+          const error = Cause.findErrorOption(readExit.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) {
+            expect(error.value).toBeInstanceOf(InvalidStackMetadataError);
+          }
+        }
+
+        const scanExit = yield* mgr.scanMetadata().pipe(Effect.exit);
+        expect(Exit.isFailure(scanExit)).toBe(true);
+        if (Exit.isFailure(scanExit)) {
+          const error = Cause.findErrorOption(scanExit.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) {
+            expect(error.value).toBeInstanceOf(InvalidStackMetadataError);
+          }
+        }
       }).pipe(Effect.provide(layer));
     });
   });

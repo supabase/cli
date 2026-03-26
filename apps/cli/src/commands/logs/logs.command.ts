@@ -1,3 +1,4 @@
+import { DEFAULT_MANAGED_STACK_NAME } from "@supabase/stack/effect";
 import { Effect } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
@@ -5,6 +6,10 @@ import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
 import { logs } from "./logs.handler.ts";
 
 const flags = {
+  stack: Flag.string("stack").pipe(
+    Flag.withDescription("Name of the managed local stack for this project."),
+    Flag.withDefault(DEFAULT_MANAGED_STACK_NAME),
+  ),
   tail: Flag.integer("tail").pipe(
     Flag.filter(
       (tail) => tail >= 0,

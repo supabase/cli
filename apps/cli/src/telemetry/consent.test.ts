@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Layer } from "effect";
+import { Effect, Layer } from "effect";
 import { cliConfigLayer } from "../config/cli-config.layer.ts";
-import { mockRuntimeInfo } from "../../tests/helpers/mocks.ts";
+import { mockProjectContext, mockRuntimeInfo, processEnvLayer } from "../../tests/helpers/mocks.ts";
 import { getEffectiveConsent } from "./consent.ts";
 import type { TelemetryConfig } from "./types.ts";
 
@@ -15,22 +15,24 @@ function makeConfig(consent: TelemetryConfig["consent"]): TelemetryConfig {
 }
 
 function withEnv(env: Record<string, string>) {
-  const configProviderLayer = ConfigProvider.layer(ConfigProvider.fromEnv({ env }));
   const runtimeInfoLayer = mockRuntimeInfo();
+  const projectContextLayer = mockProjectContext();
   return Layer.mergeAll(
-    configProviderLayer,
     runtimeInfoLayer,
-    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(configProviderLayer)),
+    projectContextLayer,
+    processEnvLayer(env),
+    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
   );
 }
 
 function emptyEnv() {
-  const configProviderLayer = ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }));
   const runtimeInfoLayer = mockRuntimeInfo();
+  const projectContextLayer = mockProjectContext();
   return Layer.mergeAll(
-    configProviderLayer,
     runtimeInfoLayer,
-    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(configProviderLayer)),
+    projectContextLayer,
+    processEnvLayer(),
+    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
   );
 }
 

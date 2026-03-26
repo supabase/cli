@@ -44,7 +44,7 @@ const poll = <E>(
     }
   });
 
-describe("Orchestrator E2E", () => {
+describe("Orchestrator integration", () => {
   it.live(
     "starts services in dependency order (A before B)",
     () => {

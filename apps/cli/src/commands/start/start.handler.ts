@@ -1,18 +1,65 @@
 import { Effect } from "effect";
+import { StateManager, stackMetadata } from "@supabase/stack/effect";
 import { Output } from "../../output/output.service.ts";
 import type { StartFlags } from "./start.command.ts";
+import { StartVersionState } from "./start.command.ts";
 import { startBackground } from "./flows/background.flow.ts";
 import { startForeground } from "./flows/foreground.flow.ts";
 import { startNonInteractive } from "./flows/non-interactive.flow.ts";
 
 export const start = Effect.fnUntraced(function* (flags: StartFlags) {
-  if (flags.detach) {
-    return yield* startBackground();
-  }
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const output = yield* Output;
+      const stateManager = yield* StateManager;
+      const startVersionState = yield* StartVersionState;
+      const { metadata, serviceVersionContext } = startVersionState;
 
-  const output = yield* Output;
-  if (output.interactive) {
-    return yield* startForeground();
-  }
-  return yield* startNonInteractive();
+      if (serviceVersionContext.activeOverrides.length > 0) {
+        yield* output.warn(
+          [
+            "Local service version overrides are active (at your own risk):",
+            ...serviceVersionContext.activeOverrides.map(
+              ({ service, version, source }) => `  ${service}: ${version} [${source}]`,
+            ),
+            "These overrides are local to this checkout and may break compatibility.",
+          ].join("\n"),
+        );
+      }
+
+      if (
+        serviceVersionContext.updateFingerprint !== undefined &&
+        metadata.lastNotifiedUpdateFingerprint !== serviceVersionContext.updateFingerprint
+      ) {
+        yield* output.warn(
+          [
+            "Updated linked or default service versions are available for this local stack:",
+            ...serviceVersionContext.availableUpdates.map(
+              ({ service, pinnedVersion, availableVersion }) =>
+                `  ${service}: ${pinnedVersion} -> ${availableVersion}`,
+            ),
+            "Run `supabase stack update` to adopt these pinned versions.",
+          ].join("\n"),
+        );
+        yield* stateManager.writeMetadata(
+          flags.stack,
+          stackMetadata({
+            ports: metadata.ports,
+            services: metadata.services,
+            updatedAt: metadata.updatedAt,
+            lastNotifiedUpdateFingerprint: serviceVersionContext.updateFingerprint,
+          }),
+        );
+      }
+
+      if (flags.detach) {
+        return yield* startBackground();
+      }
+
+      if (output.interactive) {
+        return yield* startForeground();
+      }
+      return yield* startNonInteractive();
+    }),
+  );
 });

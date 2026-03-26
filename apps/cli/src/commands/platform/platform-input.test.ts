@@ -122,6 +122,33 @@ describe("platform input", () => {
     }),
   );
 
+  it.effect("accepts string-only union params in dry-run mode", () =>
+    Effect.gen(function* () {
+      const decoded = yield* decodePlatformInput(
+        deleteBranchDescriptor,
+        deleteBranchDescriptor.inputSchema,
+        { branch_id_or_ref: "foo" },
+      );
+
+      expect(decoded).toEqual({ branch_id_or_ref: "foo" });
+    }),
+  );
+
+  it.effect("accepts flattened enum params in dry-run mode", () =>
+    Effect.gen(function* () {
+      const descriptor = findPlatformOperationDescriptor("v1RemoveProjectAddon");
+      const decoded = yield* decodePlatformInput(descriptor, descriptor.inputSchema, {
+        ref: "abcdefghijklmnopqrst",
+        addon_variant: "cd_default",
+      });
+
+      expect(decoded).toEqual({
+        ref: "abcdefghijklmnopqrst",
+        addon_variant: "cd_default",
+      });
+    }),
+  );
+
   it.effect("merges non-object request bodies under the SDK body field", () =>
     Effect.gen(function* () {
       const merged = yield* mergePlatformInput({

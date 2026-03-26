@@ -1,5 +1,5 @@
 import { note } from "@clack/prompts";
-import { Config, Effect, Layer, Option, Path, Stdio, Stream, Tracer } from "effect";
+import { Effect, Layer, Option, Path, Stdio, Stream, Tracer } from "effect";
 import type { Exit, ServiceMap } from "effect";
 
 import { CliConfig } from "../config/cli-config.service.ts";
@@ -143,8 +143,7 @@ export const tracingLayer = Layer.effect(
     const identity = yield* resolveIdentity(configDir);
     let isCi = false;
     for (const envVar of CI_ENV_VARS) {
-      const value = yield* Config.option(Config.string(envVar));
-      if (Option.isSome(value)) {
+      if (process.env[envVar] !== undefined) {
         isCi = true;
         break;
       }

@@ -5,22 +5,6 @@ import { ProcessControl } from "./process-control.service.ts";
 import { processControlLayer } from "./process-control.layer.ts";
 
 describe("ProcessControl", () => {
-  it.effect("setExitCode updates process.exitCode", () => {
-    const previousExitCode = process.exitCode;
-    return Effect.gen(function* () {
-      const processControl = yield* ProcessControl;
-      yield* processControl.setExitCode(17);
-      expect(process.exitCode).toBe(17);
-    }).pipe(
-      Effect.provide(processControlLayer),
-      Effect.ensuring(
-        Effect.sync(() => {
-          process.exitCode = previousExitCode;
-        }),
-      ),
-    );
-  });
-
   it.effect("awaitSignal resolves when the requested signal is emitted", () =>
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;

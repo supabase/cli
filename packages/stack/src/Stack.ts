@@ -1,7 +1,7 @@
 import { LogBuffer, Orchestrator } from "@supabase/process-compose";
 import { ServiceNotFoundError } from "@supabase/process-compose";
 import type { LogEntry, ServiceReadyError } from "@supabase/process-compose";
-import { Effect, Layer, ServiceMap, Stream } from "effect";
+import { Effect, Layer, Schema, ServiceMap, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { cleanupLocalStackResources } from "./cleanup.ts";
 import { StackBuildError } from "./errors.ts";
@@ -19,6 +19,17 @@ export interface StackInfo {
   readonly dockerContainerNames: ReadonlyArray<string>;
   readonly serviceEndpoints: Readonly<Record<string, string>>;
 }
+
+export const StackInfoSchema = Schema.Struct({
+  url: Schema.String,
+  dbUrl: Schema.String,
+  publishableKey: Schema.String,
+  secretKey: Schema.String,
+  anonJwt: Schema.String,
+  serviceRoleJwt: Schema.String,
+  dockerContainerNames: Schema.Array(Schema.String),
+  serviceEndpoints: Schema.Record(Schema.String, Schema.String),
+});
 
 export type StackService = ServiceMap.Service.Shape<typeof Stack>;
 

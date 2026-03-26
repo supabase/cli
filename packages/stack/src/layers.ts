@@ -9,6 +9,7 @@ import type { DaemonMessage, DaemonStartMessage } from "./daemon.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { Stack } from "./Stack.ts";
 import {
+  InvalidStackStateError,
   NoRunningStackError,
   StackAlreadyRunningError,
   StateManager,
@@ -16,6 +17,7 @@ import {
   type StateManagerService,
 } from "./StateManager.ts";
 import { StackBuilder, type ResolvedStackConfig } from "./StackBuilder.ts";
+import { UnixHttpClient } from "./UnixHttpClient.ts";
 import { resolveManagedStack } from "./managed-stack.ts";
 import { terminateChildProcess } from "./terminateChild.ts";
 
@@ -128,11 +130,12 @@ export const daemonLayer = (
   daemonEntryPoint: string,
 ): Effect.Effect<
   Layer.Layer<Stack>,
-  DaemonStartError | StackAlreadyRunningError,
-  FileSystem.FileSystem | Path.Path
+  DaemonStartError | InvalidStackStateError | StackAlreadyRunningError,
+  FileSystem.FileSystem | Path.Path | UnixHttpClient
 > =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
+    const unixHttpClient = yield* UnixHttpClient;
     const stateManager = yield* StateManager.asEffect().pipe(
       Effect.provide(
         StateManager.make(
@@ -142,7 +145,10 @@ export const daemonLayer = (
     );
 
     // Check if a stack with this name is already running
-    const existingState = yield* stateManager.read(config.name).pipe(Effect.option);
+    const existingState = yield* stateManager.read(config.name).pipe(
+      Effect.map(Option.some),
+      Effect.catchTag("StateNotFoundError", () => Effect.succeed(Option.none())),
+    );
     if (Option.isSome(existingState)) {
       const alive = yield* stateManager.isAlive(existingState.value);
       if (alive) {
@@ -194,7 +200,9 @@ export const daemonLayer = (
       child.unref();
       daemonRegistered = true;
 
-      return RemoteStack.layer(socketPath);
+      return RemoteStack.layer(socketPath).pipe(
+        Layer.provide(Layer.succeed(UnixHttpClient, unixHttpClient)),
+      );
     }).pipe(
       Effect.onExit(() =>
         daemonRegistered
@@ -277,13 +285,22 @@ export const connectLayer = (opts: {
   name?: string;
   cwd?: string;
   cacheRoot: string;
-}): Effect.Effect<Layer.Layer<Stack>, NoRunningStackError, FileSystem.FileSystem | Path.Path> =>
+  projectDir?: string;
+  projectStateRoot?: string;
+}): Effect.Effect<
+  Layer.Layer<Stack>,
+  NoRunningStackError | InvalidStackStateError,
+  FileSystem.FileSystem | Path.Path | UnixHttpClient
+> =>
   Effect.gen(function* () {
     const cwd = opts.cwd ?? process.cwd();
+    const unixHttpClient = yield* UnixHttpClient;
     const { state, alive } = yield* resolveManagedStack(opts);
     if (!alive) {
       return yield* new NoRunningStackError({ cwd });
     }
 
-    return RemoteStack.layer(state.socketPath);
+    return RemoteStack.layer(state.socketPath).pipe(
+      Layer.provide(Layer.succeed(UnixHttpClient, unixHttpClient)),
+    );
   });

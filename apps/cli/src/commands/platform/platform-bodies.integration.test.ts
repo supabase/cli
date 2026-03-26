@@ -205,4 +205,44 @@ describe("platform body handling", () => {
       },
     });
   });
+
+  it("renders urlencoded dry-run previews with the expected body kind", async () => {
+    const descriptor = findPlatformOperationDescriptor("v1ExchangeOauthToken");
+    const out = mockOutput({ format: "json" });
+
+    const handler = runPlatformOperation({ descriptor });
+
+    await Effect.runPromise(
+      handler({
+        params: Option.none(),
+        json: Option.some('{"grant_type":"refresh_token","refresh_token":"refresh-token"}'),
+        body: Option.none(),
+        bodyFile: Option.none(),
+        upload: [],
+        fields: Option.none(),
+        schema: false,
+        dryRun: true,
+        yes: true,
+      }).pipe(
+        Effect.provide(out.layer),
+        Effect.provide(mockStdin(true)),
+        Effect.provide(unusedApiClientLayer),
+        Effect.provide(BunServices.layer),
+      ),
+    );
+
+    expect(out.messages).toContainEqual(
+      expect.objectContaining({
+        type: "success",
+        message: "",
+        data: expect.objectContaining({
+          dryRun: true,
+          bodyKind: "urlencoded",
+          body: expect.objectContaining({
+            grant_type: "refresh_token",
+          }),
+        }),
+      }),
+    );
+  });
 });

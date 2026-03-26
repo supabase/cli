@@ -2,6 +2,7 @@ import { Effect, Layer, ManagedRuntime } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import type { PlatformFactory } from "./createStack.ts";
 import { DaemonServer } from "./DaemonServer.ts";
+import { runningServiceVersionsForConfig } from "./StackMetadata.ts";
 import { foregroundDaemonLayer } from "./layers.ts";
 import { Stack } from "./Stack.ts";
 import type { ResolvedStackConfig } from "./StackBuilder.ts";
@@ -89,10 +90,10 @@ export async function runDaemon(
       serviceRoleJwt: info.serviceRoleJwt,
       dockerContainerNames: Array.from(info.dockerContainerNames),
       serviceEndpoints: info.serviceEndpoints,
+      services: runningServiceVersionsForConfig(config),
     };
     daemonState = state;
     await Effect.runPromise(stateManager.write(state));
-    await Effect.runPromise(stateManager.writePorts(name, config.ports));
 
     const response: DaemonStartedMessage = { type: "started", state };
     process.send!(response);

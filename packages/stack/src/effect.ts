@@ -85,19 +85,59 @@ export { StackBuilder } from "./StackBuilder.ts";
 export type { StackInfo } from "./Stack.ts";
 export { Stack } from "./Stack.ts";
 
-export type { ServiceName, VersionManifest } from "./versions.ts";
-export { DEFAULT_VERSIONS, dockerImageForService } from "./versions.ts";
+export type { AvailableServiceVersionUpdate, ServiceName, VersionManifest } from "./versions.ts";
+export {
+  DEFAULT_VERSIONS,
+  diffPinnedAndAvailableVersions,
+  dockerImageForService,
+  fillServiceVersionManifest,
+  fullVersionManifest,
+  IMAGE_TAG_PREFIX,
+  normalizeServiceVersion,
+  normalizeServiceVersions,
+  SERVICE_NAMES,
+} from "./versions.ts";
+export type {
+  StackVersionOverride,
+  StackVersionPlan,
+  StackVersionPlanInput,
+} from "./version-plan.ts";
+export { planStackVersions } from "./version-plan.ts";
+
+export {
+  DEFAULT_MANAGED_STACK_NAME,
+  defaultManagedProjectStacksRoot,
+  defaultManagedStackRoot,
+  defaultManagedProjectsRoot,
+  displayNameForProjectDir,
+  projectKeyForProjectDir,
+} from "./paths.ts";
 
 export type { StackState } from "./StateManager.ts";
 export {
+  InvalidStackMetadataError,
+  InvalidStackStateError,
   NoRunningStackError,
   StackAlreadyRunningError,
+  StackMetadataNotFoundError,
+  UnsupportedStackMetadataVersionError,
+  projectStateManagerPathsFromRoot,
   StateManager,
   StateNotFoundError,
 } from "./StateManager.ts";
 
+export type { PartialVersionManifest, StackMetadata } from "./StackMetadata.ts";
+export {
+  PartialVersionManifestSchema,
+  StackMetadataSchema,
+  STACK_METADATA_SCHEMA_VERSION,
+  runningServiceVersionsForConfig,
+  stackMetadata,
+} from "./StackMetadata.ts";
+
 export { DaemonServer } from "./DaemonServer.ts";
 export { RemoteStack } from "./RemoteStack.ts";
+export { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
 
 export type {
   PlatformFactory,
@@ -124,6 +164,7 @@ export {
   DaemonStillRunningError,
   deleteManagedStackPersistence,
   listStacks,
+  resolveStackSummary,
   stopDaemon,
 } from "./discovery.ts";
 

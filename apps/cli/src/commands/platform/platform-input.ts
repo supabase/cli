@@ -381,7 +381,7 @@ export const promptForMissingPlatformFields = (
     return completed;
   });
 
-export const decodePlatformInput = <S extends Schema.Top & { readonly DecodingServices: never }>(
+export const decodePlatformInput = <S extends Schema.Decoder<unknown, never>>(
   descriptor: PlatformOperationDescriptor,
   schema: S,
   input: JsonRecord,

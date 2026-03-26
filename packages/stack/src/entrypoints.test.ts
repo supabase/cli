@@ -4,7 +4,11 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { daemonEntryPoint as bunDaemonEntryPoint, createStack as createBunStack } from "./bun.ts";
+import {
+  daemonEntryPoint as bunDaemonEntryPoint,
+  createStack as createBunStack,
+  unixHttpClientLayer as bunUnixHttpClientLayer,
+} from "./bun.ts";
 import {
   DEFAULT_VERSIONS,
   Stack,
@@ -16,6 +20,7 @@ import {
 import {
   daemonEntryPoint as nodeDaemonEntryPoint,
   createStack as createNodeStack,
+  unixHttpClientLayer as nodeUnixHttpClientLayer,
 } from "./node.ts";
 
 describe("@supabase/stack entrypoints", () => {
@@ -24,6 +29,8 @@ describe("@supabase/stack entrypoints", () => {
     expect(typeof createNodeStack).toBe("function");
     expect(typeof bunDaemonEntryPoint).toBe("string");
     expect(typeof nodeDaemonEntryPoint).toBe("string");
+    expect(bunUnixHttpClientLayer).toBeDefined();
+    expect(nodeUnixHttpClientLayer).toBeDefined();
   });
 
   it("consolidates advanced and internal APIs under effect", () => {

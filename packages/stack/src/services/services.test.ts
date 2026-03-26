@@ -145,6 +145,27 @@ describe("makePostgresServiceDocker", () => {
       orphanCleanup: [{ _tag: "DockerRemove", containerName: `supabase-postgres-${API_PORT}` }],
     });
   });
+
+  it("bootstraps auxiliary databases and schemas used by docker-backed services", () => {
+    const def = makePostgresServiceDocker({
+      image: dockerImageForService("postgres", DEFAULT_VERSIONS.postgres),
+      dataDir: "/tmp/supabase/data",
+      port: DB_PORT,
+      networkArgs: ["--network=host"],
+      jwtSecret: "test-jwt-secret-with-at-least-32-characters",
+      jwtExpiry: 3600,
+      apiPort: API_PORT,
+    });
+
+    const script = def.args?.[def.args.length - 1] as string;
+    expect(script).toContain("CREATE DATABASE _supabase WITH OWNER postgres");
+    expect(script).toContain(
+      "WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '_supabase')",
+    );
+    expect(script).toContain("\\connect _supabase");
+    expect(script).toContain("create schema if not exists _analytics;");
+    expect(script).toContain("create schema if not exists _supavisor;");
+  });
 });
 
 describe("makePostgrestService", () => {

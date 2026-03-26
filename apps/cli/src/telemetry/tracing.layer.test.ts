@@ -12,10 +12,15 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { ConfigProvider, Effect, Exit, Layer, Option, ServiceMap, Tracer } from "effect";
+import { Effect, Exit, Layer, Option, ServiceMap, Tracer } from "effect";
 import { cliConfigLayer } from "../config/cli-config.layer.ts";
 import type { TelemetryConfig } from "./types.ts";
-import { mockRuntimeInfo, mockTty } from "../../tests/helpers/mocks.ts";
+import {
+  mockProjectContext,
+  mockRuntimeInfo,
+  mockTty,
+  processEnvLayer,
+} from "../../tests/helpers/mocks.ts";
 import { tracingLayer } from "./tracing.layer.ts";
 
 // ---------------------------------------------------------------------------
@@ -42,18 +47,19 @@ function buildLayer(opts: { home: string; env?: Record<string, string>; stdoutIs
     HOME: opts.home,
     ...opts.env,
   };
-  const configProviderLayer = ConfigProvider.layer(ConfigProvider.fromEnv({ env }));
   const runtimeInfoLayer = mockRuntimeInfo({
     homeDir: opts.home,
     cwd: opts.home,
     platform: "linux",
     arch: "x64",
   });
+  const projectContextLayer = mockProjectContext();
   return Layer.mergeAll(
     fsLayer,
-    configProviderLayer,
     runtimeInfoLayer,
-    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(configProviderLayer)),
+    projectContextLayer,
+    processEnvLayer(env),
+    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
     mockTty({
       stdoutIsTty: opts.stdoutIsTty ?? false,
       stdinIsTty: false,

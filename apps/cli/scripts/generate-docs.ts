@@ -1,6 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { Schema } from "effect";
+import { PROJECT_CONFIG_SCHEMA_URL, ProjectConfigSchema } from "@supabase/config";
 import { root } from "../src/cli/root.ts";
 import { collectCommands, getHelpDoc } from "../src/docs/command-docs.ts";
 import { getGuide } from "../src/docs/guide-registry.ts";
@@ -9,6 +11,7 @@ import { formatHelpDocAsMarkdown } from "../src/docs/markdown-formatter.ts";
 
 const BINARY_NAME = "supabase";
 const defaultContentDir = path.resolve(import.meta.dir, "../../../apps/docs/content/docs/commands");
+const defaultDocsPublicDir = path.resolve(import.meta.dir, "../../../apps/docs/public");
 const contentDir = process.argv[2]
   ? path.resolve(process.cwd(), process.argv[2])
   : defaultContentDir;
@@ -81,4 +84,16 @@ function generateCommandDocs() {
   console.log(`\nGenerated ${pages.length} command page(s)`);
 }
 
+function generateConfigSchemaAsset() {
+  const document = Schema.toJsonSchemaDocument(ProjectConfigSchema);
+  const schemaPathname = new URL(PROJECT_CONFIG_SCHEMA_URL).pathname.replace(/^\/docs/, "");
+  const filePath = path.join(defaultDocsPublicDir, schemaPathname);
+
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileSync(filePath, `${JSON.stringify(document.schema, null, 2)}\n`);
+
+  console.log(`Generated: ${path.relative(path.resolve(import.meta.dir, "../../.."), filePath)}`);
+}
+
 generateCommandDocs();
+generateConfigSchemaAsset();

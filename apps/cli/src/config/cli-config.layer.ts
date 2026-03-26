@@ -1,27 +1,50 @@
-import { Config, Effect, Layer, Option } from "effect";
-
+import { Effect, Layer, Option, Redacted } from "effect";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import { CliConfig } from "./cli-config.service.ts";
+import { ProjectContext } from "./project-context.service.ts";
 
 const SUPABASE_API_URL = "https://api.supabase.com";
 const SUPABASE_DASHBOARD_URL = "https://supabase.com/dashboard";
+const SUPABASE_PROJECT_HOST = "supabase.co";
+
+function readEnv(
+  env: Readonly<Record<string, string | undefined>>,
+  key: string,
+): Option.Option<string> {
+  const value = env[key];
+  return value === undefined ? Option.none() : Option.some(value);
+}
 
 const makeCliConfig = Effect.gen(function* () {
   const runtimeInfo = yield* RuntimeInfo;
-  const configuredHome = yield* Config.option(Config.string("SUPABASE_HOME"));
+  const projectContext = yield* ProjectContext;
+  const effectiveEnv = Option.match(projectContext.projectEnv, {
+    onNone: () => process.env,
+    onSome: (projectEnv) => projectEnv.values,
+  });
 
   return CliConfig.of({
-    apiUrl: yield* Config.string("SUPABASE_API_URL").pipe(Config.withDefault(SUPABASE_API_URL)),
-    dashboardUrl: yield* Config.string("SUPABASE_DASHBOARD_URL").pipe(
-      Config.withDefault(SUPABASE_DASHBOARD_URL),
+    apiUrl: Option.getOrElse(readEnv(effectiveEnv, "SUPABASE_API_URL"), () => SUPABASE_API_URL),
+    dashboardUrl: Option.getOrElse(
+      readEnv(effectiveEnv, "SUPABASE_DASHBOARD_URL"),
+      () => SUPABASE_DASHBOARD_URL,
     ),
-    accessToken: yield* Config.option(Config.redacted("SUPABASE_ACCESS_TOKEN")),
-    noKeyring: yield* Config.option(Config.string("SUPABASE_NO_KEYRING")),
-    supabaseHome: Option.getOrElse(configuredHome, () => `${runtimeInfo.homeDir}/.supabase`),
-    debug: yield* Config.option(Config.string("SUPABASE_DEBUG")),
-    telemetryDebug: yield* Config.option(Config.string("SUPABASE_TELEMETRY_DEBUG")),
-    telemetry: yield* Config.option(Config.string("SUPABASE_TELEMETRY")),
-    doNotTrack: yield* Config.option(Config.string("DO_NOT_TRACK")),
+    projectHost: Option.getOrElse(
+      readEnv(effectiveEnv, "SUPABASE_PROJECT_HOST"),
+      () => SUPABASE_PROJECT_HOST,
+    ),
+    accessToken: Option.map(readEnv(effectiveEnv, "SUPABASE_ACCESS_TOKEN"), (token) =>
+      Redacted.make(token, { label: "SUPABASE_ACCESS_TOKEN" }),
+    ),
+    noKeyring: readEnv(effectiveEnv, "SUPABASE_NO_KEYRING"),
+    supabaseHome: Option.getOrElse(
+      readEnv(effectiveEnv, "SUPABASE_HOME"),
+      () => `${runtimeInfo.homeDir}/.supabase`,
+    ),
+    debug: readEnv(effectiveEnv, "SUPABASE_DEBUG"),
+    telemetryDebug: readEnv(effectiveEnv, "SUPABASE_TELEMETRY_DEBUG"),
+    telemetry: readEnv(effectiveEnv, "SUPABASE_TELEMETRY"),
+    doNotTrack: readEnv(effectiveEnv, "DO_NOT_TRACK"),
   });
 });
 

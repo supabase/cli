@@ -70,7 +70,7 @@ export interface PlatformOperationDescriptor {
   readonly description: string;
   readonly successMessage: string;
   readonly confirmsMutation: boolean;
-  readonly inputSchema: Schema.Top & { readonly DecodingServices: never };
+  readonly inputSchema: Schema.Decoder<unknown, never>;
   readonly definition: OperationDefinition;
   readonly execute: (
     input: unknown,

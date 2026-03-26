@@ -1,45 +1,111 @@
 import { ServiceNotFoundError, ServiceReadyError, type LogEntry } from "@supabase/process-compose";
-import { Effect, Layer, Stream } from "effect";
+import { Effect, Layer, Schema, Stream } from "effect";
 import * as Sse from "effect/unstable/encoding/Sse";
-import { Stack, type StackInfo } from "./Stack.ts";
-import { StackServiceState } from "./StackServiceState.ts";
+import { HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { Stack, StackInfoSchema } from "./Stack.ts";
+import { StackServiceState, StackServiceStatusSchema } from "./StackServiceState.ts";
+import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-interface StatusResponse {
-  readonly info: StackInfo;
-  readonly services: ReadonlyArray<{
-    readonly name: string;
-    readonly status: string;
-    readonly pid: number | null;
-    readonly exitCode: number | null;
-    readonly restartCount: number;
-    readonly startedAt: number | null;
-    readonly error: string | null;
-  }>;
-}
+const LogEntrySchema = Schema.Struct({
+  timestamp: Schema.Number,
+  service: Schema.String,
+  stream: Schema.Union([Schema.Literal("stdout"), Schema.Literal("stderr")]),
+  line: Schema.String,
+});
+
+const StatusServiceSchema = Schema.Struct({
+  name: Schema.String,
+  status: StackServiceStatusSchema,
+  pid: Schema.NullOr(Schema.Number),
+  exitCode: Schema.NullOr(Schema.Number),
+  restartCount: Schema.Number,
+  startedAt: Schema.NullOr(Schema.Number),
+  error: Schema.NullOr(Schema.String),
+});
+
+const StatusResponseSchema = Schema.Struct({
+  info: StackInfoSchema,
+  services: Schema.Array(StatusServiceSchema),
+});
+
+const ServiceErrorResponseSchema = Schema.Struct({
+  error: Schema.String,
+});
+
+const StatusServiceEventSchema = Schema.fromJsonString(StatusServiceSchema);
+const LogEntryEventSchema = Schema.fromJsonString(LogEntrySchema);
+const decodeStatusServiceEvent = Schema.decodeUnknownSync(StatusServiceEventSchema);
+const decodeLogEntryEvent = Schema.decodeUnknownSync(LogEntryEventSchema);
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
+function requestHeaders(init?: RequestInit) {
+  return Object.fromEntries(new Headers(init?.headers).entries());
+}
+
+function makeRequest(path: string, init?: RequestInit) {
+  const url = `http://localhost${path}`;
+  const method = init?.method?.toUpperCase() ?? "GET";
+  switch (method) {
+    case "GET":
+      return HttpClientRequest.get(url, { headers: requestHeaders(init) });
+    case "POST":
+      return HttpClientRequest.post(url, { headers: requestHeaders(init) });
+    case "PUT":
+      return HttpClientRequest.put(url, { headers: requestHeaders(init) });
+    case "PATCH":
+      return HttpClientRequest.patch(url, { headers: requestHeaders(init) });
+    case "DELETE":
+      return HttpClientRequest.delete(url, { headers: requestHeaders(init) });
+    case "HEAD":
+      return HttpClientRequest.head(url, { headers: requestHeaders(init) });
+    case "OPTIONS":
+      return HttpClientRequest.options(url, { headers: requestHeaders(init) });
+    case "TRACE":
+      return HttpClientRequest.trace(url, { headers: requestHeaders(init) });
+    default:
+      throw new Error(`Unsupported HTTP method: ${method}`);
+  }
+}
+
 /** Make a fetch request to the daemon Unix socket. */
-function unixFetch(socketPath: string, path: string, init?: RequestInit): Effect.Effect<Response> {
-  return Effect.promise(() =>
-    fetch(`http://localhost${path}`, { ...init, unix: socketPath } as RequestInit),
+function unixFetch(socketPath: string, path: string, init?: RequestInit) {
+  return Effect.flatMap(UnixHttpClient.asEffect(), (client) =>
+    client.request(socketPath, path, init),
+  );
+}
+
+function unixResponse(socketPath: string, path: string, init?: RequestInit) {
+  const request = makeRequest(path, init);
+  return Effect.map(unixFetch(socketPath, path, init), (response) =>
+    HttpClientResponse.fromWeb(request, response),
   );
 }
 
 /** Fetch JSON from the daemon, dying on HTTP errors. */
-function fetchJson<A>(socketPath: string, path: string, method = "GET"): Effect.Effect<A> {
+function fetchStatus(socketPath: string, path: string, method = "GET") {
   return Effect.gen(function* () {
-    const response = yield* unixFetch(socketPath, path, { method });
-    if (!response.ok) {
-      return yield* Effect.die(new Error(`HTTP ${response.status}: ${path}`));
-    }
-    return (yield* Effect.promise(() => response.json())) as A;
+    const response = yield* unixResponse(socketPath, path, { method });
+    const okResponse = yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
+    return yield* HttpClientResponse.schemaBodyJson(StatusResponseSchema)(okResponse).pipe(
+      Effect.orDie,
+    );
+  });
+}
+
+function fetchLogEntries(socketPath: string, path: string) {
+  return Effect.gen(function* () {
+    const response = yield* unixResponse(socketPath, path);
+    const okResponse = yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
+    return yield* HttpClientResponse.schemaBodyJson(Schema.Array(LogEntrySchema))(okResponse).pipe(
+      Effect.orDie,
+    );
   });
 }
 
@@ -62,11 +128,7 @@ function encodeSearchParams(
 }
 
 /** Convert a ReadableStream SSE body into an Effect Stream of parsed events. */
-function sseStream<A>(
-  socketPath: string,
-  path: string,
-  parse: (data: string) => A,
-): Stream.Stream<A> {
+function sseStream<A>(socketPath: string, path: string, parse: (data: string) => A) {
   return Stream.unwrap(
     Effect.gen(function* () {
       const controller = new AbortController();
@@ -85,7 +147,7 @@ function sseStream<A>(
 
       return Stream.fromReadableStream({
         evaluate: () => response.body!,
-        onError: (error) => error as Error,
+        onError: (error) => (error instanceof Error ? error : new Error(String(error))),
       }).pipe(
         Stream.flatMap((chunk: Uint8Array) => {
           collected.length = 0;
@@ -100,10 +162,12 @@ function sseStream<A>(
 }
 
 /** Deserialize a plain JSON object into a ServiceState Data.Class instance. */
-function toServiceState(raw: StatusResponse["services"][number]): StackServiceState {
+function toServiceState(
+  raw: (typeof StatusResponseSchema.Type)["services"][number],
+): StackServiceState {
   return new StackServiceState({
     name: raw.name,
-    status: raw.status as StackServiceState["status"],
+    status: raw.status,
     pid: raw.pid,
     exitCode: raw.exitCode,
     restartCount: raw.restartCount,
@@ -122,182 +186,226 @@ function toServiceState(raw: StatusResponse["services"][number]): StackServiceSt
  * between foreground (in-process) and detached (daemon) modes.
  */
 export const RemoteStack = {
-  layer: (socketPath: string): Layer.Layer<Stack> =>
-    Layer.succeed(Stack, {
-      getInfo: () =>
-        Effect.map(fetchJson<StatusResponse>(socketPath, "/status"), (res) => res.info),
-
-      start: () =>
-        Effect.gen(function* () {
-          const response = yield* unixFetch(socketPath, "/start", { method: "POST" });
-          if (!response.ok) {
-            return yield* Effect.die(new Error(`POST /start failed: ${response.status}`));
-          }
-        }),
-
-      stop: () =>
-        Effect.gen(function* () {
-          const response = yield* unixFetch(socketPath, "/stop", { method: "POST" });
-          if (!response.ok) {
-            return yield* Effect.die(new Error(`POST /stop failed: ${response.status}`));
-          }
-        }),
-
-      dispose: () =>
-        Effect.gen(function* () {
-          const response = yield* unixFetch(socketPath, "/stop", { method: "POST" });
-          if (!response.ok) {
-            return yield* Effect.die(new Error(`POST /stop failed: ${response.status}`));
-          }
-        }),
-
-      startService: (name: string) =>
-        Effect.gen(function* () {
-          const response = yield* unixFetch(socketPath, `/services/${name}/start`, {
-            method: "POST",
-          });
-          if (response.status === 404) {
-            return yield* new ServiceNotFoundError({ name });
-          }
-          if (response.status === 500) {
-            const body = (yield* Effect.promise(() => response.json())) as { error: string };
-            return yield* new ServiceReadyError({ name, reason: body.error });
-          }
-          if (!response.ok) {
-            return yield* Effect.die(new Error(`HTTP ${response.status}`));
-          }
-        }),
-
-      stopService: (name: string) =>
-        Effect.gen(function* () {
-          const response = yield* unixFetch(socketPath, `/services/${name}/stop`, {
-            method: "POST",
-          });
-          if (response.status === 404) {
-            return yield* new ServiceNotFoundError({ name });
-          }
-          if (!response.ok) {
-            return yield* Effect.die(new Error(`HTTP ${response.status}`));
-          }
-        }),
-
-      restartService: (name: string) =>
-        Effect.gen(function* () {
-          const response = yield* unixFetch(socketPath, `/services/${name}/restart`, {
-            method: "POST",
-          });
-          if (response.status === 404) {
-            return yield* new ServiceNotFoundError({ name });
-          }
-          if (!response.ok) {
-            return yield* Effect.die(new Error(`HTTP ${response.status}`));
-          }
-        }),
-
-      getState: (name: string) =>
-        Effect.gen(function* () {
-          const { services } = yield* fetchJson<StatusResponse>(socketPath, "/status");
-          const match = services.find((s) => s.name === name);
-          if (!match) {
-            return yield* new ServiceNotFoundError({ name });
-          }
-          return toServiceState(match);
-        }),
-
-      getAllStates: () =>
-        Effect.map(fetchJson<StatusResponse>(socketPath, "/status"), (res) =>
-          res.services.map(toServiceState),
-        ),
-
-      stateChanges: (name: string) =>
-        Effect.gen(function* () {
-          // Verify the service exists first
-          const { services } = yield* fetchJson<StatusResponse>(socketPath, "/status");
-          if (!services.some((s) => s.name === name)) {
-            return yield* new ServiceNotFoundError({ name });
-          }
-          return sseStream(socketPath, "/status/stream", (data) => {
-            const raw = JSON.parse(data) as StatusResponse["services"][number];
-            return toServiceState(raw);
-          }).pipe(Stream.filter((s) => s.name === name));
-        }),
-
-      allStateChanges: () =>
-        sseStream(socketPath, "/status/stream", (data) => {
-          const raw = JSON.parse(data) as StatusResponse["services"][number];
-          return toServiceState(raw);
-        }),
-
-      waitReady: (name: string) =>
-        Effect.gen(function* () {
-          // Check current state first
-          const { services } = yield* fetchJson<StatusResponse>(socketPath, "/status");
-          const match = services.find((s) => s.name === name);
-          if (!match) {
-            return yield* new ServiceNotFoundError({ name });
-          }
-          if (match.status === "Healthy" || match.status === "Running") return;
-
-          // Wait for state change via SSE
-          yield* sseStream(socketPath, "/status/stream", (data) => {
-            const raw = JSON.parse(data) as StatusResponse["services"][number];
-            return toServiceState(raw);
-          }).pipe(
-            Stream.filter((s) => s.name === name),
-            Stream.takeUntil((s) => s.status === "Healthy" || s.status === "Running"),
-            Stream.runDrain,
+  layer: (socketPath: string): Layer.Layer<Stack, never, UnixHttpClient> =>
+    Layer.effect(
+      Stack,
+      Effect.gen(function* () {
+        const unixHttpClient = yield* UnixHttpClient;
+        const unixHttpClientLayer = Layer.succeed(UnixHttpClient, unixHttpClient);
+        const withUnixHttpClient = <A, E, R>(
+          effect: Effect.Effect<A, E | UnixHttpClientError, R | UnixHttpClient>,
+        ) =>
+          effect.pipe(
+            Effect.provide(unixHttpClientLayer),
+            Effect.catchTag("UnixHttpClientError", (error) => Effect.die(error)),
           );
-        }),
-
-      waitAllReady: () =>
-        Effect.gen(function* () {
-          // Check current state first
-          const { services } = yield* fetchJson<StatusResponse>(socketPath, "/status");
-          const allReady = services.every((s) => s.status === "Healthy" || s.status === "Running");
-          if (allReady) return;
-
-          // Track service readiness via SSE
-          const readySet = new Set(
-            services
-              .filter((s) => s.status === "Healthy" || s.status === "Running")
-              .map((s) => s.name),
+        const withUnixHttpClientStream = <A, E, R>(
+          stream: Stream.Stream<A, E | UnixHttpClientError, R | UnixHttpClient>,
+        ) =>
+          stream.pipe(
+            Stream.provide(unixHttpClientLayer),
+            Stream.catchTag("UnixHttpClientError", (error) => Stream.die(error)),
           );
-          const totalCount = services.length;
 
-          yield* sseStream(socketPath, "/status/stream", (data) => {
-            const raw = JSON.parse(data) as StatusResponse["services"][number];
-            return toServiceState(raw);
-          }).pipe(
-            Stream.takeUntil((s) => {
-              if (s.status === "Healthy" || s.status === "Running") {
-                readySet.add(s.name);
-              }
-              return readySet.size >= totalCount;
-            }),
-            Stream.runDrain,
-          );
-        }),
+        return {
+          getInfo: () =>
+            withUnixHttpClient(Effect.map(fetchStatus(socketPath, "/status"), (res) => res.info)),
 
-      subscribeLogs: (name: string) =>
-        sseStream<LogEntry>(socketPath, `/logs/${name}`, (data) => JSON.parse(data) as LogEntry),
+          start: () =>
+            withUnixHttpClient(
+              Effect.gen(function* () {
+                const response = yield* unixResponse(socketPath, "/start", { method: "POST" });
+                yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
+              }),
+            ),
 
-      subscribeAllLogs: (services) => {
-        const query = encodeSearchParams({ service: services });
-        return sseStream<LogEntry>(
-          socketPath,
-          `/logs${query}`,
-          (data) => JSON.parse(data) as LogEntry,
-        );
-      },
+          stop: () =>
+            withUnixHttpClient(
+              Effect.gen(function* () {
+                const response = yield* unixResponse(socketPath, "/stop", { method: "POST" });
+                yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
+              }),
+            ),
 
-      logHistory: (name: string, limit?: number) => {
-        const query = limit !== undefined ? `?limit=${limit}` : "";
-        return fetchJson<ReadonlyArray<LogEntry>>(socketPath, `/logs/${name}/history${query}`);
-      },
+          dispose: () =>
+            withUnixHttpClient(
+              Effect.gen(function* () {
+                const response = yield* unixResponse(socketPath, "/stop", { method: "POST" });
+                yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
+              }),
+            ),
 
-      logHistoryAll: (limit?: number, services?: ReadonlyArray<string>) => {
-        const query = encodeSearchParams({ limit, service: services });
-        return fetchJson<ReadonlyArray<LogEntry>>(socketPath, `/logs/history${query}`);
-      },
-    }),
+          startService: (name: string) =>
+            withUnixHttpClient(
+              Effect.gen(function* () {
+                const response = yield* unixResponse(socketPath, `/services/${name}/start`, {
+                  method: "POST",
+                });
+                if (response.status === 404) {
+                  return yield* new ServiceNotFoundError({ name });
+                }
+                if (response.status === 500) {
+                  const body = yield* HttpClientResponse.schemaBodyJson(ServiceErrorResponseSchema)(
+                    response,
+                  ).pipe(Effect.orDie);
+                  return yield* new ServiceReadyError({ name, reason: body.error });
+                }
+                yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
+              }),
+            ),
+
+          stopService: (name: string) =>
+            withUnixHttpClient(
+              Effect.gen(function* () {
+                const response = yield* unixResponse(socketPath, `/services/${name}/stop`, {
+                  method: "POST",
+                });
+                if (response.status === 404) {
+                  return yield* new ServiceNotFoundError({ name });
+                }
+                yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
+              }),
+            ),
+
+          restartService: (name: string) =>
+            withUnixHttpClient(
+              Effect.gen(function* () {
+                const response = yield* unixResponse(socketPath, `/services/${name}/restart`, {
+                  method: "POST",
+                });
+                if (response.status === 404) {
+                  return yield* new ServiceNotFoundError({ name });
+                }
+                yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
+              }),
+            ),
+
+          getState: (name: string) =>
+            withUnixHttpClient(
+              Effect.gen(function* () {
+                const { services } = yield* fetchStatus(socketPath, "/status");
+                const match = services.find((s) => s.name === name);
+                if (!match) {
+                  return yield* new ServiceNotFoundError({ name });
+                }
+                return toServiceState(match);
+              }),
+            ),
+
+          getAllStates: () =>
+            withUnixHttpClient(
+              Effect.map(fetchStatus(socketPath, "/status"), (res) =>
+                res.services.map(toServiceState),
+              ),
+            ),
+
+          stateChanges: (name: string) =>
+            withUnixHttpClient(
+              Effect.gen(function* () {
+                // Verify the service exists first
+                const { services } = yield* fetchStatus(socketPath, "/status");
+                if (!services.some((s) => s.name === name)) {
+                  return yield* new ServiceNotFoundError({ name });
+                }
+                return withUnixHttpClientStream(
+                  sseStream(socketPath, "/status/stream", (data) => {
+                    const raw = decodeStatusServiceEvent(data);
+                    return toServiceState(raw);
+                  }).pipe(Stream.filter((s) => s.name === name)),
+                );
+              }),
+            ),
+
+          allStateChanges: () =>
+            withUnixHttpClientStream(
+              sseStream(socketPath, "/status/stream", (data) => {
+                const raw = decodeStatusServiceEvent(data);
+                return toServiceState(raw);
+              }),
+            ),
+
+          waitReady: (name: string) =>
+            withUnixHttpClient(
+              Effect.gen(function* () {
+                // Check current state first
+                const { services } = yield* fetchStatus(socketPath, "/status");
+                const match = services.find((s) => s.name === name);
+                if (!match) {
+                  return yield* new ServiceNotFoundError({ name });
+                }
+                if (match.status === "Healthy" || match.status === "Running") return;
+
+                // Wait for state change via SSE
+                yield* withUnixHttpClient(
+                  sseStream(socketPath, "/status/stream", (data) => {
+                    const raw = decodeStatusServiceEvent(data);
+                    return toServiceState(raw);
+                  }).pipe(
+                    Stream.filter((s) => s.name === name),
+                    Stream.takeUntil((s) => s.status === "Healthy" || s.status === "Running"),
+                    Stream.runDrain,
+                  ),
+                );
+              }),
+            ),
+
+          waitAllReady: () =>
+            withUnixHttpClient(
+              Effect.gen(function* () {
+                // Check current state first
+                const { services } = yield* fetchStatus(socketPath, "/status");
+                const allReady = services.every(
+                  (s) => s.status === "Healthy" || s.status === "Running",
+                );
+                if (allReady) return;
+
+                // Track service readiness via SSE
+                const readySet = new Set(
+                  services
+                    .filter((s) => s.status === "Healthy" || s.status === "Running")
+                    .map((s) => s.name),
+                );
+                const totalCount = services.length;
+
+                yield* withUnixHttpClient(
+                  sseStream(socketPath, "/status/stream", (data) => {
+                    const raw = decodeStatusServiceEvent(data);
+                    return toServiceState(raw);
+                  }).pipe(
+                    Stream.takeUntil((s) => {
+                      if (s.status === "Healthy" || s.status === "Running") {
+                        readySet.add(s.name);
+                      }
+                      return readySet.size >= totalCount;
+                    }),
+                    Stream.runDrain,
+                  ),
+                );
+              }),
+            ),
+
+          subscribeLogs: (name: string) =>
+            withUnixHttpClientStream(
+              sseStream<LogEntry>(socketPath, `/logs/${name}`, (data) => decodeLogEntryEvent(data)),
+            ),
+
+          subscribeAllLogs: (services) => {
+            const query = encodeSearchParams({ service: services });
+            return withUnixHttpClientStream(
+              sseStream<LogEntry>(socketPath, `/logs${query}`, (data) => decodeLogEntryEvent(data)),
+            );
+          },
+
+          logHistory: (name: string, limit?: number) => {
+            const query = limit !== undefined ? `?limit=${limit}` : "";
+            return withUnixHttpClient(fetchLogEntries(socketPath, `/logs/${name}/history${query}`));
+          },
+
+          logHistoryAll: (limit?: number, services?: ReadonlyArray<string>) => {
+            const query = encodeSearchParams({ limit, service: services });
+            return withUnixHttpClient(fetchLogEntries(socketPath, `/logs/history${query}`));
+          },
+        };
+      }),
+    ),
 };

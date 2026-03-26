@@ -3,9 +3,9 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { credentialsLayer } from "../../auth/credentials.layer.ts";
+import { platformApiClientLayer } from "../../auth/platform-api-client.layer.ts";
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
 import { stdinLayer } from "../../runtime/stdin.layer.ts";
-import { platformApiClientLayer } from "./platform-api-client.layer.ts";
 import { buildPlatformGeneratedExamples } from "./platform-examples.ts";
 import { runPlatformOperation } from "./platform-handler.ts";
 import type { PlatformOperationDescriptor } from "./platform-types.ts";

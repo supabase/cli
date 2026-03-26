@@ -13,6 +13,19 @@ interface OutputTask {
   readonly clear: () => Effect.Effect<void>;
 }
 
+interface OutputSelectOption {
+  readonly value: string;
+  readonly label: string;
+  readonly hint?: string;
+}
+
+interface OutputSelectBehavior {
+  readonly mode?: "auto" | "select" | "autocomplete";
+  readonly autocompleteThreshold?: number;
+  readonly placeholder?: string;
+  readonly maxItems?: number;
+}
+
 /**
  * Output - User-facing CLI output boundary.
  *
@@ -37,11 +50,8 @@ interface OutputShape {
   readonly promptConfirm: (message: string) => Effect.Effect<boolean, NonInteractiveError>;
   readonly promptSelect: (
     message: string,
-    options: ReadonlyArray<{
-      readonly value: string;
-      readonly label: string;
-      readonly hint?: string;
-    }>,
+    options: ReadonlyArray<OutputSelectOption>,
+    behavior?: OutputSelectBehavior,
   ) => Effect.Effect<string, NonInteractiveError>;
   readonly promptMultiSelect: (
     message: string,

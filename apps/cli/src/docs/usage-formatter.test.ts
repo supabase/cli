@@ -241,5 +241,19 @@ describe("formatAsUsageSpec", () => {
       expect(result).toContain('header "Interactive login"');
       expect(result).toContain('code "mycli login"');
     });
+
+    it("renders the same root usage shape from a subcommand tree", () => {
+      const login = Command.make("login").pipe(Command.withDescription("Log in"));
+      const root = Command.make("supabase").pipe(
+        Command.withDescription("Supabase CLI"),
+        Command.withSubcommands([login]),
+      );
+
+      const result = formatAsUsageSpec(root, defaultOptions);
+
+      expect(result).toContain('bin "supabase"');
+      expect(result).toContain('cmd "login"');
+      expect(result).toContain('version "1.0.0"');
+    });
   });
 });

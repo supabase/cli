@@ -1,8 +1,8 @@
-import type { LogEntry, ServiceNotFoundError } from "@supabase/process-compose";
+import type { LogEntry } from "@supabase/process-compose";
 import { readdir, readFile } from "node:fs/promises";
 import { mkdtempSync } from "node:fs";
-import { basename, join } from "node:path";
-import { Duration, Effect, type Layer, ManagedRuntime, Stream } from "effect";
+import { join } from "node:path";
+import { Duration, Effect, type Layer, ManagedRuntime, Schema, Stream } from "effect";
 import { FileSystem, Path } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -21,16 +21,19 @@ import {
   type DaemonStartError,
 } from "./layers.ts";
 import {
+  DEFAULT_MANAGED_STACK_NAME,
   defaultCacheRoot,
+  defaultManagedProjectsRoot,
   defaultManagedRuntimeRoot,
   defaultManagedStackRoot,
-  defaultManagedStacksRoot,
   shortTempPrefixRoot,
 } from "./paths.ts";
 import { allocatePorts, DEFAULT_PORTS, PORT_FIELDS, type AllocatedPorts } from "./PortAllocator.ts";
-import { StackAlreadyRunningError } from "./StateManager.ts";
+import { StackMetadataSchema } from "./StackMetadata.ts";
+import { InvalidStackStateError, StackAlreadyRunningError } from "./StateManager.ts";
 import { Stack } from "./Stack.ts";
 import type { StackServiceState } from "./StackServiceState.ts";
+import { UnixHttpClient } from "./UnixHttpClient.ts";
 import type {
   AnalyticsConfig,
   AuthConfig,
@@ -59,6 +62,9 @@ import type {
 } from "./StackBuilder.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 
+const StackMetadataFileSchema = Schema.fromJsonString(StackMetadataSchema);
+const decodeStackMetadataFile = Schema.decodeUnknownSync(StackMetadataFileSchema);
+
 export type PlatformServices =
   | FileSystem.FileSystem
   | Path.Path
@@ -72,8 +78,8 @@ export interface ReadyOptions {
   readonly timeout?: number;
 }
 
-export function defaultManagedStackName(cwd: string): string {
-  return basename(cwd) || "default";
+export function defaultManagedStackName(_cwd: string): string {
+  return DEFAULT_MANAGED_STACK_NAME;
 }
 
 export interface StackHandle extends AsyncDisposable {
@@ -149,47 +155,99 @@ const resolveDataDir = (
   suffix: string,
 ): string => explicitDir ?? join(stackRoot, "data", suffix);
 
-async function readPortsFile(filePath: string): Promise<AllocatedPorts | undefined> {
+async function readStackMetadataFile(filePath: string) {
   try {
     const content = await readFile(filePath, "utf8");
-    return JSON.parse(content) as AllocatedPorts;
+    return decodeStackMetadataFile(content);
   } catch {
     return undefined;
   }
 }
 
 async function readOwnedPorts(stackRoot: string): Promise<AllocatedPorts | undefined> {
-  return readPortsFile(join(stackRoot, "ports.json"));
+  const metadata = await readStackMetadataFile(join(stackRoot, "stack.json"));
+  return metadata?.ports;
 }
 
 async function readReservedPorts(
-  stacksRoot: string,
+  projectsRoot: string,
   currentStackRoot: string,
 ): Promise<ReadonlySet<number>> {
   const reserved = new Set<number>();
 
-  let entries: Array<{ isDirectory(): boolean; name: string }>;
+  let projectEntries: Array<{ isDirectory(): boolean; name: string }>;
   try {
-    entries = (await readdir(stacksRoot, {
-      withFileTypes: true,
-      encoding: "utf8",
-    })) as Array<{ isDirectory(): boolean; name: string }>;
+    projectEntries = await readdir(projectsRoot, { withFileTypes: true });
   } catch {
     return reserved;
   }
 
   await Promise.all(
-    entries.map(async (entry) => {
-      if (!entry.isDirectory()) {
+    projectEntries.map(async (projectEntry) => {
+      if (!projectEntry.isDirectory()) {
         return;
       }
 
-      const stackRoot = join(stacksRoot, entry.name);
+      const stacksRoot = join(projectsRoot, projectEntry.name, "stacks");
+      let stackEntries: Array<{ isDirectory(): boolean; name: string }>;
+      try {
+        stackEntries = await readdir(stacksRoot, { withFileTypes: true });
+      } catch {
+        return;
+      }
+
+      await Promise.all(
+        stackEntries.map(async (stackEntry) => {
+          if (!stackEntry.isDirectory()) {
+            return;
+          }
+
+          const stackRoot = join(stacksRoot, stackEntry.name);
+          if (stackRoot === currentStackRoot) {
+            return;
+          }
+
+          const ports = (await readStackMetadataFile(join(stackRoot, "stack.json")))?.ports;
+          if (ports === undefined) {
+            return;
+          }
+
+          for (const field of PORT_FIELDS) {
+            reserved.add(ports[field]);
+          }
+        }),
+      );
+    }),
+  );
+
+  return reserved;
+}
+
+async function readReservedPortsInStacksRoot(
+  stacksRoot: string,
+  currentStackRoot: string,
+): Promise<ReadonlySet<number>> {
+  const reserved = new Set<number>();
+
+  let stackEntries: Array<{ isDirectory(): boolean; name: string }>;
+  try {
+    stackEntries = await readdir(stacksRoot, { withFileTypes: true });
+  } catch {
+    return reserved;
+  }
+
+  await Promise.all(
+    stackEntries.map(async (stackEntry) => {
+      if (!stackEntry.isDirectory()) {
+        return;
+      }
+
+      const stackRoot = join(stacksRoot, stackEntry.name);
       if (stackRoot === currentStackRoot) {
         return;
       }
 
-      const ports = await readPortsFile(join(stackRoot, "ports.json"));
+      const ports = (await readStackMetadataFile(join(stackRoot, "stack.json")))?.ports;
       if (ports === undefined) {
         return;
       }
@@ -491,19 +549,34 @@ export async function resolveDaemonConfig(
     readonly cwd: string;
     readonly name?: string;
     readonly projectDir?: string;
+    readonly projectStateRoot?: string;
   },
 ): Promise<DaemonConfig> {
-  const { cwd, name, projectDir, ...stackConfig } = input;
+  const { cwd, name, projectDir, projectStateRoot, ...stackConfig } = input;
   if (stackConfig.stackRoot !== undefined || stackConfig.runtimeRoot !== undefined) {
     throw new Error("Managed daemon stacks derive stackRoot and runtimeRoot automatically");
   }
   const effectiveProjectDir = projectDir ?? cwd;
   const resolvedName = name ?? defaultManagedStackName(effectiveProjectDir);
   const cacheRoot = stackConfig.cacheRoot ?? defaultCacheRoot();
-  const stackRoot = defaultManagedStackRoot(cacheRoot, resolvedName);
+  const stackRoot =
+    projectStateRoot !== undefined
+      ? join(projectStateRoot, "stacks", resolvedName)
+      : defaultManagedStackRoot(cacheRoot, effectiveProjectDir, resolvedName);
   const runtimeRoot = defaultManagedRuntimeRoot(stackRoot);
   const savedPorts = await readOwnedPorts(stackRoot);
-  const reservedPorts = await readReservedPorts(defaultManagedStacksRoot(cacheRoot), stackRoot);
+  const reservedPortSets = await Promise.all([
+    readReservedPorts(defaultManagedProjectsRoot(cacheRoot), stackRoot),
+    projectStateRoot === undefined
+      ? Promise.resolve<ReadonlySet<number>>(new Set())
+      : readReservedPortsInStacksRoot(join(projectStateRoot, "stacks"), stackRoot),
+  ]);
+  const reservedPorts = new Set<number>();
+  for (const ports of reservedPortSets) {
+    for (const port of ports) {
+      reservedPorts.add(port);
+    }
+  }
   const resolved = await resolveConfig(
     {
       ...stackConfig,
@@ -528,18 +601,24 @@ export async function resolveDaemonConfig(
 export const projectDaemonLayer = (opts: {
   readonly cacheRoot: string;
   readonly cwd: string;
+  readonly projectDir?: string;
+  readonly projectStateRoot?: string;
+  readonly name?: string;
   readonly daemonEntryPoint: string;
   readonly stackConfig?: Omit<StackConfig, "cacheRoot" | "stackRoot" | "runtimeRoot">;
 }): Effect.Effect<
   Layer.Layer<Stack>,
-  DaemonStartError | StackAlreadyRunningError,
-  FileSystem.FileSystem | Path.Path
+  DaemonStartError | InvalidStackStateError | StackAlreadyRunningError,
+  FileSystem.FileSystem | Path.Path | UnixHttpClient
 > =>
   Effect.gen(function* () {
     const config = yield* Effect.promise(() =>
       resolveDaemonConfig({
         cacheRoot: opts.cacheRoot,
         cwd: opts.cwd,
+        projectDir: opts.projectDir,
+        projectStateRoot: opts.projectStateRoot,
+        name: opts.name,
         ...opts.stackConfig,
       }),
     );
@@ -614,8 +693,7 @@ export async function createStack(
         return run(effect);
       },
       getStatus: () => run(localStack.getAllStates()),
-      getServiceStatus: (name) =>
-        run(localStack.getState(name) as Effect.Effect<StackServiceState, ServiceNotFoundError>),
+      getServiceStatus: (name) => run(localStack.getState(name)),
       statusChanges: () => Stream.toAsyncIterableWith(localStack.allStateChanges(), services),
       logs: () => Stream.toAsyncIterableWith(localStack.subscribeAllLogs(), services),
       serviceLogs: (name) => Stream.toAsyncIterableWith(localStack.subscribeLogs(name), services),

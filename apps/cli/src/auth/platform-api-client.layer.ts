@@ -2,9 +2,9 @@ import { Effect, Layer, Option } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { supabaseApiClientLayer } from "@supabase/api/effect";
 
-import { Credentials } from "../../auth/credentials.service.ts";
-import { CliConfig } from "../../config/cli-config.service.ts";
-import { PlatformAuthRequiredError } from "./platform.errors.ts";
+import { CliConfig } from "../config/cli-config.service.ts";
+import { PlatformAuthRequiredError } from "./errors.ts";
+import { Credentials } from "./credentials.service.ts";
 
 const makePlatformApiClientLayer = Effect.gen(function* () {
   const cliConfig = yield* CliConfig;

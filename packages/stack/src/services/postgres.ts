@@ -65,7 +65,14 @@ ALTER USER supabase_storage_admin WITH PASSWORD :'pgpass';
 ALTER USER supabase_replication_admin WITH PASSWORD :'pgpass';
 ALTER USER supabase_read_only_user WITH PASSWORD :'pgpass';
 create schema if not exists _realtime;
-alter schema _realtime owner to postgres;`;
+alter schema _realtime owner to postgres;
+SELECT 'CREATE DATABASE _supabase WITH OWNER postgres'
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '_supabase')\\gexec
+\\connect _supabase
+create schema if not exists _analytics;
+alter schema _analytics owner to postgres;
+create schema if not exists _supavisor;
+alter schema _supavisor owner to postgres;`;
 
 const dockerPostgresEntrypoint = (port: number) =>
   `cat <<'EOF' > /etc/postgresql.schema.sql && exec docker-entrypoint.sh postgres -D /etc/postgresql -p ${port}

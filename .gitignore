@@ -4,4 +4,5 @@ dist
 .claude/
 .agents/.repos/effect-v3
 .worktrees/
+.supabase/
 .idea/

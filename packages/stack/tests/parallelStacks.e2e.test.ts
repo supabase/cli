@@ -13,6 +13,7 @@ import {
 
 const STACK_COUNT = 2;
 const SCRIPT = resolve(import.meta.dirname, "helpers/standalone-stack.ts");
+const PARALLEL_STACK_TEST_TIMEOUT_MS = 5_000;
 
 interface StackInfo {
   url: string;
@@ -104,20 +105,24 @@ describe("parallel stacks (multi-process)", () => {
     }
   }, 60_000);
 
-  test("all stacks use different API ports", () => {
+  test("all stacks use different API ports", { timeout: PARALLEL_STACK_TEST_TIMEOUT_MS }, () => {
     const ports = stacks.map((s) => new URL(s.url).port);
     expect(new Set(ports).size).toBe(STACK_COUNT);
   });
 
-  test("all stacks use different DB ports", () => {
+  test("all stacks use different DB ports", { timeout: PARALLEL_STACK_TEST_TIMEOUT_MS }, () => {
     const ports = stacks.map((s) => new URL(s.dbUrl).port);
     expect(new Set(ports).size).toBe(STACK_COUNT);
   });
 
-  test("all stacks respond to health checks", async () => {
-    const responses = await Promise.all(stacks.map((s) => fetch(`${s.url}/health`)));
-    for (const res of responses) {
-      expect(res.status).toBe(200);
-    }
-  });
+  test(
+    "all stacks respond to health checks",
+    { timeout: PARALLEL_STACK_TEST_TIMEOUT_MS },
+    async () => {
+      const responses = await Promise.all(stacks.map((s) => fetch(`${s.url}/health`)));
+      for (const res of responses) {
+        expect(res.status).toBe(200);
+      }
+    },
+  );
 });

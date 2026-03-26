@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, vi } from "vitest";
-import { ConfigProvider, Effect, FileSystem, Layer, Option, Redacted } from "effect";
-import { mockRuntimeInfo } from "../../tests/helpers/mocks.ts";
+import { Effect, FileSystem, Layer, Option, Redacted } from "effect";
+import { mockProjectContext, mockRuntimeInfo, processEnvLayer } from "../../tests/helpers/mocks.ts";
 import { cliConfigLayer } from "../config/cli-config.layer.ts";
 import { Credentials } from "./credentials.service.ts";
 import { credentialsLayer } from "./credentials.layer.ts";
@@ -47,15 +47,14 @@ vi.mock("@napi-rs/keyring", () => ({
 }));
 
 function makeLayer(home: string, env: Record<string, string> = {}) {
-  const configProviderLayer = ConfigProvider.layer(
-    ConfigProvider.fromEnv({ env: { HOME: home, ...env } }),
-  );
   const runtimeInfoLayer = mockRuntimeInfo({ homeDir: home });
+  const projectContextLayer = mockProjectContext();
   const baseLayer = Layer.mergeAll(
     BunServices.layer,
-    configProviderLayer,
     runtimeInfoLayer,
-    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(configProviderLayer)),
+    projectContextLayer,
+    processEnvLayer({ HOME: home, ...env }),
+    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
   );
   return credentialsLayer.pipe(Layer.provide(baseLayer));
 }
@@ -192,20 +191,19 @@ describe("Credentials", () => {
           exists: (_path: string) => Effect.fail(new Error("permission denied") as any),
           readFileString: (_path: string) => Effect.fail(new Error("permission denied") as any),
         } as any);
-        const configProviderLayer = ConfigProvider.layer(
-          ConfigProvider.fromEnv({ env: { HOME: tempHome } }),
-        );
         const runtimeInfoLayer = mockRuntimeInfo({ homeDir: tempHome });
+        const projectContextLayer = mockProjectContext();
         const layer = credentialsLayer.pipe(
           Layer.provide(
             Layer.mergeAll(
               failingFs,
               BunServices.layer,
-              configProviderLayer,
               runtimeInfoLayer,
+              projectContextLayer,
+              processEnvLayer({ HOME: tempHome }),
               cliConfigLayer.pipe(
                 Layer.provide(runtimeInfoLayer),
-                Layer.provide(configProviderLayer),
+                Layer.provide(projectContextLayer),
               ),
             ),
           ),

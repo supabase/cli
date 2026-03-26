@@ -1,15 +1,23 @@
 #!/usr/bin/env bun
 import { BunServices } from "@effect/platform-bun";
+import { ProjectConfigStore } from "@supabase/config";
+import { SupabaseApiClient } from "@supabase/api/effect";
+import { unixHttpClientLayer } from "@supabase/stack";
 import { Cause, Effect, Exit, Fiber, Layer, Stdio } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import { root } from "./root.ts";
 import { skillWriterLayer } from "../agents/skill-writer.layer.ts";
+import { Credentials } from "../auth/credentials.service.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
 import { outputLayerFor } from "../output/output.layer.ts";
 import { normalizeCause } from "../output/normalize-error.ts";
 import type { OutputFormat } from "../output/types.ts";
 import { Output } from "../output/output.service.ts";
 import { cliConfigLayer } from "../config/cli-config.layer.ts";
+import { projectHomeLayer } from "../config/project-home.layer.ts";
+import { ProjectLocalServiceVersions } from "../config/project-local-service-versions.service.ts";
+import { projectContextLayer } from "../config/project-context.layer.ts";
+import { ProjectLinkState } from "../config/project-link-state.service.ts";
 import { processControlLayer } from "../runtime/process-control.layer.ts";
 import { runtimeInfoLayer } from "../runtime/runtime-info.layer.ts";
 import { ttyLayer } from "../runtime/tty.layer.ts";
@@ -38,14 +46,56 @@ function formatterLayerFor(args: ReadonlyArray<string>) {
 
 function cliProgramFor(args: ReadonlyArray<string>) {
   const runtimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
+  const fallbackCommandLayer = Layer.mergeAll(
+    // Root command env inference currently leaks some subcommand-provided services.
+    Layer.succeed(Credentials, {
+      getAccessToken: Effect.die("unexpected root credentials access"),
+      saveAccessToken: () => Effect.die("unexpected root credentials write"),
+    }),
+    Layer.succeed(ProjectLinkState, {
+      load: Effect.die("unexpected root project link state access"),
+      save: () => Effect.die("unexpected root project link state write"),
+      clear: Effect.die("unexpected root project link state clear"),
+    }),
+    Layer.succeed(ProjectLocalServiceVersions, {
+      load: Effect.die("unexpected root project local service versions access"),
+    }),
+    Layer.succeed(ProjectConfigStore, {
+      load: () => Effect.die("unexpected root project config access"),
+      loadFile: () => Effect.die("unexpected root project config file access"),
+      save: () => Effect.die("unexpected root project config write"),
+    }),
+    Layer.succeed(SupabaseApiClient, {
+      execute: () => Effect.die("unexpected root platform api client access"),
+    }),
+  );
   return Command.runWith(root, { version: "0.1.0" })(args).pipe(
     Effect.provide(formatterLayerFor(args)),
     Effect.provide(skillWriterLayer.pipe(Layer.provide(BunServices.layer))),
     Effect.provide(
       tracingLayer.pipe(Layer.provide(BunServices.layer), Layer.provide(runtimeLayer)),
     ),
-    Effect.provide(cliConfigLayer),
+    Effect.provide(
+      cliConfigLayer.pipe(Layer.provide(projectContextLayer), Layer.provide(runtimeLayer)),
+    ),
+    Effect.provide(
+      projectHomeLayer.pipe(
+        Layer.provide(
+          cliConfigLayer.pipe(Layer.provide(projectContextLayer), Layer.provide(runtimeLayer)),
+        ),
+        Layer.provide(
+          projectContextLayer.pipe(Layer.provide(runtimeLayer), Layer.provide(BunServices.layer)),
+        ),
+        Layer.provide(runtimeLayer),
+        Layer.provide(BunServices.layer),
+      ),
+    ),
+    Effect.provide(
+      projectContextLayer.pipe(Layer.provide(runtimeLayer), Layer.provide(BunServices.layer)),
+    ),
     Effect.provide(runtimeLayer),
+    Effect.provide(fallbackCommandLayer),
+    Effect.provide(unixHttpClientLayer),
     Effect.provide(BunServices.layer),
   );
 }
@@ -82,6 +132,7 @@ const signalAwareProgram = Effect.scoped(
   Effect.provide(processControlLayer),
   Effect.provide(runtimeInfoLayer),
   Effect.provide(ttyLayer),
+  Effect.provide(unixHttpClientLayer),
   Effect.provide(BunServices.layer),
 );
 
@@ -105,6 +156,7 @@ const handledProgram = (
     Effect.provide(processControlLayer),
     Effect.provide(runtimeInfoLayer),
     Effect.provide(ttyLayer),
+    Effect.provide(unixHttpClientLayer),
     Effect.provide(BunServices.layer),
   );
 

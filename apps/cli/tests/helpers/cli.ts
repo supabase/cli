@@ -1,15 +1,25 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { DEFAULT_VERSIONS } from "@supabase/stack/effect";
+import {
+  noteStackProjectHome,
+  registerTempHome,
+  registerTempStackProject,
+} from "./stack-e2e-cleanup.ts";
 
 type RunResult = {
   stdout: string;
   stderr: string;
   exitCode: number;
 };
+
+const DEFAULT_EXIT_TIMEOUT_MS = 60_000;
 
 interface SpawnedSupabase {
   readonly pid: number;
@@ -18,7 +28,7 @@ interface SpawnedSupabase {
   readonly stderr: () => string;
   readonly kill: (signal?: NodeJS.Signals) => void;
   readonly waitForOutput: (pattern: RegExp, timeoutMs?: number) => Promise<void>;
-  readonly waitForExit: () => Promise<RunResult>;
+  readonly waitForExit: (timeoutMs?: number) => Promise<RunResult>;
 }
 
 export function makeTempHome() {
@@ -32,12 +42,91 @@ export function makeTempHome() {
     symlinkSync(realBinDir, path.join(dir, "bin"));
   }
 
-  return {
+  const home = {
     dir,
     [Symbol.dispose]() {
       rmSync(dir, { recursive: true, force: true });
     },
   };
+  registerTempHome(home);
+  return home;
+}
+
+function pickFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (address == null || typeof address === "string") {
+        server.close(() => reject(new Error("Failed to allocate a free port")));
+        return;
+      }
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(address.port);
+      });
+    });
+    server.on("error", reject);
+  });
+}
+
+async function makeTempProject(prefix = "supabase-project-e2e-") {
+  const projectDir = await mkdtemp(path.join(tmpdir(), prefix));
+
+  return {
+    dir: projectDir,
+    async cleanup() {
+      await rm(projectDir, { recursive: true, force: true });
+    },
+  };
+}
+
+export async function makeTempStackProject(prefix = "supabase-stack-e2e-") {
+  const project = await makeTempProject(prefix);
+  const ports = {
+    apiPort: await pickFreePort(),
+    dbPort: await pickFreePort(),
+    authPort: await pickFreePort(),
+    postgrestPort: await pickFreePort(),
+    postgrestAdminPort: await pickFreePort(),
+    realtimePort: await pickFreePort(),
+    storagePort: await pickFreePort(),
+    imgproxyPort: await pickFreePort(),
+    mailpitPort: await pickFreePort(),
+    mailpitSmtpPort: await pickFreePort(),
+    mailpitPop3Port: await pickFreePort(),
+    pgmetaPort: await pickFreePort(),
+    studioPort: await pickFreePort(),
+    analyticsPort: await pickFreePort(),
+    poolerPort: await pickFreePort(),
+    poolerApiPort: await pickFreePort(),
+  };
+
+  const stackDir = path.join(project.dir, ".supabase", "stacks", "default");
+  await mkdir(stackDir, { recursive: true });
+  await writeFile(
+    path.join(stackDir, "stack.json"),
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        updatedAt: new Date().toISOString(),
+        ports,
+        services: DEFAULT_VERSIONS,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+
+  const stackProject = {
+    ...project,
+    ports,
+  };
+  registerTempStackProject(stackProject);
+  return stackProject;
 }
 
 /** Send a signal to the process group led by `pid`. */
@@ -50,6 +139,7 @@ function killProcessGroup(pid: number, signal: NodeJS.Signals): void {
 export function spawnSupabase(
   args: string[],
   options?: {
+    cwd?: string;
     env?: Record<string, string>;
     /** Reuse a temp SUPABASE_HOME directory instead of creating a new one per call. */
     home?: string;
@@ -57,10 +147,13 @@ export function spawnSupabase(
     stdin?: string;
     /** Whether to kill the whole process group once the root process exits. */
     cleanupProcessGroupOnClose?: boolean;
+    /** Maximum time to wait for the process to exit before force-killing it. */
+    exitTimeoutMs?: number;
   },
 ): SpawnedSupabase {
   const ownHome = options?.home ? null : makeTempHome();
   const homeDir = options?.home ?? ownHome!.dir;
+  noteStackProjectHome(options?.cwd, homeDir);
   const sourceCliLauncher = fileURLToPath(new URL("./source-cli-launcher.mjs", import.meta.url));
   const sourceCliEntrypoint = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
   const usesStartWrapper = args[0] === "start";
@@ -70,6 +163,7 @@ export function spawnSupabase(
       ? [sourceCliLauncher, sourceCliEntrypoint, ...args]
       : [sourceCliEntrypoint, ...args],
     {
+      cwd: options?.cwd,
       env: {
         ...process.env,
         SUPABASE_HOME: homeDir,
@@ -107,9 +201,20 @@ export function spawnSupabase(
     proc.stdin.end();
   }
 
-  const waitForExit = async (): Promise<RunResult> => {
+  const waitForExit = async (
+    timeoutMs = options?.exitTimeoutMs ?? DEFAULT_EXIT_TIMEOUT_MS,
+  ): Promise<RunResult> => {
     const result = await new Promise<RunResult>((resolve) => {
+      const timeout = setTimeout(() => {
+        killProcessGroup(proc.pid!, "SIGKILL");
+        try {
+          proc.kill("SIGKILL");
+        } catch {}
+      }, timeoutMs);
+      timeout.unref();
+
       proc.on("close", (code) => {
+        clearTimeout(timeout);
         if (options?.cleanupProcessGroupOnClose ?? true) {
           killProcessGroup(proc.pid!, "SIGKILL");
         }
@@ -128,7 +233,10 @@ export function spawnSupabase(
     stdout: () => stdout,
     stderr: () => stderr,
     kill: (signal = "SIGTERM") => {
-      proc.kill(signal);
+      killProcessGroup(proc.pid!, signal);
+      try {
+        proc.kill(signal);
+      } catch {}
     },
     waitForOutput: async (pattern: RegExp, timeoutMs = 60_000) => {
       if (pattern.test(stdout)) {
@@ -170,6 +278,7 @@ export function spawnSupabase(
 export async function runSupabase(
   args: string[],
   options?: {
+    cwd?: string;
     env?: Record<string, string>;
     /** Reuse a temp SUPABASE_HOME directory instead of creating a new one per call. */
     home?: string;
@@ -179,6 +288,8 @@ export async function runSupabase(
     until?: RegExp;
     /** How long to wait for the `until` pattern before failing. */
     untilTimeoutMs?: number;
+    /** Maximum time to wait for the command to exit before force-killing it. */
+    exitTimeoutMs?: number;
   },
 ): Promise<RunResult> {
   const spawned = spawnSupabase(args, options);

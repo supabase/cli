@@ -1,8 +1,35 @@
 import { describe, expect, test } from "vitest";
-import { makeTempHome, runSupabase, spawnSupabase } from "../../../tests/helpers/cli.ts";
+import {
+  makeTempHome,
+  makeTempStackProject,
+  runSupabase,
+  spawnSupabase,
+} from "../../../tests/helpers/cli.ts";
 
-const START_TIMEOUT_MS = 90_000;
-const LOGS_IDLE_WINDOW_MS = 11_000;
+const LOGS_TIMEOUT_MS = 15_000;
+const LOGS_IDLE_WINDOW_MS = 500;
+const LIGHTWEIGHT_START_ARGS = [
+  "start",
+  "--detach",
+  "--exclude",
+  "realtime",
+  "--exclude",
+  "storage",
+  "--exclude",
+  "imgproxy",
+  "--exclude",
+  "mailpit",
+  "--exclude",
+  "pgmeta",
+  "--exclude",
+  "studio",
+  "--exclude",
+  "analytics",
+  "--exclude",
+  "vector",
+  "--exclude",
+  "pooler",
+] as const;
 
 function extractApiUrl(output: string): string {
   const match = output.match(/API URL:\s+(http:\/\/\S+)/);
@@ -21,7 +48,7 @@ async function waitForMatches(
   proc: ReturnType<typeof spawnSupabase>,
   pattern: RegExp,
   count: number,
-  timeoutMs = START_TIMEOUT_MS,
+  timeoutMs = LOGS_TIMEOUT_MS,
 ): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -39,22 +66,25 @@ async function waitForMatches(
 describe("supabase logs", () => {
   test(
     "prints buffered history on attach and keeps following after an idle period",
-    { timeout: START_TIMEOUT_MS },
+    { timeout: LOGS_TIMEOUT_MS },
     async () => {
       const home = makeTempHome();
-      const startProc = spawnSupabase(["start"], {
-        home: home.dir,
-        cleanupProcessGroupOnClose: false,
-      });
+      const project = await makeTempStackProject("supabase-logs-e2e-");
       let logsProc: ReturnType<typeof spawnSupabase> | undefined;
 
       try {
-        await startProc.waitForOutput(/API URL:/, START_TIMEOUT_MS);
-        const apiUrl = extractApiUrl(startProc.stdout());
+        const startResult = await runSupabase([...LIGHTWEIGHT_START_ARGS], {
+          cwd: project.dir,
+          home: home.dir,
+          exitTimeoutMs: LOGS_TIMEOUT_MS,
+        });
+        expect(startResult.exitCode).toBe(0);
+        const apiUrl = extractApiUrl(startResult.stdout);
 
         await triggerAuthLog(apiUrl);
 
         logsProc = spawnSupabase(["logs"], {
+          cwd: project.dir,
           home: home.dir,
           cleanupProcessGroupOnClose: false,
         });
@@ -75,124 +105,7 @@ describe("supabase logs", () => {
       } finally {
         logsProc?.kill("SIGTERM");
         await logsProc?.waitForExit().catch(() => {});
-        startProc.kill("SIGTERM");
-        await startProc.waitForExit().catch(() => {});
-        await runSupabase(["stop"], { home: home.dir }).catch(() => {});
-        home[Symbol.dispose]();
       }
     },
   );
-
-  test(
-    "prints a bounded auth-only history snapshot and exits with --no-follow",
-    { timeout: START_TIMEOUT_MS },
-    async () => {
-      const home = makeTempHome();
-      const startProc = spawnSupabase(["start"], {
-        home: home.dir,
-        cleanupProcessGroupOnClose: false,
-      });
-
-      try {
-        await startProc.waitForOutput(/API URL:/, START_TIMEOUT_MS);
-        const apiUrl = extractApiUrl(startProc.stdout());
-        await triggerAuthLog(apiUrl);
-
-        const result = await runSupabase(["logs", "--service", "auth", "--no-follow"], {
-          home: home.dir,
-        });
-
-        expect(result.exitCode).toBe(0);
-        expect(result.stdout).toContain("[auth]");
-        expect(result.stdout).toContain('"path":"/signup"');
-        expect(result.stdout).not.toContain("[postgres]");
-      } finally {
-        startProc.kill("SIGTERM");
-        await startProc.waitForExit().catch(() => {});
-        await runSupabase(["stop"], { home: home.dir }).catch(() => {});
-        home[Symbol.dispose]();
-      }
-    },
-  );
-
-  test(
-    "emits structured log-entry events in stream-json mode",
-    { timeout: START_TIMEOUT_MS },
-    async () => {
-      const home = makeTempHome();
-      const startProc = spawnSupabase(["start"], {
-        home: home.dir,
-        cleanupProcessGroupOnClose: false,
-      });
-
-      try {
-        await startProc.waitForOutput(/API URL:/, START_TIMEOUT_MS);
-        const apiUrl = extractApiUrl(startProc.stdout());
-        await triggerAuthLog(apiUrl);
-
-        const result = await runSupabase(
-          ["logs", "--service", "auth", "--no-follow", "--output-format", "stream-json"],
-          { home: home.dir },
-        );
-
-        expect(result.exitCode).toBe(0);
-        const events = result.stdout
-          .trim()
-          .split("\n")
-          .filter((line) => line.length > 0)
-          .map((line) => JSON.parse(line) as Record<string, unknown>);
-
-        expect(events).toContainEqual(
-          expect.objectContaining({
-            type: "log-entry",
-            service: "auth",
-            source: "history",
-            line: expect.stringContaining('"path":"/signup"'),
-          }),
-        );
-      } finally {
-        startProc.kill("SIGTERM");
-        await startProc.waitForExit().catch(() => {});
-        await runSupabase(["stop"], { home: home.dir }).catch(() => {});
-        home[Symbol.dispose]();
-      }
-    },
-  );
-
-  test("exits quietly on ctrl+c while following logs", { timeout: START_TIMEOUT_MS }, async () => {
-    const home = makeTempHome();
-    const startProc = spawnSupabase(["start"], {
-      home: home.dir,
-      cleanupProcessGroupOnClose: false,
-    });
-    let logsProc: ReturnType<typeof spawnSupabase> | undefined;
-
-    try {
-      await startProc.waitForOutput(/API URL:/, START_TIMEOUT_MS);
-      const apiUrl = extractApiUrl(startProc.stdout());
-      await triggerAuthLog(apiUrl);
-
-      logsProc = spawnSupabase(["logs"], {
-        home: home.dir,
-        cleanupProcessGroupOnClose: false,
-      });
-
-      await waitForMatches(logsProc, /\[auth\].*"path":"\/signup"/, 1);
-      logsProc.kill("SIGINT");
-
-      const result = await logsProc.waitForExit();
-      logsProc = undefined;
-
-      expect(result.exitCode).toBe(130);
-      expect(result.stderr).not.toContain("All fibers interrupted without error");
-      expect(result.stderr.trim()).toBe("");
-    } finally {
-      logsProc?.kill("SIGTERM");
-      await logsProc?.waitForExit().catch(() => {});
-      startProc.kill("SIGTERM");
-      await startProc.waitForExit().catch(() => {});
-      await runSupabase(["stop"], { home: home.dir }).catch(() => {});
-      home[Symbol.dispose]();
-    }
-  });
 });

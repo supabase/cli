@@ -1,4 +1,5 @@
 import {
+  autocomplete,
   cancel,
   confirm,
   intro,
@@ -42,6 +43,7 @@ export const textOutputLayer = Layer.effect(
   Output,
   Effect.gen(function* () {
     const tty = yield* Tty;
+    const DEFAULT_AUTOCOMPLETE_THRESHOLD = 10;
     const buildSelectOptions = (
       options: ReadonlyArray<{
         readonly value: string;
@@ -51,6 +53,27 @@ export const textOutputLayer = Layer.effect(
     ): Parameters<typeof select<string>>[0]["options"] =>
       options.map((option) => {
         const clackOption: Parameters<typeof select<string>>[0]["options"][number] = {
+          value: option.value,
+          label: option.label,
+        };
+        if (option.hint !== undefined) {
+          clackOption.hint = option.hint;
+        }
+        return clackOption;
+      });
+    const buildAutocompleteOptions = (
+      options: ReadonlyArray<{
+        readonly value: string;
+        readonly label: string;
+        readonly hint?: string;
+      }>,
+    ) =>
+      options.map((option) => {
+        const clackOption: {
+          value: string;
+          label: string;
+          hint?: string;
+        } = {
           value: option.value,
           label: option.label,
         };
@@ -84,13 +107,36 @@ export const textOutputLayer = Layer.effect(
         readonly label: string;
         readonly hint?: string;
       }>,
+      behavior: {
+        readonly mode?: "auto" | "select" | "autocomplete";
+        readonly autocompleteThreshold?: number;
+        readonly placeholder?: string;
+        readonly maxItems?: number;
+      } = {},
     ) =>
       Effect.gen(function* () {
+        const mode = behavior.mode ?? "auto";
+        const effectiveMode =
+          mode === "auto"
+            ? options.length > (behavior.autocompleteThreshold ?? DEFAULT_AUTOCOMPLETE_THRESHOLD)
+              ? "autocomplete"
+              : "select"
+            : mode;
         const value = yield* Effect.promise(() =>
-          select<string>({
-            message,
-            options: buildSelectOptions(options),
-          }),
+          effectiveMode === "autocomplete"
+            ? autocomplete<string>({
+                message,
+                options: buildAutocompleteOptions(options),
+                ...(behavior.placeholder !== undefined
+                  ? { placeholder: behavior.placeholder }
+                  : {}),
+                ...(behavior.maxItems !== undefined ? { maxItems: behavior.maxItems } : {}),
+              })
+            : select<string>({
+                message,
+                options: buildSelectOptions(options),
+                ...(behavior.maxItems !== undefined ? { maxItems: behavior.maxItems } : {}),
+              }),
         );
         if (isCancel(value)) {
           cancel("Operation cancelled.");

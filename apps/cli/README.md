@@ -22,6 +22,8 @@ For the generated command/reference docs, see:
 - [`docs/go-cli-reference.md`](/Users/jgoux/Code/supabase/dx-labs/apps/cli/docs/go-cli-reference.md)
 - [`docs/self-documenting-cli.md`](/Users/jgoux/Code/supabase/dx-labs/apps/cli/docs/self-documenting-cli.md)
 - [`docs/cli-for-ai-agents.md`](/Users/jgoux/Code/supabase/dx-labs/apps/cli/docs/cli-for-ai-agents.md)
+- [`docs/supabase-home.md`](/Users/jgoux/Code/supabase/dx-labs/apps/cli/docs/supabase-home.md)
+- [`../../packages/stack/docs/service-versioning.md`](/Users/jgoux/Code/supabase/dx-labs/packages/stack/docs/service-versioning.md)
 
 The README is intentionally brief. Command details should live in the generated docs and the parity tracker above.
 
