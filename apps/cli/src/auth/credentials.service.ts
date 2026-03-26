@@ -10,6 +10,8 @@ import { ServiceMap } from "effect";
 interface CredentialsShape {
   readonly getAccessToken: Effect.Effect<Option.Option<Redacted.Redacted<string>>>;
   readonly saveAccessToken: (token: string | Redacted.Redacted<string>) => Effect.Effect<void>;
+  /** Deletes the stored access token from all locations. Returns true if a token was found and removed. */
+  readonly deleteAccessToken: Effect.Effect<boolean>;
 }
 
 /**

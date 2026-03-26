@@ -202,14 +202,14 @@ We have no `--dry-run` flag and no response sanitization. For `login` this is le
 
 - No `--dry-run` flag on any command
 - No response sanitization against prompt injection
-- No confirmation prompts in JSON mode (they fail with `NonInteractiveError`)
+- Confirmation prompts in JSON mode fail with `NonInteractiveError` unless `--yes` is passed; `logout` supports `--yes` but other commands do not yet
 
 **Recommendations:**
 
 1. Add a global `--dry-run` flag that validates inputs and shows what _would_ happen without executing
 2. For mutating commands, encode "always use `--dry-run` first" in skill files
 3. Consider response sanitization for commands that return user-generated content (project names, function names, etc.) where prompt injection could be embedded
-4. For JSON mode: instead of failing on confirmations, consider auto-confirming with a `--yes` flag (common pattern in CLIs)
+4. For JSON mode: `logout` now supports `--yes` to skip the confirmation prompt without error; apply the same pattern to any future mutating commands
 
 ---
 
@@ -231,7 +231,7 @@ We have no `--dry-run` flag and no response sanitization. For `login` this is le
 2. **Skill invariants** — Encode agent-specific rules in existing skill templates. Zero code changes needed.
 3. **`--dry-run` global flag** — Essential before adding mutating commands.
 4. **Auto-detect non-TTY** — Default to JSON output when not in a terminal.
-5. **`--yes` flag** — Auto-confirm in non-interactive mode instead of failing.
+5. **`--yes` flag** — Implemented for `logout`; extend to any future mutating commands that have a confirmation prompt.
 6. **MCP surface** — Higher effort but eliminates entire classes of agent integration issues.
 7. **`--fields` flag** — Implement when adding data-heavy list/query commands.
 

@@ -184,6 +184,7 @@ export function mockProcessControl(
 
 export function mockCredentials(opts: { existingToken?: string } = {}) {
   let savedToken: string | undefined;
+  let deleteWasCalled = false;
   return {
     layer: Layer.succeed(Credentials, {
       getAccessToken: Effect.sync(() => {
@@ -194,9 +195,16 @@ export function mockCredentials(opts: { existingToken?: string } = {}) {
         Effect.sync(() => {
           savedToken = typeof token === "string" ? token : Redacted.value(token);
         }),
+      deleteAccessToken: Effect.sync(() => {
+        deleteWasCalled = true;
+        return !!(opts.existingToken ?? savedToken);
+      }),
     }),
     get savedToken() {
       return savedToken;
+    },
+    get deleteWasCalled() {
+      return deleteWasCalled;
     },
   };
 }
@@ -206,6 +214,7 @@ export function mockOutput(
     format?: OutputFormat;
     interactive?: boolean;
     confirmRelogin?: boolean;
+    confirmLogout?: boolean;
     promptTextFail?: boolean;
     promptSelectResponses?: ReadonlyArray<string>;
   } = {},
@@ -352,7 +361,7 @@ export function mockOutput(
         };
       })(),
       promptPassword: () => Effect.succeed(""),
-      promptConfirm: () => Effect.succeed(opts.confirmRelogin ?? true),
+      promptConfirm: () => Effect.succeed(opts.confirmLogout ?? opts.confirmRelogin ?? true),
       promptSelect: (message, options, behavior) =>
         Effect.sync(() => {
           promptSelectCalls.push({ message, options, behavior });

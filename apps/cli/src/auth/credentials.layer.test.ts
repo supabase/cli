@@ -15,6 +15,7 @@ const passwords = new Map<string, string>();
 let throwOnSetPassword = false;
 const throwOnGetPasswordAccounts = new Set<string>();
 const returnNullForAccounts = new Set<string>();
+const throwOnDeletePasswordAccounts = new Set<string>();
 
 vi.mock("@napi-rs/keyring", () => ({
   Entry: class Entry {
@@ -43,6 +44,17 @@ vi.mock("@napi-rs/keyring", () => ({
       }
       passwords.set(`${this.service}/${this.account}`, password);
     }
+    deleteCredential(): boolean {
+      const key = `${this.service}/${this.account}`;
+      if (throwOnDeletePasswordAccounts.has(key)) {
+        throw new Error("Keyring unavailable");
+      }
+      if (!passwords.has(key)) {
+        throw new Error("No entry found");
+      }
+      passwords.delete(key);
+      return true;
+    }
   },
 }));
 
@@ -66,6 +78,7 @@ beforeEach(() => {
   throwOnSetPassword = false;
   throwOnGetPasswordAccounts.clear();
   returnNullForAccounts.clear();
+  throwOnDeletePasswordAccounts.clear();
   tempHome = mkdtempSync(join(tmpdir(), "supabase-creds-test-"));
 });
 
@@ -253,6 +266,74 @@ describe("Credentials", () => {
         yield* saveAccessToken("create-dir-token");
         expect(existsSync(join(tempHome, ".supabase"))).toBe(true);
       }).pipe(Effect.provide(makeLayer(tempHome)));
+    });
+  });
+
+  describe("deleteAccessToken", () => {
+    it.effect("returns false when no token exists anywhere", () => {
+      return Effect.gen(function* () {
+        const { deleteAccessToken } = yield* Credentials;
+        const deleted = yield* deleteAccessToken;
+        expect(deleted).toBe(false);
+      }).pipe(Effect.provide(makeLayer(tempHome)));
+    });
+
+    it.effect("deletes current keyring account and returns true", () => {
+      passwords.set("Supabase CLI/access-token", "my-token");
+      return Effect.gen(function* () {
+        const { deleteAccessToken } = yield* Credentials;
+        const deleted = yield* deleteAccessToken;
+        expect(deleted).toBe(true);
+        expect(passwords.has("Supabase CLI/access-token")).toBe(false);
+      }).pipe(Effect.provide(makeLayer(tempHome)));
+    });
+
+    it.effect("deletes legacy keyring account when current is absent", () => {
+      passwords.set("Supabase CLI/supabase", "legacy-token");
+      return Effect.gen(function* () {
+        const { deleteAccessToken } = yield* Credentials;
+        const deleted = yield* deleteAccessToken;
+        expect(deleted).toBe(true);
+        expect(passwords.has("Supabase CLI/supabase")).toBe(false);
+      }).pipe(Effect.provide(makeLayer(tempHome)));
+    });
+
+    it.effect("deletes both keyring accounts when both exist", () => {
+      passwords.set("Supabase CLI/access-token", "current-token");
+      passwords.set("Supabase CLI/supabase", "legacy-token");
+      return Effect.gen(function* () {
+        const { deleteAccessToken } = yield* Credentials;
+        const deleted = yield* deleteAccessToken;
+        expect(deleted).toBe(true);
+        expect(passwords.has("Supabase CLI/access-token")).toBe(false);
+        expect(passwords.has("Supabase CLI/supabase")).toBe(false);
+      }).pipe(Effect.provide(makeLayer(tempHome)));
+    });
+
+    it.effect("deletes filesystem token and returns true", () => {
+      throwOnDeletePasswordAccounts.add("Supabase CLI/access-token");
+      throwOnDeletePasswordAccounts.add("Supabase CLI/supabase");
+      const supaDir = join(tempHome, ".supabase");
+      mkdirSync(supaDir, { recursive: true });
+      writeFileSync(join(supaDir, "access-token"), "fs-token", { mode: 0o600 });
+      return Effect.gen(function* () {
+        const { deleteAccessToken } = yield* Credentials;
+        const deleted = yield* deleteAccessToken;
+        expect(deleted).toBe(true);
+        expect(existsSync(join(supaDir, "access-token"))).toBe(false);
+      }).pipe(Effect.provide(makeLayer(tempHome)));
+    });
+
+    it.effect("deletes filesystem token in no-keyring mode", () => {
+      const supaDir = join(tempHome, ".supabase");
+      mkdirSync(supaDir, { recursive: true });
+      writeFileSync(join(supaDir, "access-token"), "fs-token", { mode: 0o600 });
+      return Effect.gen(function* () {
+        const { deleteAccessToken } = yield* Credentials;
+        const deleted = yield* deleteAccessToken;
+        expect(deleted).toBe(true);
+        expect(existsSync(join(supaDir, "access-token"))).toBe(false);
+      }).pipe(Effect.provide(makeLayer(tempHome, { SUPABASE_NO_KEYRING: "1" })));
     });
   });
 });

@@ -51,6 +51,7 @@ function cliProgramFor(args: ReadonlyArray<string>) {
     Layer.succeed(Credentials, {
       getAccessToken: Effect.die("unexpected root credentials access"),
       saveAccessToken: () => Effect.die("unexpected root credentials write"),
+      deleteAccessToken: Effect.die("unexpected root credentials deletion"),
     }),
     Layer.succeed(ProjectLinkState, {
       load: Effect.die("unexpected root project link state access"),

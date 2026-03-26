@@ -5,6 +5,7 @@ import { linkCommand } from "../commands/link/link.command.ts";
 import { initCommand } from "../commands/init/init.command.ts";
 import { listCommand } from "../commands/list/list.command.ts";
 import { loginCommand } from "../commands/login/login.command.ts";
+import { logoutCommand } from "../commands/logout/logout.command.ts";
 import { logsCommand } from "../commands/logs/logs.command.ts";
 import { platformCommand } from "../commands/platform/platform.command.ts";
 import { startCommand } from "../commands/start/start.command.ts";
@@ -25,6 +26,7 @@ export const root = Command.make("supabase").pipe(
   Command.withSubcommands([
     initCommand,
     loginCommand,
+    logoutCommand,
     linkCommand,
     unlinkCommand,
     stackCommand,

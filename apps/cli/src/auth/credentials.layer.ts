@@ -73,6 +73,33 @@ const makeCredentials = Effect.gen(function* () {
         yield* fs.makeDirectory(fallbackDir, { recursive: true, mode: 0o700 });
         yield* fs.writeFileString(fallbackPath, plainToken, { mode: 0o600 });
       }).pipe(Effect.orDie),
+
+    // Deletes the token from all storage locations. Returns true if anything was deleted.
+    deleteAccessToken: Effect.gen(function* () {
+      let anyDeleted = false;
+
+      if (Option.isSome(keyringModule)) {
+        for (const account of [ACCOUNT, LEGACY_ACCOUNT]) {
+          try {
+            const entry = new keyringModule.value.Entry(SERVICE, account);
+            if (entry.getPassword()) {
+              entry.deleteCredential();
+              anyDeleted = true;
+            }
+          } catch {
+            /* not stored here — fall through */
+          }
+        }
+      }
+
+      const exists = yield* fs.exists(fallbackPath);
+      if (exists) {
+        yield* fs.remove(fallbackPath);
+        anyDeleted = true;
+      }
+
+      return anyDeleted;
+    }).pipe(Effect.orDie),
   });
 });
 
