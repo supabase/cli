@@ -6,10 +6,15 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/docker/docker/api/types/volume"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+)
+
+var (
+	stopAppleAnalyticsForwarders = utils.StopAppleAnalyticsForwarders
+	listProjectVolumes           = utils.ListProjectVolumes
+	dockerRemoveAll              = utils.DockerRemoveAll
 )
 
 func Run(ctx context.Context, backup bool, projectId string, all bool, fsys afero.Fs) error {
@@ -23,6 +28,11 @@ func Run(ctx context.Context, backup bool, projectId string, all bool, fsys afer
 		}
 		searchProjectIdFilter = utils.Config.ProjectId
 	}
+	if utils.UsesAppleContainerRuntime() {
+		if err := stopAppleAnalyticsForwarders(fsys); err != nil {
+			return err
+		}
+	}
 
 	// Stop all services
 	if err := utils.RunProgram(ctx, func(p utils.Program, ctx context.Context) error {
@@ -33,15 +43,23 @@ func Run(ctx context.Context, backup bool, projectId string, all bool, fsys afer
 	}
 
 	fmt.Println("Stopped " + utils.Aqua("supabase") + " local development setup.")
-	if resp, err := utils.Docker.VolumeList(ctx, volume.ListOptions{
-		Filters: utils.CliProjectFilter(searchProjectIdFilter),
-	}); err == nil && len(resp.Volumes) > 0 {
+	if volumes, err := listProjectVolumes(ctx, searchProjectIdFilter); err == nil && len(volumes) > 0 {
 		if len(searchProjectIdFilter) > 0 {
-			listVolume := fmt.Sprintf("docker volume ls --filter label=%s=%s", utils.CliProjectLabel, searchProjectIdFilter)
-			utils.CmdSuggestion = "Local data are backed up to docker volume. Use docker to show them: " + utils.Aqua(listVolume)
+			if utils.UsesAppleContainerRuntime() {
+				listVolume := fmt.Sprintf("container volume list --format json | jq '.[] | select(.labels.\"%s\" == \"%s\")'", utils.CliProjectLabel, searchProjectIdFilter)
+				utils.CmdSuggestion = "Local data are backed up to apple container volumes. Use the container CLI to show them: " + utils.Aqua(listVolume)
+			} else {
+				listVolume := fmt.Sprintf("docker volume ls --filter label=%s=%s", utils.CliProjectLabel, searchProjectIdFilter)
+				utils.CmdSuggestion = "Local data are backed up to docker volume. Use docker to show them: " + utils.Aqua(listVolume)
+			}
 		} else {
-			listVolume := fmt.Sprintf("docker volume ls --filter label=%s", utils.CliProjectLabel)
-			utils.CmdSuggestion = "Local data are backed up to docker volume. Use docker to show them: " + utils.Aqua(listVolume)
+			if utils.UsesAppleContainerRuntime() {
+				listVolume := fmt.Sprintf("container volume list --format json | jq '.[] | select(.labels.\"%s\")'", utils.CliProjectLabel)
+				utils.CmdSuggestion = "Local data are backed up to apple container volumes. Use the container CLI to show them: " + utils.Aqua(listVolume)
+			} else {
+				listVolume := fmt.Sprintf("docker volume ls --filter label=%s", utils.CliProjectLabel)
+				utils.CmdSuggestion = "Local data are backed up to docker volume. Use docker to show them: " + utils.Aqua(listVolume)
+			}
 		}
 	}
 	return nil
@@ -49,5 +67,5 @@ func Run(ctx context.Context, backup bool, projectId string, all bool, fsys afer
 
 func stop(ctx context.Context, backup bool, w io.Writer, projectId string) error {
 	utils.NoBackupVolume = !backup
-	return utils.DockerRemoveAll(ctx, w, projectId)
+	return dockerRemoveAll(ctx, w, projectId)
 }

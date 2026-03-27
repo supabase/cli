@@ -5,15 +5,19 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/config"
 )
 
 func TestStatusCommand(t *testing.T) {
@@ -40,8 +44,17 @@ func TestStatusCommand(t *testing.T) {
 			}})
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
+			Persist().
 			Reply(http.StatusOK).
 			JSON(running)
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/networks").
+			Reply(http.StatusOK).
+			JSON([]network.Summary{})
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/volumes").
+			Reply(http.StatusOK).
+			JSON(volume.ListResponse{})
 		// Run test
 		assert.NoError(t, Run(context.Background(), CustomName{}, utils.OutputPretty, fsys))
 		// Check error
@@ -175,4 +188,84 @@ func TestPrintStatus(t *testing.T) {
 		// Check error
 		assert.Equal(t, "DB_URL = \"postgresql://postgres:postgres@127.0.0.1:0/postgres\"\n", stdout.String())
 	})
+}
+
+func TestBuildRuntimeItems(t *testing.T) {
+	originalContainers := listProjectContainers
+	originalNetworks := listProjectNetworks
+	originalVolumes := listProjectVolumes
+	t.Cleanup(func() {
+		listProjectContainers = originalContainers
+		listProjectNetworks = originalNetworks
+		listProjectVolumes = originalVolumes
+	})
+	utils.Config.Runtime.Backend = config.AppleContainerRuntime
+	utils.Config.ProjectId = "demo"
+	utils.Config.Db.Port = 54322
+	utils.Config.Api.Enabled = true
+	utils.Config.Api.Port = 54321
+	utils.Config.Studio.Enabled = true
+	utils.Config.Studio.Port = 54323
+	utils.Config.Inbucket.Enabled = true
+	utils.Config.Inbucket.Port = 54324
+	listProjectContainers = func(_ context.Context, projectId string, all bool) ([]utils.ContainerInfo, error) {
+		assert.Equal(t, "demo", projectId)
+		assert.True(t, all)
+		return []utils.ContainerInfo{{ID: "supabase-db-demo"}, {ID: "supabase-kong-demo"}}, nil
+	}
+	listProjectNetworks = func(_ context.Context, projectId string) ([]utils.NetworkInfo, error) {
+		assert.Equal(t, "demo", projectId)
+		return []utils.NetworkInfo{{Name: "supabase-network-demo"}}, nil
+	}
+	listProjectVolumes = func(_ context.Context, projectId string) ([]utils.VolumeInfo, error) {
+		assert.Equal(t, "demo", projectId)
+		return []utils.VolumeInfo{{Name: "supabase-db-demo"}}, nil
+	}
+
+	items, err := buildRuntimeItems(context.Background())
+
+	require.NoError(t, err)
+	assert.Contains(t, items, OutputItem{Label: "Runtime", Value: "apple-container", Type: Text})
+	assert.Contains(t, items, OutputItem{Label: "Project", Value: "demo", Type: Text})
+	assert.Contains(t, items, OutputItem{Label: "Networks", Value: "supabase-network-demo", Type: Text})
+	assert.Contains(t, items, OutputItem{Label: "Volumes", Value: "supabase-db-demo", Type: Text})
+}
+
+func TestPrettyPrintIncludesRuntimeResources(t *testing.T) {
+	originalContainers := listProjectContainers
+	originalNetworks := listProjectNetworks
+	originalVolumes := listProjectVolumes
+	t.Cleanup(func() {
+		listProjectContainers = originalContainers
+		listProjectNetworks = originalNetworks
+		listProjectVolumes = originalVolumes
+	})
+	utils.Config.Runtime.Backend = config.AppleContainerRuntime
+	utils.Config.ProjectId = "demo"
+	utils.Config.Db.Port = 54322
+	utils.Config.Api.Enabled = false
+	utils.Config.Auth.Enabled = false
+	utils.Config.Storage.Enabled = false
+	utils.Config.Realtime.Enabled = false
+	utils.Config.Studio.Enabled = false
+	utils.Config.Analytics.Enabled = false
+	utils.Config.Inbucket.Enabled = false
+	listProjectContainers = func(_ context.Context, _ string, _ bool) ([]utils.ContainerInfo, error) {
+		return []utils.ContainerInfo{{ID: "supabase-db-demo"}}, nil
+	}
+	listProjectNetworks = func(_ context.Context, _ string) ([]utils.NetworkInfo, error) {
+		return []utils.NetworkInfo{{Name: "supabase-network-demo"}}, nil
+	}
+	listProjectVolumes = func(_ context.Context, _ string) ([]utils.VolumeInfo, error) {
+		return []utils.VolumeInfo{{Name: "supabase-db-demo"}}, nil
+	}
+
+	var stdout bytes.Buffer
+	PrettyPrint(context.Background(), &stdout)
+
+	out := stdout.String()
+	assert.True(t, strings.Contains(out, "Runtime"))
+	assert.True(t, strings.Contains(out, "apple-container"))
+	assert.True(t, strings.Contains(out, "supabase-network-demo"))
+	assert.True(t, strings.Contains(out, "supabase-db-demo"))
 }

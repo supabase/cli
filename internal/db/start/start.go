@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	"github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
@@ -38,8 +37,20 @@ var (
 	//go:embed templates/_supabase.sql
 	_supabaseSchema string
 	//go:embed templates/restore.sh
-	restoreScript string
+	restoreScript      string
+	resolveContainerIP = utils.GetContainerIP
 )
+
+// runtimePostgresConfig returns the postgresql.conf snippet, adding a custom
+// data_directory on Apple containers to match the PGDATA env var override
+// (see NewContainerConfig).
+func runtimePostgresConfig() string {
+	settings := utils.Config.Db.Settings.ToPostgresConfig()
+	if utils.UsesAppleContainerRuntime() {
+		settings += "\ndata_directory = '/var/lib/postgresql/data/pgdata'\n"
+	}
+	return settings
+}
 
 func Run(ctx context.Context, fromBackup string, fsys afero.Fs) error {
 	if err := flags.LoadConfig(fsys); err != nil {
@@ -79,6 +90,12 @@ func NewContainerConfig(args ...string) container.Config {
 	} else if i := strings.IndexByte(utils.Config.Db.Image, ':'); config.VersionCompare(utils.Config.Db.Image[i+1:], "15.8.1.005") < 0 {
 		env = append(env, "POSTGRES_INITDB_ARGS=--lc-collate=C.UTF-8")
 	}
+	// Apple containers mount volumes at the top-level target directory, which
+	// conflicts with the default PGDATA location.  Using a subdirectory avoids
+	// the "initdb: directory is not empty" error on first start.
+	if utils.UsesAppleContainerRuntime() {
+		env = append(env, "PGDATA=/var/lib/postgresql/data/pgdata")
+	}
 	config := container.Config{
 		Image: utils.Config.Db.Image,
 		Env:   env,
@@ -99,7 +116,7 @@ docker-entrypoint.sh postgres -D /etc/postgresql ` + strings.Join(args, " ") + `
 EOF
 ` + utils.Config.Db.RootKey.Value + `
 EOF
-` + utils.Config.Db.Settings.ToPostgresConfig() + `
+` + runtimePostgresConfig() + `
 EOF`},
 	}
 	if utils.Config.Db.MajorVersion <= 14 {
@@ -109,7 +126,7 @@ cat <<'EOF' >> /etc/postgresql/postgresql.conf && \
 docker-entrypoint.sh postgres -D /etc/postgresql ` + strings.Join(args, " ") + `
 ` + _supabaseSchema + `
 EOF
-` + utils.Config.Db.Settings.ToPostgresConfig() + `
+` + runtimePostgresConfig() + `
 EOF`}
 	}
 	return config
@@ -154,7 +171,7 @@ EOF
 EOF
 ` + utils.Config.Db.RootKey.Value + `
 EOF
-` + utils.Config.Db.Settings.ToPostgresConfig() + `
+` + runtimePostgresConfig() + `
 cron.launch_active_jobs = off
 EOF`}
 		if !filepath.IsAbs(fromBackup) {
@@ -163,8 +180,8 @@ EOF`}
 		hostConfig.Binds = append(hostConfig.Binds, utils.ToDockerPath(fromBackup)+":/etc/backup.sql:ro")
 	}
 	// Creating volume will not override existing volume, so we must inspect explicitly
-	_, err := utils.Docker.VolumeInspect(ctx, utils.DbId)
-	utils.NoBackupVolume = errdefs.IsNotFound(err)
+	exists, err := utils.VolumeExists(ctx, utils.DbId)
+	utils.NoBackupVolume = err == nil && !exists
 	if utils.NoBackupVolume {
 		fmt.Fprintln(w, "Starting database...")
 	} else if len(fromBackup) > 0 {
@@ -187,6 +204,13 @@ EOF`}
 		}
 	}
 	return initCurrentBranch(fsys)
+}
+
+func resolveDatabaseHost(ctx context.Context, host string) (string, error) {
+	if !utils.UsesAppleContainerRuntime() || host != utils.DbId {
+		return host, nil
+	}
+	return resolveContainerIP(ctx, utils.DbId, utils.NetId)
 }
 
 func NewBackoffPolicy(ctx context.Context, timeout time.Duration) backoff.BackOff {
@@ -362,7 +386,11 @@ func SetupLocalDatabase(ctx context.Context, version string, fsys afero.Fs, w io
 		return err
 	}
 	defer conn.Close(context.Background())
-	if err := SetupDatabase(ctx, conn, utils.DbId, w, fsys); err != nil {
+	host, err := resolveDatabaseHost(ctx, utils.DbId)
+	if err != nil {
+		return err
+	}
+	if err := SetupDatabase(ctx, conn, host, w, fsys); err != nil {
 		return err
 	}
 	if err := apply.MigrateAndSeed(ctx, version, conn, fsys); err != nil {

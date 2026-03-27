@@ -183,3 +183,25 @@ func TestServeFunctions(t *testing.T) {
 		assert.Equal(t, `{"hello":{"verifyJWT":true,"entrypointPath":"testdata/functions/hello/index.ts","staticFiles":["testdata/image.png"]}}`, configString)
 	})
 }
+
+func TestEdgeRuntimeWorkingDir(t *testing.T) {
+	t.Run("uses in-container working dir on apple runtime", func(t *testing.T) {
+		originalRuntime := utils.Config.Runtime.Backend
+		t.Cleanup(func() {
+			utils.Config.Runtime.Backend = originalRuntime
+		})
+		utils.Config.Runtime.Backend = "apple-container"
+
+		assert.Equal(t, "/root", edgeRuntimeWorkingDir("/Users/james/project"))
+	})
+
+	t.Run("uses docker path on docker runtime", func(t *testing.T) {
+		originalRuntime := utils.Config.Runtime.Backend
+		t.Cleanup(func() {
+			utils.Config.Runtime.Backend = originalRuntime
+		})
+		utils.Config.Runtime.Backend = "docker"
+
+		assert.Equal(t, "/Users/james/project", edgeRuntimeWorkingDir("/Users/james/project"))
+	})
+}

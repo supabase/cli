@@ -95,6 +95,21 @@ func (p *RequestPolicy) UnmarshalText(text []byte) error {
 	return nil
 }
 
+type LocalRuntime string
+
+const (
+	DockerRuntime         LocalRuntime = "docker"
+	AppleContainerRuntime LocalRuntime = "apple-container"
+)
+
+func (r *LocalRuntime) UnmarshalText(text []byte) error {
+	allowed := []LocalRuntime{DockerRuntime, AppleContainerRuntime}
+	if *r = LocalRuntime(text); !slices.Contains(allowed, *r) {
+		return errors.Errorf("must be one of %v", allowed)
+	}
+	return nil
+}
+
 type Glob []string
 
 // Match the glob patterns in the given FS to get a deduplicated
@@ -155,7 +170,12 @@ type (
 
 	config struct {
 		baseConfig
+		Runtime runtimeConfig         `toml:"runtime" json:"runtime"`
 		Remotes map[string]baseConfig `toml:"remotes" json:"remotes"`
+	}
+
+	runtimeConfig struct {
+		Backend LocalRuntime `toml:"backend" json:"backend"`
 	}
 
 	realtime struct {
@@ -340,96 +360,101 @@ func WithHostname(hostname string) ConfigEditor {
 }
 
 func NewConfig(editors ...ConfigEditor) config {
-	initial := config{baseConfig: baseConfig{
-		Hostname: "127.0.0.1",
-		Api: api{
-			Image:     Images.Postgrest,
-			KongImage: Images.Kong,
-			Tls: tlsKong{
-				CertContent: kongCert,
-				KeyContent:  kongKey,
+	initial := config{
+		baseConfig: baseConfig{
+			Hostname: "127.0.0.1",
+			Api: api{
+				Image:     Images.Postgrest,
+				KongImage: Images.Kong,
+				Tls: tlsKong{
+					CertContent: kongCert,
+					KeyContent:  kongKey,
+				},
+			},
+			Db: db{
+				Image:    Images.Pg,
+				Password: "postgres",
+				RootKey: Secret{
+					Value: "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
+				},
+				Pooler: pooler{
+					Image:         Images.Supavisor,
+					TenantId:      "pooler-dev",
+					EncryptionKey: "12345678901234567890123456789032",
+					SecretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
+				},
+				Migrations: migrations{
+					Enabled: true,
+				},
+				Seed: seed{
+					Enabled:  true,
+					SqlPaths: []string{"seed.sql"},
+				},
+			},
+			Realtime: realtime{
+				Image:           Images.Realtime,
+				IpVersion:       AddressIPv4,
+				MaxHeaderLength: 4096,
+				TenantId:        "realtime-dev",
+				EncryptionKey:   "supabaserealtime",
+				SecretKeyBase:   "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
+			},
+			Storage: storage{
+				Image:         Images.Storage,
+				ImgProxyImage: Images.ImgProxy,
+				S3Credentials: storageS3Credentials{
+					AccessKeyId:     "625729a08b95bf1b7ff351a663f3a23c",
+					SecretAccessKey: "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907",
+					Region:          "local",
+				},
+			},
+			Auth: auth{
+				Image: Images.Gotrue,
+				Email: email{
+					Template:     map[string]emailTemplate{},
+					Notification: map[string]notification{},
+				},
+				Sms: sms{
+					TestOTP: map[string]string{},
+				},
+				External: map[string]provider{},
+				SigningKeys: []JWK{{
+					KeyType:         "EC",
+					KeyID:           "b81269f1-21d8-4f2e-b719-c2240a840d90",
+					Use:             "sig",
+					KeyOps:          []string{"sign", "verify"},
+					Algorithm:       "ES256",
+					Extractable:     cast.Ptr(true),
+					Curve:           "P-256",
+					X:               "M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4",
+					Y:               "P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ",
+					PrivateExponent: "dIhR8wywJlqlua4y_yMq2SLhlFXDZJBCvFrY1DCHyVU",
+				}},
+			},
+			Inbucket: inbucket{
+				Image:      Images.Inbucket,
+				AdminEmail: "admin@email.com",
+				SenderName: "Admin",
+			},
+			Studio: studio{
+				Image:       Images.Studio,
+				PgmetaImage: Images.Pgmeta,
+			},
+			Analytics: analytics{
+				Image:       Images.Logflare,
+				VectorImage: Images.Vector,
+				ApiKey:      "api-key",
+				// Defaults to bigquery for backwards compatibility with existing config.toml
+				Backend: LogflareBigQuery,
+			},
+			EdgeRuntime: edgeRuntime{
+				Image: Images.EdgeRuntime,
 			},
 		},
-		Db: db{
-			Image:    Images.Pg,
-			Password: "postgres",
-			RootKey: Secret{
-				Value: "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275",
-			},
-			Pooler: pooler{
-				Image:         Images.Supavisor,
-				TenantId:      "pooler-dev",
-				EncryptionKey: "12345678901234567890123456789032",
-				SecretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
-			},
-			Migrations: migrations{
-				Enabled: true,
-			},
-			Seed: seed{
-				Enabled:  true,
-				SqlPaths: []string{"seed.sql"},
-			},
+		Runtime: runtimeConfig{
+			Backend: DockerRuntime,
 		},
-		Realtime: realtime{
-			Image:           Images.Realtime,
-			IpVersion:       AddressIPv4,
-			MaxHeaderLength: 4096,
-			TenantId:        "realtime-dev",
-			EncryptionKey:   "supabaserealtime",
-			SecretKeyBase:   "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
-		},
-		Storage: storage{
-			Image:         Images.Storage,
-			ImgProxyImage: Images.ImgProxy,
-			S3Credentials: storageS3Credentials{
-				AccessKeyId:     "625729a08b95bf1b7ff351a663f3a23c",
-				SecretAccessKey: "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907",
-				Region:          "local",
-			},
-		},
-		Auth: auth{
-			Image: Images.Gotrue,
-			Email: email{
-				Template:     map[string]emailTemplate{},
-				Notification: map[string]notification{},
-			},
-			Sms: sms{
-				TestOTP: map[string]string{},
-			},
-			External: map[string]provider{},
-			SigningKeys: []JWK{{
-				KeyType:         "EC",
-				KeyID:           "b81269f1-21d8-4f2e-b719-c2240a840d90",
-				Use:             "sig",
-				KeyOps:          []string{"sign", "verify"},
-				Algorithm:       "ES256",
-				Extractable:     cast.Ptr(true),
-				Curve:           "P-256",
-				X:               "M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4",
-				Y:               "P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ",
-				PrivateExponent: "dIhR8wywJlqlua4y_yMq2SLhlFXDZJBCvFrY1DCHyVU",
-			}},
-		},
-		Inbucket: inbucket{
-			Image:      Images.Inbucket,
-			AdminEmail: "admin@email.com",
-			SenderName: "Admin",
-		},
-		Studio: studio{
-			Image:       Images.Studio,
-			PgmetaImage: Images.Pgmeta,
-		},
-		Analytics: analytics{
-			Image:       Images.Logflare,
-			VectorImage: Images.Vector,
-			ApiKey:      "api-key",
-			// Defaults to bigquery for backwards compatibility with existing config.toml
-			Backend: LogflareBigQuery,
-		},
-		EdgeRuntime: edgeRuntime{
-			Image: Images.EdgeRuntime,
-		},
-	}}
+	}
 	for _, apply := range editors {
 		apply(&initial)
 	}

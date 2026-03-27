@@ -4,6 +4,10 @@
 # working directory name when running `supabase init`.
 project_id = "{{ .ProjectId }}"
 
+[runtime]
+# Container backend for Supabase CLI-managed services. Supported values are: `docker`, `apple-container`.
+backend = "{{ .Runtime.Backend }}"
+
 [api]
 enabled = true
 # Port to use for the API URL.

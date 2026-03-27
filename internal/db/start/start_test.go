@@ -309,6 +309,57 @@ func TestSetupDatabase(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
+
+func TestResolveDatabaseHost(t *testing.T) {
+	t.Run("returns container ip on apple runtime", func(t *testing.T) {
+		originalRuntime := utils.Config.Runtime.Backend
+		originalDbId := utils.DbId
+		originalNetId := utils.NetId
+		originalResolve := resolveContainerIP
+		t.Cleanup(func() {
+			utils.Config.Runtime.Backend = originalRuntime
+			utils.DbId = originalDbId
+			utils.NetId = originalNetId
+			resolveContainerIP = originalResolve
+		})
+		utils.Config.Runtime.Backend = "apple-container"
+		utils.DbId = "supabase-db-test"
+		utils.NetId = "supabase-network-test"
+		resolveContainerIP = func(ctx context.Context, containerId, networkName string) (string, error) {
+			assert.Equal(t, utils.DbId, containerId)
+			assert.Equal(t, utils.NetId, networkName)
+			return "192.168.64.2", nil
+		}
+
+		host, err := resolveDatabaseHost(context.Background(), utils.DbId)
+
+		require.NoError(t, err)
+		assert.Equal(t, "192.168.64.2", host)
+	})
+
+	t.Run("keeps docker alias on non apple runtime", func(t *testing.T) {
+		originalRuntime := utils.Config.Runtime.Backend
+		originalDbId := utils.DbId
+		originalResolve := resolveContainerIP
+		t.Cleanup(func() {
+			utils.Config.Runtime.Backend = originalRuntime
+			utils.DbId = originalDbId
+			resolveContainerIP = originalResolve
+		})
+		utils.Config.Runtime.Backend = "docker"
+		utils.DbId = "supabase_db_test"
+		resolveContainerIP = func(ctx context.Context, containerId, networkName string) (string, error) {
+			t.Fatal("resolveContainerIP should not be called")
+			return "", nil
+		}
+
+		host, err := resolveDatabaseHost(context.Background(), utils.DbId)
+
+		require.NoError(t, err)
+		assert.Equal(t, utils.DbId, host)
+	})
+}
+
 func TestStartDatabaseWithCustomSettings(t *testing.T) {
 	t.Run("starts database with custom MaxConnections", func(t *testing.T) {
 		// Setup
