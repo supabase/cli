@@ -1997,10 +1997,10 @@ type AuthConfigResponse struct {
 	SecurityRefreshTokenReuseInterval                     nullable.Nullable[int]                                          `json:"security_refresh_token_reuse_interval"`
 	SecuritySbForwardedForEnabled                         nullable.Nullable[bool]                                         `json:"security_sb_forwarded_for_enabled"`
 	SecurityUpdatePasswordRequireReauthentication         nullable.Nullable[bool]                                         `json:"security_update_password_require_reauthentication"`
-	SessionsInactivityTimeout                             nullable.Nullable[int]                                          `json:"sessions_inactivity_timeout"`
+	SessionsInactivityTimeout                             nullable.Nullable[float32]                                      `json:"sessions_inactivity_timeout"`
 	SessionsSinglePerUser                                 nullable.Nullable[bool]                                         `json:"sessions_single_per_user"`
 	SessionsTags                                          nullable.Nullable[string]                                       `json:"sessions_tags"`
-	SessionsTimebox                                       nullable.Nullable[int]                                          `json:"sessions_timebox"`
+	SessionsTimebox                                       nullable.Nullable[float32]                                      `json:"sessions_timebox"`
 	SiteUrl                                               nullable.Nullable[string]                                       `json:"site_url"`
 	SmsAutoconfirm                                        nullable.Nullable[bool]                                         `json:"sms_autoconfirm"`
 	SmsMaxFrequency                                       nullable.Nullable[int]                                          `json:"sms_max_frequency"`
@@ -3913,10 +3913,10 @@ type UpdateAuthConfigBody struct {
 	SecurityRefreshTokenReuseInterval                     nullable.Nullable[int]                                            `json:"security_refresh_token_reuse_interval,omitempty"`
 	SecuritySbForwardedForEnabled                         nullable.Nullable[bool]                                           `json:"security_sb_forwarded_for_enabled,omitempty"`
 	SecurityUpdatePasswordRequireReauthentication         nullable.Nullable[bool]                                           `json:"security_update_password_require_reauthentication,omitempty"`
-	SessionsInactivityTimeout                             nullable.Nullable[int]                                            `json:"sessions_inactivity_timeout,omitempty"`
+	SessionsInactivityTimeout                             nullable.Nullable[float32]                                        `json:"sessions_inactivity_timeout,omitempty"`
 	SessionsSinglePerUser                                 nullable.Nullable[bool]                                           `json:"sessions_single_per_user,omitempty"`
 	SessionsTags                                          nullable.Nullable[string]                                         `json:"sessions_tags,omitempty"`
-	SessionsTimebox                                       nullable.Nullable[int]                                            `json:"sessions_timebox,omitempty"`
+	SessionsTimebox                                       nullable.Nullable[float32]                                        `json:"sessions_timebox,omitempty"`
 	SiteUrl                                               nullable.Nullable[string]                                         `json:"site_url,omitempty"`
 	SmsAutoconfirm                                        nullable.Nullable[bool]                                           `json:"sms_autoconfirm,omitempty"`
 	SmsMaxFrequency                                       nullable.Nullable[int]                                            `json:"sms_max_frequency,omitempty"`
