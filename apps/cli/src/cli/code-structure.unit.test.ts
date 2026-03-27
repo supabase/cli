@@ -31,7 +31,13 @@ function resolveImport(filePath: string, specifier: string): string {
 }
 
 function isSourceFile(filePath: string): boolean {
-  return filePath.endsWith(".ts") && !filePath.endsWith(".test.ts") && !filePath.endsWith(".d.ts");
+  return (
+    filePath.endsWith(".ts") &&
+    !filePath.endsWith(".unit.test.ts") &&
+    !filePath.endsWith(".integration.test.ts") &&
+    !filePath.endsWith(".e2e.test.ts") &&
+    !filePath.endsWith(".d.ts")
+  );
 }
 
 describe("code structure", () => {

@@ -196,7 +196,6 @@ describe("stack discovery", () => {
         secretKey: "sk",
         anonJwt: "anon",
         serviceRoleJwt: "service-role",
-        dockerContainerNames: [],
         serviceEndpoints: {},
         services: {
           postgres: "17.6.1.081",

@@ -12,6 +12,7 @@ function statusIcon(status: string) {
     case "Stopped":
       return <Text>⏹️</Text>;
     case "Starting":
+    case "Downloading":
     case "Running":
     case "Restarting":
     case "Initializing":

@@ -34,9 +34,10 @@ User runs: supabase start --detach
         │  Daemon Process   │  Lives in @supabase/stack
         │  (daemon.ts)      │
         │                   │
-        │  ┌─────────────┐  │
-        │  │ createStack()│  │  Creates full Stack (Orchestrator, ApiProxy, etc.)
-        │  └──────┬──────┘  │
+        │  ┌──────────────────────────────┐  │
+        │  │ StackLifecycleCoordinator    │  │  Prepares assets, publishes
+        │  │ + StackBuilder + ApiProxy    │  │  Downloading states, starts runtime
+        │  └─────────────┬────────────────┘  │
         │         │          │
         │  ┌──────▼──────┐  │
         │  │ Mgmt HTTP    │  │  Unix socket: /tmp/supabase/s-<hash>/daemon.sock
@@ -120,11 +121,6 @@ Project-scoped service version state such as `.supabase/project.json` and
   "secretKey": "eyJ...",
   "anonJwt": "eyJ...",
   "serviceRoleJwt": "eyJ...",
-  "dockerContainerNames": [
-    "supabase-postgres-54321",
-    "supabase-postgrest-54321",
-    "supabase-auth-54321"
-  ],
   "services": {
     "postgres": "17.6.1.084",
     "postgrest": "14.4",
@@ -135,8 +131,9 @@ Project-scoped service version state such as `.supabase/project.json` and
 
 The `publishableKey`, `secretKey`, `anonJwt`, and `serviceRoleJwt` fields are needed so CLI
 commands like `status` can display connection info without querying the daemon. The
-`dockerContainerNames` field enables crash recovery — `supabase stop` can force-remove orphaned
-Docker containers even when the daemon process is dead and unreachable via the socket.
+exact Docker cleanup targets are now persisted in stack metadata after runtime preparation. That
+keeps `/status` focused on user-facing connection info while still allowing crash recovery and
+orphan cleanup when the daemon is gone.
 
 ---
 
@@ -146,71 +143,76 @@ Docker containers even when the daemon process is dead and unreachable via the s
 
 ### `@supabase/stack` — New additions
 
-| File                  | Purpose                                                                                                       |
-| --------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `src/daemon.ts`       | Shared daemon logic: `runDaemon(platformFactory)`. IPC handling, lifecycle, signal management                 |
-| `src/daemon-bun.ts`   | Bun daemon entry point. Imports Bun platform factory, calls `runDaemon()`. Forked by CLI (Bun)                |
-| `src/daemon-node.ts`  | Node daemon entry point. Imports Node platform factory, calls `runDaemon()`. For Node consumers               |
-| `src/DaemonServer.ts` | Management HTTP server (Effect-based, Unix socket). Exposes the in-process `Stack` over HTTP                  |
-| `src/RemoteStack.ts`  | Implements the `LocalStack` Effect Service interface over HTTP/SSE, connecting to a daemon's Unix socket      |
-| `src/StateManager.ts` | Read/write/scan `stack.json` and `state.json` under `<project-root>/.supabase/stacks/`. Stale state detection |
-| `src/internals.ts`    | Export new modules for CLI consumption                                                                        |
+| File                               | Purpose                                                                                                       |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `src/daemon.ts`                    | Shared daemon logic: `runDaemon(platformFactory)`. IPC handling, lifecycle, signal management                 |
+| `src/daemon-bun.ts`                | Bun daemon entry point. Imports Bun platform factory, calls `runDaemon()`. Forked by CLI (Bun)                |
+| `src/daemon-node.ts`               | Node daemon entry point. Imports Node platform factory, calls `runDaemon()`. For Node consumers               |
+| `src/DaemonServer.ts`              | Management HTTP server (Effect-based, Unix socket). Exposes the in-process `Stack` over HTTP                  |
+| `src/RemoteStack.ts`               | Implements the `Stack` Effect Service interface over HTTP/SSE, connecting to a daemon's Unix socket           |
+| `src/StackPreparation.ts`          | Resolves native-vs-Docker assets, downloads binaries, and pulls Docker images                                 |
+| `src/StackLifecycleCoordinator.ts` | Owns preparation, unified state publication, runtime creation, and cleanup metadata                           |
+| `src/StackMetadataPersistence.ts`  | Persists exact cleanup targets for daemon crash recovery                                                      |
+| `src/StateManager.ts`              | Read/write/scan `stack.json` and `state.json` under `<project-root>/.supabase/stacks/`. Stale state detection |
+| `src/internals.ts`                 | Export new modules for CLI consumption                                                                        |
 
 ### Transparent Effect Service interface
 
-The CLI uses Effect V4 and already consumes `LocalStack` as an Effect Service (via
-`internals.ts`). Rather than using the Promise-based `Stack` interface, the CLI and
-`RemoteStack` both operate at the Effect level.
+The CLI uses Effect V4 and consumes `Stack` as an Effect Service (via `internals.ts`). Rather than
+using the Promise-based `createStack()` handle, the CLI and `RemoteStack` both operate at the
+Effect level.
 
 There are two layers of API:
 
-- **`LocalStack`** (Effect Service) — used by CLI and other Effect consumers.
+- **`Stack`** (Effect Service) — used by CLI and other Effect consumers.
   Returns `Effect`s and `Stream`s. This is the internal API.
-- **`Stack`** (Promise-based) — used by non-Effect library consumers via `createStack()`.
+- **`createStack()` handle** (Promise-based) — used by non-Effect library consumers.
   Returns `Promise`s and `AsyncIterable`s. This public API is unchanged.
 
-`RemoteStack` implements the same `LocalStack` Effect Service interface, but backed
+`RemoteStack` implements the same `Stack` Effect Service interface, but backed
 by HTTP/SSE over a Unix socket instead of in-process orchestration. The CLI switches
 between them via **Layers** — no branching in CLI code:
 
 ```
 // Foreground: provide the in-process layer
-const layer = LocalStack.layer(config).pipe(Layer.provide(...));
+const layer = Stack.layer(config).pipe(Layer.provide(...));
 
 // Detached: provide the remote layer
 const layer = RemoteStack.layer(socketPath);
 
-// CLI code is identical — just consumes the LocalStack tag
+// CLI code is identical — just consumes the Stack tag
 Effect.gen(function* () {
-  const stack = yield* LocalStack;
+  const stack = yield* Stack;
   yield* stack.start();
   yield* stack.subscribeAllLogs().pipe(Stream.runForEach(renderLog));
 });
 ```
 
+`stack.start()` now means `prepare assets -> publish Downloading when needed -> start services ->
+wait healthy`, so detached mode exposes the same pre-runtime status behavior as foreground mode.
 `RemoteStack` translates each Effect/Stream method to the corresponding HTTP call:
 
-| LocalStack method          | RemoteStack transport                                       |
-| -------------------------- | ----------------------------------------------------------- |
-| `start()`                  | `POST /start` → `Effect`                                    |
-| `stop()`                   | `POST /stop` → `Effect`                                     |
-| `getInfo()`                | `GET /status` → `Effect` (extract connection info)          |
-| `getAllStates()`           | `GET /status` → `Effect` (extract service states)           |
-| `getState(name)`           | `GET /status` → `Effect` (filter by name)                   |
-| `allStateChanges()`        | `GET /status/stream` (SSE → `Stream`)                       |
-| `stateChanges(name)`       | `GET /status/stream` (SSE → `Stream`, filter by name)       |
-| `waitReady(name)`          | `GET /status/stream` (SSE → `Stream`, take until ready)     |
-| `waitAllReady()`           | `GET /status/stream` (SSE → `Stream`, take until all ready) |
-| `subscribeAllLogs()`       | `GET /logs` (SSE → `Stream`)                                |
-| `subscribeLogs(name)`      | `GET /logs/:name` (SSE → `Stream`)                          |
-| `logHistory(name, limit?)` | `GET /logs/:name/history?limit=N` → `Effect`                |
-| `startService(name)`       | `POST /services/:name/start` → `Effect`                     |
-| `stopService(name)`        | `POST /services/:name/stop` → `Effect`                      |
-| `restartService(name)`     | `POST /services/:name/restart` → `Effect`                   |
+| Stack method               | RemoteStack transport                                          |
+| -------------------------- | -------------------------------------------------------------- |
+| `start()`                  | `POST /start` → `Effect`                                       |
+| `stop()`                   | `POST /stop` → `Effect`                                        |
+| `getInfo()`                | `GET /status` → `Effect` (extract connection info)             |
+| `getAllStates()`           | `GET /status` → `Effect` (extract service states)              |
+| `getState(name)`           | `GET /status` → `Effect` (filter by name)                      |
+| `allStateChanges()`        | `GET /status/stream` (SSE → `Stream`, including `Downloading`) |
+| `stateChanges(name)`       | `GET /status/stream` (SSE → `Stream`, filter by name)          |
+| `waitReady(name)`          | `GET /status/stream` (SSE → `Stream`, take until ready)        |
+| `waitAllReady()`           | `GET /status/stream` (SSE → `Stream`, take until all ready)    |
+| `subscribeAllLogs()`       | `GET /logs` (SSE → `Stream`)                                   |
+| `subscribeLogs(name)`      | `GET /logs/:name` (SSE → `Stream`)                             |
+| `logHistory(name, limit?)` | `GET /logs/:name/history?limit=N` → `Effect`                   |
+| `startService(name)`       | `POST /services/:name/start` → `Effect`                        |
+| `stopService(name)`        | `POST /services/:name/stop` → `Effect`                         |
+| `restartService(name)`     | `POST /services/:name/restart` → `Effect`                      |
 
 Note: `start()`, per-service control, and `logHistory` are included for completeness.
 In the MVP, the CLI only uses a subset (status, logs, stop). The full mapping ensures
-`RemoteStack` is a drop-in replacement for `LocalStack` in any Effect consumer.
+`RemoteStack` is a drop-in replacement for `Stack` in any Effect consumer.
 
 Benefits of using Effect throughout:
 
@@ -228,8 +230,8 @@ Benefits of using Effect throughout:
 **Daemon lifecycle (`runDaemon`):**
 
 1. Receive serializable `StackConfig` via IPC message from parent
-2. Call `createStack(config, platformFactory)` — reuses existing API
-3. Call `stack.start()`
+2. Build the foreground daemon layer (`StackPreparation` + `StackBuilder` + `StackLifecycleCoordinator` + `ApiProxy`)
+3. Call `stack.start()` which prepares assets first, then starts services
 4. Start management HTTP server on Unix socket
 5. Send IPC `{ type: "started", info: { url, dbUrl, ... } }` to parent
 6. Parent disconnects — daemon keeps running
@@ -252,7 +254,7 @@ CLI (parent)                          Daemon (child)
      │     detached: true,                  │
      │     stdio: "ignore"                  │
      │   }) ───────────────────────────────▶│
-     │                                      │── createStack(config)
+     │                                      │── build foreground daemon layer
      │                                      │── stack.start()
      │                                      │── start mgmt HTTP server
      │                                      │
@@ -270,15 +272,15 @@ and the CLI displays the error and exits with a non-zero code.
 
 **Management HTTP endpoints:**
 
-| Endpoint                 | Method | Description                                           |
-| ------------------------ | ------ | ----------------------------------------------------- |
-| `/health`                | GET    | Liveness check (200 OK)                               |
-| `/status`                | GET    | All service states + connection info (JSON)           |
-| `/status/stream`         | GET    | SSE stream of all service state changes               |
-| `/stop`                  | POST   | Graceful shutdown → dispose + exit                    |
-| `/logs`                  | GET    | SSE stream of all logs                                |
-| `/logs/:service`         | GET    | SSE stream for one service                            |
-| `/logs/:service/history` | GET    | Recent log entries for one service (JSON, `?limit=N`) |
+| Endpoint                 | Method | Description                                                                         |
+| ------------------------ | ------ | ----------------------------------------------------------------------------------- |
+| `/health`                | GET    | Liveness check (200 OK)                                                             |
+| `/status`                | GET    | All service states + connection info (JSON)                                         |
+| `/status/stream`         | GET    | SSE stream of all service state changes, including `Downloading` during preparation |
+| `/stop`                  | POST   | Graceful shutdown → dispose + exit                                                  |
+| `/logs`                  | GET    | SSE stream of all logs                                                              |
+| `/logs/:service`         | GET    | SSE stream for one service                                                          |
+| `/logs/:service/history` | GET    | Recent log entries for one service (JSON, `?limit=N`)                               |
 
 ### `@supabase/cli` — New/modified commands
 
@@ -355,7 +357,7 @@ within that project. This works from any nested directory inside the project.
 | Port already in use                     | Daemon sends IPC error before parent exits; CLI shows error                                                                                                                                                            |
 | Name collision (already running)        | State file exists + daemon alive → error with connection info                                                                                                                                                          |
 | Daemon crashes                          | State becomes stale. `status` detects dead PID, shows "crashed". `stop` cleans up state + Docker containers                                                                                                            |
-| Orphaned Docker containers              | `stack.dispose()` calls `dockerForceRemove()`. On crash, `stop` reads state, force-removes known containers                                                                                                            |
+| Orphaned Docker containers              | `stack.dispose()` calls `dockerForceRemove()`. On crash, `stop` reads persisted cleanup metadata, then force-removes the exact known containers                                                                        |
 | Ctrl+C during `start --detach`          | If daemon hasn't started: kill child. If started: daemon keeps running                                                                                                                                                 |
 | Foreground start while detached running | `supabase start` (foreground) checks StateManager first. If a daemon is running for the same project, error with "Stack already running in detached mode. Use `supabase stop` first or `supabase logs` to see output." |
 | Detached start while foreground running | Port allocation will fail (ports already bound), daemon sends IPC error. No special detection needed — the existing port conflict handling covers this.                                                                |
@@ -366,7 +368,7 @@ within that project. This works from any nested directory inside the project.
 
 1. **Unit tests** on `StateManager` — pure file operations, mock filesystem
 2. **Integration tests** on `RemoteStack`/`DaemonServer` — test HTTP API with real Unix socket, verify Effect/Stream round-trip
-3. **Integration tests** on CLI handlers — mock `LocalStack` via `Layer.succeed`, assert on output/state (same pattern as existing CLI tests)
+3. **Integration tests** on CLI handlers — mock `Stack` via `Layer.succeed`, assert on output/state (same pattern as existing CLI tests)
 4. **E2e tests** — spawn real `supabase start --detach`, verify startup, `supabase status` shows it, `supabase stack list` finds it, `supabase stop` stops it
 
 ---
@@ -406,7 +408,7 @@ supabase attach [name]
 
 Key difference from foreground mode:
 
-- **Foreground**: TUI consumes in-process `LocalStack` Effect Service (Effect `Stream`s)
+- **Foreground**: TUI consumes in-process `Stack` Effect Service (Effect `Stream`s)
 - **Attached**: TUI consumes `RemoteStack` Effect Service (same `Stream` interface, backed by SSE over Unix socket)
 
 Ctrl+C when attached means **detach** (daemon keeps running), not stop. The user ran

@@ -35,7 +35,6 @@ export interface StackState {
   readonly secretKey: string;
   readonly anonJwt: string;
   readonly serviceRoleJwt: string;
-  readonly dockerContainerNames: ReadonlyArray<string>;
   readonly serviceEndpoints: Readonly<Record<string, string>>;
   readonly services: PartialVersionManifest;
 }
@@ -55,7 +54,6 @@ const StackStateSchema = Schema.Struct({
   secretKey: Schema.String,
   anonJwt: Schema.String,
   serviceRoleJwt: Schema.String,
-  dockerContainerNames: Schema.Array(Schema.String),
   serviceEndpoints: Schema.Record(Schema.String, Schema.String),
   services: PartialVersionManifestSchema,
 });
@@ -372,6 +370,23 @@ function makeReadMetadata(deps: StateManagerDeps) {
     }).pipe(Effect.catchTag("PlatformError", (e) => Effect.die(e)));
 }
 
+function makeUpdateMetadata(
+  readMetadata: ReturnType<typeof makeReadMetadata>,
+  writeMetadata: ReturnType<typeof makeWriteMetadata>,
+) {
+  return (
+    name: string,
+    update: (metadata: StackMetadata) => StackMetadata,
+  ): Effect.Effect<
+    void,
+    StackMetadataNotFoundError | InvalidStackMetadataError | UnsupportedStackMetadataVersionError
+  > =>
+    Effect.gen(function* () {
+      const metadata = yield* readMetadata(name);
+      yield* writeMetadata(name, update(metadata));
+    });
+}
+
 function makeScan(deps: StateManagerDeps) {
   return (): Effect.Effect<ReadonlyArray<StackState>, InvalidStackStateError> =>
     Effect.gen(function* () {
@@ -511,6 +526,13 @@ export class StateManager extends ServiceMap.Service<
     ) => Effect.Effect<StackState, StateNotFoundError | InvalidStackStateError>;
     readonly scan: () => Effect.Effect<ReadonlyArray<StackState>, InvalidStackStateError>;
     readonly writeMetadata: (name: string, metadata: StackMetadata) => Effect.Effect<void>;
+    readonly updateMetadata: (
+      name: string,
+      update: (metadata: StackMetadata) => StackMetadata,
+    ) => Effect.Effect<
+      void,
+      StackMetadataNotFoundError | InvalidStackMetadataError | UnsupportedStackMetadataVersionError
+    >;
     readonly readMetadata: (
       name: string,
     ) => Effect.Effect<
@@ -555,6 +577,8 @@ export class StateManager extends ServiceMap.Service<
           runtimeDir,
         };
         const scan = makeScan(deps);
+        const writeMetadata = makeWriteMetadata(deps);
+        const readMetadata = makeReadMetadata(deps);
 
         return {
           stackDir,
@@ -566,8 +590,9 @@ export class StateManager extends ServiceMap.Service<
           write: makeWrite(deps),
           read: makeRead(deps),
           scan,
-          writeMetadata: makeWriteMetadata(deps),
-          readMetadata: makeReadMetadata(deps),
+          writeMetadata,
+          updateMetadata: makeUpdateMetadata(readMetadata, writeMetadata),
+          readMetadata,
           scanMetadata: makeScanMetadata(deps),
           remove: makeRemove(deps),
           deleteStack: makeDeleteStack(deps),

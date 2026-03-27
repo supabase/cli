@@ -8,6 +8,9 @@ import type { PlatformFactory } from "./createStack.ts";
 import type { DaemonMessage, DaemonStartMessage } from "./daemon.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { Stack } from "./Stack.ts";
+import { StackLifecycleCoordinator } from "./StackLifecycleCoordinator.ts";
+import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
+import { StackPreparation } from "./StackPreparation.ts";
 import {
   InvalidStackStateError,
   NoRunningStackError,
@@ -36,8 +39,13 @@ export const foregroundLayer = (
   const binaryResolverLayer = BinaryResolver.make(config.cacheRoot).pipe(
     Layer.provide(FetchHttpClient.layer),
   );
-  const stackBuilderLayer = StackBuilder.layer.pipe(Layer.provide(binaryResolverLayer));
-  const stackLayer = Stack.layer(config).pipe(Layer.provide(stackBuilderLayer));
+  const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(binaryResolverLayer));
+  const coordinatorLayer = StackLifecycleCoordinator.layer(config).pipe(
+    Layer.provide(StackBuilder.layer),
+    Layer.provide(stackPreparationLayer),
+    Layer.provide(StackMetadataPersistence.noop),
+  );
+  const stackLayer = Stack.layer(config).pipe(Layer.provide(coordinatorLayer));
 
   const proxyConfig: ProxyConfig = {
     listenPort: config.apiPort,
@@ -86,9 +94,6 @@ export const foregroundDaemonLayer = (
   const binaryResolverLayer = BinaryResolver.make(config.cacheRoot).pipe(
     Layer.provide(FetchHttpClient.layer),
   );
-  const stackBuilderLayer = StackBuilder.layer.pipe(Layer.provide(binaryResolverLayer));
-  const stackLayer = Stack.layer(config).pipe(Layer.provide(stackBuilderLayer));
-
   const proxyConfig: ProxyConfig = {
     listenPort: config.apiPort,
     gotruePort: config.auth !== false ? config.auth.port : 0,
@@ -109,6 +114,16 @@ export const foregroundDaemonLayer = (
   const stateManagerLayer = StateManager.make(
     singleStackStateManagerPaths(config.stackRoot, config.runtimeRoot, config.name),
   );
+  const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(binaryResolverLayer));
+  const metadataPersistenceLayer = StackMetadataPersistence.fromStateManager(config.name).pipe(
+    Layer.provide(stateManagerLayer),
+  );
+  const coordinatorLayer = StackLifecycleCoordinator.layer(config).pipe(
+    Layer.provide(StackBuilder.layer),
+    Layer.provide(stackPreparationLayer),
+    Layer.provide(metadataPersistenceLayer),
+  );
+  const stackLayer = Stack.layer(config).pipe(Layer.provide(coordinatorLayer));
 
   return Layer.mergeAll(stackLayer, apiProxyLayer, stateManagerLayer).pipe(
     Layer.provide(platform),

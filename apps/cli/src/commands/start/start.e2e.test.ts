@@ -24,6 +24,7 @@ const LIGHTWEIGHT_START_ARGS = [
   "--exclude",
   "pooler",
 ] as const;
+
 describe("supabase start", () => {
   test(
     "starts in detached mode and prints connection info",

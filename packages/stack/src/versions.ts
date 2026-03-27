@@ -59,21 +59,35 @@ export const DEFAULT_VERSIONS: VersionManifest = {
 
 /** Default registry. Matches the Go CLI default (`public.ecr.aws`). */
 const DEFAULT_REGISTRY = "public.ecr.aws/supabase";
+const DOCKER_HUB_SUPABASE_REGISTRY = "supabase";
+const GHCR_SUPABASE_REGISTRY = "ghcr.io/supabase";
 
 const IMAGE_REPOSITORIES: Record<ServiceName, string> = {
-  postgres: `${DEFAULT_REGISTRY}/postgres`,
-  postgrest: `${DEFAULT_REGISTRY}/postgrest`,
-  auth: `${DEFAULT_REGISTRY}/gotrue`,
-  realtime: `${DEFAULT_REGISTRY}/realtime`,
-  storage: `${DEFAULT_REGISTRY}/storage-api`,
+  postgres: "postgres",
+  postgrest: "postgrest",
+  auth: "gotrue",
+  realtime: "realtime",
+  storage: "storage-api",
   imgproxy: "darthsim/imgproxy",
   mailpit: "axllent/mailpit",
-  pgmeta: `${DEFAULT_REGISTRY}/postgres-meta`,
-  studio: `${DEFAULT_REGISTRY}/studio`,
-  analytics: `${DEFAULT_REGISTRY}/logflare`,
+  pgmeta: "postgres-meta",
+  studio: "studio",
+  analytics: "logflare",
   vector: "timberio/vector",
-  pooler: `${DEFAULT_REGISTRY}/supavisor`,
+  pooler: "supavisor",
 };
+
+const SUPABASE_REGISTRY_SERVICES = new Set<ServiceName>([
+  "postgres",
+  "postgrest",
+  "auth",
+  "realtime",
+  "storage",
+  "pgmeta",
+  "studio",
+  "analytics",
+  "pooler",
+]);
 
 export const IMAGE_TAG_PREFIX: Partial<Record<ServiceName, string>> = {
   postgrest: "v",
@@ -90,7 +104,27 @@ export const IMAGE_TAG_PREFIX: Partial<Record<ServiceName, string>> = {
  * `public.ecr.aws/supabase/` by default (faster than Docker Hub).
  */
 export function dockerImageForService(service: ServiceName, version: string): string {
-  return `${IMAGE_REPOSITORIES[service]}:${IMAGE_TAG_PREFIX[service] ?? ""}${version}`;
+  const repository = IMAGE_REPOSITORIES[service];
+  if (SUPABASE_REGISTRY_SERVICES.has(service)) {
+    return `${DEFAULT_REGISTRY}/${repository}:${IMAGE_TAG_PREFIX[service] ?? ""}${version}`;
+  }
+  return `${repository}:${IMAGE_TAG_PREFIX[service] ?? ""}${version}`;
+}
+
+export function dockerImageCandidatesForService(
+  service: ServiceName,
+  version: string,
+): ReadonlyArray<string> {
+  const repository = IMAGE_REPOSITORIES[service];
+  const tag = `${IMAGE_TAG_PREFIX[service] ?? ""}${version}`;
+  if (!SUPABASE_REGISTRY_SERVICES.has(service)) {
+    return [`${repository}:${tag}`];
+  }
+  return [
+    `${DEFAULT_REGISTRY}/${repository}:${tag}`,
+    `${DOCKER_HUB_SUPABASE_REGISTRY}/${repository}:${tag}`,
+    `${GHCR_SUPABASE_REGISTRY}/${repository}:${tag}`,
+  ];
 }
 
 function assertFullVersions(

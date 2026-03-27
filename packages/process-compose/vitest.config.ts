@@ -20,8 +20,6 @@ export default defineConfig({
         test: {
           name: "e2e",
           include: ["**/*.e2e.test.ts"],
-          fileParallelism: false,
-          globalSetup: ["./tests/global-setup.ts"],
         },
       },
     ],

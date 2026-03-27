@@ -95,7 +95,10 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
       projectDir: projectHome.projectRoot,
       projectStateRoot: projectHome.projectHomeDir,
       name: flags.stack,
-      ...withServiceVersions(toStartStackConfig([]), serviceVersionContext.candidateBaseline),
+      ...withServiceVersions(
+        toStartStackConfig([], "auto"),
+        serviceVersionContext.candidateBaseline,
+      ),
     }),
   );
 

@@ -17,7 +17,7 @@ Manages a local Supabase development stack — resolving native binaries, wiring
   - [ApiProxy — reverse proxy with key translation](#apiproxy--reverse-proxy-with-key-translation)
   - [services — ServiceDef factories](#services--servicedef-factories)
   - [StackBuilder — assemble the dependency graph](#stackbuilder--assemble-the-dependency-graph)
-  - [LocalStack — lifecycle management](#localstack--lifecycle-management)
+  - [StackLifecycleCoordinator — lifecycle management](#stacklifecyclecoordinator--lifecycle-management)
   - [createStack — platform-agnostic core](#createstack--platform-agnostic-core)
   - [bun.ts / node.ts — runtime implementations behind the root export](#bunts--nodets--runtime-implementations-behind-the-root-export)
 - [Data flow](#data-flow)
@@ -29,7 +29,7 @@ Manages a local Supabase development stack — resolving native binaries, wiring
 
 `@supabase/stack` answers a single question: given a `StackConfig`, start a local Supabase stack and give me the URLs and keys I need to talk to it.
 
-Behind that simple surface, quite a lot happens. Each binary (postgres, postgrest, auth) must be resolved for the current OS and CPU architecture, downloaded from GitHub releases if not already cached, and verified. The binaries are then composed into `ServiceDef` objects and handed to `@supabase/process-compose`, which handles health checks, dependency ordering, log streaming, restart policies, and shutdown. An `ApiProxy` sits in front of GoTrue and PostgREST, translating opaque API keys into JWTs before forwarding requests.
+Behind that simple surface, startup now has three explicit phases. `StackPreparation` resolves native-vs-Docker execution, downloads binaries, and pulls Docker images. `StackBuilder` turns the prepared artifacts into a process graph and service projection. `StackLifecycleCoordinator` then starts the orchestrator, merges pre-start and runtime state into one public stream, and exposes `Downloading`, `Starting`, `Initializing`, and `Healthy` as one continuous lifecycle to callers. An `ApiProxy` sits in front of GoTrue and PostgREST, translating opaque API keys into JWTs before forwarding requests.
 
 ```mermaid
 graph TB
@@ -40,11 +40,12 @@ graph TB
     subgraph "@supabase/stack"
         PLT["Platform<br/><i>detect OS + arch</i>"]
         BR["BinaryResolver<br/><i>download + cache</i>"]
+        PREP["StackPreparation<br/><i>resolve + fetch assets</i>"]
         JG["JwtGenerator<br/><i>sign JWT tokens + opaque keys</i>"]
         PA["PortAllocator<br/><i>allocate ports</i>"]
         AP["ApiProxy<br/><i>reverse proxy + key translation</i>"]
         SB["StackBuilder<br/><i>wire ServiceDefs</i>"]
-        LS["LocalStack<br/><i>lifecycle facade</i>"]
+        LC["StackLifecycleCoordinator<br/><i>prepare + runtime lifecycle</i>"]
         CS["createStack()<br/><i>resolveConfig + layer wiring</i>"]
         BUN["bun.ts<br/><i>Bun entry point</i>"]
         NODE["node.ts<br/><i>Node.js entry point</i>"]
@@ -61,13 +62,14 @@ graph TB
 
     SC --> CS
     PLT --> BR
-    BR --> SB
+    BR --> PREP
+    PREP --> SB
     JG --> CS
     PA --> CS
     SB --> BG
     BG --> ORC
-    ORC --> LS
-    LS --> CS
+    ORC --> LC
+    LC --> CS
     AP --> CS
     BUN --> CS
     NODE --> CS
@@ -92,8 +94,9 @@ graph LR
         JWTGEN["JwtGenerator<br/><i>HS256 JWT signing + opaque keys</i>"]
         PALLOC["PortAllocator<br/><i>dynamic port assignment</i>"]
         PROXY["ApiProxy<br/><i>reverse proxy + key translation</i>"]
+        PREP["StackPreparation"]
         BUILD["StackBuilder"]
-        LSTACK["LocalStack"]
+        COORD["StackLifecycleCoordinator"]
         CSTACK["createStack()<br/><i>resolveConfig + layer wiring</i>"]
     end
 
@@ -105,12 +108,13 @@ graph LR
     end
 
     SDEFS --> BGRAPH
+    PREP --> BUILD
     BUILD --> BGRAPH
     BGRAPH --> ORCH
     JWTGEN --> CSTACK
     PALLOC --> CSTACK
-    PROXY --> LSTACK
-    LSTACK --> ORCH
+    PROXY --> COORD
+    COORD --> ORCH
 ```
 
 | Concern                          | Owner                       |
@@ -325,7 +329,7 @@ The download is written to a temporary file (`_download.tar` or `_download.zip`)
 
 **File:** `src/resolve.ts`
 
-`resolveService` is a thin helper that wraps `BinaryResolver.resolve()` and implements the binary-first, Docker-fallback strategy shared by both `StackBuilder.build()` and `prefetch()`.
+`resolveService` is a thin helper that wraps `BinaryResolver.resolve()` and implements the binary-first, Docker-fallback strategy used by `StackPreparation` and therefore shared by both `stack.start()` and `prefetch()`.
 
 #### ServiceResolution type
 
@@ -455,7 +459,7 @@ Allocated ports are tracked in a `Set<number>`. When `probeRandomPort` returns a
 
 **File:** `src/prefetch.ts`
 
-`prefetch` downloads all service binaries and pulls all Docker images concurrently, so the first `createStack()` call in a test run does not stall on slow downloads.
+`prefetch` is now a thin wrapper over `StackPreparation`. It downloads all service binaries and pulls all Docker images concurrently, so the first `createStack()` or `stack.start()` call in a test run does not stall on slow downloads.
 
 #### Interface
 
@@ -479,7 +483,7 @@ export const prefetch: (
 
 #### How it works
 
-For each requested service, `prefetch` calls `resolveService()`:
+For each requested service, `prefetch` delegates to `StackPreparation.prepare()`:
 
 - If the result is `{ type: "binary" }`, the binary is already cached — nothing more to do.
 - If the result is `{ type: "docker" }`, `prefetch` runs `docker pull <image>` via `ChildProcessSpawner`. A non-zero exit code or a `PlatformError` both map to `DockerPullError`.
@@ -656,7 +660,9 @@ Both variants use an HTTP health check on `GET /health` (the GoTrue health endpo
 
 **File:** `src/StackBuilder.ts`
 
-`StackBuilder` coordinates binary resolution and service definition construction, then passes the complete `ServiceDef[]` list to `buildGraph()` from `@supabase/process-compose`.
+`StackBuilder` is now graph-only. Asset preparation moved out into `StackPreparation`, so
+`StackBuilder` receives a `ResolvedStackConfig` plus `PreparedStackArtifacts`, constructs the
+complete `ServiceDef[]` list, and passes it to `buildGraph()` from `@supabase/process-compose`.
 
 #### Service interface
 
@@ -664,12 +670,17 @@ Both variants use an HTTP health check on `GET /health` (the GoTrue health endpo
 class StackBuilder extends ServiceMap.Service<
   StackBuilder,
   {
-    readonly build: (config: ResolvedStackConfig) => Effect.Effect<ResolvedGraph, StackBuildError>;
+    readonly build: (
+      config: ResolvedStackConfig,
+      prepared: PreparedStackArtifacts,
+    ) => Effect.Effect<BuildResult, StackBuildError>;
   }
 >()("local/StackBuilder") {}
 ```
 
-`build()` is the only method. It takes a fully resolved `ResolvedStackConfig` (all defaults applied, ports concrete, JWTs generated) and returns a `ResolvedGraph` — the process-compose data structure that already knows start order, stop order, and dependency relationships.
+`build()` is the only method. It takes a fully resolved `ResolvedStackConfig` (all defaults applied,
+ports concrete, JWTs generated) plus prepared binary / Docker resolutions and returns the graph,
+public service projection metadata, and exact cleanup targets.
 
 #### ResolvedStackConfig
 
@@ -697,77 +708,43 @@ Setting `postgrest` or `auth` to `false` excludes those services entirely. Postg
 
 ```mermaid
 flowchart TD
-    A["build(config)"] --> B["detectPlatform()"]
-    B --> C{"config.mode === 'docker'?"}
-    C -->|"yes"| CX["skip binary resolution<br/>use Docker images directly"]
-    C -->|"no"| D["resolveService(postgres)"]
-    D -->|"ChecksumMismatchError"| E["StackBuildError"]
-    D -->|"ServiceResolution"| F{"config.auth !== false?"}
-
-    F -->|"yes"| G["resolveService(auth)"]
-    F -->|"no"| H{"config.postgrest !== false?"}
-    G -->|"ChecksumMismatchError"| E
-    G -->|"ServiceResolution"| H
-
-    H -->|"yes"| I["resolveService(postgrest)"]
-    H -->|"no"| J["buildPostgresDefs()"]
-    I -->|"ChecksumMismatchError"| E
-    I -->|"ServiceResolution"| J
-    CX --> J
-
-    J --> K["buildPostgrestDefs() — empty if postgrest=false"]
-    K --> L["buildAuthDefs() — empty if auth=false"]
-    L --> M["buildGraph(allDefs)"]
-    M -->|"error"| E
-    M -->|"ok"| N["ResolvedGraph"]
+    A["StackPreparation.prepare(config)"] --> B["PreparedStackArtifacts"]
+    B --> C["StackBuilder.build(config, prepared)"]
+    C --> D["BuildResult"]
 ```
 
-All three services call `resolveService()` for binary-first Docker fallback. The service is included when its config is an object; setting `config.postgrest = false` or `config.auth = false` skips resolution and produces an empty defs list for that service.
-
-`ChecksumMismatchError` (from `resolveService`) propagates as a `StackBuildError` — a tampered download is never silently replaced by Docker.
-
-#### Docker mode (`mode: "docker"`)
-
-When `config.mode === "docker"`, binary resolution is skipped entirely — `resolveService()` is not called and `BinaryResolver` is never consulted. Instead, Docker images are used directly for all services:
-
-- **Postgres** — runs as a Docker container with a custom entrypoint that injects `schema.sql` to configure role passwords and JWT settings before the database accepts connections.
-- **Auth** — the migration step runs as a separate short-lived Docker container (`gotrue migrate`) rather than as a native subprocess. The main auth service also runs in Docker.
-- **PostgREST** — runs as a Docker container using the standard PostgREST image.
-
-Docker mode requires Docker to be installed and running. It is selected by passing `mode: "docker"` in the `StackConfig`; the default (`"auto"`) preserves the existing binary-first Docker-fallback behavior.
-
-#### Per-service builder helpers
-
-Three private helper functions contain the service definition construction logic, keeping `build()` itself readable:
-
-- **`buildPostgresDefs(resolution, config, needsDockerAccess, platformOs)`** — builds the postgres and postgres-init `ServiceDef` objects. `postgres-init` is only added when the native binary path is available (not for Docker). In Docker mode, a custom entrypoint injects `schema.sql` to configure role passwords and JWT settings.
-- **`buildPostgrestDefs(resolution, config, hasPostgresInit, dbHost, platformOs)`** — returns an empty array when `config.postgrest === false`; otherwise builds one PostgREST `ServiceDef`. Supports both binary and Docker variants.
-- **`buildAuthDefs(resolution, config, hasPostgresInit, dbHost, platformOs)`** — returns an empty array when `config.auth === false`; otherwise builds the long-lived `auth` `ServiceDef`. Auth waits on `postgres-init` when native Postgres is used, or directly on Postgres health in Docker-backed flows.
-
-`StackBuilder` sits between `BinaryResolver` (its dependency) and `LocalStack` (its consumer). This separation is deliberate: `StackBuilder.build()` can be tested in isolation by providing a mocked `BinaryResolver` layer without touching filesystem, network, or process spawning.
+Docker vs native selection, cache probing, binary downloads, and Docker pulls now happen entirely in
+`StackPreparation`. `StackBuilder` only consumes the prepared resolutions and turns them into graph
+definitions plus cleanup metadata.
 
 ---
 
-### LocalStack — lifecycle management
+### StackLifecycleCoordinator — lifecycle management
 
-**File:** `src/LocalStack.ts`
+**File:** `src/StackLifecycleCoordinator.ts`
 
-`LocalStack` is the top-level Effect service that ties the stack together. It builds the graph via `StackBuilder`, constructs an `Orchestrator` layer internally, and exposes a rich lifecycle interface including per-service control, status streaming, and log streaming.
+`StackLifecycleCoordinator` is the top-level runtime coordinator. It owns the startup state machine,
+drives `StackPreparation`, builds the orchestrator from `StackBuilder`, persists cleanup targets,
+and exposes the unified public state stream used by both in-process and daemon-backed flows.
 
 #### Service interface
 
 ```ts
-class LocalStack extends ServiceMap.Service<
-  LocalStack,
+class StackLifecycleCoordinator extends ServiceMap.Service<
+  StackLifecycleCoordinator,
   {
     readonly getInfo: () => Effect.Effect<StackInfo>;
-    readonly start: () => Effect.Effect<void, ServiceReadyError>;
+    readonly start: () => Effect.Effect<void, ServiceReadyError | StackBuildError>;
     readonly stop: () => Effect.Effect<void>;
     readonly startService: (
       name: string,
-    ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError>;
-    readonly stopService: (name: string) => Effect.Effect<void, ServiceNotFoundError>;
-    readonly restartService: (name: string) => Effect.Effect<void, ServiceNotFoundError>;
+    ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
+    readonly stopService: (
+      name: string,
+    ) => Effect.Effect<void, ServiceNotFoundError | StackBuildError>;
+    readonly restartService: (
+      name: string,
+    ) => Effect.Effect<void, ServiceNotFoundError | StackBuildError>;
     readonly getState: (name: string) => Effect.Effect<StackServiceState, ServiceNotFoundError>;
     readonly getAllStates: () => Effect.Effect<ReadonlyArray<StackServiceState>>;
     readonly stateChanges: (
@@ -776,14 +753,32 @@ class LocalStack extends ServiceMap.Service<
     readonly allStateChanges: () => Stream.Stream<StackServiceState>;
     readonly waitReady: (
       name: string,
-    ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError>;
-    readonly waitAllReady: () => Effect.Effect<void, ServiceReadyError>;
+    ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
+    readonly waitAllReady: () => Effect.Effect<void, ServiceReadyError | StackBuildError>;
     readonly subscribeLogs: (name: string) => Stream.Stream<LogEntry>;
-    readonly subscribeAllLogs: () => Stream.Stream<LogEntry>;
+    readonly subscribeAllLogs: (services?: ReadonlyArray<string>) => Stream.Stream<LogEntry>;
     readonly logHistory: (name: string, limit?: number) => Effect.Effect<ReadonlyArray<LogEntry>>;
+    readonly logHistoryAll: (
+      limit?: number,
+      services?: ReadonlyArray<string>,
+    ) => Effect.Effect<ReadonlyArray<LogEntry>>;
   }
->()("local/LocalStack") {}
+>()("stack/StackLifecycleCoordinator") {}
 ```
+
+Internally, the coordinator owns these lifecycle phases:
+
+- `idle`
+- `preparing`
+- `prepared`
+- `starting`
+- `running`
+- `stopping`
+- `stopped`
+
+Before the orchestrator exists, it publishes synthetic service states derived from config. That is
+why `getAllStates()` and `allStateChanges()` can surface `Downloading` during cold-cache startup
+even though no process has been spawned yet.
 
 #### StackInfo
 
@@ -795,41 +790,57 @@ interface StackInfo {
   readonly secretKey: string; // opaque key for SDK consumers (privileged)
   readonly anonJwt: string; // internal HS256 JWT (role: "anon")
   readonly serviceRoleJwt: string; // internal HS256 JWT (role: "service_role")
+  readonly serviceEndpoints: Readonly<Record<string, string>>;
 }
 ```
 
-The `url` points to the `ApiProxy` listener, not to PostgREST directly. Callers use `publishableKey` / `secretKey` as their API keys; the proxy translates them to JWTs internally.
+The `url` points to the `ApiProxy` listener, not to PostgREST directly. Callers use
+`publishableKey` / `secretKey` as their API keys; the proxy translates them to JWTs internally.
+`StackInfo` intentionally does not include runtime cleanup details such as Docker container names.
+Those are persisted separately as internal metadata after preparation/build.
 
 #### Layer construction
 
 ```mermaid
 graph TB
-    subgraph "LocalStack.layer(config)"
-        SB["StackBuilder.build(config)<br/><i>produces ResolvedGraph</i>"]
-        LB["LogBuffer.layer<br/><i>shared between Orchestrator + LocalStack</i>"]
+    subgraph "StackLifecycleCoordinator.layer(config)"
+        PREP["StackPreparation.prepareEvents()<br/><i>emits Downloading + prepared artifacts</i>"]
+        SB["StackBuilder.build(config, prepared)<br/><i>produces ResolvedGraph</i>"]
+        LB["LogBuffer.layer<br/><i>shared between Orchestrator + coordinator</i>"]
         OL["Orchestrator.layer(graph)<br/><i>provided with shared LogBuffer</i>"]
-        EP["Layer.buildWithScope(orchLayer, scope)<br/><i>scoped to LocalStack's scope</i>"]
+        EP["Layer.buildWithScope(orchLayer, scope)<br/><i>scoped to coordinator scope</i>"]
         INFO["StackInfo object<br/><i>built from ResolvedStackConfig — no JWT generation needed</i>"]
+        STATE["SubscriptionRef<StackServiceState[]><br/><i>authoritative public state stream</i>"]
     end
 
+    PREP --> SB
     SB --> LB
     LB --> OL
     OL --> EP
-    EP --> INFO
+    EP --> STATE
+    STATE --> INFO
 ```
 
-The `LogBuffer` is created at `LocalStack` level and shared with the `Orchestrator`. This gives `LocalStack` direct access to `logBuffer.subscribe(name)`, `logBuffer.subscribeAll()`, and `logBuffer.history(name, limit)` — powering the `subscribeLogs`, `subscribeAllLogs`, and `logHistory` methods without going through the Orchestrator.
+The `LogBuffer` is created at coordinator level and shared with the `Orchestrator`. This gives the
+coordinator direct access to `logBuffer.subscribe(name)`, `logBuffer.subscribeAll()`, and
+`logBuffer.history(name, limit)` — powering the `subscribeLogs`, `subscribeAllLogs`,
+`logHistory`, and `logHistoryAll` methods without going through the Orchestrator.
 
 Public status is projected in `@supabase/stack`, not exposed raw from `@supabase/process-compose`.
 Helper jobs like `postgres-init` remain part of the process graph, but the public stack API hides
 them and instead projects their lifecycle onto the owning service. While `postgres-init` is active,
 callers see `postgres: Initializing`.
 
-The Orchestrator layer is constructed inside `LocalStack.layer` using `Layer.buildWithScope`. This means the Orchestrator lives within `LocalStack`'s scope: when `LocalStack`'s layer is torn down (when the runtime is disposed), the Orchestrator's scope closes, which triggers `FiberMap` to interrupt all service fibers and run their shutdown finalizers.
+The Orchestrator layer is constructed inside `StackLifecycleCoordinator.layer` using
+`Layer.buildWithScope`. This means the Orchestrator lives within the coordinator's scope: when the
+runtime is disposed, the Orchestrator's scope closes, which triggers `FiberMap` to interrupt all
+service fibers and run their shutdown finalizers.
 
 #### JWT fields and key naming
 
-`LocalStack` reads `anonJwt` and `serviceRoleJwt` directly from the `ResolvedStackConfig` passed to `LocalStack.layer(config)`. JWT generation happens upstream in `resolveConfig()` (in `createStack.ts`), not inside `LocalStack`. `LocalStack` simply propagates the already-generated values into `StackInfo`. These internal JWTs are used by `ApiProxy` to authenticate with GoTrue and PostgREST. Callers receive `publishableKey` and `secretKey` (opaque tokens) from `StackInfo`.
+The public `Stack` service is now a thin facade over `StackLifecycleCoordinator`. `StackInfo`
+contains only stable user-facing connection info; exact cleanup targets are internal runtime
+metadata persisted separately for crash recovery.
 
 ---
 
@@ -839,7 +850,17 @@ The Orchestrator layer is constructed inside `LocalStack.layer` using `Layer.bui
 
 `createStack` is the platform-agnostic core. It wires all layers, delegates to a `ManagedRuntime`, and returns a rich `Stack` interface. It takes a `PlatformFactory` parameter — a function `(apiPort: number) => PlatformLayer` — so the platform-specific HTTP server (Bun or Node.js) can be bound to the already-resolved port. Platform-specific layers (`BunHttpServer`, `NodeHttpServer`) are provided by the entry points (`bun.ts`, `node.ts`), not baked in.
 
-`createStack` also owns `resolveConfig()`, the internal async function that turns a raw `StackConfig` into a `ResolvedStackConfig`: it allocates ports via `PortAllocator`, generates JWTs via `generateJwt()` from `JwtGenerator.ts`, creates an ephemeral temp directory if no `dataDir` was specified, and applies all service config defaults.
+`createStack` also owns `resolveConfig()`, the internal async function that turns a raw
+`StackConfig` into a `ResolvedStackConfig`: it allocates ports via `PortAllocator`, generates JWTs
+via `generateJwt()` from `JwtGenerator.ts`, creates an ephemeral temp directory if no `dataDir`
+was specified, and applies all service config defaults.
+
+Once the runtime is built, `stack.start()` now means:
+
+1. prepare assets via `StackPreparation`
+2. publish synthetic `Downloading` states on cache misses
+3. build the orchestrator through `StackBuilder`
+4. start services and wait for health through `StackLifecycleCoordinator`
 
 #### PlatformLayer type
 
@@ -913,17 +934,21 @@ graph BT
         PL["PlatformLayer<br/><i>provided by bun.ts / node.ts<br/>— FileSystem, Path, ChildProcessSpawner, HttpServer</i>"]
         FH["FetchHttpClient.layer<br/><i>for BinaryResolver + ApiProxy</i>"]
         BRL["BinaryResolver.layer<br/><i>+ FetchHttpClient</i>"]
-        SBL["StackBuilder.layer<br/><i>+ BinaryResolver</i>"]
-        LSL["LocalStack.layer(resolvedConfig)<br/><i>+ StackBuilder</i>"]
+        PREP["StackPreparation.layer<br/><i>+ BinaryResolver</i>"]
+        SBL["StackBuilder.layer"]
+        COORD["StackLifecycleCoordinator.layer(resolvedConfig)<br/><i>+ StackPreparation + StackBuilder</i>"]
+        STACK["Stack.layer(resolvedConfig)<br/><i>thin facade over coordinator</i>"]
         APL["ApiProxy.layer(proxyConfig)<br/><i>+ FetchHttpClient</i>"]
-        FULL["Layer.mergeAll(LocalStack, ApiProxy)<br/><i>+ PlatformLayer</i>"]
+        FULL["Layer.mergeAll(Stack, ApiProxy)<br/><i>+ PlatformLayer</i>"]
     end
 
     PL --> FULL
     FH --> BRL
-    BRL --> SBL
-    SBL --> LSL
-    LSL --> FULL
+    BRL --> PREP
+    PREP --> COORD
+    SBL --> COORD
+    COORD --> STACK
+    STACK --> FULL
     FH --> APL
     APL --> FULL
 ```
@@ -988,15 +1013,17 @@ graph TB
     end
 
     subgraph "2. Layer assembly"
-        LA["ManagedRuntime.make(fullLayer)<br/><i>wires BinaryResolver → StackBuilder → LocalStack + ApiProxy</i>"]
+        LA["ManagedRuntime.make(fullLayer)<br/><i>wires BinaryResolver → StackPreparation → StackBuilder → StackLifecycleCoordinator + ApiProxy</i>"]
     end
 
-    subgraph "3. Binary resolution"
+    subgraph "3. Asset preparation"
         DP["detectPlatform()"]
         CH["check ~/.supabase/bin cache"]
         DL["HttpClient.get GitHub release tarball"]
+        PI["docker pull image when service resolves to Docker"]
         VR["verify SHA-256 (node:crypto createHash)"]
         EX["ChildProcessSpawner → tar extract to cache"]
+        DS["publish synthetic Downloading states"]
     end
 
     subgraph "4. Graph assembly"
@@ -1027,7 +1054,11 @@ graph TB
     CH -->|"miss"| DL
     DL --> VR
     VR --> EX
+    CH -->|"docker"| PI
+    DL --> DS
+    PI --> DS
     EX --> SD
+    PI --> SD
     CH -->|"hit"| SD
     SD --> BG
     BG --> OL
@@ -1046,17 +1077,18 @@ graph TB
 
 ### Test file table
 
-| File                               | Type        | What it tests                                                                                                                |
-| ---------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `src/Platform.test.ts`             | Unit        | `detectPlatform`, all three asset-name mapping functions                                                                     |
-| `src/BinaryResolver.test.ts`       | Unit        | Static helpers: `downloadUrl`, `checksumUrl`, `cachePath`                                                                    |
-| `src/services/services.test.ts`    | Unit        | `makePostgresService`, `makePostgresServiceDocker`, `makePostgrestService`, `makeAuthServiceNative`, `makeAuthServiceDocker` |
-| `src/ApiProxy.test.ts`             | Unit        | `transformAuthorization` key translation logic, CORS headers, route routing                                                  |
-| `src/StackBuilder.test.ts`         | Integration | `StackBuilder.build()` with mocked `BinaryResolver`                                                                          |
-| `src/LocalStack.test.ts`           | Integration | `LocalStack.getInfo()` key naming, JWT fields, with mocked resolver + spawner                                                |
-| `src/createStack.test.ts`          | Unit        | Type shape assertions + missing `stackConfig` error                                                                          |
-| `tests/createStack.e2e.test.ts`    | E2e         | Full stack lifecycle: health checks, auth sign up/in/out, PostgREST CRUD                                                     |
-| `tests/parallelStacks.e2e.test.ts` | E2e         | 5 concurrent stacks: port uniqueness, health check validation                                                                |
+| File                                 | Type        | What it tests                                                                                                                |
+| ------------------------------------ | ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `src/Platform.unit.test.ts`          | Unit        | `detectPlatform`, all three asset-name mapping functions                                                                     |
+| `src/BinaryResolver.unit.test.ts`    | Unit        | Static helpers: `downloadUrl`, `checksumUrl`, `cachePath`                                                                    |
+| `src/services/services.unit.test.ts` | Unit        | `makePostgresService`, `makePostgresServiceDocker`, `makePostgrestService`, `makeAuthServiceNative`, `makeAuthServiceDocker` |
+| `src/ApiProxy.unit.test.ts`          | Unit        | `transformAuthorization` key translation logic, CORS headers, route routing                                                  |
+| `src/StackBuilder.unit.test.ts`      | Unit        | `StackBuilder.build()` with prepared artifacts and mocked platform services                                                  |
+| `src/prefetch.unit.test.ts`          | Unit        | `StackPreparation` / `prefetch` cache hits, Docker fallback order, and pull behavior                                         |
+| `src/Stack.unit.test.ts`             | Integration | Public `Stack` facade over `StackLifecycleCoordinator`, including pre-start `Downloading` state publication                  |
+| `src/createStack.unit.test.ts`       | Unit        | Type shape assertions + missing `stackConfig` error                                                                          |
+| `tests/createStack.e2e.test.ts`      | E2e         | Full stack lifecycle: health checks, auth sign up/in/out, PostgREST CRUD                                                     |
+| `tests/parallelStacks.e2e.test.ts`   | E2e         | Concurrent stacks: port uniqueness, health check validation                                                                  |
 
 ### Mock patterns
 
@@ -1088,27 +1120,32 @@ No `vi.fn()` spies. The mock accumulates calls in a plain array; tests assert on
 
 ```ts
 it.effect("uses docker fallback when auth binary not found", () => {
-  const resolver = mockBinaryResolver({ failServices: ["auth"] });
-  const layer = Layer.provide(StackBuilder.layer, resolver.layer);
+  const prepared = {
+    resolutions: {
+      postgres: { type: "binary", path: "/tmp/postgres" },
+      postgrest: { type: "binary", path: "/tmp/postgrest" },
+      auth: { type: "docker", image: "public.ecr.aws/supabase/gotrue:v2.188.0-rc.15" },
+    },
+  };
 
   return Effect.gen(function* () {
     const builder = yield* StackBuilder;
-    const graph = yield* builder.build(baseConfig);
+    const { graph } = yield* builder.build(baseConfig, prepared);
 
     const authDef = graph.startOrder.find((s) => s.name === "auth");
     expect(authDef?.command).toBe("docker");
-  }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(StackBuilder.layer));
 });
 ```
 
-**Integration test example — `LocalStack` key naming:**
+**Integration test example — public `Stack` key naming:**
 
 ```ts
 it.effect("StackInfo uses publishableKey and secretKey", () => {
   const { layer } = setupLayer(defaultConfig);
 
   return Effect.gen(function* () {
-    const stack = yield* LocalStack;
+    const stack = yield* Stack;
     const info = yield* stack.getInfo();
 
     expect(info.publishableKey).toBe(defaultPublishableKey);
@@ -1119,21 +1156,31 @@ it.effect("StackInfo uses publishableKey and secretKey", () => {
 });
 ```
 
-`LocalStack` integration tests wire three mocked layers together via `setupLayer()`:
+`Stack` integration tests wire the coordinator and preparation layers together via `setupLayer()`.
+The exact helper in the repo also provides metadata persistence and the shared child-process
+spawner; the key idea is that tests compose `Stack.layer(config)` on top of a real
+`StackLifecycleCoordinator.layer(config)`.
 
 ```ts
 function setupLayer(config: ResolvedStackConfig = defaultConfig) {
   const resolver = mockBinaryResolver();
   const spawner = mockChildProcessSpawner(); // from @supabase/process-compose mocks
 
-  const layer = LocalStack.layer(config).pipe(
-    Layer.provide(StackBuilder.layer),
+  const preparationLayer = StackPreparation.layer.pipe(
     Layer.provide(resolver.layer),
     Layer.provide(spawner.layer),
   );
+  const coordinatorLayer = StackLifecycleCoordinator.layer(config).pipe(
+    Layer.provide(StackBuilder.layer),
+    Layer.provide(preparationLayer),
+    Layer.provide(StackMetadataPersistence.noop),
+  );
+  const layer = Stack.layer(config).pipe(Layer.provide(coordinatorLayer));
 
   return { layer, resolver, spawner };
 }
 ```
 
-The `mockChildProcessSpawner` is reused from `@supabase/process-compose`'s test helpers — it stubs process spawning without forking real OS processes, making `LocalStack` tests fast and deterministic.
+The `mockChildProcessSpawner` is reused from `@supabase/process-compose`'s test helpers — it
+stubs process spawning without forking real OS processes, making `Stack` / coordinator tests fast
+and deterministic.

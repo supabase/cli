@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { CleanupTargetsSchema, type CleanupTargets } from "./CleanupTargets.ts";
 import { AllocatedPortsSchema, type AllocatedPorts } from "./PortAllocator.ts";
 import type { ResolvedStackConfig } from "./StackBuilder.ts";
 import { SERVICE_NAMES, type ServiceName, type VersionManifest } from "./versions.ts";
@@ -40,6 +41,7 @@ export const StackMetadataSchema = Schema.Struct({
   updatedAt: Schema.String,
   ports: AllocatedPortsSchema,
   services: VersionManifestSchema,
+  cleanupTargets: Schema.optionalKey(CleanupTargetsSchema),
   lastNotifiedUpdateFingerprint: Schema.optionalKey(Schema.String),
 });
 
@@ -70,6 +72,7 @@ export function runningServiceVersionsForConfig(
 export function stackMetadata(args: {
   readonly ports: AllocatedPorts;
   readonly services: VersionManifest;
+  readonly cleanupTargets?: CleanupTargets;
   readonly updatedAt?: string;
   readonly lastNotifiedUpdateFingerprint?: string;
 }): StackMetadata {
@@ -78,6 +81,7 @@ export function stackMetadata(args: {
     updatedAt: args.updatedAt ?? new Date().toISOString(),
     ports: args.ports,
     services: args.services,
+    ...(args.cleanupTargets === undefined ? {} : { cleanupTargets: args.cleanupTargets }),
     ...(args.lastNotifiedUpdateFingerprint === undefined
       ? {}
       : { lastNotifiedUpdateFingerprint: args.lastNotifiedUpdateFingerprint }),

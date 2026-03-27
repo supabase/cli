@@ -75,6 +75,10 @@ If a workspace exposes a different script set, use that workspace's `package.jso
 ## Refactoring Policy
 
 None of this code is published as a stable internal platform API, so backward compatibility is not a constraint. Prefer the simplest correct design, including substantial refactors, API reshaping, and deleting obsolete code when it improves the codebase.
+When a cleaner architecture is available, prefer moving responsibilities to the correct owner over layering callbacks, adapters, or transitional state into an existing facade.
+Do not preserve inaccurate, leaky, or compromise-driven internal APIs just to avoid updating call sites in the same change.
+Delete obsolete helpers, shims, and parallel code paths as part of the refactor instead of leaving compatibility scaffolding behind.
+When a refactor changes ownership, interfaces, or lifecycle boundaries, update the relevant tests and docs in the same task.
 
 ## Testing
 
@@ -82,7 +86,7 @@ See `apps/cli/src/commands/login/` as the canonical example.
 
 ### File naming
 
-- `*.test.ts` — unit tests, colocated next to source
+- `*.unit.test.ts` — unit tests, colocated next to source
 - `*.integration.test.ts` — integration tests, colocated next to source
 - `*.e2e.test.ts` — end-to-end tests, colocated next to source
 - `tests/` — shared test helpers (for example `tests/helpers/cli.ts`)

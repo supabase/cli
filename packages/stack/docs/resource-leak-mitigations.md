@@ -22,10 +22,13 @@ The main leak classes we harden against are:
 That path:
 
 - runs `stack.stop()` inside `Effect.uninterruptible`
-- force-removes known Docker containers as a safety net
+- force-removes exact persisted Docker cleanup targets as a safety net
 - retries removal of auto-managed PGDATA directories for a short period
 
 This gives foreground CLI, detached daemon shutdown, and `createStack()` the same cleanup behavior.
+The exact Docker cleanup targets are no longer inferred from the public `StackInfo` shape. They are
+produced during preparation/build, stored as internal runtime metadata, and persisted for daemon
+crash recovery through `StateManager` metadata updates.
 
 ### 2. Foreground signal-aware disposal
 

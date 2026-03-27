@@ -1,11 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
 import { createHmac } from "node:crypto";
-import { Effect, Layer } from "effect";
+import { Effect, Fiber, Layer, Stream } from "effect";
 import { mockChildProcessSpawner } from "../../process-compose/tests/helpers/mocks.ts";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
 import { Stack } from "./Stack.ts";
+import { StackLifecycleCoordinator } from "./StackLifecycleCoordinator.ts";
+import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
+import { StackPreparation } from "./StackPreparation.ts";
 import { StackBuilder } from "./StackBuilder.ts";
 import type { ResolvedStackConfig } from "./StackBuilder.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
@@ -79,10 +82,15 @@ const defaultConfig: ResolvedStackConfig = {
 function setupLayer(config: ResolvedStackConfig = defaultConfig) {
   const resolver = mockBinaryResolver();
   const spawner = mockChildProcessSpawner();
+  const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
+  const coordinatorLayer = StackLifecycleCoordinator.layer(config).pipe(
+    Layer.provide(StackBuilder.layer),
+    Layer.provide(stackPreparationLayer),
+    Layer.provide(StackMetadataPersistence.noop),
+  );
 
   const layer = Stack.layer(config).pipe(
-    Layer.provide(StackBuilder.layer),
-    Layer.provide(resolver.layer),
+    Layer.provide(coordinatorLayer),
     Layer.provide(spawner.layer),
   );
 
@@ -223,7 +231,7 @@ describe("Stack", () => {
       expect(names).toContain("auth");
 
       const postgres = states.find((state) => state.name === "postgres");
-      expect(postgres?.status).toBe("Initializing");
+      expect(postgres?.status).toBe("Pending");
 
       for (const state of states) {
         expect(state.pid).toBeNull();
@@ -232,6 +240,40 @@ describe("Stack", () => {
         expect(state.startedAt).toBeNull();
         expect(state.error).toBeNull();
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("emits Downloading when a service fetches assets before startup", () => {
+    const resolver = mockBinaryResolver({
+      downloadedServices: ["postgres"],
+      downloadDelayMs: 20,
+    });
+    const spawner = mockChildProcessSpawner();
+    const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
+    const coordinatorLayer = StackLifecycleCoordinator.layer(defaultConfig).pipe(
+      Layer.provide(StackBuilder.layer),
+      Layer.provide(stackPreparationLayer),
+      Layer.provide(StackMetadataPersistence.noop),
+    );
+    const layer = Stack.layer(defaultConfig).pipe(
+      Layer.provide(coordinatorLayer),
+      Layer.provide(spawner.layer),
+    );
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      const statesFiber = yield* stack.allStateChanges().pipe(
+        Stream.filter((state) => state.name === "postgres"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild({ startImmediately: true }),
+      );
+
+      const startFiber = yield* stack.start().pipe(Effect.forkChild({ startImmediately: true }));
+      const states = yield* Fiber.join(statesFiber);
+      yield* Fiber.interrupt(startFiber);
+
+      expect(states.map((state) => state.status)).toContain("Downloading");
     }).pipe(Effect.provide(layer));
   });
 

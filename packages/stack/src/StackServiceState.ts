@@ -3,6 +3,7 @@ import type { ServiceState as RawServiceState } from "@supabase/process-compose"
 
 export const StackServiceStatusSchema = Schema.Union([
   Schema.Literal("Pending"),
+  Schema.Literal("Downloading"),
   Schema.Literal("Starting"),
   Schema.Literal("Running"),
   Schema.Literal("Healthy"),

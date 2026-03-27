@@ -18,6 +18,7 @@ import {
   type PrefetchResult,
 } from "./prefetch.ts";
 import { defaultCacheRoot } from "./paths.ts";
+import { StackPreparation } from "./StackPreparation.ts";
 import type { StackConfig } from "./StackBuilder.ts";
 import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
 
@@ -138,8 +139,12 @@ export async function prefetch(options?: PrefetchOptions): Promise<PrefetchResul
   const resolverLayer = BinaryResolver.make(defaultCacheRoot()).pipe(
     Layer.provide(FetchHttpClient.layer),
   );
+  const preparationLayer = StackPreparation.layer.pipe(Layer.provide(resolverLayer));
   return Effect.runPromise(
-    prefetchEffect(options).pipe(Effect.provide(resolverLayer), Effect.provide(NodeServices.layer)),
+    prefetchEffect(options).pipe(
+      Effect.provide(preparationLayer),
+      Effect.provide(NodeServices.layer),
+    ),
   );
 }
 

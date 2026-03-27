@@ -16,6 +16,7 @@ interface ProcessControlShape {
   readonly awaitShutdown: Effect.Effect<void>;
   readonly exit: (code: number) => Effect.Effect<never>;
   readonly setExitCode: (code: number) => Effect.Effect<void>;
+  readonly getExitCode: Effect.Effect<number | undefined>;
 }
 
 /**

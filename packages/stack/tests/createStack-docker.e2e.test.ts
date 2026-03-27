@@ -8,6 +8,7 @@ import { createStack, type StackHandle } from "../src/node.ts";
 import { setupTestTable } from "./helpers/e2e.ts";
 
 const STACK_DOCKER_E2E_TEST_TIMEOUT_MS = 5_000;
+const STACK_DOCKER_E2E_SETUP_TIMEOUT_MS = 90_000;
 
 function hasDockerDaemon(): boolean {
   try {
@@ -37,7 +38,6 @@ dockerDescribe("createStack e2e (docker mode)", () => {
 
     try {
       await stack.start();
-      await stack.ready({ timeout: 30_000 });
     } catch (startError) {
       await stack.dispose().catch(() => {});
       throw startError;
@@ -48,7 +48,7 @@ dockerDescribe("createStack e2e (docker mode)", () => {
 
     apiPort = new URL(stack.url).port;
     supabase = createClient(stack.url, stack.publishableKey);
-  }, 45_000);
+  }, STACK_DOCKER_E2E_SETUP_TIMEOUT_MS);
 
   afterAll(async () => {
     await stack?.dispose();

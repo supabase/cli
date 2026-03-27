@@ -88,7 +88,6 @@ export async function runDaemon(
       secretKey: info.secretKey,
       anonJwt: info.anonJwt,
       serviceRoleJwt: info.serviceRoleJwt,
-      dockerContainerNames: Array.from(info.dockerContainerNames),
       serviceEndpoints: info.serviceEndpoints,
       services: runningServiceVersionsForConfig(config),
     };

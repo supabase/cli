@@ -51,6 +51,7 @@ apps/cli/src/commands/login/
 ├── login.handler.ts
 ├── login.guide.md      ← hand-authored skill template
 ├── login.integration.test.ts
+├── login.unit.test.ts
 └── login.e2e.test.ts
 ```
 

@@ -7,6 +7,7 @@ import { FileSystem, Path } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { cleanupAutoManagedPaths, dockerForceRemove } from "./cleanup.ts";
+import type { CleanupTargets } from "./CleanupTargets.ts";
 import { toStackError } from "./errors.ts";
 import {
   defaultJwtSecret,
@@ -625,20 +626,20 @@ export const projectDaemonLayer = (opts: {
     return yield* daemonLayer(config, opts.daemonEntryPoint);
   });
 
-function dockerContainerNamesFor(config: ResolvedStackConfig): string[] {
-  const names = [`supabase-postgres-${config.apiPort}`];
-  if (config.postgrest !== false) names.push(`supabase-postgrest-${config.apiPort}`);
-  if (config.auth !== false) names.push(`supabase-auth-${config.apiPort}`);
-  if (config.realtime !== false) names.push(`supabase-realtime-${config.apiPort}`);
-  if (config.storage !== false) names.push(`supabase-storage-${config.apiPort}`);
-  if (config.imgproxy !== false) names.push(`supabase-imgproxy-${config.apiPort}`);
-  if (config.mailpit !== false) names.push(`supabase-mailpit-${config.apiPort}`);
-  if (config.pgmeta !== false) names.push(`supabase-pgmeta-${config.apiPort}`);
-  if (config.studio !== false) names.push(`supabase-studio-${config.apiPort}`);
-  if (config.analytics !== false) names.push(`supabase-analytics-${config.apiPort}`);
-  if (config.vector !== false) names.push(`supabase-vector-${config.apiPort}`);
-  if (config.pooler !== false) names.push(`supabase-pooler-${config.apiPort}`);
-  return names;
+function possibleCleanupTargetsForConfig(config: ResolvedStackConfig): CleanupTargets {
+  const dockerContainerNames = [`supabase-postgres-${config.apiPort}`];
+  if (config.postgrest !== false) dockerContainerNames.push(`supabase-postgrest-${config.apiPort}`);
+  if (config.auth !== false) dockerContainerNames.push(`supabase-auth-${config.apiPort}`);
+  if (config.realtime !== false) dockerContainerNames.push(`supabase-realtime-${config.apiPort}`);
+  if (config.storage !== false) dockerContainerNames.push(`supabase-storage-${config.apiPort}`);
+  if (config.imgproxy !== false) dockerContainerNames.push(`supabase-imgproxy-${config.apiPort}`);
+  if (config.mailpit !== false) dockerContainerNames.push(`supabase-mailpit-${config.apiPort}`);
+  if (config.pgmeta !== false) dockerContainerNames.push(`supabase-pgmeta-${config.apiPort}`);
+  if (config.studio !== false) dockerContainerNames.push(`supabase-studio-${config.apiPort}`);
+  if (config.analytics !== false) dockerContainerNames.push(`supabase-analytics-${config.apiPort}`);
+  if (config.vector !== false) dockerContainerNames.push(`supabase-vector-${config.apiPort}`);
+  if (config.pooler !== false) dockerContainerNames.push(`supabase-pooler-${config.apiPort}`);
+  return { dockerContainerNames };
 }
 
 export async function createStack(
@@ -704,7 +705,7 @@ export async function createStack(
     return stack;
   } catch (error: unknown) {
     await runtime.dispose().catch(() => {});
-    dockerForceRemove(dockerContainerNamesFor(resolved));
+    dockerForceRemove(possibleCleanupTargetsForConfig(resolved).dockerContainerNames);
     cleanupAutoManagedPaths(resolved);
     throw toStackError(error);
   }

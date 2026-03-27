@@ -18,5 +18,6 @@ Run this before commands or application flows that depend on local Supabase serv
 ## Tips
 
 - First run may take longer because required binaries and images are downloaded on demand.
+- Use `--mode auto` for the default native-first behavior, `--mode docker` to force Docker-backed startup, and `--mode native` when you explicitly want native-compatible services only.
 - Use `--detach` for background daemon mode and `supabase stop` when you are done.
 - Use repeated `--exclude` flags to skip optional services you do not need.

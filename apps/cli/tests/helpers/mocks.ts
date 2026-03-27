@@ -168,6 +168,7 @@ export function mockProcessControl(
         Effect.sync(() => {
           exitCode = code;
         }),
+      getExitCode: Effect.sync(() => exitCode),
     }),
     get exitCalls() {
       return exitCalls;
@@ -444,7 +445,6 @@ export function mockStack(
     secretKey: "test-secret-key",
     anonJwt: "test-anon-jwt",
     serviceRoleJwt: "test-service-role-jwt",
-    dockerContainerNames: [],
     serviceEndpoints: {},
     ...opts.info,
   };
@@ -720,6 +720,14 @@ export function mockStateManager(
     writeMetadata: (name: string, value: StackMetadata) =>
       Effect.sync(() => {
         metadata.set(name, value);
+      }),
+    updateMetadata: (name: string, update: (value: StackMetadata) => StackMetadata) =>
+      Effect.gen(function* () {
+        const value = metadata.get(name);
+        if (value === undefined) {
+          return yield* Effect.fail(new StackMetadataNotFoundError({ name }));
+        }
+        metadata.set(name, update(value));
       }),
     readMetadata: (name: string) =>
       Effect.gen(function* () {

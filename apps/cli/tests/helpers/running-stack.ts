@@ -62,7 +62,6 @@ const DEFAULT_INFO: StackInfo = {
   secretKey: "test-secret-key",
   anonJwt: "test-anon-jwt",
   serviceRoleJwt: "test-service-role-jwt",
-  dockerContainerNames: [],
   serviceEndpoints: {
     auth: `http://127.0.0.1:${DEFAULT_PORTS.authPort}`,
   },
@@ -288,7 +287,6 @@ export async function makeStackFixture(
       secretKey: info.secretKey,
       anonJwt: info.anonJwt,
       serviceRoleJwt: info.serviceRoleJwt,
-      dockerContainerNames: info.dockerContainerNames,
       serviceEndpoints: info.serviceEndpoints,
       services,
     };

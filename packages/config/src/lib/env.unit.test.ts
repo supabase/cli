@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { Schema } from "effect";
 import { ENV_PATTERN, env } from "./env.ts";
 

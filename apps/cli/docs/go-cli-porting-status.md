@@ -99,7 +99,7 @@ The old Go Management API surface has been replaced by the generated [`platform`
 That means parity is no longer 1:1 at the flag level, but the capability coverage is now broader than the old Go surface:
 
 - every current Management API OpenAPI route is exposed through `supabase platform ...`
-- the metadata test in [`../src/commands/platform/platform-metadata.test.ts`](../src/commands/platform/platform-metadata.test.ts) verifies that every exported SDK/OpenAPI operation is represented exactly once
+- the metadata test in [`../src/commands/platform/platform-metadata.unit.test.ts`](../src/commands/platform/platform-metadata.unit.test.ts) verifies that every exported SDK/OpenAPI operation is represented exactly once
 - because the public UX is intentionally different, these commands are tracked as `partial` rather than `ported`
 
 Common input drift across all Management API mappings:

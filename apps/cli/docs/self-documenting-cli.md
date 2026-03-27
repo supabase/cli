@@ -94,11 +94,11 @@ const loginCommand = Command.make("login", flags).pipe(
 src/lib/
 ├── global-flags.ts            # UsageFlag global flag definition
 ├── usage-formatter.ts         # Command tree → KDL usage spec
-├── usage-formatter.test.ts    # unit tests
+├── usage-formatter.unit.test.ts    # unit tests
 ├── markdown-formatter.ts      # HelpDoc → markdown string (for README generation)
-├── markdown-formatter.test.ts # unit tests
+├── markdown-formatter.unit.test.ts # unit tests
 ├── docs.ts                    # tree-walking, command navigation
-└── docs.test.ts               # unit tests
+└── docs.unit.test.ts          # unit tests
 ```
 
 - `formatAsUsageSpec(command, { version })` — recursively walks command tree, outputs KDL usage spec

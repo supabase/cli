@@ -68,5 +68,9 @@ export const processControlLayer = Layer.sync(ProcessControl, () =>
       Effect.sync(() => {
         process.exitCode = code;
       }),
+    getExitCode: Effect.sync(() => {
+      const exitCode = process.exitCode;
+      return typeof exitCode === "number" ? exitCode : undefined;
+    }),
   }),
 );

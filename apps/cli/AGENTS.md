@@ -44,8 +44,8 @@ Read https://www.effect.solutions/testing for Effect testing patterns. Note that
 
 ### Test categories
 
-- `*.test.ts` belongs to the `core` Vitest project and is the default for unit-style and other fast in-process tests.
-- `*.integration.test.ts` also belongs to the `core` project and is for in-process integration tests that exercise real handler or service behavior with layered dependency replacement.
+- `*.unit.test.ts` belongs to the `unit` Vitest project and is the default for unit-style and other fast in-process tests.
+- `*.integration.test.ts` belongs to the `integration` project and is for in-process integration tests that exercise real handler or service behavior with layered dependency replacement.
 - `*.e2e.test.ts` belongs to the `e2e` Vitest project and is for black-box CLI subprocess tests.
 
 ### Testing policy
@@ -53,7 +53,7 @@ Read https://www.effect.solutions/testing for Effect testing patterns. Note that
 - Prefer integration tests over unit tests for command behavior.
 - New command behavior should usually be covered in `*.integration.test.ts` first.
 - Prefer the highest-level in-process test that exercises the real behavior with stable, local feedback.
-- Use `*.test.ts` for pure logic, parsing, formatting, small state machines, and narrow edge cases that are awkward or noisy to cover through handlers.
+- Use `*.unit.test.ts` for pure logic, parsing, formatting, small state machines, and narrow edge cases that are awkward or noisy to cover through handlers.
 - Unit-style tests should prefer real collaborators and avoid mocking by default.
 - Small fakes are acceptable only at true boundaries such as filesystem, env, clock, TTY, process, browser, or network.
 - If a test needs multiple service replacements or `Layer.mergeAll(...)`, it likely belongs in `*.integration.test.ts`.

@@ -31,3 +31,35 @@ jobs:
 
       - name: Check code quality
         run: bun run check
+
+  test-core:
+    if: github.event.pull_request.draft == false
+    name: Run unit and integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Run unit and integration tests
+        run: bun run test:core
+
+  test-e2e:
+    if: github.event.pull_request.draft == false
+    name: Run end-to-end tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Warm stack Docker images
+        run: bun run --cwd packages/stack test:e2e:warmup
+
+      # TODO: Shard e2e tests across multiple machines: https://github.com/vitest-tests/test-sharding/blob/90ef5183fd30f7e4aa745adfaa750e071f86a6a0/.github/workflows/ci.yml
+      - name: Run end-to-end tests
+        run: bun run test:e2e

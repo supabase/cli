@@ -23,6 +23,8 @@ import {
 import {
   excludedStackServices,
   type ExcludedStackService,
+  startModes,
+  type StartMode,
   toStartStackConfig,
   withServiceVersions,
 } from "../../config/stack-config.ts";
@@ -49,6 +51,13 @@ export const serviceVersionFlag = Flag.string("service-version").pipe(
   Flag.withDefault([] as ReadonlyArray<string>),
 );
 
+const modeFlag = Flag.choice("mode", startModes).pipe(
+  Flag.withDescription(
+    'Stack startup mode. "auto" prefers native binaries and falls back to Docker, "native" requires native-compatible services, and "docker" forces Docker for all services.',
+  ),
+  Flag.withDefault("auto" as StartMode),
+);
+
 interface StartVersionStateShape {
   readonly metadata: StackMetadata;
   readonly serviceVersionContext: ResolvedServiceVersionContext;
@@ -64,6 +73,7 @@ const flags = {
     Flag.withDescription("Name of the managed local stack for this project."),
     Flag.withDefault(DEFAULT_MANAGED_STACK_NAME),
   ),
+  mode: modeFlag,
   exclude: excludeFlag,
   serviceVersion: serviceVersionFlag,
   detach: Flag.boolean("detach").pipe(
@@ -77,7 +87,7 @@ export type StartFlags = CliCommand.Command.Config.Infer<typeof flags>;
 export const startCommand = Command.make("start", flags).pipe(
   Command.withDescription(
     "Start the local Supabase development stack.\n\n" +
-      "Starts the full local Supabase stack. Core services prefer native binaries when available and fall back to Docker; legacy services run in Docker for now.\n\n" +
+      "Starts the full local Supabase stack. Use --mode auto (default) to prefer native binaries and fall back to Docker, --mode native to require native-compatible services, or --mode docker to force Docker-backed startup.\n\n" +
       "Named CLI stacks persist their service data under .supabase/stacks/<name>/data in the project root. Use --exclude to skip optional services. Use --detach to run in the background.",
   ),
   Command.withShortDescription("Start local Supabase stack"),
@@ -89,6 +99,10 @@ export const startCommand = Command.make("start", flags).pipe(
     {
       command: "supabase start --detach",
       description: "Start the stack in the background and return to the shell",
+    },
+    {
+      command: "supabase start --mode docker",
+      description: "Force the local stack to start in Docker mode",
     },
     {
       command: "supabase start --exclude studio --exclude analytics",
@@ -129,7 +143,7 @@ export const startCommand = Command.make("start", flags).pipe(
         }),
       );
       const stackConfig = withServiceVersions(
-        toStartStackConfig(flags.exclude),
+        toStartStackConfig(flags.exclude, flags.mode),
         serviceVersionContext.runtimeVersions,
       );
       const resolvedConfig = yield* Effect.promise(() =>

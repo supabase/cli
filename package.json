@@ -3,6 +3,8 @@
   "private": true,
   "scripts": {
     "check": "pnpm -r --parallel run \"/.*:check/\"",
+    "test:core": "pnpm -r --parallel run test:core",
+    "test:e2e": "pnpm -r --parallel run test:e2e",
     "repos:install": "git submodule update --init --recursive",
     "repos:pull": "git submodule update --remote"
   },

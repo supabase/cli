@@ -18,6 +18,7 @@ export class ChecksumMismatchError extends Data.TaggedError("ChecksumMismatchErr
 
 export class DockerPullError extends Data.TaggedError("DockerPullError")<{
   readonly image: string;
+  readonly detail: string;
   readonly cause: unknown;
 }> {}
 

@@ -40,7 +40,6 @@ function makeState(overrides: Partial<StackState> = {}): StackState {
     secretKey: "sk_test",
     anonJwt: "anon_jwt",
     serviceRoleJwt: "service_role_jwt",
-    dockerContainerNames: ["supabase-postgres-54321"],
     serviceEndpoints: {},
     services: {
       postgres: "17.6.1.081",

@@ -13,7 +13,11 @@
   },
   "scripts": {
     "generate": "bun run scripts/generate.ts",
-    "test": "bun test --concurrent",
+    "test": "bun --bun vitest run",
+    "test:unit": "bun --bun vitest run --project unit",
+    "test:integration": "bun --bun vitest run --project integration",
+    "test:core": "bun --bun vitest run --project unit --project integration",
+    "test:e2e": "bun --bun vitest run --project e2e",
     "types:check": "tsgo --noEmit",
     "lint:check": "oxlint --type-aware --deny-warnings",
     "lint:fix": "oxlint --type-aware --deny-warnings --fix",
@@ -35,7 +39,8 @@
     "knip": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
-    "oxlint-tsgolint": "catalog:"
+    "oxlint-tsgolint": "catalog:",
+    "vitest": "catalog:"
   },
   "knip": {
     "entry": [

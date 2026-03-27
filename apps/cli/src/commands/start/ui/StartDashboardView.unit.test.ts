@@ -68,7 +68,6 @@ describe("StartDashboardView", () => {
         secretKey: "sk",
         anonJwt: "anon",
         serviceRoleJwt: "service-role",
-        dockerContainerNames: [],
         serviceEndpoints: {},
       },
       showConnectionInfo: false,

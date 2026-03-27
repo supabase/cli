@@ -15,7 +15,9 @@
   "scripts": {
     "build": "bun build src/cli/bin.ts --outfile dist/supabase.js --target node && bun build src/cli/proxy.ts --outfile dist/bin.js --target node",
     "test": "bun run test:core && bun run test:e2e",
-    "test:core": "bun --bun vitest run --project core --coverage.enabled",
+    "test:unit": "bun --bun vitest run --project unit",
+    "test:integration": "bun --bun vitest run --project integration",
+    "test:core": "bun --bun vitest run --project unit --project integration --coverage.enabled",
     "test:e2e": "bun --bun vitest run --project e2e",
     "test:smoke": "bun run tests/smoke-test.ts",
     "types:check": "tsgo --noEmit",

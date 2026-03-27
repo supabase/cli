@@ -15,8 +15,20 @@ import {
   mockStack,
 } from "../../../tests/helpers/mocks.ts";
 
-const foregroundFlags = { stack: "default", exclude: [], serviceVersion: [], detach: false };
-const backgroundFlags = { stack: "default", exclude: [], serviceVersion: [], detach: true };
+const foregroundFlags = {
+  stack: "default",
+  mode: "auto" as const,
+  exclude: [],
+  serviceVersion: [],
+  detach: false,
+};
+const backgroundFlags = {
+  stack: "default",
+  mode: "auto" as const,
+  exclude: [],
+  serviceVersion: [],
+  detach: true,
+};
 
 function mockStartVersionState(
   opts: {
@@ -198,6 +210,30 @@ describe("start", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("accepts explicit docker mode for detached start", () => {
+    const { layer, stack } = setupNonInteractive();
+    return Effect.gen(function* () {
+      yield* start({
+        ...backgroundFlags,
+        mode: "docker",
+      });
+
+      expect(stack.started).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("accepts explicit native mode for detached start", () => {
+    const { layer, stack } = setupNonInteractive();
+    return Effect.gen(function* () {
+      yield* start({
+        ...backgroundFlags,
+        mode: "native",
+      });
+
+      expect(stack.started).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("runs foreground mode with Ink and disposes the stack on exit", () => {
     const { layer, stack, ink } = setupInteractive({ startPending: true, manualExit: true });
     return Effect.gen(function* () {
@@ -234,6 +270,26 @@ describe("start", () => {
       expect(ink.rendered).toBe(false);
       expect(stack.started).toBe(true);
       expect(stack.stopped).toBe(true);
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({ type: "info", message: "postgres: Healthy" }),
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("shows Downloading updates before services become healthy", () => {
+    const { layer, out } = setupNonInteractive({
+      stateChanges: [
+        { name: "postgres", status: "Downloading" },
+        { name: "postgres", status: "Healthy" },
+      ],
+    });
+
+    return Effect.gen(function* () {
+      yield* start(foregroundFlags);
+
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({ type: "info", message: "postgres: Downloading" }),
+      );
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "info", message: "postgres: Healthy" }),
       );

@@ -1,9 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { BunServices } from "@effect/platform-bun";
 import { mkdtempSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { ProjectConfigSchema } from "./base.ts";
 import { loadProjectConfig as loadProjectConfigFromBun } from "./bun.ts";
@@ -26,8 +27,8 @@ function makeTempProject(): string {
 }
 
 const legacyFixturePath = join(
-  import.meta.dir,
-  "../../../.repos/supabase-cli-go/pkg/config/testdata/config.toml",
+  dirname(fileURLToPath(import.meta.url)),
+  "../testdata/legacy-config.toml",
 );
 
 const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);

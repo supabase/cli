@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_VERSIONS,
   diffPinnedAndAvailableVersions,
+  dockerImageCandidatesForService,
   dockerImageForService,
   fillServiceVersionManifest,
   normalizeServiceVersion,
@@ -42,6 +43,20 @@ describe("dockerImageForService", () => {
     expect(dockerImageForService("auth", DEFAULT_VERSIONS.auth)).toBe(
       `public.ecr.aws/supabase/gotrue:v${DEFAULT_VERSIONS.auth}`,
     );
+  });
+
+  it("returns ECR, Docker Hub, and GHCR candidates for Supabase-owned images", () => {
+    expect(dockerImageCandidatesForService("auth", DEFAULT_VERSIONS.auth)).toEqual([
+      `public.ecr.aws/supabase/gotrue:v${DEFAULT_VERSIONS.auth}`,
+      `supabase/gotrue:v${DEFAULT_VERSIONS.auth}`,
+      `ghcr.io/supabase/gotrue:v${DEFAULT_VERSIONS.auth}`,
+    ]);
+  });
+
+  it("does not add fallback registries for third-party images", () => {
+    expect(dockerImageCandidatesForService("imgproxy", DEFAULT_VERSIONS.imgproxy)).toEqual([
+      `darthsim/imgproxy:${DEFAULT_VERSIONS.imgproxy}`,
+    ]);
   });
 });
 

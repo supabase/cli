@@ -12,6 +12,11 @@
   },
   "scripts": {
     "test": "bun --bun vitest run",
+    "test:unit": "bun --bun vitest run --project unit",
+    "test:integration": "bun --bun vitest run --project integration",
+    "test:core": "bun --bun vitest run --project unit --project integration",
+    "test:e2e:warmup": "bun run tests/warmup-e2e.ts",
+    "test:e2e": "bun --bun vitest run --project e2e",
     "types:check": "tsgo --noEmit",
     "lint:check": "oxlint --deny-warnings",
     "lint:fix": "oxlint --deny-warnings --fix",

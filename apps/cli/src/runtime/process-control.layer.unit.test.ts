@@ -18,4 +18,16 @@ describe("ProcessControl", () => {
       expect(signal).toBe("SIGINT");
     }).pipe(Effect.provide(processControlLayer)),
   );
+
+  it.effect("getExitCode returns the value previously set via setExitCode", () =>
+    Effect.gen(function* () {
+      const processControl = yield* ProcessControl;
+      const initialExitCode = yield* processControl.getExitCode;
+      expect(initialExitCode).toBe(process.exitCode);
+
+      yield* processControl.setExitCode(23);
+      const updatedExitCode = yield* processControl.getExitCode;
+      expect(updatedExitCode).toBe(23);
+    }).pipe(Effect.provide(processControlLayer)),
+  );
 });

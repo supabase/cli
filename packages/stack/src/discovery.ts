@@ -1,5 +1,6 @@
 import { Data, Duration, Effect } from "effect";
 import { FileSystem, Path } from "effect";
+import { dockerForceRemove } from "./cleanup.ts";
 import { defaultManagedStackName } from "./createStack.ts";
 import {
   InvalidStackMetadataError,
@@ -178,6 +179,14 @@ export const stopDaemon = (opts: {
       ),
     );
     if (!alive) {
+      yield* stateManager.readMetadata(state.name).pipe(
+        Effect.tap((metadata) =>
+          Effect.sync(() => {
+            dockerForceRemove(metadata.cleanupTargets?.dockerContainerNames ?? []);
+          }),
+        ),
+        Effect.ignore,
+      );
       return;
     }
 

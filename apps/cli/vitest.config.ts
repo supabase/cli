@@ -2,6 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    passWithNoTests: true,
     coverage: {
       enabled: false,
       provider: "istanbul",
@@ -11,7 +12,8 @@ export default defineConfig({
       exclude: [
         "tests/**",
         "scripts/**",
-        "**/*.test.ts",
+        "**/*.unit.test.ts",
+        "**/*.integration.test.ts",
         "**/*.e2e.test.ts",
         "**/*.command.ts",
         "src/app.ts",
@@ -23,15 +25,20 @@ export default defineConfig({
     projects: [
       {
         test: {
-          name: "core",
-          include: ["src/**/*.test.ts"],
-          exclude: ["src/**/*.e2e.test.ts"],
+          name: "unit",
+          include: ["**/*.unit.test.ts"],
+        },
+      },
+      {
+        test: {
+          name: "integration",
+          include: ["**/*.integration.test.ts"],
         },
       },
       {
         test: {
           name: "e2e",
-          include: ["src/**/*.e2e.test.ts"],
+          include: ["**/*.e2e.test.ts"],
           fileParallelism: false,
           maxWorkers: 1,
           globalSetup: ["tests/e2e-global-setup.ts"],

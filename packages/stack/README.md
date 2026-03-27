@@ -1,11 +1,12 @@
-# @supabase/local
+# @supabase/stack
 
-Programmatic local Supabase stack for TypeScript. Spin up Postgres, Auth, and PostgREST from your code with a single function call.
+Programmatic local Supabase stack for TypeScript. Create a local Supabase runtime from code, then control lifecycle, status, and logs through a small async handle.
 
 ## Features
 
-- **Single entry point** -- `createStack()` downloads binaries, wires services, and starts everything
-- **Native binaries with Docker fallback** -- uses native Postgres and Auth binaries when available, falls back to Docker images automatically
+- **Single entry point** -- `createStack()` resolves config and returns a handle; `start()` prepares assets, starts services, and waits for readiness
+- **Preparation-aware startup** -- cold-cache startup can surface `Downloading` before normal runtime states like `Starting`, `Initializing`, and `Healthy`
+- **Native binaries with Docker fallback** -- uses native services when available and falls back to Docker images automatically
 - **Automatic port allocation** -- all ports are optional and auto-assigned to avoid conflicts
 - **API proxy with opaque keys** -- SDKs use `publishableKey`/`secretKey` (like production), translated to JWTs internally
 - **`AsyncDisposable` support** -- use `await using` for automatic cleanup
@@ -15,13 +16,13 @@ Programmatic local Supabase stack for TypeScript. Spin up Postgres, Auth, and Po
 ## Installation
 
 ```sh
-bun add @supabase/local
+bun add @supabase/stack
 ```
 
 ## Quick Start
 
 ```typescript
-import { createStack } from "@supabase/local";
+import { createStack } from "@supabase/stack";
 
 // Zero config — all settings have sensible defaults
 const stack = await createStack();
@@ -35,7 +36,7 @@ await stack.dispose();
 ### With explicit config
 
 ```typescript
-import { createStack } from "@supabase/local";
+import { createStack } from "@supabase/stack";
 import { createClient } from "@supabase/supabase-js";
 
 const stack = await createStack({
@@ -70,17 +71,17 @@ await stack.dispose();
 
 ## Configuration
 
-`createStack` accepts a config object with shared settings at the top level and per-service settings nested under `postgres`, `postgrest`, and `auth`.
+`createStack` accepts a config object with shared settings at the top level and per-service settings nested under Supabase services such as `postgres`, `postgrest`, `auth`, `realtime`, `storage`, `studio`, and more.
 
 ### Top-level settings
 
-| Field            | Type                 | Required | Default  | Description                                                                                                                  |
-| ---------------- | -------------------- | -------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `mode`           | `"auto" \| "docker"` | No       | `"auto"` | Resolution mode. `"auto"` tries native binaries first, falls back to Docker. `"docker"` uses Docker images for all services. |
-| `jwtSecret`      | `string`             | No       |          | Secret for JWT signing (min 32 characters). Defaults to a well-known dev secret                                              |
-| `port`           | `number`             | No       |          | API proxy port (auto-allocated if omitted)                                                                                   |
-| `publishableKey` | `string`             | No       |          | Custom opaque publishable key                                                                                                |
-| `secretKey`      | `string`             | No       |          | Custom opaque secret key                                                                                                     |
+| Field            | Type                             | Required | Default  | Description                                                                                                                                                     |
+| ---------------- | -------------------------------- | -------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode`           | `"native" \| "auto" \| "docker"` | No       | `"auto"` | Resolution mode. `"native"` requires native binaries, `"auto"` tries native first and falls back to Docker, and `"docker"` uses Docker images for all services. |
+| `jwtSecret`      | `string`                         | No       |          | Secret for JWT signing (min 32 characters). Defaults to a well-known dev secret                                                                                 |
+| `port`           | `number`                         | No       |          | API proxy port (auto-allocated if omitted)                                                                                                                      |
+| `publishableKey` | `string`                         | No       |          | Custom opaque publishable key                                                                                                                                   |
+| `secretKey`      | `string`                         | No       |          | Custom opaque secret key                                                                                                                                        |
 
 ### `postgres`
 
@@ -90,7 +91,7 @@ Optional. When omitted, uses all defaults (ephemeral temp data directory, auto-a
 | --------- | -------- | -------- | ------------------------------------------------------------------------------------------- |
 | `dataDir` | `string` | No       | Directory for Postgres data (PGDATA). Ephemeral temp dir if omitted (cleaned up on dispose) |
 | `port`    | `number` | No       | Postgres port (auto-allocated if omitted)                                                   |
-| `version` | `string` | No       | Postgres version (default: `17.6.1.081-cli`)                                                |
+| `version` | `string` | No       | Postgres version (default: `17.6.1.081`)                                                    |
 
 ### `postgrest`
 
@@ -113,7 +114,7 @@ Optional. Omit to include with defaults, set to `false` to exclude.
 | `siteUrl`     | `string` | `http://localhost:3000`    | Auth redirect URL (your app's URL) |
 | `jwtExpiry`   | `number` | `3600`                     | JWT expiry in seconds              |
 | `externalUrl` | `string` | `http://127.0.0.1:${port}` | Auth external URL                  |
-| `version`     | `string` | `2.187.0`                  | Auth version                       |
+| `version`     | `string` | `2.188.0-rc.15`            | Auth version                       |
 
 ### Full config example
 
@@ -121,7 +122,7 @@ Optional. Omit to include with defaults, set to `false` to exclude.
 const stack = await createStack({
   jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
   port: 54321,
-  postgres: { port: 54322, dataDir: "/tmp/data", version: "17.6.1.081-cli" },
+  postgres: { port: 54322, dataDir: "/tmp/data", version: "17.6.1.081" },
   postgrest: { schemas: ["public", "custom"], maxRows: 500, version: "14.5" },
   auth: { port: 9999, siteUrl: "http://myapp.dev:3000", jwtExpiry: 7200 },
 });
@@ -159,7 +160,7 @@ Docker mode requires Docker to be installed and running.
 ### Lifecycle
 
 ```typescript
-await stack.start(); // Start all services, block until ready
+await stack.start(); // Prepare assets, start all services, block until ready
 await stack.stop(); // Graceful dependency-ordered shutdown
 await stack.dispose(); // stop() + release runtime resources
 ```
@@ -167,6 +168,10 @@ await stack.dispose(); // stop() + release runtime resources
 `dispose()` is also called automatically by `[Symbol.asyncDispose]` when using `await using`.
 
 Calling `stop()` or `dispose()` multiple times is safe -- all operations are idempotent.
+
+On a cold cache, `start()` may spend time downloading binaries or pulling Docker images before any
+service process exists. During that phase, `getStatus()` / `statusChanges()` can surface
+`Downloading` for the affected public services.
 
 ### Per-Service Lifecycle
 
@@ -176,7 +181,8 @@ await stack.startService("auth"); // Restart it (blocks until ready)
 await stack.restartService("auth"); // Stop + start in one call
 ```
 
-Service names: `"postgres"`, `"postgrest"`, `"auth"`.
+Common service names include `"postgres"`, `"postgrest"`, `"auth"`, `"realtime"`, `"storage"`,
+`"imgproxy"`, `"mailpit"`, `"pgmeta"`, `"studio"`, `"analytics"`, `"vector"`, and `"pooler"`.
 
 Internal helper processes are projected away from the public stack API. For example, `postgres-init`
 is treated as an implementation detail of `postgres`, so callers only see the public `postgres`
@@ -206,7 +212,7 @@ for await (const state of stack.statusChanges()) {
 ```
 
 `StackServiceState` includes the public service `name`, projected `status` (for example
-`"Healthy"` or `"Initializing"`), process metadata, and any surfaced error.
+`"Downloading"`, `"Healthy"`, or `"Initializing"`), process metadata, and any surfaced error.
 
 ### Logs
 
@@ -230,7 +236,7 @@ const history = await stack.logHistory("auth", 100);
 The package uses export conditions so Bun and Node.js consumers import from the same root:
 
 ```typescript
-import { createStack } from "@supabase/local";
+import { createStack } from "@supabase/stack";
 ```
 
 The runtime selects the Bun or Node.js implementation automatically. Both expose the same `createStack(config): Promise<Stack>` API.
@@ -241,7 +247,7 @@ Pre-download binaries and Docker images before they're needed — useful in test
 
 ```typescript
 // vitest.config.ts globalSetup
-import { prefetch } from "@supabase/local";
+import { prefetch } from "@supabase/stack";
 
 export async function setup() {
   await prefetch();
@@ -259,11 +265,11 @@ await prefetch({ versions: { postgres: "17.4.1.045" } });
 
 Default versions are used when no `version` field is specified per service:
 
-| Service   | Default Version  |
-| --------- | ---------------- |
-| Postgres  | `17.6.1.081-cli` |
-| PostgREST | `14.5`           |
-| Auth      | `2.187.0`        |
+| Service   | Default Version |
+| --------- | --------------- |
+| Postgres  | `17.6.1.081`    |
+| PostgREST | `14.5`          |
+| Auth      | `2.188.0-rc.15` |
 
 Override versions per service:
 
@@ -281,7 +287,7 @@ const stack = await createStack({
 All `Stack` methods throw `StackError` on failure, a standard `Error` subclass with a `code` field:
 
 ```typescript
-import { StackError } from "@supabase/local";
+import { StackError } from "@supabase/stack";
 
 try {
   await stack.startService("nonexistent");
@@ -309,7 +315,7 @@ try {
 
 ```typescript
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { createStack } from "@supabase/local";
+import { createStack } from "@supabase/stack";
 import { createClient } from "@supabase/supabase-js";
 
 describe("my app", () => {
@@ -363,4 +369,8 @@ const stack = await createStack({
 
 ## Architecture
 
-For a detailed look at internals (binary resolution, service graph, API proxy routing, process lifecycle), see [docs/architecture.md](./docs/architecture.md).
+For a detailed look at internals, see:
+
+- [docs/architecture.md](./docs/architecture.md)
+- [docs/detach-mode.md](./docs/detach-mode.md)
+- [docs/resource-leak-mitigations.md](./docs/resource-leak-mitigations.md)

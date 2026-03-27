@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { Duration, Effect } from "effect";
+import type { CleanupTargets } from "./CleanupTargets.ts";
 import type { ResolvedStackConfig } from "./StackBuilder.ts";
-import type { StackInfo, StackService } from "./Stack.ts";
 
 /**
  * Force-remove Docker containers by name. Best-effort safety net —
@@ -63,8 +63,8 @@ const cleanupAutoManagedPathsWithRetry = (config: ResolvedStackConfig): Effect.E
   });
 
 export const cleanupLocalStackResources = (opts: {
-  readonly stack: Pick<StackService, "stop">;
-  readonly info: StackInfo;
+  readonly stop: () => Effect.Effect<void>;
+  readonly cleanupTargets: CleanupTargets;
   readonly config: ResolvedStackConfig;
 }): Effect.Effect<void> =>
   Effect.gen(function* () {
@@ -72,13 +72,13 @@ export const cleanupLocalStackResources = (opts: {
     // exited or the scope is partially closed. Make the stop path
     // uninterruptible so SIGTERM-driven scope closure does not abandon it
     // mid-shutdown and leak child processes.
-    yield* Effect.uninterruptible(opts.stack.stop()).pipe(Effect.catch(() => Effect.void));
+    yield* Effect.uninterruptible(opts.stop()).pipe(Effect.catch(() => Effect.void));
 
     // Safety net: force-remove any Docker containers that survived
     // signal-based shutdown. On macOS, killing the `docker run` client
     // may not stop the container.
     yield* Effect.sync(() => {
-      dockerForceRemove(opts.info.dockerContainerNames);
+      dockerForceRemove(opts.cleanupTargets.dockerContainerNames);
     });
     yield* cleanupAutoManagedPathsWithRetry(opts.config);
   });

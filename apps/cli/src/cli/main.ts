@@ -151,7 +151,8 @@ const handledProgram = (
       }
       return yield* processControl.exit(interrupted ? 130 : 1);
     }
-    return yield* processControl.exit(0);
+    const exitCode = yield* processControl.getExitCode;
+    return yield* processControl.exit(exitCode ?? 0);
   }).pipe(
     Effect.provide(outputLayerFor(outputFormatFor(args))),
     Effect.provide(processControlLayer),

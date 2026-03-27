@@ -12,7 +12,10 @@ import { Stack, type StackInfo } from "./Stack.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 import { unixHttpClientLayer } from "./bun.ts";
 
-const IDLE_TIMEOUT_WINDOW = Duration.seconds(11);
+const REFERENCE_IDLE_TIMEOUT_SECONDS = 1;
+// Keep the idle gap just past a short reference timeout so the suite stays fast.
+const IDLE_TIMEOUT_WINDOW = Duration.millis(REFERENCE_IDLE_TIMEOUT_SECONDS * 1_000 + 100);
+const MAX_EXPECTED_RUNTIME_MS = 3_000;
 
 const MOCK_INFO: StackInfo = {
   url: "http://127.0.0.1:54321",
@@ -21,7 +24,6 @@ const MOCK_INFO: StackInfo = {
   secretKey: "sk_test",
   anonJwt: "anon_jwt",
   serviceRoleJwt: "service_role_jwt",
-  dockerContainerNames: ["supabase-postgres-54321"],
   serviceEndpoints: {},
 };
 
@@ -99,9 +101,10 @@ function buildUnixDaemonLayer(
 
 describe("Unix socket SSE integration", () => {
   test(
-    "daemon keeps idle logs SSE open past Bun's default timeout",
-    { timeout: 20_000 },
+    "daemon keeps idle logs SSE open with Bun idle timeouts disabled",
+    { timeout: 5_000 },
     async () => {
+      const startedAt = Date.now();
       const { dir, socketPath } = makeSocketFixture();
       const delayedLogs = () =>
         Stream.fromEffect(Effect.delay(Effect.succeed(DELAYED_LOG), IDLE_TIMEOUT_WINDOW));
@@ -126,6 +129,7 @@ describe("Unix socket SSE integration", () => {
         const text = await res.text();
         expect(text).toContain("event: log");
         expect(text).toContain(DELAYED_LOG.line);
+        expect(Date.now() - startedAt).toBeLessThan(MAX_EXPECTED_RUNTIME_MS);
       } finally {
         await runtime.dispose();
         rmSync(dir, { force: true, recursive: true });
@@ -134,9 +138,10 @@ describe("Unix socket SSE integration", () => {
   );
 
   test(
-    "RemoteStack receives delayed logs over a Unix socket after an idle period",
-    { timeout: 20_000 },
+    "RemoteStack receives delayed logs over a Unix socket with Bun idle timeouts disabled",
+    { timeout: 5_000 },
     async () => {
+      const startedAt = Date.now();
       const { dir, socketPath } = makeSocketFixture();
       const delayedLogs = () =>
         Stream.fromEffect(Effect.delay(Effect.succeed(DELAYED_LOG), IDLE_TIMEOUT_WINDOW));
@@ -164,6 +169,7 @@ describe("Unix socket SSE integration", () => {
 
         expect(entries).toHaveLength(1);
         expect(entries[0]).toEqual(DELAYED_LOG);
+        expect(Date.now() - startedAt).toBeLessThan(MAX_EXPECTED_RUNTIME_MS);
       } finally {
         await clientRuntime.dispose();
         await serverRuntime.dispose();

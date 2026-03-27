@@ -240,9 +240,10 @@ function DataComponent() {
 1. **Effect side** creates a session-scoped dashboard model and a manual `AtomRegistry`
 2. **Effect side** snapshots `stack.getInfo()` / `stack.getAllStates()` into writable atoms
 3. **Effect side** forks a supervised child fiber that pipes `stack.allStateChanges()` into the registry
+   Before the orchestrator exists, that stream can already emit synthetic `Downloading` states from stack preparation.
 4. **ink side** renders `RegistryContext.Provider` with the shared registry
 5. **React components** use `useAtomValue()` to subscribe and render only
-6. **Effect side** controls lifecycle: render → `stack.start()` → wait for exit → stop stack → dispose registry
+6. **Effect side** controls lifecycle: render → `stack.start()` (`prepare -> start`) → wait for exit → stop stack → dispose registry
 
 ### Atoms for the Start Command
 

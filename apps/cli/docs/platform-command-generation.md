@@ -231,9 +231,9 @@ In most cases, no CLI command file needs to be created manually. A new SDK opera
 
 The current platform coverage is split across a few focused tests:
 
-- `platform-metadata.test.ts`
+- `platform-metadata.unit.test.ts`
   Ensures every SDK operation maps to exactly one command path, checks normalization, and verifies body kinds
-- `platform-input.test.ts`
+- `platform-input.unit.test.ts`
   Covers request merging, prompting, and request-body parsing behavior
 - `projects-create.integration.test.ts`
   Covers a representative JSON-object command flow

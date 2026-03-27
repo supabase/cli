@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { ConfigProvider, Effect, Option } from "effect";
 
 import { apiConfigLayer, DEFAULT_SUPABASE_API_URL } from "./api-config.layer.ts";
