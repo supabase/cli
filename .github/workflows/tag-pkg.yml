@@ -1,0 +1,27 @@
+name: Tag pkg
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "pkg version to tag (e.g. v1.2.2)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    name: Create pkg tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - name: Create and push pkg tag
+        run: |
+          git tag "pkg/${{ inputs.version }}"
+          git push origin "pkg/${{ inputs.version }}"
