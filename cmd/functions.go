@@ -53,7 +53,7 @@ var (
 				useDocker = false
 			}
 			slug := ""
-			if len(args) > 0 {
+			if len(args) > 0 && !downloadAll {
 				slug = args[0]
 			}
 			return download.Run(cmd.Context(), slug, flags.ProjectRef, useLegacyBundle, useDocker, afero.NewOsFs())
