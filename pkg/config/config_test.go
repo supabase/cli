@@ -74,6 +74,37 @@ func TestConfigParsing(t *testing.T) {
 		// Run test
 		assert.Error(t, config.Load("", fsys))
 	})
+
+	t.Run("parses experimental pgdelta config", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[experimental.pgdelta]
+enabled = true
+declarative_schema_path = "./db/decl"
+format_options = "{\"keywordCase\":\"upper\",\"indent\":2}"
+`)},
+		}
+
+		require.NoError(t, config.Load("", fsys))
+		require.NotNil(t, config.Experimental.PgDelta)
+		assert.True(t, config.Experimental.PgDelta.Enabled)
+		assert.Equal(t, path.Join("supabase", "db", "decl"), config.Experimental.PgDelta.DeclarativeSchemaPath)
+		assert.Equal(t, `{"keywordCase":"upper","indent":2}`, config.Experimental.PgDelta.FormatOptions)
+	})
+
+	t.Run("rejects invalid experimental pgdelta format options", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[experimental.pgdelta]
+format_options = "not-json"
+`)},
+		}
+
+		err := config.Load("", fsys)
+		assert.ErrorContains(t, err, "experimental.pgdelta.format_options")
+	})
 }
 
 func TestRemoteOverride(t *testing.T) {

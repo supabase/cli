@@ -82,6 +82,7 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 
 	fmt.Fprintf(os.Stderr, "Started %s local development setup.\n\n", utils.Aqua("supabase"))
 	status.PrettyPrint(os.Stdout, excludedContainers...)
+	printSecurityNotice()
 	return nil
 }
 
@@ -391,9 +392,11 @@ EOF
 			container.Config{
 				Image: utils.Config.Analytics.VectorImage,
 				Env:   env,
-				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml && vector --config /etc/vector/vector.yaml
+				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml
 ` + vectorConfigBuf.String() + `
 EOF
+until wget --no-verbose --tries=1 --spider http://` + utils.LogflareId + `:4000/health 2>/dev/null; do sleep 2; done
+vector --config /etc/vector/vector.yaml
 `},
 				Healthcheck: &container.HealthConfig{
 					Test: []string{
@@ -1352,4 +1355,12 @@ func formatMapForEnvConfig(input map[string]string, output *bytes.Buffer) {
 			output.WriteString(",")
 		}
 	}
+}
+
+func printSecurityNotice() {
+	fmt.Fprintln(os.Stderr, utils.Yellow("Local dev security notice"))
+	fmt.Fprintln(os.Stderr, "All services bind to 0.0.0.0 (network-accessible, not just localhost)")
+	fmt.Fprintln(os.Stderr, "API keys and JWT secrets are shared defaults. Do not use in production")
+	fmt.Fprintln(os.Stderr, "Studio, pgMeta (/pg/*), and analytics have no authentication")
+	fmt.Fprintln(os.Stderr)
 }

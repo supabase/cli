@@ -33,7 +33,7 @@ func TestPullCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), nil, pgconn.Config{}, "", fsys)
+		err := Run(context.Background(), nil, pgconn.Config{}, "", false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -48,7 +48,7 @@ func TestPullCommand(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			ReplyError(pgerrcode.InvalidCatalogName, `database "postgres" does not exist`)
 		// Run test
-		err := Run(context.Background(), nil, dbConfig, "", fsys, conn.Intercept)
+		err := Run(context.Background(), nil, dbConfig, "", false, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: database "postgres" does not exist (SQLSTATE 3D000)`)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
