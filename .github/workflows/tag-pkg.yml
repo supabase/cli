@@ -24,7 +24,7 @@ jobs:
       - name: Create and push pkg tag
         run: |
           VERSION="${{ inputs.version }}"
-          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if ! [[ "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             echo "Error: version '$VERSION' does not match semver format (e.g. v1.2.2)"
             exit 1
           fi
