@@ -1,13 +1,14 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
-	"os/signal"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/link"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"golang.org/x/term"
 )
@@ -26,7 +27,7 @@ var (
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, _ := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			ctx := cmd.Context()
 			// Use an empty fs to skip loading from file
 			if err := flags.ParseProjectRef(ctx, afero.NewMemMapFs()); err != nil {
 				return err
@@ -38,6 +39,9 @@ var (
 			// TODO: move this to root cmd
 			cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", cmd.Flags().Lookup("password")))
 			return link.Run(ctx, flags.ProjectRef, skipPooler, fsys)
+		},
+		PostRun: func(cmd *cobra.Command, args []string) {
+			fmt.Fprintln(os.Stdout, "Finished "+utils.Aqua("supabase link")+".")
 		},
 	}
 )

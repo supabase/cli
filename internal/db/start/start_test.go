@@ -55,7 +55,6 @@ func TestStartDatabase(t *testing.T) {
 	t.Run("initialize main branch", func(t *testing.T) {
 		utils.Config.Db.MajorVersion = 15
 		utils.DbId = "supabase_db_test"
-		utils.ConfigId = "supabase_config_test"
 		utils.Config.Db.Port = 5432
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -103,7 +102,6 @@ func TestStartDatabase(t *testing.T) {
 	t.Run("recover from backup volume", func(t *testing.T) {
 		utils.Config.Db.MajorVersion = 14
 		utils.DbId = "supabase_db_test"
-		utils.ConfigId = "supabase_config_test"
 		utils.Config.Db.Port = 5432
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -316,7 +314,6 @@ func TestStartDatabaseWithCustomSettings(t *testing.T) {
 		// Setup
 		utils.Config.Db.MajorVersion = 15
 		utils.DbId = "supabase_db_test"
-		utils.ConfigId = "supabase_config_test"
 		utils.Config.Db.Port = 5432
 		utils.Config.Db.Settings.MaxConnections = cast.Ptr(uint(50))
 

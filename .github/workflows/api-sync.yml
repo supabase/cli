@@ -2,7 +2,8 @@ name: API Sync
 
 on:
   repository_dispatch:
-    types: [api-sync]
+    types:
+      - api-sync
   workflow_dispatch: # allow manual triggering
 
 # Add explicit permissions
@@ -15,9 +16,9 @@ jobs:
     name: Sync API Types
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version-file: go.mod
           cache: true
@@ -36,12 +37,19 @@ jobs:
             echo "has_changes=true" >> $GITHUB_OUTPUT
           fi
 
+      - name: Generate token
+        id: app-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+
       - name: Create Pull Request
         if: steps.check.outputs.has_changes == 'true'
         id: cpr
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@c0f553fe549906ede9cf27b5156039d195d2ece0 # v8.1.0
         with:
-          token: ${{ secrets.GH_PAT }}
+          token: ${{ steps.app-token.outputs.token }}
           commit-message: "chore: sync API types from infrastructure"
           title: "chore: sync API types from infrastructure"
           body: |
@@ -50,12 +58,15 @@ jobs:
             Changes were detected in the generated API code after syncing with the latest spec from infrastructure.
           branch: sync/api-types
           base: develop
-          labels: |
-            automated pr
-            api-sync
+
+      - name: Approve a PR
+        if: steps.check.outputs.has_changes == 'true'
+        run: gh pr review --approve "${{ steps.cpr.outputs.pull-request-number }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Enable Pull Request Automerge
         if: steps.check.outputs.has_changes == 'true'
         run: gh pr merge --auto --squash "${{ steps.cpr.outputs.pull-request-number }}"
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

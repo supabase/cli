@@ -138,112 +138,119 @@ func (g Glob) Files(fsys fs.FS) ([]string, error) {
 type (
 	// Common config fields between our "base" config and any "remote" branch specific
 	baseConfig struct {
-		ProjectId    string         `toml:"project_id"`
-		Hostname     string         `toml:"-"`
-		Api          api            `toml:"api"`
-		Db           db             `toml:"db"`
-		Realtime     realtime       `toml:"realtime"`
-		Studio       studio         `toml:"studio"`
-		Inbucket     inbucket       `toml:"inbucket"`
-		Storage      storage        `toml:"storage"`
-		Auth         auth           `toml:"auth"`
-		EdgeRuntime  edgeRuntime    `toml:"edge_runtime"`
-		Functions    FunctionConfig `toml:"functions"`
-		Analytics    analytics      `toml:"analytics"`
-		Experimental experimental   `toml:"experimental"`
+		ProjectId    string         `toml:"project_id" json:"project_id"`
+		Hostname     string         `toml:"-" json:"-"`
+		Api          api            `toml:"api" json:"api"`
+		Db           db             `toml:"db" json:"db"`
+		Realtime     realtime       `toml:"realtime" json:"realtime"`
+		Studio       studio         `toml:"studio" json:"studio"`
+		Inbucket     inbucket       `toml:"inbucket" json:"inbucket"`
+		Storage      storage        `toml:"storage" json:"storage"`
+		Auth         auth           `toml:"auth" json:"auth"`
+		EdgeRuntime  edgeRuntime    `toml:"edge_runtime" json:"edge_runtime"`
+		Functions    FunctionConfig `toml:"functions" json:"functions"`
+		Analytics    analytics      `toml:"analytics" json:"analytics"`
+		Experimental experimental   `toml:"experimental" json:"experimental"`
 	}
 
 	config struct {
 		baseConfig
-		Remotes map[string]baseConfig `toml:"remotes"`
+		Remotes map[string]baseConfig `toml:"remotes" json:"remotes"`
 	}
 
 	realtime struct {
-		Enabled         bool          `toml:"enabled"`
-		Image           string        `toml:"-"`
-		IpVersion       AddressFamily `toml:"ip_version"`
-		MaxHeaderLength uint          `toml:"max_header_length"`
-		TenantId        string        `toml:"-"`
-		EncryptionKey   string        `toml:"-"`
-		SecretKeyBase   string        `toml:"-"`
+		Enabled         bool          `toml:"enabled" json:"enabled"`
+		Image           string        `toml:"-" json:"-"`
+		IpVersion       AddressFamily `toml:"ip_version" json:"ip_version"`
+		MaxHeaderLength uint          `toml:"max_header_length" json:"max_header_length"`
+		TenantId        string        `toml:"-" json:"-"`
+		EncryptionKey   string        `toml:"-" json:"-"`
+		SecretKeyBase   string        `toml:"-" json:"-"`
 	}
 
 	studio struct {
-		Enabled      bool   `toml:"enabled"`
-		Image        string `toml:"-"`
-		Port         uint16 `toml:"port"`
-		ApiUrl       string `toml:"api_url"`
-		OpenaiApiKey Secret `toml:"openai_api_key"`
-		PgmetaImage  string `toml:"-"`
+		Enabled      bool   `toml:"enabled" json:"enabled"`
+		Image        string `toml:"-" json:"-"`
+		Port         uint16 `toml:"port" json:"port"`
+		ApiUrl       string `toml:"api_url" json:"api_url"`
+		OpenaiApiKey Secret `toml:"openai_api_key" json:"openai_api_key"`
+		PgmetaImage  string `toml:"-" json:"-"`
 	}
 
 	inbucket struct {
-		Enabled    bool   `toml:"enabled"`
-		Image      string `toml:"-"`
-		Port       uint16 `toml:"port"`
-		SmtpPort   uint16 `toml:"smtp_port"`
-		Pop3Port   uint16 `toml:"pop3_port"`
-		AdminEmail string `toml:"admin_email"`
-		SenderName string `toml:"sender_name"`
+		Enabled    bool   `toml:"enabled" json:"enabled"`
+		Image      string `toml:"-" json:"-"`
+		Port       uint16 `toml:"port" json:"port"`
+		SmtpPort   uint16 `toml:"smtp_port" json:"smtp_port"`
+		Pop3Port   uint16 `toml:"pop3_port" json:"pop3_port"`
+		AdminEmail string `toml:"admin_email" json:"admin_email"`
+		SenderName string `toml:"sender_name" json:"sender_name"`
 	}
 
 	edgeRuntime struct {
-		Enabled       bool          `toml:"enabled"`
-		Image         string        `toml:"-"`
-		Policy        RequestPolicy `toml:"policy"`
-		InspectorPort uint16        `toml:"inspector_port"`
-		Secrets       SecretsConfig `toml:"secrets"`
-		DenoVersion   uint          `toml:"deno_version"`
+		Enabled       bool          `toml:"enabled" json:"enabled"`
+		Image         string        `toml:"-" json:"-"`
+		Policy        RequestPolicy `toml:"policy" json:"policy"`
+		InspectorPort uint16        `toml:"inspector_port" json:"inspector_port"`
+		Secrets       SecretsConfig `toml:"secrets" json:"secrets"`
+		DenoVersion   uint          `toml:"deno_version" json:"deno_version"`
 	}
 
 	SecretsConfig  map[string]Secret
 	FunctionConfig map[string]function
 
 	function struct {
-		Enabled     bool   `toml:"enabled" json:"-"`
-		VerifyJWT   bool   `toml:"verify_jwt" json:"verifyJWT"`
-		ImportMap   string `toml:"import_map" json:"importMapPath,omitempty"`
-		Entrypoint  string `toml:"entrypoint" json:"entrypointPath,omitempty"`
-		StaticFiles Glob   `toml:"static_files" json:"staticFiles,omitempty"`
+		Enabled     bool   `toml:"enabled" json:"enabled"`
+		VerifyJWT   bool   `toml:"verify_jwt" json:"verify_jwt"`
+		ImportMap   string `toml:"import_map" json:"import_map"`
+		Entrypoint  string `toml:"entrypoint" json:"entrypoint"`
+		StaticFiles Glob   `toml:"static_files" json:"static_files"`
 	}
 
 	analytics struct {
-		Enabled          bool            `toml:"enabled"`
-		Image            string          `toml:"-"`
-		VectorImage      string          `toml:"-"`
-		Port             uint16          `toml:"port"`
-		Backend          LogflareBackend `toml:"backend"`
-		GcpProjectId     string          `toml:"gcp_project_id"`
-		GcpProjectNumber string          `toml:"gcp_project_number"`
-		GcpJwtPath       string          `toml:"gcp_jwt_path"`
-		ApiKey           string          `toml:"-"`
+		Enabled          bool            `toml:"enabled" json:"enabled"`
+		Image            string          `toml:"-" json:"-"`
+		VectorImage      string          `toml:"-" json:"-"`
+		Port             uint16          `toml:"port" json:"port"`
+		Backend          LogflareBackend `toml:"backend" json:"backend"`
+		GcpProjectId     string          `toml:"gcp_project_id" json:"gcp_project_id"`
+		GcpProjectNumber string          `toml:"gcp_project_number" json:"gcp_project_number"`
+		GcpJwtPath       string          `toml:"gcp_jwt_path" json:"gcp_jwt_path"`
+		ApiKey           string          `toml:"-" json:"-"`
 		// Deprecated together with syslog
-		VectorPort uint16 `toml:"vector_port"`
+		VectorPort uint16 `toml:"vector_port" json:"vector_port"`
 	}
 
 	webhooks struct {
-		Enabled bool `toml:"enabled"`
+		Enabled bool `toml:"enabled" json:"enabled"`
+	}
+
+	PgDeltaConfig struct {
+		Enabled               bool   `toml:"enabled" json:"enabled"`
+		DeclarativeSchemaPath string `toml:"declarative_schema_path" json:"declarative_schema_path"`
+		FormatOptions         string `toml:"format_options" json:"format_options"`
 	}
 
 	inspect struct {
-		Rules []rule `toml:"rules"`
+		Rules []rule `toml:"rules" json:"rules"`
 	}
 
 	rule struct {
-		Query string `toml:"query"`
-		Name  string `toml:"name"`
-		Pass  string `toml:"pass"`
-		Fail  string `toml:"fail"`
+		Query string `toml:"query" json:"query"`
+		Name  string `toml:"name" json:"name"`
+		Pass  string `toml:"pass" json:"pass"`
+		Fail  string `toml:"fail" json:"fail"`
 	}
 
 	experimental struct {
-		OrioleDBVersion string    `toml:"orioledb_version"`
-		S3Host          string    `toml:"s3_host"`
-		S3Region        string    `toml:"s3_region"`
-		S3AccessKey     string    `toml:"s3_access_key"`
-		S3SecretKey     string    `toml:"s3_secret_key"`
-		Webhooks        *webhooks `toml:"webhooks"`
-		Inspect         inspect   `toml:"inspect"`
+		OrioleDBVersion string         `toml:"orioledb_version" json:"orioledb_version"`
+		S3Host          string         `toml:"s3_host" json:"s3_host"`
+		S3Region        string         `toml:"s3_region" json:"s3_region"`
+		S3AccessKey     string         `toml:"s3_access_key" json:"s3_access_key"`
+		S3SecretKey     string         `toml:"s3_secret_key" json:"s3_secret_key"`
+		Webhooks        *webhooks      `toml:"webhooks" json:"webhooks"`
+		PgDelta         *PgDeltaConfig `toml:"pgdelta" json:"pgdelta"`
+		Inspect         inspect        `toml:"inspect" json:"inspect"`
 	}
 )
 
@@ -291,9 +298,15 @@ func (a *auth) Clone() auth {
 func (s *storage) Clone() storage {
 	copy := *s
 	copy.Buckets = maps.Clone(s.Buckets)
+	copy.AnalyticsBuckets.Buckets = maps.Clone(s.AnalyticsBuckets.Buckets)
+	copy.VectorBuckets.Buckets = maps.Clone(s.VectorBuckets.Buckets)
 	if s.ImageTransformation != nil {
 		img := *s.ImageTransformation
 		copy.ImageTransformation = &img
+	}
+	if s.S3Protocol != nil {
+		s3 := *s.S3Protocol
+		copy.S3Protocol = &s3
 	}
 	return copy
 }
@@ -308,6 +321,10 @@ func (c *baseConfig) Clone() baseConfig {
 	if c.Experimental.Webhooks != nil {
 		webhooks := *c.Experimental.Webhooks
 		copy.Experimental.Webhooks = &webhooks
+	}
+	if c.Experimental.PgDelta != nil {
+		pgDelta := *c.Experimental.PgDelta
+		copy.Experimental.PgDelta = &pgDelta
 	}
 	return copy
 }
@@ -380,6 +397,18 @@ func NewConfig(editors ...ConfigEditor) config {
 				TestOTP: map[string]string{},
 			},
 			External: map[string]provider{},
+			SigningKeys: []JWK{{
+				KeyType:         "EC",
+				KeyID:           "b81269f1-21d8-4f2e-b719-c2240a840d90",
+				Use:             "sig",
+				KeyOps:          []string{"sign", "verify"},
+				Algorithm:       "ES256",
+				Extractable:     cast.Ptr(true),
+				Curve:           "P-256",
+				X:               "M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4",
+				Y:               "P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ",
+				PrivateExponent: "dIhR8wywJlqlua4y_yMq2SLhlFXDZJBCvFrY1DCHyVU",
+			}},
 		},
 		Inbucket: inbucket{
 			Image:      Images.Inbucket,
@@ -533,12 +562,21 @@ func (c *config) load(v *viper.Viper) error {
 		}
 	}
 	if err := v.UnmarshalExact(c, func(dc *mapstructure.DecoderConfig) {
-		dc.TagName = "toml"
+		dc.TagName = "json"
 		dc.Squash = true
 		dc.ZeroFields = true
 		dc.DecodeHook = c.newDecodeHook(LoadEnvHook, ValidateFunctionsHook)
 	}); err != nil {
 		return errors.Errorf("failed to parse config: %w", err)
+	}
+	// Manually parse config to map
+	c.Storage.AnalyticsBuckets.Buckets = map[string]struct{}{}
+	for key := range v.GetStringMap("storage.analytics.buckets") {
+		c.Storage.AnalyticsBuckets.Buckets[key] = struct{}{}
+	}
+	c.Storage.VectorBuckets.Buckets = map[string]struct{}{}
+	for key := range v.GetStringMap("storage.vector.buckets") {
+		c.Storage.VectorBuckets.Buckets[key] = struct{}{}
 	}
 	// Convert keys to upper case: https://github.com/spf13/viper/issues/1014
 	secrets := make(SecretsConfig, len(c.EdgeRuntime.Secrets))
@@ -614,12 +652,12 @@ func (c *config) Load(path string, fsys fs.FS, overrides ...ConfigEditor) error 
 	}
 	if version, err := fs.ReadFile(fsys, builder.StorageVersionPath); err == nil && len(version) > 0 {
 		// Only replace image if local storage version is newer
-		if i := strings.IndexByte(Images.Storage, ':'); VersionCompare(string(version), Images.Storage[i+1:]) > 0 {
+		if i := strings.IndexByte(Images.Storage, ':'); semver.Compare(strings.TrimSpace(string(version)), Images.Storage[i+1:]) > 0 {
 			c.Storage.Image = replaceImageTag(Images.Storage, string(version))
 		}
 	}
 	if version, err := fs.ReadFile(fsys, builder.StorageMigrationPath); err == nil && len(version) > 0 {
-		c.Storage.TargetMigration = string(version)
+		c.Storage.TargetMigration = strings.TrimSpace(string(version))
 	}
 	if version, err := fs.ReadFile(fsys, builder.EdgeRuntimeVersionPath); err == nil && len(version) > 0 {
 		c.EdgeRuntime.Image = replaceImageTag(Images.EdgeRuntime, string(version))
@@ -744,6 +782,11 @@ func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 		if len(pattern) > 0 && !filepath.IsAbs(pattern) {
 			c.Db.Migrations.SchemaPaths[i] = path.Join(builder.SupabaseDirPath, pattern)
 		}
+	}
+	if c.Experimental.PgDelta != nil &&
+		len(c.Experimental.PgDelta.DeclarativeSchemaPath) > 0 &&
+		!filepath.IsAbs(c.Experimental.PgDelta.DeclarativeSchemaPath) {
+		c.Experimental.PgDelta.DeclarativeSchemaPath = path.Join(builder.SupabaseDirPath, c.Experimental.PgDelta.DeclarativeSchemaPath)
 	}
 	return nil
 }
@@ -1523,7 +1566,7 @@ func (a *auth) ResolveJWKS(ctx context.Context) (string, error) {
 		jwks.Keys = append(jwks.Keys, json.RawMessage(publicKeyEncoded))
 	}
 	// Fallback to JWT_SECRET for backward compatibility
-	if len(a.SigningKeys) == 0 {
+	if len(a.SigningKeysPath) == 0 {
 		jwtSecret := secretJWK{
 			KeyType:      "oct",
 			KeyBase64URL: base64.RawURLEncoding.EncodeToString([]byte(a.JwtSecret.Value)),
@@ -1586,6 +1629,9 @@ func ToTomlBytes(config any) ([]byte, error) {
 func (e *experimental) validate() error {
 	if e.Webhooks != nil && !e.Webhooks.Enabled {
 		return errors.Errorf("Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined")
+	}
+	if e.PgDelta != nil && len(e.PgDelta.FormatOptions) > 0 && !json.Valid([]byte(e.PgDelta.FormatOptions)) {
+		return errors.Errorf("Invalid config for experimental.pgdelta.format_options: must be valid JSON")
 	}
 	return nil
 }

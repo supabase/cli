@@ -71,7 +71,7 @@ func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version []string,
 			if err != nil {
 				return err
 			}
-			batch.Queue(migration.INSERT_MIGRATION_VERSION, f.Version, f.Name, f.Statements)
+			batch.Queue(migration.UPSERT_MIGRATION_VERSION, f.Version, f.Name, f.Statements)
 		}
 	case Reverted:
 		if !repairAll {

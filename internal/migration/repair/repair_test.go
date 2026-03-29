@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgconn"
@@ -37,7 +38,7 @@ func TestRepairCommand(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		helper.MockMigrationHistory(conn).
-			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", []string{"select 1"}).
+			Query(migration.UPSERT_MIGRATION_VERSION, "0", "test", []string{"select 1"}).
 			Reply("INSERT 0 1")
 		// Run test
 		err := Run(context.Background(), dbConfig, []string{"0"}, Applied, fsys, conn.Intercept)
@@ -87,7 +88,7 @@ func TestRepairCommand(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		helper.MockMigrationHistory(conn).
-			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", nil).
+			Query(migration.UPSERT_MIGRATION_VERSION, "0", "test", nil).
 			ReplyError(pgerrcode.DuplicateObject, `relation "supabase_migrations.schema_migrations" does not exist`)
 		// Run test
 		err := Run(context.Background(), dbConfig, []string{"0"}, Applied, fsys, conn.Intercept)
@@ -107,7 +108,10 @@ func TestRepairAll(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		helper.MockMigrationHistory(conn).
-			Query(migration.TRUNCATE_VERSION_TABLE + `;INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES( '0' ,  'test' ,  '{select 1}' )`).
+			Query(strings.Join([]string{
+				migration.TRUNCATE_VERSION_TABLE,
+				strings.ReplaceAll(migration.UPSERT_MIGRATION_VERSION, "$1, $2, $3", " '0' ,  'test' ,  '{select 1}' "),
+			}, ";")).
 			Reply("TRUNCATE TABLE").
 			Reply("INSERT 0 1")
 		// Run test

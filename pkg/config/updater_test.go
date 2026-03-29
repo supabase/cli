@@ -7,6 +7,7 @@ import (
 
 	"github.com/h2non/gock"
 	"github.com/oapi-codegen/nullable"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	v1API "github.com/supabase/cli/pkg/api"
@@ -118,6 +119,41 @@ func TestUpdateDbConfig(t *testing.T) {
 	})
 }
 
+func TestUpdateDbNetworkRestrictionsConfig(t *testing.T) {
+	server := "http://localhost"
+	client, err := v1API.NewClientWithResponses(server)
+	require.NoError(t, err)
+
+	t.Run("skips update if disabled locally", func(t *testing.T) {
+		updater := NewConfigUpdater(*client)
+		// Run test
+		err := updater.UpdateDbNetworkRestrictionsConfig(context.Background(), "test-project", networkRestrictions{})
+		// Check result
+		assert.NoError(t, err)
+		assert.False(t, gock.HasUnmatchedRequest())
+	})
+
+	t.Run("returns error on 400 when enabled locally", func(t *testing.T) {
+		updater := NewConfigUpdater(*client)
+		// Setup mock server
+		defer gock.Off()
+		gock.New(server).
+			Get("/v1/projects/test-project/network-restrictions").
+			Reply(http.StatusBadRequest).
+			JSON(map[string]any{
+				"message": "project not allowed to set up network restrictions",
+			})
+		// Run test
+		err := updater.UpdateDbNetworkRestrictionsConfig(context.Background(), "test-project", networkRestrictions{
+			Enabled: true,
+		})
+		// Check result
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "unexpected status 400")
+		assert.True(t, gock.IsDone())
+	})
+}
+
 func TestUpdateExperimentalConfig(t *testing.T) {
 	server := "http://localhost"
 	client, err := v1API.NewClientWithResponses(server)
@@ -222,19 +258,9 @@ func TestUpdateStorageConfig(t *testing.T) {
 		defer gock.Off()
 		mockStorage := v1API.StorageConfigResponse{
 			FileSizeLimit: 100,
-			Features: struct {
-				IcebergCatalog *struct {
-					Enabled bool `json:"enabled"`
-				} `json:"icebergCatalog,omitempty"`
-				ImageTransformation struct {
-					Enabled bool `json:"enabled"`
-				} `json:"imageTransformation"`
-				S3Protocol struct {
-					Enabled bool `json:"enabled"`
-				} `json:"s3Protocol"`
-			}{},
 		}
 		mockStorage.Features.ImageTransformation.Enabled = true
+		mockStorage.Features.S3Protocol.Enabled = true
 		gock.New(server).
 			Get("/v1/projects/test-project/config/storage").
 			Reply(http.StatusOK).
@@ -305,11 +331,18 @@ func TestUpdateRemoteConfig(t *testing.T) {
 			JSON(v1API.PostgresConfigResponse{
 				MaxConnections: cast.Ptr(cast.UintToInt(100)),
 			})
+		// Network config
+		gock.New(server).
+			Get("/v1/projects/test-project/network-restrictions").
+			Reply(http.StatusOK).
+			JSON(v1API.V1GetNetworkRestrictionsResponse{})
 		// Auth config
 		gock.New(server).
 			Get("/v1/projects/test-project/config/auth").
 			Reply(http.StatusOK).
-			JSON(v1API.AuthConfigResponse{})
+			JSON(v1API.AuthConfigResponse{
+				SmtpAdminEmail: nullable.NewNullableWithValue(openapi_types.Email("abc@example.com")),
+			})
 		gock.New(server).
 			Patch("/v1/projects/test-project/config/auth").
 			Reply(http.StatusOK)
@@ -347,6 +380,9 @@ func TestUpdateRemoteConfig(t *testing.T) {
 				Enabled:       true,
 				FileSizeLimit: 100,
 				ImageTransformation: &imageTransformation{
+					Enabled: true,
+				},
+				S3Protocol: &s3Protocol{
 					Enabled: true,
 				},
 			},

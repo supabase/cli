@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"os"
-	"sort"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -30,7 +29,7 @@ var (
 	orgId       string
 	dbPassword  string
 	region      = utils.EnumFlag{
-		Allowed: awsRegions(),
+		Allowed: utils.AwsRegions(),
 	}
 	size = utils.EnumFlag{
 		Allowed: []string{
@@ -50,7 +49,6 @@ var (
 			string(api.V1CreateProjectBodyDesiredInstanceSizeN48xlargeOptimizedMemory),
 			string(api.V1CreateProjectBodyDesiredInstanceSizeN4xlarge),
 			string(api.V1CreateProjectBodyDesiredInstanceSizeN8xlarge),
-			string(api.V1CreateProjectBodyDesiredInstanceSizePico),
 			string(api.V1CreateProjectBodyDesiredInstanceSizeSmall),
 			string(api.V1CreateProjectBodyDesiredInstanceSizeXlarge),
 		},
@@ -152,15 +150,4 @@ func init() {
 	projectsCmd.AddCommand(projectsListCmd)
 	projectsCmd.AddCommand(projectsApiKeysCmd)
 	rootCmd.AddCommand(projectsCmd)
-}
-
-func awsRegions() []string {
-	result := make([]string, len(utils.RegionMap))
-	i := 0
-	for k := range utils.RegionMap {
-		result[i] = k
-		i++
-	}
-	sort.Strings(result)
-	return result
 }

@@ -178,6 +178,11 @@ type ClientInterface interface {
 	// V1GetProject request
 	V1GetProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1UpdateAProjectWithBody request with any body
+	V1UpdateAProjectWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1UpdateAProject(ctx context.Context, ref string, body V1UpdateAProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1ListActionRuns request
 	V1ListActionRuns(ctx context.Context, ref string, params *V1ListActionRunsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -367,6 +372,31 @@ type ClientInterface interface {
 
 	V1UpdatePostgresConfig(ctx context.Context, ref string, body V1UpdatePostgresConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1GetDatabaseDisk request
+	V1GetDatabaseDisk(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1ModifyDatabaseDiskWithBody request with any body
+	V1ModifyDatabaseDiskWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1ModifyDatabaseDisk(ctx context.Context, ref string, body V1ModifyDatabaseDiskJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetProjectDiskAutoscaleConfig request
+	V1GetProjectDiskAutoscaleConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetDiskUtilization request
+	V1GetDiskUtilization(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetRealtimeConfig request
+	V1GetRealtimeConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1UpdateRealtimeConfigWithBody request with any body
+	V1UpdateRealtimeConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1UpdateRealtimeConfig(ctx context.Context, ref string, body V1UpdateRealtimeConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1ShutdownRealtime request
+	V1ShutdownRealtime(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1GetStorageConfig request
 	V1GetStorageConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -459,10 +489,23 @@ type ClientInterface interface {
 
 	V1PatchAMigration(ctx context.Context, ref string, version string, body V1PatchAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1GetDatabaseOpenapi request
+	V1GetDatabaseOpenapi(ctx context.Context, ref string, params *V1GetDatabaseOpenapiParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1UpdateDatabasePasswordWithBody request with any body
+	V1UpdateDatabasePasswordWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1UpdateDatabasePassword(ctx context.Context, ref string, body V1UpdateDatabasePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1RunAQueryWithBody request with any body
 	V1RunAQueryWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	V1RunAQuery(ctx context.Context, ref string, body V1RunAQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1ReadOnlyQueryWithBody request with any body
+	V1ReadOnlyQueryWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1ReadOnlyQuery(ctx context.Context, ref string, body V1ReadOnlyQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1EnableDatabaseWebhook request
 	V1EnableDatabaseWebhook(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -499,6 +542,14 @@ type ClientInterface interface {
 
 	// V1GetServicesHealth request
 	V1GetServicesHealth(ctx context.Context, ref string, params *V1GetServicesHealthParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetJitAccessConfig request
+	V1GetJitAccessConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1UpdateJitAccessConfigWithBody request with any body
+	V1UpdateJitAccessConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1UpdateJitAccessConfig(ctx context.Context, ref string, body V1UpdateJitAccessConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1DeleteNetworkBansWithBody request with any body
 	V1DeleteNetworkBansWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1003,6 +1054,30 @@ func (c *Client) V1DeleteAProject(ctx context.Context, ref string, reqEditors ..
 
 func (c *Client) V1GetProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1GetProjectRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateAProjectWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateAProjectRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateAProject(ctx context.Context, ref string, body V1UpdateAProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateAProjectRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1819,6 +1894,114 @@ func (c *Client) V1UpdatePostgresConfig(ctx context.Context, ref string, body V1
 	return c.Client.Do(req)
 }
 
+func (c *Client) V1GetDatabaseDisk(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetDatabaseDiskRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ModifyDatabaseDiskWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ModifyDatabaseDiskRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ModifyDatabaseDisk(ctx context.Context, ref string, body V1ModifyDatabaseDiskJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ModifyDatabaseDiskRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetProjectDiskAutoscaleConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetProjectDiskAutoscaleConfigRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetDiskUtilization(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetDiskUtilizationRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetRealtimeConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetRealtimeConfigRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateRealtimeConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateRealtimeConfigRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateRealtimeConfig(ctx context.Context, ref string, body V1UpdateRealtimeConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateRealtimeConfigRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ShutdownRealtime(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ShutdownRealtimeRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) V1GetStorageConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1GetStorageConfigRequest(c.Server, ref)
 	if err != nil {
@@ -2227,6 +2410,42 @@ func (c *Client) V1PatchAMigration(ctx context.Context, ref string, version stri
 	return c.Client.Do(req)
 }
 
+func (c *Client) V1GetDatabaseOpenapi(ctx context.Context, ref string, params *V1GetDatabaseOpenapiParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetDatabaseOpenapiRequest(c.Server, ref, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateDatabasePasswordWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateDatabasePasswordRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateDatabasePassword(ctx context.Context, ref string, body V1UpdateDatabasePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateDatabasePasswordRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) V1RunAQueryWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1RunAQueryRequestWithBody(c.Server, ref, contentType, body)
 	if err != nil {
@@ -2241,6 +2460,30 @@ func (c *Client) V1RunAQueryWithBody(ctx context.Context, ref string, contentTyp
 
 func (c *Client) V1RunAQuery(ctx context.Context, ref string, body V1RunAQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1RunAQueryRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ReadOnlyQueryWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ReadOnlyQueryRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1ReadOnlyQuery(ctx context.Context, ref string, body V1ReadOnlyQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1ReadOnlyQueryRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2397,6 +2640,42 @@ func (c *Client) V1GetAFunctionBody(ctx context.Context, ref string, functionSlu
 
 func (c *Client) V1GetServicesHealth(ctx context.Context, ref string, params *V1GetServicesHealthParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1GetServicesHealthRequest(c.Server, ref, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetJitAccessConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetJitAccessConfigRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateJitAccessConfigWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateJitAccessConfigRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateJitAccessConfig(ctx context.Context, ref string, body V1UpdateJitAccessConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateJitAccessConfigRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3140,6 +3419,22 @@ func NewV1DiffABranchRequest(server string, branchIdOrRef string, params *V1Diff
 		if params.IncludedSchemas != nil {
 
 			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "included_schemas", runtime.ParamLocationQuery, *params.IncludedSchemas); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Pgdelta != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "pgdelta", runtime.ParamLocationQuery, *params.Pgdelta); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -4290,6 +4585,53 @@ func NewV1GetProjectRequest(server string, ref string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewV1UpdateAProjectRequest calls the generic V1UpdateAProject builder with application/json body
+func NewV1UpdateAProjectRequest(server string, ref string, body V1UpdateAProjectJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1UpdateAProjectRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1UpdateAProjectRequestWithBody generates requests for V1UpdateAProject with any type of body
+func NewV1UpdateAProjectRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -6718,6 +7060,270 @@ func NewV1UpdatePostgresConfigRequestWithBody(server string, ref string, content
 	return req, nil
 }
 
+// NewV1GetDatabaseDiskRequest generates requests for V1GetDatabaseDisk
+func NewV1GetDatabaseDiskRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/disk", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1ModifyDatabaseDiskRequest calls the generic V1ModifyDatabaseDisk builder with application/json body
+func NewV1ModifyDatabaseDiskRequest(server string, ref string, body V1ModifyDatabaseDiskJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1ModifyDatabaseDiskRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1ModifyDatabaseDiskRequestWithBody generates requests for V1ModifyDatabaseDisk with any type of body
+func NewV1ModifyDatabaseDiskRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/disk", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1GetProjectDiskAutoscaleConfigRequest generates requests for V1GetProjectDiskAutoscaleConfig
+func NewV1GetProjectDiskAutoscaleConfigRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/disk/autoscale", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1GetDiskUtilizationRequest generates requests for V1GetDiskUtilization
+func NewV1GetDiskUtilizationRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/disk/util", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1GetRealtimeConfigRequest generates requests for V1GetRealtimeConfig
+func NewV1GetRealtimeConfigRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/realtime", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1UpdateRealtimeConfigRequest calls the generic V1UpdateRealtimeConfig builder with application/json body
+func NewV1UpdateRealtimeConfigRequest(server string, ref string, body V1UpdateRealtimeConfigJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1UpdateRealtimeConfigRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1UpdateRealtimeConfigRequestWithBody generates requests for V1UpdateRealtimeConfig with any type of body
+func NewV1UpdateRealtimeConfigRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/realtime", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1ShutdownRealtimeRequest generates requests for V1ShutdownRealtime
+func NewV1ShutdownRealtimeRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/config/realtime/shutdown", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewV1GetStorageConfigRequest generates requests for V1GetStorageConfig
 func NewV1GetStorageConfigRequest(server string, ref string) (*http.Request, error) {
 	var err error
@@ -7755,6 +8361,109 @@ func NewV1PatchAMigrationRequestWithBody(server string, ref string, version stri
 	return req, nil
 }
 
+// NewV1GetDatabaseOpenapiRequest generates requests for V1GetDatabaseOpenapi
+func NewV1GetDatabaseOpenapiRequest(server string, ref string, params *V1GetDatabaseOpenapiParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/openapi", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Schema != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "schema", runtime.ParamLocationQuery, *params.Schema); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1UpdateDatabasePasswordRequest calls the generic V1UpdateDatabasePassword builder with application/json body
+func NewV1UpdateDatabasePasswordRequest(server string, ref string, body V1UpdateDatabasePasswordJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1UpdateDatabasePasswordRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1UpdateDatabasePasswordRequestWithBody generates requests for V1UpdateDatabasePassword with any type of body
+func NewV1UpdateDatabasePasswordRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/password", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewV1RunAQueryRequest calls the generic V1RunAQuery builder with application/json body
 func NewV1RunAQueryRequest(server string, ref string, body V1RunAQueryJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -7783,6 +8492,53 @@ func NewV1RunAQueryRequestWithBody(server string, ref string, contentType string
 	}
 
 	operationPath := fmt.Sprintf("/v1/projects/%s/database/query", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1ReadOnlyQueryRequest calls the generic V1ReadOnlyQuery builder with application/json body
+func NewV1ReadOnlyQueryRequest(server string, ref string, body V1ReadOnlyQueryJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1ReadOnlyQueryRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1ReadOnlyQueryRequestWithBody generates requests for V1ReadOnlyQuery with any type of body
+func NewV1ReadOnlyQueryRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/query/read-only", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -8515,6 +9271,87 @@ func NewV1GetServicesHealthRequest(server string, ref string, params *V1GetServi
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewV1GetJitAccessConfigRequest generates requests for V1GetJitAccessConfig
+func NewV1GetJitAccessConfigRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/jit-access", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1UpdateJitAccessConfigRequest calls the generic V1UpdateJitAccessConfig builder with application/json body
+func NewV1UpdateJitAccessConfigRequest(server string, ref string, body V1UpdateJitAccessConfigJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1UpdateJitAccessConfigRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1UpdateJitAccessConfigRequestWithBody generates requests for V1UpdateJitAccessConfig with any type of body
+func NewV1UpdateJitAccessConfigRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/jit-access", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -10098,6 +10935,11 @@ type ClientWithResponsesInterface interface {
 	// V1GetProjectWithResponse request
 	V1GetProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectResponse, error)
 
+	// V1UpdateAProjectWithBodyWithResponse request with any body
+	V1UpdateAProjectWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateAProjectResponse, error)
+
+	V1UpdateAProjectWithResponse(ctx context.Context, ref string, body V1UpdateAProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateAProjectResponse, error)
+
 	// V1ListActionRunsWithResponse request
 	V1ListActionRunsWithResponse(ctx context.Context, ref string, params *V1ListActionRunsParams, reqEditors ...RequestEditorFn) (*V1ListActionRunsResponse, error)
 
@@ -10287,6 +11129,31 @@ type ClientWithResponsesInterface interface {
 
 	V1UpdatePostgresConfigWithResponse(ctx context.Context, ref string, body V1UpdatePostgresConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdatePostgresConfigResponse, error)
 
+	// V1GetDatabaseDiskWithResponse request
+	V1GetDatabaseDiskWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetDatabaseDiskResponse, error)
+
+	// V1ModifyDatabaseDiskWithBodyWithResponse request with any body
+	V1ModifyDatabaseDiskWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ModifyDatabaseDiskResponse, error)
+
+	V1ModifyDatabaseDiskWithResponse(ctx context.Context, ref string, body V1ModifyDatabaseDiskJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ModifyDatabaseDiskResponse, error)
+
+	// V1GetProjectDiskAutoscaleConfigWithResponse request
+	V1GetProjectDiskAutoscaleConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectDiskAutoscaleConfigResponse, error)
+
+	// V1GetDiskUtilizationWithResponse request
+	V1GetDiskUtilizationWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetDiskUtilizationResponse, error)
+
+	// V1GetRealtimeConfigWithResponse request
+	V1GetRealtimeConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetRealtimeConfigResponse, error)
+
+	// V1UpdateRealtimeConfigWithBodyWithResponse request with any body
+	V1UpdateRealtimeConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateRealtimeConfigResponse, error)
+
+	V1UpdateRealtimeConfigWithResponse(ctx context.Context, ref string, body V1UpdateRealtimeConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateRealtimeConfigResponse, error)
+
+	// V1ShutdownRealtimeWithResponse request
+	V1ShutdownRealtimeWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ShutdownRealtimeResponse, error)
+
 	// V1GetStorageConfigWithResponse request
 	V1GetStorageConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetStorageConfigResponse, error)
 
@@ -10379,10 +11246,23 @@ type ClientWithResponsesInterface interface {
 
 	V1PatchAMigrationWithResponse(ctx context.Context, ref string, version string, body V1PatchAMigrationJSONRequestBody, reqEditors ...RequestEditorFn) (*V1PatchAMigrationResponse, error)
 
+	// V1GetDatabaseOpenapiWithResponse request
+	V1GetDatabaseOpenapiWithResponse(ctx context.Context, ref string, params *V1GetDatabaseOpenapiParams, reqEditors ...RequestEditorFn) (*V1GetDatabaseOpenapiResponse, error)
+
+	// V1UpdateDatabasePasswordWithBodyWithResponse request with any body
+	V1UpdateDatabasePasswordWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateDatabasePasswordResponse, error)
+
+	V1UpdateDatabasePasswordWithResponse(ctx context.Context, ref string, body V1UpdateDatabasePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateDatabasePasswordResponse, error)
+
 	// V1RunAQueryWithBodyWithResponse request with any body
 	V1RunAQueryWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RunAQueryResponse, error)
 
 	V1RunAQueryWithResponse(ctx context.Context, ref string, body V1RunAQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*V1RunAQueryResponse, error)
+
+	// V1ReadOnlyQueryWithBodyWithResponse request with any body
+	V1ReadOnlyQueryWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ReadOnlyQueryResponse, error)
+
+	V1ReadOnlyQueryWithResponse(ctx context.Context, ref string, body V1ReadOnlyQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ReadOnlyQueryResponse, error)
 
 	// V1EnableDatabaseWebhookWithResponse request
 	V1EnableDatabaseWebhookWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1EnableDatabaseWebhookResponse, error)
@@ -10419,6 +11299,14 @@ type ClientWithResponsesInterface interface {
 
 	// V1GetServicesHealthWithResponse request
 	V1GetServicesHealthWithResponse(ctx context.Context, ref string, params *V1GetServicesHealthParams, reqEditors ...RequestEditorFn) (*V1GetServicesHealthResponse, error)
+
+	// V1GetJitAccessConfigWithResponse request
+	V1GetJitAccessConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetJitAccessConfigResponse, error)
+
+	// V1UpdateJitAccessConfigWithBodyWithResponse request with any body
+	V1UpdateJitAccessConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateJitAccessConfigResponse, error)
+
+	V1UpdateJitAccessConfigWithResponse(ctx context.Context, ref string, body V1UpdateJitAccessConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateJitAccessConfigResponse, error)
 
 	// V1DeleteNetworkBansWithBodyWithResponse request with any body
 	V1DeleteNetworkBansWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1DeleteNetworkBansResponse, error)
@@ -11066,6 +11954,28 @@ func (r V1GetProjectResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1GetProjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1UpdateAProjectResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *V1ProjectRefResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1UpdateAProjectResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1UpdateAProjectResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -12232,6 +13142,157 @@ func (r V1UpdatePostgresConfigResponse) StatusCode() int {
 	return 0
 }
 
+type V1GetDatabaseDiskResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *DiskResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetDatabaseDiskResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetDatabaseDiskResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1ModifyDatabaseDiskResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1ModifyDatabaseDiskResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1ModifyDatabaseDiskResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetProjectDiskAutoscaleConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *DiskAutoscaleConfig
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetProjectDiskAutoscaleConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetProjectDiskAutoscaleConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetDiskUtilizationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *DiskUtilMetricsResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetDiskUtilizationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetDiskUtilizationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetRealtimeConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *RealtimeConfigResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetRealtimeConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetRealtimeConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1UpdateRealtimeConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1UpdateRealtimeConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1UpdateRealtimeConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1ShutdownRealtimeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1ShutdownRealtimeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1ShutdownRealtimeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1GetStorageConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -12751,6 +13812,50 @@ func (r V1PatchAMigrationResponse) StatusCode() int {
 	return 0
 }
 
+type V1GetDatabaseOpenapiResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *map[string]interface{}
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetDatabaseOpenapiResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetDatabaseOpenapiResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1UpdateDatabasePasswordResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *V1UpdatePasswordResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1UpdateDatabasePasswordResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1UpdateDatabasePasswordResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1RunAQueryResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -12766,6 +13871,27 @@ func (r V1RunAQueryResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1RunAQueryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1ReadOnlyQueryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1ReadOnlyQueryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1ReadOnlyQueryResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -12984,6 +14110,50 @@ func (r V1GetServicesHealthResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1GetServicesHealthResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetJitAccessConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *JitAccessResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetJitAccessConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetJitAccessConfigResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1UpdateJitAccessConfigResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *JitAccessResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1UpdateJitAccessConfigResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1UpdateJitAccessConfigResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -14008,6 +15178,23 @@ func (c *ClientWithResponses) V1GetProjectWithResponse(ctx context.Context, ref 
 	return ParseV1GetProjectResponse(rsp)
 }
 
+// V1UpdateAProjectWithBodyWithResponse request with arbitrary body returning *V1UpdateAProjectResponse
+func (c *ClientWithResponses) V1UpdateAProjectWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateAProjectResponse, error) {
+	rsp, err := c.V1UpdateAProjectWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateAProjectResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1UpdateAProjectWithResponse(ctx context.Context, ref string, body V1UpdateAProjectJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateAProjectResponse, error) {
+	rsp, err := c.V1UpdateAProject(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateAProjectResponse(rsp)
+}
+
 // V1ListActionRunsWithResponse request returning *V1ListActionRunsResponse
 func (c *ClientWithResponses) V1ListActionRunsWithResponse(ctx context.Context, ref string, params *V1ListActionRunsParams, reqEditors ...RequestEditorFn) (*V1ListActionRunsResponse, error) {
 	rsp, err := c.V1ListActionRuns(ctx, ref, params, reqEditors...)
@@ -14599,6 +15786,85 @@ func (c *ClientWithResponses) V1UpdatePostgresConfigWithResponse(ctx context.Con
 	return ParseV1UpdatePostgresConfigResponse(rsp)
 }
 
+// V1GetDatabaseDiskWithResponse request returning *V1GetDatabaseDiskResponse
+func (c *ClientWithResponses) V1GetDatabaseDiskWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetDatabaseDiskResponse, error) {
+	rsp, err := c.V1GetDatabaseDisk(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetDatabaseDiskResponse(rsp)
+}
+
+// V1ModifyDatabaseDiskWithBodyWithResponse request with arbitrary body returning *V1ModifyDatabaseDiskResponse
+func (c *ClientWithResponses) V1ModifyDatabaseDiskWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ModifyDatabaseDiskResponse, error) {
+	rsp, err := c.V1ModifyDatabaseDiskWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ModifyDatabaseDiskResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1ModifyDatabaseDiskWithResponse(ctx context.Context, ref string, body V1ModifyDatabaseDiskJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ModifyDatabaseDiskResponse, error) {
+	rsp, err := c.V1ModifyDatabaseDisk(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ModifyDatabaseDiskResponse(rsp)
+}
+
+// V1GetProjectDiskAutoscaleConfigWithResponse request returning *V1GetProjectDiskAutoscaleConfigResponse
+func (c *ClientWithResponses) V1GetProjectDiskAutoscaleConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetProjectDiskAutoscaleConfigResponse, error) {
+	rsp, err := c.V1GetProjectDiskAutoscaleConfig(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetProjectDiskAutoscaleConfigResponse(rsp)
+}
+
+// V1GetDiskUtilizationWithResponse request returning *V1GetDiskUtilizationResponse
+func (c *ClientWithResponses) V1GetDiskUtilizationWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetDiskUtilizationResponse, error) {
+	rsp, err := c.V1GetDiskUtilization(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetDiskUtilizationResponse(rsp)
+}
+
+// V1GetRealtimeConfigWithResponse request returning *V1GetRealtimeConfigResponse
+func (c *ClientWithResponses) V1GetRealtimeConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetRealtimeConfigResponse, error) {
+	rsp, err := c.V1GetRealtimeConfig(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetRealtimeConfigResponse(rsp)
+}
+
+// V1UpdateRealtimeConfigWithBodyWithResponse request with arbitrary body returning *V1UpdateRealtimeConfigResponse
+func (c *ClientWithResponses) V1UpdateRealtimeConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateRealtimeConfigResponse, error) {
+	rsp, err := c.V1UpdateRealtimeConfigWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateRealtimeConfigResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1UpdateRealtimeConfigWithResponse(ctx context.Context, ref string, body V1UpdateRealtimeConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateRealtimeConfigResponse, error) {
+	rsp, err := c.V1UpdateRealtimeConfig(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateRealtimeConfigResponse(rsp)
+}
+
+// V1ShutdownRealtimeWithResponse request returning *V1ShutdownRealtimeResponse
+func (c *ClientWithResponses) V1ShutdownRealtimeWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ShutdownRealtimeResponse, error) {
+	rsp, err := c.V1ShutdownRealtime(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ShutdownRealtimeResponse(rsp)
+}
+
 // V1GetStorageConfigWithResponse request returning *V1GetStorageConfigResponse
 func (c *ClientWithResponses) V1GetStorageConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetStorageConfigResponse, error) {
 	rsp, err := c.V1GetStorageConfig(ctx, ref, reqEditors...)
@@ -14895,6 +16161,32 @@ func (c *ClientWithResponses) V1PatchAMigrationWithResponse(ctx context.Context,
 	return ParseV1PatchAMigrationResponse(rsp)
 }
 
+// V1GetDatabaseOpenapiWithResponse request returning *V1GetDatabaseOpenapiResponse
+func (c *ClientWithResponses) V1GetDatabaseOpenapiWithResponse(ctx context.Context, ref string, params *V1GetDatabaseOpenapiParams, reqEditors ...RequestEditorFn) (*V1GetDatabaseOpenapiResponse, error) {
+	rsp, err := c.V1GetDatabaseOpenapi(ctx, ref, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetDatabaseOpenapiResponse(rsp)
+}
+
+// V1UpdateDatabasePasswordWithBodyWithResponse request with arbitrary body returning *V1UpdateDatabasePasswordResponse
+func (c *ClientWithResponses) V1UpdateDatabasePasswordWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateDatabasePasswordResponse, error) {
+	rsp, err := c.V1UpdateDatabasePasswordWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateDatabasePasswordResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1UpdateDatabasePasswordWithResponse(ctx context.Context, ref string, body V1UpdateDatabasePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateDatabasePasswordResponse, error) {
+	rsp, err := c.V1UpdateDatabasePassword(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateDatabasePasswordResponse(rsp)
+}
+
 // V1RunAQueryWithBodyWithResponse request with arbitrary body returning *V1RunAQueryResponse
 func (c *ClientWithResponses) V1RunAQueryWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RunAQueryResponse, error) {
 	rsp, err := c.V1RunAQueryWithBody(ctx, ref, contentType, body, reqEditors...)
@@ -14910,6 +16202,23 @@ func (c *ClientWithResponses) V1RunAQueryWithResponse(ctx context.Context, ref s
 		return nil, err
 	}
 	return ParseV1RunAQueryResponse(rsp)
+}
+
+// V1ReadOnlyQueryWithBodyWithResponse request with arbitrary body returning *V1ReadOnlyQueryResponse
+func (c *ClientWithResponses) V1ReadOnlyQueryWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1ReadOnlyQueryResponse, error) {
+	rsp, err := c.V1ReadOnlyQueryWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ReadOnlyQueryResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1ReadOnlyQueryWithResponse(ctx context.Context, ref string, body V1ReadOnlyQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*V1ReadOnlyQueryResponse, error) {
+	rsp, err := c.V1ReadOnlyQuery(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1ReadOnlyQueryResponse(rsp)
 }
 
 // V1EnableDatabaseWebhookWithResponse request returning *V1EnableDatabaseWebhookResponse
@@ -15024,6 +16333,32 @@ func (c *ClientWithResponses) V1GetServicesHealthWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseV1GetServicesHealthResponse(rsp)
+}
+
+// V1GetJitAccessConfigWithResponse request returning *V1GetJitAccessConfigResponse
+func (c *ClientWithResponses) V1GetJitAccessConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetJitAccessConfigResponse, error) {
+	rsp, err := c.V1GetJitAccessConfig(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetJitAccessConfigResponse(rsp)
+}
+
+// V1UpdateJitAccessConfigWithBodyWithResponse request with arbitrary body returning *V1UpdateJitAccessConfigResponse
+func (c *ClientWithResponses) V1UpdateJitAccessConfigWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateJitAccessConfigResponse, error) {
+	rsp, err := c.V1UpdateJitAccessConfigWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateJitAccessConfigResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1UpdateJitAccessConfigWithResponse(ctx context.Context, ref string, body V1UpdateJitAccessConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateJitAccessConfigResponse, error) {
+	rsp, err := c.V1UpdateJitAccessConfig(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateJitAccessConfigResponse(rsp)
 }
 
 // V1DeleteNetworkBansWithBodyWithResponse request with arbitrary body returning *V1DeleteNetworkBansResponse
@@ -16000,6 +17335,32 @@ func ParseV1GetProjectResponse(rsp *http.Response) (*V1GetProjectResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest V1ProjectWithDatabaseResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1UpdateAProjectResponse parses an HTTP response from a V1UpdateAProjectWithResponse call
+func ParseV1UpdateAProjectResponse(rsp *http.Response) (*V1UpdateAProjectResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1UpdateAProjectResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest V1ProjectRefResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -17328,6 +18689,158 @@ func ParseV1UpdatePostgresConfigResponse(rsp *http.Response) (*V1UpdatePostgresC
 	return response, nil
 }
 
+// ParseV1GetDatabaseDiskResponse parses an HTTP response from a V1GetDatabaseDiskWithResponse call
+func ParseV1GetDatabaseDiskResponse(rsp *http.Response) (*V1GetDatabaseDiskResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetDatabaseDiskResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DiskResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1ModifyDatabaseDiskResponse parses an HTTP response from a V1ModifyDatabaseDiskWithResponse call
+func ParseV1ModifyDatabaseDiskResponse(rsp *http.Response) (*V1ModifyDatabaseDiskResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1ModifyDatabaseDiskResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1GetProjectDiskAutoscaleConfigResponse parses an HTTP response from a V1GetProjectDiskAutoscaleConfigWithResponse call
+func ParseV1GetProjectDiskAutoscaleConfigResponse(rsp *http.Response) (*V1GetProjectDiskAutoscaleConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetProjectDiskAutoscaleConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DiskAutoscaleConfig
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetDiskUtilizationResponse parses an HTTP response from a V1GetDiskUtilizationWithResponse call
+func ParseV1GetDiskUtilizationResponse(rsp *http.Response) (*V1GetDiskUtilizationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetDiskUtilizationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DiskUtilMetricsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetRealtimeConfigResponse parses an HTTP response from a V1GetRealtimeConfigWithResponse call
+func ParseV1GetRealtimeConfigResponse(rsp *http.Response) (*V1GetRealtimeConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetRealtimeConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RealtimeConfigResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1UpdateRealtimeConfigResponse parses an HTTP response from a V1UpdateRealtimeConfigWithResponse call
+func ParseV1UpdateRealtimeConfigResponse(rsp *http.Response) (*V1UpdateRealtimeConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1UpdateRealtimeConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1ShutdownRealtimeResponse parses an HTTP response from a V1ShutdownRealtimeWithResponse call
+func ParseV1ShutdownRealtimeResponse(rsp *http.Response) (*V1ShutdownRealtimeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1ShutdownRealtimeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
 // ParseV1GetStorageConfigResponse parses an HTTP response from a V1GetStorageConfigWithResponse call
 func ParseV1GetStorageConfigResponse(rsp *http.Response) (*V1GetStorageConfigResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -17862,6 +19375,58 @@ func ParseV1PatchAMigrationResponse(rsp *http.Response) (*V1PatchAMigrationRespo
 	return response, nil
 }
 
+// ParseV1GetDatabaseOpenapiResponse parses an HTTP response from a V1GetDatabaseOpenapiWithResponse call
+func ParseV1GetDatabaseOpenapiResponse(rsp *http.Response) (*V1GetDatabaseOpenapiResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetDatabaseOpenapiResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1UpdateDatabasePasswordResponse parses an HTTP response from a V1UpdateDatabasePasswordWithResponse call
+func ParseV1UpdateDatabasePasswordResponse(rsp *http.Response) (*V1UpdateDatabasePasswordResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1UpdateDatabasePasswordResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest V1UpdatePasswordResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseV1RunAQueryResponse parses an HTTP response from a V1RunAQueryWithResponse call
 func ParseV1RunAQueryResponse(rsp *http.Response) (*V1RunAQueryResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -17871,6 +19436,22 @@ func ParseV1RunAQueryResponse(rsp *http.Response) (*V1RunAQueryResponse, error) 
 	}
 
 	response := &V1RunAQueryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1ReadOnlyQueryResponse parses an HTTP response from a V1ReadOnlyQueryWithResponse call
+func ParseV1ReadOnlyQueryResponse(rsp *http.Response) (*V1ReadOnlyQueryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1ReadOnlyQueryResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -18108,6 +19689,58 @@ func ParseV1GetServicesHealthResponse(rsp *http.Response) (*V1GetServicesHealthR
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest []V1ServiceHealthResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetJitAccessConfigResponse parses an HTTP response from a V1GetJitAccessConfigWithResponse call
+func ParseV1GetJitAccessConfigResponse(rsp *http.Response) (*V1GetJitAccessConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetJitAccessConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest JitAccessResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1UpdateJitAccessConfigResponse parses an HTTP response from a V1UpdateJitAccessConfigWithResponse call
+func ParseV1UpdateJitAccessConfigResponse(rsp *http.Response) (*V1UpdateJitAccessConfigResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1UpdateJitAccessConfigResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest JitAccessResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/cast"
 )
 
 func TestInitCommand(t *testing.T) {
@@ -19,8 +18,8 @@ func TestInitCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &afero.MemMapFs{}
 		require.NoError(t, fsys.Mkdir(".git", 0755))
-		// Run test
-		assert.NoError(t, Run(context.Background(), fsys, nil, nil, utils.InitParams{}))
+		// Run test (non-interactive mode)
+		assert.NoError(t, Run(context.Background(), fsys, false, utils.InitParams{}))
 		// Validate generated config.toml
 		exists, err := afero.Exists(fsys, utils.ConfigPath)
 		assert.NoError(t, err)
@@ -48,14 +47,14 @@ func TestInitCommand(t *testing.T) {
 		_, err := fsys.Create(utils.ConfigPath)
 		require.NoError(t, err)
 		// Run test
-		assert.Error(t, Run(context.Background(), fsys, nil, nil, utils.InitParams{}))
+		assert.Error(t, Run(context.Background(), fsys, false, utils.InitParams{}))
 	})
 
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &fstest.OpenErrorFs{DenyPath: utils.ConfigPath}
 		// Run test
-		err := Run(context.Background(), fsys, nil, nil, utils.InitParams{})
+		err := Run(context.Background(), fsys, false, utils.InitParams{})
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})
@@ -64,57 +63,7 @@ func TestInitCommand(t *testing.T) {
 		// Setup read-only fs
 		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
 		// Run test
-		assert.Error(t, Run(context.Background(), fsys, nil, nil, utils.InitParams{}))
-	})
-
-	t.Run("creates vscode settings file", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := &afero.MemMapFs{}
-		// Run test
-		assert.NoError(t, Run(context.Background(), fsys, cast.Ptr(true), nil, utils.InitParams{}))
-		// Validate generated vscode settings
-		exists, err := afero.Exists(fsys, settingsPath)
-		assert.NoError(t, err)
-		assert.True(t, exists)
-		exists, err = afero.Exists(fsys, extensionsPath)
-		assert.NoError(t, err)
-		assert.True(t, exists)
-	})
-
-	t.Run("does not create vscode settings file", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := &afero.MemMapFs{}
-		// Run test
-		assert.NoError(t, Run(context.Background(), fsys, cast.Ptr(false), nil, utils.InitParams{}))
-		// Validate vscode settings file isn't generated
-		exists, err := afero.Exists(fsys, settingsPath)
-		assert.NoError(t, err)
-		assert.False(t, exists)
-		exists, err = afero.Exists(fsys, extensionsPath)
-		assert.NoError(t, err)
-		assert.False(t, exists)
-	})
-
-	t.Run("creates intellij deno file", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := &afero.MemMapFs{}
-		// Run test
-		assert.NoError(t, Run(context.Background(), fsys, nil, cast.Ptr(true), utils.InitParams{}))
-		// Validate generated intellij deno config
-		exists, err := afero.Exists(fsys, denoPath)
-		assert.NoError(t, err)
-		assert.True(t, exists)
-	})
-
-	t.Run("does not create intellij deno file", func(t *testing.T) {
-		// Setup in-memory fs
-		fsys := &afero.MemMapFs{}
-		// Run test
-		assert.NoError(t, Run(context.Background(), fsys, nil, cast.Ptr(false), utils.InitParams{}))
-		// Validate intellij deno config file isn't generated
-		exists, err := afero.Exists(fsys, denoPath)
-		assert.NoError(t, err)
-		assert.False(t, exists)
+		assert.Error(t, Run(context.Background(), fsys, false, utils.InitParams{}))
 	})
 }
 
@@ -170,7 +119,7 @@ func TestWriteVSCodeConfig(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := writeVscodeConfig(afero.NewReadOnlyFs(fsys))
+		err := WriteVscodeConfig(afero.NewReadOnlyFs(fsys))
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})
@@ -179,7 +128,7 @@ func TestWriteVSCodeConfig(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &fstest.OpenErrorFs{DenyPath: extensionsPath}
 		// Run test
-		err := writeVscodeConfig(fsys)
+		err := WriteVscodeConfig(fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})
@@ -188,7 +137,7 @@ func TestWriteVSCodeConfig(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &fstest.OpenErrorFs{DenyPath: settingsPath}
 		// Run test
-		err := writeVscodeConfig(fsys)
+		err := WriteVscodeConfig(fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})

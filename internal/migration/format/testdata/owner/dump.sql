@@ -1,0 +1,13 @@
+ALTER DATABASE database_name OWNER TO new_owner;
+ALTER TABLE public.table_name OWNER TO new_owner;
+ALTER VIEW public.view_name OWNER TO new_owner;
+ALTER SCHEMA public OWNER TO new_owner;
+ALTER SEQUENCE public.sequence_name OWNER TO new_owner;
+ALTER FUNCTION public.function_name(argument_types) OWNER TO new_owner;
+ALTER TYPE public.type_name OWNER TO new_owner;
+ALTER PUBLICATION publication_name OWNER TO new_owner;
+ALTER SUBSCRIPTION subscription_name OWNER TO new_owner;
+ALTER TABLESPACE tablespace_name OWNER TO new_owner;
+ALTER FOREIGN DATA WRAPPER fdw_name OWNER TO new_owner;
+ALTER SERVER server_name OWNER TO new_owner;
+ALTER EVENT TRIGGER trigger_name OWNER TO new_owner;

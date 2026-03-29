@@ -3,7 +3,7 @@ package check
 import (
 	"context"
 	"fmt"
-	"strings"
+	"os"
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
@@ -12,26 +12,17 @@ import (
 )
 
 func Run(ctx context.Context, projectRef string, desiredSubdomain string, fsys afero.Fs) error {
-	// 1. Sanity checks.
-	subdomain := strings.TrimSpace(desiredSubdomain)
-	{
-		if len(subdomain) == 0 {
-			return errors.New("non-empty vanity subdomain expected")
-		}
+	resp, err := utils.GetSupabase().V1CheckVanitySubdomainAvailabilityWithResponse(ctx, projectRef, api.V1CheckVanitySubdomainAvailabilityJSONRequestBody{
+		VanitySubdomain: desiredSubdomain,
+	})
+	if err != nil {
+		return errors.Errorf("failed to check vanity subdomain: %w", err)
+	} else if resp.JSON201 == nil {
+		return errors.Errorf("unexpected check vanity subdomain status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
-
-	// 2. check if the subdomain is available
-	{
-		resp, err := utils.GetSupabase().V1CheckVanitySubdomainAvailabilityWithResponse(ctx, projectRef, api.V1CheckVanitySubdomainAvailabilityJSONRequestBody{
-			VanitySubdomain: subdomain,
-		})
-		if err != nil {
-			return errors.Errorf("failed to check vanity subdomain: %w", err)
-		}
-		if resp.JSON201 == nil {
-			return errors.New("failed to check subdomain availability: " + string(resp.Body))
-		}
-		fmt.Printf("Subdomain %s available: %+v\n", subdomain, resp.JSON201.Available)
-		return nil
+	if utils.OutputFormat.Value != utils.OutputPretty {
+		return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, *resp.JSON201)
 	}
+	fmt.Printf("Subdomain %s available: %+v\n", desiredSubdomain, resp.JSON201.Available)
+	return nil
 }

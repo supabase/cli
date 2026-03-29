@@ -1,7 +1,7 @@
 import { STATUS_CODE, STATUS_TEXT } from "https://deno.land/std/http/status.ts";
 import * as posix from "https://deno.land/std/path/posix/mod.ts";
 
-import * as jose from "https://deno.land/x/jose@v4.13.1/index.ts";
+import * as jose from "jsr:@panva/jose@6";
 
 const SB_SPECIFIC_ERROR_CODE = {
   BootError:
@@ -29,8 +29,9 @@ const SB_SPECIFIC_ERROR_REASON = {
 // OS stuff - we don't want to expose these to the functions.
 const EXCLUDED_ENVS = ["HOME", "HOSTNAME", "PATH", "PWD"];
 
-const JWT_SECRET = Deno.env.get("SUPABASE_INTERNAL_JWT_SECRET")!;
 const HOST_PORT = Deno.env.get("SUPABASE_INTERNAL_HOST_PORT")!;
+const JWT_SECRET = Deno.env.get("SUPABASE_INTERNAL_JWT_SECRET")!;
+const JWKS_ENDPOINT = new URL('/auth/v1/.well-known/jwks.json', Deno.env.get("SUPABASE_URL")!)
 const DEBUG = Deno.env.get("SUPABASE_INTERNAL_DEBUG") === "true";
 const FUNCTIONS_CONFIG_STRING = Deno.env.get(
   "SUPABASE_INTERNAL_FUNCTIONS_CONFIG",
@@ -53,6 +54,7 @@ const GENERIC_FUNCTION_SERVE_MESSAGE = `Serving functions on http://127.0.0.1:${
 interface FunctionConfig {
   entrypointPath: string;
   importMapPath: string;
+  staticFiles: string[];
   verifyJWT: boolean;
 }
 
@@ -104,16 +106,60 @@ function getAuthToken(req: Request) {
   return token;
 }
 
-async function verifyJWT(jwt: string): Promise<boolean> {
+async function isValidLegacyJWT(jwtSecret: string, jwt: string): Promise<boolean> {
   const encoder = new TextEncoder();
-  const secretKey = encoder.encode(JWT_SECRET);
+  const secretKey = encoder.encode(jwtSecret);
   try {
     await jose.jwtVerify(jwt, secretKey);
   } catch (e) {
-    console.error(e);
+    console.error('Symmetric Legacy JWT verification error', e);
     return false;
   }
   return true;
+}
+
+// Lazy-loading JWKs
+let jwks = (() => {
+  try {
+    // using injected JWKS from cli
+    return jose.createLocalJWKSet(JSON.parse(Deno.env.get('SUPABASE_JWKS')));
+  } catch (error) {
+    return null
+  }
+})();
+
+async function isValidJWT(jwksUrl: string, jwt: string): Promise<boolean> {
+  try {
+    if (!jwks) {
+      // Loading from remote-url on fly
+      jwks = jose.createRemoteJWKSet(new URL(jwksUrl));
+    }
+    await jose.jwtVerify(jwt, jwks);
+  } catch (e) {
+    console.error('Asymmetric JWT verification error', e);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Applies hybrid JWT verification, using JWK as primary and Legacy Secret as fallback.
+ * Use only during 'New JWT Keys' migration period, while `JWT_SECRET` is still available.
+ */
+export async function verifyHybridJWT(jwtSecret: string, jwksUrl: string, jwt: string): Promise<boolean> {
+  const { alg: jwtAlgorithm } = jose.decodeProtectedHeader(jwt)
+
+  if (jwtAlgorithm === 'HS256') {
+    console.log(`Legacy token type detected, attempting ${jwtAlgorithm} verification.`)
+
+    return await isValidLegacyJWT(jwtSecret, jwt)
+  }
+
+  if (jwtAlgorithm === 'ES256' || jwtAlgorithm === 'RS256') {
+    return await isValidJWT(jwksUrl, jwt)
+  }
+
+  return false;
 }
 
 // Ref: https://docs.deno.com/examples/checking_file_existence/
@@ -158,7 +204,7 @@ Deno.serve({
     if (req.method !== "OPTIONS" && functionsConfig[functionName].verifyJWT) {
       try {
         const token = getAuthToken(req);
-        const isValidJWT = await verifyJWT(token);
+        const isValidJWT = await verifyHybridJWT(JWT_SECRET, JWKS_ENDPOINT, token);
 
         if (!isValidJWT) {
           return getResponse({ msg: "Invalid JWT" }, STATUS_CODE.Unauthorized);
@@ -190,6 +236,7 @@ Deno.serve({
     // NOTE(Nyannyacha): Decorator type has been set to tc39 by Lakshan's request,
     // but in my opinion, we should probably expose this to customers at some
     // point, as their migration process will not be easy.
+    // This need to be kept for Deno 1 compatibility.
     const decoratorType = "tc39";
 
     const absEntrypoint = posix.join(Deno.cwd(), functionsConfig[functionName].entrypointPath);

@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -102,7 +101,6 @@ func Run(ctx context.Context, algorithm string, appendMode bool, fsys afero.Fs) 
 	if err != nil {
 		return err
 	}
-	outputPath := utils.Config.Auth.SigningKeysPath
 
 	// Generate key pair
 	privateJWK, err := GeneratePrivateKey(config.Algorithm(algorithm))
@@ -111,7 +109,7 @@ func Run(ctx context.Context, algorithm string, appendMode bool, fsys afero.Fs) 
 	}
 
 	// Only serialise a single key to stdout
-	if len(outputPath) == 0 {
+	if len(utils.Config.Auth.SigningKeysPath) == 0 {
 		enc := json.NewEncoder(os.Stdout)
 		if err := enc.Encode(privateJWK); err != nil {
 			return errors.Errorf("failed to encode signing key: %w", err)
@@ -122,61 +120,49 @@ To enable JWT signing keys in your local project:
 2. Update your %s with the new keys path
 
 [auth]
-signing_keys_path = "./signing_key.json"
-`, utils.Bold(filepath.Join(utils.SupabaseDirPath, "signing_key.json")), utils.Bold(utils.ConfigPath))
+signing_keys_path = "./signing_keys.json"
+`, utils.Bold(filepath.Join(utils.SupabaseDirPath, "signing_keys.json")), utils.Bold(utils.ConfigPath))
 		return nil
 	}
 
-	var jwkArray []config.JWK
-	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(outputPath)); err != nil {
-		return err
-	}
-	f, err := fsys.OpenFile(outputPath, os.O_RDWR|os.O_CREATE, 0600)
-	if err != nil {
-		return errors.Errorf("failed to open signing key: %w", err)
-	}
-	defer f.Close()
 	if appendMode {
-		// Load existing key and reset file
-		dec := json.NewDecoder(f)
-		// Since a new file is empty, we must ignore EOF error
-		if err := dec.Decode(&jwkArray); err != nil && !errors.Is(err, io.EOF) {
-			return errors.Errorf("failed to decode signing key: %w", err)
-		}
-		if _, err = f.Seek(0, io.SeekStart); err != nil {
-			return errors.Errorf("failed to seek signing key: %w", err)
-		}
-	} else if fi, err := f.Stat(); fi.Size() > 0 {
-		if err != nil {
-			fmt.Fprintln(utils.GetDebugLogger(), err)
-		}
-		label := fmt.Sprintf("Do you want to overwrite the existing %s file?", utils.Bold(outputPath))
+		utils.Config.Auth.SigningKeys = append(utils.Config.Auth.SigningKeys, *privateJWK)
+	} else {
+		label := fmt.Sprintf("Do you want to overwrite the existing %s file?", utils.Bold(utils.Config.Auth.SigningKeysPath))
 		if shouldOverwrite, err := utils.NewConsole().PromptYesNo(ctx, label, true); err != nil {
 			return err
 		} else if !shouldOverwrite {
 			return errors.New(context.Canceled)
 		}
-		if err := f.Truncate(0); err != nil {
-			return errors.Errorf("failed to truncate signing key: %w", err)
-		}
-	}
-	jwkArray = append(jwkArray, *privateJWK)
-
-	// Write to file
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(jwkArray); err != nil {
-		return errors.Errorf("failed to encode signing key: %w", err)
+		utils.Config.Auth.SigningKeys = []config.JWK{*privateJWK}
 	}
 
-	fmt.Fprintf(os.Stderr, "JWT signing key appended to: %s (now contains %d keys)\n", utils.Bold(outputPath), len(jwkArray))
-	if len(jwkArray) == 1 {
-		if ignored, err := utils.IsGitIgnored(outputPath); err != nil {
+	if err := saveSigningKeys(fsys); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "JWT signing key appended to: %s (now contains %d keys)\n", utils.Bold(utils.Config.Auth.SigningKeysPath), len(utils.Config.Auth.SigningKeys))
+	if len(utils.Config.Auth.SigningKeys) == 1 {
+		if ignored, err := utils.IsGitIgnored(utils.Config.Auth.SigningKeysPath); err != nil {
 			fmt.Fprintln(utils.GetDebugLogger(), err)
 		} else if !ignored {
 			// Since the output path is user defined, we can't update the managed .gitignore file.
 			fmt.Fprintln(os.Stderr, utils.Yellow("IMPORTANT:"), "Add your signing key path to .gitignore to prevent committing to version control.")
 		}
+	}
+	return nil
+}
+
+func saveSigningKeys(fsys afero.Fs) error {
+	f, err := fsys.OpenFile(utils.Config.Auth.SigningKeysPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return errors.Errorf("failed to open signing key: %w", err)
+	}
+	defer f.Close()
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(utils.Config.Auth.SigningKeys); err != nil {
+		return errors.Errorf("failed to encode signing key: %w", err)
 	}
 	return nil
 }

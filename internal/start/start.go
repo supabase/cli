@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -16,7 +18,14 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
+	"github.com/compose-spec/compose-go/v2/types"
+	"github.com/docker/cli/cli/command"
+	dockerFlags "github.com/docker/cli/cli/flags"
+	"github.com/docker/compose/v2/pkg/api"
+	"github.com/docker/compose/v2/pkg/compose"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
@@ -24,6 +33,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/functions/serve"
 	"github.com/supabase/cli/internal/seed/buckets"
@@ -72,6 +82,7 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 
 	fmt.Fprintf(os.Stderr, "Started %s local development setup.\n\n", utils.Aqua("supabase"))
 	status.PrettyPrint(os.Stdout, excludedContainers...)
+	printSecurityNotice()
 	return nil
 }
 
@@ -141,14 +152,89 @@ var (
 
 var serviceTimeout = 30 * time.Second
 
+// RetryClient wraps a Docker client to add retry logic for image pulls
+type RetryClient struct {
+	*client.Client
+}
+
+func isPermanentError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Rate limited errors can be recovered by retry
+	if msg := err.Error(); strings.Contains(msg, "toomanyrequests:") {
+		return false
+	}
+	return true
+}
+
+// ImagePull wraps the Docker client's ImagePull with retry logic and registry auth
+func (cli *RetryClient) ImagePull(ctx context.Context, refStr string, options image.PullOptions) (io.ReadCloser, error) {
+	if len(options.RegistryAuth) == 0 {
+		options.RegistryAuth = utils.GetRegistryAuth()
+	}
+	pull := func() (io.ReadCloser, error) {
+		resp, err := cli.Client.ImagePull(ctx, refStr, options)
+		if isPermanentError(err) {
+			return resp, &backoff.PermanentError{Err: err}
+		}
+		return resp, err
+	}
+	policy := utils.NewBackoffPolicy(ctx)
+	return backoff.RetryWithData(pull, policy)
+}
+
+// Also retry ImageInspect: https://github.com/docker/compose/blob/main/pkg/compose/pull.go#L174
+func (cli *RetryClient) ImageInspect(ctx context.Context, refStr string, options ...client.ImageInspectOption) (image.InspectResponse, error) {
+	pull := func() (image.InspectResponse, error) {
+		resp, err := cli.Client.ImageInspect(ctx, refStr, options...)
+		if isPermanentError(err) {
+			return resp, &backoff.PermanentError{Err: err}
+		}
+		return resp, err
+	}
+	policy := utils.NewBackoffPolicy(ctx)
+	return backoff.RetryWithData(pull, policy)
+}
+
+// pullImagesUsingCompose pulls all required images using docker-compose service
+func pullImagesUsingCompose(ctx context.Context, project types.Project) error {
+	// Create Docker CLI
+	cli, err := command.NewDockerCli()
+	if err != nil {
+		return errors.Errorf("failed to create Docker CLI: %w", err)
+	}
+	// Initialize Docker CLI
+	opt := command.WithAPIClient(&RetryClient{Client: utils.Docker})
+	if err := cli.Initialize(&dockerFlags.ClientOptions{}, opt); err != nil {
+		return errors.Errorf("failed to initialize Docker CLI: %w", err)
+	}
+	service := compose.NewComposeService(cli)
+	// Fallback to regular image pull by ignoring failures
+	return service.Pull(ctx, &project, api.PullOptions{IgnoreFailures: true})
+}
+
 func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, options ...func(*pgx.ConnConfig)) error {
 	excluded := make(map[string]bool)
 	for _, name := range excludedContainers {
 		excluded[name] = true
 	}
+	notExcluded := func(sc types.ServiceConfig) bool {
+		val, ok := excluded[sc.Name]
+		return !val || !ok
+	}
 
 	jwks, err := utils.Config.Auth.ResolveJWKS(ctx)
 	if err != nil {
+		return err
+	}
+
+	// TODO: start services using compose up
+	project := types.Project{
+		Name:     "supabase-cli",
+		Services: utils.GetServices().Filter(notExcluded),
+	}
+	if err := pullImagesUsingCompose(ctx, project); err != nil {
 		return err
 	}
 
@@ -160,10 +246,16 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 	}
 
 	var started []string
-	var isStorageEnabled = utils.Config.Storage.Enabled && !isContainerExcluded(utils.Config.Storage.Image, excluded)
-	var isImgProxyEnabled = utils.Config.Storage.ImageTransformation != nil &&
+	isStorageEnabled := utils.Config.Storage.Enabled && !isContainerExcluded(utils.Config.Storage.Image, excluded)
+	isImgProxyEnabled := utils.Config.Storage.ImageTransformation != nil &&
 		utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImgProxyImage, excluded)
+	isS3ProtocolEnabled := utils.Config.Storage.S3Protocol != nil && utils.Config.Storage.S3Protocol.Enabled
 	fmt.Fprintln(os.Stderr, "Starting containers...")
+
+	workdir, err := os.Getwd()
+	if err != nil {
+		return errors.Errorf("failed to get working directory: %w", err)
+	}
 
 	// Start Logflare
 	if utils.Config.Analytics.Enabled && !isContainerExcluded(utils.Config.Analytics.Image, excluded) {
@@ -187,10 +279,6 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 
 		switch utils.Config.Analytics.Backend {
 		case config.LogflareBigQuery:
-			workdir, err := os.Getwd()
-			if err != nil {
-				return errors.Errorf("failed to get working directory: %w", err)
-			}
 			hostJwtPath := filepath.Join(workdir, utils.Config.Analytics.GcpJwtPath)
 			bind = append(bind, hostJwtPath+":/opt/app/rel/logflare/bin/gcloud.json")
 			// This is hardcoded in studio frontend
@@ -220,7 +308,8 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 EOF
 `},
 				Healthcheck: &container.HealthConfig{
-					Test: []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null",
+					Test: []string{
+						"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null",
 						"http://127.0.0.1:4000/health",
 					},
 					Interval:    10 * time.Second,
@@ -231,9 +320,11 @@ EOF
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 			},
 			container.HostConfig{
-				Binds:         bind,
-				PortBindings:  nat.PortMap{"4000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.Port), 10)}}},
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				Binds: bind,
+				PortBindings: nat.PortMap{"4000/tcp": []nat.PortBinding{{
+					HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.Port), 10),
+				}}},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
@@ -301,12 +392,15 @@ EOF
 			container.Config{
 				Image: utils.Config.Analytics.VectorImage,
 				Env:   env,
-				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml && vector --config /etc/vector/vector.yaml
+				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml
 ` + vectorConfigBuf.String() + `
 EOF
+until wget --no-verbose --tries=1 --spider http://` + utils.LogflareId + `:4000/health 2>/dev/null; do sleep 2; done
+vector --config /etc/vector/vector.yaml
 `},
 				Healthcheck: &container.HealthConfig{
-					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+					Test: []string{
+						"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
 						"http://127.0.0.1:9001/health",
 					},
 					Interval: 10 * time.Second,
@@ -316,7 +410,7 @@ EOF
 			},
 			container.HostConfig{
 				Binds:         binds,
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 				SecurityOpt:   securityOpts,
 			},
 			network.NetworkingConfig{
@@ -439,9 +533,9 @@ EOF
 			container.HostConfig{
 				Binds: binds,
 				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
-					HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10)},
-				}},
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+					HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10),
+				}}},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
@@ -489,6 +583,7 @@ EOF
 			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !utils.Config.Auth.Email.EnableConfirmations),
 			fmt.Sprintf("GOTRUE_MAILER_OTP_LENGTH=%v", utils.Config.Auth.Email.OtpLength),
 			fmt.Sprintf("GOTRUE_MAILER_OTP_EXP=%v", utils.Config.Auth.Email.OtpExpiry),
+			"GOTRUE_MAILER_TEMPLATE_RELOADING_ENABLED=true",
 
 			fmt.Sprintf("GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED=%v", utils.Config.Auth.EnableAnonymousSignIns),
 
@@ -531,9 +626,13 @@ EOF
 			fmt.Sprintf("GOTRUE_RATE_LIMIT_WEB3=%v", utils.Config.Auth.RateLimit.Web3),
 		}
 
-		// Since signing key is validated by ResolveJWKS, simply read the key file.
-		if keys, err := afero.ReadFile(fsys, utils.Config.Auth.SigningKeysPath); err == nil && len(keys) > 0 {
+		// Serialise default or custom signing keys
+		if keys, err := json.Marshal(utils.Config.Auth.SigningKeys); err == nil {
 			env = append(env, "GOTRUE_JWT_KEYS="+string(keys))
+			// TODO: deprecate HS256 when it's no longer supported
+			// TODO: remove VALIDMETHODS after a while to avoid breaking changes
+			env = append(env, "GOTRUE_JWT_VALIDMETHODS=HS256,RS256,ES256")
+			env = append(env, "GOTRUE_JWT_VALID_METHODS=HS256,RS256,ES256")
 		}
 
 		if utils.Config.Auth.Email.Smtp != nil && utils.Config.Auth.Email.Smtp.Enabled {
@@ -707,7 +806,10 @@ EOF
 				env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_%s_URL=%s", strings.ToUpper(name), config.Url))
 			}
 		}
-		env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED=%v", utils.Config.Auth.Web3.Solana.Enabled))
+		env = append(env,
+			fmt.Sprintf("GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED=%v", utils.Config.Auth.Web3.Solana.Enabled),
+			fmt.Sprintf("GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED=%v", utils.Config.Auth.Web3.Ethereum.Enabled),
+		)
 
 		// OAuth server configuration
 		if utils.Config.Auth.OAuthServer.Enabled {
@@ -725,7 +827,8 @@ EOF
 				Env:          env,
 				ExposedPorts: nat.PortSet{"9999/tcp": {}},
 				Healthcheck: &container.HealthConfig{
-					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+					Test: []string{
+						"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
 						"http://127.0.0.1:9999/health",
 					},
 					Interval: 10 * time.Second,
@@ -734,7 +837,7 @@ EOF
 				},
 			},
 			container.HostConfig{
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
@@ -752,12 +855,18 @@ EOF
 
 	// Start Mailpit
 	if utils.Config.Inbucket.Enabled && !isContainerExcluded(utils.Config.Inbucket.Image, excluded) {
-		inbucketPortBindings := nat.PortMap{"8025/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10)}}}
+		inbucketPortBindings := nat.PortMap{"8025/tcp": []nat.PortBinding{{
+			HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10),
+		}}}
 		if utils.Config.Inbucket.SmtpPort != 0 {
-			inbucketPortBindings["1025/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10)}}
+			inbucketPortBindings["1025/tcp"] = []nat.PortBinding{{
+				HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10),
+			}}
 		}
 		if utils.Config.Inbucket.Pop3Port != 0 {
-			inbucketPortBindings["1110/tcp"] = []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Pop3Port), 10)}}
+			inbucketPortBindings["1110/tcp"] = []nat.PortBinding{{
+				HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Pop3Port), 10),
+			}}
 		}
 		if _, err := utils.DockerStart(
 			ctx,
@@ -778,7 +887,7 @@ EOF
 			},
 			container.HostConfig{
 				PortBindings:  inbucketPortBindings,
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
@@ -824,7 +933,8 @@ EOF
 				ExposedPorts: nat.PortSet{"4000/tcp": {}},
 				Healthcheck: &container.HealthConfig{
 					// Podman splits command by spaces unless it's quoted, but curl header can't be quoted.
-					Test: []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null",
+					Test: []string{
+						"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null",
 						"-H", "Host:" + utils.Config.Realtime.TenantId,
 						"http://127.0.0.1:4000/api/ping",
 					},
@@ -834,7 +944,7 @@ EOF
 				},
 			},
 			container.HostConfig{
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
@@ -868,7 +978,7 @@ EOF
 				// PostgREST does not expose a shell for health check
 			},
 			container.HostConfig{
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
@@ -908,6 +1018,7 @@ EOF
 					fmt.Sprintf("ENABLE_IMAGE_TRANSFORMATION=%t", isImgProxyEnabled),
 					fmt.Sprintf("IMGPROXY_URL=http://%s:5001", utils.ImgProxyId),
 					"TUS_URL_PATH=/storage/v1/upload/resumable",
+					fmt.Sprintf("S3_PROTOCOL_ENABLED=%t", isS3ProtocolEnabled),
 					"S3_PROTOCOL_ACCESS_KEY_ID=" + utils.Config.Storage.S3Credentials.AccessKeyId,
 					"S3_PROTOCOL_ACCESS_KEY_SECRET=" + utils.Config.Storage.S3Credentials.SecretAccessKey,
 					"S3_PROTOCOL_PREFIX=/storage/v1",
@@ -917,7 +1028,8 @@ EOF
 				},
 				Healthcheck: &container.HealthConfig{
 					// For some reason, localhost resolves to IPv6 address on GitPod which breaks healthcheck.
-					Test: []string{"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+					Test: []string{
+						"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
 						"http://127.0.0.1:5000/status",
 					},
 					Interval: 10 * time.Second,
@@ -926,7 +1038,7 @@ EOF
 				},
 			},
 			container.HostConfig{
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 				Binds:         []string{utils.StorageId + ":" + dockerStoragePath},
 			},
 			network.NetworkingConfig{
@@ -969,7 +1081,7 @@ EOF
 			},
 			container.HostConfig{
 				VolumesFrom:   []string{utils.StorageId},
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
@@ -1016,7 +1128,7 @@ EOF
 				},
 			},
 			container.HostConfig{
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
@@ -1034,6 +1146,16 @@ EOF
 
 	// Start Studio.
 	if utils.Config.Studio.Enabled && !isContainerExcluded(utils.Config.Studio.Image, excluded) {
+		binds, _, err := serve.PopulatePerFunctionConfigs(workdir, "", nil, fsys)
+		if err != nil {
+			return err
+		}
+
+		// Mount snippets directory for Studio to access
+		hostSnippetsPath := filepath.Join(workdir, utils.SnippetsDir)
+		containerSnippetsPath := utils.ToDockerPath(hostSnippetsPath)
+		binds = append(binds, fmt.Sprintf("%s:%s:rw", hostSnippetsPath, containerSnippetsPath))
+		binds = utils.RemoveDuplicates(binds)
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
@@ -1049,11 +1171,17 @@ EOF
 					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
 					"LOGFLARE_PRIVATE_ACCESS_TOKEN=" + utils.Config.Analytics.ApiKey,
 					"OPENAI_API_KEY=" + utils.Config.Studio.OpenaiApiKey.Value,
+					"PGRST_DB_SCHEMAS=" + strings.Join(utils.Config.Api.Schemas, ","),
+					"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(utils.Config.Api.ExtraSearchPath, ","),
+					fmt.Sprintf("PGRST_DB_MAX_ROWS=%d", utils.Config.Api.MaxRows),
 					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
 					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
 					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
+					"EDGE_FUNCTIONS_MANAGEMENT_FOLDER=" + utils.ToDockerPath(filepath.Join(workdir, utils.FunctionsDir)),
+					"SNIPPETS_MANAGEMENT_FOLDER=" + containerSnippetsPath,
 					// Ref: https://github.com/vercel/next.js/issues/51684#issuecomment-1612834913
 					"HOSTNAME=0.0.0.0",
+					"POSTGRES_USER_READ_WRITE=postgres",
 				},
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD-SHELL", `node --eval="fetch('http://127.0.0.1:3000/api/platform/profile').then((r) => {if (!r.ok) throw new Error(r.status)})"`},
@@ -1063,8 +1191,11 @@ EOF
 				},
 			},
 			container.HostConfig{
-				PortBindings:  nat.PortMap{"3000/tcp": []nat.PortBinding{{HostPort: strconv.FormatUint(uint64(utils.Config.Studio.Port), 10)}}},
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+				Binds: binds,
+				PortBindings: nat.PortMap{"3000/tcp": []nat.PortBinding{{
+					HostPort: strconv.FormatUint(uint64(utils.Config.Studio.Port), 10),
+				}}},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
@@ -1139,9 +1270,9 @@ EOF
 			},
 			container.HostConfig{
 				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
-					HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10)},
-				}},
-				RestartPolicy: container.RestartPolicy{Name: "always"},
+					HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10),
+				}}},
+				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
@@ -1196,4 +1327,12 @@ func formatMapForEnvConfig(input map[string]string, output *bytes.Buffer) {
 			output.WriteString(",")
 		}
 	}
+}
+
+func printSecurityNotice() {
+	fmt.Fprintln(os.Stderr, utils.Yellow("Local dev security notice"))
+	fmt.Fprintln(os.Stderr, "All services bind to 0.0.0.0 (network-accessible, not just localhost)")
+	fmt.Fprintln(os.Stderr, "API keys and JWT secrets are shared defaults. Do not use in production")
+	fmt.Fprintln(os.Stderr, "Studio, pgMeta (/pg/*), and analytics have no authentication")
+	fmt.Fprintln(os.Stderr)
 }

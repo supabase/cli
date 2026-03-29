@@ -50,7 +50,7 @@ func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	hostOutputPath := filepath.Join(hostOutputDir, "output.eszip")
 	// Create exec command
 	cmd := []string{"bundle", "--entrypoint", utils.ToDockerPath(entrypoint), "--output", utils.ToDockerPath(hostOutputPath)}
-	if len(importMap) > 0 {
+	if len(importMap) > 0 && !function.ShouldUseDenoJsonDiscovery(entrypoint, importMap) {
 		cmd = append(cmd, "--import-map", utils.ToDockerPath(importMap))
 	}
 	for _, sf := range staticFiles {

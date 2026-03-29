@@ -11,7 +11,6 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
-	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/gen/types"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/config"
@@ -70,6 +69,9 @@ func DiffSchemaMigraBash(ctx context.Context, source, target pgconn.Config, sche
 		"SOURCE=" + utils.ToPostgresURL(source),
 		"TARGET=" + utils.ToPostgresURL(target),
 	}
+	if types.IsSSLDebugEnabled() {
+		env = append(env, "SUPABASE_SSL_DEBUG=true")
+	}
 	// Passing in script string means command line args must be set manually, ie. "$@"
 	args := "set -- " + strings.Join(schema, " ") + ";"
 	cmd := []string{"/bin/sh", "-c", args + diffSchemaScript}
@@ -109,43 +111,39 @@ func DiffSchemaMigra(ctx context.Context, source, target pgconn.Config, schema [
 		"SOURCE=" + utils.ToPostgresURL(source),
 		"TARGET=" + utils.ToPostgresURL(target),
 	}
+	debugf := func(string, ...any) {}
+	if types.IsSSLDebugEnabled() {
+		debugf = types.LogSSLDebugf
+		env = append(env, "SUPABASE_SSL_DEBUG=true")
+		debugf("DiffSchemaMigra source_host=%s source_port=%d target_host=%s target_port=%d target_db=%s",
+			source.Host,
+			source.Port,
+			target.Host,
+			target.Port,
+			target.Database,
+		)
+		debugf("DiffSchemaMigra docker_daemon=%s image=%s", utils.Docker.DaemonHost(), utils.Config.EdgeRuntime.Image)
+	}
 	if ca, err := types.GetRootCA(ctx, utils.ToPostgresURL(target), options...); err != nil {
+		debugf("DiffSchemaMigra GetRootCA error=%v", err)
 		return "", err
 	} else if len(ca) > 0 {
 		env = append(env, "SSL_CA="+ca)
+		debugf("DiffSchemaMigra GetRootCA ca_bundle_len=%d", len(ca))
 	}
 	if len(schema) > 0 {
 		env = append(env, "INCLUDED_SCHEMAS="+strings.Join(schema, ","))
 	} else {
 		env = append(env, "EXCLUDED_SCHEMAS="+strings.Join(managedSchemas, ","))
 	}
-	cmd := []string{"edge-runtime", "start", "--main-service=."}
-	if viper.GetBool("DEBUG") {
-		cmd = append(cmd, "--verbose")
+	// Migra also executes via Edge Runtime because the TypeScript implementation
+	// shares the same containerized execution environment as other diff engines.
+	// The helper remains in package diff to avoid coupling migra code paths to
+	// pg-delta-specific packages.
+	binds := []string{utils.EdgeRuntimeId + ":/root/.cache/deno:rw"}
+	var stdout, stderr bytes.Buffer
+	if err := utils.RunEdgeRuntimeScript(ctx, env, diffSchemaTypeScript, binds, "error diffing schema", &stdout, &stderr); err != nil {
+		return "", err
 	}
-	cmdString := strings.Join(cmd, " ")
-	entrypoint := []string{"sh", "-c", `cat <<'EOF' > index.ts && ` + cmdString + `
-` + diffSchemaTypeScript + `
-EOF
-`}
-	var out, stderr bytes.Buffer
-	if err := utils.DockerRunOnceWithConfig(
-		ctx,
-		container.Config{
-			Image:      utils.Config.EdgeRuntime.Image,
-			Env:        env,
-			Entrypoint: entrypoint,
-		},
-		container.HostConfig{
-			Binds:       []string{utils.EdgeRuntimeId + ":/root/.cache/deno:rw"},
-			NetworkMode: network.NetworkHost,
-		},
-		network.NetworkingConfig{},
-		"",
-		&out,
-		&stderr,
-	); err != nil && !strings.HasPrefix(stderr.String(), "main worker has been destroyed") {
-		return "", errors.Errorf("error diffing schema: %w:\n%s", err, stderr.String())
-	}
-	return out.String(), nil
+	return stdout.String(), nil
 }

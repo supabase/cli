@@ -1,14 +1,15 @@
 package diff
 
 import (
+	"bytes"
 	"context"
-	_ "embed"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -21,8 +22,9 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/db/start"
-	"github.com/supabase/cli/internal/gen/keys"
+	"github.com/supabase/cli/internal/pgdelta"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/parser"
@@ -30,12 +32,12 @@ import (
 
 type DiffFunc func(context.Context, pgconn.Config, pgconn.Config, []string, ...func(*pgx.ConnConfig)) (string, error)
 
-func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
-	out, err := DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, options...)
+func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, usePgDelta bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
+	out, err := DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, usePgDelta, options...)
 	if err != nil {
 		return err
 	}
-	branch := keys.GetGitBranch(fsys)
+	branch := utils.GetGitBranch(fsys)
 	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db diff")+" on branch "+utils.Aqua(branch)+".\n")
 	if err := SaveDiff(out, file, fsys); err != nil {
 		return err
@@ -49,6 +51,26 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 }
 
 func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
+	// When pg-delta is enabled, declarative path is the source of truth (config or default).
+	if utils.IsPgDeltaEnabled() {
+		declDir := utils.GetDeclarativeDir()
+		if exists, err := afero.DirExists(fsys, declDir); err == nil && exists {
+			var declared []string
+			if err := afero.Walk(fsys, declDir, func(path string, info fs.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+				if info.Mode().IsRegular() && filepath.Ext(info.Name()) == ".sql" {
+					declared = append(declared, path)
+				}
+				return nil
+			}); err != nil {
+				return nil, errors.Errorf("failed to walk declarative dir: %w", err)
+			}
+			sort.Strings(declared)
+			return declared, nil
+		}
+	}
 	if schemas := utils.Config.Db.Migrations.SchemaPaths; len(schemas) > 0 {
 		return schemas.Files(afero.NewIOFS(fsys))
 	}
@@ -69,6 +91,9 @@ func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
 	}); err != nil {
 		return nil, errors.Errorf("failed to walk dir: %w", err)
 	}
+	// Keep file application order deterministic so diff output stays stable across
+	// filesystems and operating systems. This is only if no schema paths in config are set.
+	sort.Strings(declared)
 	return declared, nil
 }
 
@@ -136,14 +161,14 @@ func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs,
 	return migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys))
 }
 
-func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ DiffFunc, options ...func(*pgx.ConnConfig)) (string, error) {
+func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ DiffFunc, usePgDelta bool, options ...func(*pgx.ConnConfig)) (string, error) {
 	fmt.Fprintln(w, "Creating shadow database...")
 	shadow, err := CreateShadowDatabase(ctx, utils.Config.Db.ShadowPort)
 	if err != nil {
 		return "", err
 	}
 	defer utils.DockerRemove(shadow)
-	if err := start.WaitForHealthyService(ctx, start.HealthTimeout, shadow); err != nil {
+	if err := start.WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, shadow); err != nil {
 		return "", err
 	}
 	if err := MigrateShadowDatabase(ctx, shadow, fsys, options...); err != nil {
@@ -157,14 +182,27 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 		Database: "postgres",
 	}
 	if utils.IsLocalDatabase(config) {
-		if declared, err := loadDeclaredSchemas(fsys); err != nil {
-			return "", err
-		} else if len(declared) > 0 {
+		if declared, err := loadDeclaredSchemas(fsys); len(declared) > 0 {
 			config = shadowConfig
 			config.Database = "contrib_regression"
-			if err := migrateBaseDatabase(ctx, config, declared, fsys, options...); err != nil {
-				return "", err
+			if usePgDelta {
+				declDir := utils.GetDeclarativeDir()
+				if exists, _ := afero.DirExists(fsys, declDir); exists {
+					if err := pgdelta.ApplyDeclarative(ctx, config, fsys); err != nil {
+						return "", err
+					}
+				} else {
+					if err := migrateBaseDatabase(ctx, config, declared, fsys, options...); err != nil {
+						return "", err
+					}
+				}
+			} else {
+				if err := migrateBaseDatabase(ctx, config, declared, fsys, options...); err != nil {
+					return "", err
+				}
 			}
+		} else if err != nil {
+			return "", err
 		}
 	}
 	// Load all user defined schemas
@@ -189,4 +227,38 @@ func migrateBaseDatabase(ctx context.Context, config pgconn.Config, migrations [
 	}
 	defer conn.Close(context.Background())
 	return migration.SeedGlobals(ctx, migrations, conn, afero.NewIOFS(fsys))
+}
+
+func diffWithStream(ctx context.Context, env []string, script string, stdout io.Writer) error {
+	cmd := []string{"edge-runtime", "start", "--main-service=."}
+	if viper.GetBool("DEBUG") {
+		cmd = append(cmd, "--verbose")
+	}
+	cmdString := strings.Join(cmd, " ")
+	entrypoint := []string{"sh", "-c", `cat <<'EOF' > index.ts && ` + cmdString + `
+` + script + `
+EOF
+`}
+	var stderr bytes.Buffer
+	if err := utils.DockerRunOnceWithConfig(
+		ctx,
+		container.Config{
+			Image:      utils.Config.EdgeRuntime.Image,
+			Env:        env,
+			Entrypoint: entrypoint,
+		},
+		container.HostConfig{
+			Binds:       []string{utils.EdgeRuntimeId + ":/root/.cache/deno:rw"},
+			NetworkMode: network.NetworkHost,
+		},
+		network.NetworkingConfig{},
+		"",
+		stdout,
+		&stderr,
+	// The "main worker has been destroyed" message may not appear at the start of stderr
+	// (e.g. preceded by other Deno runtime output), so use Contains instead of HasPrefix.
+	); err != nil && !strings.Contains(stderr.String(), "main worker has been destroyed") {
+		return errors.Errorf("error diffing schema: %w:\n%s", err, stderr.String())
+	}
+	return nil
 }

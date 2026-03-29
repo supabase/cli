@@ -16,7 +16,6 @@ import (
 	"github.com/supabase/cli/internal/branches/pause"
 	"github.com/supabase/cli/internal/branches/unpause"
 	"github.com/supabase/cli/internal/branches/update"
-	"github.com/supabase/cli/internal/gen/keys"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
@@ -30,9 +29,6 @@ var (
 		Short:   "Manage Supabase preview branches",
 	}
 
-	branchRegion = utils.EnumFlag{
-		Allowed: awsRegions(),
-	}
 	persistent bool
 	withData   bool
 	notifyURL  string
@@ -49,7 +45,7 @@ var (
 			}
 			cmdFlags := cmd.Flags()
 			if cmdFlags.Changed("region") {
-				body.Region = &branchRegion.Value
+				body.Region = &region.Value
 			}
 			if cmdFlags.Changed("size") {
 				body.DesiredInstanceSize = (*api.CreateBranchBodyDesiredInstanceSize)(&size.Value)
@@ -206,7 +202,7 @@ func init() {
 	branchFlags := branchesCmd.PersistentFlags()
 	branchFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
 	createFlags := branchCreateCmd.Flags()
-	createFlags.Var(&branchRegion, "region", "Select a region to deploy the branch database.")
+	createFlags.Var(&region, "region", "Select a region to deploy the branch database.")
 	createFlags.Var(&size, "size", "Select a desired instance size for the branch database.")
 	createFlags.BoolVar(&persistent, "persistent", false, "Whether to create a persistent branch.")
 	createFlags.BoolVar(&withData, "with-data", false, "Whether to clone production data to the branch database.")
@@ -232,7 +228,7 @@ func promptBranchId(ctx context.Context, fsys afero.Fs) error {
 	if console := utils.NewConsole(); !console.IsTTY {
 		// Only read from stdin if the terminal is non-interactive
 		title := "Enter the name of your branch"
-		if branchId = keys.GetGitBranch(fsys); len(branchId) > 0 {
+		if branchId = utils.GetGitBranch(fsys); len(branchId) > 0 {
 			title += fmt.Sprintf(" (or leave blank to use %s)", utils.Aqua(branchId))
 		}
 		title += ": "

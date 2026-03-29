@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
@@ -22,40 +21,18 @@ import (
 )
 
 func Run(ctx context.Context, projectRef string, skipPooler bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	majorVersion := utils.Config.Db.MajorVersion
+	// 1. Link postgres version
 	if err := checkRemoteProjectStatus(ctx, projectRef, fsys); err != nil {
 		return err
 	}
-
-	// 1. Check service config
+	// 2. Check service config
 	keys, err := tenant.GetApiKeys(ctx, projectRef)
 	if err != nil {
 		return err
 	}
 	LinkServices(ctx, projectRef, keys.ServiceRole, skipPooler, fsys)
-
-	// 2. Check database connection
-	if config, err := flags.NewDbConfigWithPassword(ctx, projectRef); err != nil {
-		fmt.Fprintln(os.Stderr, utils.Yellow("WARN:"), err)
-	} else if err := linkDatabase(ctx, config, fsys, options...); err != nil {
-		return err
-	}
-
 	// 3. Save project ref
-	if err := utils.WriteFile(utils.ProjectRefPath, []byte(projectRef), fsys); err != nil {
-		return err
-	}
-	fmt.Fprintln(os.Stdout, "Finished "+utils.Aqua("supabase link")+".")
-
-	// 4. Suggest config update
-	if utils.Config.Db.MajorVersion != majorVersion {
-		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Local database version differs from the linked project.")
-		fmt.Fprintf(os.Stderr, `Update your %s to fix it:
-[db]
-major_version = %d
-`, utils.Bold(utils.ConfigPath), utils.Config.Db.MajorVersion)
-	}
-	return nil
+	return utils.WriteFile(utils.ProjectRefPath, []byte(projectRef), fsys)
 }
 
 func LinkServices(ctx context.Context, projectRef, serviceKey string, skipPooler bool, fsys afero.Fs) {
@@ -66,7 +43,7 @@ func LinkServices(ctx context.Context, projectRef, serviceKey string, skipPooler
 		func() error { return linkNetworkRestrictions(ctx, projectRef) },
 		func() error { return linkPostgrest(ctx, projectRef) },
 		func() error { return linkGotrue(ctx, projectRef) },
-		func() error { return linkStorage(ctx, projectRef) },
+		func() error { return linkStorage(ctx, projectRef, fsys) },
 		func() error {
 			if skipPooler {
 				utils.Config.Db.Pooler.ConnectionString = ""
@@ -128,7 +105,7 @@ func linkGotrueVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs)
 	return utils.WriteFile(utils.GotrueVersionPath, []byte(version), fsys)
 }
 
-func linkStorage(ctx context.Context, projectRef string) error {
+func linkStorage(ctx context.Context, projectRef string, fsys afero.Fs) error {
 	resp, err := utils.GetSupabase().V1GetStorageConfigWithResponse(ctx, projectRef)
 	if err != nil {
 		return errors.Errorf("failed to read Storage config: %w", err)
@@ -136,7 +113,7 @@ func linkStorage(ctx context.Context, projectRef string) error {
 		return errors.Errorf("unexpected Storage config status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 	utils.Config.Storage.FromRemoteStorageConfig(*resp.JSON200)
-	return nil
+	return utils.WriteFile(utils.StorageMigrationPath, []byte(utils.Config.Storage.TargetMigration), fsys)
 }
 
 func linkStorageVersion(ctx context.Context, api tenant.TenantAPI, fsys afero.Fs) error {
@@ -253,8 +230,24 @@ func checkRemoteProjectStatus(ctx context.Context, projectRef string, fsys afero
 	}
 
 	// Update postgres image version to match the remote project
-	if version := resp.JSON200.Database.Version; len(version) > 0 {
-		return utils.WriteFile(utils.PostgresVersionPath, []byte(version), fsys)
+	return linkPostgresVersion(resp.JSON200.Database.Version, fsys)
+}
+
+func linkPostgresVersion(version string, fsys afero.Fs) error {
+	if len(version) == 0 {
+		return nil
 	}
-	return nil
+	majorVersion, err := strconv.ParseUint(strings.Split(version, ".")[0], 10, 7)
+	if err != nil {
+		return errors.Errorf("invalid major version: %w", err)
+	}
+	if uint64(utils.Config.Db.MajorVersion) != majorVersion {
+		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Local database version differs from the linked project.")
+		fmt.Fprintf(os.Stderr, `Update your %s to fix it:
+[db]
+major_version = %d
+`, utils.Bold(utils.ConfigPath), majorVersion)
+	}
+	utils.Config.Db.MajorVersion = uint(majorVersion)
+	return utils.WriteFile(utils.PostgresVersionPath, []byte(version), fsys)
 }

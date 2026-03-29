@@ -30,6 +30,7 @@ public = false`
 		bucketPath := filepath.Join(utils.SupabaseDirPath, "images")
 		require.NoError(t, fsys.Mkdir(bucketPath, 0755))
 		// Setup mock api
+		defer gock.OffAll()
 		gock.New(utils.Config.Api.ExternalUrl).
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
@@ -54,6 +55,7 @@ public = false`
 
 	t.Run("ignores unconfigured buckets", func(t *testing.T) {
 		// Setup mock api
+		defer gock.OffAll()
 		gock.New(utils.Config.Api.ExternalUrl).
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).

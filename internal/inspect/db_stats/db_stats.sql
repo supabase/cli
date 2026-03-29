@@ -52,7 +52,7 @@ SELECT
   COALESCE((SELECT size FROM total_objects WHERE relkind = 'i'), '0 bytes') AS total_index_size,
   COALESCE((SELECT size FROM total_objects WHERE relkind = 'r'), '0 bytes') AS total_table_size,
   COALESCE((SELECT size FROM total_objects WHERE relkind = 't'), '0 bytes') AS total_toast_size,
-  COALESCE((SELECT (now() - stats_reset)::text FROM pg_stat_statements_info), 'N/A') AS time_since_stats_reset,
+  COALESCE((SELECT (now() - stats_reset)::text FROM extensions.pg_stat_statements_info), 'N/A') AS time_since_stats_reset,
   (SELECT COALESCE(ratio::text, 'N/A') FROM cache_hit WHERE relkind = 'i') AS index_hit_rate,
   (SELECT COALESCE(ratio::text, 'N/A') FROM cache_hit WHERE relkind = 't') AS table_hit_rate,
   COALESCE((SELECT pg_size_pretty(SUM(size)) FROM pg_ls_waldir()), '0 bytes') AS wal_size

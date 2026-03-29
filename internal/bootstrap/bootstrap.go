@@ -60,7 +60,7 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 		if err := downloadSample(ctx, client, starter.Url, fsys); err != nil {
 			return err
 		}
-	} else if err := initBlank.Run(ctx, fsys, nil, nil, utils.InitParams{Overwrite: true}); err != nil {
+	} else if err := initBlank.Run(ctx, fsys, false, utils.InitParams{Overwrite: true}); err != nil {
 		return err
 	}
 	// 1. Login
@@ -156,7 +156,7 @@ func suggestAppStart(cwd, command string) string {
 
 func checkProjectHealth(ctx context.Context) error {
 	params := api.V1GetServicesHealthParams{
-		Services: []api.V1GetServicesHealthParamsServices{api.Db},
+		Services: []api.V1GetServicesHealthParamsServices{api.V1GetServicesHealthParamsServicesDb},
 	}
 	resp, err := utils.GetSupabase().V1GetServicesHealthWithResponse(ctx, flags.ProjectRef, &params)
 	if err != nil {

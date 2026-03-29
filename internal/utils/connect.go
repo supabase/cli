@@ -44,6 +44,8 @@ func ToPostgresURL(config pgconn.Config) string {
 	)
 }
 
+var ErrPrimaryNotFound = errors.New("primary database not found")
+
 func GetPoolerConfigPrimary(ctx context.Context, ref string) (api.SupavisorConfigResponse, error) {
 	var result api.SupavisorConfigResponse
 	resp, err := GetSupabase().V1GetPoolerConfigWithResponse(ctx, ref)
@@ -57,7 +59,7 @@ func GetPoolerConfigPrimary(ctx context.Context, ref string) (api.SupavisorConfi
 			return config, nil
 		}
 	}
-	return result, errors.Errorf("primary database not found: %s", ref)
+	return result, errors.New(ErrPrimaryNotFound)
 }
 
 func GetPoolerConfig(projectRef string) *pgconn.Config {
@@ -164,7 +166,22 @@ func ConnectByUrl(ctx context.Context, url string, options ...func(*pgx.ConnConf
 		}
 		cc.Fallbacks = fallbacks
 	})
-	return pgxv5.Connect(ctx, url, options...)
+	conn, err := pgxv5.Connect(ctx, url, options...)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if strings.Contains(pgErr.Message, "connect: connection refused") {
+			CmdSuggestion = fmt.Sprintf("Make sure your local IP is allowed in Network Restrictions and Network Bans.\n%s/project/_/database/settings", CurrentProfile.DashboardURL)
+		} else if strings.Contains(pgErr.Message, "SSL connection is required") && viper.GetBool("DEBUG") {
+			CmdSuggestion = "SSL connection is not supported with --debug flag"
+		} else if strings.Contains(pgErr.Message, "SCRAM exchange: Wrong password") || strings.Contains(pgErr.Message, "failed SASL auth") {
+			// password authentication failed for user / invalid SCRAM server-final-message received from server
+			CmdSuggestion = "Try setting the SUPABASE_DB_PASSWORD environment variable"
+		} else if strings.Contains(pgErr.Message, "connect: no route to host") || strings.Contains(pgErr.Message, "Tenant or user not found") {
+			// Assumes IPv6 check has been performed before this
+			CmdSuggestion = "Make sure your project exists on profile: " + CurrentProfile.Name
+		}
+	}
+	return conn, err
 }
 
 const (

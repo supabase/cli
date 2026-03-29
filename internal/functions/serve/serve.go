@@ -117,7 +117,14 @@ func restartEdgeRuntime(ctx context.Context, envFilePath string, noVerifyJWT *bo
 	dbUrl := fmt.Sprintf("postgresql://postgres:postgres@%s:5432/postgres", utils.DbAliases[0])
 	// 3. Serve and log to console
 	fmt.Fprintln(os.Stderr, "Setting up Edge Functions runtime...")
-	return ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys)
+	if err := ServeFunctions(ctx, envFilePath, noVerifyJWT, importMapPath, dbUrl, runtimeOption, fsys); err != nil {
+		return err
+	}
+	// 4. Reload Kong to refresh DNS cache for the new Edge Runtime container IP.
+	if err := utils.DockerExecOnceWithStream(ctx, utils.KongId, "", nil, []string{"kong", "reload"}, os.Stderr, os.Stderr); err != nil {
+		fmt.Fprintln(os.Stderr, "Warning: failed to reload Kong:", err)
+	}
+	return nil
 }
 
 func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, dbUrl string, runtimeOption RuntimeOption, fsys afero.Fs) error {
@@ -126,12 +133,14 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 	if err != nil {
 		return err
 	}
+	jwks, _ := utils.Config.Auth.ResolveJWKS(ctx)
 	env = append(env,
 		fmt.Sprintf("SUPABASE_URL=http://%s:8000", utils.KongAliases[0]),
 		"SUPABASE_ANON_KEY="+utils.Config.Auth.AnonKey.Value,
 		"SUPABASE_SERVICE_ROLE_KEY="+utils.Config.Auth.ServiceRoleKey.Value,
 		"SUPABASE_DB_URL="+dbUrl,
 		"SUPABASE_INTERNAL_JWT_SECRET="+utils.Config.Auth.JwtSecret.Value,
+		"SUPABASE_JWKS="+jwks,
 		fmt.Sprintf("SUPABASE_INTERNAL_HOST_PORT=%d", utils.Config.Api.Port),
 	)
 	if viper.GetBool("DEBUG") {
@@ -153,7 +162,7 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 			return errors.Errorf("failed to resolve relative path: %w", err)
 		}
 	}
-	binds, functionsConfigString, err := populatePerFunctionConfigs(cwd, importMapPath, noVerifyJWT, fsys)
+	binds, functionsConfigString, err := PopulatePerFunctionConfigs(cwd, importMapPath, noVerifyJWT, fsys)
 	if err != nil {
 		return err
 	}
@@ -241,7 +250,14 @@ func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
 	return env, err
 }
 
-func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) ([]string, string, error) {
+type dockerFunction struct {
+	VerifyJWT      bool     `json:"verifyJWT"`
+	EntrypointPath string   `json:"entrypointPath,omitempty"`
+	ImportMapPath  string   `json:"importMapPath,omitempty"`
+	StaticFiles    []string `json:"staticFiles,omitempty"`
+}
+
+func PopulatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fsys afero.Fs) ([]string, string, error) {
 	slugs, err := deploy.GetFunctionSlugs(fsys)
 	if err != nil {
 		return nil, "", err
@@ -251,10 +267,10 @@ func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 		return nil, "", err
 	}
 	binds := []string{}
+	enabledFunctions := map[string]dockerFunction{}
 	for slug, fc := range functionsConfig {
 		if !fc.Enabled {
 			fmt.Fprintln(os.Stderr, "Skipped serving Function:", slug)
-			delete(functionsConfig, slug)
 			continue
 		}
 		modules, err := deploy.GetBindMounts(cwd, utils.FunctionsDir, "", fc.Entrypoint, fc.ImportMap, fsys)
@@ -262,14 +278,18 @@ func populatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 			return nil, "", err
 		}
 		binds = append(binds, modules...)
-		fc.ImportMap = utils.ToDockerPath(fc.ImportMap)
-		fc.Entrypoint = utils.ToDockerPath(fc.Entrypoint)
-		functionsConfig[slug] = fc
-		for i, val := range fc.StaticFiles {
-			fc.StaticFiles[i] = utils.ToDockerPath(val)
+		enabled := dockerFunction{
+			VerifyJWT:      fc.VerifyJWT,
+			EntrypointPath: utils.ToDockerPath(fc.Entrypoint),
+			ImportMapPath:  utils.ToDockerPath(fc.ImportMap),
+			StaticFiles:    make([]string, len(fc.StaticFiles)),
 		}
+		for i, val := range fc.StaticFiles {
+			enabled.StaticFiles[i] = utils.ToDockerPath(val)
+		}
+		enabledFunctions[slug] = enabled
 	}
-	functionsConfigBytes, err := json.Marshal(functionsConfig)
+	functionsConfigBytes, err := json.Marshal(enabledFunctions)
 	if err != nil {
 		return nil, "", errors.Errorf("failed to marshal config json: %w", err)
 	}

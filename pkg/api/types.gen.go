@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	BearerScopes = "bearer.Scopes"
-	Oauth2Scopes = "oauth2.Scopes"
+	BearerScopes          = "bearer.Scopes"
+	Fga_permissionsScopes = "fga_permissions.Scopes"
+	Oauth2Scopes          = "oauth2.Scopes"
 )
 
 // Defines values for ActionRunResponseRunStepsName.
@@ -95,6 +96,12 @@ const (
 // Defines values for ApplyProjectAddonBodyAddonVariant3.
 const (
 	ApplyProjectAddonBodyAddonVariant3Ipv4Default ApplyProjectAddonBodyAddonVariant3 = "ipv4_default"
+)
+
+// Defines values for AuthConfigResponseDbMaxPoolSizeUnit.
+const (
+	AuthConfigResponseDbMaxPoolSizeUnitConnections AuthConfigResponseDbMaxPoolSizeUnit = "connections"
+	AuthConfigResponseDbMaxPoolSizeUnitPercent     AuthConfigResponseDbMaxPoolSizeUnit = "percent"
 )
 
 // Defines values for AuthConfigResponsePasswordRequiredCharacters.
@@ -430,6 +437,26 @@ const (
 	DeployFunctionResponseStatusTHROTTLED DeployFunctionResponseStatus = "THROTTLED"
 )
 
+// Defines values for DiskRequestBodyAttributes0Type.
+const (
+	DiskRequestBodyAttributes0TypeGp3 DiskRequestBodyAttributes0Type = "gp3"
+)
+
+// Defines values for DiskRequestBodyAttributes1Type.
+const (
+	DiskRequestBodyAttributes1TypeIo2 DiskRequestBodyAttributes1Type = "io2"
+)
+
+// Defines values for DiskResponseAttributes0Type.
+const (
+	DiskResponseAttributes0TypeGp3 DiskResponseAttributes0Type = "gp3"
+)
+
+// Defines values for DiskResponseAttributes1Type.
+const (
+	DiskResponseAttributes1TypeIo2 DiskResponseAttributes1Type = "io2"
+)
+
 // Defines values for FunctionResponseStatus.
 const (
 	FunctionResponseStatusACTIVE    FunctionResponseStatus = "ACTIVE"
@@ -461,6 +488,13 @@ const (
 	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelInternal  GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "internal"
 	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelPreview   GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "preview"
 	GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannelWithdrawn GetProjectAvailableRestoreVersionsResponseAvailableVersionsReleaseChannel = "withdrawn"
+)
+
+// Defines values for JitAccessRequestRequestState.
+const (
+	Disabled    JitAccessRequestRequestState = "disabled"
+	Enabled     JitAccessRequestRequestState = "enabled"
+	Unavailable JitAccessRequestRequestState = "unavailable"
 )
 
 // Defines values for ListActionRunResponseRunStepsName.
@@ -690,6 +724,7 @@ const (
 const (
 	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanEnterprise OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "enterprise"
 	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanFree       OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "free"
+	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanPlatform   OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "platform"
 	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanPro        OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "pro"
 	OrganizationProjectClaimResponsePreviewSourceSubscriptionPlanTeam       OrganizationProjectClaimResponsePreviewSourceSubscriptionPlan = "team"
 )
@@ -698,6 +733,7 @@ const (
 const (
 	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanEnterprise OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "enterprise"
 	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanFree       OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "free"
+	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanPlatform   OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "platform"
 	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanPro        OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "pro"
 	OrganizationProjectClaimResponsePreviewTargetSubscriptionPlanTeam       OrganizationProjectClaimResponsePreviewTargetSubscriptionPlan = "team"
 )
@@ -792,11 +828,11 @@ const (
 
 // Defines values for ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion.
 const (
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersionN13       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "13"
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersionN14       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "14"
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersionN15       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "15"
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersionN17       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "17"
-	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersionN17Oriole ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "17-oriole"
+	N13       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "13"
+	N14       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "14"
+	N15       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "15"
+	N17       ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "17"
+	N17Oriole ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion = "17-oriole"
 )
 
 // Defines values for ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel.
@@ -809,6 +845,52 @@ const (
 	ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannelWithdrawn ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel = "withdrawn"
 )
 
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors0Type.
+const (
+	ObjectsDependingOnPgCron ProjectUpgradeEligibilityResponseValidationErrors0Type = "objects_depending_on_pg_cron"
+)
+
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors1Type.
+const (
+	IndexesReferencingLlToEarth ProjectUpgradeEligibilityResponseValidationErrors1Type = "indexes_referencing_ll_to_earth"
+)
+
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors2Type.
+const (
+	FunctionUsingObsoleteLang ProjectUpgradeEligibilityResponseValidationErrors2Type = "function_using_obsolete_lang"
+)
+
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors3Type.
+const (
+	UnsupportedExtension ProjectUpgradeEligibilityResponseValidationErrors3Type = "unsupported_extension"
+)
+
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors4Type.
+const (
+	UnsupportedFdwHandler ProjectUpgradeEligibilityResponseValidationErrors4Type = "unsupported_fdw_handler"
+)
+
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors5Type.
+const (
+	UnloggedTableWithPersistentSequence ProjectUpgradeEligibilityResponseValidationErrors5Type = "unlogged_table_with_persistent_sequence"
+)
+
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors6ObjType.
+const (
+	ProjectUpgradeEligibilityResponseValidationErrors6ObjTypeFunction ProjectUpgradeEligibilityResponseValidationErrors6ObjType = "function"
+	ProjectUpgradeEligibilityResponseValidationErrors6ObjTypeTable    ProjectUpgradeEligibilityResponseValidationErrors6ObjType = "table"
+)
+
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors6Type.
+const (
+	UserDefinedObjectsInInternalSchemas ProjectUpgradeEligibilityResponseValidationErrors6Type = "user_defined_objects_in_internal_schemas"
+)
+
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors7Type.
+const (
+	ActiveReplicationSlot ProjectUpgradeEligibilityResponseValidationErrors7Type = "active_replication_slot"
+)
+
 // Defines values for RegionsInfoAllSmartGroupCode.
 const (
 	RegionsInfoAllSmartGroupCodeAmericas RegionsInfoAllSmartGroupCode = "americas"
@@ -819,6 +901,28 @@ const (
 // Defines values for RegionsInfoAllSmartGroupType.
 const (
 	RegionsInfoAllSmartGroupTypeSmartGroup RegionsInfoAllSmartGroupType = "smartGroup"
+)
+
+// Defines values for RegionsInfoAllSpecificCode.
+const (
+	RegionsInfoAllSpecificCodeApEast1      RegionsInfoAllSpecificCode = "ap-east-1"
+	RegionsInfoAllSpecificCodeApNortheast1 RegionsInfoAllSpecificCode = "ap-northeast-1"
+	RegionsInfoAllSpecificCodeApNortheast2 RegionsInfoAllSpecificCode = "ap-northeast-2"
+	RegionsInfoAllSpecificCodeApSouth1     RegionsInfoAllSpecificCode = "ap-south-1"
+	RegionsInfoAllSpecificCodeApSoutheast1 RegionsInfoAllSpecificCode = "ap-southeast-1"
+	RegionsInfoAllSpecificCodeApSoutheast2 RegionsInfoAllSpecificCode = "ap-southeast-2"
+	RegionsInfoAllSpecificCodeCaCentral1   RegionsInfoAllSpecificCode = "ca-central-1"
+	RegionsInfoAllSpecificCodeEuCentral1   RegionsInfoAllSpecificCode = "eu-central-1"
+	RegionsInfoAllSpecificCodeEuCentral2   RegionsInfoAllSpecificCode = "eu-central-2"
+	RegionsInfoAllSpecificCodeEuNorth1     RegionsInfoAllSpecificCode = "eu-north-1"
+	RegionsInfoAllSpecificCodeEuWest1      RegionsInfoAllSpecificCode = "eu-west-1"
+	RegionsInfoAllSpecificCodeEuWest2      RegionsInfoAllSpecificCode = "eu-west-2"
+	RegionsInfoAllSpecificCodeEuWest3      RegionsInfoAllSpecificCode = "eu-west-3"
+	RegionsInfoAllSpecificCodeSaEast1      RegionsInfoAllSpecificCode = "sa-east-1"
+	RegionsInfoAllSpecificCodeUsEast1      RegionsInfoAllSpecificCode = "us-east-1"
+	RegionsInfoAllSpecificCodeUsEast2      RegionsInfoAllSpecificCode = "us-east-2"
+	RegionsInfoAllSpecificCodeUsWest1      RegionsInfoAllSpecificCode = "us-west-1"
+	RegionsInfoAllSpecificCodeUsWest2      RegionsInfoAllSpecificCode = "us-west-2"
 )
 
 // Defines values for RegionsInfoAllSpecificProvider.
@@ -850,6 +954,28 @@ const (
 // Defines values for RegionsInfoRecommendationsSmartGroupType.
 const (
 	RegionsInfoRecommendationsSmartGroupTypeSmartGroup RegionsInfoRecommendationsSmartGroupType = "smartGroup"
+)
+
+// Defines values for RegionsInfoRecommendationsSpecificCode.
+const (
+	RegionsInfoRecommendationsSpecificCodeApEast1      RegionsInfoRecommendationsSpecificCode = "ap-east-1"
+	RegionsInfoRecommendationsSpecificCodeApNortheast1 RegionsInfoRecommendationsSpecificCode = "ap-northeast-1"
+	RegionsInfoRecommendationsSpecificCodeApNortheast2 RegionsInfoRecommendationsSpecificCode = "ap-northeast-2"
+	RegionsInfoRecommendationsSpecificCodeApSouth1     RegionsInfoRecommendationsSpecificCode = "ap-south-1"
+	RegionsInfoRecommendationsSpecificCodeApSoutheast1 RegionsInfoRecommendationsSpecificCode = "ap-southeast-1"
+	RegionsInfoRecommendationsSpecificCodeApSoutheast2 RegionsInfoRecommendationsSpecificCode = "ap-southeast-2"
+	RegionsInfoRecommendationsSpecificCodeCaCentral1   RegionsInfoRecommendationsSpecificCode = "ca-central-1"
+	RegionsInfoRecommendationsSpecificCodeEuCentral1   RegionsInfoRecommendationsSpecificCode = "eu-central-1"
+	RegionsInfoRecommendationsSpecificCodeEuCentral2   RegionsInfoRecommendationsSpecificCode = "eu-central-2"
+	RegionsInfoRecommendationsSpecificCodeEuNorth1     RegionsInfoRecommendationsSpecificCode = "eu-north-1"
+	RegionsInfoRecommendationsSpecificCodeEuWest1      RegionsInfoRecommendationsSpecificCode = "eu-west-1"
+	RegionsInfoRecommendationsSpecificCodeEuWest2      RegionsInfoRecommendationsSpecificCode = "eu-west-2"
+	RegionsInfoRecommendationsSpecificCodeEuWest3      RegionsInfoRecommendationsSpecificCode = "eu-west-3"
+	RegionsInfoRecommendationsSpecificCodeSaEast1      RegionsInfoRecommendationsSpecificCode = "sa-east-1"
+	RegionsInfoRecommendationsSpecificCodeUsEast1      RegionsInfoRecommendationsSpecificCode = "us-east-1"
+	RegionsInfoRecommendationsSpecificCodeUsEast2      RegionsInfoRecommendationsSpecificCode = "us-east-2"
+	RegionsInfoRecommendationsSpecificCodeUsWest1      RegionsInfoRecommendationsSpecificCode = "us-west-1"
+	RegionsInfoRecommendationsSpecificCodeUsWest2      RegionsInfoRecommendationsSpecificCode = "us-west-2"
 )
 
 // Defines values for RegionsInfoRecommendationsSpecificProvider.
@@ -967,6 +1093,12 @@ const (
 const (
 	SupavisorConfigResponsePoolModeSession     SupavisorConfigResponsePoolMode = "session"
 	SupavisorConfigResponsePoolModeTransaction SupavisorConfigResponsePoolMode = "transaction"
+)
+
+// Defines values for UpdateAuthConfigBodyDbMaxPoolSizeUnit.
+const (
+	UpdateAuthConfigBodyDbMaxPoolSizeUnitConnections UpdateAuthConfigBodyDbMaxPoolSizeUnit = "connections"
+	UpdateAuthConfigBodyDbMaxPoolSizeUnitPercent     UpdateAuthConfigBodyDbMaxPoolSizeUnit = "percent"
 )
 
 // Defines values for UpdateAuthConfigBodyPasswordRequiredCharacters.
@@ -1167,7 +1299,6 @@ const (
 	V1CreateProjectBodyDesiredInstanceSizeN4xlarge                 V1CreateProjectBodyDesiredInstanceSize = "4xlarge"
 	V1CreateProjectBodyDesiredInstanceSizeN8xlarge                 V1CreateProjectBodyDesiredInstanceSize = "8xlarge"
 	V1CreateProjectBodyDesiredInstanceSizeNano                     V1CreateProjectBodyDesiredInstanceSize = "nano"
-	V1CreateProjectBodyDesiredInstanceSizePico                     V1CreateProjectBodyDesiredInstanceSize = "pico"
 	V1CreateProjectBodyDesiredInstanceSizeSmall                    V1CreateProjectBodyDesiredInstanceSize = "small"
 	V1CreateProjectBodyDesiredInstanceSizeXlarge                   V1CreateProjectBodyDesiredInstanceSize = "xlarge"
 )
@@ -1176,13 +1307,6 @@ const (
 const (
 	V1CreateProjectBodyPlanFree V1CreateProjectBodyPlan = "free"
 	V1CreateProjectBodyPlanPro  V1CreateProjectBodyPlan = "pro"
-)
-
-// Defines values for V1CreateProjectBodyPostgresEngine.
-const (
-	V1CreateProjectBodyPostgresEngineN15       V1CreateProjectBodyPostgresEngine = "15"
-	V1CreateProjectBodyPostgresEngineN17       V1CreateProjectBodyPostgresEngine = "17"
-	V1CreateProjectBodyPostgresEngineN17Oriole V1CreateProjectBodyPostgresEngine = "17-oriole"
 )
 
 // Defines values for V1CreateProjectBodyRegion.
@@ -1246,24 +1370,14 @@ const (
 	SmartGroup V1CreateProjectBodyRegionSelection1Type = "smartGroup"
 )
 
-// Defines values for V1CreateProjectBodyReleaseChannel.
-const (
-	V1CreateProjectBodyReleaseChannelAlpha     V1CreateProjectBodyReleaseChannel = "alpha"
-	V1CreateProjectBodyReleaseChannelBeta      V1CreateProjectBodyReleaseChannel = "beta"
-	V1CreateProjectBodyReleaseChannelGa        V1CreateProjectBodyReleaseChannel = "ga"
-	V1CreateProjectBodyReleaseChannelInternal  V1CreateProjectBodyReleaseChannel = "internal"
-	V1CreateProjectBodyReleaseChannelPreview   V1CreateProjectBodyReleaseChannel = "preview"
-	V1CreateProjectBodyReleaseChannelWithdrawn V1CreateProjectBodyReleaseChannel = "withdrawn"
-)
-
 // Defines values for V1OrganizationSlugResponseAllowedReleaseChannels.
 const (
-	Alpha     V1OrganizationSlugResponseAllowedReleaseChannels = "alpha"
-	Beta      V1OrganizationSlugResponseAllowedReleaseChannels = "beta"
-	Ga        V1OrganizationSlugResponseAllowedReleaseChannels = "ga"
-	Internal  V1OrganizationSlugResponseAllowedReleaseChannels = "internal"
-	Preview   V1OrganizationSlugResponseAllowedReleaseChannels = "preview"
-	Withdrawn V1OrganizationSlugResponseAllowedReleaseChannels = "withdrawn"
+	V1OrganizationSlugResponseAllowedReleaseChannelsAlpha     V1OrganizationSlugResponseAllowedReleaseChannels = "alpha"
+	V1OrganizationSlugResponseAllowedReleaseChannelsBeta      V1OrganizationSlugResponseAllowedReleaseChannels = "beta"
+	V1OrganizationSlugResponseAllowedReleaseChannelsGa        V1OrganizationSlugResponseAllowedReleaseChannels = "ga"
+	V1OrganizationSlugResponseAllowedReleaseChannelsInternal  V1OrganizationSlugResponseAllowedReleaseChannels = "internal"
+	V1OrganizationSlugResponseAllowedReleaseChannelsPreview   V1OrganizationSlugResponseAllowedReleaseChannels = "preview"
+	V1OrganizationSlugResponseAllowedReleaseChannelsWithdrawn V1OrganizationSlugResponseAllowedReleaseChannels = "withdrawn"
 )
 
 // Defines values for V1OrganizationSlugResponseOptInTags.
@@ -1277,6 +1391,7 @@ const (
 const (
 	V1OrganizationSlugResponsePlanEnterprise V1OrganizationSlugResponsePlan = "enterprise"
 	V1OrganizationSlugResponsePlanFree       V1OrganizationSlugResponsePlan = "free"
+	V1OrganizationSlugResponsePlanPlatform   V1OrganizationSlugResponsePlan = "platform"
 	V1OrganizationSlugResponsePlanPro        V1OrganizationSlugResponsePlan = "pro"
 	V1OrganizationSlugResponsePlanTeam       V1OrganizationSlugResponsePlan = "team"
 )
@@ -1492,7 +1607,6 @@ const (
 	V1GetAvailableRegionsParamsDesiredInstanceSizeN4xlarge                 V1GetAvailableRegionsParamsDesiredInstanceSize = "4xlarge"
 	V1GetAvailableRegionsParamsDesiredInstanceSizeN8xlarge                 V1GetAvailableRegionsParamsDesiredInstanceSize = "8xlarge"
 	V1GetAvailableRegionsParamsDesiredInstanceSizeNano                     V1GetAvailableRegionsParamsDesiredInstanceSize = "nano"
-	V1GetAvailableRegionsParamsDesiredInstanceSizePico                     V1GetAvailableRegionsParamsDesiredInstanceSize = "pico"
 	V1GetAvailableRegionsParamsDesiredInstanceSizeSmall                    V1GetAvailableRegionsParamsDesiredInstanceSize = "small"
 	V1GetAvailableRegionsParamsDesiredInstanceSizeXlarge                   V1GetAvailableRegionsParamsDesiredInstanceSize = "xlarge"
 )
@@ -1562,14 +1676,14 @@ const (
 
 // Defines values for V1GetServicesHealthParamsServices.
 const (
-	Auth           V1GetServicesHealthParamsServices = "auth"
-	Db             V1GetServicesHealthParamsServices = "db"
-	DbPostgresUser V1GetServicesHealthParamsServices = "db_postgres_user"
-	PgBouncer      V1GetServicesHealthParamsServices = "pg_bouncer"
-	Pooler         V1GetServicesHealthParamsServices = "pooler"
-	Realtime       V1GetServicesHealthParamsServices = "realtime"
-	Rest           V1GetServicesHealthParamsServices = "rest"
-	Storage        V1GetServicesHealthParamsServices = "storage"
+	V1GetServicesHealthParamsServicesAuth           V1GetServicesHealthParamsServices = "auth"
+	V1GetServicesHealthParamsServicesDb             V1GetServicesHealthParamsServices = "db"
+	V1GetServicesHealthParamsServicesDbPostgresUser V1GetServicesHealthParamsServices = "db_postgres_user"
+	V1GetServicesHealthParamsServicesPgBouncer      V1GetServicesHealthParamsServices = "pg_bouncer"
+	V1GetServicesHealthParamsServicesPooler         V1GetServicesHealthParamsServices = "pooler"
+	V1GetServicesHealthParamsServicesRealtime       V1GetServicesHealthParamsServices = "realtime"
+	V1GetServicesHealthParamsServicesRest           V1GetServicesHealthParamsServices = "rest"
+	V1GetServicesHealthParamsServicesStorage        V1GetServicesHealthParamsServices = "storage"
 )
 
 // Defines values for V1ListAllSnippetsParamsSortBy.
@@ -1686,7 +1800,10 @@ type ApplyProjectAddonBody_AddonVariant struct {
 // AuthConfigResponse defines model for AuthConfigResponse.
 type AuthConfigResponse struct {
 	ApiMaxRequestDuration                                 nullable.Nullable[int]                                          `json:"api_max_request_duration"`
+	CustomOauthEnabled                                    bool                                                            `json:"custom_oauth_enabled"`
+	CustomOauthMaxProviders                               int                                                             `json:"custom_oauth_max_providers"`
 	DbMaxPoolSize                                         nullable.Nullable[int]                                          `json:"db_max_pool_size"`
+	DbMaxPoolSizeUnit                                     nullable.Nullable[AuthConfigResponseDbMaxPoolSizeUnit]          `json:"db_max_pool_size_unit"`
 	DisableSignup                                         nullable.Nullable[bool]                                         `json:"disable_signup"`
 	ExternalAnonymousUsersEnabled                         nullable.Nullable[bool]                                         `json:"external_anonymous_users_enabled"`
 	ExternalAppleAdditionalClientIds                      nullable.Nullable[string]                                       `json:"external_apple_additional_client_ids"`
@@ -1775,6 +1892,10 @@ type AuthConfigResponse struct {
 	ExternalWorkosEnabled                                 nullable.Nullable[bool]                                         `json:"external_workos_enabled"`
 	ExternalWorkosSecret                                  nullable.Nullable[string]                                       `json:"external_workos_secret"`
 	ExternalWorkosUrl                                     nullable.Nullable[string]                                       `json:"external_workos_url"`
+	ExternalXClientId                                     nullable.Nullable[string]                                       `json:"external_x_client_id"`
+	ExternalXEmailOptional                                nullable.Nullable[bool]                                         `json:"external_x_email_optional"`
+	ExternalXEnabled                                      nullable.Nullable[bool]                                         `json:"external_x_enabled"`
+	ExternalXSecret                                       nullable.Nullable[string]                                       `json:"external_x_secret"`
 	ExternalZoomClientId                                  nullable.Nullable[string]                                       `json:"external_zoom_client_id"`
 	ExternalZoomEmailOptional                             nullable.Nullable[bool]                                         `json:"external_zoom_email_optional"`
 	ExternalZoomEnabled                                   nullable.Nullable[bool]                                         `json:"external_zoom_enabled"`
@@ -1852,6 +1973,9 @@ type AuthConfigResponse struct {
 	NimbusOauthClientId                                   nullable.Nullable[string]                                       `json:"nimbus_oauth_client_id"`
 	NimbusOauthClientSecret                               nullable.Nullable[string]                                       `json:"nimbus_oauth_client_secret"`
 	NimbusOauthEmailOptional                              nullable.Nullable[bool]                                         `json:"nimbus_oauth_email_optional"`
+	OauthServerAllowDynamicRegistration                   bool                                                            `json:"oauth_server_allow_dynamic_registration"`
+	OauthServerAuthorizationPath                          nullable.Nullable[string]                                       `json:"oauth_server_authorization_path"`
+	OauthServerEnabled                                    bool                                                            `json:"oauth_server_enabled"`
 	PasswordHibpEnabled                                   nullable.Nullable[bool]                                         `json:"password_hibp_enabled"`
 	PasswordMinLength                                     nullable.Nullable[int]                                          `json:"password_min_length"`
 	PasswordRequiredCharacters                            nullable.Nullable[AuthConfigResponsePasswordRequiredCharacters] `json:"password_required_characters"`
@@ -1871,11 +1995,12 @@ type AuthConfigResponse struct {
 	SecurityCaptchaSecret                                 nullable.Nullable[string]                                       `json:"security_captcha_secret"`
 	SecurityManualLinkingEnabled                          nullable.Nullable[bool]                                         `json:"security_manual_linking_enabled"`
 	SecurityRefreshTokenReuseInterval                     nullable.Nullable[int]                                          `json:"security_refresh_token_reuse_interval"`
+	SecuritySbForwardedForEnabled                         nullable.Nullable[bool]                                         `json:"security_sb_forwarded_for_enabled"`
 	SecurityUpdatePasswordRequireReauthentication         nullable.Nullable[bool]                                         `json:"security_update_password_require_reauthentication"`
-	SessionsInactivityTimeout                             nullable.Nullable[int]                                          `json:"sessions_inactivity_timeout"`
+	SessionsInactivityTimeout                             nullable.Nullable[float32]                                      `json:"sessions_inactivity_timeout"`
 	SessionsSinglePerUser                                 nullable.Nullable[bool]                                         `json:"sessions_single_per_user"`
 	SessionsTags                                          nullable.Nullable[string]                                       `json:"sessions_tags"`
-	SessionsTimebox                                       nullable.Nullable[int]                                          `json:"sessions_timebox"`
+	SessionsTimebox                                       nullable.Nullable[float32]                                      `json:"sessions_timebox"`
 	SiteUrl                                               nullable.Nullable[string]                                       `json:"site_url"`
 	SmsAutoconfirm                                        nullable.Nullable[bool]                                         `json:"sms_autoconfirm"`
 	SmsMaxFrequency                                       nullable.Nullable[int]                                          `json:"sms_max_frequency"`
@@ -1908,6 +2033,9 @@ type AuthConfigResponse struct {
 	SmtpUser                                              nullable.Nullable[string]                                       `json:"smtp_user"`
 	UriAllowList                                          nullable.Nullable[string]                                       `json:"uri_allow_list"`
 }
+
+// AuthConfigResponseDbMaxPoolSizeUnit defines model for AuthConfigResponse.DbMaxPoolSizeUnit.
+type AuthConfigResponseDbMaxPoolSizeUnit string
 
 // AuthConfigResponsePasswordRequiredCharacters defines model for AuthConfigResponse.PasswordRequiredCharacters.
 type AuthConfigResponsePasswordRequiredCharacters string
@@ -2393,6 +2521,91 @@ type DeployFunctionResponse struct {
 // DeployFunctionResponseStatus defines model for DeployFunctionResponse.Status.
 type DeployFunctionResponseStatus string
 
+// DiskAutoscaleConfig defines model for DiskAutoscaleConfig.
+type DiskAutoscaleConfig struct {
+	// GrowthPercent Growth percentage for disk autoscaling
+	GrowthPercent nullable.Nullable[int] `json:"growth_percent"`
+
+	// MaxSizeGb Maximum limit the disk size will grow to in GB
+	MaxSizeGb nullable.Nullable[int] `json:"max_size_gb"`
+
+	// MinIncrementGb Minimum increment size for disk autoscaling in GB
+	MinIncrementGb nullable.Nullable[int] `json:"min_increment_gb"`
+}
+
+// DiskRequestBody defines model for DiskRequestBody.
+type DiskRequestBody struct {
+	Attributes DiskRequestBody_Attributes `json:"attributes"`
+}
+
+// DiskRequestBodyAttributes0 defines model for .
+type DiskRequestBodyAttributes0 struct {
+	Iops            int                            `json:"iops"`
+	SizeGb          int                            `json:"size_gb"`
+	ThroughputMibps *int                           `json:"throughput_mibps,omitempty"`
+	Type            DiskRequestBodyAttributes0Type `json:"type"`
+}
+
+// DiskRequestBodyAttributes0Type defines model for DiskRequestBody.Attributes.0.Type.
+type DiskRequestBodyAttributes0Type string
+
+// DiskRequestBodyAttributes1 defines model for .
+type DiskRequestBodyAttributes1 struct {
+	Iops   int                            `json:"iops"`
+	SizeGb int                            `json:"size_gb"`
+	Type   DiskRequestBodyAttributes1Type `json:"type"`
+}
+
+// DiskRequestBodyAttributes1Type defines model for DiskRequestBody.Attributes.1.Type.
+type DiskRequestBodyAttributes1Type string
+
+// DiskRequestBody_Attributes defines model for DiskRequestBody.Attributes.
+type DiskRequestBody_Attributes struct {
+	union json.RawMessage
+}
+
+// DiskResponse defines model for DiskResponse.
+type DiskResponse struct {
+	Attributes     DiskResponse_Attributes `json:"attributes"`
+	LastModifiedAt *string                 `json:"last_modified_at,omitempty"`
+}
+
+// DiskResponseAttributes0 defines model for .
+type DiskResponseAttributes0 struct {
+	Iops            int                         `json:"iops"`
+	SizeGb          int                         `json:"size_gb"`
+	ThroughputMibps *int                        `json:"throughput_mibps,omitempty"`
+	Type            DiskResponseAttributes0Type `json:"type"`
+}
+
+// DiskResponseAttributes0Type defines model for DiskResponse.Attributes.0.Type.
+type DiskResponseAttributes0Type string
+
+// DiskResponseAttributes1 defines model for .
+type DiskResponseAttributes1 struct {
+	Iops   int                         `json:"iops"`
+	SizeGb int                         `json:"size_gb"`
+	Type   DiskResponseAttributes1Type `json:"type"`
+}
+
+// DiskResponseAttributes1Type defines model for DiskResponse.Attributes.1.Type.
+type DiskResponseAttributes1Type string
+
+// DiskResponse_Attributes defines model for DiskResponse.Attributes.
+type DiskResponse_Attributes struct {
+	union json.RawMessage
+}
+
+// DiskUtilMetricsResponse defines model for DiskUtilMetricsResponse.
+type DiskUtilMetricsResponse struct {
+	Metrics struct {
+		FsAvailBytes float32 `json:"fs_avail_bytes"`
+		FsSizeBytes  float32 `json:"fs_size_bytes"`
+		FsUsedBytes  float32 `json:"fs_used_bytes"`
+	} `json:"metrics"`
+	Timestamp string `json:"timestamp"`
+}
+
 // FunctionDeployBody defines model for FunctionDeployBody.
 type FunctionDeployBody struct {
 	File     *[]openapi_types.File `json:"file,omitempty"`
@@ -2503,6 +2716,14 @@ type GetProviderResponse struct {
 	} `json:"saml,omitempty"`
 	UpdatedAt *string `json:"updated_at,omitempty"`
 }
+
+// JitAccessRequestRequest defines model for JitAccessRequestRequest.
+type JitAccessRequestRequest struct {
+	State JitAccessRequestRequestState `json:"state"`
+}
+
+// JitAccessRequestRequestState defines model for JitAccessRequestRequest.State.
+type JitAccessRequestRequestState string
 
 // JitAccessResponse defines model for JitAccessResponse.
 type JitAccessResponse struct {
@@ -3020,14 +3241,24 @@ type ProjectUpgradeEligibilityResponse struct {
 	Eligible                        bool                                                             `json:"eligible"`
 	LatestAppVersion                string                                                           `json:"latest_app_version"`
 	LegacyAuthCustomRoles           []string                                                         `json:"legacy_auth_custom_roles"`
-	ObjectsToBeDropped              []string                                                         `json:"objects_to_be_dropped"`
-	TargetUpgradeVersions           []struct {
+
+	// ObjectsToBeDropped Use validation_errors instead.
+	// Deprecated:
+	ObjectsToBeDropped    []string `json:"objects_to_be_dropped"`
+	TargetUpgradeVersions []struct {
 		AppVersion      string                                                                `json:"app_version"`
 		PostgresVersion ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion `json:"postgres_version"`
 		ReleaseChannel  ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel  `json:"release_channel"`
 	} `json:"target_upgrade_versions"`
-	UnsupportedExtensions               []string `json:"unsupported_extensions"`
-	UserDefinedObjectsInInternalSchemas []string `json:"user_defined_objects_in_internal_schemas"`
+
+	// UnsupportedExtensions Use validation_errors instead.
+	// Deprecated:
+	UnsupportedExtensions []string `json:"unsupported_extensions"`
+
+	// UserDefinedObjectsInInternalSchemas Use validation_errors instead.
+	// Deprecated:
+	UserDefinedObjectsInInternalSchemas []string                                                  `json:"user_defined_objects_in_internal_schemas"`
+	ValidationErrors                    []ProjectUpgradeEligibilityResponse_ValidationErrors_Item `json:"validation_errors"`
 }
 
 // ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel defines model for ProjectUpgradeEligibilityResponse.CurrentAppVersionReleaseChannel.
@@ -3038,6 +3269,95 @@ type ProjectUpgradeEligibilityResponseTargetUpgradeVersionsPostgresVersion strin
 
 // ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel defines model for ProjectUpgradeEligibilityResponse.TargetUpgradeVersions.ReleaseChannel.
 type ProjectUpgradeEligibilityResponseTargetUpgradeVersionsReleaseChannel string
+
+// ProjectUpgradeEligibilityResponseValidationErrors0 defines model for .
+type ProjectUpgradeEligibilityResponseValidationErrors0 struct {
+	Dependents []string                                               `json:"dependents"`
+	Type       ProjectUpgradeEligibilityResponseValidationErrors0Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseValidationErrors0Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.0.Type.
+type ProjectUpgradeEligibilityResponseValidationErrors0Type string
+
+// ProjectUpgradeEligibilityResponseValidationErrors1 defines model for .
+type ProjectUpgradeEligibilityResponseValidationErrors1 struct {
+	IndexName  string                                                 `json:"index_name"`
+	SchemaName string                                                 `json:"schema_name"`
+	TableName  string                                                 `json:"table_name"`
+	Type       ProjectUpgradeEligibilityResponseValidationErrors1Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseValidationErrors1Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.1.Type.
+type ProjectUpgradeEligibilityResponseValidationErrors1Type string
+
+// ProjectUpgradeEligibilityResponseValidationErrors2 defines model for .
+type ProjectUpgradeEligibilityResponseValidationErrors2 struct {
+	FunctionName string                                                 `json:"function_name"`
+	LangName     string                                                 `json:"lang_name"`
+	SchemaName   string                                                 `json:"schema_name"`
+	Type         ProjectUpgradeEligibilityResponseValidationErrors2Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseValidationErrors2Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.2.Type.
+type ProjectUpgradeEligibilityResponseValidationErrors2Type string
+
+// ProjectUpgradeEligibilityResponseValidationErrors3 defines model for .
+type ProjectUpgradeEligibilityResponseValidationErrors3 struct {
+	ExtensionName string                                                 `json:"extension_name"`
+	Type          ProjectUpgradeEligibilityResponseValidationErrors3Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseValidationErrors3Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.3.Type.
+type ProjectUpgradeEligibilityResponseValidationErrors3Type string
+
+// ProjectUpgradeEligibilityResponseValidationErrors4 defines model for .
+type ProjectUpgradeEligibilityResponseValidationErrors4 struct {
+	FdwHandlerName string                                                 `json:"fdw_handler_name"`
+	FdwName        string                                                 `json:"fdw_name"`
+	Type           ProjectUpgradeEligibilityResponseValidationErrors4Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseValidationErrors4Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.4.Type.
+type ProjectUpgradeEligibilityResponseValidationErrors4Type string
+
+// ProjectUpgradeEligibilityResponseValidationErrors5 defines model for .
+type ProjectUpgradeEligibilityResponseValidationErrors5 struct {
+	SchemaName   string                                                 `json:"schema_name"`
+	SequenceName string                                                 `json:"sequence_name"`
+	TableName    string                                                 `json:"table_name"`
+	Type         ProjectUpgradeEligibilityResponseValidationErrors5Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseValidationErrors5Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.5.Type.
+type ProjectUpgradeEligibilityResponseValidationErrors5Type string
+
+// ProjectUpgradeEligibilityResponseValidationErrors6 defines model for .
+type ProjectUpgradeEligibilityResponseValidationErrors6 struct {
+	ObjName    string                                                    `json:"obj_name"`
+	ObjType    ProjectUpgradeEligibilityResponseValidationErrors6ObjType `json:"obj_type"`
+	SchemaName string                                                    `json:"schema_name"`
+	Type       ProjectUpgradeEligibilityResponseValidationErrors6Type    `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseValidationErrors6ObjType defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.6.ObjType.
+type ProjectUpgradeEligibilityResponseValidationErrors6ObjType string
+
+// ProjectUpgradeEligibilityResponseValidationErrors6Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.6.Type.
+type ProjectUpgradeEligibilityResponseValidationErrors6Type string
+
+// ProjectUpgradeEligibilityResponseValidationErrors7 defines model for .
+type ProjectUpgradeEligibilityResponseValidationErrors7 struct {
+	SlotName string                                                 `json:"slot_name"`
+	Type     ProjectUpgradeEligibilityResponseValidationErrors7Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseValidationErrors7Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.7.Type.
+type ProjectUpgradeEligibilityResponseValidationErrors7Type string
+
+// ProjectUpgradeEligibilityResponse_ValidationErrors_Item defines model for ProjectUpgradeEligibilityResponse.validation_errors.Item.
+type ProjectUpgradeEligibilityResponse_ValidationErrors_Item struct {
+	union json.RawMessage
+}
 
 // ProjectUpgradeInitiateResponse defines model for ProjectUpgradeInitiateResponse.
 type ProjectUpgradeInitiateResponse struct {
@@ -3051,6 +3371,42 @@ type ReadOnlyStatusResponse struct {
 	OverrideEnabled     bool   `json:"override_enabled"`
 }
 
+// RealtimeConfigResponse defines model for RealtimeConfigResponse.
+type RealtimeConfigResponse struct {
+	// ConnectionPool Sets connection pool size for Realtime Authorization
+	ConnectionPool nullable.Nullable[int] `json:"connection_pool"`
+
+	// MaxBytesPerSecond Sets maximum number of bytes per second rate per channel limit
+	MaxBytesPerSecond nullable.Nullable[int] `json:"max_bytes_per_second"`
+
+	// MaxChannelsPerClient Sets maximum number of channels per client rate limit
+	MaxChannelsPerClient nullable.Nullable[int] `json:"max_channels_per_client"`
+
+	// MaxConcurrentUsers Sets maximum number of concurrent users rate limit
+	MaxConcurrentUsers nullable.Nullable[int] `json:"max_concurrent_users"`
+
+	// MaxEventsPerSecond Sets maximum number of events per second rate per channel limit
+	MaxEventsPerSecond nullable.Nullable[int] `json:"max_events_per_second"`
+
+	// MaxJoinsPerSecond Sets maximum number of joins per second rate limit
+	MaxJoinsPerSecond nullable.Nullable[int] `json:"max_joins_per_second"`
+
+	// MaxPayloadSizeInKb Sets maximum number of payload size in KB rate limit
+	MaxPayloadSizeInKb nullable.Nullable[int] `json:"max_payload_size_in_kb"`
+
+	// MaxPresenceEventsPerSecond Sets maximum number of presence events per second rate limit
+	MaxPresenceEventsPerSecond nullable.Nullable[int] `json:"max_presence_events_per_second"`
+
+	// PresenceEnabled Whether to enable presence
+	PresenceEnabled bool `json:"presence_enabled"`
+
+	// PrivateOnly Whether to only allow private channels
+	PrivateOnly nullable.Nullable[bool] `json:"private_only"`
+
+	// Suspend Disables the Realtime service for this project when true. Set to false to re-enable it.
+	Suspend nullable.Nullable[bool] `json:"suspend"`
+}
+
 // RegionsInfo defines model for RegionsInfo.
 type RegionsInfo struct {
 	All struct {
@@ -3060,7 +3416,7 @@ type RegionsInfo struct {
 			Type RegionsInfoAllSmartGroupType `json:"type"`
 		} `json:"smartGroup"`
 		Specific []struct {
-			Code     string                         `json:"code"`
+			Code     RegionsInfoAllSpecificCode     `json:"code"`
 			Name     string                         `json:"name"`
 			Provider RegionsInfoAllSpecificProvider `json:"provider"`
 			Status   *RegionsInfoAllSpecificStatus  `json:"status,omitempty"`
@@ -3074,7 +3430,7 @@ type RegionsInfo struct {
 			Type RegionsInfoRecommendationsSmartGroupType `json:"type"`
 		} `json:"smartGroup"`
 		Specific []struct {
-			Code     string                                     `json:"code"`
+			Code     RegionsInfoRecommendationsSpecificCode     `json:"code"`
 			Name     string                                     `json:"name"`
 			Provider RegionsInfoRecommendationsSpecificProvider `json:"provider"`
 			Status   *RegionsInfoRecommendationsSpecificStatus  `json:"status,omitempty"`
@@ -3088,6 +3444,9 @@ type RegionsInfoAllSmartGroupCode string
 
 // RegionsInfoAllSmartGroupType defines model for RegionsInfo.All.SmartGroup.Type.
 type RegionsInfoAllSmartGroupType string
+
+// RegionsInfoAllSpecificCode defines model for RegionsInfo.All.Specific.Code.
+type RegionsInfoAllSpecificCode string
 
 // RegionsInfoAllSpecificProvider defines model for RegionsInfo.All.Specific.Provider.
 type RegionsInfoAllSpecificProvider string
@@ -3103,6 +3462,9 @@ type RegionsInfoRecommendationsSmartGroupCode string
 
 // RegionsInfoRecommendationsSmartGroupType defines model for RegionsInfo.Recommendations.SmartGroup.Type.
 type RegionsInfoRecommendationsSmartGroupType string
+
+// RegionsInfoRecommendationsSpecificCode defines model for RegionsInfo.Recommendations.Specific.Code.
+type RegionsInfoRecommendationsSpecificCode string
 
 // RegionsInfoRecommendationsSpecificProvider defines model for RegionsInfo.Recommendations.Specific.Provider.
 type RegionsInfoRecommendationsSpecificProvider string
@@ -3275,15 +3637,23 @@ type StorageConfigResponse struct {
 		UpstreamTarget StorageConfigResponseExternalUpstreamTarget `json:"upstreamTarget"`
 	} `json:"external"`
 	Features struct {
-		IcebergCatalog *struct {
-			Enabled bool `json:"enabled"`
-		} `json:"icebergCatalog,omitempty"`
+		IcebergCatalog struct {
+			Enabled       bool `json:"enabled"`
+			MaxCatalogs   int  `json:"maxCatalogs"`
+			MaxNamespaces int  `json:"maxNamespaces"`
+			MaxTables     int  `json:"maxTables"`
+		} `json:"icebergCatalog"`
 		ImageTransformation struct {
 			Enabled bool `json:"enabled"`
 		} `json:"imageTransformation"`
 		S3Protocol struct {
 			Enabled bool `json:"enabled"`
 		} `json:"s3Protocol"`
+		VectorBuckets struct {
+			Enabled    bool `json:"enabled"`
+			MaxBuckets int  `json:"maxBuckets"`
+			MaxIndexes int  `json:"maxIndexes"`
+		} `json:"vectorBuckets"`
 	} `json:"features"`
 	FileSizeLimit    int64  `json:"fileSizeLimit"`
 	MigrationVersion string `json:"migrationVersion"`
@@ -3349,7 +3719,9 @@ type UpdateApiKeyBody struct {
 // UpdateAuthConfigBody defines model for UpdateAuthConfigBody.
 type UpdateAuthConfigBody struct {
 	ApiMaxRequestDuration                                 nullable.Nullable[int]                                            `json:"api_max_request_duration,omitempty"`
+	CustomOauthEnabled                                    *bool                                                             `json:"custom_oauth_enabled,omitempty"`
 	DbMaxPoolSize                                         nullable.Nullable[int]                                            `json:"db_max_pool_size,omitempty"`
+	DbMaxPoolSizeUnit                                     nullable.Nullable[UpdateAuthConfigBodyDbMaxPoolSizeUnit]          `json:"db_max_pool_size_unit,omitempty"`
 	DisableSignup                                         nullable.Nullable[bool]                                           `json:"disable_signup,omitempty"`
 	ExternalAnonymousUsersEnabled                         nullable.Nullable[bool]                                           `json:"external_anonymous_users_enabled,omitempty"`
 	ExternalAppleAdditionalClientIds                      nullable.Nullable[string]                                         `json:"external_apple_additional_client_ids,omitempty"`
@@ -3438,6 +3810,10 @@ type UpdateAuthConfigBody struct {
 	ExternalWorkosEnabled                                 nullable.Nullable[bool]                                           `json:"external_workos_enabled,omitempty"`
 	ExternalWorkosSecret                                  nullable.Nullable[string]                                         `json:"external_workos_secret,omitempty"`
 	ExternalWorkosUrl                                     nullable.Nullable[string]                                         `json:"external_workos_url,omitempty"`
+	ExternalXClientId                                     nullable.Nullable[string]                                         `json:"external_x_client_id,omitempty"`
+	ExternalXEmailOptional                                nullable.Nullable[bool]                                           `json:"external_x_email_optional,omitempty"`
+	ExternalXEnabled                                      nullable.Nullable[bool]                                           `json:"external_x_enabled,omitempty"`
+	ExternalXSecret                                       nullable.Nullable[string]                                         `json:"external_x_secret,omitempty"`
 	ExternalZoomClientId                                  nullable.Nullable[string]                                         `json:"external_zoom_client_id,omitempty"`
 	ExternalZoomEmailOptional                             nullable.Nullable[bool]                                           `json:"external_zoom_email_optional,omitempty"`
 	ExternalZoomEnabled                                   nullable.Nullable[bool]                                           `json:"external_zoom_enabled,omitempty"`
@@ -3514,6 +3890,9 @@ type UpdateAuthConfigBody struct {
 	MfaWebAuthnVerifyEnabled                              nullable.Nullable[bool]                                           `json:"mfa_web_authn_verify_enabled,omitempty"`
 	NimbusOauthClientId                                   nullable.Nullable[string]                                         `json:"nimbus_oauth_client_id,omitempty"`
 	NimbusOauthClientSecret                               nullable.Nullable[string]                                         `json:"nimbus_oauth_client_secret,omitempty"`
+	OauthServerAllowDynamicRegistration                   nullable.Nullable[bool]                                           `json:"oauth_server_allow_dynamic_registration,omitempty"`
+	OauthServerAuthorizationPath                          nullable.Nullable[string]                                         `json:"oauth_server_authorization_path,omitempty"`
+	OauthServerEnabled                                    nullable.Nullable[bool]                                           `json:"oauth_server_enabled,omitempty"`
 	PasswordHibpEnabled                                   nullable.Nullable[bool]                                           `json:"password_hibp_enabled,omitempty"`
 	PasswordMinLength                                     nullable.Nullable[int]                                            `json:"password_min_length,omitempty"`
 	PasswordRequiredCharacters                            nullable.Nullable[UpdateAuthConfigBodyPasswordRequiredCharacters] `json:"password_required_characters,omitempty"`
@@ -3532,11 +3911,12 @@ type UpdateAuthConfigBody struct {
 	SecurityCaptchaSecret                                 nullable.Nullable[string]                                         `json:"security_captcha_secret,omitempty"`
 	SecurityManualLinkingEnabled                          nullable.Nullable[bool]                                           `json:"security_manual_linking_enabled,omitempty"`
 	SecurityRefreshTokenReuseInterval                     nullable.Nullable[int]                                            `json:"security_refresh_token_reuse_interval,omitempty"`
+	SecuritySbForwardedForEnabled                         nullable.Nullable[bool]                                           `json:"security_sb_forwarded_for_enabled,omitempty"`
 	SecurityUpdatePasswordRequireReauthentication         nullable.Nullable[bool]                                           `json:"security_update_password_require_reauthentication,omitempty"`
-	SessionsInactivityTimeout                             nullable.Nullable[int]                                            `json:"sessions_inactivity_timeout,omitempty"`
+	SessionsInactivityTimeout                             nullable.Nullable[float32]                                        `json:"sessions_inactivity_timeout,omitempty"`
 	SessionsSinglePerUser                                 nullable.Nullable[bool]                                           `json:"sessions_single_per_user,omitempty"`
 	SessionsTags                                          nullable.Nullable[string]                                         `json:"sessions_tags,omitempty"`
-	SessionsTimebox                                       nullable.Nullable[int]                                            `json:"sessions_timebox,omitempty"`
+	SessionsTimebox                                       nullable.Nullable[float32]                                        `json:"sessions_timebox,omitempty"`
 	SiteUrl                                               nullable.Nullable[string]                                         `json:"site_url,omitempty"`
 	SmsAutoconfirm                                        nullable.Nullable[bool]                                           `json:"sms_autoconfirm,omitempty"`
 	SmsMaxFrequency                                       nullable.Nullable[int]                                            `json:"sms_max_frequency,omitempty"`
@@ -3569,6 +3949,9 @@ type UpdateAuthConfigBody struct {
 	SmtpUser                                              nullable.Nullable[string]                                         `json:"smtp_user,omitempty"`
 	UriAllowList                                          nullable.Nullable[string]                                         `json:"uri_allow_list,omitempty"`
 }
+
+// UpdateAuthConfigBodyDbMaxPoolSizeUnit defines model for UpdateAuthConfigBody.DbMaxPoolSizeUnit.
+type UpdateAuthConfigBodyDbMaxPoolSizeUnit string
 
 // UpdateAuthConfigBodyPasswordRequiredCharacters defines model for UpdateAuthConfigBody.PasswordRequiredCharacters.
 type UpdateAuthConfigBodyPasswordRequiredCharacters string
@@ -3746,6 +4129,42 @@ type UpdateProviderResponse struct {
 	UpdatedAt *string `json:"updated_at,omitempty"`
 }
 
+// UpdateRealtimeConfigBody defines model for UpdateRealtimeConfigBody.
+type UpdateRealtimeConfigBody struct {
+	// ConnectionPool Sets connection pool size for Realtime Authorization
+	ConnectionPool *int `json:"connection_pool,omitempty"`
+
+	// MaxBytesPerSecond Sets maximum number of bytes per second rate per channel limit
+	MaxBytesPerSecond *int `json:"max_bytes_per_second,omitempty"`
+
+	// MaxChannelsPerClient Sets maximum number of channels per client rate limit
+	MaxChannelsPerClient *int `json:"max_channels_per_client,omitempty"`
+
+	// MaxConcurrentUsers Sets maximum number of concurrent users rate limit
+	MaxConcurrentUsers *int `json:"max_concurrent_users,omitempty"`
+
+	// MaxEventsPerSecond Sets maximum number of events per second rate per channel limit
+	MaxEventsPerSecond *int `json:"max_events_per_second,omitempty"`
+
+	// MaxJoinsPerSecond Sets maximum number of joins per second rate limit
+	MaxJoinsPerSecond *int `json:"max_joins_per_second,omitempty"`
+
+	// MaxPayloadSizeInKb Sets maximum number of payload size in KB rate limit
+	MaxPayloadSizeInKb *int `json:"max_payload_size_in_kb,omitempty"`
+
+	// MaxPresenceEventsPerSecond Sets maximum number of presence events per second rate limit
+	MaxPresenceEventsPerSecond *int `json:"max_presence_events_per_second,omitempty"`
+
+	// PresenceEnabled Whether to enable presence
+	PresenceEnabled *bool `json:"presence_enabled,omitempty"`
+
+	// PrivateOnly Whether to only allow private channels
+	PrivateOnly *bool `json:"private_only,omitempty"`
+
+	// Suspend Disables the Realtime service for this project when true. Set to false to re-enable it.
+	Suspend *bool `json:"suspend,omitempty"`
+}
+
 // UpdateRunStatusBody defines model for UpdateRunStatusBody.
 type UpdateRunStatusBody struct {
 	Clone     *UpdateRunStatusBodyClone     `json:"clone,omitempty"`
@@ -3801,14 +4220,22 @@ type UpdateStorageConfigBody struct {
 	} `json:"external,omitempty"`
 	Features *struct {
 		IcebergCatalog *struct {
-			Enabled bool `json:"enabled"`
+			Enabled       bool `json:"enabled"`
+			MaxCatalogs   int  `json:"maxCatalogs"`
+			MaxNamespaces int  `json:"maxNamespaces"`
+			MaxTables     int  `json:"maxTables"`
 		} `json:"icebergCatalog,omitempty"`
-		ImageTransformation struct {
+		ImageTransformation *struct {
 			Enabled bool `json:"enabled"`
-		} `json:"imageTransformation"`
-		S3Protocol struct {
+		} `json:"imageTransformation,omitempty"`
+		S3Protocol *struct {
 			Enabled bool `json:"enabled"`
-		} `json:"s3Protocol"`
+		} `json:"s3Protocol,omitempty"`
+		VectorBuckets *struct {
+			Enabled    bool `json:"enabled"`
+			MaxBuckets int  `json:"maxBuckets"`
+			MaxIndexes int  `json:"maxIndexes"`
+		} `json:"vectorBuckets,omitempty"`
 	} `json:"features,omitempty"`
 	FileSizeLimit *int64 `json:"fileSizeLimit,omitempty"`
 }
@@ -3879,7 +4306,9 @@ type V1CreateMigrationBody struct {
 // V1CreateProjectBody defines model for V1CreateProjectBody.
 type V1CreateProjectBody struct {
 	// DbPass Database password
-	DbPass              string                                  `json:"db_pass"`
+	DbPass string `json:"db_pass"`
+
+	// DesiredInstanceSize Desired instance size. Omit this field to always default to the smallest possible size.
 	DesiredInstanceSize *V1CreateProjectBodyDesiredInstanceSize `json:"desired_instance_size,omitempty"`
 
 	// KpsEnabled This field is deprecated and is ignored in this request
@@ -3900,10 +4329,6 @@ type V1CreateProjectBody struct {
 	// Deprecated:
 	Plan *V1CreateProjectBodyPlan `json:"plan,omitempty"`
 
-	// PostgresEngine Postgres engine version. If not provided, the latest version will be used.
-	// Deprecated:
-	PostgresEngine *V1CreateProjectBodyPostgresEngine `json:"postgres_engine,omitempty"`
-
 	// Region Region you want your server to reside in. Use region_selection instead.
 	// Deprecated:
 	Region *V1CreateProjectBodyRegion `json:"region,omitempty"`
@@ -3911,22 +4336,15 @@ type V1CreateProjectBody struct {
 	// RegionSelection Region selection. Only one of region or region_selection can be specified.
 	RegionSelection *V1CreateProjectBody_RegionSelection `json:"region_selection,omitempty"`
 
-	// ReleaseChannel Release channel. If not provided, GA will be used.
-	// Deprecated:
-	ReleaseChannel *V1CreateProjectBodyReleaseChannel `json:"release_channel,omitempty"`
-
 	// TemplateUrl Template URL used to create the project from the CLI.
 	TemplateUrl *string `json:"template_url,omitempty"`
 }
 
-// V1CreateProjectBodyDesiredInstanceSize defines model for V1CreateProjectBody.DesiredInstanceSize.
+// V1CreateProjectBodyDesiredInstanceSize Desired instance size. Omit this field to always default to the smallest possible size.
 type V1CreateProjectBodyDesiredInstanceSize string
 
 // V1CreateProjectBodyPlan Subscription Plan is now set on organization level and is ignored in this request
 type V1CreateProjectBodyPlan string
-
-// V1CreateProjectBodyPostgresEngine Postgres engine version. If not provided, the latest version will be used.
-type V1CreateProjectBodyPostgresEngine string
 
 // V1CreateProjectBodyRegion Region you want your server to reside in. Use region_selection instead.
 type V1CreateProjectBodyRegion string
@@ -3961,9 +4379,6 @@ type V1CreateProjectBodyRegionSelection1Type string
 type V1CreateProjectBody_RegionSelection struct {
 	union json.RawMessage
 }
-
-// V1CreateProjectBodyReleaseChannel Release channel. If not provided, GA will be used.
-type V1CreateProjectBodyReleaseChannel string
 
 // V1GetMigrationResponse defines model for V1GetMigrationResponse.
 type V1GetMigrationResponse struct {
@@ -4222,6 +4637,12 @@ type V1ProjectWithDatabaseResponse struct {
 // V1ProjectWithDatabaseResponseStatus defines model for V1ProjectWithDatabaseResponse.Status.
 type V1ProjectWithDatabaseResponseStatus string
 
+// V1ReadOnlyQueryBody defines model for V1ReadOnlyQueryBody.
+type V1ReadOnlyQueryBody struct {
+	Parameters *[]interface{} `json:"parameters,omitempty"`
+	Query      string         `json:"query"`
+}
+
 // V1RestorePitrBody defines model for V1RestorePitrBody.
 type V1RestorePitrBody struct {
 	RecoveryTimeTargetUnix int64 `json:"recovery_time_target_unix"`
@@ -4234,8 +4655,9 @@ type V1RestorePointPostBody struct {
 
 // V1RestorePointResponse defines model for V1RestorePointResponse.
 type V1RestorePointResponse struct {
-	Name   string                       `json:"name"`
-	Status V1RestorePointResponseStatus `json:"status"`
+	CompletedOn nullable.Nullable[time.Time] `json:"completed_on"`
+	Name        string                       `json:"name"`
+	Status      V1RestorePointResponseStatus `json:"status"`
 }
 
 // V1RestorePointResponseStatus defines model for V1RestorePointResponse.Status.
@@ -4250,7 +4672,10 @@ type V1RunQueryBody struct {
 
 // V1ServiceHealthResponse defines model for V1ServiceHealthResponse.
 type V1ServiceHealthResponse struct {
-	Error   *string                       `json:"error,omitempty"`
+	Error *string `json:"error,omitempty"`
+
+	// Healthy Deprecated. Use `status` instead.
+	// Deprecated:
 	Healthy bool                          `json:"healthy"`
 	Info    *V1ServiceHealthResponse_Info `json:"info,omitempty"`
 	Name    V1ServiceHealthResponseName   `json:"name"`
@@ -4271,7 +4696,11 @@ type V1ServiceHealthResponseInfo0Name string
 type V1ServiceHealthResponseInfo1 struct {
 	ConnectedCluster int  `json:"connected_cluster"`
 	DbConnected      bool `json:"db_connected"`
-	Healthy          bool `json:"healthy"`
+
+	// Healthy Deprecated. Use `status` instead.
+	// Deprecated:
+	Healthy              bool `json:"healthy"`
+	ReplicationConnected bool `json:"replication_connected"`
 }
 
 // V1ServiceHealthResponseInfo2 defines model for .
@@ -4312,12 +4741,27 @@ type V1UpdateFunctionBody struct {
 	VerifyJwt *bool   `json:"verify_jwt,omitempty"`
 }
 
+// V1UpdatePasswordBody defines model for V1UpdatePasswordBody.
+type V1UpdatePasswordBody struct {
+	Password string `json:"password"`
+}
+
+// V1UpdatePasswordResponse defines model for V1UpdatePasswordResponse.
+type V1UpdatePasswordResponse struct {
+	Message string `json:"message"`
+}
+
 // V1UpdatePostgrestConfigBody defines model for V1UpdatePostgrestConfigBody.
 type V1UpdatePostgrestConfigBody struct {
 	DbExtraSearchPath *string `json:"db_extra_search_path,omitempty"`
 	DbPool            *int    `json:"db_pool,omitempty"`
 	DbSchema          *string `json:"db_schema,omitempty"`
 	MaxRows           *int    `json:"max_rows,omitempty"`
+}
+
+// V1UpdateProjectBody defines model for V1UpdateProjectBody.
+type V1UpdateProjectBody struct {
+	Name string `json:"name"`
 }
 
 // V1UpsertMigrationBody defines model for V1UpsertMigrationBody.
@@ -4350,6 +4794,9 @@ type V1DeleteABranchParams struct {
 // V1DiffABranchParams defines parameters for V1DiffABranch.
 type V1DiffABranchParams struct {
 	IncludedSchemas *string `form:"included_schemas,omitempty" json:"included_schemas,omitempty"`
+
+	// Pgdelta Use pg-delta instead of Migra for diffing when true
+	Pgdelta *bool `form:"pgdelta,omitempty" json:"pgdelta,omitempty"`
 }
 
 // V1AuthorizeUserParams defines parameters for V1AuthorizeUser.
@@ -4426,7 +4873,7 @@ type V1GetAvailableRegionsParams struct {
 	// Continent Continent code to determine regional recommendations: NA (North America), SA (South America), EU (Europe), AF (Africa), AS (Asia), OC (Oceania), AN (Antarctica)
 	Continent *V1GetAvailableRegionsParamsContinent `form:"continent,omitempty" json:"continent,omitempty"`
 
-	// DesiredInstanceSize Desired instance size
+	// DesiredInstanceSize Desired instance size. Omit this field to always default to the smallest possible size.
 	DesiredInstanceSize *V1GetAvailableRegionsParamsDesiredInstanceSize `form:"desired_instance_size,omitempty" json:"desired_instance_size,omitempty"`
 }
 
@@ -4550,6 +4997,12 @@ type V1UpsertAMigrationParams struct {
 	IdempotencyKey *string `json:"Idempotency-Key,omitempty"`
 }
 
+// V1GetDatabaseOpenapiParams defines parameters for V1GetDatabaseOpenapi.
+type V1GetDatabaseOpenapiParams struct {
+	// Schema The database schema to generate the OpenAPI spec for
+	Schema *string `form:"schema,omitempty" json:"schema,omitempty"`
+}
+
 // V1CreateAFunctionParams defines parameters for V1CreateAFunction.
 type V1CreateAFunctionParams struct {
 	Slug *string `form:"slug,omitempty" json:"slug,omitempty"`
@@ -4647,6 +5100,9 @@ type V1CreateAnOrganizationJSONRequestBody = CreateOrganizationV1
 // V1CreateAProjectJSONRequestBody defines body for V1CreateAProject for application/json ContentType.
 type V1CreateAProjectJSONRequestBody = V1CreateProjectBody
 
+// V1UpdateAProjectJSONRequestBody defines body for V1UpdateAProject for application/json ContentType.
+type V1UpdateAProjectJSONRequestBody = V1UpdateProjectBody
+
 // V1UpdateActionRunStatusJSONRequestBody defines body for V1UpdateActionRunStatus for application/json ContentType.
 type V1UpdateActionRunStatusJSONRequestBody = UpdateRunStatusBody
 
@@ -4689,6 +5145,12 @@ type V1UpdatePoolerConfigJSONRequestBody = UpdateSupavisorConfigBody
 // V1UpdatePostgresConfigJSONRequestBody defines body for V1UpdatePostgresConfig for application/json ContentType.
 type V1UpdatePostgresConfigJSONRequestBody = UpdatePostgresConfigBody
 
+// V1ModifyDatabaseDiskJSONRequestBody defines body for V1ModifyDatabaseDisk for application/json ContentType.
+type V1ModifyDatabaseDiskJSONRequestBody = DiskRequestBody
+
+// V1UpdateRealtimeConfigJSONRequestBody defines body for V1UpdateRealtimeConfig for application/json ContentType.
+type V1UpdateRealtimeConfigJSONRequestBody = UpdateRealtimeConfigBody
+
 // V1UpdateStorageConfigJSONRequestBody defines body for V1UpdateStorageConfig for application/json ContentType.
 type V1UpdateStorageConfigJSONRequestBody = UpdateStorageConfigBody
 
@@ -4719,8 +5181,14 @@ type V1UpsertAMigrationJSONRequestBody = V1UpsertMigrationBody
 // V1PatchAMigrationJSONRequestBody defines body for V1PatchAMigration for application/json ContentType.
 type V1PatchAMigrationJSONRequestBody = V1PatchMigrationBody
 
+// V1UpdateDatabasePasswordJSONRequestBody defines body for V1UpdateDatabasePassword for application/json ContentType.
+type V1UpdateDatabasePasswordJSONRequestBody = V1UpdatePasswordBody
+
 // V1RunAQueryJSONRequestBody defines body for V1RunAQuery for application/json ContentType.
 type V1RunAQueryJSONRequestBody = V1RunQueryBody
+
+// V1ReadOnlyQueryJSONRequestBody defines body for V1ReadOnlyQuery for application/json ContentType.
+type V1ReadOnlyQueryJSONRequestBody = V1ReadOnlyQueryBody
 
 // V1CreateAFunctionJSONRequestBody defines body for V1CreateAFunction for application/json ContentType.
 type V1CreateAFunctionJSONRequestBody = V1CreateFunctionBody
@@ -4733,6 +5201,9 @@ type V1DeployAFunctionMultipartRequestBody = FunctionDeployBody
 
 // V1UpdateAFunctionJSONRequestBody defines body for V1UpdateAFunction for application/json ContentType.
 type V1UpdateAFunctionJSONRequestBody = V1UpdateFunctionBody
+
+// V1UpdateJitAccessConfigJSONRequestBody defines body for V1UpdateJitAccessConfig for application/json ContentType.
+type V1UpdateJitAccessConfigJSONRequestBody = JitAccessRequestRequest
 
 // V1DeleteNetworkBansJSONRequestBody defines body for V1DeleteNetworkBans for application/json ContentType.
 type V1DeleteNetworkBansJSONRequestBody = RemoveNetworkBanRequest
@@ -5208,6 +5679,130 @@ func (t *CreateSigningKeyBody_PrivateJwk) UnmarshalJSON(b []byte) error {
 	return err
 }
 
+// AsDiskRequestBodyAttributes0 returns the union data inside the DiskRequestBody_Attributes as a DiskRequestBodyAttributes0
+func (t DiskRequestBody_Attributes) AsDiskRequestBodyAttributes0() (DiskRequestBodyAttributes0, error) {
+	var body DiskRequestBodyAttributes0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDiskRequestBodyAttributes0 overwrites any union data inside the DiskRequestBody_Attributes as the provided DiskRequestBodyAttributes0
+func (t *DiskRequestBody_Attributes) FromDiskRequestBodyAttributes0(v DiskRequestBodyAttributes0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDiskRequestBodyAttributes0 performs a merge with any union data inside the DiskRequestBody_Attributes, using the provided DiskRequestBodyAttributes0
+func (t *DiskRequestBody_Attributes) MergeDiskRequestBodyAttributes0(v DiskRequestBodyAttributes0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsDiskRequestBodyAttributes1 returns the union data inside the DiskRequestBody_Attributes as a DiskRequestBodyAttributes1
+func (t DiskRequestBody_Attributes) AsDiskRequestBodyAttributes1() (DiskRequestBodyAttributes1, error) {
+	var body DiskRequestBodyAttributes1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDiskRequestBodyAttributes1 overwrites any union data inside the DiskRequestBody_Attributes as the provided DiskRequestBodyAttributes1
+func (t *DiskRequestBody_Attributes) FromDiskRequestBodyAttributes1(v DiskRequestBodyAttributes1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDiskRequestBodyAttributes1 performs a merge with any union data inside the DiskRequestBody_Attributes, using the provided DiskRequestBodyAttributes1
+func (t *DiskRequestBody_Attributes) MergeDiskRequestBodyAttributes1(v DiskRequestBodyAttributes1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t DiskRequestBody_Attributes) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *DiskRequestBody_Attributes) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsDiskResponseAttributes0 returns the union data inside the DiskResponse_Attributes as a DiskResponseAttributes0
+func (t DiskResponse_Attributes) AsDiskResponseAttributes0() (DiskResponseAttributes0, error) {
+	var body DiskResponseAttributes0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDiskResponseAttributes0 overwrites any union data inside the DiskResponse_Attributes as the provided DiskResponseAttributes0
+func (t *DiskResponse_Attributes) FromDiskResponseAttributes0(v DiskResponseAttributes0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDiskResponseAttributes0 performs a merge with any union data inside the DiskResponse_Attributes, using the provided DiskResponseAttributes0
+func (t *DiskResponse_Attributes) MergeDiskResponseAttributes0(v DiskResponseAttributes0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsDiskResponseAttributes1 returns the union data inside the DiskResponse_Attributes as a DiskResponseAttributes1
+func (t DiskResponse_Attributes) AsDiskResponseAttributes1() (DiskResponseAttributes1, error) {
+	var body DiskResponseAttributes1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDiskResponseAttributes1 overwrites any union data inside the DiskResponse_Attributes as the provided DiskResponseAttributes1
+func (t *DiskResponse_Attributes) FromDiskResponseAttributes1(v DiskResponseAttributes1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDiskResponseAttributes1 performs a merge with any union data inside the DiskResponse_Attributes, using the provided DiskResponseAttributes1
+func (t *DiskResponse_Attributes) MergeDiskResponseAttributes1(v DiskResponseAttributes1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t DiskResponse_Attributes) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *DiskResponse_Attributes) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
 // AsListProjectAddonsResponseAvailableAddonsVariantsId0 returns the union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as a ListProjectAddonsResponseAvailableAddonsVariantsId0
 func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) AsListProjectAddonsResponseAvailableAddonsVariantsId0() (ListProjectAddonsResponseAvailableAddonsVariantsId0, error) {
 	var body ListProjectAddonsResponseAvailableAddonsVariantsId0
@@ -5588,6 +6183,224 @@ func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) MarshalJSON() ([]by
 }
 
 func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseValidationErrors0 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors0
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors0() (ProjectUpgradeEligibilityResponseValidationErrors0, error) {
+	var body ProjectUpgradeEligibilityResponseValidationErrors0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseValidationErrors0 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors0
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors0(v ProjectUpgradeEligibilityResponseValidationErrors0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseValidationErrors0 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors0
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors0(v ProjectUpgradeEligibilityResponseValidationErrors0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseValidationErrors1 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors1
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors1() (ProjectUpgradeEligibilityResponseValidationErrors1, error) {
+	var body ProjectUpgradeEligibilityResponseValidationErrors1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseValidationErrors1 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors1
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors1(v ProjectUpgradeEligibilityResponseValidationErrors1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseValidationErrors1 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors1
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors1(v ProjectUpgradeEligibilityResponseValidationErrors1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseValidationErrors2 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors2
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors2() (ProjectUpgradeEligibilityResponseValidationErrors2, error) {
+	var body ProjectUpgradeEligibilityResponseValidationErrors2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseValidationErrors2 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors2
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors2(v ProjectUpgradeEligibilityResponseValidationErrors2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseValidationErrors2 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors2
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors2(v ProjectUpgradeEligibilityResponseValidationErrors2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseValidationErrors3 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors3
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors3() (ProjectUpgradeEligibilityResponseValidationErrors3, error) {
+	var body ProjectUpgradeEligibilityResponseValidationErrors3
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseValidationErrors3 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors3
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors3(v ProjectUpgradeEligibilityResponseValidationErrors3) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseValidationErrors3 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors3
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors3(v ProjectUpgradeEligibilityResponseValidationErrors3) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseValidationErrors4 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors4
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors4() (ProjectUpgradeEligibilityResponseValidationErrors4, error) {
+	var body ProjectUpgradeEligibilityResponseValidationErrors4
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseValidationErrors4 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors4
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors4(v ProjectUpgradeEligibilityResponseValidationErrors4) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseValidationErrors4 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors4
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors4(v ProjectUpgradeEligibilityResponseValidationErrors4) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseValidationErrors5 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors5
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors5() (ProjectUpgradeEligibilityResponseValidationErrors5, error) {
+	var body ProjectUpgradeEligibilityResponseValidationErrors5
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseValidationErrors5 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors5
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors5(v ProjectUpgradeEligibilityResponseValidationErrors5) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseValidationErrors5 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors5
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors5(v ProjectUpgradeEligibilityResponseValidationErrors5) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseValidationErrors6 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors6
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors6() (ProjectUpgradeEligibilityResponseValidationErrors6, error) {
+	var body ProjectUpgradeEligibilityResponseValidationErrors6
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseValidationErrors6 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors6
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors6(v ProjectUpgradeEligibilityResponseValidationErrors6) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseValidationErrors6 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors6
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors6(v ProjectUpgradeEligibilityResponseValidationErrors6) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseValidationErrors7 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors7
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors7() (ProjectUpgradeEligibilityResponseValidationErrors7, error) {
+	var body ProjectUpgradeEligibilityResponseValidationErrors7
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseValidationErrors7 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors7
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors7(v ProjectUpgradeEligibilityResponseValidationErrors7) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseValidationErrors7 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors7
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors7(v ProjectUpgradeEligibilityResponseValidationErrors7) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }

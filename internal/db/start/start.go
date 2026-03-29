@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/pgcache"
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
@@ -30,7 +31,6 @@ import (
 )
 
 var (
-	HealthTimeout = 120 * time.Second
 	//go:embed templates/schema.sql
 	initialSchema string
 	//go:embed templates/webhook.sql
@@ -119,10 +119,9 @@ func NewHostConfig() container.HostConfig {
 	hostPort := strconv.FormatUint(uint64(utils.Config.Db.Port), 10)
 	hostConfig := container.HostConfig{
 		PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
-		RestartPolicy: container.RestartPolicy{Name: "always"},
+		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 		Binds: []string{
 			utils.DbId + ":/var/lib/postgresql/data",
-			utils.ConfigId + ":/etc/postgresql-custom",
 		},
 	}
 	if utils.Config.Db.MajorVersion <= 14 {
@@ -178,7 +177,7 @@ EOF`}
 		return err
 	}
 	// Ignore health check because restoring a large backup may take longer than 2 minutes
-	if err := WaitForHealthyService(ctx, HealthTimeout, utils.DbId); err != nil && len(fromBackup) == 0 {
+	if err := WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, utils.DbId); err != nil && len(fromBackup) == 0 {
 		return err
 	}
 	// Initialize if we are on PG14 and there's no existing db volume
@@ -366,7 +365,19 @@ func SetupLocalDatabase(ctx context.Context, version string, fsys afero.Fs, w io
 	if err := SetupDatabase(ctx, conn, utils.DbId, w, fsys); err != nil {
 		return err
 	}
-	return apply.MigrateAndSeed(ctx, version, conn, fsys)
+	if err := apply.MigrateAndSeed(ctx, version, conn, fsys); err != nil {
+		return err
+	}
+	if err := pgcache.TryCacheMigrationsCatalog(ctx, pgconn.Config{
+		Host:     utils.Config.Hostname,
+		Port:     utils.Config.Db.Port,
+		User:     "postgres",
+		Password: utils.Config.Db.Password,
+		Database: "postgres",
+	}, "local", version, fsys, options...); err != nil {
+		fmt.Fprintln(os.Stderr, "Warning: failed to cache migrations catalog:", err)
+	}
+	return nil
 }
 
 func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer, fsys afero.Fs) error {

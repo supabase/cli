@@ -12,6 +12,7 @@ import (
 	"github.com/supabase/cli/internal/sso/update"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/api"
 )
 
 var (
@@ -25,6 +26,16 @@ var (
 		Allowed: []string{"saml"},
 		// intentionally no default value so users have to specify --type saml explicitly
 	}
+
+	ssoNameIDFormat = utils.EnumFlag{
+		Allowed: []string{
+			string(api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatEmailAddress),
+			string(api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML11NameidFormatUnspecified),
+			string(api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatPersistent),
+			string(api.CreateProviderBodyNameIdFormatUrnOasisNamesTcSAML20NameidFormatTransient),
+		},
+	}
+
 	ssoMetadataFile         string
 	ssoMetadataURL          string
 	ssoSkipURLValidation    bool
@@ -48,6 +59,7 @@ var (
 				MetadataURL:       ssoMetadataURL,
 				SkipURLValidation: ssoSkipURLValidation,
 				AttributeMapping:  ssoAttributeMappingFile,
+				NameIDFormat:      ssoNameIDFormat.String(),
 				Domains:           ssoDomains,
 			})
 		},
@@ -88,6 +100,7 @@ var (
 				MetadataURL:       ssoMetadataURL,
 				SkipURLValidation: ssoSkipURLValidation,
 				AttributeMapping:  ssoAttributeMappingFile,
+				NameIDFormat:      ssoNameIDFormat.String(),
 				Domains:           ssoDomains,
 				AddDomains:        ssoAddDomains,
 				RemoveDomains:     ssoRemoveDomains,
@@ -146,6 +159,7 @@ func init() {
 	ssoAddFlags.StringVar(&ssoMetadataURL, "metadata-url", "", "URL pointing to a SAML 2.0 Metadata XML document describing the identity provider.")
 	ssoAddFlags.BoolVar(&ssoSkipURLValidation, "skip-url-validation", false, "Whether local validation of the SAML 2.0 Metadata URL should not be performed.")
 	ssoAddFlags.StringVar(&ssoAttributeMappingFile, "attribute-mapping-file", "", "File containing a JSON mapping between SAML attributes to custom JWT claims.")
+	ssoAddFlags.Var(&ssoNameIDFormat, "name-id-format", "URI reference representing the classification of string-based identifier information.")
 	ssoAddCmd.MarkFlagsMutuallyExclusive("metadata-file", "metadata-url")
 	cobra.CheckErr(ssoAddCmd.MarkFlagRequired("type"))
 	cobra.CheckErr(ssoAddCmd.MarkFlagFilename("metadata-file", "xml"))
@@ -159,6 +173,7 @@ func init() {
 	ssoUpdateFlags.StringVar(&ssoMetadataURL, "metadata-url", "", "URL pointing to a SAML 2.0 Metadata XML document describing the identity provider.")
 	ssoUpdateFlags.BoolVar(&ssoSkipURLValidation, "skip-url-validation", false, "Whether local validation of the SAML 2.0 Metadata URL should not be performed.")
 	ssoUpdateFlags.StringVar(&ssoAttributeMappingFile, "attribute-mapping-file", "", "File containing a JSON mapping between SAML attributes to custom JWT claims.")
+	ssoUpdateFlags.Var(&ssoNameIDFormat, "name-id-format", "URI reference representing the classification of string-based identifier information.")
 	ssoUpdateCmd.MarkFlagsMutuallyExclusive("metadata-file", "metadata-url")
 	ssoUpdateCmd.MarkFlagsMutuallyExclusive("domains", "add-domains")
 	ssoUpdateCmd.MarkFlagsMutuallyExclusive("domains", "remove-domains")

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/db/pgcache"
 	"github.com/supabase/cli/internal/migration/up"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
@@ -90,6 +91,9 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 			}
 			if err := migration.ApplyMigrations(ctx, pending, conn, afero.NewIOFS(fsys)); err != nil {
 				return err
+			}
+			if err := pgcache.TryCacheMigrationsCatalog(ctx, config, "", "", fsys, options...); err != nil {
+				fmt.Fprintln(os.Stderr, "Warning: failed to cache migrations catalog:", err)
 			}
 		} else {
 			fmt.Fprintln(os.Stderr, "Schema migrations are up to date.")

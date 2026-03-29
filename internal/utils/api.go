@@ -141,23 +141,6 @@ func GetSupabase() *supabase.ClientWithResponses {
 // Used by unit tests
 var DefaultApiHost = CurrentProfile.APIURL
 
-var RegionMap = map[string]string{
-	"ap-northeast-1": "Northeast Asia (Tokyo)",
-	"ap-northeast-2": "Northeast Asia (Seoul)",
-	"ap-south-1":     "South Asia (Mumbai)",
-	"ap-southeast-1": "Southeast Asia (Singapore)",
-	"ap-southeast-2": "Oceania (Sydney)",
-	"ca-central-1":   "Canada (Central)",
-	"eu-central-1":   "Central EU (Frankfurt)",
-	"eu-west-1":      "West EU (Ireland)",
-	"eu-west-2":      "West EU (London)",
-	"eu-west-3":      "West EU (Paris)",
-	"sa-east-1":      "South America (São Paulo)",
-	"us-east-1":      "East US (North Virginia)",
-	"us-west-1":      "West US (North California)",
-	"us-west-2":      "West US (Oregon)",
-}
-
 func GetSupabaseAPIHost() string {
 	return CurrentProfile.APIURL
 }

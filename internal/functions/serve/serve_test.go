@@ -45,6 +45,18 @@ func TestServeCommand(t *testing.T) {
 			Reply(http.StatusOK)
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image), containerId)
 		require.NoError(t, apitest.MockDockerLogsStream(utils.Docker, containerId, 1, strings.NewReader("failed")))
+		// Mock kong reload after edge runtime restart
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/supabase_kong_test/exec").
+			Reply(http.StatusOK).
+			JSON(container.ExecCreateResponse{ID: "kong-reload"})
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/exec/kong-reload/start").
+			Reply(http.StatusOK)
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/exec/kong-reload/json").
+			Reply(http.StatusOK).
+			JSON(container.ExecInspect{ExitCode: 0})
 		// Run test with timeout context
 		err := Run(context.Background(), "", nil, "", RuntimeOption{}, fsys)
 		// Check error
@@ -161,7 +173,7 @@ func TestServeFunctions(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.FromIOFS{FS: testdata}
 		// Run test
-		binds, configString, err := populatePerFunctionConfigs("/", "", nil, fsys)
+		binds, configString, err := PopulatePerFunctionConfigs("/", "", nil, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.ElementsMatch(t, []string{

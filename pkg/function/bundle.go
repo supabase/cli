@@ -18,15 +18,17 @@ import (
 )
 
 type nativeBundler struct {
-	tempDir string
-	fsys    fs.FS
-	timeout time.Duration
+	tempDir     string
+	fsys        fs.FS
+	timeout     time.Duration
+	denoVersion uint
 }
 
 func NewNativeBundler(tempDir string, fsys fs.FS, opts ...func(*nativeBundler)) EszipBundler {
 	b := &nativeBundler{
-		tempDir: tempDir,
-		fsys:    fsys,
+		tempDir:     tempDir,
+		fsys:        fsys,
+		denoVersion: 2,
 	}
 	for _, apply := range opts {
 		apply(b)
@@ -40,12 +42,16 @@ func WithTimeout(timeout time.Duration) func(*nativeBundler) {
 	}
 }
 
+func WithDenoVersion(version uint) func(*nativeBundler) {
+	return func(b *nativeBundler) {
+		b.denoVersion = version
+	}
+}
+
 var (
 	// Use a package private variable to allow testing without gosec complaining about G204
 	edgeRuntimeBin = "edge-runtime"
-	BundleFlags    = []string{
-		"--decorator", "tc39",
-	}
+	BundleFlags    = []string{}
 )
 
 func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap string, staticFiles []string, output io.Writer) (FunctionDeployMetadata, error) {
@@ -53,7 +59,7 @@ func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	outputPath := filepath.Join(b.tempDir, slug+".eszip")
 	// TODO: make edge runtime write to stdout
 	args := []string{"bundle", "--entrypoint", entrypoint, "--output", outputPath}
-	if len(importMap) > 0 {
+	if len(importMap) > 0 && !ShouldUseDenoJsonDiscovery(entrypoint, importMap) {
 		args = append(args, "--import-map", importMap)
 	}
 	for _, staticFile := range staticFiles {
@@ -82,6 +88,10 @@ func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	}
 	defer eszipBytes.Close()
 	return meta, Compress(eszipBytes, output)
+}
+
+func ShouldUseDenoJsonDiscovery(entrypoint, importMap string) bool {
+	return isDeno(filepath.Base(importMap)) && filepath.Dir(importMap) == filepath.Dir(entrypoint)
 }
 
 func ShouldUsePackageJsonDiscovery(entrypoint, importMap string, fsys fs.StatFS) bool {

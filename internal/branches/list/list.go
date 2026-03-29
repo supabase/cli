@@ -30,23 +30,23 @@ func Run(ctx context.Context, fsys afero.Fs) error {
 			Branches: branches,
 		})
 	case utils.OutputEnv:
-		return errors.Errorf("--output env flag is not supported")
+		return errors.New(utils.ErrEnvNotSupported)
 	}
 
 	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, branches)
 }
 
 func ToMarkdown(branches []api.BranchResponse) string {
-	table := `|ID|NAME|DEFAULT|GIT BRANCH|WITH DATA|STATUS|CREATED AT (UTC)|UPDATED AT (UTC)|
+	var table strings.Builder
+	table.WriteString(`|ID|NAME|DEFAULT|GIT BRANCH|WITH DATA|STATUS|CREATED AT (UTC)|UPDATED AT (UTC)|
 |-|-|-|-|-|-|-|-|
-`
+`)
 	for _, branch := range branches {
 		gitBranch := " "
 		if branch.GitBranch != nil {
 			gitBranch = *branch.GitBranch
 		}
-		table += fmt.Sprintf(
-			"|`%s`|`%s`|`%t`|`%s`|`%t`|`%s`|`%s`|`%s`|\n",
+		fmt.Fprintf(&table, "|`%s`|`%s`|`%t`|`%s`|`%t`|`%s`|`%s`|`%s`|\n",
 			branch.ProjectRef,
 			strings.ReplaceAll(branch.Name, "|", "\\|"),
 			branch.IsDefault,
@@ -54,10 +54,9 @@ func ToMarkdown(branches []api.BranchResponse) string {
 			branch.WithData,
 			branch.Status,
 			utils.FormatTime(branch.CreatedAt),
-			utils.FormatTime(branch.UpdatedAt),
-		)
+			utils.FormatTime(branch.UpdatedAt))
 	}
-	return table
+	return table.String()
 }
 
 type BranchFilter func(api.BranchResponse) bool

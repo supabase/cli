@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -16,7 +15,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
@@ -38,7 +36,6 @@ func TestResetCommand(t *testing.T) {
 
 	t.Run("seeds storage after reset", func(t *testing.T) {
 		utils.DbId = "test-reset"
-		utils.ConfigId = "test-config"
 		utils.Config.Db.MajorVersion = 15
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -377,7 +374,6 @@ func TestRestartDatabase(t *testing.T) {
 
 	t.Run("throws error on health check timeout", func(t *testing.T) {
 		utils.DbId = "test-reset"
-		start.HealthTimeout = 0 * time.Second
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()

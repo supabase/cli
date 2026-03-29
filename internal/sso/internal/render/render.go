@@ -65,6 +65,15 @@ func formatEntityID(provider api.GetProviderResponse) string {
 	return entityID
 }
 
+func formatNameIDFormat(provider api.GetProviderResponse) string {
+	nameIDFormat := "-"
+	if provider.Saml != nil && provider.Saml.NameIdFormat != nil && *provider.Saml.NameIdFormat != "" {
+		nameIDFormat = *provider.Saml.NameIdFormat
+	}
+
+	return nameIDFormat
+}
+
 func ListMarkdown(providers api.ListProvidersResponse) error {
 	markdownTable := []string{
 		"|TYPE|IDENTITY PROVIDER ID|DOMAINS|SAML 2.0 `EntityID`|CREATED AT (UTC)|UPDATED AT (UTC)|\n|-|-|-|-|-|-|\n",
@@ -115,6 +124,11 @@ func SingleMarkdown(provider api.GetProviderResponse) error {
 		markdownTable = append(markdownTable, fmt.Sprintf(
 			"|SAML 2.0 `EntityID`|`%s`|",
 			formatEntityID(provider),
+		))
+
+		markdownTable = append(markdownTable, fmt.Sprintf(
+			"|NAMEID FORMAT|`%s`|",
+			formatNameIDFormat(provider),
 		))
 	}
 

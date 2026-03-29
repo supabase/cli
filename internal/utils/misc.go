@@ -58,28 +58,32 @@ var (
 	PgSchemas       = migration.InternalSchemas[:2]
 	InternalSchemas = migration.InternalSchemas
 
-	SupabaseDirPath       = "supabase"
-	ConfigPath            = filepath.Join(SupabaseDirPath, "config.toml")
-	GitIgnorePath         = filepath.Join(SupabaseDirPath, ".gitignore")
-	TempDir               = filepath.Join(SupabaseDirPath, ".temp")
-	ImportMapsDir         = filepath.Join(TempDir, "import_maps")
-	ProjectRefPath        = filepath.Join(TempDir, "project-ref")
-	PoolerUrlPath         = filepath.Join(TempDir, "pooler-url")
-	PostgresVersionPath   = filepath.Join(TempDir, "postgres-version")
-	GotrueVersionPath     = filepath.Join(TempDir, "gotrue-version")
-	RestVersionPath       = filepath.Join(TempDir, "rest-version")
-	StorageVersionPath    = filepath.Join(TempDir, "storage-version")
-	StorageMigrationPath  = filepath.Join(TempDir, "storage-migration")
-	StudioVersionPath     = filepath.Join(TempDir, "studio-version")
-	PgmetaVersionPath     = filepath.Join(TempDir, "pgmeta-version")
-	PoolerVersionPath     = filepath.Join(TempDir, "pooler-version")
-	RealtimeVersionPath   = filepath.Join(TempDir, "realtime-version")
-	CliVersionPath        = filepath.Join(TempDir, "cli-latest")
-	ProfilePath           = filepath.Join(TempDir, "profile")
-	CurrBranchPath        = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
+	SupabaseDirPath      = "supabase"
+	ConfigPath           = filepath.Join(SupabaseDirPath, "config.toml")
+	GitIgnorePath        = filepath.Join(SupabaseDirPath, ".gitignore")
+	TempDir              = filepath.Join(SupabaseDirPath, ".temp")
+	ImportMapsDir        = filepath.Join(TempDir, "import_maps")
+	ProjectRefPath       = filepath.Join(TempDir, "project-ref")
+	PoolerUrlPath        = filepath.Join(TempDir, "pooler-url")
+	PostgresVersionPath  = filepath.Join(TempDir, "postgres-version")
+	GotrueVersionPath    = filepath.Join(TempDir, "gotrue-version")
+	RestVersionPath      = filepath.Join(TempDir, "rest-version")
+	StorageVersionPath   = filepath.Join(TempDir, "storage-version")
+	StorageMigrationPath = filepath.Join(TempDir, "storage-migration")
+	StudioVersionPath    = filepath.Join(TempDir, "studio-version")
+	PgmetaVersionPath    = filepath.Join(TempDir, "pgmeta-version")
+	PoolerVersionPath    = filepath.Join(TempDir, "pooler-version")
+	RealtimeVersionPath  = filepath.Join(TempDir, "realtime-version")
+	CliVersionPath       = filepath.Join(TempDir, "cli-latest")
+	CurrBranchPath       = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
+	// DeclarativeDir is the canonical location for pg-delta declarative schema
+	// files generated or synced by `supabase db schema declarative` commands.
+	DeclarativeDir        = filepath.Join(SupabaseDirPath, "declarative")
+	ClusterDir            = filepath.Join(SupabaseDirPath, "cluster")
 	SchemasDir            = filepath.Join(SupabaseDirPath, "schemas")
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")
 	FunctionsDir          = filepath.Join(SupabaseDirPath, "functions")
+	SnippetsDir           = filepath.Join(SupabaseDirPath, "snippets")
 	FallbackImportMapPath = filepath.Join(FunctionsDir, "import_map.json")
 	FallbackEnvFilePath   = filepath.Join(FunctionsDir, ".env")
 	DbTestsDir            = filepath.Join(SupabaseDirPath, "tests")
@@ -90,6 +94,17 @@ var (
 	ErrInvalidSlug = errors.New("Invalid Function name. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens. (^[A-Za-z][A-Za-z0-9_-]*$)")
 	ErrNotRunning  = errors.Errorf("%s is not running.", Aqua("supabase start"))
 )
+
+func GetDeclarativeDir() string {
+	if Config.Experimental.PgDelta != nil && len(Config.Experimental.PgDelta.DeclarativeSchemaPath) > 0 {
+		return Config.Experimental.PgDelta.DeclarativeSchemaPath
+	}
+	return DeclarativeDir
+}
+
+func IsPgDeltaEnabled() bool {
+	return Config.Experimental.PgDelta != nil && Config.Experimental.PgDelta.Enabled
+}
 
 func GetCurrentTimestamp() string {
 	// Magic number: https://stackoverflow.com/q/45160822.

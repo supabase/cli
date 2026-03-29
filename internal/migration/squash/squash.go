@@ -40,6 +40,7 @@ func Run(ctx context.Context, version string, config pgconn.Config, fsys afero.F
 	}
 	// 2. Update migration history
 	if utils.IsLocalDatabase(config) {
+		utils.CmdSuggestion = fmt.Sprintf("Run %s to update your remote migration history table.", utils.Aqua("supabase migration repair --status applied"))
 		return nil
 	}
 	if shouldUpdate, err := utils.NewConsole().PromptYesNo(ctx, "Update remote migration history table?", true); err != nil {
@@ -84,7 +85,7 @@ func squashMigrations(ctx context.Context, migrations []string, fsys afero.Fs, o
 		return err
 	}
 	defer utils.DockerRemove(shadow)
-	if err := start.WaitForHealthyService(ctx, start.HealthTimeout, shadow); err != nil {
+	if err := start.WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, shadow); err != nil {
 		return err
 	}
 	conn, err := diff.ConnectShadowDatabase(ctx, 10*time.Second, options...)
