@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const srcDir = fileURLToPath(new URL("..", import.meta.url));
-const concernSlices = ["auth", "config", "output", "runtime", "telemetry", "agents"] as const;
+const concernSlices = ["auth", "config", "output", "runtime", "telemetry"] as const;
 const commandsDir = path.join(srcDir, "commands");
 const cliDir = path.join(srcDir, "cli");
 const docsDir = path.join(srcDir, "docs");
@@ -64,7 +64,7 @@ describe("code structure", () => {
     expect(violations).toEqual([]);
   });
 
-  it("keeps docs independent from cli and only dependent on command guide assets", () => {
+  it("keeps docs independent from cli and commands", () => {
     const violations: Array<string> = [];
 
     for (const filePath of walk(docsDir).filter(isSourceFile)) {
@@ -74,7 +74,7 @@ describe("code structure", () => {
           violations.push(`${path.relative(srcDir, filePath)} -> ${specifier}`);
           continue;
         }
-        if (resolved.startsWith(commandsDir) && !resolved.endsWith(".guide.md")) {
+        if (resolved.startsWith(commandsDir)) {
           violations.push(`${path.relative(srcDir, filePath)} -> ${specifier}`);
         }
       }

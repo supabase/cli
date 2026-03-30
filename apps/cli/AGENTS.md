@@ -60,37 +60,6 @@ Read https://www.effect.solutions/testing for Effect testing patterns. Note that
 - Prefer assertions on outputs and accumulated state over spy-heavy interaction tests.
 - Keep `*.e2e.test.ts` focused on golden paths, CLI surface behavior, and subprocess correctness, not branch-by-branch coverage.
 
-## Command guide files
-
-Every command directory must include a `<command>.guide.md` file alongside the command source. See `src/commands/login/login.guide.md` as the reference.
-
-Structure:
-
-```md
-# Command name
-
-One-sentence description.
-
-## When to use
-
-Prose explaining when and why to run the command. Include CI/automation guidance where relevant.
-
-<!-- USAGE:START -->
-<!-- USAGE:END -->
-
-<!-- FLAGS:START -->
-<!-- FLAGS:END -->
-
-<!-- EXAMPLES:START -->
-<!-- EXAMPLES:END -->
-
-## Tips
-
-- Bullet points for non-obvious behaviour, edge cases, or cross-command interactions
-```
-
-The `<!-- ... -->` comment blocks are injection points for generated content — always include them, even if empty.
-
 ## Go CLI parity tracking
 
 When you add or change CLI commands, subcommands, flags, or parameters, always update [`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md).
@@ -99,7 +68,6 @@ When you add or change CLI commands, subcommands, flags, or parameters, always u
 - Update missing or extra flag/parameter notes when the command surface changes — including when you add or remove a flag on an already-ported TS command (e.g. adding `--yes` to `logout` moves it from `ported` back to `partial`).
 - Keep the tracker focused on final leaf commands, not command groups.
 - If you add a TS-native command with no direct Go equivalent (for example `dev`), record it in the TS-only section instead of marking a Go command as ported.
-- Also update [`docs/cli-for-ai-agents.md`](./docs/cli-for-ai-agents.md) if the change affects agent-relevant behaviour (non-interactive support, `--yes`, `--dry-run`, output format, etc.).
 
 ## Code quality
 

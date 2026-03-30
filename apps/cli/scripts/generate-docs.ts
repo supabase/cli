@@ -5,8 +5,6 @@ import { Schema } from "effect";
 import { PROJECT_CONFIG_SCHEMA_URL, ProjectConfigSchema } from "@supabase/config";
 import { root } from "../src/cli/root.ts";
 import { collectCommands, getHelpDoc } from "../src/docs/command-docs.ts";
-import { getGuide } from "../src/docs/guide-registry.ts";
-import { injectSections } from "../src/docs/guide-injector.ts";
 import { formatHelpDocAsMarkdown } from "../src/docs/markdown-formatter.ts";
 
 const BINARY_NAME = "supabase";
@@ -15,11 +13,6 @@ const defaultDocsPublicDir = path.resolve(import.meta.dir, "../../../apps/docs/p
 const contentDir = process.argv[2]
   ? path.resolve(process.cwd(), process.argv[2])
   : defaultContentDir;
-
-/** Strip HTML comment markers left by the guide injector. */
-function stripMarkers(content: string): string {
-  return content.replace(/<!--\s*\w+:(START|END)\s*-->\n*/g, "");
-}
 
 function generateCommandDocs() {
   const leaves = collectCommands(root, [BINARY_NAME]).filter(
@@ -30,11 +23,7 @@ function generateCommandDocs() {
 
   for (const { command, commandPath } of leaves) {
     const helpDoc = getHelpDoc(command, commandPath);
-    const guide = getGuide(commandPath.slice(1));
-
-    const body = guide
-      ? stripMarkers(injectSections(guide.template, helpDoc))
-      : formatHelpDocAsMarkdown(helpDoc);
+    const body = formatHelpDocAsMarkdown(helpDoc);
 
     const title = commandPath.slice(1).join(" ");
     const description =

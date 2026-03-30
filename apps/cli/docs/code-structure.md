@@ -4,7 +4,6 @@ The CLI is organized into lowercase top-level slices under `src/`:
 
 ```text
 src/
-  agents/
   cli/
   commands/
   docs/
@@ -17,8 +16,8 @@ src/
 
 ## Why This Structure
 
-- `commands/` is the user-facing entry point. Each command owns its own parsing, handler, tests, and guides.
-- `auth/`, `config/`, `output/`, `runtime/`, `telemetry/`, and `agents/` are reusable concern slices shared by multiple commands or flags.
+- `commands/` is the user-facing entry point. Each command owns its own parsing, handler, and tests.
+- `auth/`, `config/`, `output/`, `runtime/`, and `telemetry/` are reusable concern slices shared by multiple commands or flags.
 - `docs/` owns shared command documentation content and renderers used by both the runtime CLI and the docs generation script.
 - Shared concern slices still split contracts from implementations:
   - `*.service.ts` defines Effect services and public interfaces
@@ -30,8 +29,8 @@ This split keeps the service contract readable on its own and prevents large imp
 
 - `cli/` may import from `commands/`, `docs/`, and concern slices.
 - `commands/` may import from concern slices.
-- `agents/`, `auth/`, `config/`, `output/`, `runtime/`, and `telemetry/` must not import from `commands/` or `cli/`.
-- `docs/` must not import from `cli/` and may only import command guide assets from `commands/`.
+- `auth/`, `config/`, `output/`, `runtime/`, and `telemetry/` must not import from `commands/` or `cli/`.
+- `docs/` must not import from `cli/` or `commands/`.
 - Commands must not import another command's internals.
 
 Use direct file imports. Do not add barrel `index.ts` files.
@@ -49,7 +48,6 @@ commands/login/
   login.errors.ts
   login.integration.test.ts
   login.e2e.test.ts
-  login.guide.md
 ```
 
 Shared concern files:
@@ -107,11 +105,7 @@ If code is shared across multiple commands, move it into the owning concern slic
 `docs/` is a special slice. It may contain pure helpers such as:
 
 - `command-docs.ts`
-- `guide-registry.ts`
-- `guide-injector.ts`
 - `markdown-formatter.ts`
-- `usage-formatter.ts`
-- `skill-entries.ts`
 
 ## Command-Local Folders
 

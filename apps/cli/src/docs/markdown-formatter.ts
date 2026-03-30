@@ -5,7 +5,7 @@ function escapeMdxText(value: string): string {
   return value.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-export function formatTable(headers: string[], rows: string[][]): string {
+function formatTable(headers: string[], rows: string[][]): string {
   const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)));
   const pad = (s: string, w: number) => s + " ".repeat(w - s.length);
 

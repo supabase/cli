@@ -1,6 +1,6 @@
 import { Effect, Layer } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
-import { OutputFormatFlag, SkillDirFlag, SkillFlag, UsageFlag } from "./global-flags.ts";
+import { OutputFormatFlag } from "./global-flags.ts";
 import { linkCommand } from "../commands/link/link.command.ts";
 import { initCommand } from "../commands/init/init.command.ts";
 import { listCommand } from "../commands/list/list.command.ts";
@@ -46,5 +46,5 @@ export const root = Command.make("supabase").pipe(
       }),
     ),
   ),
-  Command.withGlobalFlags([OutputFormatFlag, UsageFlag, SkillFlag, SkillDirFlag]),
+  Command.withGlobalFlags([OutputFormatFlag]),
 );

@@ -6,7 +6,6 @@ import { unixHttpClientLayer } from "@supabase/stack";
 import { Cause, Effect, Exit, Fiber, Layer, Stdio } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import { root } from "./root.ts";
-import { skillWriterLayer } from "../agents/skill-writer.layer.ts";
 import { Credentials } from "../auth/credentials.service.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
 import { outputLayerFor } from "../output/output.layer.ts";
@@ -72,7 +71,6 @@ function cliProgramFor(args: ReadonlyArray<string>) {
   );
   return Command.runWith(root, { version: "0.1.0" })(args).pipe(
     Effect.provide(formatterLayerFor(args)),
-    Effect.provide(skillWriterLayer.pipe(Layer.provide(BunServices.layer))),
     Effect.provide(
       tracingLayer.pipe(Layer.provide(BunServices.layer), Layer.provide(runtimeLayer)),
     ),
