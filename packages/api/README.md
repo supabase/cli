@@ -80,8 +80,8 @@ The public binary input contract is:
 ## Development
 
 ```sh
-bun run --parallel "*:check"   # Run all quality checks in parallel
-bun run --parallel "*:fix"     # Auto-fix lint, format, and unused exports in parallel
-bun test                       # Run tests
-bun run generate               # Regenerate the SDK from the OpenAPI spec
+pnpm run check:all   # Run all quality checks in parallel
+pnpm run fix:all     # Auto-fix lint, format, and unused exports in parallel
+pnpm run test        # Run tests
+pnpm run generate    # Regenerate the SDK from the OpenAPI spec
 ```

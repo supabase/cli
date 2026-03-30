@@ -53,8 +53,8 @@ When both `supabase/config.json` and `supabase/config.toml` exist in one project
 ## Development
 
 ```sh
-bun run --parallel "*:check"   # Run all quality checks in parallel
-bun run --parallel "*:fix"     # Auto-fix lint, format, and unused exports in parallel
-bun test                       # Run tests
-bun run build                  # Generate dist/schema.json
+pnpm run check:all   # Run all quality checks in parallel
+pnpm run fix:all     # Auto-fix lint, format, and unused exports in parallel
+pnpm run test        # Run tests
+pnpm run build       # Generate dist/schema.json
 ```

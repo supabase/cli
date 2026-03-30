@@ -1,12 +1,20 @@
 packages:
   - "packages/*"
   - "apps/*"
+  - "tools/*"
+
 allowBuilds:
+  "@swc/core": true
   esbuild: true
   msgpackr-extract: true
   sharp: true
+  nx: true
 
 catalog:
+  "@nx/devkit": "22.6.1"
+  "nx": "22.6.1"
+  "@swc-node/register": "^1.10.9"
+  "@swc/core": "^1.11.21"
   "@effect/atom-react": "^4.0.0-beta.40"
   "@effect/platform-bun": "^4.0.0-beta.40"
   "@effect/platform-node": "^4.0.0-beta.40"

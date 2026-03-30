@@ -85,16 +85,16 @@ Useful companion docs:
 From `apps/cli`:
 
 ```sh
-bun run --parallel "*:check"
-bun run --parallel "*:fix"
-bun run test
+pnpm run check:all
+pnpm run fix:all
+pnpm run test
 ```
 
 Useful subsets:
 
 ```sh
-bun run test:core
-bun run test:e2e
+pnpm run test:core
+pnpm run test:e2e
 ```
 
 ## Publishing

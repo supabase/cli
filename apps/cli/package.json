@@ -14,19 +14,11 @@
   },
   "scripts": {
     "build": "bun build src/cli/bin.ts --outfile dist/supabase.js --target node && bun build src/cli/proxy.ts --outfile dist/bin.js --target node",
-    "test": "bun run test:core && bun run test:e2e",
-    "test:unit": "bun --bun vitest run --project unit",
-    "test:integration": "bun --bun vitest run --project integration",
-    "test:core": "bun --bun vitest run --project unit --project integration --coverage.enabled",
-    "test:e2e": "bun --bun vitest run --project e2e",
+    "test": "nx run-many -t test:core test:e2e --projects=$npm_package_name",
+    "test:core": "nx run-many -t test:unit test:integration --projects=$npm_package_name --coverage.enabled",
     "test:smoke": "bun run tests/smoke-test.ts",
-    "types:check": "tsgo --noEmit",
-    "lint:check": "oxlint --deny-warnings",
-    "lint:fix": "oxlint --deny-warnings --fix",
-    "fmt:check": "oxfmt --check",
-    "fmt:fix": "oxfmt",
-    "knip:check": "knip-bun",
-    "knip:fix": "knip-bun --fix"
+    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name",
+    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name"
   },
   "dependencies": {
     "@clack/prompts": "^1.1.0",
@@ -73,6 +65,7 @@
       "tests/*.ts"
     ],
     "ignoreBinaries": [
+      "nx",
       "tar",
       "nfpm",
       "gh",
@@ -83,7 +76,23 @@
     "ignoreDependencies": [
       "@supabase/api",
       "@supabase/config",
-      "@supabase/stack"
+      "@supabase/stack",
+      "@typescript/native-preview",
+      "oxfmt",
+      "oxlint",
+      "oxlint-tsgolint"
     ]
+  },
+  "nx": {
+    "targets": {
+      "build": {
+        "outputs": [
+          "{projectRoot}/dist"
+        ]
+      },
+      "test:smoke": {
+        "cache": false
+      }
+    }
   }
 }

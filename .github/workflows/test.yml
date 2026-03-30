@@ -30,7 +30,7 @@ jobs:
         uses: ./.github/actions/setup
 
       - name: Check code quality
-        run: bun run check
+        run: pnpm run check:all
 
   test-core:
     if: github.event.pull_request.draft == false
@@ -44,7 +44,7 @@ jobs:
         uses: ./.github/actions/setup
 
       - name: Run unit and integration tests
-        run: bun run test:core
+        run: pnpm run test:core
 
   test-e2e:
     if: github.event.pull_request.draft == false
@@ -57,9 +57,6 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
 
-      - name: Warm stack Docker images
-        run: bun run --cwd packages/stack test:e2e:warmup
-
       # TODO: Shard e2e tests across multiple machines: https://github.com/vitest-tests/test-sharding/blob/90ef5183fd30f7e4aa745adfaa750e071f86a6a0/.github/workflows/ci.yml
       - name: Run end-to-end tests
-        run: bun run test:e2e
+        run: pnpm run test:e2e

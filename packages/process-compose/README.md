@@ -26,7 +26,7 @@ bun run packages/process-compose/src/cli.ts -f process-compose.yaml
 ## Development
 
 ```sh
-bun run --parallel "*:check"   # Run all quality checks in parallel
-bun run --parallel "*:fix"     # Auto-fix lint, format, and unused exports in parallel
-bun test                       # Run tests
+pnpm run check:all   # Run all quality checks in parallel
+pnpm run fix:all     # Auto-fix lint, format, and unused exports in parallel
+pnpm run test        # Run tests
 ```

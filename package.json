@@ -2,11 +2,17 @@
   "name": "@supabase/root",
   "private": true,
   "scripts": {
-    "check": "pnpm -r --parallel run \"/.*:check/\"",
-    "test:core": "pnpm -r --parallel run test:core",
-    "test:e2e": "pnpm -r --parallel run test:e2e",
+    "test:core": "nx run-many -t test:unit test:integration --coverage.enabled",
+    "test:e2e": "nx run-many -t test:e2e",
+    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check",
+    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix",
     "repos:install": "git submodule update --init --recursive",
     "repos:pull": "git submodule update --remote"
   },
-  "packageManager": "pnpm@10.33.0"
+  "packageManager": "pnpm@10.33.0",
+  "devDependencies": {
+    "@swc-node/register": "catalog:",
+    "@swc/core": "catalog:",
+    "nx": "catalog:"
+  }
 }
