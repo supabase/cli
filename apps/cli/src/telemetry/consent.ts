@@ -33,11 +33,9 @@ export const writeTelemetryConfig = Effect.fnUntraced(function* (
 
 export const getEffectiveConsent = Effect.fnUntraced(function* (config: TelemetryConfig | null) {
   const cliConfig = yield* CliConfig;
-  const supabaseTelemetry = cliConfig.telemetry;
-  if (Option.isSome(supabaseTelemetry)) {
-    const val = supabaseTelemetry.value.toLowerCase();
-    if (val === "on" || val === "1") return "granted" as ConsentState;
-    if (val === "off" || val === "0") return "denied" as ConsentState;
+  const telemetryDisabled = cliConfig.telemetryDisabled;
+  if (Option.isSome(telemetryDisabled) && telemetryDisabled.value === "1") {
+    return "denied" as ConsentState;
   }
 
   const doNotTrack = cliConfig.doNotTrack;

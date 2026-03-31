@@ -5,9 +5,13 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Stdio } from "effect";
+import { Command } from "effect/unstable/cli";
 import { PROJECT_CONFIG_SCHEMA_URL } from "@supabase/config";
-import { mockOutput, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
+import { initCommand } from "./init.command.ts";
+import { CurrentAnalyticsContext } from "../../telemetry/analytics-context.ts";
+import { Analytics } from "../../telemetry/analytics.service.ts";
+import { mockOutput, mockProcessControl, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { init } from "./init.handler.ts";
 
 function makeTempDir(): string {
@@ -27,6 +31,35 @@ function buildLayer(cwd: string) {
       projectConfigStoreLayer.pipe(Layer.provide(BunServices.layer)),
     ),
   };
+}
+
+function mockContextualAnalytics() {
+  const captured: Array<{
+    event: string;
+    properties: Record<string, unknown>;
+  }> = [];
+
+  const layer = Layer.succeed(
+    Analytics,
+    Analytics.of({
+      capture: (event: string, properties: Record<string, unknown> = {}) =>
+        Effect.gen(function* () {
+          const context = yield* CurrentAnalyticsContext;
+          captured.push({
+            event,
+            properties: {
+              ...context,
+              ...properties,
+            },
+          });
+        }),
+      identify: () => Effect.void,
+      alias: () => Effect.void,
+      groupIdentify: () => Effect.void,
+    }),
+  );
+
+  return { layer, captured };
 }
 
 describe("init handler", () => {
@@ -103,6 +136,45 @@ describe("init handler", () => {
       yield* init().pipe(Effect.provide(layer));
 
       expect(existsSync(join(tempDir, ".supabase", "project.json"))).toBe(false);
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("emits a canonical command event with no default flag values", () => {
+    const tempDir = makeTempDir();
+    const runtimeInfoLayer = mockRuntimeInfo({ cwd: tempDir });
+    const processControl = mockProcessControl();
+    const out = mockOutput({ format: "text", interactive: false });
+    const analytics = mockContextualAnalytics();
+    const layer = Layer.mergeAll(
+      BunServices.layer,
+      out.layer,
+      analytics.layer,
+      runtimeInfoLayer,
+      processControl.layer,
+      Stdio.layerTest({
+        args: Effect.succeed(["init"]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => mkdir(join(tempDir, ".git"), { recursive: true }));
+
+      yield* Command.runWith(initCommand, { version: "0.1.0" })(["init"]).pipe(
+        Effect.provide(layer),
+      );
+
+      expect(analytics.captured).toHaveLength(1);
+      expect(analytics.captured[0]).toEqual({
+        event: "cli_command_executed",
+        properties: expect.objectContaining({
+          command: "init",
+          flags_used: [],
+          flag_values: {},
+          exit_code: 0,
+        }),
+      });
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );

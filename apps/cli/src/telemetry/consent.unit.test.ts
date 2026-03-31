@@ -37,34 +37,6 @@ function emptyEnv() {
 }
 
 describe("getEffectiveConsent", () => {
-  it.live("returns granted when SUPABASE_TELEMETRY=on", () =>
-    Effect.gen(function* () {
-      const consent = yield* getEffectiveConsent(null);
-      expect(consent).toBe("granted");
-    }).pipe(Effect.provide(withEnv({ SUPABASE_TELEMETRY: "on" }))),
-  );
-
-  it.live("returns granted when SUPABASE_TELEMETRY=1", () =>
-    Effect.gen(function* () {
-      const consent = yield* getEffectiveConsent(makeConfig("denied"));
-      expect(consent).toBe("granted");
-    }).pipe(Effect.provide(withEnv({ SUPABASE_TELEMETRY: "1" }))),
-  );
-
-  it.live("returns denied when SUPABASE_TELEMETRY=off", () =>
-    Effect.gen(function* () {
-      const consent = yield* getEffectiveConsent(makeConfig("granted"));
-      expect(consent).toBe("denied");
-    }).pipe(Effect.provide(withEnv({ SUPABASE_TELEMETRY: "off" }))),
-  );
-
-  it.live("returns denied when SUPABASE_TELEMETRY=0", () =>
-    Effect.gen(function* () {
-      const consent = yield* getEffectiveConsent(null);
-      expect(consent).toBe("denied");
-    }).pipe(Effect.provide(withEnv({ SUPABASE_TELEMETRY: "0" }))),
-  );
-
   it.live("returns denied when DO_NOT_TRACK=1", () =>
     Effect.gen(function* () {
       const consent = yield* getEffectiveConsent(makeConfig("granted"));
@@ -72,18 +44,32 @@ describe("getEffectiveConsent", () => {
     }).pipe(Effect.provide(withEnv({ DO_NOT_TRACK: "1" }))),
   );
 
-  it.live("SUPABASE_TELEMETRY=on overrides DO_NOT_TRACK=1", () =>
+  it.live("returns denied when SUPABASE_TELEMETRY_DISABLED=1", () =>
     Effect.gen(function* () {
-      const consent = yield* getEffectiveConsent(null);
-      expect(consent).toBe("granted");
-    }).pipe(Effect.provide(withEnv({ SUPABASE_TELEMETRY: "on", DO_NOT_TRACK: "1" }))),
+      const consent = yield* getEffectiveConsent(makeConfig("granted"));
+      expect(consent).toBe("denied");
+    }).pipe(Effect.provide(withEnv({ SUPABASE_TELEMETRY_DISABLED: "1" }))),
   );
 
-  it.live("SUPABASE_TELEMETRY=off takes precedence over DO_NOT_TRACK", () =>
+  it.live("SUPABASE_TELEMETRY_DISABLED=1 takes precedence over persisted granted consent", () =>
     Effect.gen(function* () {
       const consent = yield* getEffectiveConsent(null);
       expect(consent).toBe("denied");
-    }).pipe(Effect.provide(withEnv({ SUPABASE_TELEMETRY: "off", DO_NOT_TRACK: "1" }))),
+    }).pipe(Effect.provide(withEnv({ SUPABASE_TELEMETRY_DISABLED: "1" }))),
+  );
+
+  it.live("DO_NOT_TRACK=1 takes precedence over persisted granted consent", () =>
+    Effect.gen(function* () {
+      const consent = yield* getEffectiveConsent(makeConfig("granted"));
+      expect(consent).toBe("denied");
+    }).pipe(Effect.provide(withEnv({ DO_NOT_TRACK: "1" }))),
+  );
+
+  it.live("SUPABASE_TELEMETRY_DISABLED=1 takes precedence over DO_NOT_TRACK=1", () =>
+    Effect.gen(function* () {
+      const consent = yield* getEffectiveConsent(makeConfig("granted"));
+      expect(consent).toBe("denied");
+    }).pipe(Effect.provide(withEnv({ SUPABASE_TELEMETRY_DISABLED: "1", DO_NOT_TRACK: "1" }))),
   );
 
   it.live("returns config consent value when set", () =>

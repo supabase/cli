@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 import {
+  mockAnalytics,
   mockOutput,
   mockProjectLinkRemote,
   mockRuntimeInfo,
@@ -65,6 +66,7 @@ function buildLayer(opts: {
     interactive: opts.interactive ?? false,
     promptSelectResponses: opts.promptSelectResponses,
   });
+  const analytics = mockAnalytics();
   const remote = mockProjectLinkRemote({
     projects: opts.projects,
     linkedProject: {
@@ -83,6 +85,7 @@ function buildLayer(opts: {
 
   return {
     out,
+    analytics,
     layer: Layer.mergeAll(
       BunServices.layer,
       runtimeInfoLayer,
@@ -92,6 +95,7 @@ function buildLayer(opts: {
       discoveredProjectHomeLayer,
       discoveredProjectLinkStateLayer,
       out.layer,
+      analytics.layer,
       remote,
     ),
   };
@@ -131,7 +135,7 @@ describe("link handler", () => {
         writeFile(join(projectRoot, "supabase", "config.toml"), initialConfig),
       );
 
-      const { layer, out } = buildLayer({
+      const { layer, out, analytics } = buildLayer({
         cwd: projectRoot,
         env: { SUPABASE_HOME: supabaseHome },
         remoteProjectRef: projectRef,
@@ -155,6 +159,8 @@ describe("link handler", () => {
       if (Option.isSome(cached)) {
         expect(cached.value.ref).toBe(projectRef);
         expect(cached.value.name).toBe("Linked Project");
+        expect(cached.value.organization_slug).toBe("supabase");
+        expect(cached.value.organization_id).toBe("org_123");
         expect(cached.value.versions).toEqual({
           postgres: "17.6.1.090",
           postgrest: "v14.5",
@@ -166,6 +172,31 @@ describe("link handler", () => {
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: `Linked to project ${projectRef}.` }),
       );
+      expect(analytics.groupIdentified).toContainEqual({
+        groupType: "organization",
+        groupKey: "supabase",
+        properties: {
+          organization_id: "org_123",
+          organization_slug: "supabase",
+        },
+      });
+      expect(analytics.groupIdentified).toContainEqual({
+        groupType: "project",
+        groupKey: projectRef,
+        properties: {
+          project_name: "Linked Project",
+          project_ref: projectRef,
+          organization_slug: "supabase",
+        },
+      });
+      expect(analytics.captured).toContainEqual({
+        event: "cli_project_linked",
+        properties: {
+          project_ref: projectRef,
+          project_name: "Linked Project",
+          organization_slug: "supabase",
+        },
+      });
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );

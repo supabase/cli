@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
+import { withCommandAnalytics } from "../../telemetry/command-analytics.ts";
 import { stop } from "./stop.handler.ts";
 
 const flags = {
@@ -24,6 +25,10 @@ export const stopCommand = Command.make("stop", flags).pipe(
   ),
   Command.withShortDescription("Stop local Supabase stack"),
   Command.withHandler((flags) =>
-    stop(flags).pipe(Effect.withSpan("command.stop"), withJsonErrorHandling),
+    stop(flags).pipe(
+      Effect.withSpan("command.stop"),
+      withCommandAnalytics({ command: "stop" }),
+      withJsonErrorHandling,
+    ),
   ),
 );

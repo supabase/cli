@@ -2,6 +2,7 @@ import { Effect, Layer } from "effect";
 import { Command } from "effect/unstable/cli";
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
+import { withCommandAnalytics } from "../../telemetry/command-analytics.ts";
 import { unlink } from "./unlink.handler.ts";
 
 const unlinkRuntimeLayer = Layer.mergeAll(projectLinkStateLayer);
@@ -13,7 +14,11 @@ export const unlinkCommand = Command.make("unlink").pipe(
   ),
   Command.withShortDescription("Unlink local project from Supabase"),
   Command.withHandler(() =>
-    unlink().pipe(Effect.withSpan("command.unlink"), withJsonErrorHandling),
+    unlink().pipe(
+      Effect.withSpan("command.unlink"),
+      withCommandAnalytics({ command: "unlink" }),
+      withJsonErrorHandling,
+    ),
   ),
   Command.provide(unlinkRuntimeLayer),
 );

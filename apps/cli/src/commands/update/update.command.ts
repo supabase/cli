@@ -13,6 +13,7 @@ import {
 } from "../../config/project-runtime.layer.ts";
 import { projectStackStateManagerLayer } from "../../config/project-stack-state-manager.layer.ts";
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
+import { withCommandAnalytics } from "../../telemetry/command-analytics.ts";
 import { update } from "./update.handler.ts";
 
 const flags = {
@@ -52,7 +53,11 @@ export const updateCommand = Command.make("update", flags).pipe(
     },
   ]),
   Command.withHandler((commandFlags) =>
-    update(commandFlags).pipe(Effect.withSpan("command.stack.update"), withJsonErrorHandling),
+    update(commandFlags).pipe(
+      Effect.withSpan("command.stack.update"),
+      withCommandAnalytics({ command: "stack update" }),
+      withJsonErrorHandling,
+    ),
   ),
   Command.provide(commandRuntimeLayer),
 );

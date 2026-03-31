@@ -10,6 +10,11 @@ import { Credentials } from "../../auth/credentials.service.ts";
 import { Crypto } from "../../auth/crypto.service.ts";
 import { Browser } from "../../runtime/browser.service.ts";
 import { Stdin } from "../../runtime/stdin.service.ts";
+import { getConfigDir } from "../../telemetry/consent.ts";
+import { clearDistinctId, saveDistinctId } from "../../telemetry/identity.ts";
+import { Analytics } from "../../telemetry/analytics.service.ts";
+import { withAnalyticsContext } from "../../telemetry/analytics-context.ts";
+import { TelemetryRuntime } from "../../telemetry/runtime.service.ts";
 import type { NonInteractiveError } from "../../output/errors.ts";
 import { LoginFailedError, NoTtyError } from "./login.errors.ts";
 import type { LoginFlags } from "./login.command.ts";
@@ -29,9 +34,15 @@ const revealToken = (token: Redacted.Redacted<string>): string => Redacted.value
 const saveDirectToken = Effect.fnUntraced(function* (token: Redacted.Redacted<string>) {
   const credentials = yield* Credentials;
   const output = yield* Output;
+  const analytics = yield* Analytics;
+  const configDir = yield* getConfigDir;
   yield* validateToken(revealToken(token));
   yield* credentials.saveAccessToken(token);
+  yield* clearDistinctId(configDir);
   yield* output.success("Logged in successfully.", { command: "login" });
+  yield* analytics.capture("cli_login_completed", {
+    login_method: "token",
+  });
 });
 
 // Token resolution priority: --token flag > SUPABASE_ACCESS_TOKEN env > piped stdin > interactive browser flow
@@ -64,6 +75,9 @@ const browserOAuthFlow = Effect.fnUntraced(function* (flags: LoginFlags) {
   const crypto = yield* Crypto;
   const browser = yield* Browser;
   const output = yield* Output;
+  const analytics = yield* Analytics;
+  const telemetryRuntime = yield* TelemetryRuntime;
+  const configDir = yield* getConfigDir;
 
   // Check if already logged in
   const existingToken = yield* credentials.getAccessToken;
@@ -153,6 +167,29 @@ const browserOAuthFlow = Effect.fnUntraced(function* (flags: LoginFlags) {
     tokenName,
   });
   yield* output.outro("You are now logged in. Happy coding!");
+
+  if (session.user_id !== undefined) {
+    yield* analytics.alias(session.user_id, telemetryRuntime.deviceId);
+    yield* analytics.identify(session.user_id);
+    yield* saveDistinctId(configDir, session.user_id);
+    yield* analytics
+      .capture("cli_login_completed", {
+        login_method: "browser_oauth",
+        token_name: tokenName,
+      })
+      .pipe(
+        withAnalyticsContext({
+          distinct_id: session.user_id,
+        }),
+      );
+    return;
+  }
+
+  yield* clearDistinctId(configDir);
+  yield* analytics.capture("cli_login_completed", {
+    login_method: "browser_oauth",
+    token_name: tokenName,
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -10,6 +10,8 @@ import {
 } from "../../config/project-link-remote.service.ts";
 import { ProjectLinkState } from "../../config/project-link-state.service.ts";
 import { Output } from "../../output/output.service.ts";
+import { Analytics } from "../../telemetry/analytics.service.ts";
+import { withAnalyticsContext } from "../../telemetry/analytics-context.ts";
 import type { LinkFlags } from "./link.command.ts";
 import { NoAccessibleProjectsError, ProjectRefRequiredError } from "./link.errors.ts";
 
@@ -111,6 +113,7 @@ const printLinkedVersions = Effect.fnUntraced(function* (
 
 export const link = Effect.fnUntraced(function* (flags: LinkFlags) {
   const output = yield* Output;
+  const analytics = yield* Analytics;
   const projectHome = yield* ProjectHome;
   const stateManager = yield* StateManager.asEffect().pipe(
     Effect.provide(StateManager.make(projectStateManagerPathsFromRoot(projectHome.projectHomeDir))),
@@ -156,6 +159,29 @@ export const link = Effect.fnUntraced(function* (flags: LinkFlags) {
       ].join("\n"),
     );
   }
+
+  const groups = {
+    organization: linkedProject.organizationSlug,
+    project: linkedProject.ref,
+  } as const;
+  yield* analytics.groupIdentify("organization", linkedProject.organizationSlug, {
+    organization_id: linkedProject.organizationId,
+    organization_slug: linkedProject.organizationSlug,
+  });
+  yield* analytics
+    .groupIdentify("project", linkedProject.ref, {
+      project_name: linkedProject.name,
+      project_ref: linkedProject.ref,
+      organization_slug: linkedProject.organizationSlug,
+    })
+    .pipe(withAnalyticsContext({ groups }));
+  yield* analytics
+    .capture("cli_project_linked", {
+      project_ref: linkedProject.ref,
+      project_name: linkedProject.name,
+      organization_slug: linkedProject.organizationSlug,
+    })
+    .pipe(withAnalyticsContext({ groups }));
 
   yield* output.outro(`Linked local project to ${linkedProject.name} (${linkedProject.ref}).`);
 });

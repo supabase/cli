@@ -2,5 +2,6 @@
   "editor.defaultFormatter": "oxc.oxc-vscode",
   "editor.formatOnSave": true,
   "editor.formatOnSaveMode": "file",
-  "typescript.experimental.useTsgo": true
+  "typescript.experimental.useTsgo": true,
+  "oxc.useExecPath": true,
 }

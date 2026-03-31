@@ -33,6 +33,7 @@ import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
 import { Output } from "../../output/output.service.ts";
 import { inkLayer } from "../../runtime/ink.layer.ts";
 import { RuntimeInfo } from "../../runtime/runtime-info.service.ts";
+import { withCommandAnalytics } from "../../telemetry/command-analytics.ts";
 import { start } from "./start.handler.ts";
 
 export const excludeFlag = Flag.choice("exclude", excludedStackServices).pipe(
@@ -114,7 +115,15 @@ export const startCommand = Command.make("start", flags).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    start(flags).pipe(Effect.withSpan("command.start"), withJsonErrorHandling),
+    start(flags).pipe(
+      Effect.withSpan("command.start"),
+      withCommandAnalytics({
+        command: "start",
+        flags,
+        allowedFlagValues: ["mode"],
+      }),
+      withJsonErrorHandling,
+    ),
   ),
   Command.provide((flags) => {
     const providedRuntimeLayer = provideProjectCommandRuntime(

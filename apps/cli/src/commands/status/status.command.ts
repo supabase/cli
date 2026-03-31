@@ -7,6 +7,7 @@ import { projectLocalServiceVersionsLayer } from "../../config/project-local-ser
 import { provideProjectCommandRuntime } from "../../config/project-runtime.layer.ts";
 import { projectStackStateManagerLayer } from "../../config/project-stack-state-manager.layer.ts";
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
+import { withCommandAnalytics } from "../../telemetry/command-analytics.ts";
 import { status } from "./status.handler.ts";
 
 const flags = {
@@ -30,7 +31,11 @@ export const statusCommand = Command.make("status", flags).pipe(
   Command.withDescription("Show the current local Supabase stack status."),
   Command.withShortDescription("Show local stack connection info and service status"),
   Command.withHandler((flags) =>
-    status(flags).pipe(Effect.withSpan("command.status"), withJsonErrorHandling),
+    status(flags).pipe(
+      Effect.withSpan("command.status"),
+      withCommandAnalytics({ command: "status" }),
+      withJsonErrorHandling,
+    ),
   ),
   Command.provide(commandRuntimeLayer),
 );

@@ -220,6 +220,8 @@ describe("update handler", () => {
         expect(refreshedProject).toEqual({
           ref: "abcdefghijklmnopqrst",
           name: "Linked Project",
+          organization_id: "org_123",
+          organization_slug: "supabase",
           fetchedAt: expect.any(String),
           versions: {
             postgres: "17.6.1.090",

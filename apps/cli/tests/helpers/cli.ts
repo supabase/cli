@@ -168,6 +168,8 @@ export function spawnSupabase(
         ...process.env,
         SUPABASE_HOME: homeDir,
         SUPABASE_NO_KEYRING: "1",
+        // Keep e2e subprocesses quiet by default while still allowing per-test overrides.
+        SUPABASE_TELEMETRY_DISABLED: "1",
         ...options?.env,
       },
       stdio:

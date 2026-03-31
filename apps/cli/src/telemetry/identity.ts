@@ -16,7 +16,12 @@ export const resolveIdentity = Effect.fnUntraced(function* (configDir: string) {
       session_last_active: now,
     };
     yield* writeTelemetryConfig(newConfig, configDir);
-    return { deviceId: newConfig.device_id, sessionId: newConfig.session_id, isFirstRun: true };
+    return {
+      deviceId: newConfig.device_id,
+      sessionId: newConfig.session_id,
+      distinctId: undefined,
+      isFirstRun: true,
+    };
   }
 
   const isSessionExpired = now - config.session_last_active > SESSION_TIMEOUT_MS;
@@ -26,5 +31,35 @@ export const resolveIdentity = Effect.fnUntraced(function* (configDir: string) {
     { ...config, session_id: sessionId, session_last_active: now },
     configDir,
   );
-  return { deviceId: config.device_id, sessionId, isFirstRun: false };
+  return {
+    deviceId: config.device_id,
+    sessionId,
+    distinctId: config.distinct_id,
+    isFirstRun: false,
+  };
+});
+
+export const saveDistinctId = Effect.fnUntraced(function* (configDir: string, distinctId: string) {
+  const identity = yield* resolveIdentity(configDir);
+  const config = yield* readTelemetryConfig(configDir);
+  const nextConfig: TelemetryConfig = {
+    consent: config?.consent ?? "granted",
+    device_id: identity.deviceId,
+    session_id: identity.sessionId,
+    session_last_active: Date.now(),
+    distinct_id: distinctId,
+  };
+  yield* writeTelemetryConfig(nextConfig, configDir);
+});
+
+export const clearDistinctId = Effect.fnUntraced(function* (configDir: string) {
+  const identity = yield* resolveIdentity(configDir);
+  const config = yield* readTelemetryConfig(configDir);
+  const nextConfig: TelemetryConfig = {
+    consent: config?.consent ?? "granted",
+    device_id: identity.deviceId,
+    session_id: identity.sessionId,
+    session_last_active: Date.now(),
+  };
+  yield* writeTelemetryConfig(nextConfig, configDir);
 });

@@ -8,6 +8,7 @@ import { startForegroundWithStopSignal } from "./flows/foreground.flow.ts";
 import type { ResolvedServiceVersionContext } from "../../config/service-version-resolution.ts";
 import {
   emptyEnv,
+  mockAnalytics,
   mockInk,
   mockOutput,
   mockProjectLocalServiceVersions,
@@ -140,16 +141,18 @@ function setupInteractive(
     startError: opts.startError,
     startPending: opts.startPending,
   });
+  const analytics = mockAnalytics();
   const out = mockOutput({ format: "text", interactive: true });
   const ink = mockInk({ manualExit: opts.manualExit });
   const layer = Layer.mergeAll(
     emptyEnv(),
     stack.layer,
+    analytics.layer,
     out.layer,
     ink.layer,
     mockStartVersionState(),
   );
-  return { layer, stack, out, ink };
+  return { layer, stack, out, ink, analytics };
 }
 
 function setupNonInteractive(
@@ -159,16 +162,18 @@ function setupNonInteractive(
   } = {},
 ) {
   const stack = mockStack({ info: opts.info, stateChanges: opts.stateChanges });
+  const analytics = mockAnalytics();
   const out = mockOutput({ format: "text", interactive: false });
   const ink = mockInk();
   const layer = Layer.mergeAll(
     emptyEnv(),
     stack.layer,
+    analytics.layer,
     out.layer,
     ink.layer,
     mockStartVersionState(),
   );
-  return { layer, stack, out, ink };
+  return { layer, stack, out, ink, analytics };
 }
 
 const waitFor = Effect.fnUntraced(function* (
@@ -187,11 +192,19 @@ const waitFor = Effect.fnUntraced(function* (
 
 describe("start", () => {
   it.live("runs detached mode in the background and prints connection info", () => {
-    const { layer, stack, out, ink } = setupNonInteractive();
+    const { layer, stack, out, ink, analytics } = setupNonInteractive();
     return Effect.gen(function* () {
       yield* start(backgroundFlags);
 
       expect(stack.started).toBe(true);
+      expect(analytics.captured).toContainEqual({
+        event: "cli_stack_started",
+        properties: {
+          mode: "auto",
+          detach: true,
+          stack: "default",
+        },
+      });
       expect(ink.rendered).toBe(false);
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "Local Supabase started" }),
@@ -315,10 +328,12 @@ describe("start", () => {
 
   it.live("warns when newer linked or default versions are available for the pinned stack", () => {
     const { stack, ink } = setupNonInteractive();
+    const analytics = mockAnalytics();
     const out = mockOutput({ format: "text", interactive: false });
     const layer = Layer.mergeAll(
       emptyEnv(),
       stack.layer,
+      analytics.layer,
       out.layer,
       ink.layer,
       mockStartVersionState({
@@ -433,10 +448,12 @@ describe("start", () => {
 
   it.live("warns when local service version overrides are active", () => {
     const { stack, ink } = setupNonInteractive();
+    const analytics = mockAnalytics();
     const out = mockOutput({ format: "text", interactive: false });
     const layer = Layer.mergeAll(
       emptyEnv(),
       stack.layer,
+      analytics.layer,
       out.layer,
       ink.layer,
       mockStartVersionState({
@@ -471,10 +488,12 @@ describe("start", () => {
 
   it.live("warns when one-off flag overrides are active", () => {
     const { stack, ink } = setupNonInteractive();
+    const analytics = mockAnalytics();
     const out = mockOutput({ format: "text", interactive: false });
     const layer = Layer.mergeAll(
       emptyEnv(),
       stack.layer,
+      analytics.layer,
       out.layer,
       ink.layer,
       mockStartVersionState({

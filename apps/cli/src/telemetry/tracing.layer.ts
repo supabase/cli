@@ -1,14 +1,10 @@
-import { note } from "@clack/prompts";
-import { Effect, Layer, Option, Path, Stdio, Stream, Tracer } from "effect";
+import { Effect, Layer, Option, Stdio, Stream, Tracer } from "effect";
 import type { Exit, ServiceMap } from "effect";
 
-import { CliConfig } from "../config/cli-config.service.ts";
-import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
-import { Tty } from "../runtime/tty.service.ts";
-import { getConfigDir, getEffectiveConsent, readTelemetryConfig } from "./consent.ts";
 import { makeDebugConsoleExporter } from "./exporters/debug-console.ts";
 import { exportSpanToNdjson, initNdjsonExporter } from "./exporters/ndjson.ts";
-import { resolveIdentity } from "./identity.ts";
+import { telemetryRuntimeLayer } from "./runtime.layer.ts";
+import { TelemetryRuntime } from "./runtime.service.ts";
 import { Tracing } from "./tracing.service.ts";
 
 /**
@@ -88,78 +84,41 @@ class ExportableSpan implements Tracer.Span {
   addLinks(_links: ReadonlyArray<Tracer.SpanLink>): void {}
 }
 
-const CI_ENV_VARS = ["CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "JENKINS_URL", "BUILDKITE"];
-
 export const tracingLayer = Layer.effect(
   Tracing,
   Effect.gen(function* () {
-    const cliConfig = yield* CliConfig;
-    const path = yield* Path.Path;
     const stdio = yield* Stdio.Stdio;
-    const configDir = yield* getConfigDir;
-    const tracesDir = path.join(configDir, "traces");
+    const telemetryRuntime = yield* TelemetryRuntime;
     const exportSpanToDebugConsole = makeDebugConsoleExporter((line) => {
       Effect.runFork(Stream.make(line).pipe(Stream.run(stdio.stderr()), Effect.ignore));
     });
-    const tty = yield* Tty;
-    const runtimeInfo = yield* RuntimeInfo;
-
-    // First-run bootstrap owns the persisted config and session/device identity.
-    let config = yield* readTelemetryConfig(configDir);
-    const isTty = tty.stdoutIsTty;
-    if (config === null && isTty) {
-      yield* Effect.sync(() =>
-        note(
-          "Supabase collects anonymous usage data to improve the CLI.\nYou can opt out at any time:\n\n  supabase telemetry disable\n\nLearn more: https://supabase.com/docs/cli/telemetry",
-          "Telemetry",
-        ),
-      );
-    }
-    if (config === null) {
-      yield* resolveIdentity(configDir);
-      config = yield* readTelemetryConfig(configDir);
-    }
-
-    const consent = yield* getEffectiveConsent(config);
-    const showDebug =
-      (Option.isSome(cliConfig.debug) && cliConfig.debug.value === "1") ||
-      (Option.isSome(cliConfig.telemetryDebug) && cliConfig.telemetryDebug.value === "1");
 
     // Exporters are gated by consent/debug flags before spans start flowing.
-    if (consent === "granted") {
-      yield* initNdjsonExporter(tracesDir);
+    if (telemetryRuntime.consent === "granted") {
+      yield* initNdjsonExporter(telemetryRuntime.tracesDir);
     }
 
     function onSpanEnd(span: ExportableSpan): void {
       if (!span.sampled) return;
-      if (consent === "granted") {
-        exportSpanToNdjson(span, tracesDir);
+      if (telemetryRuntime.consent === "granted") {
+        exportSpanToNdjson(span, telemetryRuntime.tracesDir);
       }
-      if (showDebug) {
+      if (telemetryRuntime.showDebug) {
         exportSpanToDebugConsole(span);
-      }
-    }
-
-    const identity = yield* resolveIdentity(configDir);
-    let isCi = false;
-    for (const envVar of CI_ENV_VARS) {
-      if (process.env[envVar] !== undefined) {
-        isCi = true;
-        break;
       }
     }
 
     // Global attributes are attached once here so individual commands stay lean.
     const globalAttrs: Record<string, unknown> = {
       schema_version: 1,
-      device_id: identity.deviceId,
-      session_id: identity.sessionId,
-      is_first_run: identity.isFirstRun,
-      is_tty: isTty,
-      is_ci: isCi,
-      os: runtimeInfo.platform,
-      arch: runtimeInfo.arch,
-      cli_version: "0.1.0",
+      device_id: telemetryRuntime.deviceId,
+      session_id: telemetryRuntime.sessionId,
+      is_first_run: telemetryRuntime.isFirstRun,
+      is_tty: telemetryRuntime.isTty,
+      is_ci: telemetryRuntime.isCi,
+      os: telemetryRuntime.os,
+      arch: telemetryRuntime.arch,
+      cli_version: telemetryRuntime.cliVersion,
     };
 
     return Tracer.make({
@@ -172,4 +131,4 @@ export const tracingLayer = Layer.effect(
       },
     });
   }),
-);
+).pipe(Layer.provide(telemetryRuntimeLayer));

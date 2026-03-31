@@ -19,6 +19,8 @@ interface RefreshedLinkedProjectSnapshot {
     readonly name: string;
     readonly region: string;
     readonly status: string;
+    readonly organizationId: string;
+    readonly organizationSlug: string;
     readonly versions: {
       readonly postgres?: string;
       readonly postgrest?: string;
@@ -42,6 +44,8 @@ export const refreshLinkedProjectSnapshot = Effect.fnUntraced(function* (
   yield* projectLinkState.save({
     ref: linkedProject.ref,
     name: linkedProject.name,
+    organization_id: linkedProject.organizationId,
+    organization_slug: linkedProject.organizationSlug,
     fetchedAt: new Date().toISOString(),
     versions: linkedProject.versions,
   });

@@ -6,6 +6,8 @@ import { ProjectContext } from "./project-context.service.ts";
 const SUPABASE_API_URL = "https://api.supabase.com";
 const SUPABASE_DASHBOARD_URL = "https://supabase.com/dashboard";
 const SUPABASE_PROJECT_HOST = "supabase.co";
+const SUPABASE_TELEMETRY_POSTHOG_HOST = "https://eu.i.posthog.com";
+const SUPABASE_TELEMETRY_POSTHOG_KEY = "phc_ihjC3EeB2wXCt87yccX5idgIgeZsub7WG0XR5hGFhJz";
 
 function readEnv(
   env: Readonly<Record<string, string | undefined>>,
@@ -33,6 +35,14 @@ const makeCliConfig = Effect.gen(function* () {
       readEnv(effectiveEnv, "SUPABASE_PROJECT_HOST"),
       () => SUPABASE_PROJECT_HOST,
     ),
+    telemetryPosthogHost: Option.getOrElse(
+      readEnv(effectiveEnv, "SUPABASE_TELEMETRY_POSTHOG_HOST"),
+      () => SUPABASE_TELEMETRY_POSTHOG_HOST,
+    ),
+    telemetryPosthogKey: Option.getOrElse(
+      readEnv(effectiveEnv, "SUPABASE_TELEMETRY_POSTHOG_KEY"),
+      () => SUPABASE_TELEMETRY_POSTHOG_KEY,
+    ),
     accessToken: Option.map(readEnv(effectiveEnv, "SUPABASE_ACCESS_TOKEN"), (token) =>
       Redacted.make(token, { label: "SUPABASE_ACCESS_TOKEN" }),
     ),
@@ -43,7 +53,7 @@ const makeCliConfig = Effect.gen(function* () {
     ),
     debug: readEnv(effectiveEnv, "SUPABASE_DEBUG"),
     telemetryDebug: readEnv(effectiveEnv, "SUPABASE_TELEMETRY_DEBUG"),
-    telemetry: readEnv(effectiveEnv, "SUPABASE_TELEMETRY"),
+    telemetryDisabled: readEnv(effectiveEnv, "SUPABASE_TELEMETRY_DISABLED"),
     doNotTrack: readEnv(effectiveEnv, "DO_NOT_TRACK"),
   });
 });

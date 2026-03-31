@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import { credentialsLayer } from "../../auth/credentials.layer.ts";
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
+import { withCommandAnalytics } from "../../telemetry/command-analytics.ts";
 import { logout } from "./logout.handler.ts";
 
 export const logoutCommand = Command.make("logout", {
@@ -10,7 +11,11 @@ export const logoutCommand = Command.make("logout", {
   Command.withDescription("Log out of Supabase and remove the stored access token."),
   Command.withShortDescription("Log out of Supabase"),
   Command.withHandler(({ yes }) =>
-    logout(yes).pipe(Effect.withSpan("command.logout"), withJsonErrorHandling),
+    logout(yes).pipe(
+      Effect.withSpan("command.logout"),
+      withCommandAnalytics({ command: "logout" }),
+      withJsonErrorHandling,
+    ),
   ),
   Command.provide(credentialsLayer),
 );

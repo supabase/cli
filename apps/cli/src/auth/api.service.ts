@@ -7,6 +7,7 @@ export type LoginSessionResponse = {
   access_token: string;
   public_key: string;
   nonce: string;
+  user_id?: string;
 };
 
 interface ApiShape {

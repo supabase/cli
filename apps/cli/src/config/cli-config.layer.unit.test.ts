@@ -157,4 +157,35 @@ describe("cliConfigLayer", () => {
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );
   });
+
+  it.live("falls back to the shipped PostHog key when no env override is set", () => {
+    const tempDir = makeTempDir();
+    return Effect.gen(function* () {
+      const cliConfig = yield* CliConfig;
+
+      expect(cliConfig.telemetryPosthogKey).toMatch(/^phc_/);
+    }).pipe(
+      Effect.provide(buildLayer({ cwd: tempDir })),
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("prefers SUPABASE_TELEMETRY_POSTHOG_KEY over the shipped default", () => {
+    const tempDir = makeTempDir();
+    return Effect.gen(function* () {
+      const cliConfig = yield* CliConfig;
+
+      expect(cliConfig.telemetryPosthogKey).toBe("phc_env_override");
+    }).pipe(
+      Effect.provide(
+        buildLayer({
+          cwd: tempDir,
+          env: {
+            SUPABASE_TELEMETRY_POSTHOG_KEY: "phc_env_override",
+          },
+        }),
+      ),
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
 });

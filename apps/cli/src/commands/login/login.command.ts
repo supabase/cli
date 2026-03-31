@@ -6,6 +6,7 @@ import { credentialsLayer } from "../../auth/credentials.layer.ts";
 import { cryptoLayer } from "../../auth/crypto.layer.ts";
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
 import { browserLayer } from "../../runtime/browser.layer.ts";
+import { withCommandAnalytics } from "../../telemetry/command-analytics.ts";
 import { stdinLayer } from "../../runtime/stdin.layer.ts";
 import { login } from "./login.handler.ts";
 
@@ -59,7 +60,11 @@ export const loginCommand = Command.make("login", flags).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    login(flags).pipe(Effect.withSpan("command.login"), withJsonErrorHandling),
+    login(flags).pipe(
+      Effect.withSpan("command.login"),
+      withCommandAnalytics({ command: "login" }),
+      withJsonErrorHandling,
+    ),
   ),
   Command.provide(apiLayer),
   Command.provide(credentialsLayer),

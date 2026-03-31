@@ -1,4 +1,5 @@
 import process from "node:process";
+import { BunServices } from "@effect/platform-bun";
 import { Deferred, Effect, Layer, Option, PubSub, Redacted, Stream } from "effect";
 import type { ReactElement } from "react";
 import type { ProjectConfig, ProjectEnvironment, ProjectPaths } from "@supabase/config";
@@ -42,6 +43,8 @@ import {
 import { RuntimeInfo } from "../../src/runtime/runtime-info.service.ts";
 import { Stdin } from "../../src/runtime/stdin.service.ts";
 import { Tty } from "../../src/runtime/tty.service.ts";
+import { Analytics } from "../../src/telemetry/analytics.service.ts";
+import { TelemetryRuntime } from "../../src/telemetry/runtime.service.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -132,7 +135,7 @@ export function mockRuntimeInfo(
     cwd: opts.cwd ?? "/test/project",
     platform: opts.platform ?? "linux",
     arch: opts.arch ?? "x64",
-    homeDir: opts.homeDir ?? "/test/home",
+    homeDir: opts.homeDir ?? "/tmp/supabase-cli-test-home",
     execPath: opts.execPath ?? "/test/bin/bun",
     pid: opts.pid ?? 1234,
   });
@@ -379,13 +382,19 @@ export function mockOutput(
   };
 }
 
-export function mockApi(opts: { failTimes?: number } = {}) {
+export function mockApi(
+  opts: {
+    failTimes?: number;
+    response?: Partial<LoginSessionResponse>;
+  } = {},
+) {
   let callCount = 0;
   const failTimes = opts.failTimes ?? 0;
   const response: LoginSessionResponse = {
     access_token: "encrypted",
     public_key: "abcd",
     nonce: "1234",
+    ...opts.response,
   };
 
   return {
@@ -402,6 +411,95 @@ export function mockApi(opts: { failTimes?: number } = {}) {
       return callCount;
     },
   };
+}
+
+export function mockAnalytics() {
+  const captured: Array<{
+    event: string;
+    properties: Record<string, unknown>;
+  }> = [];
+  const identified: Array<{
+    distinctId: string;
+    properties: Record<string, unknown>;
+  }> = [];
+  const aliased: Array<{
+    distinctId: string;
+    alias: string;
+  }> = [];
+  const groupIdentified: Array<{
+    groupType: string;
+    groupKey: string;
+    properties: Record<string, unknown>;
+  }> = [];
+
+  return {
+    layer: Layer.succeed(
+      Analytics,
+      Analytics.of({
+        capture: (event: string, properties: Record<string, unknown> = {}) =>
+          Effect.sync(() => {
+            captured.push({ event, properties });
+          }),
+        identify: (distinctId: string, properties: Record<string, unknown> = {}) =>
+          Effect.sync(() => {
+            identified.push({ distinctId, properties });
+          }),
+        alias: (distinctId: string, alias: string) =>
+          Effect.sync(() => {
+            aliased.push({ distinctId, alias });
+          }),
+        groupIdentify: (
+          groupType: string,
+          groupKey: string,
+          properties: Record<string, unknown> = {},
+        ) =>
+          Effect.sync(() => {
+            groupIdentified.push({ groupType, groupKey, properties });
+          }),
+      }),
+    ),
+    captured,
+    identified,
+    aliased,
+    groupIdentified,
+  };
+}
+
+function mockTelemetryRuntime(
+  opts: Partial<{
+    configDir: string;
+    tracesDir: string;
+    consent: "granted" | "denied";
+    showDebug: boolean;
+    deviceId: string;
+    sessionId: string;
+    distinctId: string | undefined;
+    isFirstRun: boolean;
+    isTty: boolean;
+    isCi: boolean;
+    os: string;
+    arch: string;
+    cliVersion: string;
+  }> = {},
+): Layer.Layer<TelemetryRuntime> {
+  return Layer.succeed(
+    TelemetryRuntime,
+    TelemetryRuntime.of({
+      configDir: opts.configDir ?? "/tmp/supabase-cli-test-home/.supabase",
+      tracesDir: opts.tracesDir ?? "/tmp/supabase-cli-test-home/.supabase/traces",
+      consent: opts.consent ?? "granted",
+      showDebug: opts.showDebug ?? false,
+      deviceId: opts.deviceId ?? "test-device-id",
+      sessionId: opts.sessionId ?? "test-session-id",
+      distinctId: opts.distinctId,
+      isFirstRun: opts.isFirstRun ?? false,
+      isTty: opts.isTty ?? false,
+      isCi: opts.isCi ?? false,
+      os: opts.os ?? "linux",
+      arch: opts.arch ?? "x64",
+      cliVersion: opts.cliVersion ?? "0.1.0",
+    }),
+  );
 }
 
 export function mockStack(
@@ -787,12 +885,16 @@ export function mockProjectLinkRemote(
       name: string;
       region: string;
       status: string;
+      organizationId?: string;
+      organizationSlug?: string;
     }>;
     linkedProject?: {
       ref: string;
       name: string;
       region: string;
       status: string;
+      organizationId?: string;
+      organizationSlug?: string;
       versions: {
         postgres?: string;
         postgrest?: string;
@@ -808,7 +910,13 @@ export function mockProjectLinkRemote(
   return Layer.succeed(
     ProjectLinkRemote,
     ProjectLinkRemote.of({
-      listAccessibleProjects: Effect.succeed(projects),
+      listAccessibleProjects: Effect.succeed(
+        projects.map((project) => ({
+          ...project,
+          organizationId: project.organizationId ?? "org_123",
+          organizationSlug: project.organizationSlug ?? "supabase",
+        })),
+      ),
       fetchLinkedProject: (projectRef: string) =>
         Effect.gen(function* () {
           if (linkedProject === undefined) {
@@ -816,6 +924,8 @@ export function mockProjectLinkRemote(
           }
           return {
             ...linkedProject,
+            organizationId: linkedProject.organizationId ?? "org_123",
+            organizationSlug: linkedProject.organizationSlug ?? "supabase",
             unavailableServices: linkedProject.unavailableServices ?? [],
           };
         }),
@@ -845,13 +955,17 @@ export function emptyEnv() {
   const projectLinkStateLayer = mockProjectLinkState();
   const projectLocalServiceVersionsLayer = mockProjectLocalServiceVersions();
   const stateManagerLayer = mockStateManager();
+  const analytics = mockAnalytics();
   return Layer.mergeAll(
+    BunServices.layer,
     runtimeInfoLayer,
     projectContextLayer,
     projectHomeLayer,
     projectLinkStateLayer,
     projectLocalServiceVersionsLayer,
     stateManagerLayer,
+    analytics.layer,
+    mockTelemetryRuntime(),
     envLayer,
     mockTty(),
     mockProcessControl().layer,
@@ -865,11 +979,15 @@ export function withEnv(env: Record<string, string>) {
   const envLayer = processEnvLayer(env);
   const projectHomeLayer = mockProjectHome();
   const stateManagerLayer = mockStateManager();
+  const analytics = mockAnalytics();
   return Layer.mergeAll(
+    BunServices.layer,
     runtimeInfoLayer,
     projectContextLayer,
     projectHomeLayer,
     stateManagerLayer,
+    analytics.layer,
+    mockTelemetryRuntime(),
     envLayer,
     mockTty(),
     mockProcessControl().layer,

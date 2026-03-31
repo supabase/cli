@@ -165,32 +165,35 @@ describe("tracingLayer – layer construction & first-run", () => {
     );
   });
 
-  it.live("SUPABASE_TELEMETRY=off overrides consent=granted: no NDJSON export on span end", () => {
-    const home = makeTempDir();
-    const configDir = path.join(home, ".supabase");
-    const tracesDir = path.join(configDir, "traces");
-    writeConfig(configDir, {
-      consent: "granted",
-      device_id: "existing-device",
-      session_id: "existing-session",
-      session_last_active: Date.now(),
-    });
-    return Effect.gen(function* () {
-      const tracer = yield* Tracer.Tracer;
-      const span = tracer.span(makeSpanOptions());
-      span.end(BigInt(Date.now() + 100) * 1_000_000n, Exit.void);
-    }).pipe(
-      Effect.provide(buildTracingLayer({ home, env: { SUPABASE_TELEMETRY: "off" } })),
-      Effect.ensuring(
-        Effect.sync(() => {
-          const hasNdjson =
-            existsSync(tracesDir) && readdirSync(tracesDir).some((f) => f.endsWith(".ndjson"));
-          expect(hasNdjson).toBe(false);
-          rmSync(home, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
+  it.live(
+    "SUPABASE_TELEMETRY_DISABLED=1 overrides consent=granted: no NDJSON export on span end",
+    () => {
+      const home = makeTempDir();
+      const configDir = path.join(home, ".supabase");
+      const tracesDir = path.join(configDir, "traces");
+      writeConfig(configDir, {
+        consent: "granted",
+        device_id: "existing-device",
+        session_id: "existing-session",
+        session_last_active: Date.now(),
+      });
+      return Effect.gen(function* () {
+        const tracer = yield* Tracer.Tracer;
+        const span = tracer.span(makeSpanOptions());
+        span.end(BigInt(Date.now() + 100) * 1_000_000n, Exit.void);
+      }).pipe(
+        Effect.provide(buildTracingLayer({ home, env: { SUPABASE_TELEMETRY_DISABLED: "1" } })),
+        Effect.ensuring(
+          Effect.sync(() => {
+            const hasNdjson =
+              existsSync(tracesDir) && readdirSync(tracesDir).some((f) => f.endsWith(".ndjson"));
+            expect(hasNdjson).toBe(false);
+            rmSync(home, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -239,7 +242,7 @@ describe("tracingLayer – span behaviour", () => {
     );
   });
 
-  it.live("span end does NOT export to NDJSON when SUPABASE_TELEMETRY=off", () => {
+  it.live("span end does NOT export to NDJSON when SUPABASE_TELEMETRY_DISABLED=1", () => {
     const home = makeTempDir();
     const configDir = path.join(home, ".supabase");
     const tracesDir = path.join(configDir, "traces");
@@ -248,7 +251,7 @@ describe("tracingLayer – span behaviour", () => {
       const span = tracer.span(makeSpanOptions());
       span.end(BigInt(Date.now() + 100) * 1_000_000n, Exit.void);
     }).pipe(
-      Effect.provide(buildTracingLayer({ home, env: { SUPABASE_TELEMETRY: "off" } })),
+      Effect.provide(buildTracingLayer({ home, env: { SUPABASE_TELEMETRY_DISABLED: "1" } })),
       Effect.ensuring(
         Effect.sync(() => {
           const hasNdjson =

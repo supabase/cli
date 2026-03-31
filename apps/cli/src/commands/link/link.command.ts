@@ -6,6 +6,7 @@ import { platformApiClientLayer } from "../../auth/platform-api-client.layer.ts"
 import { projectLinkRemoteLayer } from "../../config/project-link-remote.layer.ts";
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
+import { withCommandAnalytics } from "../../telemetry/command-analytics.ts";
 import { link } from "./link.handler.ts";
 
 const flags = {
@@ -39,7 +40,11 @@ export const linkCommand = Command.make("link", flags).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    link(flags).pipe(Effect.withSpan("command.link"), withJsonErrorHandling),
+    link(flags).pipe(
+      Effect.withSpan("command.link"),
+      withCommandAnalytics({ command: "link" }),
+      withJsonErrorHandling,
+    ),
   ),
   Command.provide(linkRuntimeLayer),
 );

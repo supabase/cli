@@ -28,9 +28,11 @@
     "@supabase/api": "workspace:*",
     "@supabase/config": "workspace:*",
     "@supabase/stack": "workspace:*",
+    "@vercel/detect-agent": "^1.2.1",
     "effect": "catalog:",
     "ink": "^6.8.0",
     "ink-spinner": "^5.0.0",
+    "posthog-node": "^5.28.9",
     "react": "^19.2.4"
   },
   "devDependencies": {
@@ -60,23 +62,16 @@
       "src/cli/proxy.ts",
       "src/cli/bin.ts",
       "src/**/*.test.ts",
-      "src/**/*.e2e.test.ts",
+      "src/**/*.e2e.test.ts"
+    ],
+    "ignore": [
       "scripts/*.ts",
-      "tests/*.ts"
+      "tests/**/*.ts"
     ],
     "ignoreBinaries": [
-      "nx",
-      "tar",
-      "nfpm",
-      "gh",
-      "brew",
-      "scoop",
-      "supabase"
+      "nx"
     ],
     "ignoreDependencies": [
-      "@supabase/api",
-      "@supabase/config",
-      "@supabase/stack",
       "@typescript/native-preview",
       "oxfmt",
       "oxlint",

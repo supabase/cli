@@ -1,11 +1,16 @@
 import { describe, expect, it } from "@effect/vitest";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 import type { OutputFormat } from "../../output/types.ts";
 import type { LoginFlags } from "./login.command.ts";
 import { login } from "./login.handler.ts";
+import type { TelemetryConfig } from "../../telemetry/types.ts";
 import {
   emptyEnv,
   mockApi,
+  mockAnalytics,
   mockBrowser,
   mockCredentials,
   mockCrypto,
@@ -27,6 +32,18 @@ const NO_FLAGS: LoginFlags = {
   noBrowser: false,
 };
 
+function makeTempDir(): string {
+  return mkdtempSync(path.join(tmpdir(), "supabase-login-test-"));
+}
+
+function writeTelemetryConfig(dir: string, config: TelemetryConfig) {
+  writeFileSync(path.join(dir, "telemetry.json"), JSON.stringify(config));
+}
+
+function readTelemetryConfig(dir: string): TelemetryConfig {
+  return JSON.parse(readFileSync(path.join(dir, "telemetry.json"), "utf8"));
+}
+
 // ---------------------------------------------------------------------------
 // Setup helpers — compose layers and return state for assertions
 // ---------------------------------------------------------------------------
@@ -35,8 +52,10 @@ function setupNonTty(opts: { pipedToken?: string; format?: OutputFormat } = {}) 
   const creds = mockCredentials();
   const out = mockOutput({ format: opts.format });
   const api = mockApi();
+  const analytics = mockAnalytics();
   const layer = Layer.mergeAll(
     emptyEnv(),
+    analytics.layer,
     api.layer,
     creds.layer,
     mockCrypto(),
@@ -44,7 +63,7 @@ function setupNonTty(opts: { pipedToken?: string; format?: OutputFormat } = {}) 
     mockStdin(false, opts.pipedToken),
     out.layer,
   );
-  return { layer, creds, out, api };
+  return { layer, creds, out, api, analytics };
 }
 
 function setupTty(
@@ -63,8 +82,10 @@ function setupTty(
     promptTextFail: opts.promptTextFail,
   });
   const api = mockApi({ failTimes: opts.apiFailTimes });
+  const analytics = mockAnalytics();
   const layer = Layer.mergeAll(
     emptyEnv(),
+    analytics.layer,
     api.layer,
     creds.layer,
     mockCrypto(),
@@ -72,7 +93,7 @@ function setupTty(
     mockStdin(true),
     out.layer,
   );
-  return { layer, creds, out, api };
+  return { layer, creds, out, api, analytics };
 }
 
 function setupWithEnv(
@@ -82,8 +103,10 @@ function setupWithEnv(
   const creds = mockCredentials({ existingToken: opts.existingToken });
   const out = mockOutput();
   const api = mockApi();
+  const analytics = mockAnalytics();
   const layer = Layer.mergeAll(
     withEnv(env),
+    analytics.layer,
     api.layer,
     creds.layer,
     mockCrypto(),
@@ -91,7 +114,7 @@ function setupWithEnv(
     mockStdin(opts.isTTY ?? false),
     out.layer,
   );
-  return { layer, creds, out, api };
+  return { layer, creds, out, api, analytics };
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +139,7 @@ function expectFailureTag(exit: Exit.Exit<unknown, unknown>, tag: string) {
 describe("login", () => {
   describe("token resolution order", () => {
     it.live("--token flag takes priority", () => {
-      const { layer, creds, out } = setupNonTty();
+      const { layer, creds, out, analytics } = setupNonTty();
       return Effect.gen(function* () {
         yield* login({ ...NO_FLAGS, token: Option.some(VALID_TOKEN) });
         expect(creds.savedToken).toBe(VALID_TOKEN);
@@ -126,6 +149,12 @@ describe("login", () => {
         expect(out.messages).toContainEqual(
           expect.objectContaining({ type: "success", message: "Logged in successfully." }),
         );
+        expect(analytics.captured).toContainEqual({
+          event: "cli_login_completed",
+          properties: {
+            login_method: "token",
+          },
+        });
       }).pipe(Effect.provide(layer));
     });
 
@@ -143,6 +172,28 @@ describe("login", () => {
         yield* login(NO_FLAGS);
         expect(creds.savedToken).toBe(VALID_TOKEN);
       }).pipe(Effect.provide(layer));
+    });
+
+    it.live("token-based login clears a stale distinct_id when the user cannot be stitched", () => {
+      const homeDir = makeTempDir();
+      writeTelemetryConfig(homeDir, {
+        consent: "granted",
+        device_id: "device-123",
+        session_id: "session-123",
+        session_last_active: Date.now(),
+        distinct_id: "old-user-id",
+      });
+      const { layer, creds, analytics } = setupWithEnv({ SUPABASE_HOME: homeDir });
+
+      return Effect.gen(function* () {
+        yield* login({ ...NO_FLAGS, token: Option.some(VALID_TOKEN) });
+        expect(creds.savedToken).toBe(VALID_TOKEN);
+        expect(readTelemetryConfig(homeDir).distinct_id).toBeUndefined();
+        expect(analytics.identified).toEqual([]);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(Effect.sync(() => rmSync(homeDir, { recursive: true, force: true }))),
+      );
     });
 
     it.live("returns NoTtyError when piped stdin is empty", () => {
@@ -257,7 +308,7 @@ describe("login", () => {
 
   describe("browser OAuth flow", () => {
     it.live("successful login via browser flow", () => {
-      const { layer, creds, out } = setupTty();
+      const { layer, creds, out, analytics } = setupTty();
       return Effect.gen(function* () {
         yield* login(NO_FLAGS);
         expect(creds.savedToken).toBe(VALID_TOKEN);
@@ -273,6 +324,84 @@ describe("login", () => {
             message: "You are now logged in. Happy coding!",
           }),
         );
+        expect(analytics.captured).toContainEqual({
+          event: "cli_login_completed",
+          properties: {
+            login_method: "browser_oauth",
+            token_name: "cli_test@host_123",
+          },
+        });
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("browser OAuth clears a stale distinct_id when user_id is not returned", () => {
+      const homeDir = makeTempDir();
+      writeTelemetryConfig(homeDir, {
+        consent: "granted",
+        device_id: "device-123",
+        session_id: "session-123",
+        session_last_active: Date.now(),
+        distinct_id: "old-user-id",
+      });
+      const creds = mockCredentials();
+      const out = mockOutput();
+      const api = mockApi();
+      const analytics = mockAnalytics();
+      const layer = Layer.mergeAll(
+        withEnv({ SUPABASE_HOME: homeDir }),
+        analytics.layer,
+        api.layer,
+        creds.layer,
+        mockCrypto(),
+        mockBrowser(),
+        mockStdin(true),
+        out.layer,
+      );
+
+      return Effect.gen(function* () {
+        yield* login(NO_FLAGS);
+        expect(readTelemetryConfig(homeDir).distinct_id).toBeUndefined();
+        expect(analytics.aliased).toEqual([]);
+        expect(analytics.identified).toEqual([]);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(Effect.sync(() => rmSync(homeDir, { recursive: true, force: true }))),
+      );
+    });
+
+    it.live("browser OAuth stitches the authenticated user when the API returns user_id", () => {
+      const creds = mockCredentials();
+      const out = mockOutput();
+      const api = mockApi({ response: { user_id: "user-123" } });
+      const analytics = mockAnalytics();
+      const layer = Layer.mergeAll(
+        emptyEnv(),
+        analytics.layer,
+        api.layer,
+        creds.layer,
+        mockCrypto(),
+        mockBrowser(),
+        mockStdin(true),
+        out.layer,
+      );
+
+      return Effect.gen(function* () {
+        yield* login(NO_FLAGS);
+        expect(analytics.aliased).toContainEqual({
+          distinctId: "user-123",
+          alias: "test-device-id",
+        });
+        expect(analytics.identified).toContainEqual({
+          distinctId: "user-123",
+          properties: {},
+        });
+        expect(analytics.captured).toContainEqual({
+          event: "cli_login_completed",
+          properties: {
+            login_method: "browser_oauth",
+            token_name: "cli_test@host_123",
+          },
+        });
       }).pipe(Effect.provide(layer));
     });
 

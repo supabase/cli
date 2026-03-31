@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import { Argument, Command } from "effect/unstable/cli";
 
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
+import { withCommandAnalytics } from "../../telemetry/command-analytics.ts";
 import { showPlatformSchema } from "./platform-schema.handler.ts";
 
 const config = {
@@ -27,6 +28,7 @@ export const platformSchemaCommand = Command.make("schema", config).pipe(
   Command.withHandler(({ method }) =>
     showPlatformSchema(method).pipe(
       Effect.withSpan("command.platform.schema"),
+      withCommandAnalytics({ command: "platform schema" }),
       withJsonErrorHandling,
     ),
   ),

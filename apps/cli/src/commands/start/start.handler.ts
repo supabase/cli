@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { StateManager, stackMetadata } from "@supabase/stack/effect";
 import { Output } from "../../output/output.service.ts";
+import { Analytics } from "../../telemetry/analytics.service.ts";
 import type { StartFlags } from "./start.command.ts";
 import { StartVersionState } from "./start.command.ts";
 import { startBackground } from "./flows/background.flow.ts";
@@ -11,6 +12,7 @@ export const start = Effect.fnUntraced(function* (flags: StartFlags) {
   return yield* Effect.scoped(
     Effect.gen(function* () {
       const output = yield* Output;
+      const analytics = yield* Analytics;
       const stateManager = yield* StateManager;
       const startVersionState = yield* StartVersionState;
       const { metadata, serviceVersionContext } = startVersionState;
@@ -52,14 +54,21 @@ export const start = Effect.fnUntraced(function* (flags: StartFlags) {
         );
       }
 
+      let result: void;
       if (flags.detach) {
-        return yield* startBackground();
+        result = yield* startBackground();
+      } else if (output.interactive) {
+        result = yield* startForeground();
+      } else {
+        result = yield* startNonInteractive();
       }
 
-      if (output.interactive) {
-        return yield* startForeground();
-      }
-      return yield* startNonInteractive();
+      yield* analytics.capture("cli_stack_started", {
+        mode: flags.mode,
+        detach: flags.detach,
+        stack: flags.stack,
+      });
+      return result;
     }),
   );
 });

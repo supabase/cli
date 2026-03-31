@@ -5,4 +5,5 @@ export type TelemetryConfig = {
   device_id: string;
   session_id: string;
   session_last_active: number;
+  distinct_id?: string;
 };

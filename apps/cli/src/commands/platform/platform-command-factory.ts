@@ -6,6 +6,7 @@ import { credentialsLayer } from "../../auth/credentials.layer.ts";
 import { platformApiClientLayer } from "../../auth/platform-api-client.layer.ts";
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
 import { stdinLayer } from "../../runtime/stdin.layer.ts";
+import { withCommandAnalytics } from "../../telemetry/command-analytics.ts";
 import { buildPlatformGeneratedExamples } from "./platform-examples.ts";
 import { runPlatformOperation } from "./platform-handler.ts";
 import type { PlatformOperationDescriptor } from "./platform-types.ts";
@@ -123,6 +124,7 @@ export function makePlatformLeafCommand(
     Command.withHandler((commandFlags) =>
       handler(commandFlags).pipe(
         Effect.withSpan(`command.${descriptor.commandPath.join(".")}`),
+        withCommandAnalytics({ command: descriptor.commandPath.slice(1).join(" ") }),
         withJsonErrorHandling,
       ),
     ),

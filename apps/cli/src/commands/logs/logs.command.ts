@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
+import { withCommandAnalytics } from "../../telemetry/command-analytics.ts";
 import { logs } from "./logs.handler.ts";
 
 const flags = {
@@ -56,6 +57,10 @@ export const logsCommand = Command.make("logs", flags).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    logs(flags).pipe(Effect.withSpan("command.logs"), withJsonErrorHandling),
+    logs(flags).pipe(
+      Effect.withSpan("command.logs"),
+      withCommandAnalytics({ command: "logs" }),
+      withJsonErrorHandling,
+    ),
   ),
 );

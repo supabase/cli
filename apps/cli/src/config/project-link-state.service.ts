@@ -13,6 +13,8 @@ export type LinkedServiceVersions = Schema.Schema.Type<typeof LinkedServiceVersi
 export const ProjectLinkStateValueSchema = Schema.Struct({
   ref: Schema.String,
   name: Schema.optionalKey(Schema.String),
+  organization_id: Schema.optionalKey(Schema.String),
+  organization_slug: Schema.optionalKey(Schema.String),
   fetchedAt: Schema.String,
   versions: LinkedServiceVersionsSchema,
 });

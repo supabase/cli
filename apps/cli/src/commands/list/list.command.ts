@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import { Command } from "effect/unstable/cli";
 import { projectCommandBaseLayer } from "../../config/project-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
+import { withCommandAnalytics } from "../../telemetry/command-analytics.ts";
 import { list } from "./list.handler.ts";
 
 export const listCommand = Command.make("list").pipe(
@@ -14,7 +15,11 @@ export const listCommand = Command.make("list").pipe(
     },
   ]),
   Command.withHandler(() =>
-    list().pipe(Effect.withSpan("command.stack.list"), withJsonErrorHandling),
+    list().pipe(
+      Effect.withSpan("command.stack.list"),
+      withCommandAnalytics({ command: "stack list" }),
+      withJsonErrorHandling,
+    ),
   ),
   Command.provide(projectCommandBaseLayer),
 );

@@ -15,6 +15,8 @@ export interface AccessibleProject {
   readonly name: string;
   readonly region: string;
   readonly status: string;
+  readonly organizationId: string;
+  readonly organizationSlug: string;
 }
 
 export interface LinkedProjectSnapshot extends AccessibleProject {

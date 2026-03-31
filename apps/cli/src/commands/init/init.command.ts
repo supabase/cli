@@ -3,6 +3,7 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer } from "effect";
 import { Command } from "effect/unstable/cli";
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
+import { withCommandAnalytics } from "../../telemetry/command-analytics.ts";
 import { init } from "./init.handler.ts";
 
 export const initCommand = Command.make("init").pipe(
@@ -16,7 +17,13 @@ export const initCommand = Command.make("init").pipe(
       description: "Create a minimal supabase/config.json in the current directory",
     },
   ]),
-  Command.withHandler(() => init().pipe(Effect.withSpan("command.init"), withJsonErrorHandling)),
+  Command.withHandler(() =>
+    init().pipe(
+      Effect.withSpan("command.init"),
+      withCommandAnalytics({ command: "init" }),
+      withJsonErrorHandling,
+    ),
+  ),
   Command.provide(
     Layer.mergeAll(
       BunServices.layer,

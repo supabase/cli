@@ -11,6 +11,7 @@ import { platformCommand } from "../commands/platform/platform.command.ts";
 import { startCommand } from "../commands/start/start.command.ts";
 import { statusCommand } from "../commands/status/status.command.ts";
 import { stopCommand } from "../commands/stop/stop.command.ts";
+import { telemetryCommand } from "../commands/telemetry/telemetry.command.ts";
 import { unlinkCommand } from "../commands/unlink/unlink.command.ts";
 import { updateCommand } from "../commands/update/update.command.ts";
 import { outputLayerFor } from "../output/output.layer.ts";
@@ -27,6 +28,7 @@ export const root = Command.make("supabase").pipe(
     initCommand,
     loginCommand,
     logoutCommand,
+    telemetryCommand,
     linkCommand,
     unlinkCommand,
     stackCommand,

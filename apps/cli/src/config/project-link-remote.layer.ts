@@ -176,6 +176,8 @@ const makeProjectLinkRemote = Effect.gen(function* () {
           name: project.name,
           region: project.region,
           status: project.status,
+          organizationId: project.organization_id,
+          organizationSlug: project.organization_slug,
         })),
       ),
     ),
@@ -241,6 +243,8 @@ const makeProjectLinkRemote = Effect.gen(function* () {
         name: project.name,
         region: project.region,
         status: project.status,
+        organizationId: project.organization_id,
+        organizationSlug: project.organization_slug,
         versions,
         unavailableServices,
       } satisfies LinkedProjectSnapshot;
