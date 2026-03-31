@@ -135,8 +135,13 @@ describe("update handler", () => {
         }).pipe(Effect.provide(layer));
 
         yield* projectLinkState.save({
-          ref: "abcdefghijklmnopqrst",
-          name: "Linked Project",
+          project: {
+            ref: "abcdefghijklmnopqrst",
+            name: "Linked Project",
+            organization_id: "org_123",
+            organization_slug: "supabase",
+          },
+          active_branch: { ref: "abcdefghijklmnopqrst", name: "main", is_default: true },
           fetchedAt: "2026-03-24T10:00:00.000Z",
           versions: {
             postgres: "17.6.1.001",
@@ -218,10 +223,13 @@ describe("update handler", () => {
           ),
         );
         expect(refreshedProject).toEqual({
-          ref: "abcdefghijklmnopqrst",
-          name: "Linked Project",
-          organization_id: "org_123",
-          organization_slug: "supabase",
+          project: {
+            ref: "abcdefghijklmnopqrst",
+            name: "Linked Project",
+            organization_id: "org_123",
+            organization_slug: "supabase",
+          },
+          active_branch: { ref: "abcdefghijklmnopqrst", name: "main", is_default: true },
           fetchedAt: expect.any(String),
           versions: {
             postgres: "17.6.1.090",
@@ -308,8 +316,13 @@ describe("update handler", () => {
       }).pipe(Effect.provide(layer));
 
       yield* projectLinkState.save({
-        ref: "abcdefghijklmnopqrst",
-        name: "Linked Project",
+        project: {
+          ref: "abcdefghijklmnopqrst",
+          name: "Linked Project",
+          organization_id: "org_123",
+          organization_slug: "supabase",
+        },
+        active_branch: { ref: "abcdefghijklmnopqrst", name: "main", is_default: true },
         fetchedAt: "2026-03-24T10:00:00.000Z",
         versions: {
           postgres: "17.6.1.090",

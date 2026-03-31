@@ -87,8 +87,13 @@ describe("unlink handler", () => {
 
       yield* projectHome.ensureProjectHomeDir;
       yield* linkState.save({
-        ref: projectRef,
-        name: "Linked Project",
+        project: {
+          ref: projectRef,
+          name: "Linked Project",
+          organization_id: "org_123",
+          organization_slug: "supabase",
+        },
+        active_branch: { ref: projectRef, name: "main", is_default: true },
         fetchedAt: "2026-03-20T12:00:00.000Z",
         versions: { postgres: "17.6.1.090" },
       });

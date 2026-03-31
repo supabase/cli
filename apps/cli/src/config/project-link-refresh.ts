@@ -42,10 +42,17 @@ export const refreshLinkedProjectSnapshot = Effect.fnUntraced(function* (
   const linkedProject = yield* remote.fetchLinkedProject(projectRef);
 
   yield* projectLinkState.save({
-    ref: linkedProject.ref,
-    name: linkedProject.name,
-    organization_id: linkedProject.organizationId,
-    organization_slug: linkedProject.organizationSlug,
+    project: {
+      ref: linkedProject.ref,
+      name: linkedProject.name,
+      organization_id: linkedProject.organizationId,
+      organization_slug: linkedProject.organizationSlug,
+    },
+    active_branch: {
+      ref: linkedProject.ref,
+      name: "main",
+      is_default: true,
+    },
     fetchedAt: new Date().toISOString(),
     versions: linkedProject.versions,
   });

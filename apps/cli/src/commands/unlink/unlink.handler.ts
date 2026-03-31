@@ -21,12 +21,12 @@ export const unlink = Effect.fnUntraced(function* () {
     return;
   }
 
-  const clearedProjectRef = cachedLinkState.value.ref;
-  const clearedProjectLabel = formatLinkedProjectLabel(cachedLinkState.value);
+  const clearedProjectRef = cachedLinkState.value.project.ref;
+  const clearedProjectLabel = formatLinkedProjectLabel(cachedLinkState.value.project);
 
   yield* output.success("Local project unlinked.", {
     project_ref: clearedProjectRef,
-    project_name: cachedLinkState.value.name ?? null,
+    project_name: cachedLinkState.value.project.name ?? null,
     cached_link_state: true,
   });
   yield* output.outro(`Unlinked local project from ${clearedProjectLabel}.`);

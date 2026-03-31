@@ -51,8 +51,13 @@ describe("status handler", () => {
         fixture.baseLayer,
         out.layer,
         mockProjectLinkState({
-          ref: "abcdefghijklmnopqrst",
-          name: "Alpha",
+          project: {
+            ref: "abcdefghijklmnopqrst",
+            name: "Alpha",
+            organization_id: "org_123",
+            organization_slug: "supabase",
+          },
+          active_branch: { ref: "abcdefghijklmnopqrst", name: "main", is_default: true },
           fetchedAt: "2026-03-25T08:00:00.000Z",
           versions: {
             postgres: "17.6.1.081",
@@ -106,8 +111,13 @@ describe("status handler", () => {
           fixture.baseLayer,
           out.layer,
           mockProjectLinkState({
-            ref: "abcdefghijklmnopqrst",
-            name: "Alpha",
+            project: {
+              ref: "abcdefghijklmnopqrst",
+              name: "Alpha",
+              organization_id: "org_123",
+              organization_slug: "supabase",
+            },
+            active_branch: { ref: "abcdefghijklmnopqrst", name: "main", is_default: true },
             fetchedAt: "2026-03-25T08:00:00.000Z",
             versions: {
               postgres: "17.6.1.081",
@@ -171,8 +181,13 @@ describe("status handler", () => {
         fixture.baseLayer,
         out.layer,
         mockProjectLinkState({
-          ref: "abcdefghijklmnopqrst",
-          name: "Alpha",
+          project: {
+            ref: "abcdefghijklmnopqrst",
+            name: "Alpha",
+            organization_id: "org_123",
+            organization_slug: "supabase",
+          },
+          active_branch: { ref: "abcdefghijklmnopqrst", name: "main", is_default: true },
           fetchedAt: "2026-03-25T08:00:00.000Z",
           versions: {
             postgres: "17.6.1.090",

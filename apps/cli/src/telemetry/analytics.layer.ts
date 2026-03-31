@@ -36,13 +36,10 @@ function resolveGroups(
 
   return Option.match(linkedProject, {
     onNone: () => undefined,
-    onSome: (state) =>
-      state.organization_slug === undefined
-        ? undefined
-        : {
-            organization: state.organization_slug,
-            project: state.ref,
-          },
+    onSome: (state) => ({
+      organization: state.project.organization_slug,
+      project: state.project.ref,
+    }),
   });
 }
 

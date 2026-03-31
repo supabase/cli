@@ -10,11 +10,24 @@ export const LinkedServiceVersionsSchema = Schema.Struct({
 
 export type LinkedServiceVersions = Schema.Schema.Type<typeof LinkedServiceVersionsSchema>;
 
-export const ProjectLinkStateValueSchema = Schema.Struct({
+export const ActiveBranchSchema = Schema.Struct({
   ref: Schema.String,
-  name: Schema.optionalKey(Schema.String),
-  organization_id: Schema.optionalKey(Schema.String),
-  organization_slug: Schema.optionalKey(Schema.String),
+  name: Schema.String,
+  is_default: Schema.Boolean,
+});
+
+export type ActiveBranch = Schema.Schema.Type<typeof ActiveBranchSchema>;
+
+const ProjectSchema = Schema.Struct({
+  ref: Schema.String,
+  name: Schema.String,
+  organization_id: Schema.String,
+  organization_slug: Schema.String,
+});
+
+export const ProjectLinkStateValueSchema = Schema.Struct({
+  project: ProjectSchema,
+  active_branch: ActiveBranchSchema,
   fetchedAt: Schema.String,
   versions: LinkedServiceVersionsSchema,
 });
@@ -26,10 +39,22 @@ export class InvalidProjectLinkStateError extends Data.TaggedError("InvalidProje
   readonly suggestion: string;
 }> {}
 
+export class ProjectNotLinkedError extends Data.TaggedError("ProjectNotLinkedError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {}
+
 interface ProjectLinkStateShape {
   readonly load: Effect.Effect<Option.Option<ProjectLinkStateValue>, InvalidProjectLinkStateError>;
   readonly save: (state: ProjectLinkStateValue) => Effect.Effect<void>;
   readonly clear: Effect.Effect<void>;
+  readonly getActiveBranch: Effect.Effect<
+    Option.Option<ActiveBranch>,
+    InvalidProjectLinkStateError
+  >;
+  readonly setActiveBranch: (
+    branch: ActiveBranch,
+  ) => Effect.Effect<void, InvalidProjectLinkStateError | ProjectNotLinkedError>;
 }
 
 export class ProjectLinkState extends ServiceMap.Service<ProjectLinkState, ProjectLinkStateShape>()(

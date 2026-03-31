@@ -28,6 +28,8 @@ function buildLayer(opts: {
   cwd: string;
   env?: Record<string, string>;
   remoteProjectRef?: string;
+  remoteOrganizationId?: string;
+  remoteOrganizationSlug?: string;
   projects?: ReadonlyArray<{
     ref: string;
     name: string;
@@ -72,6 +74,8 @@ function buildLayer(opts: {
     linkedProject: {
       ref: opts.remoteProjectRef ?? opts.projects?.[0]?.ref ?? "abcdefghijklmnopqrst",
       name: "Linked Project",
+      organizationId: opts.remoteOrganizationId ?? "org-id-abc",
+      organizationSlug: opts.remoteOrganizationSlug ?? "my-org",
       region: "eu-west-3",
       status: "ACTIVE_HEALTHY",
       versions: {
@@ -121,7 +125,7 @@ function expectFailure(
 }
 
 describe("link handler", () => {
-  it.live("writes only cached link state and leaves project config unchanged", () => {
+  it.live("writes nested link state with project, active_branch, and versions", () => {
     const tempDir = makeTempDir();
     const projectRoot = join(tempDir, "repo");
     const supabaseHome = join(tempDir, "supabase-home");
@@ -139,6 +143,8 @@ describe("link handler", () => {
         cwd: projectRoot,
         env: { SUPABASE_HOME: supabaseHome },
         remoteProjectRef: projectRef,
+        remoteOrganizationId: "org-id-abc",
+        remoteOrganizationSlug: "my-org",
       });
 
       yield* link({ projectRef: Option.some(projectRef) }).pipe(Effect.provide(layer));
@@ -157,10 +163,15 @@ describe("link handler", () => {
       const cached = yield* linkState.load;
       expect(Option.isSome(cached)).toBe(true);
       if (Option.isSome(cached)) {
-        expect(cached.value.ref).toBe(projectRef);
-        expect(cached.value.name).toBe("Linked Project");
-        expect(cached.value.organization_slug).toBe("supabase");
-        expect(cached.value.organization_id).toBe("org_123");
+        expect(cached.value.project.ref).toBe(projectRef);
+        expect(cached.value.project.name).toBe("Linked Project");
+        expect(cached.value.project.organization_id).toBe("org-id-abc");
+        expect(cached.value.project.organization_slug).toBe("my-org");
+        expect(cached.value.active_branch).toEqual({
+          ref: projectRef,
+          name: "main",
+          is_default: true,
+        });
         expect(cached.value.versions).toEqual({
           postgres: "17.6.1.090",
           postgrest: "v14.5",
@@ -174,10 +185,10 @@ describe("link handler", () => {
       );
       expect(analytics.groupIdentified).toContainEqual({
         groupType: "organization",
-        groupKey: "supabase",
+        groupKey: "my-org",
         properties: {
-          organization_id: "org_123",
-          organization_slug: "supabase",
+          organization_id: "org-id-abc",
+          organization_slug: "my-org",
         },
       });
       expect(analytics.groupIdentified).toContainEqual({
@@ -186,7 +197,7 @@ describe("link handler", () => {
         properties: {
           project_name: "Linked Project",
           project_ref: projectRef,
-          organization_slug: "supabase",
+          organization_slug: "my-org",
         },
       });
       expect(analytics.captured).toContainEqual({
@@ -194,7 +205,7 @@ describe("link handler", () => {
         properties: {
           project_ref: projectRef,
           project_name: "Linked Project",
-          organization_slug: "supabase",
+          organization_slug: "my-org",
         },
       });
     }).pipe(
@@ -224,11 +235,44 @@ describe("link handler", () => {
       }).pipe(Effect.provide(layer));
       const cached = yield* linkState.load;
       expect(Option.isSome(cached)).toBe(true);
-      expect(Option.isSome(cached) && cached.value.ref).toBe(projectRef);
+      expect(Option.isSome(cached) && cached.value.project.ref).toBe(projectRef);
 
       expect(
         yield* Effect.tryPromise(() => readFile(join(projectRoot, ".gitignore"), "utf8")),
       ).toContain(".supabase/");
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("active_branch.ref matches project.ref on a default fresh link (round-trip)", () => {
+    const tempDir = makeTempDir();
+    const projectRoot = join(tempDir, "repo");
+    const supabaseHome = join(tempDir, "supabase-home");
+    const projectRef = "abcdefghijklmnopqrst";
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => mkdir(join(projectRoot, ".git"), { recursive: true }));
+
+      const { layer } = buildLayer({
+        cwd: projectRoot,
+        env: { SUPABASE_HOME: supabaseHome },
+        remoteProjectRef: projectRef,
+      });
+
+      yield* link({ projectRef: Option.some(projectRef) }).pipe(Effect.provide(layer));
+
+      const linkState = yield* Effect.gen(function* () {
+        return yield* ProjectLinkState;
+      }).pipe(Effect.provide(layer));
+
+      const activeBranch = yield* linkState.getActiveBranch;
+      expect(Option.isSome(activeBranch)).toBe(true);
+      if (Option.isSome(activeBranch)) {
+        expect(activeBranch.value.ref).toBe(projectRef);
+        expect(activeBranch.value.name).toBe("main");
+        expect(activeBranch.value.is_default).toBe(true);
+      }
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );
@@ -274,7 +318,7 @@ describe("link handler", () => {
       const cached = yield* linkState.load;
       expect(Option.isSome(cached)).toBe(true);
       if (Option.isSome(cached)) {
-        expect(cached.value.ref).toBe(selectedProjectRef);
+        expect(cached.value.project.ref).toBe(selectedProjectRef);
       }
 
       expect(out.promptSelectCalls).toEqual([
@@ -320,8 +364,17 @@ describe("link handler", () => {
       }).pipe(Effect.provide(layer));
 
       yield* linkState.save({
-        ref: projectRef,
-        name: "Linked Project",
+        project: {
+          ref: projectRef,
+          name: "Linked Project",
+          organization_id: "org-id-abc",
+          organization_slug: "my-org",
+        },
+        active_branch: {
+          ref: projectRef,
+          name: "main",
+          is_default: true,
+        },
         fetchedAt: "2026-01-01T00:00:00.000Z",
         versions: {
           postgres: "17.6.1.001",
@@ -358,8 +411,8 @@ describe("link handler", () => {
       const cached = yield* linkState.load;
       expect(Option.isSome(cached)).toBe(true);
       if (Option.isSome(cached)) {
-        expect(cached.value.ref).toBe(projectRef);
-        expect(cached.value.name).toBe("Linked Project");
+        expect(cached.value.project.ref).toBe(projectRef);
+        expect(cached.value.project.name).toBe("Linked Project");
         expect(cached.value.versions).toEqual({
           postgres: "17.6.1.090",
           postgrest: "v14.5",
@@ -402,8 +455,17 @@ describe("link handler", () => {
       }).pipe(Effect.provide(layer));
 
       yield* linkState.save({
-        ref: originalProjectRef,
-        name: "Alpha Project",
+        project: {
+          ref: originalProjectRef,
+          name: "Alpha Project",
+          organization_id: "org-id-abc",
+          organization_slug: "my-org",
+        },
+        active_branch: {
+          ref: originalProjectRef,
+          name: "main",
+          is_default: true,
+        },
         fetchedAt: "2026-01-01T00:00:00.000Z",
         versions: {
           postgres: "17.6.1.001",
@@ -449,8 +511,8 @@ describe("link handler", () => {
       const cached = yield* linkState.load;
       expect(Option.isSome(cached)).toBe(true);
       if (Option.isSome(cached)) {
-        expect(cached.value.ref).toBe(newProjectRef);
-        expect(cached.value.name).toBe("Linked Project");
+        expect(cached.value.project.ref).toBe(newProjectRef);
+        expect(cached.value.project.name).toBe("Linked Project");
       }
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
@@ -507,8 +569,17 @@ describe("link handler", () => {
       }).pipe(Effect.provide(layer));
 
       yield* linkState.save({
-        ref: projectRef,
-        name: "Linked Project",
+        project: {
+          ref: projectRef,
+          name: "Linked Project",
+          organization_id: "org-id-abc",
+          organization_slug: "my-org",
+        },
+        active_branch: {
+          ref: projectRef,
+          name: "main",
+          is_default: true,
+        },
         fetchedAt: "2026-01-01T00:00:00.000Z",
         versions: {
           postgres: "17.6.1.001",

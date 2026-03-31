@@ -874,6 +874,16 @@ export function mockProjectLinkState(
       clear: Effect.sync(() => {
         state = undefined;
       }),
+      getActiveBranch: Effect.sync(() =>
+        state === undefined ? Option.none() : Option.some(state.active_branch),
+      ),
+      setActiveBranch: (branch) =>
+        Effect.sync(() => {
+          if (state === undefined) {
+            throw new Error("Cannot set active branch: no linked project found.");
+          }
+          state = { ...state, active_branch: branch };
+        }),
     }),
   );
 }

@@ -3,6 +3,8 @@ import {
   InvalidProjectLinkStateError,
   ProjectLinkState,
   ProjectLinkStateValueSchema,
+  ProjectNotLinkedError,
+  type ActiveBranch,
   type ProjectLinkStateValue,
 } from "./project-link-state.service.ts";
 import { ProjectHome } from "./project-home.service.ts";
@@ -59,10 +61,28 @@ const makeProjectLinkState = Effect.gen(function* () {
 
   const clear = fs.remove(projectHome.projectLinkPath).pipe(Effect.ignore, Effect.orDie);
 
+  const getActiveBranch = load.pipe(Effect.map(Option.map((state) => state.active_branch)));
+
+  const setActiveBranch = (branch: ActiveBranch) =>
+    Effect.gen(function* () {
+      const current = yield* load;
+      if (Option.isNone(current)) {
+        return yield* Effect.fail(
+          new ProjectNotLinkedError({
+            detail: "Cannot set active branch: no linked project found.",
+            suggestion: "Run `supabase link` to link this checkout to a Supabase project first.",
+          }),
+        );
+      }
+      yield* save({ ...current.value, active_branch: branch });
+    });
+
   return ProjectLinkState.of({
     load,
     save,
     clear,
+    getActiveBranch,
+    setActiveBranch,
   });
 });
 

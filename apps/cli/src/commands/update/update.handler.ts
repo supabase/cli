@@ -49,7 +49,7 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
   const linkedState = yield* projectLinkState.load;
   if (Option.isSome(linkedState)) {
     const refreshed = yield* refreshLinkedProjectSnapshot(
-      linkedState.value.ref,
+      linkedState.value.project.ref,
       yield* stateManager.scanMetadata(),
     );
     const changedVersions = diffCachedLinkedVersions(

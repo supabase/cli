@@ -55,13 +55,13 @@ const chooseProjectRef = Effect.fnUntraced(function* (flagProjectRef: Option.Opt
   if (Option.isSome(cachedLinkState)) {
     if (!output.interactive) {
       yield* output.info(
-        `This local project is already linked to ${formatLinkedProjectLabel(cachedLinkState.value)}; refreshing linked project metadata.`,
+        `This local project is already linked to ${formatLinkedProjectLabel(cachedLinkState.value.project)}; refreshing linked project metadata.`,
       );
-      return cachedLinkState.value.ref;
+      return cachedLinkState.value.project.ref;
     }
 
     yield* output.info(
-      `This local project is already linked to ${formatLinkedProjectLabel(cachedLinkState.value)}.`,
+      `This local project is already linked to ${formatLinkedProjectLabel(cachedLinkState.value.project)}.`,
     );
     const action = yield* output.promptSelect(
       "What would you like to do?",
@@ -69,7 +69,7 @@ const chooseProjectRef = Effect.fnUntraced(function* (flagProjectRef: Option.Opt
         {
           value: "refresh",
           label: "Refresh linked metadata",
-          hint: `Refresh the current linked project metadata for ${formatLinkedProjectLabel(cachedLinkState.value)}`,
+          hint: `Refresh the current linked project metadata for ${formatLinkedProjectLabel(cachedLinkState.value.project)}`,
         },
         {
           value: "relink",
@@ -81,7 +81,7 @@ const chooseProjectRef = Effect.fnUntraced(function* (flagProjectRef: Option.Opt
     );
 
     if (action === "refresh") {
-      return cachedLinkState.value.ref;
+      return cachedLinkState.value.project.ref;
     }
 
     return yield* promptForAccessibleProject();

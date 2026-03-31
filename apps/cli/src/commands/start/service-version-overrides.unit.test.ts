@@ -25,7 +25,13 @@ describe("service version overrides", () => {
   test("resolves flag > local file > link state precedence", async () => {
     const layer = Layer.mergeAll(
       mockProjectLinkState({
-        ref: "abcdefghijklmnopqrst",
+        project: {
+          ref: "abcdefghijklmnopqrst",
+          name: "Test Project",
+          organization_id: "org_123",
+          organization_slug: "supabase",
+        },
+        active_branch: { ref: "abcdefghijklmnopqrst", name: "main", is_default: true },
         fetchedAt: "2026-03-20T12:00:00.000Z",
         versions: {
           postgres: "17.6.1.090",

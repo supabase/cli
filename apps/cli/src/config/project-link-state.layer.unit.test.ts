@@ -11,7 +11,11 @@ import { projectContextLayer } from "./project-context.layer.ts";
 import { projectHomeLayer } from "./project-home.layer.ts";
 import { ProjectHome } from "./project-home.service.ts";
 import { projectLinkStateLayer } from "./project-link-state.layer.ts";
-import { InvalidProjectLinkStateError, ProjectLinkState } from "./project-link-state.service.ts";
+import {
+  InvalidProjectLinkStateError,
+  ProjectLinkState,
+  ProjectNotLinkedError,
+} from "./project-link-state.service.ts";
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "supabase-project-link-state-"));
@@ -54,6 +58,27 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?:
   );
 }
 
+const SAMPLE_STATE = {
+  project: {
+    ref: "abcdefghijklmnopqrst",
+    name: "Alpha Project",
+    organization_id: "org-id-abc",
+    organization_slug: "my-org",
+  },
+  active_branch: {
+    ref: "abcdefghijklmnopqrst",
+    name: "main",
+    is_default: true,
+  },
+  fetchedAt: "2026-03-19T12:34:56.000Z",
+  versions: {
+    postgres: "17.6.1.090",
+    postgrest: "v14.5",
+    auth: "v2.187.0",
+    storage: "v1.39.2",
+  },
+} as const;
+
 describe("projectLinkStateLayer", () => {
   it.live("saves and loads repo-local project link state", () => {
     const tempDir = makeTempDir();
@@ -73,30 +98,20 @@ describe("projectLinkStateLayer", () => {
       const linkState = yield* Effect.gen(function* () {
         return yield* ProjectLinkState;
       }).pipe(Effect.provide(layer));
-      const state = {
-        ref: "abcdefghijklmnopqrst",
-        name: "Alpha Project",
-        fetchedAt: "2026-03-19T12:34:56.000Z",
-        versions: {
-          postgres: "17.6.1.090",
-          postgrest: "v14.5",
-          auth: "v2.187.0",
-          storage: "v1.39.2",
-        },
-      } as const;
 
-      yield* linkState.save(state);
+      yield* linkState.save(SAMPLE_STATE);
       const loaded = yield* linkState.load;
 
       expect(Option.isSome(loaded)).toBe(true);
       if (Option.isSome(loaded)) {
-        expect(loaded.value).toEqual(state);
+        expect(loaded.value).toEqual(SAMPLE_STATE);
       }
 
       const rawFile = yield* Effect.tryPromise(() => readFile(projectHome.projectLinkPath, "utf8"));
-      expect(rawFile).toContain('\n  "ref": "abcdefghijklmnopqrst",\n');
-      const raw = JSON.parse(rawFile) as typeof state;
-      expect(raw).toEqual(state);
+      expect(rawFile).toContain('"project":');
+      expect(rawFile).toContain('"active_branch":');
+      const raw = JSON.parse(rawFile) as typeof SAMPLE_STATE;
+      expect(raw).toEqual(SAMPLE_STATE);
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );
@@ -121,12 +136,7 @@ describe("projectLinkStateLayer", () => {
         return yield* ProjectLinkState;
       }).pipe(Effect.provide(layer));
 
-      yield* linkState.save({
-        ref: "abcdefghijklmnopqrst",
-        name: "Alpha Project",
-        fetchedAt: "2026-03-19T12:34:56.000Z",
-        versions: {},
-      });
+      yield* linkState.save(SAMPLE_STATE);
       yield* linkState.clear;
 
       const loaded = yield* linkState.load;
@@ -168,6 +178,123 @@ describe("projectLinkStateLayer", () => {
           expect(error.value).toMatchObject({
             _tag: "InvalidProjectLinkStateError",
             suggestion: "Fix or remove project.json, then retry the command.",
+          });
+        }
+      }
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("getActiveBranch returns none when not linked", () => {
+    const tempDir = makeTempDir();
+    const projectRoot = join(tempDir, "repo");
+    const supabaseHome = join(tempDir, "supabase-home");
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => mkdir(join(projectRoot, ".git"), { recursive: true }));
+
+      const layer = buildLayer({ cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
+      const linkState = yield* Effect.gen(function* () {
+        return yield* ProjectLinkState;
+      }).pipe(Effect.provide(layer));
+
+      const activeBranch = yield* linkState.getActiveBranch;
+      expect(Option.isNone(activeBranch)).toBe(true);
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("getActiveBranch returns the persisted active_branch", () => {
+    const tempDir = makeTempDir();
+    const projectRoot = join(tempDir, "repo");
+    const supabaseHome = join(tempDir, "supabase-home");
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => mkdir(join(projectRoot, ".git"), { recursive: true }));
+
+      const layer = buildLayer({ cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
+      const linkState = yield* Effect.gen(function* () {
+        return yield* ProjectLinkState;
+      }).pipe(Effect.provide(layer));
+
+      yield* linkState.save(SAMPLE_STATE);
+
+      const activeBranch = yield* linkState.getActiveBranch;
+      expect(Option.isSome(activeBranch)).toBe(true);
+      if (Option.isSome(activeBranch)) {
+        expect(activeBranch.value).toEqual({
+          ref: "abcdefghijklmnopqrst",
+          name: "main",
+          is_default: true,
+        });
+      }
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live(
+    "setActiveBranch updates only active_branch, leaving project and versions unchanged",
+    () => {
+      const tempDir = makeTempDir();
+      const projectRoot = join(tempDir, "repo");
+      const supabaseHome = join(tempDir, "supabase-home");
+
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => mkdir(join(projectRoot, ".git"), { recursive: true }));
+
+        const layer = buildLayer({ cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
+        const linkState = yield* Effect.gen(function* () {
+          return yield* ProjectLinkState;
+        }).pipe(Effect.provide(layer));
+
+        yield* linkState.save(SAMPLE_STATE);
+
+        const newBranch = { ref: "branchrefabcdefghijk", name: "feature-x", is_default: false };
+        yield* linkState.setActiveBranch(newBranch);
+
+        const loaded = yield* linkState.load;
+        expect(Option.isSome(loaded)).toBe(true);
+        if (Option.isSome(loaded)) {
+          expect(loaded.value.active_branch).toEqual(newBranch);
+          expect(loaded.value.project).toEqual(SAMPLE_STATE.project);
+          expect(loaded.value.versions).toEqual(SAMPLE_STATE.versions);
+          expect(loaded.value.fetchedAt).toBe(SAMPLE_STATE.fetchedAt);
+        }
+      }).pipe(
+        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+      );
+    },
+  );
+
+  it.live("setActiveBranch fails with ProjectNotLinkedError when project is not linked", () => {
+    const tempDir = makeTempDir();
+    const projectRoot = join(tempDir, "repo");
+    const supabaseHome = join(tempDir, "supabase-home");
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => mkdir(join(projectRoot, ".git"), { recursive: true }));
+
+      const layer = buildLayer({ cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
+      const linkState = yield* Effect.gen(function* () {
+        return yield* ProjectLinkState;
+      }).pipe(Effect.provide(layer));
+
+      const exit = yield* linkState
+        .setActiveBranch({ ref: "branchrefabcdefghijk", name: "feature-x", is_default: false })
+        .pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(ProjectNotLinkedError);
+          expect(error.value).toMatchObject({
+            _tag: "ProjectNotLinkedError",
+            suggestion: "Run `supabase link` to link this checkout to a Supabase project first.",
           });
         }
       }
