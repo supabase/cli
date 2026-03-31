@@ -2,6 +2,10 @@
 
 Bun monorepo with workspaces under `apps/` and `packages/`.
 
+## Package Manager
+
+`pnpm` is the package manager. Use `pnpm <script>` to run scripts from any `package.json`. Do not use `bun run` or `npm run`.
+
 ## Workspace Layout
 
 - `apps/cli` — main `@supabase/cli` package
@@ -46,7 +50,7 @@ The complete source code for the `effect` library (V4) is in `.repos/effect/`. S
 If `.repos/effect/` is missing in a fresh clone, run this from the repo root first:
 
 ```sh
-bun run repos:install
+pnpm repos:install
 ```
 
 Key references:
@@ -59,18 +63,53 @@ Key references:
 
 Run quality checks from the workspace directory you changed. Do not consider a task complete until all relevant scripts pass.
 Do not waive or defer failing checks in a changed workspace as "pre-existing". If a required check fails, fix it before closing the task. Only treat a failure as an external blocker when it cannot be resolved within the workspace, and in that case call it out explicitly.
-If you run a workspace check command such as `bun run --parallel "*:check"`, you own all failing checks in that workspace for the duration of the task, even if the failing files look unrelated. Do not leave the workspace with unresolved failing checks after running the command.
+If you run a workspace check command such as `pnpm types:check && pnpm lint:check && pnpm fmt:check`, you own all failing checks in that workspace for the duration of the task, even if the failing files look unrelated. Do not leave the workspace with unresolved failing checks after running the command.
 Do not use TypeScript `as` casts to silence type errors in production code. If a type does not line up, fix the typing or restructure the code until it type-checks cleanly.
 
 For the standard Bun/TypeScript workspaces:
 
 ```sh
-bun run --parallel "*:check"
-bun run --parallel "*:fix"
-bun run test
+pnpm types:check && pnpm lint:check && pnpm fmt:check && pnpm knip:check
+pnpm lint:fix && pnpm fmt:fix
+pnpm test
 ```
 
 If a workspace exposes a different script set, use that workspace's `package.json` as the source of truth.
+
+## Nx
+
+This repo uses Nx for task orchestration. Prefer Nx commands over running scripts directly when working across projects or when you need to understand project structure.
+
+### Exploring the workspace
+
+```sh
+# List all projects
+nx show projects
+
+# Show targets and metadata for a specific project
+nx show project <name> --json
+
+# Visualize the project dependency graph
+nx graph
+```
+
+### Running tasks
+
+```sh
+# Run a single target
+nx run <project>:<target>
+
+# Run a target across all projects
+nx run-many -t <target>
+
+# Run a target only on projects affected by current changes
+nx affected -t <target>
+
+# Run multiple targets (e.g. build + test)
+nx run-many -t build test
+```
+
+Use `nx show project <name> --json` to discover available targets before running them — do not guess target names.
 
 ## Refactoring Policy
 
