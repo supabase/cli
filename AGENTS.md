@@ -69,7 +69,7 @@ Do not use TypeScript `as` casts to silence type errors in production code. If a
 For the standard Bun/TypeScript workspaces:
 
 ```sh
-pnpm types:check && pnpm lint:check && pnpm fmt:check && pnpm knip:check
+pnpm check:all
 pnpm lint:fix && pnpm fmt:fix
 pnpm test
 ```
