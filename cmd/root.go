@@ -59,6 +59,7 @@ var experimental = []*cobra.Command{
 	genKeysCmd,
 	postgresCmd,
 	storageCmd,
+	dbDeclarativeCmd,
 }
 
 func IsExperimental(cmd *cobra.Command) bool {
@@ -243,6 +244,7 @@ func init() {
 	flags.VarP(&utils.OutputFormat, "output", "o", "output format of status variables")
 	flags.Var(&utils.DNSResolver, "dns-resolver", "lookup domain names using the specified resolver")
 	flags.BoolVar(&createTicket, "create-ticket", false, "create a support ticket for any CLI error")
+	flags.VarP(&utils.AgentMode, "agent", "", "Override agent detection: yes, no, or auto (default auto)")
 	cobra.CheckErr(viper.BindPFlags(flags))
 
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
