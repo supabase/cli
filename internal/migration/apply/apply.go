@@ -14,7 +14,9 @@ import (
 )
 
 func MigrateAndSeed(ctx context.Context, version string, conn *pgx.Conn, fsys afero.Fs) error {
-	if viper.GetBool("EXPERIMENTAL") && len(version) == 0 {
+	// If pg-delta is enabled, the source of truth for migrations is always the migrations only or the declarative files.
+	// Declarative files must be used with `db schema declarative sync` commands always.
+	if viper.GetBool("EXPERIMENTAL") && len(version) == 0 && !utils.IsPgDeltaEnabled() {
 		if err := applySchemaFiles(ctx, conn, afero.NewIOFS(fsys)); err != nil {
 			return err
 		}

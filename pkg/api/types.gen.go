@@ -598,13 +598,13 @@ const (
 
 // Defines values for ListProjectAddonsResponseSelectedAddonsType.
 const (
-	AuthMfaPhone    ListProjectAddonsResponseSelectedAddonsType = "auth_mfa_phone"
-	AuthMfaWebAuthn ListProjectAddonsResponseSelectedAddonsType = "auth_mfa_web_authn"
-	ComputeInstance ListProjectAddonsResponseSelectedAddonsType = "compute_instance"
-	CustomDomain    ListProjectAddonsResponseSelectedAddonsType = "custom_domain"
-	Ipv4            ListProjectAddonsResponseSelectedAddonsType = "ipv4"
-	LogDrain        ListProjectAddonsResponseSelectedAddonsType = "log_drain"
-	Pitr            ListProjectAddonsResponseSelectedAddonsType = "pitr"
+	ListProjectAddonsResponseSelectedAddonsTypeAuthMfaPhone    ListProjectAddonsResponseSelectedAddonsType = "auth_mfa_phone"
+	ListProjectAddonsResponseSelectedAddonsTypeAuthMfaWebAuthn ListProjectAddonsResponseSelectedAddonsType = "auth_mfa_web_authn"
+	ListProjectAddonsResponseSelectedAddonsTypeComputeInstance ListProjectAddonsResponseSelectedAddonsType = "compute_instance"
+	ListProjectAddonsResponseSelectedAddonsTypeCustomDomain    ListProjectAddonsResponseSelectedAddonsType = "custom_domain"
+	ListProjectAddonsResponseSelectedAddonsTypeIpv4            ListProjectAddonsResponseSelectedAddonsType = "ipv4"
+	ListProjectAddonsResponseSelectedAddonsTypeLogDrain        ListProjectAddonsResponseSelectedAddonsType = "log_drain"
+	ListProjectAddonsResponseSelectedAddonsTypePitr            ListProjectAddonsResponseSelectedAddonsType = "pitr"
 )
 
 // Defines values for ListProjectAddonsResponseSelectedAddonsVariantId0.
@@ -1370,6 +1370,80 @@ const (
 	SmartGroup V1CreateProjectBodyRegionSelection1Type = "smartGroup"
 )
 
+// Defines values for V1ListEntitlementsResponseEntitlementsFeatureKey.
+const (
+	V1ListEntitlementsResponseEntitlementsFeatureKeyAssistantAdvanceModel                 V1ListEntitlementsResponseEntitlementsFeatureKey = "assistant.advance_model"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthAdvancedAuthSettings              V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.advanced_auth_settings"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthCustomJwtTemplate                 V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.custom_jwt_template"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthHooks                             V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.hooks"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthLeakedPasswordProtection          V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.leaked_password_protection"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthMfaEnhancedSecurity               V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.mfa_enhanced_security"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthMfaPhone                          V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.mfa_phone"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthMfaWebAuthn                       V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.mfa_web_authn"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthPasswordHibp                      V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.password_hibp"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthPerformanceSettings               V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.performance_settings"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthPlatformSso                       V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.platform.sso"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthSaml2                             V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.saml_2"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthUserSessions                      V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.user_sessions"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyBackupRestoreToNewProject             V1ListEntitlementsResponseEntitlementsFeatureKey = "backup.restore_to_new_project"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyBackupRetentionDays                   V1ListEntitlementsResponseEntitlementsFeatureKey = "backup.retention_days"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyBranchingLimit                        V1ListEntitlementsResponseEntitlementsFeatureKey = "branching_limit"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyBranchingPersistent                   V1ListEntitlementsResponseEntitlementsFeatureKey = "branching_persistent"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyCustomDomain                          V1ListEntitlementsResponseEntitlementsFeatureKey = "custom_domain"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyDedicatedPooler                       V1ListEntitlementsResponseEntitlementsFeatureKey = "dedicated_pooler"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyFunctionMaxCount                      V1ListEntitlementsResponseEntitlementsFeatureKey = "function.max_count"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyFunctionSizeLimitMb                   V1ListEntitlementsResponseEntitlementsFeatureKey = "function.size_limit_mb"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyInstancesComputeUpdateAvailableSizes  V1ListEntitlementsResponseEntitlementsFeatureKey = "instances.compute_update_available_sizes"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyInstancesDiskModifications            V1ListEntitlementsResponseEntitlementsFeatureKey = "instances.disk_modifications"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyInstancesHighAvailability             V1ListEntitlementsResponseEntitlementsFeatureKey = "instances.high_availability"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyInstancesOrioledb                     V1ListEntitlementsResponseEntitlementsFeatureKey = "instances.orioledb"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyInstancesReadReplicas                 V1ListEntitlementsResponseEntitlementsFeatureKey = "instances.read_replicas"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyIntegrationsGithubConnections         V1ListEntitlementsResponseEntitlementsFeatureKey = "integrations.github_connections"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyIpv4                                  V1ListEntitlementsResponseEntitlementsFeatureKey = "ipv4"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyLogDrains                             V1ListEntitlementsResponseEntitlementsFeatureKey = "log_drains"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyLogRetentionDays                      V1ListEntitlementsResponseEntitlementsFeatureKey = "log.retention_days"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyObservabilityDashboardAdvancedMetrics V1ListEntitlementsResponseEntitlementsFeatureKey = "observability.dashboard_advanced_metrics"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyPitrAvailableVariants                 V1ListEntitlementsResponseEntitlementsFeatureKey = "pitr.available_variants"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyProjectCloning                        V1ListEntitlementsResponseEntitlementsFeatureKey = "project_cloning"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyProjectPausing                        V1ListEntitlementsResponseEntitlementsFeatureKey = "project_pausing"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyProjectRestoreAfterExpiry             V1ListEntitlementsResponseEntitlementsFeatureKey = "project_restore_after_expiry"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyProjectScopedRoles                    V1ListEntitlementsResponseEntitlementsFeatureKey = "project_scoped_roles"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxBytesPerSecond             V1ListEntitlementsResponseEntitlementsFeatureKey = "realtime.max_bytes_per_second"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxChannelsPerClient          V1ListEntitlementsResponseEntitlementsFeatureKey = "realtime.max_channels_per_client"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxConcurrentUsers            V1ListEntitlementsResponseEntitlementsFeatureKey = "realtime.max_concurrent_users"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxEventsPerSecond            V1ListEntitlementsResponseEntitlementsFeatureKey = "realtime.max_events_per_second"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxJoinsPerSecond             V1ListEntitlementsResponseEntitlementsFeatureKey = "realtime.max_joins_per_second"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxPayloadSizeInKb            V1ListEntitlementsResponseEntitlementsFeatureKey = "realtime.max_payload_size_in_kb"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyRealtimeMaxPresenceEventsPerSecond    V1ListEntitlementsResponseEntitlementsFeatureKey = "realtime.max_presence_events_per_second"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyReplicationEtl                        V1ListEntitlementsResponseEntitlementsFeatureKey = "replication.etl"
+	V1ListEntitlementsResponseEntitlementsFeatureKeySecurityAuditLogsDays                 V1ListEntitlementsResponseEntitlementsFeatureKey = "security.audit_logs_days"
+	V1ListEntitlementsResponseEntitlementsFeatureKeySecurityEnforceMfa                    V1ListEntitlementsResponseEntitlementsFeatureKey = "security.enforce_mfa"
+	V1ListEntitlementsResponseEntitlementsFeatureKeySecurityMemberRoles                   V1ListEntitlementsResponseEntitlementsFeatureKey = "security.member_roles"
+	V1ListEntitlementsResponseEntitlementsFeatureKeySecurityPrivateLink                   V1ListEntitlementsResponseEntitlementsFeatureKey = "security.private_link"
+	V1ListEntitlementsResponseEntitlementsFeatureKeySecurityQuestionnaire                 V1ListEntitlementsResponseEntitlementsFeatureKey = "security.questionnaire"
+	V1ListEntitlementsResponseEntitlementsFeatureKeySecuritySoc2Report                    V1ListEntitlementsResponseEntitlementsFeatureKey = "security.soc2_report"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyStorageIcebergCatalog                 V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.iceberg_catalog"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyStorageImageTransformations           V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.image_transformations"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyStorageMaxFileSize                    V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.max_file_size"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyStorageMaxFileSizeConfigurable        V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.max_file_size.configurable"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyStorageVectorBuckets                  V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.vector_buckets"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyVanitySubdomain                       V1ListEntitlementsResponseEntitlementsFeatureKey = "vanity_subdomain"
+)
+
+// Defines values for V1ListEntitlementsResponseEntitlementsFeatureType.
+const (
+	V1ListEntitlementsResponseEntitlementsFeatureTypeBoolean V1ListEntitlementsResponseEntitlementsFeatureType = "boolean"
+	V1ListEntitlementsResponseEntitlementsFeatureTypeNumeric V1ListEntitlementsResponseEntitlementsFeatureType = "numeric"
+	V1ListEntitlementsResponseEntitlementsFeatureTypeSet     V1ListEntitlementsResponseEntitlementsFeatureType = "set"
+)
+
+// Defines values for V1ListEntitlementsResponseEntitlementsType.
+const (
+	V1ListEntitlementsResponseEntitlementsTypeBoolean V1ListEntitlementsResponseEntitlementsType = "boolean"
+	V1ListEntitlementsResponseEntitlementsTypeNumeric V1ListEntitlementsResponseEntitlementsType = "numeric"
+	V1ListEntitlementsResponseEntitlementsTypeSet     V1ListEntitlementsResponseEntitlementsType = "set"
+)
+
 // Defines values for V1OrganizationSlugResponseAllowedReleaseChannels.
 const (
 	V1OrganizationSlugResponseAllowedReleaseChannelsAlpha     V1OrganizationSlugResponseAllowedReleaseChannels = "alpha"
@@ -1997,10 +2071,10 @@ type AuthConfigResponse struct {
 	SecurityRefreshTokenReuseInterval                     nullable.Nullable[int]                                          `json:"security_refresh_token_reuse_interval"`
 	SecuritySbForwardedForEnabled                         nullable.Nullable[bool]                                         `json:"security_sb_forwarded_for_enabled"`
 	SecurityUpdatePasswordRequireReauthentication         nullable.Nullable[bool]                                         `json:"security_update_password_require_reauthentication"`
-	SessionsInactivityTimeout                             nullable.Nullable[int]                                          `json:"sessions_inactivity_timeout"`
+	SessionsInactivityTimeout                             nullable.Nullable[float32]                                      `json:"sessions_inactivity_timeout"`
 	SessionsSinglePerUser                                 nullable.Nullable[bool]                                         `json:"sessions_single_per_user"`
 	SessionsTags                                          nullable.Nullable[string]                                       `json:"sessions_tags"`
-	SessionsTimebox                                       nullable.Nullable[int]                                          `json:"sessions_timebox"`
+	SessionsTimebox                                       nullable.Nullable[float32]                                      `json:"sessions_timebox"`
 	SiteUrl                                               nullable.Nullable[string]                                       `json:"site_url"`
 	SmsAutoconfirm                                        nullable.Nullable[bool]                                         `json:"sms_autoconfirm"`
 	SmsMaxFrequency                                       nullable.Nullable[int]                                          `json:"sms_max_frequency"`
@@ -3913,10 +3987,10 @@ type UpdateAuthConfigBody struct {
 	SecurityRefreshTokenReuseInterval                     nullable.Nullable[int]                                            `json:"security_refresh_token_reuse_interval,omitempty"`
 	SecuritySbForwardedForEnabled                         nullable.Nullable[bool]                                           `json:"security_sb_forwarded_for_enabled,omitempty"`
 	SecurityUpdatePasswordRequireReauthentication         nullable.Nullable[bool]                                           `json:"security_update_password_require_reauthentication,omitempty"`
-	SessionsInactivityTimeout                             nullable.Nullable[int]                                            `json:"sessions_inactivity_timeout,omitempty"`
+	SessionsInactivityTimeout                             nullable.Nullable[float32]                                        `json:"sessions_inactivity_timeout,omitempty"`
 	SessionsSinglePerUser                                 nullable.Nullable[bool]                                           `json:"sessions_single_per_user,omitempty"`
 	SessionsTags                                          nullable.Nullable[string]                                         `json:"sessions_tags,omitempty"`
-	SessionsTimebox                                       nullable.Nullable[int]                                            `json:"sessions_timebox,omitempty"`
+	SessionsTimebox                                       nullable.Nullable[float32]                                        `json:"sessions_timebox,omitempty"`
 	SiteUrl                                               nullable.Nullable[string]                                         `json:"site_url,omitempty"`
 	SmsAutoconfirm                                        nullable.Nullable[bool]                                           `json:"sms_autoconfirm,omitempty"`
 	SmsMaxFrequency                                       nullable.Nullable[int]                                            `json:"sms_max_frequency,omitempty"`
@@ -4454,6 +4528,52 @@ type V1GetUsageApiRequestsCountResponse_Error struct {
 	union json.RawMessage
 }
 
+// V1ListEntitlementsResponse defines model for V1ListEntitlementsResponse.
+type V1ListEntitlementsResponse struct {
+	Entitlements []struct {
+		Config  V1ListEntitlementsResponse_Entitlements_Config `json:"config"`
+		Feature struct {
+			Key  V1ListEntitlementsResponseEntitlementsFeatureKey  `json:"key"`
+			Type V1ListEntitlementsResponseEntitlementsFeatureType `json:"type"`
+		} `json:"feature"`
+		HasAccess bool                                       `json:"hasAccess"`
+		Type      V1ListEntitlementsResponseEntitlementsType `json:"type"`
+	} `json:"entitlements"`
+}
+
+// V1ListEntitlementsResponseEntitlementsConfig0 defines model for .
+type V1ListEntitlementsResponseEntitlementsConfig0 struct {
+	Enabled bool `json:"enabled"`
+}
+
+// V1ListEntitlementsResponseEntitlementsConfig1 defines model for .
+type V1ListEntitlementsResponseEntitlementsConfig1 struct {
+	Enabled   bool    `json:"enabled"`
+	Unit      string  `json:"unit"`
+	Unlimited bool    `json:"unlimited"`
+	Value     float32 `json:"value"`
+}
+
+// V1ListEntitlementsResponseEntitlementsConfig2 defines model for .
+type V1ListEntitlementsResponseEntitlementsConfig2 struct {
+	Enabled bool     `json:"enabled"`
+	Set     []string `json:"set"`
+}
+
+// V1ListEntitlementsResponse_Entitlements_Config defines model for V1ListEntitlementsResponse.Entitlements.Config.
+type V1ListEntitlementsResponse_Entitlements_Config struct {
+	union json.RawMessage
+}
+
+// V1ListEntitlementsResponseEntitlementsFeatureKey defines model for V1ListEntitlementsResponse.Entitlements.Feature.Key.
+type V1ListEntitlementsResponseEntitlementsFeatureKey string
+
+// V1ListEntitlementsResponseEntitlementsFeatureType defines model for V1ListEntitlementsResponse.Entitlements.Feature.Type.
+type V1ListEntitlementsResponseEntitlementsFeatureType string
+
+// V1ListEntitlementsResponseEntitlementsType defines model for V1ListEntitlementsResponse.Entitlements.Type.
+type V1ListEntitlementsResponseEntitlementsType string
+
 // V1ListMigrationsResponse defines model for V1ListMigrationsResponse.
 type V1ListMigrationsResponse = []struct {
 	Name    *string `json:"name,omitempty"`
@@ -4517,6 +4637,13 @@ type V1PostgrestConfigResponse struct {
 	DbPool   nullable.Nullable[int] `json:"db_pool"`
 	DbSchema string                 `json:"db_schema"`
 	MaxRows  int                    `json:"max_rows"`
+}
+
+// V1ProfileResponse defines model for V1ProfileResponse.
+type V1ProfileResponse struct {
+	GotrueId     string `json:"gotrue_id"`
+	PrimaryEmail string `json:"primary_email"`
+	Username     string `json:"username"`
 }
 
 // V1ProjectAdvisorsResponse defines model for V1ProjectAdvisorsResponse.
@@ -4655,8 +4782,9 @@ type V1RestorePointPostBody struct {
 
 // V1RestorePointResponse defines model for V1RestorePointResponse.
 type V1RestorePointResponse struct {
-	Name   string                       `json:"name"`
-	Status V1RestorePointResponseStatus `json:"status"`
+	CompletedOn nullable.Nullable[time.Time] `json:"completed_on"`
+	Name        string                       `json:"name"`
+	Status      V1RestorePointResponseStatus `json:"status"`
 }
 
 // V1RestorePointResponseStatus defines model for V1RestorePointResponse.Status.
@@ -4994,6 +5122,12 @@ type V1ApplyAMigrationParams struct {
 type V1UpsertAMigrationParams struct {
 	// IdempotencyKey A unique key to ensure the same migration is tracked only once.
 	IdempotencyKey *string `json:"Idempotency-Key,omitempty"`
+}
+
+// V1GetDatabaseOpenapiParams defines parameters for V1GetDatabaseOpenapi.
+type V1GetDatabaseOpenapiParams struct {
+	// Schema The database schema to generate the OpenAPI spec for
+	Schema *string `form:"schema,omitempty" json:"schema,omitempty"`
 }
 
 // V1CreateAFunctionParams defines parameters for V1CreateAFunction.
@@ -6580,6 +6714,94 @@ func (t V1GetUsageApiRequestsCountResponse_Error) MarshalJSON() ([]byte, error) 
 }
 
 func (t *V1GetUsageApiRequestsCountResponse_Error) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsV1ListEntitlementsResponseEntitlementsConfig0 returns the union data inside the V1ListEntitlementsResponse_Entitlements_Config as a V1ListEntitlementsResponseEntitlementsConfig0
+func (t V1ListEntitlementsResponse_Entitlements_Config) AsV1ListEntitlementsResponseEntitlementsConfig0() (V1ListEntitlementsResponseEntitlementsConfig0, error) {
+	var body V1ListEntitlementsResponseEntitlementsConfig0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromV1ListEntitlementsResponseEntitlementsConfig0 overwrites any union data inside the V1ListEntitlementsResponse_Entitlements_Config as the provided V1ListEntitlementsResponseEntitlementsConfig0
+func (t *V1ListEntitlementsResponse_Entitlements_Config) FromV1ListEntitlementsResponseEntitlementsConfig0(v V1ListEntitlementsResponseEntitlementsConfig0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeV1ListEntitlementsResponseEntitlementsConfig0 performs a merge with any union data inside the V1ListEntitlementsResponse_Entitlements_Config, using the provided V1ListEntitlementsResponseEntitlementsConfig0
+func (t *V1ListEntitlementsResponse_Entitlements_Config) MergeV1ListEntitlementsResponseEntitlementsConfig0(v V1ListEntitlementsResponseEntitlementsConfig0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsV1ListEntitlementsResponseEntitlementsConfig1 returns the union data inside the V1ListEntitlementsResponse_Entitlements_Config as a V1ListEntitlementsResponseEntitlementsConfig1
+func (t V1ListEntitlementsResponse_Entitlements_Config) AsV1ListEntitlementsResponseEntitlementsConfig1() (V1ListEntitlementsResponseEntitlementsConfig1, error) {
+	var body V1ListEntitlementsResponseEntitlementsConfig1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromV1ListEntitlementsResponseEntitlementsConfig1 overwrites any union data inside the V1ListEntitlementsResponse_Entitlements_Config as the provided V1ListEntitlementsResponseEntitlementsConfig1
+func (t *V1ListEntitlementsResponse_Entitlements_Config) FromV1ListEntitlementsResponseEntitlementsConfig1(v V1ListEntitlementsResponseEntitlementsConfig1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeV1ListEntitlementsResponseEntitlementsConfig1 performs a merge with any union data inside the V1ListEntitlementsResponse_Entitlements_Config, using the provided V1ListEntitlementsResponseEntitlementsConfig1
+func (t *V1ListEntitlementsResponse_Entitlements_Config) MergeV1ListEntitlementsResponseEntitlementsConfig1(v V1ListEntitlementsResponseEntitlementsConfig1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsV1ListEntitlementsResponseEntitlementsConfig2 returns the union data inside the V1ListEntitlementsResponse_Entitlements_Config as a V1ListEntitlementsResponseEntitlementsConfig2
+func (t V1ListEntitlementsResponse_Entitlements_Config) AsV1ListEntitlementsResponseEntitlementsConfig2() (V1ListEntitlementsResponseEntitlementsConfig2, error) {
+	var body V1ListEntitlementsResponseEntitlementsConfig2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromV1ListEntitlementsResponseEntitlementsConfig2 overwrites any union data inside the V1ListEntitlementsResponse_Entitlements_Config as the provided V1ListEntitlementsResponseEntitlementsConfig2
+func (t *V1ListEntitlementsResponse_Entitlements_Config) FromV1ListEntitlementsResponseEntitlementsConfig2(v V1ListEntitlementsResponseEntitlementsConfig2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeV1ListEntitlementsResponseEntitlementsConfig2 performs a merge with any union data inside the V1ListEntitlementsResponse_Entitlements_Config, using the provided V1ListEntitlementsResponseEntitlementsConfig2
+func (t *V1ListEntitlementsResponse_Entitlements_Config) MergeV1ListEntitlementsResponseEntitlementsConfig2(v V1ListEntitlementsResponseEntitlementsConfig2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t V1ListEntitlementsResponse_Entitlements_Config) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *V1ListEntitlementsResponse_Entitlements_Config) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }

@@ -167,21 +167,33 @@ func ConnectByUrl(ctx context.Context, url string, options ...func(*pgx.ConnConf
 		cc.Fallbacks = fallbacks
 	})
 	conn, err := pgxv5.Connect(ctx, url, options...)
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		if strings.Contains(pgErr.Message, "connect: connection refused") {
-			CmdSuggestion = fmt.Sprintf("Make sure your local IP is allowed in Network Restrictions and Network Bans.\n%s/project/_/database/settings", CurrentProfile.DashboardURL)
-		} else if strings.Contains(pgErr.Message, "SSL connection is required") && viper.GetBool("DEBUG") {
-			CmdSuggestion = "SSL connection is not supported with --debug flag"
-		} else if strings.Contains(pgErr.Message, "SCRAM exchange: Wrong password") || strings.Contains(pgErr.Message, "failed SASL auth") {
-			// password authentication failed for user / invalid SCRAM server-final-message received from server
-			CmdSuggestion = "Try setting the SUPABASE_DB_PASSWORD environment variable"
-		} else if strings.Contains(pgErr.Message, "connect: no route to host") || strings.Contains(pgErr.Message, "Tenant or user not found") {
-			// Assumes IPv6 check has been performed before this
-			CmdSuggestion = "Make sure your project exists on profile: " + CurrentProfile.Name
-		}
-	}
+	SetConnectSuggestion(err)
 	return conn, err
+}
+
+const SuggestEnvVar = "Connect to your database by setting the env var correctly: SUPABASE_DB_PASSWORD"
+
+// Sets CmdSuggestion to an actionable hint based on the given pg connection error.
+func SetConnectSuggestion(err error) {
+	if err == nil {
+		return
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "connect: connection refused") ||
+		strings.Contains(msg, "Address not in tenant allow_list") {
+		CmdSuggestion = fmt.Sprintf(
+			"Make sure your local IP is allowed in Network Restrictions and Network Bans.\n%s/project/_/database/settings",
+			CurrentProfile.DashboardURL,
+		)
+	} else if strings.Contains(msg, "SSL connection is required") && viper.GetBool("DEBUG") {
+		CmdSuggestion = "SSL connection is not supported with --debug flag"
+	} else if strings.Contains(msg, "SCRAM exchange: Wrong password") || strings.Contains(msg, "failed SASL auth") {
+		// password authentication failed for user / invalid SCRAM server-final-message received from server
+		CmdSuggestion = SuggestEnvVar
+	} else if strings.Contains(msg, "connect: no route to host") || strings.Contains(msg, "Tenant or user not found") {
+		// Assumes IPv6 check has been performed before this
+		CmdSuggestion = "Make sure your project exists on profile: " + CurrentProfile.Name
+	}
 }
 
 const (
