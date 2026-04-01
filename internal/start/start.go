@@ -39,6 +39,7 @@ import (
 	"github.com/supabase/cli/internal/seed/buckets"
 	"github.com/supabase/cli/internal/services"
 	"github.com/supabase/cli/internal/status"
+	phtelemetry "github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/config"
@@ -1326,7 +1327,15 @@ EOF
 			return err
 		}
 	}
-	return start.WaitForHealthyService(ctx, serviceTimeout, started...)
+	if err := start.WaitForHealthyService(ctx, serviceTimeout, started...); err != nil {
+		return err
+	}
+	if service := phtelemetry.FromContext(ctx); service != nil {
+		if err := service.Capture(ctx, "cli_stack_started", nil, nil); err != nil {
+			fmt.Fprintln(utils.GetDebugLogger(), err)
+		}
+	}
+	return nil
 }
 
 func isContainerExcluded(imageName string, excluded map[string]bool) bool {

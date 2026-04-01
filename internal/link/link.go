@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	phtelemetry "github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/tenant"
 	"github.com/supabase/cli/pkg/api"
@@ -22,7 +23,8 @@ import (
 
 func Run(ctx context.Context, projectRef string, skipPooler bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// 1. Link postgres version
-	if err := checkRemoteProjectStatus(ctx, projectRef, fsys); err != nil {
+	project, err := checkRemoteProjectStatus(ctx, projectRef, fsys)
+	if err != nil {
 		return err
 	}
 	// 2. Check service config
@@ -32,7 +34,38 @@ func Run(ctx context.Context, projectRef string, skipPooler bool, fsys afero.Fs,
 	}
 	LinkServices(ctx, projectRef, keys.ServiceRole, skipPooler, fsys)
 	// 3. Save project ref
-	return utils.WriteFile(utils.ProjectRefPath, []byte(projectRef), fsys)
+	if err := utils.WriteFile(utils.ProjectRefPath, []byte(projectRef), fsys); err != nil {
+		return err
+	}
+	if project != nil {
+		if err := phtelemetry.SaveLinkedProject(*project, fsys); err != nil {
+			fmt.Fprintln(utils.GetDebugLogger(), err)
+		}
+		if service := phtelemetry.FromContext(ctx); service != nil {
+			if project.OrganizationId != "" {
+				if err := service.GroupIdentify("organization", project.OrganizationId, map[string]any{
+					"organization_slug": project.OrganizationSlug,
+				}); err != nil {
+					fmt.Fprintln(utils.GetDebugLogger(), err)
+				}
+			}
+			if project.Ref != "" {
+				if err := service.GroupIdentify("project", project.Ref, map[string]any{
+					"name":              project.Name,
+					"organization_slug": project.OrganizationSlug,
+				}); err != nil {
+					fmt.Fprintln(utils.GetDebugLogger(), err)
+				}
+			}
+			if err := service.Capture(ctx, "cli_project_linked", nil, map[string]string{
+				"organization": project.OrganizationId,
+				"project":      project.Ref,
+			}); err != nil {
+				fmt.Fprintln(utils.GetDebugLogger(), err)
+			}
+		}
+	}
+	return nil
 }
 
 func LinkServices(ctx context.Context, projectRef, serviceKey string, skipPooler bool, fsys afero.Fs) {
@@ -204,25 +237,25 @@ func updatePoolerConfig(config api.SupavisorConfigResponse) {
 
 var errProjectPaused = errors.New("project is paused")
 
-func checkRemoteProjectStatus(ctx context.Context, projectRef string, fsys afero.Fs) error {
+func checkRemoteProjectStatus(ctx context.Context, projectRef string, fsys afero.Fs) (*api.V1ProjectWithDatabaseResponse, error) {
 	resp, err := utils.GetSupabase().V1GetProjectWithResponse(ctx, projectRef)
 	if err != nil {
-		return errors.Errorf("failed to retrieve remote project status: %w", err)
+		return nil, errors.Errorf("failed to retrieve remote project status: %w", err)
 	}
 	switch resp.StatusCode() {
 	case http.StatusNotFound:
 		// Ignore not found error to support linking branch projects
-		return nil
+		return nil, nil
 	case http.StatusOK:
 		// resp.JSON200 is not nil, proceed
 	default:
-		return errors.New("Unexpected error retrieving remote project status: " + string(resp.Body))
+		return nil, errors.New("Unexpected error retrieving remote project status: " + string(resp.Body))
 	}
 
 	switch resp.JSON200.Status {
 	case api.V1ProjectWithDatabaseResponseStatusINACTIVE:
 		utils.CmdSuggestion = fmt.Sprintf("An admin must unpause it from the Supabase dashboard at %s", utils.Aqua(fmt.Sprintf("%s/project/%s", utils.GetSupabaseDashboardURL(), projectRef)))
-		return errors.New(errProjectPaused)
+		return nil, errors.New(errProjectPaused)
 	case api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY:
 		// Project is in the desired state, do nothing
 	default:
@@ -230,7 +263,7 @@ func checkRemoteProjectStatus(ctx context.Context, projectRef string, fsys afero
 	}
 
 	// Update postgres image version to match the remote project
-	return linkPostgresVersion(resp.JSON200.Database.Version, fsys)
+	return resp.JSON200, linkPostgresVersion(resp.JSON200.Database.Version, fsys)
 }
 
 func linkPostgresVersion(version string, fsys afero.Fs) error {
