@@ -629,8 +629,8 @@ func (m *mfa) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 }
 
 func (s sessions) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
-	body.SessionsTimebox = nullable.NewNullableWithValue(int(s.Timebox.Hours()))
-	body.SessionsInactivityTimeout = nullable.NewNullableWithValue(int(s.InactivityTimeout.Hours()))
+	body.SessionsTimebox = nullable.NewNullableWithValue(float32(s.Timebox.Hours()))
+	body.SessionsInactivityTimeout = nullable.NewNullableWithValue(float32(s.InactivityTimeout.Hours()))
 }
 
 func (s *sessions) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
