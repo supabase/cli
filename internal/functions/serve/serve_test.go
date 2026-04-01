@@ -184,6 +184,48 @@ func TestServeFunctions(t *testing.T) {
 	})
 }
 
+func TestResolveRuntimeHost(t *testing.T) {
+	t.Run("uses alias on docker runtime", func(t *testing.T) {
+		originalRuntime := utils.Config.Runtime.Backend
+		originalResolver := resolveContainerIP
+		t.Cleanup(func() {
+			utils.Config.Runtime.Backend = originalRuntime
+			resolveContainerIP = originalResolver
+		})
+		utils.Config.Runtime.Backend = "docker"
+		resolveContainerIP = func(_ context.Context, _, _ string) (string, error) {
+			t.Fatal("resolver should not be called")
+			return "", nil
+		}
+
+		host, err := resolveRuntimeHost(context.Background(), "db", "supabase-db-test")
+		require.NoError(t, err)
+		assert.Equal(t, "db", host)
+	})
+
+	t.Run("resolves container ip on apple runtime", func(t *testing.T) {
+		originalRuntime := utils.Config.Runtime.Backend
+		originalResolver := resolveContainerIP
+		originalNetID := utils.NetId
+		t.Cleanup(func() {
+			utils.Config.Runtime.Backend = originalRuntime
+			resolveContainerIP = originalResolver
+			utils.NetId = originalNetID
+		})
+		utils.Config.Runtime.Backend = "apple-container"
+		utils.NetId = "test-network"
+		resolveContainerIP = func(_ context.Context, containerID, networkName string) (string, error) {
+			assert.Equal(t, "supabase-kong-test", containerID)
+			assert.Equal(t, "test-network", networkName)
+			return "192.168.0.10", nil
+		}
+
+		host, err := resolveRuntimeHost(context.Background(), "kong", "supabase-kong-test")
+		require.NoError(t, err)
+		assert.Equal(t, "192.168.0.10", host)
+	})
+}
+
 func TestEdgeRuntimeWorkingDir(t *testing.T) {
 	t.Run("uses in-container working dir on apple runtime", func(t *testing.T) {
 		originalRuntime := utils.Config.Runtime.Backend

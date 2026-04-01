@@ -70,6 +70,8 @@ const (
 //go:embed templates/main.ts
 var mainFuncEmbed string
 
+var resolveContainerIP = utils.GetContainerIP
+
 func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
 	watcher, err := NewDebounceFileWatcher()
 	if err != nil {
@@ -100,6 +102,13 @@ func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPa
 	}
 }
 
+func resolveRuntimeHost(ctx context.Context, alias, containerID string) (string, error) {
+	if !utils.UsesAppleContainerRuntime() {
+		return alias, nil
+	}
+	return resolveContainerIP(ctx, containerID, utils.NetId)
+}
+
 func restartEdgeRuntime(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	if err := flags.LoadConfig(fsys); err != nil {
@@ -110,7 +119,10 @@ func restartEdgeRuntime(ctx context.Context, envFilePath string, noVerifyJWT *bo
 	}
 	// 2. Remove existing container.
 	_ = utils.RemoveContainer(ctx, utils.EdgeRuntimeId, true, true)
-	dbHost := utils.RuntimeServiceHost(utils.DbAliases[0], utils.DbId)
+	dbHost, err := resolveRuntimeHost(ctx, utils.DbAliases[0], utils.DbId)
+	if err != nil {
+		return err
+	}
 	dbUrl := fmt.Sprintf("postgresql://postgres:postgres@%s:5432/postgres", dbHost)
 	// 3. Serve and log to console
 	fmt.Fprintln(os.Stderr, "Setting up Edge Functions runtime...")
@@ -138,7 +150,10 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 		return err
 	}
 	jwks, _ := utils.Config.Auth.ResolveJWKS(ctx)
-	kongHost := utils.RuntimeServiceHost(utils.KongAliases[0], utils.KongId)
+	kongHost, err := resolveRuntimeHost(ctx, utils.KongAliases[0], utils.KongId)
+	if err != nil {
+		return err
+	}
 	env = append(env,
 		fmt.Sprintf("SUPABASE_URL=http://%s:8000", kongHost),
 		"SUPABASE_ANON_KEY="+utils.Config.Auth.AnonKey.Value,

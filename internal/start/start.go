@@ -760,7 +760,7 @@ EOF
 				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml
 ` + vectorConfigBuf.String() + `
 EOF
-until wget --no-verbose --tries=1 --spider http://` + utils.LogflareId + `:4000/health 2>/dev/null; do sleep 2; done
+until wget --no-verbose --tries=1 --spider http://` + cfg.LogflareHost + `:4000/health 2>/dev/null; do sleep 2; done
 vector --config /etc/vector/vector.yaml
 `},
 				Healthcheck: &container.HealthConfig{

@@ -590,6 +590,33 @@ func TestRenderVectorConfig(t *testing.T) {
 		assert.Contains(t, rendered, "http://test-logflare:4000/api/logs?source_name=gotrue.logs.prod")
 	})
 
+	t.Run("uses resolved logflare host in startup wait loop", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := vectorConfigTemplate.Option("missingkey=error").Execute(&buf, vectorConfig{
+			ApiKey:        "api-key",
+			VectorId:      "test-vector",
+			LogflareHost:  "192.168.0.40",
+			KongId:        "test-kong",
+			GotrueId:      "test-gotrue",
+			RestId:        "test-rest",
+			RealtimeId:    "test-realtime",
+			StorageId:     "test-storage",
+			EdgeRuntimeId: "test-edge",
+			DbId:          "test-db",
+			SourceName:    "apple_logs",
+			SourceType:    vectorSourceFile,
+			SourceInclude: []string{appleVectorLogGlob},
+		})
+		require.NoError(t, err)
+		startupScript := `cat <<'EOF' > /etc/vector/vector.yaml
+` + buf.String() + `
+EOF
+until wget --no-verbose --tries=1 --spider http://192.168.0.40:4000/health 2>/dev/null; do sleep 2; done
+vector --config /etc/vector/vector.yaml
+`
+		assert.Contains(t, startupScript, "http://192.168.0.40:4000/health")
+	})
+
 	t.Run("renders apple file source", func(t *testing.T) {
 		var buf bytes.Buffer
 		err := vectorConfigTemplate.Option("missingkey=error").Execute(&buf, vectorConfig{
