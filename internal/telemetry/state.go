@@ -15,6 +15,8 @@ import (
 
 const SchemaVersion = 1
 
+const sessionRotationThreshold = 30 * time.Minute
+
 type State struct {
 	Enabled           bool      `json:"enabled"`
 	DeviceID          string    `json:"device_id"`
@@ -66,6 +68,9 @@ func SaveState(state State, fsys afero.Fs) error {
 func LoadOrCreateState(fsys afero.Fs, now time.Time) (State, bool, error) {
 	state, err := LoadState(fsys)
 	if err == nil {
+		if now.UTC().Sub(state.SessionLastActive) > sessionRotationThreshold {
+			state.SessionID = uuid.NewString()
+		}
 		state.SessionLastActive = now.UTC()
 		return state, false, SaveState(state, fsys)
 	}

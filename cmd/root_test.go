@@ -6,7 +6,32 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/utils"
 )
+
+func clearAIToolEnv(t *testing.T) {
+	for _, key := range []string{
+		"AI_AGENT",
+		"CURSOR_TRACE_ID",
+		"CURSOR_EXTENSION_HOST_ROLE",
+		"WINDSURF_SESSION_ID",
+		"GEMINI_CLI",
+		"CODEX_SANDBOX",
+		"CODEX_CI",
+		"CODEX_THREAD_ID",
+		"ANTIGRAVITY_AGENT",
+		"AUGMENT_AGENT",
+		"OPENCODE_CLIENT",
+		"CLAUDECODE",
+		"CLAUDE_CODE",
+		"COPILOT_MODEL",
+		"COPILOT_ALLOW_ALL",
+		"COPILOT_GITHUB_TOKEN",
+		"REPL_ID",
+	} {
+		t.Setenv(key, "")
+	}
+}
 
 func TestCommandAnalyticsContext(t *testing.T) {
 	root := &cobra.Command{Use: "supabase"}
@@ -44,4 +69,28 @@ func TestCommandName(t *testing.T) {
 
 	assert.Equal(t, "db push", commandName(child))
 	assert.Equal(t, "supabase", commandName(root))
+}
+
+func TestTelemetryAITool(t *testing.T) {
+	t.Run("returns claude_code for spec env", func(t *testing.T) {
+		clearAIToolEnv(t)
+		t.Setenv("CLAUDE_CODE", "1")
+		utils.AgentMode.Value = "auto"
+		t.Cleanup(func() {
+			utils.AgentMode.Value = "auto"
+		})
+
+		assert.Equal(t, "claude_code", telemetryAITool())
+	})
+
+	t.Run("returns cursor for session env", func(t *testing.T) {
+		clearAIToolEnv(t)
+		t.Setenv("CURSOR_EXTENSION_HOST_ROLE", "agent-exec")
+		utils.AgentMode.Value = "auto"
+		t.Cleanup(func() {
+			utils.AgentMode.Value = "auto"
+		})
+
+		assert.Equal(t, "cursor", telemetryAITool())
+	})
 }

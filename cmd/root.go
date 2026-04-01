@@ -123,11 +123,14 @@ var (
 				fmt.Fprintln(os.Stderr, cmd.Root().Short)
 				fmt.Fprintf(os.Stderr, "Using profile: %s (%s)\n", utils.CurrentProfile.Name, utils.CurrentProfile.ProjectHost)
 			}
+			isTTY := telemetryIsTTY()
+			isCI := telemetryIsCI()
+			aiTool := telemetryAITool()
 			service, err := telemetry.NewService(fsys, telemetry.Options{
 				Now:     time.Now,
-				IsTTY:   telemetryIsTTY(),
-				IsCI:    telemetryIsCI(),
-				AITool:  telemetryAITool(),
+				IsTTY:   isTTY,
+				IsCI:    isCI,
+				AITool:  aiTool,
 				CLIName: utils.Version,
 			})
 			if err != nil {

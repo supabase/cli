@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/supabase/cli/internal/telemetry"
+	"github.com/supabase/cli/internal/utils/agent"
 	"golang.org/x/term"
 )
 
@@ -67,28 +68,5 @@ func telemetryIsTTY() bool {
 }
 
 func telemetryAITool() string {
-	switch {
-	case os.Getenv("CURSOR_TRACE_ID") != "" || os.Getenv("CURSOR_AGENT") != "":
-		return "cursor"
-	case os.Getenv("GEMINI_CLI") != "":
-		return "gemini"
-	case os.Getenv("CODEX_SANDBOX") != "" || os.Getenv("CODEX_CI") != "" || os.Getenv("CODEX_THREAD_ID") != "":
-		return "codex"
-	case os.Getenv("ANTIGRAVITY_AGENT") != "":
-		return "antigravity"
-	case os.Getenv("AUGMENT_AGENT") != "":
-		return "augment"
-	case os.Getenv("OPENCODE_CLIENT") != "":
-		return "opencode"
-	case os.Getenv("CLAUDECODE") != "" || os.Getenv("CLAUDE_CODE") != "":
-		return "claude-code"
-	case os.Getenv("COPILOT_MODEL") != "" || os.Getenv("COPILOT_ALLOW_ALL") != "" || os.Getenv("COPILOT_GITHUB_TOKEN") != "":
-		return "copilot"
-	case os.Getenv("REPL_ID") != "":
-		return "replit"
-	case os.Getenv("AI_AGENT") != "":
-		return "ai-agent"
-	default:
-		return ""
-	}
+	return agent.GetAgentName()
 }

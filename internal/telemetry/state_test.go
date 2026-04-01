@@ -78,6 +78,33 @@ func TestLoadOrCreateState(t *testing.T) {
 		assert.Equal(t, "user-123", state.DistinctID)
 		assert.Equal(t, now, state.SessionLastActive)
 	})
+
+	t.Run("rotates stale session after inactivity threshold", func(t *testing.T) {
+		t.Setenv("SUPABASE_HOME", "/tmp/supabase-home")
+		fsys := afero.NewMemMapFs()
+		initial := State{
+			Enabled:           true,
+			DeviceID:          uuid.NewString(),
+			SessionID:         uuid.NewString(),
+			SessionLastActive: now.Add(-(sessionRotationThreshold + time.Minute)),
+			DistinctID:        "user-123",
+			SchemaVersion:     SchemaVersion,
+		}
+		require.NoError(t, SaveState(initial, fsys))
+
+		state, created, err := LoadOrCreateState(fsys, now)
+
+		require.NoError(t, err)
+		assert.False(t, created)
+		assert.Equal(t, initial.DeviceID, state.DeviceID)
+		assert.NotEqual(t, initial.SessionID, state.SessionID)
+		assert.Equal(t, "user-123", state.DistinctID)
+		assert.Equal(t, now, state.SessionLastActive)
+
+		saved, err := LoadState(fsys)
+		require.NoError(t, err)
+		assert.Equal(t, state, saved)
+	})
 }
 
 func TestTelemetryDisabled(t *testing.T) {

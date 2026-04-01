@@ -13,10 +13,7 @@ func IsAgent() bool {
 		return true
 	}
 	// Cursor
-	if os.Getenv("CURSOR_TRACE_ID") != "" {
-		return true
-	}
-	if os.Getenv("CURSOR_AGENT") != "" {
+	if os.Getenv("CURSOR_EXTENSION_HOST_ROLE") != "" {
 		return true
 	}
 	// Gemini
@@ -56,4 +53,32 @@ func IsAgent() bool {
 		return true
 	}
 	return false
+}
+
+func GetAgentName() string {
+	if IsAgent() {
+		switch {
+		case os.Getenv("CLAUDE_CODE") != "" || os.Getenv("CLAUDECODE") != "":
+			return "claude_code"
+		case os.Getenv("CURSOR_EXTENSION_HOST_ROLE") != "":
+			return "cursor"
+		case os.Getenv("GEMINI_CLI") != "":
+			return "gemini"
+		case os.Getenv("CODEX_SANDBOX") != "" || os.Getenv("CODEX_CI") != "" || os.Getenv("CODEX_THREAD_ID") != "":
+			return "codex"
+		case os.Getenv("ANTIGRAVITY_AGENT") != "":
+			return "antigravity"
+		case os.Getenv("AUGMENT_AGENT") != "":
+			return "augment"
+		case os.Getenv("OPENCODE_CLIENT") != "":
+			return "opencode"
+		case os.Getenv("COPILOT_MODEL") != "" || os.Getenv("COPILOT_ALLOW_ALL") != "" || os.Getenv("COPILOT_GITHUB_TOKEN") != "":
+			return "copilot"
+		case os.Getenv("REPL_ID") != "":
+			return "replit"
+		default:
+			return "ai_agent"
+		}
+	}
+	return ""
 }
