@@ -82,10 +82,14 @@ func TestServiceCaptureIncludesBasePropertiesAndCommandContext(t *testing.T) {
 		Now:       func() time.Time { return now },
 		IsTTY:     true,
 		IsCI:      true,
-		AITool:    "cursor",
-		CLIName:   "1.2.3",
-		GOOS:      "darwin",
-		GOARCH:    "arm64",
+		IsAgent:   true,
+		EnvSignals: map[string]any{
+			"CLAUDE_CODE":  true,
+			"TERM_PROGRAM": "iTerm.app",
+		},
+		CLIName: "1.2.3",
+		GOOS:    "darwin",
+		GOARCH:  "arm64",
 	})
 	require.NoError(t, err)
 
@@ -110,7 +114,11 @@ func TestServiceCaptureIncludesBasePropertiesAndCommandContext(t *testing.T) {
 	assert.Equal(t, true, call.properties["is_first_run"])
 	assert.Equal(t, true, call.properties["is_tty"])
 	assert.Equal(t, true, call.properties["is_ci"])
-	assert.Equal(t, "cursor", call.properties["ai_tool"])
+	assert.Equal(t, true, call.properties["is_agent"])
+	assert.Equal(t, map[string]any{
+		"CLAUDE_CODE":  true,
+		"TERM_PROGRAM": "iTerm.app",
+	}, call.properties["env_signals"])
 	assert.Equal(t, "darwin", call.properties["os"])
 	assert.Equal(t, "arm64", call.properties["arch"])
 	assert.Equal(t, "1.2.3", call.properties["cli_version"])

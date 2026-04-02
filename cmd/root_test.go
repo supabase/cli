@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -9,12 +10,11 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-func clearAIToolEnv(t *testing.T) {
+func clearTelemetryEnv(t *testing.T) {
 	for _, key := range []string{
 		"AI_AGENT",
-		"CURSOR_TRACE_ID",
+		"CURSOR_AGENT",
 		"CURSOR_EXTENSION_HOST_ROLE",
-		"WINDSURF_SESSION_ID",
 		"GEMINI_CLI",
 		"CODEX_SANDBOX",
 		"CODEX_CI",
@@ -85,26 +85,50 @@ func TestCommandName(t *testing.T) {
 	assert.Equal(t, "supabase", commandName(root))
 }
 
-func TestTelemetryAITool(t *testing.T) {
-	t.Run("returns claude_code for spec env", func(t *testing.T) {
-		clearAIToolEnv(t)
+func TestTelemetryIsAgent(t *testing.T) {
+	t.Run("returns true for agent env", func(t *testing.T) {
+		clearTelemetryEnv(t)
 		t.Setenv("CLAUDE_CODE", "1")
 		utils.AgentMode.Value = "auto"
 		t.Cleanup(func() {
 			utils.AgentMode.Value = "auto"
 		})
 
-		assert.Equal(t, "claude_code", telemetryAITool())
+		assert.True(t, telemetryIsAgent())
 	})
 
-	t.Run("returns cursor for session env", func(t *testing.T) {
-		clearAIToolEnv(t)
-		t.Setenv("CURSOR_EXTENSION_HOST_ROLE", "agent-exec")
+	t.Run("returns false with no agent env", func(t *testing.T) {
+		clearTelemetryEnv(t)
 		utils.AgentMode.Value = "auto"
 		t.Cleanup(func() {
 			utils.AgentMode.Value = "auto"
 		})
 
-		assert.Equal(t, "cursor", telemetryAITool())
+		assert.False(t, telemetryIsAgent())
 	})
+}
+
+func TestTelemetryEnvSignals(t *testing.T) {
+	clearTelemetryEnv(t)
+	t.Setenv("CURSOR_AGENT", "1")
+	t.Setenv("TERM_PROGRAM", "  iTerm.app  ")
+
+	signals := telemetryEnvSignals()
+
+	assert.Equal(t, true, signals["CURSOR_AGENT"])
+	assert.Equal(t, "iTerm.app", signals["TERM_PROGRAM"])
+	assert.NotContains(t, signals, "AI_AGENT")
+}
+
+func TestEnvSignals(t *testing.T) {
+	clearTelemetryEnv(t)
+	t.Setenv("AI_AGENT", "  ")
+	t.Setenv("TERM_PROGRAM", "  iTerm.app  ")
+	t.Setenv("TERM", strings.Repeat("x", 100))
+
+	signals := envSignals([]string{"AI_AGENT"}, []string{"TERM_PROGRAM", "TERM"})
+
+	assert.Equal(t, "iTerm.app", signals["TERM_PROGRAM"])
+	assert.Equal(t, strings.Repeat("x", 80), signals["TERM"])
+	assert.NotContains(t, signals, "AI_AGENT")
 }

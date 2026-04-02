@@ -11,6 +11,7 @@ func clearAgentEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
 		"AI_AGENT",
+		"CURSOR_AGENT",
 		"CURSOR_EXTENSION_HOST_ROLE",
 		"GEMINI_CLI",
 		"CODEX_SANDBOX", "CODEX_CI", "CODEX_THREAD_ID",
@@ -45,6 +46,12 @@ func TestIsAgent(t *testing.T) {
 
 	t.Run("detects Cursor via CURSOR_TRACE_ID", func(t *testing.T) {
 		t.Setenv("CURSOR_EXTENSION_HOST_ROLE", "agent-exec")
+		assert.True(t, IsAgent())
+	})
+
+	t.Run("detects Cursor via CURSOR_AGENT", func(t *testing.T) {
+		clearAgentEnv(t)
+		t.Setenv("CURSOR_AGENT", "1")
 		assert.True(t, IsAgent())
 	})
 
@@ -91,16 +98,5 @@ func TestIsAgent(t *testing.T) {
 	t.Run("detects Antigravity via ANTIGRAVITY_AGENT", func(t *testing.T) {
 		t.Setenv("ANTIGRAVITY_AGENT", "1")
 		assert.True(t, IsAgent())
-	})
-}
-
-func TestGetAgentName(t *testing.T) {
-	t.Run("returns claude_code for CLAUDE_CODE", func(t *testing.T) {
-		t.Setenv("CLAUDE_CODE", "1")
-		assert.Equal(t, "claude_code", GetAgentName())
-	})
-	t.Run("returns cursor for CURSOR_EXTENSION_HOST_ROLE", func(t *testing.T) {
-		t.Setenv("CURSOR_EXTENSION_HOST_ROLE", "agent-exec")
-		assert.Equal(t, "cursor", GetAgentName())
 	})
 }

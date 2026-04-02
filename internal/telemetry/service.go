@@ -21,14 +21,15 @@ type CommandContext struct {
 }
 
 type Options struct {
-	Analytics Analytics
-	Now       func() time.Time
-	IsTTY     bool
-	IsCI      bool
-	AITool    string
-	CLIName   string
-	GOOS      string
-	GOARCH    string
+	Analytics  Analytics
+	Now        func() time.Time
+	IsTTY      bool
+	IsCI       bool
+	IsAgent    bool
+	EnvSignals map[string]any
+	CLIName    string
+	GOOS       string
+	GOARCH     string
 }
 
 type Service struct {
@@ -39,7 +40,8 @@ type Service struct {
 	isFirstRun bool
 	isTTY      bool
 	isCI       bool
-	aiTool     string
+	isAgent    bool
+	envSignals map[string]any
 	cliVersion string
 	goos       string
 	goarch     string
@@ -81,7 +83,8 @@ func NewService(fsys afero.Fs, opts Options) (*Service, error) {
 		isFirstRun: created,
 		isTTY:      opts.IsTTY,
 		isCI:       opts.IsCI,
-		aiTool:     opts.AITool,
+		isAgent:    opts.IsAgent,
+		envSignals: opts.EnvSignals,
 		cliVersion: cliVersion,
 		goos:       goos,
 		goarch:     goarch,
@@ -164,7 +167,7 @@ func (s *Service) Close() error {
 }
 
 func (s *Service) baseProperties() map[string]any {
-	return map[string]any{
+	properties := map[string]any{
 		"platform":       "cli",
 		"schema_version": s.state.SchemaVersion,
 		"device_id":      s.state.DeviceID,
@@ -172,11 +175,15 @@ func (s *Service) baseProperties() map[string]any {
 		"is_first_run":   s.isFirstRun,
 		"is_tty":         s.isTTY,
 		"is_ci":          s.isCI,
-		"ai_tool":        s.aiTool,
+		"is_agent":       s.isAgent,
 		"os":             s.goos,
 		"arch":           s.goarch,
 		"cli_version":    s.cliVersion,
 	}
+	if len(s.envSignals) > 0 {
+		properties["env_signals"] = s.envSignals
+	}
+	return properties
 }
 
 func (s *Service) basePropertiesWith(properties map[string]any) map[string]any {

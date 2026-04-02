@@ -125,13 +125,15 @@ var (
 			}
 			isTTY := telemetryIsTTY()
 			isCI := telemetryIsCI()
-			aiTool := telemetryAITool()
+			isAgent := telemetryIsAgent()
+			envSignals := telemetryEnvSignals()
 			service, err := telemetry.NewService(fsys, telemetry.Options{
-				Now:     time.Now,
-				IsTTY:   isTTY,
-				IsCI:    isCI,
-				AITool:  aiTool,
-				CLIName: utils.Version,
+				Now:        time.Now,
+				IsTTY:      isTTY,
+				IsCI:       isCI,
+				IsAgent:    isAgent,
+				EnvSignals: envSignals,
+				CLIName:    utils.Version,
 			})
 			if err != nil {
 				fmt.Fprintln(utils.GetDebugLogger(), err)
