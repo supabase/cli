@@ -1,6 +1,7 @@
 import { Effect, Layer } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import { OutputFormatFlag } from "./global-flags.ts";
+import { branchesCommand } from "../commands/branches/branches.command.ts";
 import { linkCommand } from "../commands/link/link.command.ts";
 import { initCommand } from "../commands/init/init.command.ts";
 import { listCommand } from "../commands/list/list.command.ts";
@@ -29,6 +30,7 @@ export const root = Command.make("supabase").pipe(
     loginCommand,
     logoutCommand,
     telemetryCommand,
+    branchesCommand,
     linkCommand,
     unlinkCommand,
     stackCommand,
