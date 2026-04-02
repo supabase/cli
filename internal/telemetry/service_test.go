@@ -78,22 +78,23 @@ func TestServiceCaptureIncludesBasePropertiesAndCommandContext(t *testing.T) {
 	analytics := &fakeAnalytics{enabled: true}
 
 	service, err := NewService(fsys, Options{
-		Analytics:  analytics,
-		Now:        func() time.Time { return now },
-		IsTTY:      true,
-		IsCI:       true,
-		AITool:     "cursor",
-		CLIName:    "1.2.3",
-		GOOS:       "darwin",
-		GOARCH:     "arm64",
+		Analytics: analytics,
+		Now:       func() time.Time { return now },
+		IsTTY:     true,
+		IsCI:      true,
+		AITool:    "cursor",
+		CLIName:   "1.2.3",
+		GOOS:      "darwin",
+		GOARCH:    "arm64",
 	})
 	require.NoError(t, err)
 
 	ctx := WithCommandContext(context.Background(), CommandContext{
-		RunID:      "run-123",
-		Command:    "login",
-		FlagsUsed:  []string{"token"},
-		FlagValues: map[string]any{},
+		RunID:   "run-123",
+		Command: "login",
+		Flags: map[string]any{
+			"token": "<redacted>",
+		},
 	})
 
 	require.NoError(t, service.Capture(ctx, "cli_command_executed", map[string]any{
@@ -115,8 +116,11 @@ func TestServiceCaptureIncludesBasePropertiesAndCommandContext(t *testing.T) {
 	assert.Equal(t, "1.2.3", call.properties["cli_version"])
 	assert.Equal(t, "run-123", call.properties["command_run_id"])
 	assert.Equal(t, "login", call.properties["command"])
-	assert.Equal(t, []string{"token"}, call.properties["flags_used"])
-	assert.Equal(t, map[string]any{}, call.properties["flag_values"])
+	assert.Equal(t, map[string]any{"token": "<redacted>"}, call.properties["flags"])
+	_, hasFlagsUsed := call.properties["flags_used"]
+	assert.False(t, hasFlagsUsed)
+	_, hasFlagValues := call.properties["flag_values"]
+	assert.False(t, hasFlagValues)
 	assert.Equal(t, 42, call.properties["duration_ms"])
 }
 

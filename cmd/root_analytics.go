@@ -3,22 +3,28 @@ package cmd
 import (
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/supabase/cli/internal/telemetry"
+	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/agent"
 	"golang.org/x/term"
 )
 
+const (
+	telemetrySafeValueAnnotation = "supabase.com/telemetry-safe-value"
+	redactedTelemetryValue       = "<redacted>"
+)
+
 func commandAnalyticsContext(cmd *cobra.Command) telemetry.CommandContext {
 	return telemetry.CommandContext{
-		RunID:      uuid.NewString(),
-		Command:    commandName(cmd),
-		FlagsUsed:  changedFlags(cmd),
-		FlagValues: map[string]any{},
+		RunID:   uuid.NewString(),
+		Command: commandName(cmd),
+		Flags:   changedFlagValues(cmd),
 	}
 }
 
@@ -31,9 +37,21 @@ func commandName(cmd *cobra.Command) string {
 	return strings.TrimSpace(strings.TrimPrefix(path, rootName))
 }
 
-func changedFlags(cmd *cobra.Command) []string {
+func changedFlagValues(cmd *cobra.Command) map[string]any {
+	flags := changedFlags(cmd)
+	if len(flags) == 0 {
+		return nil
+	}
+	values := make(map[string]any, len(flags))
+	for _, flag := range flags {
+		values[flag.Name] = telemetryFlagValue(flag)
+	}
+	return values
+}
+
+func changedFlags(cmd *cobra.Command) []*pflag.Flag {
 	seen := make(map[string]struct{})
-	var result []string
+	var result []*pflag.Flag
 	collect := func(flags *pflag.FlagSet) {
 		if flags == nil {
 			return
@@ -43,15 +61,67 @@ func changedFlags(cmd *cobra.Command) []string {
 				return
 			}
 			seen[flag.Name] = struct{}{}
-			result = append(result, flag.Name)
+			result = append(result, flag)
 		})
 	}
 	for current := cmd; current != nil; current = current.Parent() {
 		collect(current.PersistentFlags())
 	}
 	collect(cmd.Flags())
-	sort.Strings(result)
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Name < result[j].Name
+	})
 	return result
+}
+
+func markFlagTelemetrySafe(flag *pflag.Flag) {
+	if flag == nil {
+		return
+	}
+	if flag.Annotations == nil {
+		flag.Annotations = map[string][]string{}
+	}
+	flag.Annotations[telemetrySafeValueAnnotation] = []string{"true"}
+}
+
+func telemetryFlagValue(flag *pflag.Flag) any {
+	if flag == nil {
+		return nil
+	}
+	if isTelemetrySafeFlag(flag) || isBooleanFlag(flag) || isEnumFlag(flag) {
+		return actualTelemetryFlagValue(flag)
+	}
+	return redactedTelemetryValue
+}
+
+func isTelemetrySafeFlag(flag *pflag.Flag) bool {
+	if flag == nil || flag.Annotations == nil {
+		return false
+	}
+	values, ok := flag.Annotations[telemetrySafeValueAnnotation]
+	return ok && len(values) > 0 && values[0] == "true"
+}
+
+func isBooleanFlag(flag *pflag.Flag) bool {
+	return flag != nil && flag.Value.Type() == "bool"
+}
+
+func isEnumFlag(flag *pflag.Flag) bool {
+	if flag == nil {
+		return false
+	}
+	_, ok := flag.Value.(*utils.EnumFlag)
+	return ok
+}
+
+func actualTelemetryFlagValue(flag *pflag.Flag) any {
+	if isBooleanFlag(flag) {
+		value, err := strconv.ParseBool(flag.Value.String())
+		if err == nil {
+			return value
+		}
+	}
+	return flag.Value.String()
 }
 
 func telemetryIsCI() bool {

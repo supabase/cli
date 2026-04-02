@@ -36,27 +36,41 @@ func clearAIToolEnv(t *testing.T) {
 func TestCommandAnalyticsContext(t *testing.T) {
 	root := &cobra.Command{Use: "supabase"}
 	var projectRef string
-	var linked bool
+	var password string
+	var debug bool
+	output := utils.EnumFlag{
+		Allowed: []string{"json", "table"},
+		Value:   "table",
+	}
 	child := &cobra.Command{
 		Use: "link",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return nil
 		},
 	}
-	root.PersistentFlags().Bool("debug", false, "")
+	root.PersistentFlags().BoolVar(&debug, "debug", false, "")
 	child.Flags().StringVar(&projectRef, "project-ref", "", "")
-	child.Flags().BoolVar(&linked, "linked", false, "")
+	child.Flags().StringVar(&password, "password", "", "")
+	child.Flags().Var(&output, "output", "")
 	child.Flags().AddFlag(root.PersistentFlags().Lookup("debug"))
+	markFlagTelemetrySafe(child.Flags().Lookup("project-ref"))
 	root.AddCommand(child)
 
 	require.NoError(t, root.PersistentFlags().Set("debug", "true"))
 	require.NoError(t, child.Flags().Set("project-ref", "proj_123"))
+	require.NoError(t, child.Flags().Set("password", "hunter2"))
+	require.NoError(t, child.Flags().Set("output", "json"))
 
 	ctx := commandAnalyticsContext(child)
 
 	assert.Equal(t, "link", ctx.Command)
-	assert.Equal(t, []string{"debug", "project-ref"}, ctx.FlagsUsed)
-	assert.Equal(t, map[string]any{}, ctx.FlagValues)
+	assert.Equal(t, map[string]any{
+		"debug":       true,
+		"output":      "json",
+		"password":    redactedTelemetryValue,
+		"project-ref": "proj_123",
+	}, ctx.Flags)
+	assert.NotContains(t, ctx.Flags, "linked")
 	assert.NotEmpty(t, ctx.RunID)
 }
 

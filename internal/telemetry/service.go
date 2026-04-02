@@ -14,11 +14,10 @@ type commandContextKey struct{}
 type serviceContextKey struct{}
 
 type CommandContext struct {
-	RunID      string
-	Command    string
-	FlagsUsed  []string
-	FlagValues map[string]any
-	Groups     map[string]string
+	RunID   string
+	Command string
+	Flags   map[string]any
+	Groups  map[string]string
 }
 
 type Options struct {
@@ -117,11 +116,8 @@ func (s *Service) Capture(ctx context.Context, event string, properties map[stri
 	if command.Command != "" {
 		mergedProperties["command"] = command.Command
 	}
-	if command.FlagsUsed != nil {
-		mergedProperties["flags_used"] = command.FlagsUsed
-	}
-	if command.FlagValues != nil {
-		mergedProperties["flag_values"] = command.FlagValues
+	if command.Flags != nil {
+		mergedProperties["flags"] = command.Flags
 	}
 	for key, value := range properties {
 		mergedProperties[key] = value
