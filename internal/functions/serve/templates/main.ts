@@ -122,7 +122,7 @@ async function isValidLegacyJWT(jwtSecret: string, jwt: string): Promise<boolean
 let jwks = (() => {
   try {
     // using injected JWKS from cli
-    return jose.createLocalJWKSet(JSON.parse(Deno.env.get('SUPABASE_INTERNAL_JWKS')));
+    return jose.createLocalJWKSet(JSON.parse(Deno.env.get('SUPABASE_JWKS')));
   } catch (error) {
     return null
   }
