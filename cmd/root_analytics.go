@@ -187,7 +187,7 @@ func telemetryIsCI() bool {
 }
 
 func telemetryIsTTY() bool {
-	return term.IsTerminal(int(os.Stdout.Fd()))
+	return term.IsTerminal(int(os.Stdout.Fd())) //nolint:gosec // G115: stdout fd is a small int on supported platforms
 }
 
 func telemetryIsAgent() bool {

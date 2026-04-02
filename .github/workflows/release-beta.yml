@@ -52,6 +52,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+          POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
 
       - run: gh release edit v${{ needs.release.outputs.new-release-version }} --draft=false --prerelease
         env:

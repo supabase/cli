@@ -19,11 +19,11 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/internal/testing/apitest"
 	phtelemetry "github.com/supabase/cli/internal/telemetry"
+	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/config"
 	supabaseapi "github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/pgtest"
 	"github.com/supabase/cli/pkg/storage"
 )
@@ -46,7 +46,7 @@ func (f *fakeAnalytics) Capture(distinctID string, event string, properties map[
 	return nil
 }
 func (f *fakeAnalytics) Identify(distinctID string, properties map[string]any) error { return nil }
-func (f *fakeAnalytics) Alias(distinctID string, alias string) error { return nil }
+func (f *fakeAnalytics) Alias(distinctID string, alias string) error                 { return nil }
 func (f *fakeAnalytics) GroupIdentify(groupType string, groupKey string, properties map[string]any) error {
 	return nil
 }
