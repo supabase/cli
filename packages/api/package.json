@@ -12,7 +12,8 @@
     "./openapi.json": "./src/generated/openapi.json"
   },
   "scripts": {
-    "generate": "bun run scripts/generate.ts",
+    "generate:spec": "bun run scripts/download-openapi.ts",
+    "generate": "bun run generate:spec && bun run scripts/generate.ts",
     "test": "nx run-many -t test:core test:e2e --projects=$npm_package_name",
     "test:core": "nx run-many -t test:unit test:integration --projects=$npm_package_name",
     "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name",
@@ -41,6 +42,8 @@
       "src/bun.ts",
       "src/node.ts",
       "src/**/*.test.ts",
+      "scripts/download-openapi.ts",
+      "scripts/download-openapi.unit.test.ts",
       "scripts/generate.ts"
     ],
     "ignoreDependencies": [

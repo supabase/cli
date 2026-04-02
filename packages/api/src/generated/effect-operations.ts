@@ -856,6 +856,21 @@ export const v1GetDatabaseMetadata = (
     );
   });
 
+export const v1GetDatabaseOpenapi = (
+  input: typeof operationDefinitions.v1GetDatabaseOpenapi.inputSchema.Type,
+): Effect.Effect<
+  typeof operationDefinitions.v1GetDatabaseOpenapi.outputSchema.Type,
+  SupabaseApiError,
+  SupabaseApiClient
+> =>
+  Effect.gen(function* () {
+    const client = yield* SupabaseApiClient;
+    return yield* client.execute<"v1GetDatabaseOpenapi">(
+      operationDefinitions.v1GetDatabaseOpenapi,
+      input,
+    );
+  });
+
 export const v1GetDiskUtilization = (
   input: typeof operationDefinitions.v1GetDiskUtilization.inputSchema.Type,
 ): Effect.Effect<
@@ -939,6 +954,21 @@ export const v1GetNetworkRestrictions = (
     const client = yield* SupabaseApiClient;
     return yield* client.execute<"v1GetNetworkRestrictions">(
       operationDefinitions.v1GetNetworkRestrictions,
+      input,
+    );
+  });
+
+export const v1GetOrganizationEntitlements = (
+  input: typeof operationDefinitions.v1GetOrganizationEntitlements.inputSchema.Type,
+): Effect.Effect<
+  typeof operationDefinitions.v1GetOrganizationEntitlements.outputSchema.Type,
+  SupabaseApiError,
+  SupabaseApiClient
+> =>
+  Effect.gen(function* () {
+    const client = yield* SupabaseApiClient;
+    return yield* client.execute<"v1GetOrganizationEntitlements">(
+      operationDefinitions.v1GetOrganizationEntitlements,
       input,
     );
   });
@@ -1061,6 +1091,16 @@ export const v1GetPostgrestServiceConfig = (
       operationDefinitions.v1GetPostgrestServiceConfig,
       input,
     );
+  });
+
+export const v1GetProfile = (): Effect.Effect<
+  typeof operationDefinitions.v1GetProfile.outputSchema.Type,
+  SupabaseApiError,
+  SupabaseApiClient
+> =>
+  Effect.gen(function* () {
+    const client = yield* SupabaseApiClient;
+    return yield* client.execute<"v1GetProfile">(operationDefinitions.v1GetProfile, {});
   });
 
 export const v1GetProject = (
@@ -2340,12 +2380,14 @@ export const effectOperations = {
   v1GetAvailableRegions,
   v1GetDatabaseDisk,
   v1GetDatabaseMetadata,
+  v1GetDatabaseOpenapi,
   v1GetDiskUtilization,
   v1GetHostnameConfig,
   v1GetJitAccess,
   v1GetJitAccessConfig,
   v1GetLegacySigningKey,
   v1GetNetworkRestrictions,
+  v1GetOrganizationEntitlements,
   v1GetOrganizationProjectClaim,
   v1GetPerformanceAdvisors,
   v1GetPgsodiumConfig,
@@ -2354,6 +2396,7 @@ export const effectOperations = {
   v1GetPostgresUpgradeEligibility,
   v1GetPostgresUpgradeStatus,
   v1GetPostgrestServiceConfig,
+  v1GetProfile,
   v1GetProject,
   v1GetProjectApiKey,
   v1GetProjectApiKeys,

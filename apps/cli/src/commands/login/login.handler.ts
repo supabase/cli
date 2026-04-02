@@ -1,4 +1,4 @@
-import { Data, Effect, Option, Redacted } from "effect";
+import { Data, Effect, Exit, Option, Redacted } from "effect";
 import { UrlParams } from "effect/unstable/http";
 import { validateToken } from "../../auth/token.ts";
 import { CliConfig } from "../../config/cli-config.service.ts";
@@ -31,18 +31,55 @@ const MAX_LOGIN_VERIFICATION_RETRIES = 2;
 
 const revealToken = (token: Redacted.Redacted<string>): string => Redacted.value(token);
 
+const resolveAuthenticatedDistinctId = Effect.fnUntraced(function* (
+  token: Redacted.Redacted<string>,
+) {
+  const api = yield* Api;
+  const analytics = yield* Analytics;
+  const cliConfig = yield* CliConfig;
+  const telemetryRuntime = yield* TelemetryRuntime;
+  const configDir = yield* getConfigDir;
+
+  const profileExit = yield* api.fetchProfile(cliConfig.apiUrl, token).pipe(Effect.exit);
+  if (Exit.isFailure(profileExit)) {
+    yield* clearDistinctId(configDir);
+    return Option.none<string>();
+  }
+
+  const distinctId = profileExit.value.gotrue_id;
+  yield* analytics.alias(distinctId, telemetryRuntime.deviceId);
+  yield* analytics.identify(distinctId);
+  yield* saveDistinctId(configDir, distinctId);
+  return Option.some(distinctId);
+});
+
+const captureLoginCompleted = Effect.fnUntraced(function* (
+  properties: Record<string, unknown>,
+  distinctId: Option.Option<string>,
+) {
+  const analytics = yield* Analytics;
+
+  const capture = analytics.capture("cli_login_completed", properties);
+  if (Option.isNone(distinctId)) {
+    yield* capture;
+    return;
+  }
+
+  yield* capture.pipe(
+    withAnalyticsContext({
+      distinct_id: distinctId.value,
+    }),
+  );
+});
+
 const saveDirectToken = Effect.fnUntraced(function* (token: Redacted.Redacted<string>) {
   const credentials = yield* Credentials;
   const output = yield* Output;
-  const analytics = yield* Analytics;
-  const configDir = yield* getConfigDir;
   yield* validateToken(revealToken(token));
   yield* credentials.saveAccessToken(token);
-  yield* clearDistinctId(configDir);
+  const distinctId = yield* resolveAuthenticatedDistinctId(token);
   yield* output.success("Logged in successfully.", { command: "login" });
-  yield* analytics.capture("cli_login_completed", {
-    login_method: "token",
-  });
+  yield* captureLoginCompleted({ login_method: "token" }, distinctId);
 });
 
 // Token resolution priority: --token flag > SUPABASE_ACCESS_TOKEN env > piped stdin > interactive browser flow
@@ -75,9 +112,6 @@ const browserOAuthFlow = Effect.fnUntraced(function* (flags: LoginFlags) {
   const crypto = yield* Crypto;
   const browser = yield* Browser;
   const output = yield* Output;
-  const analytics = yield* Analytics;
-  const telemetryRuntime = yield* TelemetryRuntime;
-  const configDir = yield* getConfigDir;
 
   // Check if already logged in
   const existingToken = yield* credentials.getAccessToken;
@@ -160,36 +194,22 @@ const browserOAuthFlow = Effect.fnUntraced(function* (flags: LoginFlags) {
     nonce: session.nonce,
   });
   yield* validateToken(token);
-  yield* credentials.saveAccessToken(Redacted.make(token));
+  const accessToken = Redacted.make(token);
+  yield* credentials.saveAccessToken(accessToken);
+  const distinctId = yield* resolveAuthenticatedDistinctId(accessToken);
 
   yield* output.success(`Token ${tokenName} created successfully.`, {
     command: "login",
     tokenName,
   });
   yield* output.outro("You are now logged in. Happy coding!");
-
-  if (session.user_id !== undefined) {
-    yield* analytics.alias(session.user_id, telemetryRuntime.deviceId);
-    yield* analytics.identify(session.user_id);
-    yield* saveDistinctId(configDir, session.user_id);
-    yield* analytics
-      .capture("cli_login_completed", {
-        login_method: "browser_oauth",
-        token_name: tokenName,
-      })
-      .pipe(
-        withAnalyticsContext({
-          distinct_id: session.user_id,
-        }),
-      );
-    return;
-  }
-
-  yield* clearDistinctId(configDir);
-  yield* analytics.capture("cli_login_completed", {
-    login_method: "browser_oauth",
-    token_name: tokenName,
-  });
+  yield* captureLoginCompleted(
+    {
+      login_method: "browser_oauth",
+      token_name: tokenName,
+    },
+    distinctId,
+  );
 });
 
 // ---------------------------------------------------------------------------

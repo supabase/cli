@@ -80,8 +80,14 @@ The public binary input contract is:
 ## Development
 
 ```sh
-pnpm run check:all   # Run all quality checks in parallel
-pnpm run fix:all     # Auto-fix lint, format, and unused exports in parallel
-pnpm run test        # Run tests
-pnpm run generate    # Regenerate the SDK from the OpenAPI spec
+bun run check:all   # Run all quality checks in parallel
+bun run fix:all     # Auto-fix lint, format, and unused exports in parallel
+bun run test        # Run tests
+bun run generate    # Refresh the OpenAPI spec and regenerate the SDK
+```
+
+To refresh from staging instead of production:
+
+```sh
+SUPABASE_API_URL=https://api.supabase.green bun run generate
 ```

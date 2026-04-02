@@ -15,7 +15,7 @@ import {
   type StackState,
 } from "@supabase/stack/effect";
 import { Api } from "../../src/auth/api.service.ts";
-import type { LoginSessionResponse } from "../../src/auth/api.service.ts";
+import type { LoginSessionResponse, ProfileResponse } from "../../src/auth/api.service.ts";
 import { Credentials } from "../../src/auth/credentials.service.ts";
 import { Crypto } from "../../src/auth/crypto.service.ts";
 import { ApiError } from "../../src/auth/errors.ts";
@@ -386,15 +386,24 @@ export function mockApi(
   opts: {
     failTimes?: number;
     response?: Partial<LoginSessionResponse>;
+    profileResponse?: Partial<ProfileResponse>;
+    profileError?: ApiError;
   } = {},
 ) {
   let callCount = 0;
+  let profileCallCount = 0;
   const failTimes = opts.failTimes ?? 0;
   const response: LoginSessionResponse = {
     access_token: "encrypted",
     public_key: "abcd",
     nonce: "1234",
     ...opts.response,
+  };
+  const profileResponse: ProfileResponse = {
+    gotrue_id: "user-123",
+    primary_email: "test@example.com",
+    username: "tester",
+    ...opts.profileResponse,
   };
 
   return {
@@ -406,9 +415,19 @@ export function mockApi(
         }
         return Effect.succeed(response);
       },
+      fetchProfile: () => {
+        profileCallCount++;
+        if (opts.profileError !== undefined) {
+          return Effect.fail(opts.profileError);
+        }
+        return Effect.succeed(profileResponse);
+      },
     }),
     get callCount() {
       return callCount;
+    },
+    get profileCallCount() {
+      return profileCallCount;
     },
   };
 }

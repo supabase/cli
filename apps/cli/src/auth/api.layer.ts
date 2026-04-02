@@ -1,4 +1,5 @@
 import { Effect, Layer } from "effect";
+import { supabaseApiClientLayer, v1GetProfile } from "@supabase/api/effect";
 import {
   FetchHttpClient,
   HttpClient,
@@ -24,7 +25,9 @@ function mapHttpClientError(
 }
 
 export const makeApi = Effect.gen(function* () {
-  const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
+  const rawHttpClient = yield* HttpClient.HttpClient;
+  const httpClient = rawHttpClient.pipe(HttpClient.filterStatusOk);
+  const httpClientLayer = Layer.succeed(HttpClient.HttpClient, rawHttpClient);
 
   return Api.of({
     fetchLoginSession: Effect.fnUntraced(
@@ -34,6 +37,32 @@ export const makeApi = Effect.gen(function* () {
         return (yield* response.json) as LoginSessionResponse;
       },
       (effect) => effect.pipe(Effect.catch(mapHttpClientError)),
+    ),
+    fetchProfile: Effect.fnUntraced(
+      function* (apiUrl, accessToken) {
+        return yield* v1GetProfile().pipe(
+          Effect.provide(
+            supabaseApiClientLayer({
+              baseUrl: apiUrl,
+              accessToken,
+              userAgent: "@supabase/cli",
+            }).pipe(Layer.provide(httpClientLayer)),
+          ),
+        );
+      },
+      (effect) =>
+        effect.pipe(
+          Effect.catch((error) => {
+            if (HttpClientError.isHttpClientError(error)) {
+              return mapHttpClientError(error);
+            }
+            return Effect.fail(
+              new ApiError({
+                detail: error instanceof Error ? error.message : String(error),
+              }),
+            );
+          }),
+        ),
     ),
   });
 });

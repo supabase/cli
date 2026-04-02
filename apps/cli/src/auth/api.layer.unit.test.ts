@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer } from "effect";
+import { Cause, Effect, Exit, Layer, Redacted } from "effect";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/unstable/http";
 import { Api } from "./api.service.ts";
 import { ApiError } from "./errors.ts";
@@ -132,6 +132,38 @@ describe("Api", () => {
         const error = getFailError(exit) as ApiError;
         expect(error.statusCode).toBe(503);
         expect(error.detail).toContain("503");
+      }).pipe(Effect.provide(testLayer));
+    });
+  });
+
+  describe("fetchProfile", () => {
+    it.effect("requests the canonical profile endpoint", () => {
+      const responseBody = {
+        gotrue_id: "user-123",
+        primary_email: "test@example.com",
+        username: "tester",
+      };
+      const mock = mockHttpClient({ body: responseBody });
+      const testLayer = Layer.effect(Api, makeApi).pipe(Layer.provide(mock.layer));
+      return Effect.gen(function* () {
+        const { fetchProfile } = yield* Api;
+        const result = yield* fetchProfile(API_URL, Redacted.make("sbp_" + "a".repeat(40)));
+        expect(result).toEqual(responseBody);
+        expect(mock.requests[0]).toBe(`${API_URL}/v1/profile`);
+      }).pipe(Effect.provide(testLayer));
+    });
+
+    it.effect("returns ApiError when profile lookup is not OK", () => {
+      const { layer: httpLayer } = mockHttpClient({ status: 401, body: "Unauthorized" });
+      const testLayer = Layer.effect(Api, makeApi).pipe(Layer.provide(httpLayer));
+      return Effect.gen(function* () {
+        const { fetchProfile } = yield* Api;
+        const exit = yield* fetchProfile(API_URL, Redacted.make("sbp_" + "a".repeat(40))).pipe(
+          Effect.exit,
+        );
+        const error = getFailError(exit) as ApiError;
+        expect(error).toBeInstanceOf(ApiError);
+        expect(error.statusCode).toBe(401);
       }).pipe(Effect.provide(testLayer));
     });
   });

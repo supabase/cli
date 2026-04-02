@@ -100,23 +100,17 @@ export const ApiKeyResponse = Schema.Struct({
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
     Schema.Union([
-      Schema.Literal("legacy"),
-      Schema.Literal("publishable"),
-      Schema.Literal("secret"),
-      Schema.Null,
+      Schema.Literals(["legacy", "publishable", "secret"]),
+      Schema.Union([Schema.Null]),
     ]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({}), Schema.Null])),
-  inserted_at: Schema.optionalKey(
-    Schema.Union([Schema.String, Schema.Null]).annotate({ format: "date-time" }),
-  ),
-  updated_at: Schema.optionalKey(
-    Schema.Union([Schema.String, Schema.Null]).annotate({ format: "date-time" }),
-  ),
+  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({})])),
+  inserted_at: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "date-time" })])),
+  updated_at: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "date-time" })])),
 });
 export const SecretResponse = Schema.Struct({
   name: Schema.String,
@@ -836,30 +830,24 @@ export const V1CreateProjectApiKeyInput = Schema.Struct({
     .check(Schema.isMaxLength(64))
     .check(Schema.isPattern(new RegExp("^[a-z_][a-z0-9_]+$"))),
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({}), Schema.Null])),
+  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({})])),
 });
 export const V1CreateProjectApiKeyOutput = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
     Schema.Union([
-      Schema.Literal("legacy"),
-      Schema.Literal("publishable"),
-      Schema.Literal("secret"),
-      Schema.Null,
+      Schema.Literals(["legacy", "publishable", "secret"]),
+      Schema.Union([Schema.Null]),
     ]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({}), Schema.Null])),
-  inserted_at: Schema.optionalKey(
-    Schema.Union([Schema.String, Schema.Null]).annotate({ format: "date-time" }),
-  ),
-  updated_at: Schema.optionalKey(
-    Schema.Union([Schema.String, Schema.Null]).annotate({ format: "date-time" }),
-  ),
+  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({})])),
+  inserted_at: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "date-time" })])),
+  updated_at: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "date-time" })])),
 });
 export const V1CreateProjectClaimTokenInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -987,6 +975,7 @@ export const V1CreateRestorePointInput = Schema.Struct({
 export const V1CreateRestorePointOutput = Schema.Struct({
   name: Schema.String,
   status: Schema.Literals(["AVAILABLE", "PENDING", "REMOVED", "FAILED"]),
+  completed_on: Schema.Union([Schema.String.annotate({ format: "date-time" })]),
 });
 export const V1DeactivateVanitySubdomainConfigInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -1117,23 +1106,17 @@ export const V1DeleteProjectApiKeyOutput = Schema.Struct({
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
     Schema.Union([
-      Schema.Literal("legacy"),
-      Schema.Literal("publishable"),
-      Schema.Literal("secret"),
-      Schema.Null,
+      Schema.Literals(["legacy", "publishable", "secret"]),
+      Schema.Union([Schema.Null]),
     ]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({}), Schema.Null])),
-  inserted_at: Schema.optionalKey(
-    Schema.Union([Schema.String, Schema.Null]).annotate({ format: "date-time" }),
-  ),
-  updated_at: Schema.optionalKey(
-    Schema.Union([Schema.String, Schema.Null]).annotate({ format: "date-time" }),
-  ),
+  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({})])),
+  inserted_at: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "date-time" })])),
+  updated_at: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "date-time" })])),
 });
 export const V1DeleteProjectClaimTokenInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -1632,9 +1615,8 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   api_max_request_duration: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
   db_max_pool_size: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
   db_max_pool_size_unit: Schema.Union([
-    Schema.Literal("connections"),
-    Schema.Literal("percent"),
-    Schema.Null,
+    Schema.Literals(["connections", "percent"]),
+    Schema.Union([Schema.Null]),
   ]),
   disable_signup: Schema.Union([Schema.Boolean, Schema.Null]),
   external_anonymous_users_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
@@ -1820,13 +1802,13 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   password_hibp_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   password_min_length: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
   password_required_characters: Schema.Union([
-    Schema.Literal("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
-    Schema.Literal("abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
-    Schema.Literal(
+    Schema.Literals([
+      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
+      "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
       "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~",
-    ),
-    Schema.Literal(""),
-    Schema.Null,
+      "",
+    ]),
+    Schema.Union([Schema.Null]),
   ]),
   rate_limit_anonymous_users: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
   rate_limit_email_sent: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
@@ -1842,9 +1824,8 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   security_sb_forwarded_for_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_provider: Schema.Union([
-    Schema.Literal("turnstile"),
-    Schema.Literal("hcaptcha"),
-    Schema.Null,
+    Schema.Literals(["turnstile", "hcaptcha"]),
+    Schema.Union([Schema.Null]),
   ]),
   security_captcha_secret: Schema.Union([Schema.String, Schema.Null]),
   security_manual_linking_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
@@ -1853,10 +1834,10 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   security_update_password_require_reauthentication: Schema.Union([Schema.Boolean, Schema.Null]),
-  sessions_inactivity_timeout: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  sessions_inactivity_timeout: Schema.Union([Schema.Number.check(Schema.isFinite()), Schema.Null]),
   sessions_single_per_user: Schema.Union([Schema.Boolean, Schema.Null]),
   sessions_tags: Schema.Union([Schema.String, Schema.Null]),
-  sessions_timebox: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  sessions_timebox: Schema.Union([Schema.Number.check(Schema.isFinite()), Schema.Null]),
   site_url: Schema.Union([Schema.String, Schema.Null]),
   sms_autoconfirm: Schema.Union([Schema.Boolean, Schema.Null]),
   sms_max_frequency: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
@@ -1865,18 +1846,12 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   sms_otp_exp: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
   sms_otp_length: Schema.Number.check(Schema.isInt()),
   sms_provider: Schema.Union([
-    Schema.Literal("messagebird"),
-    Schema.Literal("textlocal"),
-    Schema.Literal("twilio"),
-    Schema.Literal("twilio_verify"),
-    Schema.Literal("vonage"),
-    Schema.Null,
+    Schema.Literals(["messagebird", "textlocal", "twilio", "twilio_verify", "vonage"]),
+    Schema.Union([Schema.Null]),
   ]),
   sms_template: Schema.Union([Schema.String, Schema.Null]),
   sms_test_otp: Schema.Union([Schema.String, Schema.Null]),
-  sms_test_otp_valid_until: Schema.Union([Schema.String, Schema.Null]).annotate({
-    format: "date-time",
-  }),
+  sms_test_otp_valid_until: Schema.Union([Schema.String.annotate({ format: "date-time" })]),
   sms_textlocal_api_key: Schema.Union([Schema.String, Schema.Null]),
   sms_textlocal_sender: Schema.Union([Schema.String, Schema.Null]),
   sms_twilio_account_sid: Schema.Union([Schema.String, Schema.Null]),
@@ -1889,7 +1864,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   sms_vonage_api_key: Schema.Union([Schema.String, Schema.Null]),
   sms_vonage_api_secret: Schema.Union([Schema.String, Schema.Null]),
   sms_vonage_from: Schema.Union([Schema.String, Schema.Null]),
-  smtp_admin_email: Schema.Union([Schema.String, Schema.Null]).annotate({ format: "email" }),
+  smtp_admin_email: Schema.Union([Schema.String.annotate({ format: "email" })]),
   smtp_host: Schema.Union([Schema.String, Schema.Null]),
   smtp_max_frequency: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
   smtp_pass: Schema.Union([Schema.String, Schema.Null]),
@@ -2050,6 +2025,13 @@ export const V1GetDatabaseMetadataOutput = Schema.Struct({
     ),
   ),
 });
+export const V1GetDatabaseOpenapiInput = Schema.Struct({
+  ref: Schema.String.check(Schema.isMinLength(20))
+    .check(Schema.isMaxLength(20))
+    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  schema: Schema.optionalKey(Schema.String),
+});
+export const V1GetDatabaseOpenapiOutput = Schema.Struct({});
 export const V1GetDiskUtilizationInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
@@ -2188,6 +2170,91 @@ export const V1GetNetworkRestrictionsOutput = Schema.Struct({
   updated_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   applied_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
 });
+export const V1GetOrganizationEntitlementsInput = Schema.Struct({
+  slug: Schema.String.check(Schema.isPattern(new RegExp("^[\\w-]+$"))),
+});
+export const V1GetOrganizationEntitlementsOutput = Schema.Struct({
+  entitlements: Schema.Array(
+    Schema.Struct({
+      feature: Schema.Struct({
+        key: Schema.Literals([
+          "instances.compute_update_available_sizes",
+          "instances.read_replicas",
+          "instances.disk_modifications",
+          "instances.high_availability",
+          "instances.orioledb",
+          "replication.etl",
+          "storage.max_file_size",
+          "storage.max_file_size.configurable",
+          "storage.image_transformations",
+          "storage.vector_buckets",
+          "storage.iceberg_catalog",
+          "security.audit_logs_days",
+          "security.questionnaire",
+          "security.soc2_report",
+          "security.private_link",
+          "security.enforce_mfa",
+          "log.retention_days",
+          "custom_domain",
+          "vanity_subdomain",
+          "ipv4",
+          "pitr.available_variants",
+          "log_drains",
+          "branching_limit",
+          "branching_persistent",
+          "auth.mfa_phone",
+          "auth.mfa_web_authn",
+          "auth.mfa_enhanced_security",
+          "auth.hooks",
+          "auth.platform.sso",
+          "auth.custom_jwt_template",
+          "auth.saml_2",
+          "auth.user_sessions",
+          "auth.leaked_password_protection",
+          "auth.advanced_auth_settings",
+          "auth.performance_settings",
+          "auth.password_hibp",
+          "backup.retention_days",
+          "backup.restore_to_new_project",
+          "function.max_count",
+          "function.size_limit_mb",
+          "realtime.max_concurrent_users",
+          "realtime.max_events_per_second",
+          "realtime.max_joins_per_second",
+          "realtime.max_channels_per_client",
+          "realtime.max_bytes_per_second",
+          "realtime.max_presence_events_per_second",
+          "realtime.max_payload_size_in_kb",
+          "project_scoped_roles",
+          "security.member_roles",
+          "project_pausing",
+          "project_cloning",
+          "project_restore_after_expiry",
+          "assistant.advance_model",
+          "integrations.github_connections",
+          "dedicated_pooler",
+          "observability.dashboard_advanced_metrics",
+        ]),
+        type: Schema.Literals(["boolean", "numeric", "set"]),
+      }),
+      hasAccess: Schema.Boolean,
+      type: Schema.Literals(["boolean", "numeric", "set"]),
+      config: Schema.Union(
+        [
+          Schema.Struct({ enabled: Schema.Boolean }),
+          Schema.Struct({
+            enabled: Schema.Boolean,
+            value: Schema.Number.check(Schema.isFinite()),
+            unlimited: Schema.Boolean,
+            unit: Schema.String,
+          }),
+          Schema.Struct({ enabled: Schema.Boolean, set: Schema.Array(Schema.String) }),
+        ],
+        { mode: "oneOf" },
+      ),
+    }),
+  ),
+});
 export const V1GetOrganizationProjectClaimInput = Schema.Struct({
   slug: Schema.String.check(Schema.isPattern(new RegExp("^[\\w-]+$"))),
   token: Schema.String,
@@ -2204,12 +2271,8 @@ export const V1GetOrganizationProjectClaimOutput = Schema.Struct({
     ),
     source_subscription_plan: Schema.Literals(["free", "pro", "team", "enterprise", "platform"]),
     target_subscription_plan: Schema.Union([
-      Schema.Literal("free"),
-      Schema.Literal("pro"),
-      Schema.Literal("team"),
-      Schema.Literal("enterprise"),
-      Schema.Literal("platform"),
-      Schema.Null,
+      Schema.Literals(["free", "pro", "team", "enterprise", "platform"]),
+      Schema.Union([Schema.Null]),
     ]),
   }),
   expires_at: Schema.String,
@@ -2449,7 +2512,42 @@ export const V1GetPostgresUpgradeStatusInput = Schema.Struct({
   tracking_id: Schema.optionalKey(Schema.String),
 });
 export const V1GetPostgresUpgradeStatusOutput = Schema.Struct({
-  databaseUpgradeStatus: Schema.Union([Schema.Struct({}), Schema.Null]),
+  databaseUpgradeStatus: Schema.Union([
+    Schema.Struct({
+      initiated_at: Schema.String,
+      latest_status_at: Schema.String,
+      target_version: Schema.Number.check(Schema.isFinite()),
+      error: Schema.optionalKey(
+        Schema.Literals([
+          "1_upgraded_instance_launch_failed",
+          "2_volume_detachchment_from_upgraded_instance_failed",
+          "3_volume_attachment_to_original_instance_failed",
+          "4_data_upgrade_initiation_failed",
+          "5_data_upgrade_completion_failed",
+          "6_volume_detachchment_from_original_instance_failed",
+          "7_volume_attachment_to_upgraded_instance_failed",
+          "8_upgrade_completion_failed",
+          "9_post_physical_backup_failed",
+        ]),
+      ),
+      progress: Schema.optionalKey(
+        Schema.Literals([
+          "0_requested",
+          "1_started",
+          "2_launched_upgraded_instance",
+          "3_detached_volume_from_upgraded_instance",
+          "4_attached_volume_to_original_instance",
+          "5_initiated_data_upgrade",
+          "6_completed_data_upgrade",
+          "7_detached_volume_from_original_instance",
+          "8_attached_volume_to_upgraded_instance",
+          "9_completed_upgrade",
+          "10_completed_post_physical_backup",
+        ]),
+      ),
+      status: Schema.Number.check(Schema.isFinite()),
+    }),
+  ]),
 });
 export const V1GetPostgrestServiceConfigInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -2464,6 +2562,12 @@ export const V1GetPostgrestServiceConfigOutput = Schema.Struct({
     description: "If `null`, the value is automatically configured based on compute size.",
   }),
   jwt_secret: Schema.optionalKey(Schema.String),
+});
+export const V1GetProfileInput = Schema.Struct({});
+export const V1GetProfileOutput = Schema.Struct({
+  gotrue_id: Schema.String,
+  primary_email: Schema.String,
+  username: Schema.String,
 });
 export const V1GetProjectInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -2521,23 +2625,17 @@ export const V1GetProjectApiKeyOutput = Schema.Struct({
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
     Schema.Union([
-      Schema.Literal("legacy"),
-      Schema.Literal("publishable"),
-      Schema.Literal("secret"),
-      Schema.Null,
+      Schema.Literals(["legacy", "publishable", "secret"]),
+      Schema.Union([Schema.Null]),
     ]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({}), Schema.Null])),
-  inserted_at: Schema.optionalKey(
-    Schema.Union([Schema.String, Schema.Null]).annotate({ format: "date-time" }),
-  ),
-  updated_at: Schema.optionalKey(
-    Schema.Union([Schema.String, Schema.Null]).annotate({ format: "date-time" }),
-  ),
+  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({})])),
+  inserted_at: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "date-time" })])),
+  updated_at: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "date-time" })])),
 });
 export const V1GetProjectApiKeysInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -2563,15 +2661,27 @@ export const V1GetProjectDiskAutoscaleConfigInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1GetProjectDiskAutoscaleConfigOutput = Schema.Struct({
-  growth_percent: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]).annotate({
-    description: "Growth percentage for disk autoscaling",
-  }),
-  min_increment_gb: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]).annotate({
-    description: "Minimum increment size for disk autoscaling in GB",
-  }),
-  max_size_gb: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]).annotate({
-    description: "Maximum limit the disk size will grow to in GB",
-  }),
+  growth_percent: Schema.Union([
+    Schema.Number.check(Schema.isInt()).check(
+      Schema.makeFilterGroup([Schema.isFinite(), Schema.isGreaterThan(0)], {
+        description: "Growth percentage for disk autoscaling",
+      }),
+    ),
+  ]),
+  min_increment_gb: Schema.Union([
+    Schema.Number.check(Schema.isInt()).check(
+      Schema.makeFilterGroup([Schema.isFinite(), Schema.isGreaterThan(0)], {
+        description: "Minimum increment size for disk autoscaling in GB",
+      }),
+    ),
+  ]),
+  max_size_gb: Schema.Union([
+    Schema.Number.check(Schema.isInt()).check(
+      Schema.makeFilterGroup([Schema.isFinite(), Schema.isGreaterThan(0)], {
+        description: "Maximum limit the disk size will grow to in GB",
+      }),
+    ),
+  ]),
 });
 export const V1GetProjectFunctionCombinedStatsInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -2802,32 +2912,70 @@ export const V1GetRealtimeConfigOutput = Schema.Struct({
   private_only: Schema.Union([Schema.Boolean, Schema.Null]).annotate({
     description: "Whether to only allow private channels",
   }),
-  connection_pool: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]).annotate({
-    description: "Sets connection pool size for Realtime Authorization",
-  }),
-  max_concurrent_users: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]).annotate({
-    description: "Sets maximum number of concurrent users rate limit",
-  }),
-  max_events_per_second: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]).annotate({
-    description: "Sets maximum number of events per second rate per channel limit",
-  }),
-  max_bytes_per_second: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]).annotate({
-    description: "Sets maximum number of bytes per second rate per channel limit",
-  }),
+  connection_pool: Schema.Union([
+    Schema.Number.check(Schema.isInt()).check(
+      Schema.makeFilterGroup(
+        [Schema.isFinite(), Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(100)],
+        { description: "Sets connection pool size for Realtime Authorization" },
+      ),
+    ),
+  ]),
+  max_concurrent_users: Schema.Union([
+    Schema.Number.check(Schema.isInt()).check(
+      Schema.makeFilterGroup(
+        [Schema.isFinite(), Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(50000)],
+        { description: "Sets maximum number of concurrent users rate limit" },
+      ),
+    ),
+  ]),
+  max_events_per_second: Schema.Union([
+    Schema.Number.check(Schema.isInt()).check(
+      Schema.makeFilterGroup(
+        [Schema.isFinite(), Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(50000)],
+        { description: "Sets maximum number of events per second rate per channel limit" },
+      ),
+    ),
+  ]),
+  max_bytes_per_second: Schema.Union([
+    Schema.Number.check(Schema.isInt()).check(
+      Schema.makeFilterGroup(
+        [Schema.isFinite(), Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(10000000)],
+        { description: "Sets maximum number of bytes per second rate per channel limit" },
+      ),
+    ),
+  ]),
   max_channels_per_client: Schema.Union([
-    Schema.Number.check(Schema.isInt()),
-    Schema.Null,
-  ]).annotate({ description: "Sets maximum number of channels per client rate limit" }),
-  max_joins_per_second: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]).annotate({
-    description: "Sets maximum number of joins per second rate limit",
-  }),
+    Schema.Number.check(Schema.isInt()).check(
+      Schema.makeFilterGroup(
+        [Schema.isFinite(), Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(10000)],
+        { description: "Sets maximum number of channels per client rate limit" },
+      ),
+    ),
+  ]),
+  max_joins_per_second: Schema.Union([
+    Schema.Number.check(Schema.isInt()).check(
+      Schema.makeFilterGroup(
+        [Schema.isFinite(), Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(5000)],
+        { description: "Sets maximum number of joins per second rate limit" },
+      ),
+    ),
+  ]),
   max_presence_events_per_second: Schema.Union([
-    Schema.Number.check(Schema.isInt()),
-    Schema.Null,
-  ]).annotate({ description: "Sets maximum number of presence events per second rate limit" }),
-  max_payload_size_in_kb: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]).annotate(
-    { description: "Sets maximum number of payload size in KB rate limit" },
-  ),
+    Schema.Number.check(Schema.isInt()).check(
+      Schema.makeFilterGroup(
+        [Schema.isFinite(), Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(5000)],
+        { description: "Sets maximum number of presence events per second rate limit" },
+      ),
+    ),
+  ]),
+  max_payload_size_in_kb: Schema.Union([
+    Schema.Number.check(Schema.isInt()).check(
+      Schema.makeFilterGroup(
+        [Schema.isFinite(), Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(10000)],
+        { description: "Sets maximum number of payload size in KB rate limit" },
+      ),
+    ),
+  ]),
   suspend: Schema.Union([Schema.Boolean, Schema.Null]).annotate({
     description:
       "Disables the Realtime service for this project when true. Set to false to re-enable it.",
@@ -2843,6 +2991,7 @@ export const V1GetRestorePointInput = Schema.Struct({
 export const V1GetRestorePointOutput = Schema.Struct({
   name: Schema.String,
   status: Schema.Literals(["AVAILABLE", "PENDING", "REMOVED", "FAILED"]),
+  completed_on: Schema.Union([Schema.String.annotate({ format: "date-time" })]),
 });
 export const V1GetSecurityAdvisorsInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -3882,18 +4031,30 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  site_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  disable_signup: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
-  jwt_exp: Schema.optionalKey(Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null])),
-  smtp_admin_email: Schema.optionalKey(
-    Schema.Union([Schema.String, Schema.Null]).annotate({ format: "email" }),
+  site_url: Schema.optionalKey(
+    Schema.Union([Schema.String.check(Schema.isPattern(new RegExp("^[^,]+$")))]),
   ),
+  disable_signup: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
+  jwt_exp: Schema.optionalKey(
+    Schema.Union([
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isFinite())
+        .check(Schema.isGreaterThanOrEqualTo(0))
+        .check(Schema.isLessThanOrEqualTo(604800)),
+    ]),
+  ),
+  smtp_admin_email: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "email" })])),
   smtp_host: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   smtp_port: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   smtp_user: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   smtp_pass: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   smtp_max_frequency: Schema.optionalKey(
-    Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+    Schema.Union([
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isFinite())
+        .check(Schema.isGreaterThanOrEqualTo(0))
+        .check(Schema.isLessThanOrEqualTo(32767)),
+    ]),
   ),
   smtp_sender_name: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   mailer_allow_unverified_email_sign_ins: Schema.optionalKey(
@@ -3984,50 +4145,96 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
     Schema.Union([Schema.Boolean, Schema.Null]),
   ),
   mfa_max_enrolled_factors: Schema.optionalKey(
-    Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+    Schema.Union([
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isFinite())
+        .check(Schema.isGreaterThanOrEqualTo(0))
+        .check(Schema.isLessThanOrEqualTo(2147483647)),
+    ]),
   ),
   uri_allow_list: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   external_anonymous_users_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   external_email_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   external_phone_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   saml_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
-  saml_external_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  saml_external_url: Schema.optionalKey(
+    Schema.Union([Schema.String.check(Schema.isPattern(new RegExp("^[^,]+$")))]),
+  ),
   security_sb_forwarded_for_enabled: Schema.optionalKey(
     Schema.Union([Schema.Boolean, Schema.Null]),
   ),
   security_captcha_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   security_captcha_provider: Schema.optionalKey(
-    Schema.Union([Schema.Literal("turnstile"), Schema.Literal("hcaptcha"), Schema.Null]),
+    Schema.Union([Schema.Literals(["turnstile", "hcaptcha"]), Schema.Union([Schema.Null])]),
   ),
   security_captcha_secret: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   sessions_timebox: Schema.optionalKey(
-    Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+    Schema.Union([Schema.Number.check(Schema.isFinite()).check(Schema.isGreaterThanOrEqualTo(0))]),
   ),
   sessions_inactivity_timeout: Schema.optionalKey(
-    Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+    Schema.Union([Schema.Number.check(Schema.isFinite()).check(Schema.isGreaterThanOrEqualTo(0))]),
   ),
   sessions_single_per_user: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
-  sessions_tags: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  sessions_tags: Schema.optionalKey(
+    Schema.Union([
+      Schema.String.check(Schema.isPattern(new RegExp("^\\s*([a-zA-Z0-9_-]+(\\s*,+\\s*)?)*\\s*$"))),
+    ]),
+  ),
   rate_limit_anonymous_users: Schema.optionalKey(
-    Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+    Schema.Union([
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isFinite())
+        .check(Schema.isGreaterThanOrEqualTo(1))
+        .check(Schema.isLessThanOrEqualTo(2147483647)),
+    ]),
   ),
   rate_limit_email_sent: Schema.optionalKey(
-    Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+    Schema.Union([
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isFinite())
+        .check(Schema.isGreaterThanOrEqualTo(1))
+        .check(Schema.isLessThanOrEqualTo(2147483647)),
+    ]),
   ),
   rate_limit_sms_sent: Schema.optionalKey(
-    Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+    Schema.Union([
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isFinite())
+        .check(Schema.isGreaterThanOrEqualTo(1))
+        .check(Schema.isLessThanOrEqualTo(2147483647)),
+    ]),
   ),
   rate_limit_verify: Schema.optionalKey(
-    Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+    Schema.Union([
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isFinite())
+        .check(Schema.isGreaterThanOrEqualTo(1))
+        .check(Schema.isLessThanOrEqualTo(2147483647)),
+    ]),
   ),
   rate_limit_token_refresh: Schema.optionalKey(
-    Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+    Schema.Union([
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isFinite())
+        .check(Schema.isGreaterThanOrEqualTo(1))
+        .check(Schema.isLessThanOrEqualTo(2147483647)),
+    ]),
   ),
   rate_limit_otp: Schema.optionalKey(
-    Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+    Schema.Union([
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isFinite())
+        .check(Schema.isGreaterThanOrEqualTo(1))
+        .check(Schema.isLessThanOrEqualTo(2147483647)),
+    ]),
   ),
   rate_limit_web3: Schema.optionalKey(
-    Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+    Schema.Union([
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isFinite())
+        .check(Schema.isGreaterThanOrEqualTo(1))
+        .check(Schema.isLessThanOrEqualTo(2147483647)),
+    ]),
   ),
   mailer_secure_email_change_enabled: Schema.optionalKey(
     Schema.Union([Schema.Boolean, Schema.Null]),
@@ -4035,17 +4242,22 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   refresh_token_rotation_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   password_hibp_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   password_min_length: Schema.optionalKey(
-    Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+    Schema.Union([
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isFinite())
+        .check(Schema.isGreaterThanOrEqualTo(6))
+        .check(Schema.isLessThanOrEqualTo(32767)),
+    ]),
   ),
   password_required_characters: Schema.optionalKey(
     Schema.Union([
-      Schema.Literal("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
-      Schema.Literal("abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
-      Schema.Literal(
+      Schema.Literals([
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
+        "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
         "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~",
-      ),
-      Schema.Literal(""),
-      Schema.Null,
+        "",
+      ]),
+      Schema.Union([Schema.Null]),
     ]),
   ),
   security_manual_linking_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
@@ -4053,7 +4265,12 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
     Schema.Union([Schema.Boolean, Schema.Null]),
   ),
   security_refresh_token_reuse_interval: Schema.optionalKey(
-    Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+    Schema.Union([
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isFinite())
+        .check(Schema.isGreaterThanOrEqualTo(0))
+        .check(Schema.isLessThanOrEqualTo(2147483647)),
+    ]),
   ),
   mailer_otp_exp: Schema.optionalKey(
     Schema.Number.check(Schema.isInt())
@@ -4061,13 +4278,30 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
       .check(Schema.isLessThanOrEqualTo(2147483647)),
   ),
   mailer_otp_length: Schema.optionalKey(
-    Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+    Schema.Union([
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isFinite())
+        .check(Schema.isGreaterThanOrEqualTo(6))
+        .check(Schema.isLessThanOrEqualTo(10)),
+    ]),
   ),
   sms_autoconfirm: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   sms_max_frequency: Schema.optionalKey(
-    Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+    Schema.Union([
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isFinite())
+        .check(Schema.isGreaterThanOrEqualTo(0))
+        .check(Schema.isLessThanOrEqualTo(32767)),
+    ]),
   ),
-  sms_otp_exp: Schema.optionalKey(Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null])),
+  sms_otp_exp: Schema.optionalKey(
+    Schema.Union([
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isFinite())
+        .check(Schema.isGreaterThanOrEqualTo(0))
+        .check(Schema.isLessThanOrEqualTo(2147483647)),
+    ]),
+  ),
   sms_otp_length: Schema.optionalKey(
     Schema.Number.check(Schema.isInt())
       .check(Schema.isGreaterThanOrEqualTo(0))
@@ -4075,19 +4309,17 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   sms_provider: Schema.optionalKey(
     Schema.Union([
-      Schema.Literal("messagebird"),
-      Schema.Literal("textlocal"),
-      Schema.Literal("twilio"),
-      Schema.Literal("twilio_verify"),
-      Schema.Literal("vonage"),
-      Schema.Null,
+      Schema.Literals(["messagebird", "textlocal", "twilio", "twilio_verify", "vonage"]),
+      Schema.Union([Schema.Null]),
     ]),
   ),
   sms_messagebird_access_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   sms_messagebird_originator: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  sms_test_otp: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  sms_test_otp: Schema.optionalKey(
+    Schema.Union([Schema.String.check(Schema.isPattern(new RegExp("^([0-9]{1,15}=[0-9]+,?)*$")))]),
+  ),
   sms_test_otp_valid_until: Schema.optionalKey(
-    Schema.Union([Schema.String, Schema.Null]).annotate({ format: "date-time" }),
+    Schema.Union([Schema.String.annotate({ format: "date-time" })]),
   ),
   sms_textlocal_api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   sms_textlocal_sender: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -4241,7 +4473,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
     Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
   ),
   db_max_pool_size_unit: Schema.optionalKey(
-    Schema.Union([Schema.Literal("connections"), Schema.Literal("percent"), Schema.Null]),
+    Schema.Union([Schema.Literals(["connections", "percent"]), Schema.Union([Schema.Null])]),
   ),
   api_max_request_duration: Schema.optionalKey(
     Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
@@ -4253,10 +4485,20 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   mfa_phone_enroll_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   mfa_phone_verify_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   mfa_phone_max_frequency: Schema.optionalKey(
-    Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+    Schema.Union([
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isFinite())
+        .check(Schema.isGreaterThanOrEqualTo(0))
+        .check(Schema.isLessThanOrEqualTo(32767)),
+    ]),
   ),
   mfa_phone_otp_length: Schema.optionalKey(
-    Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+    Schema.Union([
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isFinite())
+        .check(Schema.isGreaterThanOrEqualTo(0))
+        .check(Schema.isLessThanOrEqualTo(32767)),
+    ]),
   ),
   mfa_phone_template: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   nimbus_oauth_client_id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -4272,9 +4514,8 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   api_max_request_duration: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
   db_max_pool_size: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
   db_max_pool_size_unit: Schema.Union([
-    Schema.Literal("connections"),
-    Schema.Literal("percent"),
-    Schema.Null,
+    Schema.Literals(["connections", "percent"]),
+    Schema.Union([Schema.Null]),
   ]),
   disable_signup: Schema.Union([Schema.Boolean, Schema.Null]),
   external_anonymous_users_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
@@ -4460,13 +4701,13 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   password_hibp_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   password_min_length: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
   password_required_characters: Schema.Union([
-    Schema.Literal("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
-    Schema.Literal("abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"),
-    Schema.Literal(
+    Schema.Literals([
+      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
+      "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
       "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~",
-    ),
-    Schema.Literal(""),
-    Schema.Null,
+      "",
+    ]),
+    Schema.Union([Schema.Null]),
   ]),
   rate_limit_anonymous_users: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
   rate_limit_email_sent: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
@@ -4482,9 +4723,8 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   security_sb_forwarded_for_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_captcha_provider: Schema.Union([
-    Schema.Literal("turnstile"),
-    Schema.Literal("hcaptcha"),
-    Schema.Null,
+    Schema.Literals(["turnstile", "hcaptcha"]),
+    Schema.Union([Schema.Null]),
   ]),
   security_captcha_secret: Schema.Union([Schema.String, Schema.Null]),
   security_manual_linking_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
@@ -4493,10 +4733,10 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   security_update_password_require_reauthentication: Schema.Union([Schema.Boolean, Schema.Null]),
-  sessions_inactivity_timeout: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  sessions_inactivity_timeout: Schema.Union([Schema.Number.check(Schema.isFinite()), Schema.Null]),
   sessions_single_per_user: Schema.Union([Schema.Boolean, Schema.Null]),
   sessions_tags: Schema.Union([Schema.String, Schema.Null]),
-  sessions_timebox: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+  sessions_timebox: Schema.Union([Schema.Number.check(Schema.isFinite()), Schema.Null]),
   site_url: Schema.Union([Schema.String, Schema.Null]),
   sms_autoconfirm: Schema.Union([Schema.Boolean, Schema.Null]),
   sms_max_frequency: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
@@ -4505,18 +4745,12 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   sms_otp_exp: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
   sms_otp_length: Schema.Number.check(Schema.isInt()),
   sms_provider: Schema.Union([
-    Schema.Literal("messagebird"),
-    Schema.Literal("textlocal"),
-    Schema.Literal("twilio"),
-    Schema.Literal("twilio_verify"),
-    Schema.Literal("vonage"),
-    Schema.Null,
+    Schema.Literals(["messagebird", "textlocal", "twilio", "twilio_verify", "vonage"]),
+    Schema.Union([Schema.Null]),
   ]),
   sms_template: Schema.Union([Schema.String, Schema.Null]),
   sms_test_otp: Schema.Union([Schema.String, Schema.Null]),
-  sms_test_otp_valid_until: Schema.Union([Schema.String, Schema.Null]).annotate({
-    format: "date-time",
-  }),
+  sms_test_otp_valid_until: Schema.Union([Schema.String.annotate({ format: "date-time" })]),
   sms_textlocal_api_key: Schema.Union([Schema.String, Schema.Null]),
   sms_textlocal_sender: Schema.Union([Schema.String, Schema.Null]),
   sms_twilio_account_sid: Schema.Union([Schema.String, Schema.Null]),
@@ -4529,7 +4763,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   sms_vonage_api_key: Schema.Union([Schema.String, Schema.Null]),
   sms_vonage_api_secret: Schema.Union([Schema.String, Schema.Null]),
   sms_vonage_from: Schema.Union([Schema.String, Schema.Null]),
-  smtp_admin_email: Schema.Union([Schema.String, Schema.Null]).annotate({ format: "email" }),
+  smtp_admin_email: Schema.Union([Schema.String.annotate({ format: "email" })]),
   smtp_host: Schema.Union([Schema.String, Schema.Null]),
   smtp_max_frequency: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
   smtp_pass: Schema.Union([Schema.String, Schema.Null]),
@@ -4693,7 +4927,12 @@ export const V1UpdatePoolerConfigInput = Schema.Struct({
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   default_pool_size: Schema.optionalKey(
-    Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
+    Schema.Union([
+      Schema.Number.check(Schema.isInt())
+        .check(Schema.isFinite())
+        .check(Schema.isGreaterThanOrEqualTo(0))
+        .check(Schema.isLessThanOrEqualTo(3000)),
+    ]),
   ),
   pool_mode: Schema.optionalKey(
     Schema.Literals(["transaction", "session"]).annotate({
@@ -4872,30 +5111,24 @@ export const V1UpdateProjectApiKeyInput = Schema.Struct({
       .check(Schema.isPattern(new RegExp("^[a-z_][a-z0-9_]+$"))),
   ),
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({}), Schema.Null])),
+  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({})])),
 });
 export const V1UpdateProjectApiKeyOutput = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
     Schema.Union([
-      Schema.Literal("legacy"),
-      Schema.Literal("publishable"),
-      Schema.Literal("secret"),
-      Schema.Null,
+      Schema.Literals(["legacy", "publishable", "secret"]),
+      Schema.Union([Schema.Null]),
     ]),
   ),
   prefix: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({}), Schema.Null])),
-  inserted_at: Schema.optionalKey(
-    Schema.Union([Schema.String, Schema.Null]).annotate({ format: "date-time" }),
-  ),
-  updated_at: Schema.optionalKey(
-    Schema.Union([Schema.String, Schema.Null]).annotate({ format: "date-time" }),
-  ),
+  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({})])),
+  inserted_at: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "date-time" })])),
+  updated_at: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "date-time" })])),
 });
 export const V1UpdateProjectLegacyApiKeysInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -5193,12 +5426,14 @@ export const openApiOperationIdMap = {
   "v1-get-available-regions": "v1GetAvailableRegions",
   "v1-get-database-disk": "v1GetDatabaseDisk",
   "v1-get-database-metadata": "v1GetDatabaseMetadata",
+  "v1-get-database-openapi": "v1GetDatabaseOpenapi",
   "v1-get-disk-utilization": "v1GetDiskUtilization",
   "v1-get-hostname-config": "v1GetHostnameConfig",
   "v1-get-jit-access": "v1GetJitAccess",
   "v1-get-jit-access-config": "v1GetJitAccessConfig",
   "v1-get-legacy-signing-key": "v1GetLegacySigningKey",
   "v1-get-network-restrictions": "v1GetNetworkRestrictions",
+  "v1-get-organization-entitlements": "v1GetOrganizationEntitlements",
   "v1-get-organization-project-claim": "v1GetOrganizationProjectClaim",
   "v1-get-performance-advisors": "v1GetPerformanceAdvisors",
   "v1-get-pgsodium-config": "v1GetPgsodiumConfig",
@@ -5207,6 +5442,7 @@ export const openApiOperationIdMap = {
   "v1-get-postgres-upgrade-eligibility": "v1GetPostgresUpgradeEligibility",
   "v1-get-postgres-upgrade-status": "v1GetPostgresUpgradeStatus",
   "v1-get-postgrest-service-config": "v1GetPostgrestServiceConfig",
+  "v1-get-profile": "v1GetProfile",
   "v1-get-project": "v1GetProject",
   "v1-get-project-api-key": "v1GetProjectApiKey",
   "v1-get-project-api-keys": "v1GetProjectApiKeys",
@@ -6154,6 +6390,20 @@ export const operationDefinitions = {
     inputSchema: V1GetDatabaseMetadataInput,
     outputSchema: V1GetDatabaseMetadataOutput,
   },
+  v1GetDatabaseOpenapi: {
+    id: "v1GetDatabaseOpenapi",
+    description:
+      "Returns the PostgREST OpenAPI specification for the project. This is the replacement for querying `/rest/v1/` directly with the anon key.",
+    method: "GET",
+    path: "/v1/projects/{ref}/database/openapi",
+    pathParams: ["ref"],
+    queryParams: ["schema"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V1GetDatabaseOpenapiInput,
+    outputSchema: V1GetDatabaseOpenapiOutput,
+  },
   v1GetDiskUtilization: {
     id: "v1GetDiskUtilization",
     description: "Get disk utilization",
@@ -6232,6 +6482,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V1GetNetworkRestrictionsInput,
     outputSchema: V1GetNetworkRestrictionsOutput,
+  },
+  v1GetOrganizationEntitlements: {
+    id: "v1GetOrganizationEntitlements",
+    description:
+      "Returns the entitlements available to the organization based on their plan and any overrides.",
+    method: "GET",
+    path: "/v1/organizations/{slug}/entitlements",
+    pathParams: ["slug"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V1GetOrganizationEntitlementsInput,
+    outputSchema: V1GetOrganizationEntitlementsOutput,
   },
   v1GetOrganizationProjectClaim: {
     id: "v1GetOrganizationProjectClaim",
@@ -6337,6 +6601,19 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V1GetPostgrestServiceConfigInput,
     outputSchema: V1GetPostgrestServiceConfigOutput,
+  },
+  v1GetProfile: {
+    id: "v1GetProfile",
+    description: "Gets the user's profile",
+    method: "GET",
+    path: "/v1/profile",
+    pathParams: [],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V1GetProfileInput,
+    outputSchema: V1GetProfileOutput,
   },
   v1GetProject: {
     id: "v1GetProject",

@@ -7,6 +7,7 @@ import type { OutputFormat } from "../../output/types.ts";
 import type { LoginFlags } from "./login.command.ts";
 import { login } from "./login.handler.ts";
 import type { TelemetryConfig } from "../../telemetry/types.ts";
+import { ApiError } from "../../auth/errors.ts";
 import {
   emptyEnv,
   mockApi,
@@ -155,6 +156,14 @@ describe("login", () => {
             login_method: "token",
           },
         });
+        expect(analytics.aliased).toContainEqual({
+          distinctId: "user-123",
+          alias: "test-device-id",
+        });
+        expect(analytics.identified).toContainEqual({
+          distinctId: "user-123",
+          properties: {},
+        });
       }).pipe(Effect.provide(layer));
     });
 
@@ -174,7 +183,7 @@ describe("login", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("token-based login clears a stale distinct_id when the user cannot be stitched", () => {
+    it.live("token-based login clears a stale distinct_id when profile lookup fails", () => {
       const homeDir = makeTempDir();
       writeTelemetryConfig(homeDir, {
         consent: "granted",
@@ -183,13 +192,27 @@ describe("login", () => {
         session_last_active: Date.now(),
         distinct_id: "old-user-id",
       });
-      const { layer, creds, analytics } = setupWithEnv({ SUPABASE_HOME: homeDir });
+      const creds = mockCredentials();
+      const out = mockOutput();
+      const api = mockApi({ profileError: new ApiError({ detail: "Unauthorized" }) });
+      const analytics = mockAnalytics();
+      const layer = Layer.mergeAll(
+        withEnv({ SUPABASE_HOME: homeDir }),
+        analytics.layer,
+        api.layer,
+        creds.layer,
+        mockCrypto(),
+        mockBrowser(),
+        mockStdin(false),
+        out.layer,
+      );
 
       return Effect.gen(function* () {
         yield* login({ ...NO_FLAGS, token: Option.some(VALID_TOKEN) });
         expect(creds.savedToken).toBe(VALID_TOKEN);
         expect(readTelemetryConfig(homeDir).distinct_id).toBeUndefined();
         expect(analytics.identified).toEqual([]);
+        expect(analytics.aliased).toEqual([]);
       }).pipe(
         Effect.provide(layer),
         Effect.ensuring(Effect.sync(() => rmSync(homeDir, { recursive: true, force: true }))),
@@ -334,7 +357,7 @@ describe("login", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("browser OAuth clears a stale distinct_id when user_id is not returned", () => {
+    it.live("browser OAuth clears a stale distinct_id when profile lookup fails", () => {
       const homeDir = makeTempDir();
       writeTelemetryConfig(homeDir, {
         consent: "granted",
@@ -345,7 +368,7 @@ describe("login", () => {
       });
       const creds = mockCredentials();
       const out = mockOutput();
-      const api = mockApi();
+      const api = mockApi({ profileError: new ApiError({ detail: "Unauthorized" }) });
       const analytics = mockAnalytics();
       const layer = Layer.mergeAll(
         withEnv({ SUPABASE_HOME: homeDir }),
@@ -369,10 +392,14 @@ describe("login", () => {
       );
     });
 
-    it.live("browser OAuth stitches the authenticated user when the API returns user_id", () => {
+    it.live("browser OAuth stitches the authenticated user via /v1/profile", () => {
       const creds = mockCredentials();
       const out = mockOutput();
-      const api = mockApi({ response: { user_id: "user-123" } });
+      const api = mockApi({
+        profileResponse: {
+          gotrue_id: "user-123",
+        },
+      });
       const analytics = mockAnalytics();
       const layer = Layer.mergeAll(
         emptyEnv(),
@@ -402,6 +429,7 @@ describe("login", () => {
             token_name: "cli_test@host_123",
           },
         });
+        expect(api.profileCallCount).toBe(1);
       }).pipe(Effect.provide(layer));
     });
 
