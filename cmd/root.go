@@ -160,9 +160,9 @@ func Execute() {
 	executedCmd, err := rootCmd.ExecuteC()
 	if executedCmd != nil {
 		if service := telemetry.FromContext(executedCmd.Context()); service != nil {
-			_ = service.Capture(executedCmd.Context(), "cli_command_executed", map[string]any{
-				"exit_code":   exitCode(err),
-				"duration_ms": time.Since(startedAt).Milliseconds(),
+			_ = service.Capture(executedCmd.Context(), telemetry.EventCommandExecuted, map[string]any{
+				telemetry.PropExitCode:   exitCode(err),
+				telemetry.PropDurationMs: time.Since(startedAt).Milliseconds(),
 			}, nil)
 			_ = service.Close()
 		}

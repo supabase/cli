@@ -246,10 +246,10 @@ func TestDatabaseStart(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 		require.Len(t, analytics.captures, 1)
-		assert.Equal(t, "cli_stack_started", analytics.captures[0].event)
+		assert.Equal(t, phtelemetry.EventStackStarted, analytics.captures[0].event)
 		assert.Equal(t, map[string]string{
-			"organization": "org_123",
-			"project":      "proj_123",
+			phtelemetry.GroupOrganization: "org_123",
+			phtelemetry.GroupProject:      "proj_123",
 		}, analytics.captures[0].groups)
 	})
 

@@ -58,10 +58,10 @@ func linkedProjectGroups(fsys afero.Fs) map[string]string {
 	}
 	groups := make(map[string]string, 2)
 	if linked.OrganizationID != "" {
-		groups["organization"] = linked.OrganizationID
+		groups[GroupOrganization] = linked.OrganizationID
 	}
 	if linked.Ref != "" {
-		groups["project"] = linked.Ref
+		groups[GroupProject] = linked.Ref
 	}
 	if len(groups) == 0 {
 		return nil

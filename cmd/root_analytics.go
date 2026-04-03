@@ -21,58 +21,6 @@ const (
 	maxTelemetryEnvValueLength   = 80
 )
 
-var telemetryEnvPresenceVars = []string{
-	// AI tools signals
-	"CURSOR_AGENT",
-	"CURSOR_TRACE_ID",
-	"GEMINI_CLI",
-	"CODEX_SANDBOX",
-	"CODEX_CI",
-	"CODEX_THREAD_ID",
-	"ANTIGRAVITY_AGENT",
-	"AUGMENT_AGENT",
-	"OPENCODE_CLIENT",
-	"CLAUDECODE",
-	"CLAUDE_CODE",
-	"REPL_ID",
-	"COPILOT_MODEL",
-	"COPILOT_ALLOW_ALL",
-	"COPILOT_GITHUB_TOKEN",
-	// CI signals
-	"CI",
-	"GITHUB_ACTIONS",
-	"BUILDKITE",
-	"TF_BUILD",
-	"JENKINS_URL",
-	"GITLAB_CI",
-	// Extra signals
-	"GITHUB_TOKEN",
-	"GITHUB_HEAD_REF",
-	"BITBUCKET_CLONE_DIR",
-	// Supabase environment signals
-	"SUPABASE_ACCESS_TOKEN",
-	"SUPABASE_HOME",
-	"SYSTEMROOT",
-	"SUPABASE_SSL_DEBUG",
-	"SUPABASE_CA_SKIP_VERIFY",
-	"SSL_CERT_FILE",
-	"SSL_CERT_DIR",
-	"NPM_CONFIG_REGISTRY",
-	"SUPABASE_SERVICE_ROLE_KEY",
-	"SUPABASE_PROJECT_ID",
-	"SUPABASE_POSTGRES_URL",
-	"SUPABASE_ENV",
-}
-
-var telemetryEnvValueVars = []string{
-	"AI_AGENT",
-	"CURSOR_EXTENSION_HOST_ROLE",
-	"TERM",
-	"TERM_PROGRAM",
-	"TERM_PROGRAM_VERSION",
-	"TERM_COLOR_MODE",
-}
-
 func commandAnalyticsContext(cmd *cobra.Command) telemetry.CommandContext {
 	return telemetry.CommandContext{
 		RunID:   uuid.NewString(),
@@ -195,7 +143,7 @@ func telemetryIsAgent() bool {
 }
 
 func telemetryEnvSignals() map[string]any {
-	return envSignals(telemetryEnvPresenceVars, telemetryEnvValueVars)
+	return envSignals(telemetry.EnvSignalPresenceKeys[:], telemetry.EnvSignalValueKeys[:])
 }
 
 func envSignals(presenceKeys []string, valueKeys []string) map[string]any {

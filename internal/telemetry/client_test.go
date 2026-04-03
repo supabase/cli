@@ -48,7 +48,7 @@ func TestNewClient(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.False(t, client.Enabled())
-		assert.NoError(t, client.Capture("device-1", "cli_command_executed", map[string]any{"command": "login"}, nil))
+		assert.NoError(t, client.Capture("device-1", EventCommandExecuted, map[string]any{"command": "login"}, nil))
 		assert.NoError(t, client.Close())
 	})
 }
@@ -63,10 +63,10 @@ func TestCaptureMergesBasePropertiesAndGroups(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = client.Capture("device-1", "cli_command_executed", map[string]any{
+	err = client.Capture("device-1", EventCommandExecuted, map[string]any{
 		"command": "login",
 	}, map[string]string{
-		"project": "proj_123",
+		GroupProject: "proj_123",
 	})
 
 	require.NoError(t, err)
@@ -74,11 +74,11 @@ func TestCaptureMergesBasePropertiesAndGroups(t *testing.T) {
 	msg, ok := queue.messages[0].(posthog.Capture)
 	require.True(t, ok)
 	assert.Equal(t, "device-1", msg.DistinctId)
-	assert.Equal(t, "cli_command_executed", msg.Event)
+	assert.Equal(t, EventCommandExecuted, msg.Event)
 	assert.Equal(t, "cli", msg.Properties["platform"])
 	assert.Equal(t, "darwin", msg.Properties["os"])
 	assert.Equal(t, "login", msg.Properties["command"])
-	assert.Equal(t, posthog.Groups{"project": "proj_123"}, msg.Groups)
+	assert.Equal(t, posthog.Groups{GroupProject: "proj_123"}, msg.Groups)
 }
 
 func TestIdentifyAliasAndGroupIdentify(t *testing.T) {
@@ -90,7 +90,7 @@ func TestIdentifyAliasAndGroupIdentify(t *testing.T) {
 
 	require.NoError(t, client.Identify("user-123", map[string]any{"schema_version": 1}))
 	require.NoError(t, client.Alias("user-123", "device-123"))
-	require.NoError(t, client.GroupIdentify("organization", "org_123", map[string]any{"slug": "acme"}))
+	require.NoError(t, client.GroupIdentify(GroupOrganization, "org_123", map[string]any{"slug": "acme"}))
 	require.NoError(t, client.Close())
 
 	require.Len(t, queue.messages, 3)
@@ -108,7 +108,7 @@ func TestIdentifyAliasAndGroupIdentify(t *testing.T) {
 
 	groupIdentify, ok := queue.messages[2].(posthog.GroupIdentify)
 	require.True(t, ok)
-	assert.Equal(t, "organization", groupIdentify.Type)
+	assert.Equal(t, GroupOrganization, groupIdentify.Type)
 	assert.Equal(t, "org_123", groupIdentify.Key)
 	assert.Equal(t, "cli", groupIdentify.Properties["platform"])
 	assert.Equal(t, "acme", groupIdentify.Properties["slug"])

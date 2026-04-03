@@ -181,10 +181,10 @@ func TestLinkCommand(t *testing.T) {
 		assert.Equal(t, "org_123", linkedProject.OrganizationID)
 		require.Len(t, analytics.groupIdentifies, 2)
 		require.Len(t, analytics.captures, 1)
-		assert.Equal(t, "cli_project_linked", analytics.captures[0].event)
+		assert.Equal(t, phtelemetry.EventProjectLinked, analytics.captures[0].event)
 		assert.Equal(t, map[string]string{
-			"organization": "org_123",
-			"project":      project,
+			phtelemetry.GroupOrganization: "org_123",
+			phtelemetry.GroupProject:      project,
 		}, analytics.captures[0].groups)
 	})
 

@@ -43,23 +43,23 @@ func Run(ctx context.Context, projectRef string, skipPooler bool, fsys afero.Fs,
 		}
 		if service := phtelemetry.FromContext(ctx); service != nil {
 			if project.OrganizationId != "" {
-				if err := service.GroupIdentify("organization", project.OrganizationId, map[string]any{
+				if err := service.GroupIdentify(phtelemetry.GroupOrganization, project.OrganizationId, map[string]any{
 					"organization_slug": project.OrganizationSlug,
 				}); err != nil {
 					fmt.Fprintln(utils.GetDebugLogger(), err)
 				}
 			}
 			if project.Ref != "" {
-				if err := service.GroupIdentify("project", project.Ref, map[string]any{
+				if err := service.GroupIdentify(phtelemetry.GroupProject, project.Ref, map[string]any{
 					"name":              project.Name,
 					"organization_slug": project.OrganizationSlug,
 				}); err != nil {
 					fmt.Fprintln(utils.GetDebugLogger(), err)
 				}
 			}
-			if err := service.Capture(ctx, "cli_project_linked", nil, map[string]string{
-				"organization": project.OrganizationId,
-				"project":      project.Ref,
+			if err := service.Capture(ctx, phtelemetry.EventProjectLinked, nil, map[string]string{
+				phtelemetry.GroupOrganization: project.OrganizationId,
+				phtelemetry.GroupProject:      project.Ref,
 			}); err != nil {
 				fmt.Fprintln(utils.GetDebugLogger(), err)
 			}

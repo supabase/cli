@@ -287,7 +287,7 @@ func handleTelemetryAfterLogin(ctx context.Context, params RunParams) {
 			fmt.Fprintln(logger, err)
 		}
 	}
-	if err := service.Capture(ctx, "cli_login_completed", nil, nil); err != nil {
+	if err := service.Capture(ctx, phtelemetry.EventLoginCompleted, nil, nil); err != nil {
 		fmt.Fprintln(logger, err)
 	}
 }

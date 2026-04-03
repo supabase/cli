@@ -1333,7 +1333,7 @@ EOF
 		return err
 	}
 	if service := phtelemetry.FromContext(ctx); service != nil {
-		if err := service.Capture(ctx, "cli_stack_started", nil, nil); err != nil {
+		if err := service.Capture(ctx, phtelemetry.EventStackStarted, nil, nil); err != nil {
 			fmt.Fprintln(utils.GetDebugLogger(), err)
 		}
 	}

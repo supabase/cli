@@ -101,35 +101,35 @@ func TestServiceCaptureIncludesBasePropertiesAndCommandContext(t *testing.T) {
 		},
 	})
 
-	require.NoError(t, service.Capture(ctx, "cli_command_executed", map[string]any{
-		"duration_ms": 42,
+	require.NoError(t, service.Capture(ctx, EventCommandExecuted, map[string]any{
+		PropDurationMs: 42,
 	}, nil))
 
 	require.Len(t, analytics.captures, 1)
 	call := analytics.captures[0]
 	assert.NoError(t, uuid.Validate(call.distinctID))
-	assert.Equal(t, "cli_command_executed", call.event)
-	assert.Equal(t, "cli", call.properties["platform"])
-	assert.Equal(t, SchemaVersion, call.properties["schema_version"])
-	assert.Equal(t, true, call.properties["is_first_run"])
-	assert.Equal(t, true, call.properties["is_tty"])
-	assert.Equal(t, true, call.properties["is_ci"])
-	assert.Equal(t, true, call.properties["is_agent"])
+	assert.Equal(t, EventCommandExecuted, call.event)
+	assert.Equal(t, "cli", call.properties[PropPlatform])
+	assert.Equal(t, SchemaVersion, call.properties[PropSchemaVersion])
+	assert.Equal(t, true, call.properties[PropIsFirstRun])
+	assert.Equal(t, true, call.properties[PropIsTTY])
+	assert.Equal(t, true, call.properties[PropIsCI])
+	assert.Equal(t, true, call.properties[PropIsAgent])
 	assert.Equal(t, map[string]any{
 		"CLAUDE_CODE":  true,
 		"TERM_PROGRAM": "iTerm.app",
-	}, call.properties["env_signals"])
-	assert.Equal(t, "darwin", call.properties["os"])
-	assert.Equal(t, "arm64", call.properties["arch"])
-	assert.Equal(t, "1.2.3", call.properties["cli_version"])
-	assert.Equal(t, "run-123", call.properties["command_run_id"])
-	assert.Equal(t, "login", call.properties["command"])
-	assert.Equal(t, map[string]any{"token": "<redacted>"}, call.properties["flags"])
+	}, call.properties[PropEnvSignals])
+	assert.Equal(t, "darwin", call.properties[PropOS])
+	assert.Equal(t, "arm64", call.properties[PropArch])
+	assert.Equal(t, "1.2.3", call.properties[PropCLIVersion])
+	assert.Equal(t, "run-123", call.properties[PropCommandRunID])
+	assert.Equal(t, "login", call.properties[PropCommand])
+	assert.Equal(t, map[string]any{"token": "<redacted>"}, call.properties[PropFlags])
 	_, hasFlagsUsed := call.properties["flags_used"]
 	assert.False(t, hasFlagsUsed)
 	_, hasFlagValues := call.properties["flag_values"]
 	assert.False(t, hasFlagValues)
-	assert.Equal(t, 42, call.properties["duration_ms"])
+	assert.Equal(t, 42, call.properties[PropDurationMs])
 }
 
 func TestServiceStitchLoginPersistsDistinctID(t *testing.T) {
@@ -146,7 +146,7 @@ func TestServiceStitchLoginPersistsDistinctID(t *testing.T) {
 	deviceID := service.state.DeviceID
 
 	require.NoError(t, service.StitchLogin("user-123"))
-	require.NoError(t, service.Capture(context.Background(), "cli_login_completed", nil, nil))
+	require.NoError(t, service.Capture(context.Background(), EventLoginCompleted, nil, nil))
 
 	require.Len(t, analytics.aliases, 1)
 	assert.Equal(t, "user-123", analytics.aliases[0].distinctID)
@@ -176,7 +176,7 @@ func TestServiceClearDistinctIDFallsBackToDeviceID(t *testing.T) {
 	require.NoError(t, service.StitchLogin("user-123"))
 
 	require.NoError(t, service.ClearDistinctID())
-	require.NoError(t, service.Capture(context.Background(), "cli_login_completed", nil, nil))
+	require.NoError(t, service.Capture(context.Background(), EventLoginCompleted, nil, nil))
 
 	require.Len(t, analytics.captures, 1)
 	assert.Equal(t, deviceID, analytics.captures[0].distinctID)
@@ -204,12 +204,12 @@ func TestServiceCaptureIncludesLinkedProjectGroups(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, service.Capture(context.Background(), "cli_stack_started", nil, nil))
+	require.NoError(t, service.Capture(context.Background(), EventStackStarted, nil, nil))
 
 	require.Len(t, analytics.captures, 1)
 	assert.Equal(t, map[string]string{
-		"organization": "org_123",
-		"project":      "proj_123",
+		GroupOrganization: "org_123",
+		GroupProject:      "proj_123",
 	}, analytics.captures[0].groups)
 }
 
@@ -234,7 +234,7 @@ func TestServiceCaptureHonorsConsentAndEnvOptOut(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		require.NoError(t, service.Capture(context.Background(), "cli_command_executed", nil, nil))
+		require.NoError(t, service.Capture(context.Background(), EventCommandExecuted, nil, nil))
 		assert.Empty(t, analytics.captures)
 	})
 
@@ -250,7 +250,7 @@ func TestServiceCaptureHonorsConsentAndEnvOptOut(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		require.NoError(t, service.Capture(context.Background(), "cli_command_executed", nil, nil))
+		require.NoError(t, service.Capture(context.Background(), EventCommandExecuted, nil, nil))
 		assert.Empty(t, analytics.captures)
 	})
 }

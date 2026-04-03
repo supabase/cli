@@ -7,28 +7,15 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/utils"
 )
 
 func clearTelemetryEnv(t *testing.T) {
-	for _, key := range []string{
-		"AI_AGENT",
-		"CURSOR_AGENT",
-		"CURSOR_EXTENSION_HOST_ROLE",
-		"GEMINI_CLI",
-		"CODEX_SANDBOX",
-		"CODEX_CI",
-		"CODEX_THREAD_ID",
-		"ANTIGRAVITY_AGENT",
-		"AUGMENT_AGENT",
-		"OPENCODE_CLIENT",
-		"CLAUDECODE",
-		"CLAUDE_CODE",
-		"COPILOT_MODEL",
-		"COPILOT_ALLOW_ALL",
-		"COPILOT_GITHUB_TOKEN",
-		"REPL_ID",
-	} {
+	for _, key := range telemetry.EnvSignalPresenceKeys {
+		t.Setenv(key, "")
+	}
+	for _, key := range telemetry.EnvSignalValueKeys {
 		t.Setenv(key, "")
 	}
 }

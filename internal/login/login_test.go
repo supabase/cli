@@ -173,7 +173,7 @@ func TestLoginTelemetryStitching(t *testing.T) {
 		require.Len(t, analytics.identifies, 1)
 		assert.Equal(t, "user-123", analytics.identifies[0].distinctID)
 		require.Len(t, analytics.captures, 1)
-		assert.Equal(t, "cli_login_completed", analytics.captures[0].event)
+		assert.Equal(t, phtelemetry.EventLoginCompleted, analytics.captures[0].event)
 		assert.Equal(t, "user-123", analytics.captures[0].distinctID)
 		state, err := phtelemetry.LoadState(fsys)
 		require.NoError(t, err)

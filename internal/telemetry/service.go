@@ -107,6 +107,7 @@ func FromContext(ctx context.Context) *Service {
 	return service
 }
 
+// Property catalog: see events.go.
 func (s *Service) Capture(ctx context.Context, event string, properties map[string]any, groups map[string]string) error {
 	if !s.canSend() {
 		return nil
@@ -114,13 +115,13 @@ func (s *Service) Capture(ctx context.Context, event string, properties map[stri
 	mergedProperties := s.baseProperties()
 	command := commandContextFrom(ctx)
 	if command.RunID != "" {
-		mergedProperties["command_run_id"] = command.RunID
+		mergedProperties[PropCommandRunID] = command.RunID
 	}
 	if command.Command != "" {
-		mergedProperties["command"] = command.Command
+		mergedProperties[PropCommand] = command.Command
 	}
 	if command.Flags != nil {
-		mergedProperties["flags"] = command.Flags
+		mergedProperties[PropFlags] = command.Flags
 	}
 	for key, value := range properties {
 		mergedProperties[key] = value
@@ -168,20 +169,20 @@ func (s *Service) Close() error {
 
 func (s *Service) baseProperties() map[string]any {
 	properties := map[string]any{
-		"platform":       "cli",
-		"schema_version": s.state.SchemaVersion,
-		"device_id":      s.state.DeviceID,
-		"$session_id":    s.state.SessionID,
-		"is_first_run":   s.isFirstRun,
-		"is_tty":         s.isTTY,
-		"is_ci":          s.isCI,
-		"is_agent":       s.isAgent,
-		"os":             s.goos,
-		"arch":           s.goarch,
-		"cli_version":    s.cliVersion,
+		PropPlatform:      "cli",
+		PropSchemaVersion: s.state.SchemaVersion,
+		PropDeviceID:      s.state.DeviceID,
+		PropSessionID:     s.state.SessionID,
+		PropIsFirstRun:    s.isFirstRun,
+		PropIsTTY:         s.isTTY,
+		PropIsCI:          s.isCI,
+		PropIsAgent:       s.isAgent,
+		PropOS:            s.goos,
+		PropArch:          s.goarch,
+		PropCLIVersion:    s.cliVersion,
 	}
 	if len(s.envSignals) > 0 {
-		properties["env_signals"] = s.envSignals
+		properties[PropEnvSignals] = s.envSignals
 	}
 	return properties
 }
