@@ -76,14 +76,18 @@ func TestTomlOutput(t *testing.T) {
 	t.Cleanup(func() { utils.OutputFormat.Value = utils.OutputPretty })
 
 	t.Run("encodes toml format", func(t *testing.T) {
-		connectionString := fmt.Sprintf("postgresql://%s@127.0.0.1:6543/postgres", "postgres")
-		t.Cleanup(fstest.MockStdout(t, fmt.Sprintf(`POSTGRES_URL = "postgresql://postgres:postgres@127.0.0.1:6543/postgres?connect_timeout=10"
-POSTGRES_URL_NON_POOLING = "postgresql://postgres:postgres@127.0.0.1:5432/postgres?connect_timeout=10"
+		dbUser := "postgres"
+		dbPassword := "postgres"
+		connectionString := fmt.Sprintf("postgresql://%s@127.0.0.1:6543/postgres", dbUser)
+		pooledURL := fmt.Sprintf("postgresql://%s:%s@127.0.0.1:6543/postgres?connect_timeout=10", dbUser, dbPassword)
+		nonPoolingURL := fmt.Sprintf("postgresql://%s:%s@127.0.0.1:5432/postgres?connect_timeout=10", dbUser, dbPassword)
+		t.Cleanup(fstest.MockStdout(t, fmt.Sprintf(`POSTGRES_URL = %q
+POSTGRES_URL_NON_POOLING = %q
 SUPABASE_ANON_KEY = "anon-key"
 SUPABASE_JWT_SECRET = "secret-key"
 SUPABASE_SERVICE_ROLE_KEY = "service-role-key"
 SUPABASE_URL = "https://%s."
-`, flags.ProjectRef)))
+`, pooledURL, nonPoolingURL, flags.ProjectRef)))
 		t.Cleanup(apitest.MockPlatformAPI(t))
 		// Setup mock api
 		gock.New(utils.DefaultApiHost).

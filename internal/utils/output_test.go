@@ -11,7 +11,7 @@ import (
 
 func TestEncodeOutput(t *testing.T) {
 	t.Run("encodes flat env", func(t *testing.T) {
-		databaseURL := fmt.Sprintf("postgresql://%s@host:5432/db", "user")
+		databaseURL := fmt.Sprintf("postgresql://%s@host:5432/db", "testuser")
 		input := map[string]string{
 			"DATABASE_URL": databaseURL,
 			"API_KEY":      "secret-key",

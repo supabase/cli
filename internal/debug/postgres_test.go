@@ -12,7 +12,7 @@ import (
 )
 
 func TestPostgresProxy(t *testing.T) {
-	postgresURL := fmt.Sprintf("postgresql://%s@127.0.0.1:5432/postgres", "postgres")
+	postgresURL := fmt.Sprintf("postgresql://%s@127.0.0.1:5432/postgres", "testuser")
 
 	t.Run("forwards messages between frontend and backend", func(t *testing.T) {
 		// Parse connection url
