@@ -3,8 +3,6 @@ package utils
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -26,6 +24,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/api/types/versions"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
@@ -173,12 +172,20 @@ func GetRegistryAuth() string {
 			fmt.Fprintln(os.Stderr, "Failed to load registry credentials:", err)
 			return
 		}
-		encoded, err := json.Marshal(auth)
+		encoded, err := registry.EncodeAuthConfig(registry.AuthConfig{
+			Username:      auth.Username,
+			Password:      auth.Password,
+			Auth:          auth.Auth,
+			Email:         auth.Email,
+			ServerAddress: auth.ServerAddress,
+			IdentityToken: auth.IdentityToken,
+			RegistryToken: auth.RegistryToken,
+		})
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "Failed to serialise auth config:", err)
+			fmt.Fprintln(os.Stderr, "Failed to encode auth config:", err)
 			return
 		}
-		registryAuth = base64.URLEncoding.EncodeToString(encoded)
+		registryAuth = encoded
 	})
 	return registryAuth
 }

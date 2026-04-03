@@ -22,6 +22,7 @@ func TestGetBranch(t *testing.T) {
 	flags.ProjectRef = apitest.RandomProjectRef()
 
 	t.Run("fetches branch details", func(t *testing.T) {
+		connectionString := fmt.Sprintf("postgresql://%s@127.0.0.1:6543/postgres", "postgres")
 		t.Cleanup(fstest.MockStdout(t, `
   
    HOST      | PORT | USER   | PASSWORD | JWT SECRET | POSTGRES VERSION             | STATUS         
@@ -110,7 +111,7 @@ SUPABASE_URL = "https://%s."
 			Get("/v1/projects/" + flags.ProjectRef + "/config/database/pooler").
 			Reply(http.StatusOK).
 			JSON([]api.SupavisorConfigResponse{{
-				ConnectionString: "postgres://postgres:postgres@127.0.0.1:6543/postgres",
+				ConnectionString: connectionString,
 				DatabaseType:     api.SupavisorConfigResponseDatabaseTypePRIMARY,
 				PoolMode:         api.SupavisorConfigResponsePoolModeTransaction,
 			}})

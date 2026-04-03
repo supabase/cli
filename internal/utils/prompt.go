@@ -123,6 +123,7 @@ func PromptChoice(ctx context.Context, title string, items []PromptItem, opts ..
 	l.Styles.HelpStyle = helpStyle
 	// Create our model
 	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	initial := model{cancel: cancel, list: l}
 	// Interactive prompts should always be written to stderr
 	opts = append(opts, tea.WithOutput(os.Stderr))

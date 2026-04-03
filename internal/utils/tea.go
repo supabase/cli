@@ -92,6 +92,7 @@ func (t StatusWriter) Write(p []byte) (int, error) {
 
 func RunProgram(ctx context.Context, f func(p Program, ctx context.Context) error) error {
 	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	p := NewProgram(logModel{
 		cancel: cancel,
 		spinner: spinner.New(

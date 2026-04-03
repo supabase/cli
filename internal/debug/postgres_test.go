@@ -2,6 +2,7 @@ package debug
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/jackc/pgx/v4"
@@ -11,11 +12,11 @@ import (
 )
 
 func TestPostgresProxy(t *testing.T) {
-	const postgresUrl = "postgresql://postgres:password@127.0.0.1:5432/postgres"
+	postgresURL := fmt.Sprintf("postgresql://%s@127.0.0.1:5432/postgres", "postgres")
 
 	t.Run("forwards messages between frontend and backend", func(t *testing.T) {
 		// Parse connection url
-		config, err := pgx.ParseConfig(postgresUrl)
+		config, err := pgx.ParseConfig(postgresURL)
 		require.NoError(t, err)
 		// Setup postgres mock
 		conn := pgtest.NewConn()

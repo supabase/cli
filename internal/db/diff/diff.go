@@ -1,7 +1,6 @@
 package diff
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -15,14 +14,11 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/pgdelta"
 	"github.com/supabase/cli/internal/utils"
@@ -227,38 +223,4 @@ func migrateBaseDatabase(ctx context.Context, config pgconn.Config, migrations [
 	}
 	defer conn.Close(context.Background())
 	return migration.SeedGlobals(ctx, migrations, conn, afero.NewIOFS(fsys))
-}
-
-func diffWithStream(ctx context.Context, env []string, script string, stdout io.Writer) error {
-	cmd := []string{"edge-runtime", "start", "--main-service=."}
-	if viper.GetBool("DEBUG") {
-		cmd = append(cmd, "--verbose")
-	}
-	cmdString := strings.Join(cmd, " ")
-	entrypoint := []string{"sh", "-c", `cat <<'EOF' > index.ts && ` + cmdString + `
-` + script + `
-EOF
-`}
-	var stderr bytes.Buffer
-	if err := utils.DockerRunOnceWithConfig(
-		ctx,
-		container.Config{
-			Image:      utils.Config.EdgeRuntime.Image,
-			Env:        env,
-			Entrypoint: entrypoint,
-		},
-		container.HostConfig{
-			Binds:       []string{utils.EdgeRuntimeId + ":/root/.cache/deno:rw"},
-			NetworkMode: network.NetworkHost,
-		},
-		network.NetworkingConfig{},
-		"",
-		stdout,
-		&stderr,
-	// The "main worker has been destroyed" message may not appear at the start of stderr
-	// (e.g. preceded by other Deno runtime output), so use Contains instead of HasPrefix.
-	); err != nil && !strings.Contains(stderr.String(), "main worker has been destroyed") {
-		return errors.Errorf("error diffing schema: %w:\n%s", err, stderr.String())
-	}
-	return nil
 }

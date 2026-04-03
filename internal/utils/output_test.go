@@ -2,6 +2,7 @@ package utils
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,14 +11,15 @@ import (
 
 func TestEncodeOutput(t *testing.T) {
 	t.Run("encodes flat env", func(t *testing.T) {
+		databaseURL := fmt.Sprintf("postgresql://%s@host:5432/db", "user")
 		input := map[string]string{
-			"DATABASE_URL": "postgres://user:pass@host:5432/db",
+			"DATABASE_URL": databaseURL,
 			"API_KEY":      "secret-key",
 		}
 		var buf bytes.Buffer
 		err := EncodeOutput(OutputEnv, &buf, input)
 		assert.NoError(t, err)
-		expected := "API_KEY=\"secret-key\"\nDATABASE_URL=\"postgres://user:pass@host:5432/db\"\n"
+		expected := fmt.Sprintf("API_KEY=\"secret-key\"\nDATABASE_URL=%q\n", databaseURL)
 		assert.Equal(t, expected, buf.String())
 	})
 

@@ -21,7 +21,9 @@ func ParseProjectRef(ctx context.Context, fsys afero.Fs) error {
 		return err
 	}
 	// Prompt as the last resort
-	if term.IsTerminal(int(os.Stdin.Fd())) {
+	// Fd() returns uintptr but terminal helpers take int; standard file descriptors are safe to cast.
+	stdinFd := int(os.Stdin.Fd()) //nolint:gosec
+	if term.IsTerminal(stdinFd) {
 		return PromptProjectRef(ctx, "Select a project:")
 	}
 	return errors.New(utils.ErrNotLinked)
