@@ -66,8 +66,10 @@ func Run(ctx context.Context, starter StarterTemplate, fsys afero.Fs, options ..
 	// 1. Login
 	_, err := utils.LoadAccessTokenFS(fsys)
 	if errors.Is(err, utils.ErrMissingToken) {
+		// Fd() returns uintptr but terminal helpers take int; standard file descriptors are safe to cast.
+		stdinFd := int(os.Stdin.Fd()) //nolint:gosec
 		if err := login.Run(ctx, os.Stdout, login.RunParams{
-			OpenBrowser: term.IsTerminal(int(os.Stdin.Fd())),
+			OpenBrowser: term.IsTerminal(stdinFd),
 			Fsys:        fsys,
 		}); err != nil {
 			return err

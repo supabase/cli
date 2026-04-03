@@ -22,7 +22,6 @@ func TestGetBranch(t *testing.T) {
 	flags.ProjectRef = apitest.RandomProjectRef()
 
 	t.Run("fetches branch details", func(t *testing.T) {
-		connectionString := fmt.Sprintf("postgresql://%s@127.0.0.1:6543/postgres", "postgres")
 		t.Cleanup(fstest.MockStdout(t, `
   
    HOST      | PORT | USER   | PASSWORD | JWT SECRET | POSTGRES VERSION             | STATUS         
@@ -77,6 +76,7 @@ func TestTomlOutput(t *testing.T) {
 	t.Cleanup(func() { utils.OutputFormat.Value = utils.OutputPretty })
 
 	t.Run("encodes toml format", func(t *testing.T) {
+		connectionString := fmt.Sprintf("postgresql://%s@127.0.0.1:6543/postgres", "postgres")
 		t.Cleanup(fstest.MockStdout(t, fmt.Sprintf(`POSTGRES_URL = "postgresql://postgres:postgres@127.0.0.1:6543/postgres?connect_timeout=10"
 POSTGRES_URL_NON_POOLING = "postgresql://postgres:postgres@127.0.0.1:5432/postgres?connect_timeout=10"
 SUPABASE_ANON_KEY = "anon-key"

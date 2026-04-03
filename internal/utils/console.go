@@ -23,8 +23,10 @@ type Console struct {
 }
 
 func NewConsole() *Console {
+	// Fd() returns uintptr but terminal helpers take int; standard file descriptors are safe to cast.
+	stdinFd := int(os.Stdin.Fd()) //nolint:gosec
 	return &Console{
-		IsTTY: term.IsTerminal(int(os.Stdin.Fd())),
+		IsTTY: term.IsTerminal(stdinFd),
 		stdin: bufio.NewScanner(os.Stdin),
 		token: make(chan string),
 		mu:    sync.Mutex{},

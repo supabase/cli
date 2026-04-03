@@ -17,7 +17,9 @@ import (
 
 func NewProgram(model tea.Model, opts ...tea.ProgramOption) Program {
 	var p Program
-	if term.IsTerminal(int(os.Stdin.Fd())) {
+	// Fd() returns uintptr but terminal helpers take int; standard file descriptors are safe to cast.
+	stdinFd := int(os.Stdin.Fd()) //nolint:gosec
+	if term.IsTerminal(stdinFd) {
 		p = tea.NewProgram(model, opts...)
 	} else {
 		p = newFakeProgram(model)
