@@ -260,6 +260,11 @@ func (a *auth) Clone() auth {
 		capt := *a.Captcha
 		copy.Captcha = &capt
 	}
+	if copy.Passkey != nil {
+		passkey := *a.Passkey
+		passkey.RpOrigins = slices.Clone(a.Passkey.RpOrigins)
+		copy.Passkey = &passkey
+	}
 	copy.External = maps.Clone(a.External)
 	if a.Email.Smtp != nil {
 		mailer := *a.Email.Smtp
@@ -914,6 +919,24 @@ func (c *config) Validate(fsys fs.FS) error {
 				return errors.Errorf("failed to read signing keys: %w", err)
 			} else if c.Auth.SigningKeys, err = fetcher.ParseJSON[[]JWK](f); err != nil {
 				return errors.Errorf("failed to decode signing keys: %w", err)
+			}
+		}
+		if c.Auth.Passkey != nil {
+			if c.Auth.Passkey.Enabled {
+				if len(c.Auth.Passkey.RpId) == 0 {
+					return errors.New("Missing required field in config: auth.passkey.rp_id")
+				}
+				if len(c.Auth.Passkey.RpOrigins) == 0 {
+					return errors.New("Missing required field in config: auth.passkey.rp_origins")
+				}
+				if err := assertEnvLoaded(c.Auth.Passkey.RpId); err != nil {
+					return errors.Errorf("Invalid config for auth.passkey.rp_id: %v", err)
+				}
+				for i, origin := range c.Auth.Passkey.RpOrigins {
+					if err := assertEnvLoaded(origin); err != nil {
+						return errors.Errorf("Invalid config for auth.passkey.rp_origins[%d]: %v", i, err)
+					}
+				}
 			}
 		}
 		if err := c.Auth.Hook.validate(); err != nil {
