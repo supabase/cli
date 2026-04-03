@@ -2050,6 +2050,7 @@ type AuthConfigResponse struct {
 	OauthServerAllowDynamicRegistration                   bool                                                            `json:"oauth_server_allow_dynamic_registration"`
 	OauthServerAuthorizationPath                          nullable.Nullable[string]                                       `json:"oauth_server_authorization_path"`
 	OauthServerEnabled                                    bool                                                            `json:"oauth_server_enabled"`
+	PasskeyEnabled                                        bool                                                            `json:"passkey_enabled"`
 	PasswordHibpEnabled                                   nullable.Nullable[bool]                                         `json:"password_hibp_enabled"`
 	PasswordMinLength                                     nullable.Nullable[int]                                          `json:"password_min_length"`
 	PasswordRequiredCharacters                            nullable.Nullable[AuthConfigResponsePasswordRequiredCharacters] `json:"password_required_characters"`
@@ -2106,6 +2107,9 @@ type AuthConfigResponse struct {
 	SmtpSenderName                                        nullable.Nullable[string]                                       `json:"smtp_sender_name"`
 	SmtpUser                                              nullable.Nullable[string]                                       `json:"smtp_user"`
 	UriAllowList                                          nullable.Nullable[string]                                       `json:"uri_allow_list"`
+	WebauthnRpDisplayName                                 nullable.Nullable[string]                                       `json:"webauthn_rp_display_name"`
+	WebauthnRpId                                          nullable.Nullable[string]                                       `json:"webauthn_rp_id"`
+	WebauthnRpOrigins                                     nullable.Nullable[string]                                       `json:"webauthn_rp_origins"`
 }
 
 // AuthConfigResponseDbMaxPoolSizeUnit defines model for AuthConfigResponse.DbMaxPoolSizeUnit.
@@ -3967,6 +3971,7 @@ type UpdateAuthConfigBody struct {
 	OauthServerAllowDynamicRegistration                   nullable.Nullable[bool]                                           `json:"oauth_server_allow_dynamic_registration,omitempty"`
 	OauthServerAuthorizationPath                          nullable.Nullable[string]                                         `json:"oauth_server_authorization_path,omitempty"`
 	OauthServerEnabled                                    nullable.Nullable[bool]                                           `json:"oauth_server_enabled,omitempty"`
+	PasskeyEnabled                                        *bool                                                             `json:"passkey_enabled,omitempty"`
 	PasswordHibpEnabled                                   nullable.Nullable[bool]                                           `json:"password_hibp_enabled,omitempty"`
 	PasswordMinLength                                     nullable.Nullable[int]                                            `json:"password_min_length,omitempty"`
 	PasswordRequiredCharacters                            nullable.Nullable[UpdateAuthConfigBodyPasswordRequiredCharacters] `json:"password_required_characters,omitempty"`
@@ -4022,6 +4027,9 @@ type UpdateAuthConfigBody struct {
 	SmtpSenderName                                        nullable.Nullable[string]                                         `json:"smtp_sender_name,omitempty"`
 	SmtpUser                                              nullable.Nullable[string]                                         `json:"smtp_user,omitempty"`
 	UriAllowList                                          nullable.Nullable[string]                                         `json:"uri_allow_list,omitempty"`
+	WebauthnRpDisplayName                                 nullable.Nullable[string]                                         `json:"webauthn_rp_display_name,omitempty"`
+	WebauthnRpId                                          nullable.Nullable[string]                                         `json:"webauthn_rp_id,omitempty"`
+	WebauthnRpOrigins                                     nullable.Nullable[string]                                         `json:"webauthn_rp_origins,omitempty"`
 }
 
 // UpdateAuthConfigBodyDbMaxPoolSizeUnit defines model for UpdateAuthConfigBody.DbMaxPoolSizeUnit.
