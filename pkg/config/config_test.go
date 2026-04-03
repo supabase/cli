@@ -74,6 +74,69 @@ func TestConfigParsing(t *testing.T) {
 		// Run test
 		assert.Error(t, config.Load("", fsys))
 	})
+	t.Run("config file with passkey settings", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3000"
+[auth.passkey]
+enabled = true
+rp_display_name = "Supabase CLI"
+rp_id = "localhost"
+rp_origins = ["http://127.0.0.1:3000", "https://localhost:3000"]
+`)},
+		}
+		// Run test
+		assert.NoError(t, config.Load("", fsys))
+		// Check result
+		if assert.NotNil(t, config.Auth.Passkey) {
+			assert.True(t, config.Auth.Passkey.Enabled)
+			assert.Equal(t, "Supabase CLI", config.Auth.Passkey.RpDisplayName)
+			assert.Equal(t, "localhost", config.Auth.Passkey.RpId)
+			assert.Equal(t, []string{
+				"http://127.0.0.1:3000",
+				"https://localhost:3000",
+			}, config.Auth.Passkey.RpOrigins)
+		}
+	})
+
+	t.Run("passkey enabled requires rp_id", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3000"
+[auth.passkey]
+enabled = true
+rp_origins = ["http://127.0.0.1:3000"]
+`)},
+		}
+		// Run test
+		err := config.Load("", fsys)
+		// Check result
+		assert.ErrorContains(t, err, "Missing required field in config: auth.passkey.rp_id")
+	})
+
+	t.Run("passkey enabled requires rp_origins", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3000"
+[auth.passkey]
+enabled = true
+rp_id = "localhost"
+`)},
+		}
+		// Run test
+		err := config.Load("", fsys)
+		// Check result
+		assert.ErrorContains(t, err, "Missing required field in config: auth.passkey.rp_origins")
+	})
 
 	t.Run("parses experimental pgdelta config", func(t *testing.T) {
 		config := NewConfig()
