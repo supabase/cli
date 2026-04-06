@@ -149,6 +149,9 @@ type ClientInterface interface {
 	// V1GetAnOrganization request
 	V1GetAnOrganization(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1GetOrganizationEntitlements request
+	V1GetOrganizationEntitlements(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1ListOrganizationMembers request
 	V1ListOrganizationMembers(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -160,6 +163,9 @@ type ClientInterface interface {
 
 	// V1GetAllProjectsForOrganization request
 	V1GetAllProjectsForOrganization(ctx context.Context, slug string, params *V1GetAllProjectsForOrganizationParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetProfile request
+	V1GetProfile(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1ListAllProjects request
 	V1ListAllProjects(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -944,6 +950,18 @@ func (c *Client) V1GetAnOrganization(ctx context.Context, slug string, reqEditor
 	return c.Client.Do(req)
 }
 
+func (c *Client) V1GetOrganizationEntitlements(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetOrganizationEntitlementsRequest(c.Server, slug)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) V1ListOrganizationMembers(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1ListOrganizationMembersRequest(c.Server, slug)
 	if err != nil {
@@ -982,6 +1000,18 @@ func (c *Client) V1ClaimProjectForOrganization(ctx context.Context, slug string,
 
 func (c *Client) V1GetAllProjectsForOrganization(ctx context.Context, slug string, params *V1GetAllProjectsForOrganizationParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1GetAllProjectsForOrganizationRequest(c.Server, slug, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetProfile(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetProfileRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -4141,6 +4171,40 @@ func NewV1GetAnOrganizationRequest(server string, slug string) (*http.Request, e
 	return req, nil
 }
 
+// NewV1GetOrganizationEntitlementsRequest generates requests for V1GetOrganizationEntitlements
+func NewV1GetOrganizationEntitlementsRequest(server string, slug string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "slug", runtime.ParamLocationPath, slug)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/organizations/%s/entitlements", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewV1ListOrganizationMembersRequest generates requests for V1ListOrganizationMembers
 func NewV1ListOrganizationMembersRequest(server string, slug string) (*http.Request, error) {
 	var err error
@@ -4367,6 +4431,33 @@ func NewV1GetAllProjectsForOrganizationRequest(server string, slug string, param
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1GetProfileRequest generates requests for V1GetProfile
+func NewV1GetProfileRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/profile")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -10906,6 +10997,9 @@ type ClientWithResponsesInterface interface {
 	// V1GetAnOrganizationWithResponse request
 	V1GetAnOrganizationWithResponse(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*V1GetAnOrganizationResponse, error)
 
+	// V1GetOrganizationEntitlementsWithResponse request
+	V1GetOrganizationEntitlementsWithResponse(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*V1GetOrganizationEntitlementsResponse, error)
+
 	// V1ListOrganizationMembersWithResponse request
 	V1ListOrganizationMembersWithResponse(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*V1ListOrganizationMembersResponse, error)
 
@@ -10917,6 +11011,9 @@ type ClientWithResponsesInterface interface {
 
 	// V1GetAllProjectsForOrganizationWithResponse request
 	V1GetAllProjectsForOrganizationWithResponse(ctx context.Context, slug string, params *V1GetAllProjectsForOrganizationParams, reqEditors ...RequestEditorFn) (*V1GetAllProjectsForOrganizationResponse, error)
+
+	// V1GetProfileWithResponse request
+	V1GetProfileWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*V1GetProfileResponse, error)
 
 	// V1ListAllProjectsWithResponse request
 	V1ListAllProjectsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*V1ListAllProjectsResponse, error)
@@ -11763,6 +11860,28 @@ func (r V1GetAnOrganizationResponse) StatusCode() int {
 	return 0
 }
 
+type V1GetOrganizationEntitlementsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *V1ListEntitlementsResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetOrganizationEntitlementsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetOrganizationEntitlementsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1ListOrganizationMembersResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -11844,6 +11963,28 @@ func (r V1GetAllProjectsForOrganizationResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1GetAllProjectsForOrganizationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetProfileResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *V1ProfileResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetProfileResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetProfileResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -15089,6 +15230,15 @@ func (c *ClientWithResponses) V1GetAnOrganizationWithResponse(ctx context.Contex
 	return ParseV1GetAnOrganizationResponse(rsp)
 }
 
+// V1GetOrganizationEntitlementsWithResponse request returning *V1GetOrganizationEntitlementsResponse
+func (c *ClientWithResponses) V1GetOrganizationEntitlementsWithResponse(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*V1GetOrganizationEntitlementsResponse, error) {
+	rsp, err := c.V1GetOrganizationEntitlements(ctx, slug, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetOrganizationEntitlementsResponse(rsp)
+}
+
 // V1ListOrganizationMembersWithResponse request returning *V1ListOrganizationMembersResponse
 func (c *ClientWithResponses) V1ListOrganizationMembersWithResponse(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*V1ListOrganizationMembersResponse, error) {
 	rsp, err := c.V1ListOrganizationMembers(ctx, slug, reqEditors...)
@@ -15123,6 +15273,15 @@ func (c *ClientWithResponses) V1GetAllProjectsForOrganizationWithResponse(ctx co
 		return nil, err
 	}
 	return ParseV1GetAllProjectsForOrganizationResponse(rsp)
+}
+
+// V1GetProfileWithResponse request returning *V1GetProfileResponse
+func (c *ClientWithResponses) V1GetProfileWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*V1GetProfileResponse, error) {
+	rsp, err := c.V1GetProfile(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetProfileResponse(rsp)
 }
 
 // V1ListAllProjectsWithResponse request returning *V1ListAllProjectsResponse
@@ -17121,6 +17280,32 @@ func ParseV1GetAnOrganizationResponse(rsp *http.Response) (*V1GetAnOrganizationR
 	return response, nil
 }
 
+// ParseV1GetOrganizationEntitlementsResponse parses an HTTP response from a V1GetOrganizationEntitlementsWithResponse call
+func ParseV1GetOrganizationEntitlementsResponse(rsp *http.Response) (*V1GetOrganizationEntitlementsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetOrganizationEntitlementsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest V1ListEntitlementsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseV1ListOrganizationMembersResponse parses an HTTP response from a V1ListOrganizationMembersWithResponse call
 func ParseV1ListOrganizationMembersResponse(rsp *http.Response) (*V1ListOrganizationMembersResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -17205,6 +17390,32 @@ func ParseV1GetAllProjectsForOrganizationResponse(rsp *http.Response) (*V1GetAll
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest OrganizationProjectsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetProfileResponse parses an HTTP response from a V1GetProfileWithResponse call
+func ParseV1GetProfileResponse(rsp *http.Response) (*V1GetProfileResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetProfileResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest V1ProfileResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
