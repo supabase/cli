@@ -31,7 +31,7 @@ func SuggestUpgradeOnError(ctx context.Context, projectRef, featureKey string, s
 
 	orgSlug, err := GetOrgSlugFromProjectRef(ctx, projectRef)
 	if err != nil {
-		CmdSuggestion = "This feature may require a plan upgrade. Check your organization's billing settings in the Supabase dashboard."
+		CmdSuggestion = fmt.Sprintf("This feature may require a plan upgrade. Manage billing: %s", Bold(GetSupabaseDashboardURL()))
 		return
 	}
 

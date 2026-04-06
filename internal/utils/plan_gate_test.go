@@ -10,7 +10,7 @@ import (
 	"github.com/supabase/cli/internal/testing/apitest"
 )
 
-var projectJSON = map[string]interface{}{
+var planGateProjectJSON = map[string]interface{}{
 	"ref":               "test-ref",
 	"organization_slug": "my-org",
 	"name":              "test",
@@ -28,7 +28,7 @@ func TestGetOrgSlugFromProjectRef(t *testing.T) {
 		gock.New(DefaultApiHost).
 			Get("/v1/projects/" + ref).
 			Reply(http.StatusOK).
-			JSON(projectJSON)
+			JSON(planGateProjectJSON)
 		slug, err := GetOrgSlugFromProjectRef(context.Background(), ref)
 		assert.NoError(t, err)
 		assert.Equal(t, "my-org", slug)
@@ -80,7 +80,7 @@ func TestSuggestUpgradeOnError(t *testing.T) {
 		gock.New(DefaultApiHost).
 			Get("/v1/projects/" + ref).
 			Reply(http.StatusOK).
-			JSON(projectJSON)
+			JSON(planGateProjectJSON)
 		gock.New(DefaultApiHost).
 			Get("/v1/organizations/my-org/entitlements").
 			Reply(http.StatusOK).
@@ -96,7 +96,7 @@ func TestSuggestUpgradeOnError(t *testing.T) {
 		gock.New(DefaultApiHost).
 			Get("/v1/projects/" + ref).
 			Reply(http.StatusOK).
-			JSON(projectJSON)
+			JSON(planGateProjectJSON)
 		gock.New(DefaultApiHost).
 			Get("/v1/organizations/my-org/entitlements").
 			Reply(http.StatusInternalServerError)
@@ -113,7 +113,24 @@ func TestSuggestUpgradeOnError(t *testing.T) {
 			Reply(http.StatusNotFound)
 		SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusPaymentRequired)
 		assert.Contains(t, CmdSuggestion, "plan upgrade")
+		assert.Contains(t, CmdSuggestion, GetSupabaseDashboardURL())
 		assert.NotContains(t, CmdSuggestion, "/org/")
+	})
+
+	t.Run("sets generic suggestion when feature has access", func(t *testing.T) {
+		t.Cleanup(apitest.MockPlatformAPI(t))
+		t.Cleanup(func() { CmdSuggestion = "" })
+		gock.New(DefaultApiHost).
+			Get("/v1/projects/" + ref).
+			Reply(http.StatusOK).
+			JSON(planGateProjectJSON)
+		gock.New(DefaultApiHost).
+			Get("/v1/organizations/my-org/entitlements").
+			Reply(http.StatusOK).
+			JSON(entitlementsJSON("branching_limit", true))
+		SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusPaymentRequired)
+		assert.Contains(t, CmdSuggestion, "/org/my-org/billing")
+		assert.Contains(t, CmdSuggestion, "may require a plan upgrade")
 	})
 
 	t.Run("skips suggestion on 403 forbidden", func(t *testing.T) {
