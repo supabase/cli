@@ -2,12 +2,74 @@ package query
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"testing"
 
+	"github.com/jackc/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/pgtest"
 )
+
+func TestCheckRLSAdvisoryWithUnprotectedTables(t *testing.T) {
+	utils.Config.Hostname = "127.0.0.1"
+	utils.Config.Db.Port = 5432
+
+	conn := pgtest.NewConn()
+	defer conn.Close(t)
+	conn.Query(rlsCheckSQL).
+		Reply("SELECT 2", []any{"public.users"}, []any{"public.posts"})
+
+	config := pgconn.Config{
+		Host:     "127.0.0.1",
+		Port:     5432,
+		User:     "admin",
+		Password: "password",
+		Database: "postgres",
+	}
+	pgConn, err := utils.ConnectByConfig(context.Background(), config, conn.Intercept)
+	require.NoError(t, err)
+	defer pgConn.Close(context.Background())
+
+	advisory := checkRLSAdvisory(context.Background(), pgConn)
+	require.NotNil(t, advisory)
+	assert.Equal(t, "rls_disabled", advisory.ID)
+	assert.Equal(t, 1, advisory.Priority)
+	assert.Equal(t, "critical", advisory.Level)
+	assert.Contains(t, advisory.Message, "2 table(s)")
+	assert.Contains(t, advisory.Message, "public.users")
+	assert.Contains(t, advisory.Message, "public.posts")
+	assert.Equal(t,
+		"ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;\nALTER TABLE public.posts ENABLE ROW LEVEL SECURITY;",
+		advisory.RemediationSQL,
+	)
+}
+
+func TestCheckRLSAdvisoryNoUnprotectedTables(t *testing.T) {
+	utils.Config.Hostname = "127.0.0.1"
+	utils.Config.Db.Port = 5432
+
+	conn := pgtest.NewConn()
+	defer conn.Close(t)
+	conn.Query(rlsCheckSQL).
+		Reply("SELECT 0")
+
+	config := pgconn.Config{
+		Host:     "127.0.0.1",
+		Port:     5432,
+		User:     "admin",
+		Password: "password",
+		Database: "postgres",
+	}
+	pgConn, err := utils.ConnectByConfig(context.Background(), config, conn.Intercept)
+	require.NoError(t, err)
+	defer pgConn.Close(context.Background())
+
+	advisory := checkRLSAdvisory(context.Background(), pgConn)
+	assert.Nil(t, advisory)
+}
 
 func TestWriteJSONWithAdvisory(t *testing.T) {
 	advisory := &Advisory{
