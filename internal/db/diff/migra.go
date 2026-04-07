@@ -23,6 +23,10 @@ var (
 	//go:embed templates/migra.ts
 	diffSchemaTypeScript string
 
+	// Allow a larger V8 heap for large schema diffs executed inside edge-runtime.
+	// The default heap has proven too small for some user projects.
+	migraV8Flags = "--max-old-space-size=4096"
+
 	managedSchemas = []string{
 		// Local development
 		"_analytics",
@@ -110,6 +114,7 @@ func DiffSchemaMigra(ctx context.Context, source, target pgconn.Config, schema [
 	env := []string{
 		"SOURCE=" + utils.ToPostgresURL(source),
 		"TARGET=" + utils.ToPostgresURL(target),
+		"V8_FLAGS=" + migraV8Flags,
 	}
 	debugf := func(string, ...any) {}
 	if types.IsSSLDebugEnabled() {
@@ -143,7 +148,20 @@ func DiffSchemaMigra(ctx context.Context, source, target pgconn.Config, schema [
 	binds := []string{utils.EdgeRuntimeId + ":/root/.cache/deno:rw"}
 	var stdout, stderr bytes.Buffer
 	if err := utils.RunEdgeRuntimeScript(ctx, env, diffSchemaTypeScript, binds, "error diffing schema", &stdout, &stderr); err != nil {
+		if shouldFallbackToLegacyMigra(err) {
+			debugf("DiffSchemaMigra falling back to legacy migra after edge-runtime OOM")
+			return DiffSchemaMigraBash(ctx, source, target, schema, options...)
+		}
 		return "", err
 	}
 	return stdout.String(), nil
+}
+
+func shouldFallbackToLegacyMigra(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "Fatal JavaScript out of memory") ||
+		strings.Contains(message, "Ineffective mark-compacts near heap limit")
 }
