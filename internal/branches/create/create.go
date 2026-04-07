@@ -30,6 +30,7 @@ func Run(ctx context.Context, body api.CreateBranchBody, fsys afero.Fs) error {
 	if err != nil {
 		return errors.Errorf("failed to create preview branch: %w", err)
 	} else if resp.JSON201 == nil {
+		utils.SuggestUpgradeOnError(ctx, flags.ProjectRef, "branching_limit", resp.StatusCode())
 		return errors.Errorf("unexpected create branch status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 
