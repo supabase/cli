@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"net/http"
 	"strings"
 
 	"github.com/go-errors/errors"
@@ -41,6 +42,9 @@ func NewClient(apiKey string, endpoint string, baseProperties map[string]any, fa
 	if endpoint != "" {
 		config.Endpoint = endpoint
 	}
+	// Preserve the active process-wide transport, which may be wrapped by debug.NewTransport()
+	// instead of assuming http.DefaultTransport is always a *http.Transport.
+	config.Transport = http.DefaultTransport
 	client, err := factory(apiKey, config)
 	if err != nil {
 		return nil, errors.Errorf("failed to initialize posthog client: %w", err)
