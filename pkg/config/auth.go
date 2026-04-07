@@ -162,6 +162,7 @@ type (
 		PasswordRequirements       PasswordRequirements `toml:"password_requirements" json:"password_requirements"`
 		SigningKeysPath            string               `toml:"signing_keys_path" json:"signing_keys_path"`
 		SigningKeys                []JWK                `toml:"-" json:"-"`
+		Passkey                    *passkey             `toml:"passkey" json:"passkey"`
 
 		RateLimit   rateLimit   `toml:"rate_limit" json:"rate_limit"`
 		Captcha     *captcha    `toml:"captcha" json:"captcha"`
@@ -378,6 +379,13 @@ type (
 		Ethereum ethereum `toml:"ethereum" json:"ethereum"`
 	}
 
+	passkey struct {
+		Enabled       bool     `toml:"enabled" json:"enabled"`
+		RpDisplayName string   `toml:"rp_display_name" json:"rp_display_name"`
+		RpId          string   `toml:"rp_id" json:"rp_id"`
+		RpOrigins     []string `toml:"rp_origins" json:"rp_origins"`
+	}
+
 	OAuthServer struct {
 		Enabled                  bool   `toml:"enabled" json:"enabled"`
 		AllowDynamicRegistration bool   `toml:"allow_dynamic_registration" json:"allow_dynamic_registration"`
@@ -407,6 +415,9 @@ func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 	if a.Captcha != nil {
 		a.Captcha.toAuthConfigBody(&body)
 	}
+	if a.Passkey != nil {
+		a.Passkey.toAuthConfigBody(&body)
+	}
 	a.Hook.toAuthConfigBody(&body)
 	a.MFA.toAuthConfigBody(&body)
 	a.Sessions.toAuthConfigBody(&body)
@@ -430,6 +441,7 @@ func (a *auth) FromRemoteAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	a.MinimumPasswordLength = cast.IntToUint(ValOrDefault(remoteConfig.PasswordMinLength, 0))
 	prc := ValOrDefault(remoteConfig.PasswordRequiredCharacters, "")
 	a.PasswordRequirements = NewPasswordRequirement(v1API.UpdateAuthConfigBodyPasswordRequiredCharacters(prc))
+	a.Passkey.fromAuthConfig(remoteConfig)
 	a.RateLimit.fromAuthConfig(remoteConfig)
 	if s := a.Email.Smtp; s != nil && s.Enabled {
 		a.RateLimit.EmailSent = cast.IntToUint(ValOrDefault(remoteConfig.RateLimitEmailSent, 0))
@@ -487,6 +499,28 @@ func (c *captcha) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 		}
 	}
 	c.Enabled = ValOrDefault(remoteConfig.SecurityCaptchaEnabled, false)
+}
+
+func (p passkey) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+	if body.PasskeyEnabled = cast.Ptr(p.Enabled); p.Enabled {
+		body.WebauthnRpDisplayName = nullable.NewNullableWithValue(p.RpDisplayName)
+		body.WebauthnRpId = nullable.NewNullableWithValue(p.RpId)
+		body.WebauthnRpOrigins = nullable.NewNullableWithValue(strings.Join(p.RpOrigins, ","))
+	}
+}
+
+func (p *passkey) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+	// When local config is not set, we assume platform defaults should not change
+	if p == nil {
+		return
+	}
+	// Ignore disabled passkey fields to minimise config diff
+	if p.Enabled {
+		p.RpDisplayName = ValOrDefault(remoteConfig.WebauthnRpDisplayName, "")
+		p.RpId = ValOrDefault(remoteConfig.WebauthnRpId, "")
+		p.RpOrigins = strToArr(ValOrDefault(remoteConfig.WebauthnRpOrigins, ""))
+	}
+	p.Enabled = remoteConfig.PasskeyEnabled
 }
 
 func (h hook) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
