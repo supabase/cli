@@ -23,10 +23,6 @@ var (
 	//go:embed templates/migra.ts
 	diffSchemaTypeScript string
 
-	// Allow a larger V8 heap for large schema diffs executed inside edge-runtime.
-	// The default heap has proven too small for some user projects.
-	migraV8Flags = "--max-old-space-size=4096"
-
 	managedSchemas = []string{
 		// Local development
 		"_analytics",
@@ -114,7 +110,6 @@ func DiffSchemaMigra(ctx context.Context, source, target pgconn.Config, schema [
 	env := []string{
 		"SOURCE=" + utils.ToPostgresURL(source),
 		"TARGET=" + utils.ToPostgresURL(target),
-		"V8_FLAGS=" + migraV8Flags,
 	}
 	debugf := func(string, ...any) {}
 	if types.IsSSLDebugEnabled() {
