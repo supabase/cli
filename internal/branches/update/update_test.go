@@ -106,4 +106,45 @@ func TestUpdateBranch(t *testing.T) {
 		err := Run(context.Background(), flags.ProjectRef, api.UpdateBranchBody{}, nil)
 		assert.ErrorContains(t, err, "unexpected update branch status 503:")
 	})
+
+	t.Run("suggests upgrade on payment required for persistent", func(t *testing.T) {
+		t.Cleanup(apitest.MockPlatformAPI(t))
+		t.Cleanup(func() { utils.CmdSuggestion = "" })
+		// Mock branch update returns 402
+		gock.New(utils.DefaultApiHost).
+			Patch("/v1/branches/" + flags.ProjectRef).
+			Reply(http.StatusPaymentRequired).
+			JSON(map[string]interface{}{"message": "Persistent branches are not available on your plan"})
+		// Mock project lookup for SuggestUpgradeOnError
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + flags.ProjectRef).
+			Reply(http.StatusOK).
+			JSON(map[string]interface{}{
+				"ref":               flags.ProjectRef,
+				"organization_slug": "test-org",
+				"name":              "test",
+				"region":            "us-east-1",
+				"created_at":        "2024-01-01T00:00:00Z",
+				"status":            "ACTIVE_HEALTHY",
+				"database":          map[string]interface{}{"host": "db.example.supabase.co", "version": "15.1.0.117"},
+			})
+		// Mock entitlements
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/organizations/test-org/entitlements").
+			Reply(http.StatusOK).
+			JSON(map[string]interface{}{
+				"entitlements": []map[string]interface{}{
+					{
+						"feature":   map[string]interface{}{"key": "branching_persistent", "type": "boolean"},
+						"hasAccess": false,
+						"type":      "boolean",
+						"config":    map[string]interface{}{"enabled": false},
+					},
+				},
+			})
+		persistent := true
+		err := Run(context.Background(), flags.ProjectRef, api.UpdateBranchBody{Persistent: &persistent}, nil)
+		assert.ErrorContains(t, err, "unexpected update branch status 402")
+		assert.Contains(t, utils.CmdSuggestion, "/org/test-org/billing")
+	})
 }
