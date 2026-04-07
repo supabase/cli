@@ -1,11 +1,13 @@
 package telemetry
 
 import (
+	"net/http"
 	"testing"
 
 	"github.com/posthog/posthog-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/debug"
 )
 
 type fakeQueue struct {
@@ -49,6 +51,20 @@ func TestNewClient(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, client.Enabled())
 		assert.NoError(t, client.Capture("device-1", EventCommandExecuted, map[string]any{"command": "login"}, nil))
+		assert.NoError(t, client.Close())
+	})
+	t.Run("works when debug wraps the default transport", func(t *testing.T) {
+		original := http.DefaultTransport
+		http.DefaultTransport = debug.NewTransport()
+		t.Cleanup(func() {
+			http.DefaultTransport = original
+		})
+
+		client, err := NewClient("phc_test", "https://eu.i.posthog.com", map[string]any{"platform": "cli"}, nil)
+
+		require.NoError(t, err)
+		require.NotNil(t, client)
+		assert.True(t, client.Enabled())
 		assert.NoError(t, client.Close())
 	})
 }
