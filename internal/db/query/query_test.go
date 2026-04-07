@@ -52,7 +52,10 @@ func TestRunSelectJSON(t *testing.T) {
 	conn := pgtest.NewConn()
 	defer conn.Close(t)
 	conn.Query("SELECT 42 as id, 'test' as name").
-		Reply("SELECT 1", []any{int64(42), "test"})
+		Reply("SELECT 1", []any{int64(42), "test"}).
+		// Agent mode triggers an RLS advisory check query; mock returns no unprotected tables
+		Query(rlsCheckSQL).
+		Reply("SELECT 0")
 
 	var buf bytes.Buffer
 	err := RunLocal(context.Background(), "SELECT 42 as id, 'test' as name", dbConfig, "json", true, &buf, conn.Intercept)
@@ -69,6 +72,9 @@ func TestRunSelectJSON(t *testing.T) {
 	// pgtest mock generates column names as c_00, c_01
 	assert.Equal(t, float64(42), row["c_00"])
 	assert.Equal(t, "test", row["c_01"])
+	// No advisory when no unprotected tables
+	_, hasAdvisory := envelope["advisory"]
+	assert.False(t, hasAdvisory)
 }
 
 func TestRunSelectJSONNoEnvelope(t *testing.T) {
@@ -277,7 +283,7 @@ func TestRunLinkedSelectCSV(t *testing.T) {
 
 func TestFormatOutputNilColsJSON(t *testing.T) {
 	var buf bytes.Buffer
-	err := formatOutput(&buf, "json", true, nil, nil)
+	err := formatOutput(&buf, "json", true, nil, nil, nil)
 	assert.NoError(t, err)
 	var envelope map[string]interface{}
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &envelope))
@@ -288,13 +294,13 @@ func TestFormatOutputNilColsJSON(t *testing.T) {
 
 func TestFormatOutputNilColsTable(t *testing.T) {
 	var buf bytes.Buffer
-	err := formatOutput(&buf, "table", false, nil, nil)
+	err := formatOutput(&buf, "table", false, nil, nil, nil)
 	assert.NoError(t, err)
 }
 
 func TestFormatOutputNilColsCSV(t *testing.T) {
 	var buf bytes.Buffer
-	err := formatOutput(&buf, "csv", false, nil, nil)
+	err := formatOutput(&buf, "csv", false, nil, nil, nil)
 	assert.NoError(t, err)
 }
 
