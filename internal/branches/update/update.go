@@ -10,6 +10,7 @@ import (
 	"github.com/supabase/cli/internal/branches/list"
 	"github.com/supabase/cli/internal/branches/pause"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
 )
 
@@ -22,6 +23,7 @@ func Run(ctx context.Context, branchId string, body api.UpdateBranchBody, fsys a
 	if err != nil {
 		return errors.Errorf("failed to update preview branch: %w", err)
 	} else if resp.JSON200 == nil {
+		utils.SuggestUpgradeOnError(ctx, flags.ProjectRef, "branching_persistent", resp.StatusCode())
 		return errors.Errorf("unexpected update branch status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 	fmt.Fprintln(os.Stderr, "Updated preview branch:")

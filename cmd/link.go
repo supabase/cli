@@ -49,6 +49,7 @@ var (
 func init() {
 	linkFlags := linkCmd.Flags()
 	linkFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
+	markFlagTelemetrySafe(linkFlags.Lookup("project-ref"))
 	linkFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	linkFlags.BoolVar(&skipPooler, "skip-pooler", false, "Use direct connection instead of pooler.")
 	// For some reason, BindPFlag only works for StringVarP instead of StringP

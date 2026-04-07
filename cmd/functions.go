@@ -138,7 +138,9 @@ var (
 
 func init() {
 	functionsListCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
+	markFlagTelemetrySafe(functionsListCmd.Flags().Lookup("project-ref"))
 	functionsDeleteCmd.Flags().StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
+	markFlagTelemetrySafe(functionsDeleteCmd.Flags().Lookup("project-ref"))
 	deployFlags := functionsDeployCmd.Flags()
 	deployFlags.BoolVar(&useApi, "use-api", false, "Bundle functions server-side without using Docker.")
 	deployFlags.BoolVar(&useDocker, "use-docker", true, "Use Docker to bundle functions.")
@@ -150,6 +152,7 @@ func init() {
 	deployFlags.BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	deployFlags.BoolVar(&prune, "prune", false, "Delete Functions that exist in Supabase project but not locally.")
 	deployFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
+	markFlagTelemetrySafe(deployFlags.Lookup("project-ref"))
 	deployFlags.StringVar(&importMapPath, "import-map", "", "Path to import map file.")
 	functionsServeCmd.Flags().BoolVar(noVerifyJWT, "no-verify-jwt", false, "Disable JWT verification for the Function.")
 	functionsServeCmd.Flags().StringVar(&envFilePath, "env-file", "", "Path to an env file to be populated to the Function environment.")
@@ -162,6 +165,7 @@ func init() {
 	cobra.CheckErr(functionsServeCmd.Flags().MarkHidden("all"))
 	downloadFlags := functionsDownloadCmd.Flags()
 	downloadFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
+	markFlagTelemetrySafe(downloadFlags.Lookup("project-ref"))
 	downloadFlags.BoolVar(&useLegacyBundle, "legacy-bundle", false, "Use legacy bundling mechanism.")
 	downloadFlags.BoolVar(&useApi, "use-api", false, "Unbundle functions server-side without using Docker.")
 	downloadFlags.BoolVar(&useDocker, "use-docker", true, "Use Docker to unbundle functions client-side.")

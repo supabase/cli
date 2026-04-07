@@ -11,7 +11,8 @@ func clearAgentEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
 		"AI_AGENT",
-		"CURSOR_TRACE_ID", "CURSOR_AGENT",
+		"CURSOR_AGENT",
+		"CURSOR_EXTENSION_HOST_ROLE",
 		"GEMINI_CLI",
 		"CODEX_SANDBOX", "CODEX_CI", "CODEX_THREAD_ID",
 		"ANTIGRAVITY_AGENT",
@@ -44,11 +45,12 @@ func TestIsAgent(t *testing.T) {
 	})
 
 	t.Run("detects Cursor via CURSOR_TRACE_ID", func(t *testing.T) {
-		t.Setenv("CURSOR_TRACE_ID", "abc123")
+		t.Setenv("CURSOR_EXTENSION_HOST_ROLE", "agent-exec")
 		assert.True(t, IsAgent())
 	})
 
-	t.Run("detects Cursor CLI via CURSOR_AGENT", func(t *testing.T) {
+	t.Run("detects Cursor via CURSOR_AGENT", func(t *testing.T) {
+		clearAgentEnv(t)
 		t.Setenv("CURSOR_AGENT", "1")
 		assert.True(t, IsAgent())
 	})

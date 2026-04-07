@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/migration/new"
+	phtelemetry "github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/fetcher"
 )
@@ -32,6 +33,7 @@ type RunParams struct {
 	SessionId   string
 	Encryption  LoginEncryptor
 	Fsys        afero.Fs
+	GetProfile  func(context.Context) (string, error)
 }
 
 type AccessTokenResponse struct {
@@ -168,6 +170,7 @@ func Run(ctx context.Context, stdout io.Writer, params RunParams) error {
 		if err := utils.SaveAccessToken(params.Token, params.Fsys); err != nil {
 			return errors.Errorf("cannot save provided token: %w", err)
 		}
+		handleTelemetryAfterLogin(ctx, params)
 		fmt.Println(loggedInMsg)
 		return nil
 	}
@@ -216,6 +219,7 @@ func Run(ctx context.Context, stdout io.Writer, params RunParams) error {
 	if err := utils.SaveAccessToken(decryptedAccessToken, params.Fsys); err != nil {
 		return err
 	}
+	handleTelemetryAfterLogin(ctx, params)
 
 	fmt.Fprintf(stdout, "Token %s created successfully.\n\n", utils.Bold(params.TokenName))
 	fmt.Fprintln(stdout, loggedInMsg)
@@ -258,4 +262,43 @@ func generateTokenNameWithFallback() string {
 		name = fmt.Sprintf("cli_%d", time.Now().Unix())
 	}
 	return name
+}
+
+func handleTelemetryAfterLogin(ctx context.Context, params RunParams) {
+	service := phtelemetry.FromContext(ctx)
+	if service == nil {
+		return
+	}
+	getProfile := params.GetProfile
+	if getProfile == nil {
+		getProfile = getProfileGotrueID
+	}
+	logger := utils.GetDebugLogger()
+	if distinctID, err := getProfile(ctx); err == nil {
+		if err := service.StitchLogin(distinctID); err != nil {
+			fmt.Fprintln(logger, err)
+			if err := service.ClearDistinctID(); err != nil {
+				fmt.Fprintln(logger, err)
+			}
+		}
+	} else {
+		fmt.Fprintln(logger, err)
+		if err := service.ClearDistinctID(); err != nil {
+			fmt.Fprintln(logger, err)
+		}
+	}
+	if err := service.Capture(ctx, phtelemetry.EventLoginCompleted, nil, nil); err != nil {
+		fmt.Fprintln(logger, err)
+	}
+}
+
+func getProfileGotrueID(ctx context.Context) (string, error) {
+	resp, err := utils.GetSupabase().V1GetProfileWithResponse(ctx)
+	if err != nil {
+		return "", errors.Errorf("failed to fetch profile: %w", err)
+	}
+	if resp.JSON200 == nil {
+		return "", errors.Errorf("unexpected profile status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+	return resp.JSON200.GotrueId, nil
 }
