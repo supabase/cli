@@ -13,10 +13,7 @@ func IsAgent() bool {
 		return true
 	}
 	// Cursor
-	if os.Getenv("CURSOR_TRACE_ID") != "" {
-		return true
-	}
-	if os.Getenv("CURSOR_AGENT") != "" {
+	if os.Getenv("CURSOR_AGENT") != "" || os.Getenv("CURSOR_EXTENSION_HOST_ROLE") != "" {
 		return true
 	}
 	// Gemini

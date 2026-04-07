@@ -22,8 +22,10 @@ import (
 
 // Assigned using `-ldflags` https://stackoverflow.com/q/11354518
 var (
-	Version   string
-	SentryDsn string
+	Version         string
+	SentryDsn       string
+	PostHogAPIKey   string
+	PostHogEndpoint string
 )
 
 func ShortContainerImageName(imageName string) string {

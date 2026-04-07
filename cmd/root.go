@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/debug"
+	"github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"golang.org/x/mod/semver"
@@ -122,6 +123,24 @@ var (
 				fmt.Fprintln(os.Stderr, cmd.Root().Short)
 				fmt.Fprintf(os.Stderr, "Using profile: %s (%s)\n", utils.CurrentProfile.Name, utils.CurrentProfile.ProjectHost)
 			}
+			isTTY := telemetryIsTTY()
+			isCI := telemetryIsCI()
+			isAgent := telemetryIsAgent()
+			envSignals := telemetryEnvSignals()
+			service, err := telemetry.NewService(fsys, telemetry.Options{
+				Now:        time.Now,
+				IsTTY:      isTTY,
+				IsCI:       isCI,
+				IsAgent:    isAgent,
+				EnvSignals: envSignals,
+				CLIName:    utils.Version,
+			})
+			if err != nil {
+				fmt.Fprintln(utils.GetDebugLogger(), err)
+			} else {
+				ctx = telemetry.WithService(ctx, service)
+			}
+			ctx = telemetry.WithCommandContext(ctx, commandAnalyticsContext(cmd))
 			cmd.SetContext(ctx)
 			// Setup sentry last to ignore errors from parsing cli flags
 			apiHost, err := url.Parse(utils.GetSupabaseAPIHost())
@@ -137,11 +156,26 @@ var (
 
 func Execute() {
 	defer recoverAndExit()
-	if err := rootCmd.Execute(); err != nil {
+	startedAt := time.Now()
+	executedCmd, err := rootCmd.ExecuteC()
+	if executedCmd != nil {
+		if service := telemetry.FromContext(executedCmd.Context()); service != nil {
+			_ = service.Capture(executedCmd.Context(), telemetry.EventCommandExecuted, map[string]any{
+				telemetry.PropExitCode:   exitCode(err),
+				telemetry.PropDurationMs: time.Since(startedAt).Milliseconds(),
+			}, nil)
+			_ = service.Close()
+		}
+	}
+	if err != nil {
 		panic(err)
 	}
 	// Check upgrade last because --version flag is initialised after execute
-	version, err := checkUpgrade(rootCmd.Context(), afero.NewOsFs())
+	ctx := rootCmd.Context()
+	if executedCmd != nil {
+		ctx = executedCmd.Context()
+	}
+	version, err := checkUpgrade(ctx, afero.NewOsFs())
 	if err != nil {
 		fmt.Fprintln(utils.GetDebugLogger(), err)
 	}
@@ -151,6 +185,13 @@ func Execute() {
 	if len(utils.CmdSuggestion) > 0 {
 		fmt.Fprintln(os.Stderr, utils.CmdSuggestion)
 	}
+}
+
+func exitCode(err error) int {
+	if err != nil {
+		return 1
+	}
+	return 0
 }
 
 func checkUpgrade(ctx context.Context, fsys afero.Fs) (string, error) {

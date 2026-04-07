@@ -134,6 +134,7 @@ func init() {
 	createFlags.BoolVarP(&interactive, "interactive", "i", true, "Enables interactive mode.")
 	cobra.CheckErr(createFlags.MarkHidden("interactive"))
 	createFlags.StringVar(&orgId, "org-id", "", "Organization ID to create the project in.")
+	markFlagTelemetrySafe(createFlags.Lookup("org-id"))
 	createFlags.StringVar(&dbPassword, "db-password", "", "Database password of the project.")
 	createFlags.Var(&region, "region", "Select a region close to you for the best performance.")
 	createFlags.String("plan", "", "Select a plan that suits your needs.")
@@ -143,6 +144,7 @@ func init() {
 
 	apiKeysFlags := projectsApiKeysCmd.Flags()
 	apiKeysFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
+	markFlagTelemetrySafe(apiKeysFlags.Lookup("project-ref"))
 
 	// Add commands to root
 	projectsCmd.AddCommand(projectsCreateCmd)

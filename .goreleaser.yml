@@ -6,7 +6,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X github.com/supabase/cli/internal/utils.Version={{.Version}} -X github.com/supabase/cli/internal/utils.SentryDsn={{ .Env.SENTRY_DSN }}
+      - -s -w -X github.com/supabase/cli/internal/utils.Version={{.Version}} -X github.com/supabase/cli/internal/utils.SentryDsn={{ .Env.SENTRY_DSN }} -X github.com/supabase/cli/internal/utils.PostHogAPIKey={{ .Env.POSTHOG_API_KEY }} -X github.com/supabase/cli/internal/utils.PostHogEndpoint={{ .Env.POSTHOG_ENDPOINT }}
     env:
       - CGO_ENABLED=0
     targets:
