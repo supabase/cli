@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/nx/schemas/nx-schema.json",
   "analytics": false,
+  "parallel": 6,
   "plugins": [
     "./tools/nx-plugins/src/knip.plugin.ts",
     "./tools/nx-plugins/src/oxfmt.plugin.ts",

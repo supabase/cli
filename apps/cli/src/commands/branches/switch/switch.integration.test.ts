@@ -4,6 +4,7 @@ import { Effect, Exit, Layer, Option } from "effect";
 import type { BranchResponse } from "@supabase/api/effect";
 import { withJsonErrorHandling } from "../../../output/json-error-handling.ts";
 import { emptyEnv, mockOutput, mockProjectLinkState } from "../../../../tests/helpers/mocks.ts";
+import { ProjectLinkState } from "../../../config/project-link-state.service.ts";
 import { switchBranch } from "./switch.handler.ts";
 
 // ---------------------------------------------------------------------------
@@ -102,6 +103,18 @@ describe("branches switch handler", () => {
     }),
   );
 
+  it.live("updates the active branch in link state after switching", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      yield* switchBranch({ name: Option.some("dev") });
+      const linkStateService = yield* ProjectLinkState;
+      const state = yield* linkStateService.load;
+      const activeBranch = Option.map(state, (s) => s.active_branch);
+      expect(Option.getOrNull(activeBranch)?.ref).toBe("devrefghijklmnopqrst0");
+      expect(Option.getOrNull(activeBranch)?.name).toBe("dev");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("switches to a branch by project_ref", () =>
     Effect.gen(function* () {
       const { out, layer } = setup();
@@ -131,6 +144,28 @@ describe("branches switch handler", () => {
         expect.objectContaining({ type: "outro", message: "Switched to branch 'dev'." }),
       );
     }),
+  );
+
+  it.live(
+    "fails with BranchNotFoundError when interactive select returns an unresolvable ref",
+    () =>
+      Effect.gen(function* () {
+        const { layer } = setup({
+          interactive: true,
+          promptSelectResponses: ["ghost-ref-that-doesnt-exist"],
+        });
+
+        const exit = yield* switchBranch({ name: Option.none() }).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain("BranchNotFoundError");
+          expect(JSON.stringify(exit.cause)).toContain("Selected branch could not be resolved");
+        }
+      }),
   );
 
   it.live("fails with NonInteractiveError when no name and not interactive", () =>
@@ -212,7 +247,7 @@ describe("branches switch handler", () => {
     }),
   );
 
-  it.live("emits success event when already on branch in JSON mode", () =>
+  it.live("emits outro but no success event when already on branch in JSON mode", () =>
     Effect.gen(function* () {
       const { out, layer } = setup({ format: "json" });
 
