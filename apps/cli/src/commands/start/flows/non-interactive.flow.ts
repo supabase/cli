@@ -2,7 +2,7 @@ import { Effect, Stream } from "effect";
 import { Stack } from "@supabase/stack/effect";
 import { Output } from "../../../output/output.service.ts";
 import { interruptOnSignal } from "../signal.ts";
-import { printStackConnectionInfo, startStackWithProgress } from "../start.shared.ts";
+import { printStackConnectionInfo, startStackWithProgress } from "../../../stack/stack.shared.ts";
 
 export const startNonInteractive = Effect.fnUntraced(function* () {
   const output = yield* Output;

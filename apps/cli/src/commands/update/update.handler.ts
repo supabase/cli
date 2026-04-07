@@ -88,6 +88,11 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
     }),
   );
 
+  const persistedLaunch = Option.match(existingMetadata, {
+    onNone: () => ({ mode: "auto" as const, excludedServices: [] as const }),
+    onSome: (m) => m.launch ?? { mode: "auto" as const, excludedServices: [] as const },
+  });
+
   const resolvedConfig = yield* Effect.promise(() =>
     resolveDaemonConfig({
       cacheRoot: cliConfig.supabaseHome,
@@ -96,7 +101,7 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
       projectStateRoot: projectHome.projectHomeDir,
       name: flags.stack,
       ...withServiceVersions(
-        toStartStackConfig([], "auto"),
+        toStartStackConfig(persistedLaunch.excludedServices, persistedLaunch.mode),
         serviceVersionContext.candidateBaseline,
       ),
     }),
@@ -107,6 +112,7 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
     stackMetadata({
       ports: resolvedConfig.ports,
       services: serviceVersionContext.candidateBaseline,
+      launch: persistedLaunch,
     }),
   );
 

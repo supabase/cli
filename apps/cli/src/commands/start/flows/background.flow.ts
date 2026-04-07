@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { Output } from "../../../output/output.service.ts";
-import { printStackConnectionInfo, startStackWithProgress } from "../start.shared.ts";
+import { printStackConnectionInfo, startStackWithProgress } from "../../../stack/stack.shared.ts";
 
 export const startBackground = Effect.fnUntraced(function* () {
   const output = yield* Output;

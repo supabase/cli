@@ -14,6 +14,7 @@ import {
   type StackMetadata,
   type StackState,
 } from "@supabase/stack/effect";
+import { UnixHttpClient } from "@supabase/stack";
 import { Api } from "../../src/auth/api.service.ts";
 import type { LoginSessionResponse, ProfileResponse } from "../../src/auth/api.service.ts";
 import { Credentials } from "../../src/auth/credentials.service.ts";
@@ -999,6 +1000,9 @@ export function emptyEnv() {
     mockTty(),
     mockProcessControl().layer,
     cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
+    Layer.succeed(UnixHttpClient, {
+      request: () => Effect.die("unexpected UnixHttpClient access in tests"),
+    }),
   );
 }
 

@@ -259,6 +259,7 @@ export async function makeStackFixture(
     stackMetadata({
       ports: DEFAULT_PORTS,
       services,
+      launch: { mode: "auto", excludedServices: [] },
     });
 
   const stateManagerLayer = StateManager.make(

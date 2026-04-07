@@ -48,6 +48,7 @@ function writeStackMetadataFile(stackDir: string) {
           vector: "0.28.1-alpine",
           pooler: "2.7.4",
         },
+        launch: { mode: "auto", excludedServices: [] },
       }),
       null,
       2,
@@ -118,6 +119,7 @@ describe("deleteManagedStackPersistence", () => {
                   vector: "0.28.1-alpine",
                   pooler: "2.7.4",
                 },
+                launch: { mode: "auto", excludedServices: [] },
               }),
             ),
           );

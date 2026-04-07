@@ -80,6 +80,10 @@ const config = {
     Flag.withDescription("HTTP endpoint to notify when the branch becomes active and healthy."),
     Flag.optional,
   ),
+  switchAfter: Flag.boolean("switch").pipe(
+    Flag.withDescription("Switch to the new branch after creation. Pass --no-switch to skip."),
+    Flag.withDefault(true),
+  ),
 } as const;
 
 export type CreateFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -89,7 +93,7 @@ export const createBranchesCommand = Command.make("create", config).pipe(
     "Create a new branch from the linked project.\n\n" +
       "Requires the project to be linked (`supabase link`). " +
       "If no name is provided and you are in a git repository, the current branch name is used. " +
-      "After creation, the new branch is set as the active branch in `.supabase/project.json`.",
+      "Use --switch to set the new branch as active immediately, or confirm the prompt in interactive mode.",
   ),
   Command.withShortDescription("Create a new branch for the linked project"),
   Command.withExamples([

@@ -284,6 +284,7 @@ describe("StateManager", () => {
               vector: "0.28.1-alpine",
               pooler: "2.7.4",
             },
+            launch: { mode: "auto", excludedServices: [] },
           }),
         );
         yield* mgr.remove("my-project");
@@ -327,6 +328,7 @@ describe("StateManager", () => {
               vector: "0.28.1-alpine",
               pooler: "2.7.4",
             },
+            launch: { mode: "auto", excludedServices: [] },
           }),
         );
         yield* mgr.remove("my-project");
@@ -359,6 +361,7 @@ describe("StateManager", () => {
               vector: "0.28.1-alpine",
               pooler: "2.7.4",
             },
+            launch: { mode: "auto", excludedServices: [] },
           }),
         );
         yield* mgr.remove("my-project");
@@ -390,6 +393,7 @@ describe("StateManager", () => {
             vector: "0.28.1-alpine",
             pooler: "2.7.4",
           },
+          launch: { mode: "auto", excludedServices: [] },
         });
         yield* mgr.writeMetadata("my-project", metadata);
         const readMetadata = yield* mgr.readMetadata("my-project");
@@ -419,6 +423,7 @@ describe("StateManager", () => {
               vector: "0.28.1-alpine",
               pooler: "2.7.4",
             },
+            launch: { mode: "auto", excludedServices: [] },
           }),
         );
         yield* mgr.writeMetadata(
@@ -443,6 +448,7 @@ describe("StateManager", () => {
               vector: "0.28.1-alpine",
               pooler: "2.7.4",
             },
+            launch: { mode: "auto", excludedServices: [] },
           }),
         );
 
@@ -475,6 +481,7 @@ describe("StateManager", () => {
               vector: "0.28.1-alpine",
               pooler: "2.7.4",
             },
+            launch: { mode: "auto", excludedServices: [] },
           }),
         );
         files.set(`${mgr.stackDir("my-project")}/stack.json`, "{");

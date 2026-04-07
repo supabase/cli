@@ -75,6 +75,7 @@ function mockStartVersionState(
             vector: "0.28.1-alpine",
             pooler: "2.7.4",
           },
+          launch: { mode: "auto", excludedServices: [] },
         }),
       serviceVersionContext: {
         candidateBaseline: {
@@ -370,6 +371,7 @@ describe("start", () => {
             vector: "0.28.1-alpine",
             pooler: "2.7.4",
           },
+          launch: { mode: "auto", excludedServices: [] },
         }),
         serviceVersionContext: {
           availableUpdates: [
@@ -419,6 +421,7 @@ describe("start", () => {
                 vector: "0.28.1-alpine",
                 pooler: "2.7.4",
               },
+              launch: { mode: "auto", excludedServices: [] },
             }),
           },
         ],

@@ -57,6 +57,7 @@ const BASE_FLAGS: CreateFlags = {
   persistent: false,
   withData: false,
   notifyUrl: Option.none(),
+  switchAfter: true,
 };
 
 function mockCreateApi(
@@ -133,7 +134,7 @@ describe("branches create handler", () => {
           (m) =>
             m.type === "outro" &&
             m.message.includes("my-branch") &&
-            m.message.includes("supabase branches switch"),
+            m.message.includes("created and set as active"),
         ),
       ).toBe(true);
     }),
@@ -264,6 +265,7 @@ describe("branches create handler", () => {
         persistent: true,
         withData: true,
         notifyUrl: Option.some("https://example.com/hook"),
+        switchAfter: false,
       };
 
       yield* create(flags).pipe(Effect.provide(layer));
@@ -288,7 +290,7 @@ describe("branches create handler", () => {
     }),
   );
 
-  it.live("sets active branch to the newly created branch after creation", () => {
+  it.live("sets active branch to the newly created branch by default", () => {
     const branch = makeCreatedBranch({
       name: "new-active-branch",
       project_ref: "newbranchref12345678",
@@ -361,4 +363,34 @@ describe("branches create handler", () => {
       expect(JSON.stringify(exit)).toContain("existing-branch");
     }),
   );
+
+  it.live("does not switch and shows switch hint when --no-switch is passed", () => {
+    const branch = makeCreatedBranch({
+      name: "no-switch-branch",
+      project_ref: "noswitchref123456789",
+      is_default: false,
+    });
+    const { layer, out } = setup({ apiResponse: branch });
+    const flags: CreateFlags = {
+      ...BASE_FLAGS,
+      name: Option.some("no-switch-branch"),
+      switchAfter: false,
+    };
+
+    return Effect.gen(function* () {
+      yield* create(flags);
+      const linkStateService = yield* ProjectLinkState;
+      const state = yield* linkStateService.load;
+      // Active branch remains unchanged
+      expect(Option.getOrNull(Option.map(state, (s) => s.active_branch))?.ref).toBe(
+        "mainrefghijklmnopqrst",
+      );
+      expect(
+        out.messages.some(
+          (m) =>
+            m.type === "outro" && m.message.includes("supabase branches switch no-switch-branch"),
+        ),
+      ).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
 });

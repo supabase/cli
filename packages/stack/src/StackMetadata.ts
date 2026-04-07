@@ -36,11 +36,33 @@ export const PartialVersionManifestSchema = Schema.Struct({
 
 export type PartialVersionManifest = Schema.Schema.Type<typeof PartialVersionManifestSchema>;
 
+const StackLaunchSchema = Schema.Struct({
+  mode: Schema.Literals(["native", "auto", "docker"] as const),
+  excludedServices: Schema.Array(
+    Schema.Literals([
+      "auth",
+      "postgrest",
+      "realtime",
+      "storage",
+      "imgproxy",
+      "mailpit",
+      "pgmeta",
+      "studio",
+      "analytics",
+      "vector",
+      "pooler",
+    ] as const),
+  ),
+});
+
+type StackLaunch = Schema.Schema.Type<typeof StackLaunchSchema>;
+
 export const StackMetadataSchema = Schema.Struct({
   schemaVersion: Schema.Number,
   updatedAt: Schema.String,
   ports: AllocatedPortsSchema,
   services: VersionManifestSchema,
+  launch: Schema.optionalKey(StackLaunchSchema),
   cleanupTargets: Schema.optionalKey(CleanupTargetsSchema),
   lastNotifiedUpdateFingerprint: Schema.optionalKey(Schema.String),
 });
@@ -72,6 +94,7 @@ export function runningServiceVersionsForConfig(
 export function stackMetadata(args: {
   readonly ports: AllocatedPorts;
   readonly services: VersionManifest;
+  readonly launch: StackLaunch;
   readonly cleanupTargets?: CleanupTargets;
   readonly updatedAt?: string;
   readonly lastNotifiedUpdateFingerprint?: string;
@@ -81,6 +104,7 @@ export function stackMetadata(args: {
     updatedAt: args.updatedAt ?? new Date().toISOString(),
     ports: args.ports,
     services: args.services,
+    launch: args.launch,
     ...(args.cleanupTargets === undefined ? {} : { cleanupTargets: args.cleanupTargets }),
     ...(args.lastNotifiedUpdateFingerprint === undefined
       ? {}

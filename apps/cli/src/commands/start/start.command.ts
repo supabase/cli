@@ -172,6 +172,7 @@ export const startCommand = Command.make("start", flags).pipe(
       const metadata = stackMetadata({
         ports: resolvedConfig.ports,
         services: serviceVersionContext.pinnedBaseline,
+        launch: { mode: flags.mode, excludedServices: flags.exclude },
         lastNotifiedUpdateFingerprint:
           serviceVersionContext.updateFingerprint === undefined
             ? undefined

@@ -1,6 +1,6 @@
-import { Effect, Fiber, Stream } from "effect";
 import { Stack } from "@supabase/stack/effect";
-import { Output } from "../../output/output.service.ts";
+import { Effect, Fiber, Stream } from "effect";
+import { Output } from "../output/output.service.ts";
 
 export const startStackWithProgress = Effect.fnUntraced(function* () {
   const output = yield* Output;

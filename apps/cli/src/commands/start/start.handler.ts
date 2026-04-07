@@ -48,6 +48,7 @@ export const start = Effect.fnUntraced(function* (flags: StartFlags) {
           stackMetadata({
             ports: metadata.ports,
             services: metadata.services,
+            launch: metadata.launch ?? { mode: "auto", excludedServices: [] },
             updatedAt: metadata.updatedAt,
             lastNotifiedUpdateFingerprint: serviceVersionContext.updateFingerprint,
           }),

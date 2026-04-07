@@ -9,7 +9,7 @@ import { formatTableRow, outputTable } from "../../../output/table.ts";
 import { formatUtcDate, formatUtcTime } from "../../../output/time.ts";
 import { RuntimeInfo } from "../../../runtime/runtime-info.service.ts";
 import type { CreateFlags } from "./create.command.ts";
-import { BranchAlreadyExistsError, NoBranchNameError } from "./create.errors.ts";
+import { BranchAlreadyExistsError, NoBranchNameError } from "../errors.ts";
 
 const detectGitBranch: Effect.Effect<
   Option.Option<string>,
@@ -148,11 +148,13 @@ export const create = Effect.fn("branches.create")(function* (flags: CreateFlags
 
   yield* creating.clear();
 
-  yield* projectLinkState.setActiveBranch({
-    ref: branch.project_ref,
-    name: branch.name,
-    is_default: branch.is_default,
-  });
+  if (flags.switchAfter) {
+    yield* projectLinkState.setActiveBranch({
+      ref: branch.project_ref,
+      name: branch.name,
+      is_default: branch.is_default,
+    });
+  }
 
   if (output.format !== "text") {
     yield* output.success("Branch created", { ...branch });
@@ -182,6 +184,8 @@ export const create = Effect.fn("branches.create")(function* (flags: CreateFlags
   );
 
   yield* output.outro(
-    `Branch "${branch.name}" created. Run \`supabase branches switch ${branch.name}\` to switch to it.`,
+    flags.switchAfter
+      ? `Branch "${branch.name}" created and set as active.`
+      : `Branch "${branch.name}" created. Run \`supabase branches switch ${branch.name}\` to switch to it.`,
   );
 });
