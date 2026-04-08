@@ -85,7 +85,8 @@ func TestSuggestUpgradeOnError(t *testing.T) {
 			Get("/v1/organizations/my-org/entitlements").
 			Reply(http.StatusOK).
 			JSON(entitlementsJSON("branching_limit", false))
-		SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusPaymentRequired)
+		got := SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusPaymentRequired)
+		assert.True(t, got)
 		assert.Contains(t, CmdSuggestion, "/org/my-org/billing")
 		assert.Contains(t, CmdSuggestion, "does not have access")
 	})
@@ -100,7 +101,8 @@ func TestSuggestUpgradeOnError(t *testing.T) {
 		gock.New(DefaultApiHost).
 			Get("/v1/organizations/my-org/entitlements").
 			Reply(http.StatusInternalServerError)
-		SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusPaymentRequired)
+		got := SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusPaymentRequired)
+		assert.True(t, got)
 		assert.Contains(t, CmdSuggestion, "/org/my-org/billing")
 		assert.Contains(t, CmdSuggestion, "may require a plan upgrade")
 	})
@@ -111,7 +113,8 @@ func TestSuggestUpgradeOnError(t *testing.T) {
 		gock.New(DefaultApiHost).
 			Get("/v1/projects/" + ref).
 			Reply(http.StatusNotFound)
-		SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusPaymentRequired)
+		got := SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusPaymentRequired)
+		assert.True(t, got)
 		assert.Contains(t, CmdSuggestion, "plan upgrade")
 		assert.Contains(t, CmdSuggestion, GetSupabaseDashboardURL())
 		assert.NotContains(t, CmdSuggestion, "/org/")
@@ -128,26 +131,30 @@ func TestSuggestUpgradeOnError(t *testing.T) {
 			Get("/v1/organizations/my-org/entitlements").
 			Reply(http.StatusOK).
 			JSON(entitlementsJSON("branching_limit", true))
-		SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusPaymentRequired)
+		got := SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusPaymentRequired)
+		assert.True(t, got)
 		assert.Contains(t, CmdSuggestion, "/org/my-org/billing")
 		assert.Contains(t, CmdSuggestion, "may require a plan upgrade")
 	})
 
 	t.Run("skips suggestion on 403 forbidden", func(t *testing.T) {
 		CmdSuggestion = ""
-		SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusForbidden)
+		got := SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusForbidden)
+		assert.False(t, got)
 		assert.Empty(t, CmdSuggestion)
 	})
 
 	t.Run("skips suggestion on non-billing status codes", func(t *testing.T) {
 		CmdSuggestion = ""
-		SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusInternalServerError)
+		got := SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusInternalServerError)
+		assert.False(t, got)
 		assert.Empty(t, CmdSuggestion)
 	})
 
 	t.Run("skips suggestion on success status codes", func(t *testing.T) {
 		CmdSuggestion = ""
-		SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusOK)
+		got := SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusOK)
+		assert.False(t, got)
 		assert.Empty(t, CmdSuggestion)
 	})
 }
