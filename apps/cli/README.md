@@ -11,7 +11,7 @@ This workspace contains:
 
 ## Status
 
-This CLI is still a partial TypeScript port of the old Go CLI.
+This workspace currently contains the next/V3 CLI shell and the scaffolding for a legacy shell.
 
 For current migration/parity status, see:
 
@@ -31,18 +31,19 @@ From the workspace:
 
 ```sh
 cd apps/cli
-pnpm exec bun src/cli/main.ts --help
+pnpm dev:next -- --help
 ```
 
 Examples:
 
 ```sh
-pnpm exec bun src/cli/main.ts start
-pnpm exec bun src/cli/main.ts start --mode docker
-pnpm exec bun src/cli/main.ts start --detach
-pnpm exec bun src/cli/main.ts status
-pnpm exec bun src/cli/main.ts logs
-pnpm exec bun src/cli/main.ts login --no-browser
+pnpm dev:next -- start
+pnpm dev:next -- start --mode docker
+pnpm dev:next -- start --detach
+pnpm dev:next -- status
+pnpm dev:next -- logs
+pnpm dev:next -- login --no-browser
+pnpm dev:legacy -- hello
 ```
 
 ## Build
@@ -51,12 +52,16 @@ From `apps/cli`:
 
 ```sh
 pnpm build
+pnpm build:next
+pnpm build:legacy
+pnpm build:shim
 ```
 
 Build output:
 
 - `dist/supabase.js`
-- `dist/bin.js`
+- `dist/main-next.js`
+- `dist/main-legacy.js`
 
 ## Architecture
 
@@ -64,11 +69,12 @@ The CLI is built on `effect/unstable/cli`.
 
 Important areas:
 
-- `src/cli/` for root command wiring and global flags
-- `src/commands/` for command definitions and handlers
-- `src/output/` for text / JSON / NDJSON output policies
-- `src/runtime/` for TTY, stdin, browser, Ink, and process-control services
-- `src/auth/` for login-related services
+- `src/shared/cli/` for shared runner logic, roots, and global flags
+- `src/next/commands/` for the next/V3 command tree
+- `src/legacy/commands/` for the legacy command tree
+- `src/shared/output/` for text / JSON / NDJSON output policies
+- `src/shared/runtime/` for TTY, stdin, browser, Ink, and process-control services
+- `src/next/auth/` for login-related services
 
 The local stack commands use `@supabase/stack` for lifecycle, daemon transport, status, and logs.
 That stack layer now has an explicit preparation phase, so foreground and detached `start` flows
@@ -100,6 +106,16 @@ pnpm test:e2e
 ## Publishing
 
 This workspace publishes the main `@supabase/cli` package.
+
+Release channels are split by npm dist-tag:
+
+- stable publishes the legacy shell to `latest`
+- alpha publishes the next/V3 shell to `alpha`
+
+The release automation is split across:
+
+- [`.github/workflows/release-stable.yml`](/Users/jgoux/Code/supabase/dx-labs/.github/workflows/release-stable.yml)
+- [`.github/workflows/release-alpha.yml`](/Users/jgoux/Code/supabase/dx-labs/.github/workflows/release-alpha.yml)
 
 Platform-specific wrapper packages live under:
 

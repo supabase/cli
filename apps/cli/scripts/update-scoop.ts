@@ -58,7 +58,7 @@ const manifest = {
     "64bit": {
       url: `${baseUrl}/supabase_${version}_windows_amd64.zip`,
       hash: sha(`supabase_${version}_windows_amd64.zip`),
-      bin: ["supabase.exe", "supabase-backend.exe"],
+      bin: ["supabase.exe"],
     },
   },
   checkver: {

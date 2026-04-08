@@ -24,9 +24,9 @@ import {
   type LogEntry,
   ServiceNotFoundError,
 } from "../../../../packages/process-compose/src/index.ts";
-import { CliConfig } from "../../src/config/cli-config.service.ts";
-import { ProjectHome } from "../../src/config/project-home.service.ts";
-import { RuntimeInfo } from "../../src/runtime/runtime-info.service.ts";
+import { CliConfig } from "../../src/next/config/cli-config.service.ts";
+import { ProjectHome } from "../../src/next/config/project-home.service.ts";
+import { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
 
 const DEFAULT_PORTS = {
   apiPort: 54321,

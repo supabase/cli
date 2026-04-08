@@ -15,37 +15,37 @@ import {
   type StackState,
 } from "@supabase/stack/effect";
 import { UnixHttpClient } from "@supabase/stack";
-import { Api } from "../../src/auth/api.service.ts";
-import type { LoginSessionResponse, ProfileResponse } from "../../src/auth/api.service.ts";
-import { Credentials } from "../../src/auth/credentials.service.ts";
-import { Crypto } from "../../src/auth/crypto.service.ts";
-import { ApiError } from "../../src/auth/errors.ts";
-import { cliConfigLayer } from "../../src/config/cli-config.layer.ts";
-import { ProjectHome } from "../../src/config/project-home.service.ts";
+import { Api } from "../../src/next/auth/api.service.ts";
+import type { LoginSessionResponse, ProfileResponse } from "../../src/next/auth/api.service.ts";
+import { Credentials } from "../../src/next/auth/credentials.service.ts";
+import { Crypto } from "../../src/next/auth/crypto.service.ts";
+import { ApiError } from "../../src/next/auth/errors.ts";
+import { cliConfigLayer } from "../../src/next/config/cli-config.layer.ts";
+import { ProjectHome } from "../../src/next/config/project-home.service.ts";
 import {
   ProjectLocalServiceVersions,
   type LocalServiceVersionsState,
-} from "../../src/config/project-local-service-versions.service.ts";
-import { ProjectLinkRemote } from "../../src/config/project-link-remote.service.ts";
+} from "../../src/next/config/project-local-service-versions.service.ts";
+import { ProjectLinkRemote } from "../../src/next/config/project-link-remote.service.ts";
 import {
   ProjectLinkState,
   type ProjectLinkStateValue,
-} from "../../src/config/project-link-state.service.ts";
-import { ProjectContext } from "../../src/config/project-context.service.ts";
-import { NonInteractiveError } from "../../src/output/errors.ts";
-import { Output } from "../../src/output/output.service.ts";
-import type { OutputFormat } from "../../src/output/types.ts";
-import { Browser } from "../../src/runtime/browser.service.ts";
-import { Ink, type InkInstance } from "../../src/runtime/ink.service.ts";
+} from "../../src/next/config/project-link-state.service.ts";
+import { ProjectContext } from "../../src/next/config/project-context.service.ts";
+import { NonInteractiveError } from "../../src/shared/output/errors.ts";
+import { Output } from "../../src/shared/output/output.service.ts";
+import type { OutputFormat } from "../../src/shared/output/types.ts";
+import { Browser } from "../../src/shared/runtime/browser.service.ts";
+import { Ink, type InkInstance } from "../../src/shared/runtime/ink.service.ts";
 import {
   ProcessControl,
   type CliProcessSignal,
-} from "../../src/runtime/process-control.service.ts";
-import { RuntimeInfo } from "../../src/runtime/runtime-info.service.ts";
-import { Stdin } from "../../src/runtime/stdin.service.ts";
-import { Tty } from "../../src/runtime/tty.service.ts";
-import { Analytics } from "../../src/telemetry/analytics.service.ts";
-import { TelemetryRuntime } from "../../src/telemetry/runtime.service.ts";
+} from "../../src/shared/runtime/process-control.service.ts";
+import { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
+import { Stdin } from "../../src/shared/runtime/stdin.service.ts";
+import { Tty } from "../../src/shared/runtime/tty.service.ts";
+import { Analytics } from "../../src/shared/telemetry/analytics.service.ts";
+import { TelemetryRuntime } from "../../src/shared/telemetry/runtime.service.ts";
 
 // ---------------------------------------------------------------------------
 // Types

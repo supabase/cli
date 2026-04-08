@@ -1,7 +1,6 @@
 import { $ } from "bun";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
@@ -10,13 +9,11 @@ const MUSL_TARGETS = [
   {
     bunTarget: "bun-linux-arm64-musl",
     pkg: "cli-linux-arm64-musl",
-    glibcPkg: "cli-linux-arm64",
     nfpmArch: "arm64",
   },
   {
     bunTarget: "bun-linux-x64-musl",
     pkg: "cli-linux-x64-musl",
-    glibcPkg: "cli-linux-x64",
     nfpmArch: "amd64",
   },
 ] as const;
@@ -25,15 +22,22 @@ const LINUX_PKG_FORMATS = ["deb", "rpm", "apk"] as const;
 
 const { values } = parseArgs({
   options: {
-    "go-version": { type: "string" },
     version: { type: "string" },
+    shell: { type: "string", default: "next" },
   },
 });
 
-const goVersion = values["go-version"];
 const version = values.version;
-if (!goVersion || !version) {
-  console.error("Usage: bun run scripts/build.ts --go-version <version> --version <npm-version>");
+if (!version) {
+  console.error(
+    "Usage: pnpm exec bun apps/cli/scripts/build.ts --version <npm-version> --shell <legacy|next>",
+  );
+  process.exit(1);
+}
+
+const shell = values.shell;
+if (shell !== "legacy" && shell !== "next") {
+  console.error(`Invalid --shell value: ${String(shell)}. Expected "legacy" or "next".`);
   process.exit(1);
 }
 
@@ -41,21 +45,18 @@ const TARGETS = [
   {
     bunTarget: "bun-darwin-arm64",
     pkg: "cli-darwin-arm64",
-    goAsset: "supabase_darwin_arm64.tar.gz",
     archive: `supabase_${version}_darwin_arm64.tar.gz`,
     ext: "",
   },
   {
     bunTarget: "bun-darwin-x64",
     pkg: "cli-darwin-x64",
-    goAsset: "supabase_darwin_amd64.tar.gz",
     archive: `supabase_${version}_darwin_amd64.tar.gz`,
     ext: "",
   },
   {
     bunTarget: "bun-linux-arm64",
     pkg: "cli-linux-arm64",
-    goAsset: "supabase_linux_arm64.tar.gz",
     archive: `supabase_${version}_linux_arm64.tar.gz`,
     nfpmArch: "arm64",
     ext: "",
@@ -63,7 +64,6 @@ const TARGETS = [
   {
     bunTarget: "bun-linux-x64",
     pkg: "cli-linux-x64",
-    goAsset: "supabase_linux_amd64.tar.gz",
     archive: `supabase_${version}_linux_amd64.tar.gz`,
     nfpmArch: "amd64",
     ext: "",
@@ -71,55 +71,25 @@ const TARGETS = [
   {
     bunTarget: "bun-windows-x64",
     pkg: "cli-windows-x64",
-    goAsset: "supabase_windows_amd64.tar.gz",
     archive: `supabase_${version}_windows_amd64.zip`,
     ext: ".exe",
   },
-];
+] as const;
 
 const root = path.resolve(import.meta.dir, "../../..");
+const entrypoint = path.join(root, "apps/cli/src", shell, "main.ts");
+const distDir = path.join(root, "dist");
 
 async function buildTarget(target: (typeof TARGETS)[number]) {
   const binDir = path.join(root, "packages", target.pkg, "bin");
   await mkdir(binDir, { recursive: true });
 
   const outfile = path.join(binDir, `supabase${target.ext}`);
-  const entrypoint = path.join(root, "apps/cli/src/index.ts");
 
   console.log(`[${target.pkg}] Compiling Bun CLI...`);
   await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --outfile=${outfile}`;
-
-  const assetUrl = `https://github.com/supabase/cli/releases/download/v${goVersion}/${target.goAsset}`;
-  const sidecar = path.join(binDir, `supabase-backend${target.ext}`);
-
-  console.log(`[${target.pkg}] Downloading Go CLI from ${assetUrl}...`);
-  const response = await fetch(assetUrl);
-  if (!response.ok) {
-    throw new Error(`Failed to download ${assetUrl}: ${response.status} ${response.statusText}`);
-  }
-
-  const buffer = await response.arrayBuffer();
-
-  // Extract to a temp directory to avoid overwriting the compiled Bun binary
-  const tmpDir = await mkdtemp(path.join(tmpdir(), "supabase-go-"));
-
-  if (target.goAsset.endsWith(".zip")) {
-    const tmpZip = path.join(tmpDir, "archive.zip");
-    await Bun.write(tmpZip, buffer);
-    await $`unzip -o ${tmpZip} -d ${tmpDir}`;
-  } else {
-    const tmpTar = path.join(tmpDir, "archive.tar.gz");
-    await Bun.write(tmpTar, buffer);
-    await $`tar -xzf ${tmpTar} -C ${tmpDir}`;
-  }
-
-  await $`mv ${path.join(tmpDir, `supabase${target.ext}`)} ${sidecar}`;
-  await rm(tmpDir, { recursive: true });
-
   console.log(`[${target.pkg}] Done.`);
 }
-
-const distDir = path.join(root, "dist");
 
 async function archiveTarget(target: (typeof TARGETS)[number]) {
   const binDir = path.join(root, "packages", target.pkg, "bin");
@@ -128,15 +98,13 @@ async function archiveTarget(target: (typeof TARGETS)[number]) {
   console.log(`[${target.pkg}] Creating archive ${target.archive}...`);
 
   if (target.archive.endsWith(".zip")) {
-    await $`zip -j ${archivePath} ${path.join(binDir, `supabase${target.ext}`)} ${path.join(binDir, `supabase-backend${target.ext}`)}`;
+    await $`zip -j ${archivePath} ${path.join(binDir, `supabase${target.ext}`)}`;
   } else {
-    await $`tar -czf ${archivePath} -C ${binDir} supabase${target.ext} supabase-backend${target.ext}`;
+    await $`tar -czf ${archivePath} -C ${binDir} supabase${target.ext}`;
   }
 }
 
 async function buildMuslBinaries() {
-  const entrypoint = path.join(root, "apps/cli/src/index.ts");
-
   await Promise.all(
     MUSL_TARGETS.map(async (target) => {
       const binDir = path.join(root, "packages", target.pkg, "bin");
@@ -145,31 +113,23 @@ async function buildMuslBinaries() {
       const outfile = path.join(binDir, "supabase");
       console.log(`[${target.pkg}] Compiling Bun CLI (musl)...`);
       await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --outfile=${outfile}`;
-
-      // Copy the Go backend from the glibc platform package (same binary works on both)
-      const goBackend = path.join(root, "packages", target.glibcPkg, "bin", "supabase-backend");
-      await $`cp ${goBackend} ${path.join(binDir, "supabase-backend")}`;
-
       console.log(`[${target.pkg}] Done.`);
     }),
   );
 }
 
 async function buildLinuxPackages(version: string) {
-  const linuxTargets = TARGETS.filter((t) => "nfpmArch" in t);
+  const linuxTargets = TARGETS.filter((target) => "nfpmArch" in target);
   const jobs: Promise<void>[] = [];
 
   for (const target of linuxTargets) {
     const glibcBinDir = path.join(root, "packages", target.pkg, "bin");
-    const muslTarget = MUSL_TARGETS.find((m) => m.nfpmArch === target.nfpmArch)!;
+    const muslTarget = MUSL_TARGETS.find((candidate) => candidate.nfpmArch === target.nfpmArch)!;
     const muslBinDir = path.join(root, "packages", muslTarget.pkg, "bin");
 
     for (const fmt of LINUX_PKG_FORMATS) {
       const outFile = `supabase_${version}_linux_${target.nfpmArch}.${fmt}`;
       const outPath = path.join(distDir, outFile);
-
-      // apk targets Alpine (musl) — use musl-compiled Bun binary
-      // deb/rpm target glibc distros — use glibc-compiled Bun binary
       const binDir = fmt === "apk" ? muslBinDir : glibcBinDir;
 
       const nfpmConfig: Record<string, unknown> = {
@@ -181,16 +141,9 @@ async function buildLinuxPackages(version: string) {
         description: "Supabase CLI",
         homepage: "https://supabase.com",
         license: "MIT",
-        contents: [
-          { src: path.join(binDir, "supabase"), dst: "/usr/bin/supabase" },
-          {
-            src: path.join(binDir, "supabase-backend"),
-            dst: "/usr/bin/supabase-backend",
-          },
-        ],
+        contents: [{ src: path.join(binDir, "supabase"), dst: "/usr/bin/supabase" }],
       };
 
-      // musl Bun binaries need libstdc++ and libgcc on Alpine
       if (fmt === "apk") {
         nfpmConfig.depends = ["libstdc++", "libgcc"];
       }
@@ -214,7 +167,6 @@ async function buildLinuxPackages(version: string) {
 async function generateChecksums() {
   const lines: string[] = [];
 
-  // Hash archives
   for (const target of TARGETS) {
     const archivePath = path.join(distDir, target.archive);
     const data = await readFile(archivePath);
@@ -222,8 +174,7 @@ async function generateChecksums() {
     lines.push(`${hash}  ${target.archive}`);
   }
 
-  // Hash Linux packages
-  const linuxTargets = TARGETS.filter((t) => "nfpmArch" in t);
+  const linuxTargets = TARGETS.filter((target) => "nfpmArch" in target);
   for (const target of linuxTargets) {
     for (const fmt of LINUX_PKG_FORMATS) {
       const filename = `supabase_${version}_linux_${target.nfpmArch}.${fmt}`;
@@ -235,24 +186,18 @@ async function generateChecksums() {
 
   const checksumsPath = path.join(distDir, "checksums.txt");
   await writeFile(checksumsPath, `${lines.join("\n")}\n`);
-  console.log(`Checksums written to dist/checksums.txt`);
+  console.log("Checksums written to dist/checksums.txt");
 }
 
-console.log(`Building CLI for ${TARGETS.length} targets (Go CLI v${goVersion})...\n`);
+console.log(`Building ${shell} CLI for ${TARGETS.length} targets...\n`);
 
-// Build all targets concurrently
 await Promise.all(TARGETS.map(buildTarget));
 
-// Create distributable archives for brew/scoop
 await mkdir(distDir, { recursive: true });
 await Promise.all(TARGETS.map(archiveTarget));
 
-// Build musl variants for Alpine apk packages
 await buildMuslBinaries();
-
-// Create Linux packages (.deb, .rpm use glibc; .apk uses musl)
 await buildLinuxPackages(version);
-
 await generateChecksums();
 
-console.log("\nAll targets built successfully.");
+console.log(`\nAll ${shell} targets built successfully.`);

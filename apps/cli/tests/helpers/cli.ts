@@ -149,13 +149,20 @@ export function spawnSupabase(
     cleanupProcessGroupOnClose?: boolean;
     /** Maximum time to wait for the process to exit before force-killing it. */
     exitTimeoutMs?: number;
+    /** Which source entrypoint to execute. */
+    entrypoint?: "next" | "legacy";
   },
 ): SpawnedSupabase {
   const ownHome = options?.home ? null : makeTempHome();
   const homeDir = options?.home ?? ownHome!.dir;
   noteStackProjectHome(options?.cwd, homeDir);
   const sourceCliLauncher = fileURLToPath(new URL("./source-cli-launcher.mjs", import.meta.url));
-  const sourceCliEntrypoint = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
+  const sourceCliEntrypoint = fileURLToPath(
+    new URL(
+      options?.entrypoint === "legacy" ? "../../src/legacy/main.ts" : "../../src/next/main.ts",
+      import.meta.url,
+    ),
+  );
   const usesStartWrapper = args[0] === "start";
   const proc = spawn(
     usesStartWrapper ? "node" : "bun",
@@ -292,6 +299,8 @@ export async function runSupabase(
     untilTimeoutMs?: number;
     /** Maximum time to wait for the command to exit before force-killing it. */
     exitTimeoutMs?: number;
+    /** Which source entrypoint to execute. */
+    entrypoint?: "next" | "legacy";
   },
 ): Promise<RunResult> {
   const spawned = spawnSupabase(args, options);

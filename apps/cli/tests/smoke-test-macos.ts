@@ -4,14 +4,21 @@ import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import { createTmpDir, runNpmTest } from "./helpers/npm-registry.ts";
+import { verifyExpectedShell } from "./helpers/release-shell.ts";
 
 const { values } = parseArgs({
   options: {
     version: { type: "string", default: "0.0.1-smoke" },
+    tag: { type: "string", default: "latest" },
   },
 });
 
 const version = values.version!;
+const tag = values.tag;
+if (tag !== "latest" && tag !== "alpha") {
+  console.error(`Invalid --tag value: ${String(tag)}. Expected "latest" or "alpha".`);
+  process.exit(1);
+}
 const root = path.resolve(import.meta.dir, "../../..");
 
 interface TestResult {
@@ -36,8 +43,10 @@ console.log("=".repeat(60));
   try {
     const output = await $`${binPath} --version`.text();
     const trimmed = output.trim();
-    const passed = /^\d+\.\d+\.\d+/.test(trimmed);
+    const shellCheck = await verifyExpectedShell(binPath, tag);
+    const passed = /^\d+\.\d+\.\d+/.test(trimmed) && shellCheck.passed;
     console.log(`[${name}] ${passed ? "PASS" : "FAIL"} — ${trimmed}`);
+    console.log(`[${name}] ${shellCheck.detail}`);
     results.push({ name, status: passed ? "pass" : "fail" });
   } catch (e) {
     console.log(`[${name}] FAIL — ${e}`);
@@ -52,7 +61,7 @@ console.log("npm (Verdaccio) test");
 console.log("=".repeat(60));
 
 try {
-  const npmPassed = await runNpmTest(version);
+  const npmPassed = await runNpmTest(version, tag);
   results.push({ name: "npm", status: npmPassed ? "pass" : "fail" });
 } catch (e) {
   console.error(`[npm] Error: ${e}`);
@@ -94,9 +103,11 @@ if (!hasBrew) {
 
       const output = await $`supabase --version`.text();
       const trimmed = output.trim();
-      const passed = /^\d+\.\d+\.\d+/.test(trimmed);
+      const shellCheck = await verifyExpectedShell("supabase", tag);
+      const passed = /^\d+\.\d+\.\d+/.test(trimmed) && shellCheck.passed;
 
       console.log(`[brew] ${passed ? "PASS" : "FAIL"} — supabase --version: ${trimmed}`);
+      console.log(`[brew] ${shellCheck.detail}`);
       results.push({ name: "brew", status: passed ? "pass" : "fail" });
     } finally {
       await $`brew uninstall supabase`.nothrow();

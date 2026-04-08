@@ -2,8 +2,7 @@
   "name": "@supabase/cli",
   "private": false,
   "bin": {
-    "supabase": "dist/supabase.js",
-    "supabase-proxy": "dist/bin.js"
+    "supabase": "dist/supabase.js"
   },
   "files": [
     "dist/"
@@ -13,7 +12,12 @@
     "access": "public"
   },
   "scripts": {
-    "build": "bun build src/cli/bin.ts --outfile dist/supabase.js --target node && bun build src/cli/proxy.ts --outfile dist/bin.js --target node",
+    "build": "pnpm build:next && pnpm build:legacy && pnpm build:shim",
+    "build:next": "bun build src/next/main.ts --outfile dist/main-next.js --target bun --packages external",
+    "build:legacy": "bun build src/legacy/main.ts --outfile dist/main-legacy.js --target bun --packages external",
+    "build:shim": "bun build src/shared/cli/bin.ts --outfile dist/supabase.js --target node",
+    "dev:next": "pnpm exec bun src/next/main.ts",
+    "dev:legacy": "pnpm exec bun src/legacy/main.ts",
     "test": "nx run-many -t test:core test:e2e --projects=$npm_package_name",
     "test:core": "nx run-many -t test:unit test:integration --projects=$npm_package_name --coverage.enabled",
     "test:smoke": "bun run tests/smoke-test.ts",
@@ -46,6 +50,7 @@
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:",
+    "react-devtools-core": "^7.0.1",
     "vitest": "catalog:"
   },
   "optionalDependencies": {
@@ -59,8 +64,7 @@
   },
   "knip": {
     "entry": [
-      "src/cli/proxy.ts",
-      "src/cli/bin.ts",
+      "src/shared/cli/bin.ts",
       "src/**/*.test.ts",
       "src/**/*.e2e.test.ts"
     ],

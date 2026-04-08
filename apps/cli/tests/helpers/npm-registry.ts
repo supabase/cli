@@ -3,19 +3,22 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { verifyExpectedShell } from "./release-shell.ts";
 
 const root = path.resolve(import.meta.dir, "../../../..");
 
-const ALL_PACKAGES = [
-  "cli-darwin-arm64",
-  "cli-darwin-x64",
-  "cli-linux-arm64",
-  "cli-linux-arm64-musl",
-  "cli-linux-x64",
-  "cli-linux-x64-musl",
-  "cli-windows-x64",
-  "cli",
-];
+const PACKAGE_PATHS = {
+  "cli-darwin-arm64": ["packages", "cli-darwin-arm64"],
+  "cli-darwin-x64": ["packages", "cli-darwin-x64"],
+  "cli-linux-arm64": ["packages", "cli-linux-arm64"],
+  "cli-linux-arm64-musl": ["packages", "cli-linux-arm64-musl"],
+  "cli-linux-x64": ["packages", "cli-linux-x64"],
+  "cli-linux-x64-musl": ["packages", "cli-linux-x64-musl"],
+  "cli-windows-x64": ["packages", "cli-windows-x64"],
+  cli: ["apps", "cli"],
+} as const;
+
+const ALL_PACKAGES = Object.keys(PACKAGE_PATHS) as Array<keyof typeof PACKAGE_PATHS>;
 
 export async function createTmpDir(prefix: string): Promise<AsyncDisposable & { path: string }> {
   const dir = await mkdtemp(path.join(tmpdir(), prefix));
@@ -56,7 +59,7 @@ async function startVerdaccio(
 async function savePackageJsons() {
   const originals = new Map<string, string>();
   for (const pkg of ALL_PACKAGES) {
-    const p = path.join(root, "packages", pkg, "package.json");
+    const p = path.join(root, ...PACKAGE_PATHS[pkg], "package.json");
     originals.set(p, await readFile(p, "utf-8"));
   }
   return {
@@ -68,7 +71,10 @@ async function savePackageJsons() {
   };
 }
 
-export async function runNpmTest(version: string): Promise<boolean> {
+export async function runNpmTest(
+  version: string,
+  tag: "latest" | "alpha" = "latest",
+): Promise<boolean> {
   const publishEnv = { ...process.env, NPM_CONFIG_TOKEN: "dummy" };
 
   await using _pkgJsons = await savePackageJsons();
@@ -96,7 +102,7 @@ listen: 0.0.0.0:${PORT}
 
   // Sync versions across all packages
   console.log(`Syncing versions to ${version}...`);
-  await $`bun run apps/cli/scripts/sync-versions.ts --version ${version}`.cwd(root).quiet();
+  await $`pnpm exec bun apps/cli/scripts/sync-versions.ts --version ${version}`.cwd(root).quiet();
 
   console.log("Starting local npm registry...");
   await using registry = await startVerdaccio(configPath, PORT);
@@ -108,18 +114,21 @@ listen: 0.0.0.0:${PORT}
   await Promise.all(
     platformPackages.map(async (pkg) => {
       const pkgDir = path.join(root, "packages", pkg);
-      await $`bun publish --registry ${registry.url}`.cwd(pkgDir).env(publishEnv).quiet();
+      await $`bun publish --registry ${registry.url} --tag ${tag}`
+        .cwd(pkgDir)
+        .env(publishEnv)
+        .quiet();
       console.log(`  @supabase/${pkg}`);
     }),
   );
 
   // Build and publish umbrella package
   const cliDir = path.join(root, "apps", "cli");
-  console.log("\nBuilding umbrella package...");
-  await $`bun run build`.cwd(cliDir).quiet();
+  console.log("\nBuilding umbrella package shim...");
+  await $`pnpm build:shim`.cwd(cliDir).quiet();
 
   console.log("Publishing umbrella package...");
-  await $`bun publish --registry ${registry.url}`.cwd(cliDir).env(publishEnv).quiet();
+  await $`bun publish --registry ${registry.url} --tag ${tag}`.cwd(cliDir).env(publishEnv).quiet();
   console.log("  @supabase/cli\n");
 
   // Create test project
@@ -135,18 +144,21 @@ listen: 0.0.0.0:${PORT}
   );
 
   // Install
-  console.log("Installing @supabase/cli...");
-  await $`npm install @supabase/cli`.cwd(testDir);
+  const installSpec = tag === "alpha" ? "@supabase/cli@alpha" : "@supabase/cli";
+  console.log(`Installing ${installSpec}...`);
+  await $`npm install ${installSpec}`.cwd(testDir);
 
   // Verify
   console.log("\nVerifying...");
   const ext = process.platform === "win32" ? ".cmd" : "";
   const binPath = path.join(testDir, "node_modules", ".bin", `supabase${ext}`);
-  const output = await $`${binPath} --version`.text();
-  const trimmed = output.trim();
-  const passed = /^\d+\.\d+\.\d+/.test(trimmed);
+  const versionOutput = (await $`${binPath} --version`.text()).trim();
+  const hasValidVersion = /^\d+\.\d+\.\d+/.test(versionOutput);
+  const shellCheck = await verifyExpectedShell(binPath, tag);
+  const passed = hasValidVersion && shellCheck.passed;
 
-  console.log(`\n${passed ? "PASS" : "FAIL"} — supabase --version: ${trimmed}`);
+  console.log(`\n${passed ? "PASS" : "FAIL"} — supabase --version: ${versionOutput}`);
+  console.log(shellCheck.detail);
 
   return passed;
 }

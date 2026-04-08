@@ -5,10 +5,16 @@ import { parseArgs } from "node:util";
 const { values } = parseArgs({
   options: {
     version: { type: "string", default: "0.0.1-smoke" },
+    tag: { type: "string", default: "latest" },
   },
 });
 
 const version = values.version!;
+const tag = values.tag;
+if (tag !== "latest" && tag !== "alpha") {
+  console.error(`Invalid --tag value: ${String(tag)}. Expected "latest" or "alpha".`);
+  process.exit(1);
+}
 const testsDir = import.meta.dir;
 
 const platformScripts: Record<string, string> = {
@@ -26,7 +32,7 @@ if (!script) {
 const scriptPath = path.join(testsDir, script);
 console.log(`Detected platform: ${process.platform} — running ${script}\n`);
 
-const proc = Bun.spawn(["bun", "run", scriptPath, "--version", version], {
+const proc = Bun.spawn(["bun", "run", scriptPath, "--version", version, "--tag", tag], {
   stdout: "inherit",
   stderr: "inherit",
   env: process.env,

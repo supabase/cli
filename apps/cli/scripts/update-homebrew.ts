@@ -76,7 +76,6 @@ const formula = `class Supabase < Formula
 
   def install
     bin.install "supabase"
-    bin.install "supabase-backend"
   end
 
   test do

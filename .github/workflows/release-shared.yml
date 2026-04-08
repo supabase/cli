@@ -1,0 +1,156 @@
+name: Release Shared
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: npm package version to publish
+        required: true
+        type: string
+      shell:
+        description: CLI shell to package as the shipped supabase binary
+        required: true
+        type: string
+      npm_tag:
+        description: npm dist-tag to publish under
+        required: true
+        type: string
+      prerelease:
+        description: Whether the GitHub release should be marked as a prerelease
+        required: true
+        type: boolean
+      dry_run:
+        description: Dry run (skip actual publishing)
+        required: true
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Install nfpm
+        run: |
+          echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
+          sudo apt-get update
+          sudo apt-get install -y nfpm
+
+      - name: Sync versions
+        run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
+
+      - name: Build selected shell
+        run: pnpm exec bun apps/cli/scripts/build.ts --version ${{ inputs.version }} --shell ${{ inputs.shell }}
+
+      - name: Verify build artifacts
+        run: |
+          for pkg in cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-arm64-musl cli-linux-x64 cli-linux-x64-musl cli-windows-x64; do
+            echo "Checking packages/$pkg/bin/..."
+            ls -la "packages/$pkg/bin/"
+          done
+          echo "Checking dist/..."
+          ls -la dist/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+          path: |
+            packages/cli-*/bin/
+            dist/
+
+  smoke-test:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+
+      - name: Setup QEMU for cross-platform Docker
+        if: runner.os == 'Linux'
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+
+      - name: Install Scoop
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          iex "& {$(irm get.scoop.sh)} -RunAsAdmin"
+          Join-Path (Resolve-Path ~).Path "scoop\shims" >> $env:GITHUB_PATH
+
+      - name: Fix binary permissions
+        if: runner.os != 'Windows'
+        run: chmod +x packages/cli-*/bin/supabase || true
+
+      - name: Run smoke tests
+        run: pnpm run test:smoke -- --version ${{ inputs.version }} --tag ${{ inputs.npm_tag }}
+        working-directory: apps/cli
+
+  publish:
+    needs: smoke-test
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+
+      - name: Sync versions
+        run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
+
+      - name: Publish to npm
+        run: pnpm exec bun apps/cli/scripts/publish.ts --tag ${{ inputs.npm_tag }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create draft GitHub Release
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: v${{ inputs.version }}
+          draft: true
+          prerelease: ${{ inputs.prerelease }}
+          files: |
+            dist/supabase_${{ inputs.version }}_darwin_arm64.tar.gz
+            dist/supabase_${{ inputs.version }}_darwin_amd64.tar.gz
+            dist/supabase_${{ inputs.version }}_linux_arm64.tar.gz
+            dist/supabase_${{ inputs.version }}_linux_amd64.tar.gz
+            dist/supabase_${{ inputs.version }}_linux_arm64.deb
+            dist/supabase_${{ inputs.version }}_linux_amd64.deb
+            dist/supabase_${{ inputs.version }}_linux_arm64.rpm
+            dist/supabase_${{ inputs.version }}_linux_amd64.rpm
+            dist/supabase_${{ inputs.version }}_linux_arm64.apk
+            dist/supabase_${{ inputs.version }}_linux_amd64.apk
+            dist/supabase_${{ inputs.version }}_windows_amd64.zip
+            dist/checksums.txt
+
+      - name: Publish GitHub Release (immutable)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit v${{ inputs.version }} --draft=false

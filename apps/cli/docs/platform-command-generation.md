@@ -57,41 +57,41 @@ flowchart TD
 
 ### Command entrypoints
 
-- `src/commands/platform/api.command.ts`
+- `src/next/commands/platform/api.command.ts`
   Declares the `supabase api` namespace command and its `routes` and `request` subcommands.
-- `src/commands/platform/request.command.ts`
+- `src/next/commands/platform/request.command.ts`
   Implements `supabase api request <route>`.
-- `src/commands/platform/routes.command.ts`
+- `src/next/commands/platform/routes.command.ts`
   Implements `supabase api routes`.
-- `src/commands/platform/platform-route-resolver.ts`
+- `src/next/commands/platform/platform-route-resolver.ts`
   Resolves a normalized route template plus optional method into one operation descriptor.
-- `src/commands/platform/platform-routes.ts`
+- `src/next/commands/platform/platform-routes.ts`
   Derives the path-level route catalog and text rendering from descriptor metadata.
 
 ### Metadata and schemas
 
-- `src/commands/platform/platform-openapi.ts`
+- `src/next/commands/platform/platform-openapi.ts`
   Loads `@supabase/api/openapi.json`, joins raw OpenAPI ids to SDK ids, and exposes normalized operation entries.
-- `src/commands/platform/platform-schema-introspection.ts`
+- `src/next/commands/platform/platform-schema-introspection.ts`
   Converts raw OpenAPI request and response schemas into CLI request/response schema nodes.
-- `src/commands/platform/platform-descriptors.ts`
+- `src/next/commands/platform/platform-descriptors.ts`
   Assembles the final CLI-facing descriptor model for each route/method pair and binds execution through the API package.
-- `src/commands/platform/platform-types.ts`
+- `src/next/commands/platform/platform-types.ts`
   Shared command-local types for descriptors, body kinds, and schema nodes.
 
 ### Execution and UX
 
-- `src/commands/platform/platform-handler.ts`
+- `src/next/commands/platform/platform-handler.ts`
   Shared execution flow for route inspection, dry runs, confirmation, execution, and output.
-- `src/commands/platform/platform-input.ts`
+- `src/next/commands/platform/platform-input.ts`
   Parses `--params`, `--json`, `--body`, `--body-file`, and `--upload`, prompts for missing values, validates stdin usage, and builds dry-run previews.
-- `src/commands/platform/platform-schema.ts`
+- `src/next/commands/platform/platform-schema.ts`
   Builds the payload returned by `supabase api request <route> --schema`.
-- `src/commands/platform/platform-fields.ts`
+- `src/next/commands/platform/platform-fields.ts`
   Implements `--fields` projection and text-mode rendering.
-- `src/commands/platform/platform-cli.ts`
+- `src/next/commands/platform/platform-cli.ts`
   Small route-first formatting helpers used in prompts, examples, and schema guidance.
-- `src/auth/platform-api.layer.ts`
+- `src/next/auth/platform-api.layer.ts`
   Wires auth and config into the unified versioned `PlatformApi` client.
 
 ## Route Resolution

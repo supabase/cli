@@ -21,7 +21,7 @@ This path is span-based. It is intentionally separate from PostHog analytics, wh
 and optimized for product questions rather than operational traces.
 
 The tracing implementation is currently owned by the `Tracing` service and
-[`src/telemetry/tracing.layer.ts`](../src/telemetry/tracing.layer.ts).
+[`src/shared/telemetry/tracing.layer.ts`](../src/shared/telemetry/tracing.layer.ts).
 
 ## What Happens Today
 
@@ -57,9 +57,9 @@ Tracing follows the shared telemetry consent model used by the CLI:
 - consent is not stored in `supabase/config.*`
 - consent is not stored in repo-local `.supabase/`
 
-The consent read/write logic lives in [`src/telemetry/consent.ts`](../src/telemetry/consent.ts),
+The consent read/write logic lives in [`src/shared/telemetry/consent.ts`](../src/shared/telemetry/consent.ts),
 and the runtime view of telemetry state is built in
-[`src/telemetry/runtime.layer.ts`](../src/telemetry/runtime.layer.ts).
+[`src/shared/telemetry/runtime.layer.ts`](../src/shared/telemetry/runtime.layer.ts).
 
 When consent is not granted, the tracing layer does not initialize the NDJSON exporter. Debug
 output is gated separately by the telemetry debug flags.
