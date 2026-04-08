@@ -213,6 +213,28 @@ func TestServiceCaptureIncludesLinkedProjectGroups(t *testing.T) {
 	}, analytics.captures[0].groups)
 }
 
+func TestServiceNeedsIdentityStitch(t *testing.T) {
+	now := time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC)
+	t.Setenv("SUPABASE_HOME", "/tmp/supabase-home")
+	fsys := afero.NewMemMapFs()
+	analytics := &fakeAnalytics{enabled: true}
+
+	service, err := NewService(fsys, Options{
+		Analytics: analytics,
+		Now:       func() time.Time { return now },
+	})
+	require.NoError(t, err)
+
+	t.Run("true when DistinctID is empty", func(t *testing.T) {
+		assert.True(t, service.NeedsIdentityStitch())
+	})
+
+	t.Run("false after StitchLogin", func(t *testing.T) {
+		require.NoError(t, service.StitchLogin("user-123"))
+		assert.False(t, service.NeedsIdentityStitch())
+	})
+}
+
 func TestServiceCaptureHonorsConsentAndEnvOptOut(t *testing.T) {
 	now := time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC)
 

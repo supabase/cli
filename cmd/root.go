@@ -140,6 +140,15 @@ var (
 			} else {
 				ctx = telemetry.WithService(ctx, service)
 			}
+			if service != nil {
+				utils.OnGotrueID = func(gotrueID string) {
+					if service.NeedsIdentityStitch() {
+						if err := service.StitchLogin(gotrueID); err != nil {
+							fmt.Fprintln(utils.GetDebugLogger(), err)
+						}
+					}
+				}
+			}
 			ctx = telemetry.WithCommandContext(ctx, commandAnalyticsContext(cmd))
 			cmd.SetContext(ctx)
 			// Setup sentry last to ignore errors from parsing cli flags
