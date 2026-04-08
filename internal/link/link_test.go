@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
@@ -13,6 +14,8 @@ import (
 	"github.com/oapi-codegen/nullable"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	phtelemetry "github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
@@ -30,6 +33,38 @@ var dbConfig = pgconn.Config{
 	Database: "postgres",
 }
 
+type fakeAnalytics struct {
+	enabled         bool
+	captures        []captureCall
+	groupIdentifies []groupIdentifyCall
+}
+
+type captureCall struct {
+	distinctID string
+	event      string
+	properties map[string]any
+	groups     map[string]string
+}
+
+type groupIdentifyCall struct {
+	groupType  string
+	groupKey   string
+	properties map[string]any
+}
+
+func (f *fakeAnalytics) Enabled() bool { return f.enabled }
+func (f *fakeAnalytics) Capture(distinctID string, event string, properties map[string]any, groups map[string]string) error {
+	f.captures = append(f.captures, captureCall{distinctID: distinctID, event: event, properties: properties, groups: groups})
+	return nil
+}
+func (f *fakeAnalytics) Identify(distinctID string, properties map[string]any) error { return nil }
+func (f *fakeAnalytics) Alias(distinctID string, alias string) error                 { return nil }
+func (f *fakeAnalytics) GroupIdentify(groupType string, groupKey string, properties map[string]any) error {
+	f.groupIdentifies = append(f.groupIdentifies, groupIdentifyCall{groupType: groupType, groupKey: groupKey, properties: properties})
+	return nil
+}
+func (f *fakeAnalytics) Close() error { return nil }
+
 func TestLinkCommand(t *testing.T) {
 	project := "test-project"
 	// Setup valid access token
@@ -42,11 +77,23 @@ func TestLinkCommand(t *testing.T) {
 		t.Cleanup(fstest.MockStdin(t, "\n"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
+		t.Setenv("SUPABASE_HOME", "/tmp/supabase-home")
+		analytics := &fakeAnalytics{enabled: true}
+		service, err := phtelemetry.NewService(fsys, phtelemetry.Options{
+			Analytics: analytics,
+			Now:       func() time.Time { return time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC) },
+		})
+		require.NoError(t, err)
+		ctx := phtelemetry.WithService(context.Background(), service)
 		// Flush pending mocks after test execution
 		defer gock.OffAll()
 		// Mock project status
 		mockPostgres := api.V1ProjectWithDatabaseResponse{
-			Status: api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
+			Status:           api.V1ProjectWithDatabaseResponseStatusACTIVEHEALTHY,
+			Ref:              project,
+			Name:             "My Project",
+			OrganizationId:   "org_123",
+			OrganizationSlug: "acme",
 		}
 		mockPostgres.Database.Host = utils.GetSupabaseDbHost(project)
 		mockPostgres.Database.Version = "15.1.0.117"
@@ -108,7 +155,7 @@ func TestLinkCommand(t *testing.T) {
 			Reply(200).
 			BodyString(storage)
 		// Run test
-		err := Run(context.Background(), project, false, fsys)
+		err = Run(ctx, project, false, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -128,6 +175,17 @@ func TestLinkCommand(t *testing.T) {
 		postgresVersion, err := afero.ReadFile(fsys, utils.PostgresVersionPath)
 		assert.NoError(t, err)
 		assert.Equal(t, []byte(mockPostgres.Database.Version), postgresVersion)
+		linkedProject, err := phtelemetry.LoadLinkedProject(fsys)
+		require.NoError(t, err)
+		assert.Equal(t, project, linkedProject.Ref)
+		assert.Equal(t, "org_123", linkedProject.OrganizationID)
+		require.Len(t, analytics.groupIdentifies, 2)
+		require.Len(t, analytics.captures, 1)
+		assert.Equal(t, phtelemetry.EventProjectLinked, analytics.captures[0].event)
+		assert.Equal(t, map[string]string{
+			phtelemetry.GroupOrganization: "org_123",
+			phtelemetry.GroupProject:      project,
+		}, analytics.captures[0].groups)
 	})
 
 	t.Run("ignores error linking services", func(t *testing.T) {
@@ -280,7 +338,7 @@ func TestStatusCheck(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(postgres)
 		// Run test
-		err := checkRemoteProjectStatus(context.Background(), project, fsys)
+		_, err := checkRemoteProjectStatus(context.Background(), project, fsys)
 		// Check error
 		assert.NoError(t, err)
 		version, err := afero.ReadFile(fsys, utils.PostgresVersionPath)
@@ -299,7 +357,7 @@ func TestStatusCheck(t *testing.T) {
 			Get("/v1/projects/" + project).
 			Reply(http.StatusNotFound)
 		// Run test
-		err := checkRemoteProjectStatus(context.Background(), project, fsys)
+		_, err := checkRemoteProjectStatus(context.Background(), project, fsys)
 		// Check error
 		assert.NoError(t, err)
 		exists, err := afero.Exists(fsys, utils.PostgresVersionPath)
@@ -319,7 +377,7 @@ func TestStatusCheck(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(api.V1ProjectWithDatabaseResponse{Status: api.V1ProjectWithDatabaseResponseStatusINACTIVE})
 		// Run test
-		err := checkRemoteProjectStatus(context.Background(), project, fsys)
+		_, err := checkRemoteProjectStatus(context.Background(), project, fsys)
 		// Check error
 		assert.ErrorIs(t, err, errProjectPaused)
 		exists, err := afero.Exists(fsys, utils.PostgresVersionPath)

@@ -322,7 +322,7 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 			}
 			CmdSuggestion += fmt.Sprintf("\n%s a different %s port in %s", prefix, name, Bold(ConfigPath))
 		}
-		err = errors.Errorf("failed to start docker container: %w", err)
+		err = errors.Errorf("failed to start docker container %q: %w", containerName, err)
 	}
 	return resp.ID, err
 }
