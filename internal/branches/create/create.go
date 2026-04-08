@@ -31,8 +31,8 @@ func Run(ctx context.Context, body api.CreateBranchBody, fsys afero.Fs) error {
 	if err != nil {
 		return errors.Errorf("failed to create preview branch: %w", err)
 	} else if resp.JSON201 == nil {
-		if utils.SuggestUpgradeOnError(ctx, flags.ProjectRef, "branching_limit", resp.StatusCode()) {
-			trackUpgradeSuggested(ctx, "branching_limit")
+		if orgSlug, was402 := utils.SuggestUpgradeOnError(ctx, flags.ProjectRef, "branching_limit", resp.StatusCode()); was402 {
+			trackUpgradeSuggested(ctx, "branching_limit", orgSlug)
 		}
 		return errors.Errorf("unexpected create branch status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
@@ -45,10 +45,11 @@ func Run(ctx context.Context, body api.CreateBranchBody, fsys afero.Fs) error {
 	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, *resp.JSON201)
 }
 
-func trackUpgradeSuggested(ctx context.Context, featureKey string) {
+func trackUpgradeSuggested(ctx context.Context, featureKey, orgSlug string) {
 	if svc := telemetry.FromContext(ctx); svc != nil {
 		_ = svc.Capture(ctx, telemetry.EventUpgradeSuggested, map[string]any{
 			telemetry.PropFeatureKey: featureKey,
+			telemetry.PropOrgSlug:    orgSlug,
 		}, nil)
 	}
 }
