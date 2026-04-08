@@ -2,7 +2,7 @@ package utils
 
 import "net/http"
 
-const HeaderGotrueId = "X-Gotrue-Id"
+const HeaderGotrueID = "X-Gotrue-Id"
 
 type identityTransport struct {
 	http.RoundTripper
@@ -14,7 +14,7 @@ func (t *identityTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	if err != nil {
 		return resp, err
 	}
-	if id := resp.Header.Get(HeaderGotrueId); id != "" && t.onGotrueID != nil {
+	if id := resp.Header.Get(HeaderGotrueID); id != "" && t.onGotrueID != nil {
 		t.onGotrueID(id)
 	}
 	return resp, err
