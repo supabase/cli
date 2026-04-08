@@ -1,4 +1,3 @@
-import { SupabaseApiClient, v1ListAllBranches } from "@supabase/api/effect";
 import {
   StateManager,
   daemonLayer,
@@ -8,6 +7,7 @@ import {
 } from "@supabase/stack/effect";
 import { daemonEntryPoint } from "@supabase/stack";
 import { Effect, Option } from "effect";
+import { PlatformApi } from "../../../auth/platform-api.service.ts";
 import { CliConfig } from "../../../config/cli-config.service.ts";
 import { ProjectHome } from "../../../config/project-home.service.ts";
 import {
@@ -26,7 +26,7 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
 }) {
   const output = yield* Output;
   const projectLinkState = yield* ProjectLinkState;
-  const apiClient = yield* SupabaseApiClient;
+  const api = yield* PlatformApi;
   const cliConfig = yield* CliConfig;
   const projectHome = yield* ProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
@@ -46,10 +46,9 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
 
   const { project, active_branch } = maybeLinkState.value;
   const fetching = yield* output.task("Fetching branches...");
-  const branches = yield* v1ListAllBranches({ ref: project.ref }).pipe(
-    Effect.provideService(SupabaseApiClient, apiClient),
-    Effect.tapError(() => fetching.fail()),
-  );
+  const branches = yield* api.v1
+    .listAllBranches({ ref: project.ref })
+    .pipe(Effect.tapError(() => fetching.fail()));
   yield* fetching.clear();
 
   let target: (typeof branches)[number];

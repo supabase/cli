@@ -1,7 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import { SupabaseApiClient } from "@supabase/api/effect";
+import { makeApiClient } from "@supabase/api/effect";
 import { Effect, Exit, Layer, Option } from "effect";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import type { BranchResponse } from "@supabase/api/effect";
+import { PlatformApi } from "../../../auth/platform-api.service.ts";
 import { withJsonErrorHandling } from "../../../output/json-error-handling.ts";
 import { emptyEnv, mockOutput, mockProjectLinkState } from "../../../../tests/helpers/mocks.ts";
 import { ProjectLinkState } from "../../../config/project-link-state.service.ts";
@@ -33,13 +38,13 @@ const MAIN_BRANCH = makeBranch();
 const DEV_BRANCH = makeBranch({
   id: "00000000-0000-0000-0000-000000000002",
   name: "dev",
-  project_ref: "devrefghijklmnopqrst0",
+  project_ref: "devrefghijklmnopqrst",
   is_default: false,
 });
 
 const DEFAULT_LINK_STATE = {
   project: {
-    ref: "parentref1234567890",
+    ref: "parentrefabcdefghijk",
     name: "my-project",
     organization_id: "org123",
     organization_slug: "my-org",
@@ -53,10 +58,71 @@ const DEFAULT_LINK_STATE = {
   versions: {},
 };
 
-function mockApiClient(branches: ReadonlyArray<typeof BranchResponse.Type>) {
-  return Layer.succeed(SupabaseApiClient, {
-    execute: () => Effect.succeed(branches) as never,
-  });
+function httpClientLayer(
+  handler: (
+    request: HttpClientRequest.HttpClientRequest,
+  ) => Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>,
+) {
+  return Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => handler(request)),
+  );
+}
+
+function jsonResponse(
+  request: HttpClientRequest.HttpClientRequest,
+  status: number,
+  body: unknown,
+): HttpClientResponse.HttpClientResponse {
+  return HttpClientResponse.fromWeb(
+    request,
+    new Response(JSON.stringify(body), {
+      status,
+      headers: {
+        "content-type": "application/json",
+      },
+    }),
+  );
+}
+
+function mockPlatformApi(
+  branches: ReadonlyArray<typeof BranchResponse.Type>,
+  opts: { status?: number } = {},
+) {
+  const requests: Array<{
+    url: string;
+    headers: Readonly<Record<string, string | undefined>>;
+  }> = [];
+
+  const layer = Layer.effect(
+    PlatformApi,
+    makeApiClient({
+      baseUrl: "https://api.supabase.com",
+      accessToken: "test-token",
+      userAgent: "@supabase/cli",
+      headers: {
+        "X-Supabase-Command": "branches switch",
+        "X-Supabase-Command-Run-ID": "run-123",
+      },
+    }),
+  ).pipe(
+    Layer.provide(
+      httpClientLayer((request) => {
+        requests.push({
+          url: request.url,
+          headers: request.headers,
+        });
+        return Effect.succeed(jsonResponse(request, opts.status ?? 200, branches));
+      }),
+    ),
+  );
+
+  return {
+    layer,
+    get requests() {
+      return requests;
+    },
+  };
 }
 
 function setup(
@@ -67,6 +133,7 @@ function setup(
     interactive?: boolean;
     promptSelectResponses?: ReadonlyArray<string>;
     activeBranchRef?: string;
+    status?: number;
   } = {},
 ) {
   const linked = opts.linked ?? true;
@@ -81,9 +148,11 @@ function setup(
     promptSelectResponses: opts.promptSelectResponses,
   });
   const state = mockProjectLinkState(linkState);
-  const api = mockApiClient(opts.branches ?? [MAIN_BRANCH, DEV_BRANCH]);
-  const layer = Layer.mergeAll(emptyEnv(), out.layer, state, api);
-  return { out, state, layer };
+  const api = mockPlatformApi(opts.branches ?? [MAIN_BRANCH, DEV_BRANCH], {
+    status: opts.status,
+  });
+  const layer = Layer.mergeAll(emptyEnv(), out.layer, state, api.layer);
+  return { out, layer, api };
 }
 
 // ---------------------------------------------------------------------------
@@ -110,7 +179,7 @@ describe("branches switch handler", () => {
       const linkStateService = yield* ProjectLinkState;
       const state = yield* linkStateService.load;
       const activeBranch = Option.map(state, (s) => s.active_branch);
-      expect(Option.getOrNull(activeBranch)?.ref).toBe("devrefghijklmnopqrst0");
+      expect(Option.getOrNull(activeBranch)?.ref).toBe("devrefghijklmnopqrst");
       expect(Option.getOrNull(activeBranch)?.name).toBe("dev");
     }).pipe(Effect.provide(layer));
   });
@@ -119,7 +188,7 @@ describe("branches switch handler", () => {
     Effect.gen(function* () {
       const { out, layer } = setup();
 
-      yield* switchBranch({ name: Option.some("devrefghijklmnopqrst0") }).pipe(
+      yield* switchBranch({ name: Option.some("devrefghijklmnopqrst") }).pipe(
         Effect.provide(layer),
       );
 
@@ -133,13 +202,13 @@ describe("branches switch handler", () => {
     Effect.gen(function* () {
       const { out, layer } = setup({
         interactive: true,
-        promptSelectResponses: ["devrefghijklmnopqrst0"],
+        promptSelectResponses: ["devrefghijklmnopqrst"],
       });
 
       yield* switchBranch({ name: Option.none() }).pipe(Effect.provide(layer));
 
       expect(out.promptSelectCalls).toHaveLength(1);
-      expect(out.promptSelectCalls[0]?.options.map((o) => o.label)).toContain("dev");
+      expect(out.promptSelectCalls[0]?.options.map((option) => option.label)).toContain("dev");
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "outro", message: "Switched to branch 'dev'." }),
       );
@@ -236,11 +305,11 @@ describe("branches switch handler", () => {
 
       yield* switchBranch({ name: Option.some("dev") }).pipe(Effect.provide(layer));
 
-      const successMessages = out.messages.filter((m) => m.type === "success");
+      const successMessages = out.messages.filter((message) => message.type === "success");
       expect(successMessages).toHaveLength(1);
       const data = (successMessages[0] as { data?: { branch?: unknown } }).data;
       expect(data?.branch).toMatchObject({
-        ref: "devrefghijklmnopqrst0",
+        ref: "devrefghijklmnopqrst",
         name: "dev",
         is_default: false,
       });
@@ -253,8 +322,7 @@ describe("branches switch handler", () => {
 
       yield* switchBranch({ name: Option.some("main") }).pipe(Effect.provide(layer));
 
-      // Already on branch — no success event, just outro
-      const successMessages = out.messages.filter((m) => m.type === "success");
+      const successMessages = out.messages.filter((message) => message.type === "success");
       expect(successMessages).toHaveLength(0);
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "outro", message: "Already on branch 'main'." }),
@@ -266,10 +334,8 @@ describe("branches switch handler", () => {
     Effect.gen(function* () {
       const out = mockOutput({ format: "json" });
       const linkState = mockProjectLinkState(DEFAULT_LINK_STATE);
-      const failingApiClient = Layer.succeed(SupabaseApiClient, {
-        execute: () => Effect.fail(new Error("API unavailable") as never),
-      });
-      const layer = Layer.mergeAll(emptyEnv(), out.layer, linkState, failingApiClient);
+      const api = mockPlatformApi([MAIN_BRANCH, DEV_BRANCH], { status: 503 });
+      const layer = Layer.mergeAll(emptyEnv(), out.layer, linkState, api.layer);
 
       yield* switchBranch({ name: Option.some("dev") }).pipe(
         withJsonErrorHandling,
@@ -277,6 +343,21 @@ describe("branches switch handler", () => {
       );
 
       expect(out.messages).toContainEqual(expect.objectContaining({ type: "fail" }));
+    }),
+  );
+
+  it.live("calls the facade client with the expected CLI headers", () =>
+    Effect.gen(function* () {
+      const { api, layer } = setup({ format: "json" });
+
+      yield* switchBranch({ name: Option.some("dev") }).pipe(Effect.provide(layer));
+
+      expect(api.requests).toHaveLength(1);
+      expect(api.requests[0]?.url).toBe(
+        "https://api.supabase.com/v1/projects/parentrefabcdefghijk/branches",
+      );
+      expect(api.requests[0]?.headers["x-supabase-command"]).toBe("branches switch");
+      expect(api.requests[0]?.headers["x-supabase-command-run-id"]).toBe("run-123");
     }),
   );
 

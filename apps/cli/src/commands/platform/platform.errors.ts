@@ -11,7 +11,13 @@ export class PlatformMetadataError extends Data.TaggedError("PlatformMetadataErr
   readonly detail?: string;
 }> {}
 
-export class PlatformMethodNotFoundError extends Data.TaggedError("PlatformMethodNotFoundError")<{
+export class PlatformRouteNotFoundError extends Data.TaggedError("PlatformRouteNotFoundError")<{
+  readonly message: string;
+  readonly detail?: string;
+  readonly suggestion?: string;
+}> {}
+
+export class PlatformMethodSelectionError extends Data.TaggedError("PlatformMethodSelectionError")<{
   readonly message: string;
   readonly detail?: string;
   readonly suggestion?: string;

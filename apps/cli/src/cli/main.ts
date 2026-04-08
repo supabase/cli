@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 import { BunServices } from "@effect/platform-bun";
 import { ProjectConfigStore } from "@supabase/config";
-import { SupabaseApiClient } from "@supabase/api/effect";
 import { unixHttpClientLayer } from "@supabase/stack";
 import { Cause, Effect, Exit, Fiber, Layer, Stdio } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
@@ -20,6 +19,7 @@ import { projectLinkStateLayer } from "../config/project-link-state.layer.ts";
 import { processControlLayer } from "../runtime/process-control.layer.ts";
 import { runtimeInfoLayer } from "../runtime/runtime-info.layer.ts";
 import { ttyLayer } from "../runtime/tty.layer.ts";
+import { CommandRuntime } from "../runtime/command-runtime.service.ts";
 import { ProcessControl } from "../runtime/process-control.service.ts";
 import { analyticsLayer } from "../telemetry/analytics.layer.ts";
 import { telemetryRuntimeLayer } from "../telemetry/runtime.layer.ts";
@@ -82,9 +82,13 @@ function cliProgramFor(args: ReadonlyArray<string>) {
       loadFile: () => Effect.die("unexpected root project config file access"),
       save: () => Effect.die("unexpected root project config write"),
     }),
-    Layer.succeed(SupabaseApiClient, {
-      execute: () => Effect.die("unexpected root platform api client access"),
-    }),
+    Layer.succeed(
+      CommandRuntime,
+      CommandRuntime.of({
+        commandPath: ["root"],
+        commandRunId: "root-command-run-id",
+      }),
+    ),
   );
   return Command.runWith(root, { version: "0.1.0" })(args).pipe(
     Effect.provide(formatterLayerFor(args)),
@@ -96,8 +100,8 @@ function cliProgramFor(args: ReadonlyArray<string>) {
     Effect.provide(projectContextLayerFor(runtimeLayer)),
     Effect.provide(projectLinkStateLayer),
     Effect.provide(runtimeLayer),
-    Effect.provide(fallbackCommandLayer),
     Effect.provide(unixHttpClientLayer),
+    Effect.provide(fallbackCommandLayer),
     Effect.provide(BunServices.layer),
   );
 }
@@ -140,7 +144,9 @@ const signalAwareProgram = Effect.scoped(
 
 const handledRuntimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
 
-const handledProgram = <R>(program: Effect.Effect<unknown, unknown, R>) =>
+const handledProgram = <A, E, R>(
+  program: Effect.Effect<A, E, R>,
+): Effect.Effect<never, unknown, never> =>
   Effect.gen(function* () {
     const processControl = yield* ProcessControl;
     const output = yield* Output;

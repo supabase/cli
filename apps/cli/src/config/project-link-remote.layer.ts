@@ -1,11 +1,6 @@
-import {
-  SupabaseApiClient,
-  v1GetProject,
-  v1GetProjectApiKeys,
-  v1ListAllProjects,
-} from "@supabase/api/effect";
 import { Data, Duration, Effect, Exit, Layer } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { PlatformApi } from "../auth/platform-api.service.ts";
 import { CliConfig } from "./cli-config.service.ts";
 import {
   ProjectLinkRemote,
@@ -164,11 +159,10 @@ const fetchOptionalVersion = <Service extends Exclude<LinkedProjectVersionServic
 
 const makeProjectLinkRemote = Effect.gen(function* () {
   const cliConfig = yield* CliConfig;
-  const apiClient = yield* SupabaseApiClient;
+  const api = yield* PlatformApi;
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
 
-  const listAccessibleProjects = v1ListAllProjects().pipe(
-    Effect.provideService(SupabaseApiClient, apiClient),
+  const listAccessibleProjects = api.v1.listAllProjects().pipe(
     Effect.map((projects) =>
       sortProjects(
         projects.map((project) => ({
@@ -187,12 +181,8 @@ const makeProjectLinkRemote = Effect.gen(function* () {
     Effect.gen(function* () {
       const [project, apiKeys] = yield* Effect.all(
         [
-          v1GetProject({ ref: projectRef }).pipe(
-            Effect.provideService(SupabaseApiClient, apiClient),
-          ),
-          v1GetProjectApiKeys({ ref: projectRef, reveal: true }).pipe(
-            Effect.provideService(SupabaseApiClient, apiClient),
-          ),
+          api.v1.getProject({ ref: projectRef }),
+          api.v1.getProjectApiKeys({ ref: projectRef, reveal: true }),
         ],
         { concurrency: "unbounded" },
       );

@@ -54,6 +54,7 @@ type OpenApiOperation = {
   operationId?: string;
   summary?: string;
   description?: string;
+  tags?: ReadonlyArray<string>;
   parameters?: ReadonlyArray<OpenApiParameter>;
   requestBody?: OpenApiRequestBody;
   responses?: Record<string, OpenApiResponse>;
@@ -87,7 +88,9 @@ export type PlatformOpenApiOperationEntry = {
   readonly definition: OperationDefinition;
   readonly method: PlatformHttpMethod;
   readonly path: string;
-  readonly description: string;
+  readonly summary?: string;
+  readonly description?: string;
+  readonly tags: ReadonlyArray<string>;
   readonly parameters: ReadonlyArray<PlatformOpenApiParameter>;
   readonly requestBody?: PlatformOpenApiRequestBody;
   readonly responses?: Record<string, PlatformOpenApiResponse>;
@@ -190,6 +193,10 @@ function parseOperation(value: unknown): OpenApiOperation | undefined {
     : undefined;
 
   const requestBody = parseRequestBody(value.requestBody);
+  const tags =
+    Array.isArray(value.tags) && value.tags.every((tag) => typeof tag === "string")
+      ? value.tags
+      : undefined;
   const responses: Record<string, OpenApiResponse> = {};
   if (isRecord(value.responses)) {
     for (const [status, response] of Object.entries(value.responses)) {
@@ -204,10 +211,16 @@ function parseOperation(value: unknown): OpenApiOperation | undefined {
     ...(typeof value.operationId === "string" ? { operationId: value.operationId } : {}),
     ...(typeof value.summary === "string" ? { summary: value.summary } : {}),
     ...(typeof value.description === "string" ? { description: value.description } : {}),
+    ...(tags && tags.length > 0 ? { tags } : {}),
     ...(parameters && parameters.length > 0 ? { parameters } : {}),
     ...(requestBody ? { requestBody } : {}),
     ...(Object.keys(responses).length > 0 ? { responses } : {}),
   };
+}
+
+function normalizeText(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
 function loadOpenApiDocument(): OpenApiDocument {
@@ -362,8 +375,8 @@ export const platformOpenApiOperationEntries: ReadonlyArray<PlatformOpenApiOpera
         }
 
         const definition = operationDefinitions[sdkOperationId];
-        const description =
-          operation.description?.trim() || operation.summary?.trim() || operation.operationId;
+        const summary = normalizeText(operation.summary);
+        const description = normalizeText(operation.description);
 
         return [
           {
@@ -372,7 +385,9 @@ export const platformOpenApiOperationEntries: ReadonlyArray<PlatformOpenApiOpera
             definition,
             method: httpMethods[method],
             path,
-            description,
+            ...(summary ? { summary } : {}),
+            ...(description ? { description } : {}),
+            tags: operation.tags ?? [],
             parameters: mergeParameters(pathItem.parameters, operation.parameters),
             requestBody: operation.requestBody,
             responses: operation.responses,

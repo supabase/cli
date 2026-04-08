@@ -1,5 +1,5 @@
-import { SupabaseApiClient, v1ListAllBranches } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
+import { PlatformApi } from "../../../auth/platform-api.service.ts";
 import {
   ProjectLinkState,
   ProjectNotLinkedError,
@@ -11,7 +11,7 @@ import { formatUtcDate, formatUtcTime } from "../../../output/time.ts";
 export const list = Effect.fn("branches.list")(function* () {
   const output = yield* Output;
   const projectLinkState = yield* ProjectLinkState;
-  const apiClient = yield* SupabaseApiClient;
+  const api = yield* PlatformApi;
 
   yield* output.intro("List branches");
 
@@ -27,10 +27,9 @@ export const list = Effect.fn("branches.list")(function* () {
 
   const { project, active_branch } = maybeLinkState.value;
   const fetching = yield* output.task("Fetching branches...");
-  const branches = yield* v1ListAllBranches({ ref: project.ref }).pipe(
-    Effect.provideService(SupabaseApiClient, apiClient),
-    Effect.tapError(() => fetching.fail()),
-  );
+  const branches = yield* api.v1
+    .listAllBranches({ ref: project.ref })
+    .pipe(Effect.tapError(() => fetching.fail()));
   yield* fetching.clear();
   const annotated = branches.map((b) => ({ ...b, active: b.project_ref === active_branch.ref }));
 

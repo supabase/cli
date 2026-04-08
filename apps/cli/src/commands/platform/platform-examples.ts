@@ -6,6 +6,7 @@ import type {
   PlatformOperationDescriptor,
   PlatformSchemaNode,
 } from "./platform-types.ts";
+import { formatPlatformApiCommand } from "./platform-cli.ts";
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -28,7 +29,7 @@ const bodyExampleOverrides: Partial<
       description:
         "Pass structured fields with `--json` and let the CLI serialize them as form data.",
       command:
-        'supabase platform oauth token exchange --json \'{"grant_type":"refresh_token","refresh_token":"refresh-token"}\'',
+        'supabase api request /v1/oauth/token --method POST --json \'{"grant_type":"refresh_token","refresh_token":"refresh-token"}\'',
     },
   ],
 };
@@ -219,7 +220,7 @@ function buildBodyExamples(
     return override;
   }
 
-  const baseCommand = `supabase ${descriptor.commandPath.join(" ")}`;
+  const baseCommand = formatPlatformApiCommand(descriptor);
   const paramsExample = buildParamsExampleValue(descriptor);
   const paramsSegment = paramsExample ? ` --params ${formatJsonForShell(paramsExample)}` : "";
 
@@ -297,7 +298,7 @@ function buildCommandExamples(
     return bodyExamples;
   }
 
-  const baseCommand = `supabase ${descriptor.commandPath.join(" ")}`;
+  const baseCommand = formatPlatformApiCommand(descriptor);
   const paramsExample = buildParamsExampleValue(descriptor);
 
   if (paramsExample) {

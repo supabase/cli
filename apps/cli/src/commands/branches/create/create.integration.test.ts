@@ -1,6 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
-import { SupabaseApiClient, V1CreateABranchOutput } from "@supabase/api/effect";
+import { makeApiClient, V1CreateABranchOutput } from "@supabase/api/effect";
 import { Effect, Layer, Option } from "effect";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import { PlatformApi } from "../../../auth/platform-api.service.ts";
 import { ProjectLinkState } from "../../../config/project-link-state.service.ts";
 import { withJsonErrorHandling } from "../../../output/json-error-handling.ts";
 import {
@@ -16,14 +21,16 @@ import { create } from "./create.handler.ts";
 // Fixtures
 // ---------------------------------------------------------------------------
 
+const textDecoder = new TextDecoder();
+
 function makeCreatedBranch(
   overrides: Partial<typeof V1CreateABranchOutput.Type> = {},
 ): typeof V1CreateABranchOutput.Type {
   return {
     id: "00000000-0000-0000-0000-000000000002",
     name: "feature-branch",
-    project_ref: "branchref1234567890ab",
-    parent_project_ref: "parentref1234567890",
+    project_ref: "branchrefabcdefghijk",
+    parent_project_ref: "parentrefabcdefghijk",
     is_default: false,
     persistent: false,
     status: "CREATING_PROJECT",
@@ -36,7 +43,7 @@ function makeCreatedBranch(
 
 const DEFAULT_LINK_STATE = {
   project: {
-    ref: "parentref1234567890",
+    ref: "parentrefabcdefghijk",
     name: "my-project",
     organization_id: "org123",
     organization_slug: "my-org",
@@ -60,26 +67,74 @@ const BASE_FLAGS: CreateFlags = {
   switchAfter: true,
 };
 
+function httpClientLayer(
+  handler: (
+    request: HttpClientRequest.HttpClientRequest,
+  ) => Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>,
+) {
+  return Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => handler(request)),
+  );
+}
+
+function jsonResponse(
+  request: HttpClientRequest.HttpClientRequest,
+  status: number,
+  body: unknown,
+): HttpClientResponse.HttpClientResponse {
+  return HttpClientResponse.fromWeb(
+    request,
+    new Response(JSON.stringify(body), {
+      status,
+      headers: {
+        "content-type": "application/json",
+      },
+    }),
+  );
+}
+
+function requestBodyJson(
+  request: HttpClientRequest.HttpClientRequest,
+): Record<string, unknown> | undefined {
+  if (request.body._tag !== "Uint8Array") {
+    return undefined;
+  }
+  return JSON.parse(textDecoder.decode(request.body.body)) as Record<string, unknown>;
+}
+
 function mockCreateApi(
   opts: {
     response?: typeof V1CreateABranchOutput.Type;
-    error?: unknown;
+    status?: number;
   } = {},
 ) {
   let capturedInput: Record<string, unknown> | undefined;
-  return {
-    layer: Layer.succeed(SupabaseApiClient, {
-      execute: (_def: unknown, input: unknown) =>
-        Effect.sync(() => {
-          capturedInput = input as Record<string, unknown>;
-        }).pipe(
-          Effect.flatMap(() =>
-            opts.error !== undefined
-              ? Effect.fail(opts.error as never)
-              : Effect.succeed(opts.response ?? makeCreatedBranch()),
-          ),
-        ) as never,
+
+  const layer = Layer.effect(
+    PlatformApi,
+    makeApiClient({
+      baseUrl: "https://api.supabase.com",
+      accessToken: "test-token",
+      userAgent: "@supabase/cli",
+      headers: {
+        "X-Supabase-Command": "branches create",
+        "X-Supabase-Command-Run-ID": "run-123",
+      },
     }),
+  ).pipe(
+    Layer.provide(
+      httpClientLayer((request) => {
+        capturedInput = requestBodyJson(request);
+        return Effect.succeed(
+          jsonResponse(request, opts.status ?? 200, opts.response ?? makeCreatedBranch()),
+        );
+      }),
+    ),
+  );
+
+  return {
+    layer,
     get capturedInput() {
       return capturedInput;
     },
@@ -94,7 +149,7 @@ function setup(
     interactive?: boolean;
     confirmCreate?: boolean;
     apiResponse?: typeof V1CreateABranchOutput.Type;
-    apiError?: unknown;
+    apiStatus?: number;
   } = {},
 ) {
   const linked = opts.linked ?? true;
@@ -104,7 +159,7 @@ function setup(
     confirmRelogin: opts.confirmCreate,
   });
   const linkState = mockProjectLinkState(linked ? DEFAULT_LINK_STATE : undefined);
-  const api = mockCreateApi({ response: opts.apiResponse, error: opts.apiError });
+  const api = mockCreateApi({ response: opts.apiResponse, status: opts.apiStatus });
   const base = opts.env ? withEnv(opts.env) : emptyEnv();
   const layer = Layer.mergeAll(base, out.layer, linkState, api.layer);
   return { out, layer, api };
@@ -125,7 +180,6 @@ describe("branches create handler", () => {
 
       const infoMessages = out.messages.filter((m) => m.type === "info").map((m) => m.message);
       expect(infoMessages.some((m) => m.includes("my-branch"))).toBe(true);
-      // Date and time on separate visual lines
       expect(infoMessages.some((m) => m.includes("2024-03-01") && m.includes("12:00:00 UTC"))).toBe(
         true,
       );
@@ -154,9 +208,7 @@ describe("branches create handler", () => {
 
       yield* create(BASE_FLAGS).pipe(Effect.provide(layer));
 
-      // Prompt message should include the detected git branch name
       expect(out.messages.some((m) => m.message.includes("feature/auto-detect"))).toBe(true);
-      // API receives both branch_name and git_branch from auto-detection
       expect(api.capturedInput?.branch_name).toBe("feature/auto-detect");
       expect(api.capturedInput?.git_branch).toBe("feature/auto-detect");
     }),
@@ -178,7 +230,6 @@ describe("branches create handler", () => {
 
   it.live("fails with NoBranchNameError when no name and no git branch", () =>
     Effect.gen(function* () {
-      // emptyEnv clears GITHUB_HEAD_REF; /test/project/.git/HEAD does not exist
       const { layer } = setup();
 
       const exit = yield* create(BASE_FLAGS).pipe(Effect.provide(layer), Effect.exit);
@@ -230,7 +281,7 @@ describe("branches create handler", () => {
     Effect.gen(function* () {
       const { out, layer } = setup({
         format: "json",
-        apiError: new Error("API unavailable"),
+        apiStatus: 503,
       });
       const flags: CreateFlags = { ...BASE_FLAGS, name: Option.some("my-branch") };
 
@@ -278,7 +329,7 @@ describe("branches create handler", () => {
     }),
   );
 
-  it.live("does not send persistent/with_data when they are false", () =>
+  it.live("does not send falsey branch creation flags to the API", () =>
     Effect.gen(function* () {
       const { layer, api } = setup();
       const flags: CreateFlags = { ...BASE_FLAGS, name: Option.some("my-branch") };
@@ -293,7 +344,7 @@ describe("branches create handler", () => {
   it.live("sets active branch to the newly created branch by default", () => {
     const branch = makeCreatedBranch({
       name: "new-active-branch",
-      project_ref: "newbranchref12345678",
+      project_ref: "newbranchrefabcdefgh",
       is_default: false,
     });
     const { layer } = setup({ apiResponse: branch });
@@ -302,59 +353,32 @@ describe("branches create handler", () => {
     return Effect.gen(function* () {
       yield* create(flags);
 
-      const linkStateService = yield* ProjectLinkState;
-      const state = yield* linkStateService.load;
-      const activeBranch = Option.map(state, (s) => s.active_branch);
-      expect(Option.getOrNull(activeBranch)?.ref).toBe("newbranchref12345678");
+      const projectLinkState = yield* ProjectLinkState;
+      const state = yield* projectLinkState.load;
+      const activeBranch = Option.map(state, (linkState) => linkState.active_branch);
+      expect(Option.getOrNull(activeBranch)?.ref).toBe("newbranchrefabcdefgh");
       expect(Option.getOrNull(activeBranch)?.name).toBe("new-active-branch");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses GITHUB_HEAD_REF as branch name in non-interactive (CI) mode", () =>
+  it.live("maps API 409 responses to BranchAlreadyExistsError for auto-detected git branches", () =>
     Effect.gen(function* () {
-      const branch = makeCreatedBranch({ name: "main" });
-      const { layer, api } = setup({
-        env: { GITHUB_HEAD_REF: "main" },
+      const { layer } = setup({
+        env: { GITHUB_HEAD_REF: "existing-branch" },
+        apiStatus: 409,
         format: "json",
-        apiResponse: branch,
       });
 
-      yield* create(BASE_FLAGS).pipe(Effect.provide(layer));
+      const exit = yield* create(BASE_FLAGS).pipe(Effect.provide(layer), Effect.exit);
 
-      expect(api.capturedInput?.branch_name).toBe("main");
-      expect(api.capturedInput?.git_branch).toBe("main");
+      expect(JSON.stringify(exit)).toContain("BranchAlreadyExistsError");
+      expect(JSON.stringify(exit)).toContain("supabase branches create <name>");
     }),
   );
 
-  it.live(
-    "maps API 409 to BranchAlreadyExistsError with suggestion when branch name was auto-detected",
-    () =>
-      Effect.gen(function* () {
-        const mock409 = {
-          _tag: "HttpClientError",
-          response: { status: 409 },
-          message: "Conflict: branch already exists",
-        };
-        const { layer } = setup({
-          env: { GITHUB_HEAD_REF: "existing-branch" },
-          apiError: mock409,
-        });
-
-        const exit = yield* create(BASE_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-
-        expect(JSON.stringify(exit)).toContain("BranchAlreadyExistsError");
-        expect(JSON.stringify(exit)).toContain("supabase branches create <name>");
-      }),
-  );
-
-  it.live("maps API 409 to BranchAlreadyExistsError when an explicit name is provided", () =>
+  it.live("maps API 409 responses to BranchAlreadyExistsError for explicit names", () =>
     Effect.gen(function* () {
-      const mock409 = {
-        _tag: "HttpClientError",
-        response: { status: 409 },
-        message: "Conflict: branch already exists",
-      };
-      const { layer } = setup({ apiError: mock409 });
+      const { layer } = setup({ apiStatus: 409 });
       const flags: CreateFlags = { ...BASE_FLAGS, name: Option.some("existing-branch") };
 
       const exit = yield* create(flags).pipe(Effect.provide(layer), Effect.exit);

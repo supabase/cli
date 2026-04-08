@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, ServiceMap } from "effect";
+import { Effect, Option, ServiceMap } from "effect";
 import * as Cause from "effect/Cause";
 import * as Redacted from "effect/Redacted";
 import type { SchemaError } from "effect/Schema";
@@ -22,12 +22,14 @@ export interface SupabaseApiConfig {
   readonly baseUrl?: string | undefined;
   readonly accessToken?: string | Redacted.Redacted<string> | undefined;
   readonly userAgent?: string | undefined;
+  readonly headers?: Readonly<Record<string, string | undefined>> | undefined;
 }
 
 interface ResolvedSupabaseApiConfig {
   readonly baseUrl: string;
   readonly accessToken: string | Redacted.Redacted<string>;
   readonly userAgent?: string | undefined;
+  readonly headers?: Readonly<Record<string, string | undefined>> | undefined;
 }
 
 export interface SupabaseApiRetryOptions {
@@ -87,6 +89,7 @@ function resolveSupabaseApiConfig(
       baseUrl: config.baseUrl ?? apiConfig.baseUrl,
       accessToken,
       userAgent: config.userAgent,
+      headers: config.headers,
     };
   });
 }
@@ -207,6 +210,13 @@ function prepareClient(
         "User-Agent",
         config.userAgent ?? "supabase-api/unknown",
       );
+      if (config.headers !== undefined) {
+        for (const [name, value] of Object.entries(config.headers)) {
+          if (value !== undefined) {
+            next = HttpClientRequest.setHeader(next, name, value);
+          }
+        }
+      }
       return next;
     }),
   );
@@ -490,11 +500,4 @@ export function makeSupabaseApiClient(
         }),
     };
   });
-}
-
-export function supabaseApiClientLayer(
-  config: SupabaseApiConfig = {},
-  options?: SupabaseApiClientOptions,
-): Layer.Layer<SupabaseApiClient, SupabaseApiConfigError, HttpClient.HttpClient> {
-  return Layer.effect(SupabaseApiClient, makeSupabaseApiClient(config, options));
 }

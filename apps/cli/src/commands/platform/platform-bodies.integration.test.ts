@@ -1,15 +1,35 @@
 import { describe, expect, it } from "vitest";
 import { Effect, Layer, Option } from "effect";
 import { BunServices } from "@effect/platform-bun";
-import { SupabaseApiClient } from "@supabase/api/effect";
+import { makeApiClient } from "@supabase/api/effect";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
+import { PlatformApi } from "../../auth/platform-api.service.ts";
 import { mockOutput, mockStdin } from "../../../tests/helpers/mocks.ts";
 import { platformOperationDescriptors } from "./platform-descriptors.ts";
 import { runPlatformOperation } from "./platform-handler.ts";
 
-const unusedApiClientLayer = Layer.succeed(SupabaseApiClient, {
-  execute: () => Effect.die("unused test client"),
-});
+function httpClientLayer(
+  handler: (
+    request: HttpClientRequest.HttpClientRequest,
+  ) => Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>,
+) {
+  return Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => handler(request)),
+  );
+}
+
+const unusedPlatformApiLayer = Layer.effect(
+  PlatformApi,
+  makeApiClient({
+    baseUrl: "https://api.supabase.com",
+    accessToken: "unused-test-token",
+  }),
+).pipe(Layer.provide(httpClientLayer(() => Effect.die("unused test client"))));
 const textDecoder = new TextDecoder();
 
 function findPlatformOperationDescriptor(operationId: string) {
@@ -51,7 +71,7 @@ describe("platform body handling", () => {
       }).pipe(
         Effect.provide(out.layer),
         Effect.provide(mockStdin(true)),
-        Effect.provide(unusedApiClientLayer),
+        Effect.provide(unusedPlatformApiLayer),
         Effect.provide(BunServices.layer),
       ),
     );
@@ -92,7 +112,7 @@ describe("platform body handling", () => {
       }).pipe(
         Effect.provide(out.layer),
         Effect.provide(mockStdin(true)),
-        Effect.provide(unusedApiClientLayer),
+        Effect.provide(unusedPlatformApiLayer),
         Effect.provide(BunServices.layer),
       ),
     );
@@ -138,7 +158,7 @@ describe("platform body handling", () => {
       }).pipe(
         Effect.provide(out.layer),
         Effect.provide(mockStdin(true)),
-        Effect.provide(unusedApiClientLayer),
+        Effect.provide(unusedPlatformApiLayer),
         Effect.provide(BunServices.layer),
       ),
     );
@@ -193,7 +213,7 @@ describe("platform body handling", () => {
       }).pipe(
         Effect.provide(out.layer),
         Effect.provide(mockStdin(true)),
-        Effect.provide(unusedApiClientLayer),
+        Effect.provide(unusedPlatformApiLayer),
         Effect.provide(BunServices.layer),
       ),
     );
@@ -226,7 +246,7 @@ describe("platform body handling", () => {
       }).pipe(
         Effect.provide(out.layer),
         Effect.provide(mockStdin(true)),
-        Effect.provide(unusedApiClientLayer),
+        Effect.provide(unusedPlatformApiLayer),
         Effect.provide(BunServices.layer),
       ),
     );

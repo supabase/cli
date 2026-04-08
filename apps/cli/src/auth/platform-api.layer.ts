@@ -1,14 +1,17 @@
 import { Effect, Layer, Option } from "effect";
+import { makeApiClient } from "@supabase/api/effect";
 import { FetchHttpClient } from "effect/unstable/http";
-import { supabaseApiClientLayer } from "@supabase/api/effect";
 
+import { CommandRuntime, getCommandRuntimeCommand } from "../runtime/command-runtime.service.ts";
 import { CliConfig } from "../config/cli-config.service.ts";
 import { PlatformAuthRequiredError } from "./errors.ts";
 import { Credentials } from "./credentials.service.ts";
+import { PlatformApi } from "./platform-api.service.ts";
 
-const makePlatformApiClientLayer = Effect.gen(function* () {
+export const makePlatformApiServices = Effect.gen(function* () {
   const cliConfig = yield* CliConfig;
   const credentials = yield* Credentials;
+  const commandRuntime = yield* CommandRuntime;
 
   const configuredToken = cliConfig.accessToken;
   const storedToken = yield* credentials.getAccessToken;
@@ -24,11 +27,20 @@ const makePlatformApiClientLayer = Effect.gen(function* () {
     );
   }
 
-  return supabaseApiClientLayer({
+  const config = {
     baseUrl: cliConfig.apiUrl,
     accessToken: token.value,
     userAgent: "@supabase/cli",
-  }).pipe(Layer.provide(FetchHttpClient.layer));
+    headers: {
+      "X-Supabase-Command": getCommandRuntimeCommand(commandRuntime),
+      "X-Supabase-Command-Run-ID": commandRuntime.commandRunId,
+    },
+  };
+
+  const api = yield* makeApiClient(config);
+  return Layer.succeed(PlatformApi, api);
 });
 
-export const platformApiClientLayer = Layer.unwrap(makePlatformApiClientLayer);
+export const platformApiLayer = Layer.unwrap(makePlatformApiServices).pipe(
+  Layer.provide(FetchHttpClient.layer),
+);

@@ -95,7 +95,7 @@ describe("platform input", () => {
           message: "Unexpected field(s) in --json.",
           detail: "organization_slu",
           suggestion:
-            "Run `supabase platform schema projects.create` or re-run `supabase platform projects create --schema` to inspect the supported request shape.",
+            "Run `supabase api request /v1/projects --method POST --schema` to inspect the supported request shape.",
         }),
       );
     }),
@@ -329,7 +329,7 @@ describe("platform input", () => {
           message: "The request payload does not match the operation schema.",
           detail: expect.stringContaining("Expected"),
           suggestion:
-            "Run `supabase platform schema branches.delete` or re-run `supabase platform branches delete --schema` to inspect the documented request and response shape.",
+            "Run `supabase api request /v1/branches/{branch_id_or_ref} --method DELETE --schema` to inspect the documented request and response shape.",
         }),
       );
     }),

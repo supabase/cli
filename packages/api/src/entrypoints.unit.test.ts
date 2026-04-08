@@ -4,43 +4,37 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, test } from "vitest";
 
-import { createApiClient as createBunApiClient, clientLayer as bunClientLayer } from "./bun.ts";
-import {
-  ApiConfig,
-  apiConfigLayer,
-  DEFAULT_SUPABASE_API_URL,
-  makeApiClient,
-  makeSupabaseApiClient,
-  openApiOperationIdMap,
-  operationDefinitions,
-  SupabaseApiClient,
-  V1CreateAProjectInput,
-} from "./effect.ts";
-import { createApiClient as createNodeApiClient, clientLayer as nodeClientLayer } from "./node.ts";
+import * as effectModule from "./effect.ts";
+import { createApiClient as createNodeApiClient } from "./node.ts";
 
 describe("@supabase/api entrypoints", () => {
   test("exports the generated contracts without embedding the OpenAPI document", () => {
-    expect(operationDefinitions.v1CreateAProject.method).toBe("POST");
-    expect(openApiOperationIdMap["v1-create-a-project"]).toBe("v1CreateAProject");
-    expect(V1CreateAProjectInput).toBeDefined();
-    expect(SupabaseApiClient).toBeDefined();
+    expect(effectModule.operationDefinitions.v1CreateAProject.method).toBe("POST");
+    expect(effectModule.openApiOperationIdMap["v1-create-a-project"]).toBe("v1CreateAProject");
+    expect(effectModule.V1CreateAProjectInput).toBeDefined();
+    expect("SupabaseApiClient" in effectModule).toBe(false);
+    expect("makeSupabaseApiClient" in effectModule).toBe(false);
+    expect("supabaseApiClientLayer" in effectModule).toBe(false);
+    expect("v1ListAllProjects" in effectModule).toBe(false);
   });
 
   test("exports runtime-specific client builders", () => {
-    expect(typeof bunClientLayer).toBe("function");
-    expect(typeof createBunApiClient).toBe("function");
-    expect(typeof nodeClientLayer).toBe("function");
+    const srcDir = dirname(fileURLToPath(import.meta.url));
+    const bunSource = readFileSync(join(srcDir, "bun.ts"), "utf8");
+
+    expect(bunSource).toContain("export async function createApiClient");
     expect(typeof createNodeApiClient).toBe("function");
-    expect(typeof makeApiClient).toBe("function");
-    expect(typeof makeSupabaseApiClient).toBe("function");
-    expect(ApiConfig).toBeDefined();
-    expect(apiConfigLayer).toBeDefined();
-    expect(DEFAULT_SUPABASE_API_URL).toBe("https://api.supabase.com");
+    expect(typeof effectModule.makeApiClient).toBe("function");
+    expect(effectModule.ApiConfig).toBeDefined();
+    expect(effectModule.apiConfigLayer).toBeDefined();
+    expect(effectModule.DEFAULT_SUPABASE_API_URL).toBe("https://api.supabase.com");
+    expect(bunSource).not.toContain("clientLayer");
   });
 
-  test("does not generate a separate promise-client artifact", () => {
+  test("does not generate separate promise or standalone operation artifacts", () => {
     const srcDir = dirname(fileURLToPath(import.meta.url));
     expect(existsSync(join(srcDir, "generated/promise-client.ts"))).toBe(false);
+    expect(existsSync(join(srcDir, "generated/effect-operations.ts"))).toBe(false);
   });
 
   test("ships the OpenAPI spec as a json subpath artifact", () => {
@@ -64,11 +58,11 @@ describe("@supabase/api entrypoints", () => {
   });
 
   test("exports a stable raw OpenAPI operation id map", () => {
-    expect(Object.keys(openApiOperationIdMap)).toHaveLength(
-      Object.keys(operationDefinitions).length,
+    expect(Object.keys(effectModule.openApiOperationIdMap)).toHaveLength(
+      Object.keys(effectModule.operationDefinitions).length,
     );
-    expect(openApiOperationIdMap["v1-authorize-user"]).toBe("v1AuthorizeUser");
-    expect(openApiOperationIdMap["v1-diff-a-branch"]).toBe("v1DiffABranch");
-    expect(openApiOperationIdMap["v1-list-jit-access"]).toBe("v1ListJitAccess");
+    expect(effectModule.openApiOperationIdMap["v1-authorize-user"]).toBe("v1AuthorizeUser");
+    expect(effectModule.openApiOperationIdMap["v1-diff-a-branch"]).toBe("v1DiffABranch");
+    expect(effectModule.openApiOperationIdMap["v1-list-jit-access"]).toBe("v1ListJitAccess");
   });
 });

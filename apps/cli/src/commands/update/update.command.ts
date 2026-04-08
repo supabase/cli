@@ -1,9 +1,9 @@
-import { Effect, Layer } from "effect";
+import { Layer } from "effect";
 import { DEFAULT_MANAGED_STACK_NAME } from "@supabase/stack/effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { credentialsLayer } from "../../auth/credentials.layer.ts";
-import { platformApiClientLayer } from "../../auth/platform-api-client.layer.ts";
+import { platformApiLayer } from "../../auth/platform-api.layer.ts";
 import { projectLinkRemoteLayer } from "../../config/project-link-remote.layer.ts";
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
 import { projectLocalServiceVersionsLayer } from "../../config/project-local-service-versions.layer.ts";
@@ -13,7 +13,8 @@ import {
 } from "../../config/project-runtime.layer.ts";
 import { projectStackStateManagerLayer } from "../../config/project-stack-state-manager.layer.ts";
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
-import { withCommandAnalytics } from "../../telemetry/command-analytics.ts";
+import { commandRuntimeLayer } from "../../runtime/command-runtime.layer.ts";
+import { withCommandInstrumentation } from "../../telemetry/command-instrumentation.ts";
 import { update } from "./update.handler.ts";
 
 const flags = {
@@ -25,18 +26,19 @@ const flags = {
 
 export type UpdateFlags = CliCommand.Command.Config.Infer<typeof flags>;
 
-const updatePlatformApiLayer = platformApiClientLayer.pipe(Layer.provide(credentialsLayer));
+const updatePlatformApiLayer = platformApiLayer.pipe(Layer.provide(credentialsLayer));
 const updateProjectLinkRemoteLayer = projectLinkRemoteLayer.pipe(
   Layer.provide(updatePlatformApiLayer),
   Layer.provide(discoveredCliConfigLayer),
 );
 
-const commandRuntimeLayer = provideProjectCommandRuntime(
+const updateRuntimeLayer = provideProjectCommandRuntime(
   Layer.mergeAll(
     projectLinkStateLayer,
     projectLocalServiceVersionsLayer,
     projectStackStateManagerLayer,
     updateProjectLinkRemoteLayer,
+    commandRuntimeLayer(["stack", "update"]),
   ),
 );
 
@@ -53,11 +55,7 @@ export const updateCommand = Command.make("update", flags).pipe(
     },
   ]),
   Command.withHandler((commandFlags) =>
-    update(commandFlags).pipe(
-      Effect.withSpan("command.stack.update"),
-      withCommandAnalytics({ command: "stack update" }),
-      withJsonErrorHandling,
-    ),
+    update(commandFlags).pipe(withCommandInstrumentation(), withJsonErrorHandling),
   ),
-  Command.provide(commandRuntimeLayer),
+  Command.provide(updateRuntimeLayer),
 );

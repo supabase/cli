@@ -1,12 +1,13 @@
-import { Effect, Layer } from "effect";
+import { Layer } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { credentialsLayer } from "../../auth/credentials.layer.ts";
-import { platformApiClientLayer } from "../../auth/platform-api-client.layer.ts";
+import { platformApiLayer } from "../../auth/platform-api.layer.ts";
 import { projectLinkRemoteLayer } from "../../config/project-link-remote.layer.ts";
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
-import { withCommandAnalytics } from "../../telemetry/command-analytics.ts";
+import { commandRuntimeLayer } from "../../runtime/command-runtime.layer.ts";
+import { withCommandInstrumentation } from "../../telemetry/command-instrumentation.ts";
 import { link } from "./link.handler.ts";
 
 const flags = {
@@ -18,10 +19,14 @@ const flags = {
 
 export type LinkFlags = CliCommand.Command.Config.Infer<typeof flags>;
 
-const linkPlatformApiLayer = platformApiClientLayer.pipe(Layer.provide(credentialsLayer));
+const linkPlatformApiLayer = platformApiLayer.pipe(Layer.provide(credentialsLayer));
 const linkProjectLinkRemoteLayer = projectLinkRemoteLayer.pipe(Layer.provide(linkPlatformApiLayer));
 
-const linkRuntimeLayer = Layer.mergeAll(linkProjectLinkRemoteLayer, projectLinkStateLayer);
+const linkRuntimeLayer = Layer.mergeAll(
+  linkProjectLinkRemoteLayer,
+  projectLinkStateLayer,
+  commandRuntimeLayer(["link"]),
+);
 
 export const linkCommand = Command.make("link", flags).pipe(
   Command.withDescription(
@@ -40,11 +45,7 @@ export const linkCommand = Command.make("link", flags).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    link(flags).pipe(
-      Effect.withSpan("command.link"),
-      withCommandAnalytics({ command: "link" }),
-      withJsonErrorHandling,
-    ),
+    link(flags).pipe(withCommandInstrumentation(), withJsonErrorHandling),
   ),
   Command.provide(linkRuntimeLayer),
 );

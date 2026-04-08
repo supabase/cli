@@ -1,15 +1,36 @@
 import { describe, expect, it } from "vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Effect, Exit, Layer, Option, Sink, Stream } from "effect";
 import { BunServices } from "@effect/platform-bun";
-import { SupabaseApiClient } from "@supabase/api/effect";
+import { makeApiClient } from "@supabase/api/effect";
+import * as Stdio from "effect/Stdio";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
+import { PlatformApi } from "../../auth/platform-api.service.ts";
 import { mockOutput, mockStdin } from "../../../tests/helpers/mocks.ts";
 import { platformOperationDescriptors } from "./platform-descriptors.ts";
 import { runPlatformOperation } from "./platform-handler.ts";
 
-const unusedApiClientLayer = Layer.succeed(SupabaseApiClient, {
-  execute: () => Effect.die("unused test client"),
-});
+function httpClientLayer(
+  handler: (
+    request: HttpClientRequest.HttpClientRequest,
+  ) => Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>,
+) {
+  return Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => handler(request)),
+  );
+}
+
+const unusedPlatformApiLayer = Layer.effect(
+  PlatformApi,
+  makeApiClient({
+    baseUrl: "https://api.supabase.com",
+    accessToken: "unused-test-token",
+  }),
+).pipe(Layer.provide(httpClientLayer(() => Effect.die("unused test client"))));
 
 function findPlatformOperationDescriptor(operationId: string) {
   const descriptor = platformOperationDescriptors.find(
@@ -19,6 +40,31 @@ function findPlatformOperationDescriptor(operationId: string) {
     throw new Error(`No platform operation descriptor was found for ${operationId}.`);
   }
   return descriptor;
+}
+
+function mockStdio() {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const layer = Layer.succeed(
+    Stdio.Stdio,
+    Stdio.make({
+      args: Effect.succeed([]),
+      stdin: Stream.empty,
+      stdout: () =>
+        Sink.forEach((item: string | Uint8Array) =>
+          Effect.sync(() => {
+            stdout.push(typeof item === "string" ? item : new TextDecoder().decode(item));
+          }),
+        ),
+      stderr: () =>
+        Sink.forEach((item: string | Uint8Array) =>
+          Effect.sync(() => {
+            stderr.push(typeof item === "string" ? item : new TextDecoder().decode(item));
+          }),
+        ),
+    }),
+  );
+  return { layer, stdout, stderr };
 }
 
 describe("projects create platform handler", () => {
@@ -48,7 +94,7 @@ describe("projects create platform handler", () => {
       }).pipe(
         Effect.provide(out.layer),
         Effect.provide(mockStdin(true)),
-        Effect.provide(unusedApiClientLayer),
+        Effect.provide(unusedPlatformApiLayer),
         Effect.provide(BunServices.layer),
       ),
     );
@@ -93,7 +139,7 @@ describe("projects create platform handler", () => {
             '{"name":"from-stdin","db_pass":"stdin-secret","organization_slug":"my-org"}',
           ),
         ),
-        Effect.provide(unusedApiClientLayer),
+        Effect.provide(unusedPlatformApiLayer),
         Effect.provide(BunServices.layer),
       ),
     );
@@ -156,7 +202,7 @@ describe("projects create platform handler", () => {
       }).pipe(
         Effect.provide(out.layer),
         Effect.provide(mockStdin(true)),
-        Effect.provide(unusedApiClientLayer),
+        Effect.provide(unusedPlatformApiLayer),
         Effect.provide(BunServices.layer),
       ),
     );
@@ -178,6 +224,7 @@ describe("projects create platform handler", () => {
   it("renders schema without executing the operation", async () => {
     const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
     const out = mockOutput({ format: "json" });
+    const stdio = mockStdio();
     let executed = false;
 
     const handler = runPlatformOperation({
@@ -204,24 +251,23 @@ describe("projects create platform handler", () => {
         yes: true,
       }).pipe(
         Effect.provide(out.layer),
+        Effect.provide(stdio.layer),
         Effect.provide(mockStdin(true)),
-        Effect.provide(unusedApiClientLayer),
+        Effect.provide(unusedPlatformApiLayer),
         Effect.provide(BunServices.layer),
       ),
     );
 
     expect(executed).toBe(false);
-    expect(out.messages).toContainEqual(
+    expect(out.messages).toEqual([]);
+    expect(JSON.parse(stdio.stdout.join(""))).toEqual(
       expect.objectContaining({
-        type: "success",
-        message: "",
-        data: expect.objectContaining({
-          method: "projects.create",
-          command: "supabase platform projects create",
-          request: expect.objectContaining({
-            body: expect.objectContaining({
-              kind: "json",
-            }),
+        route: "/v1/projects",
+        method: "POST",
+        command: "supabase api request /v1/projects --method POST",
+        input: expect.objectContaining({
+          body: expect.objectContaining({
+            kind: "json",
           }),
         }),
       }),
@@ -258,7 +304,7 @@ describe("projects create platform handler", () => {
       }).pipe(
         Effect.provide(out.layer),
         Effect.provide(mockStdin(true)),
-        Effect.provide(unusedApiClientLayer),
+        Effect.provide(unusedPlatformApiLayer),
         Effect.provide(BunServices.layer),
       ),
     );
@@ -272,7 +318,59 @@ describe("projects create platform handler", () => {
     expect(out.messages).toContainEqual(
       expect.objectContaining({
         type: "info",
-        message: expect.stringContaining("method: projects.create"),
+        message: expect.stringContaining("Route\n  POST /v1/projects"),
+      }),
+    );
+  });
+
+  it("emits schema payloads as result events in stream-json mode", async () => {
+    const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
+    const out = mockOutput({ format: "stream-json", interactive: false });
+    let executed = false;
+
+    const handler = runPlatformOperation({
+      descriptor,
+      execute: () =>
+        Effect.sync(() => {
+          executed = true;
+          return {
+            id: "project-id",
+          };
+        }),
+    });
+
+    await Effect.runPromise(
+      handler({
+        params: Option.none(),
+        json: Option.none(),
+        body: Option.none(),
+        bodyFile: Option.none(),
+        upload: [],
+        fields: Option.none(),
+        schema: true,
+        dryRun: false,
+        yes: true,
+      }).pipe(
+        Effect.provide(out.layer),
+        Effect.provide(mockStdin(true)),
+        Effect.provide(unusedPlatformApiLayer),
+        Effect.provide(BunServices.layer),
+      ),
+    );
+
+    expect(executed).toBe(false);
+    expect(out.events).toContainEqual(
+      expect.objectContaining({
+        type: "result",
+        data: expect.objectContaining({
+          route: "/v1/projects",
+          method: "POST",
+          input: expect.objectContaining({
+            body: expect.objectContaining({
+              kind: "json",
+            }),
+          }),
+        }),
       }),
     );
   });
@@ -311,7 +409,7 @@ describe("projects create platform handler", () => {
       }).pipe(
         Effect.provide(out.layer),
         Effect.provide(mockStdin(true)),
-        Effect.provide(unusedApiClientLayer),
+        Effect.provide(unusedPlatformApiLayer),
         Effect.provide(BunServices.layer),
       ),
     );
@@ -366,7 +464,7 @@ describe("projects create platform handler", () => {
       }).pipe(
         Effect.provide(out.layer),
         Effect.provide(mockStdin(true)),
-        Effect.provide(unusedApiClientLayer),
+        Effect.provide(unusedPlatformApiLayer),
         Effect.provide(BunServices.layer),
       ),
     );
@@ -404,7 +502,7 @@ describe("projects create platform handler", () => {
       }).pipe(
         Effect.provide(out.layer),
         Effect.provide(mockStdin(false)),
-        Effect.provide(unusedApiClientLayer),
+        Effect.provide(unusedPlatformApiLayer),
         Effect.provide(BunServices.layer),
         Effect.exit,
       ),

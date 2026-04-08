@@ -5,7 +5,7 @@ Generated Supabase Management API SDK built directly from the Supabase OpenAPI s
 The package exposes:
 
 - `@supabase/api` for the runtime-specific Promise client helpers plus generated contracts
-- `@supabase/api/effect` for the Effect-native method client and standalone generated Effect operations
+- `@supabase/api/effect` for the Effect-native versioned client plus generated contracts
 - `@supabase/api/openapi.json` for the raw generated OpenAPI document
 - `openApiOperationIdMap` for tools that need to join raw OpenAPI operation ids to SDK operation ids
 
@@ -16,7 +16,7 @@ import { createApiClient } from "@supabase/api";
 
 const client = await createApiClient({ accessToken: "<token>" });
 
-const projects = await client.listAllProjects();
+const projects = await client.v1.listAllProjects();
 ```
 
 `baseUrl` defaults to `https://api.supabase.com` and `accessToken` can also come from
@@ -31,7 +31,7 @@ import { makeApiClient } from "@supabase/api/effect";
 const program = Effect.gen(function* () {
   const client = yield* makeApiClient({ accessToken: "<token>" });
 
-  return yield* client.listAllProjects();
+  return yield* client.v1.listAllProjects();
 });
 ```
 
@@ -47,13 +47,7 @@ Supported environment variables:
 - `SUPABASE_API_URL` (optional, defaults to `https://api.supabase.com`)
 - `SUPABASE_ACCESS_TOKEN` (optional if `accessToken` is passed explicitly)
 
-You can also use the generated Effect operations directly when you want selective imports:
-
-```ts
-import { v1ListAllProjects } from "@supabase/api/effect";
-```
-
-If you want the versioned namespace explicitly, the client also exposes:
+The only callable client surface is the versioned namespace:
 
 ```ts
 const projects = await client.v1.listAllProjects();
@@ -80,14 +74,14 @@ The public binary input contract is:
 ## Development
 
 ```sh
-bun run check:all   # Run all quality checks in parallel
-bun run fix:all     # Auto-fix lint, format, and unused exports in parallel
-bun run test        # Run tests
-bun run generate    # Refresh the OpenAPI spec and regenerate the SDK
+pnpm check:all   # Run all quality checks in parallel
+pnpm fix:all     # Auto-fix lint, format, and unused exports in parallel
+pnpm test        # Run tests
+pnpm generate    # Refresh the OpenAPI spec and regenerate the SDK
 ```
 
 To refresh from staging instead of production:
 
 ```sh
-SUPABASE_API_URL=https://api.supabase.green bun run generate
+SUPABASE_API_URL=https://api.supabase.green pnpm generate
 ```

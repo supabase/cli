@@ -85,7 +85,7 @@ describe("makeApiClient", () => {
     );
 
     await Effect.runPromise(
-      client.getProject({
+      client.v1.getProject({
         ref: "abcdefghijklmnopqrst",
       }),
     );
@@ -139,12 +139,72 @@ describe("makeApiClient", () => {
     );
 
     await Effect.runPromise(
-      client.getProject({
+      client.v1.getProject({
         ref: "abcdefghijklmnopqrst",
       }),
     );
 
     expect(seenRequests).toEqual([{ authorization: "Bearer env-token" }]);
+  });
+
+  test("passes configured default headers through the facade client", async () => {
+    const seenRequests: Array<{
+      command: string | undefined;
+      commandRunId: string | undefined;
+      authorization: string | undefined;
+    }> = [];
+
+    const client = await Effect.runPromise(
+      makeApiClient({
+        ...config,
+        headers: {
+          "X-Supabase-Command": "projects get",
+          "X-Supabase-Command-Run-ID": "run-456",
+        },
+      }).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            seenRequests.push({
+              command: request.headers["x-supabase-command"],
+              commandRunId: request.headers["x-supabase-command-run-id"],
+              authorization: request.headers.authorization,
+            });
+            return Effect.succeed(
+              jsonResponse(request, 200, {
+                id: "project-id",
+                ref: "abcdefghijklmnopqrst",
+                organization_id: "org-id",
+                organization_slug: "my-org",
+                name: "project-name",
+                region: "us-east-1",
+                created_at: "2026-03-13T12:00:00.000Z",
+                status: "ACTIVE_HEALTHY",
+                database: {
+                  host: "db.supabase.internal",
+                  version: "17.0.1",
+                  postgres_engine: "17",
+                  release_channel: "ga",
+                },
+              }),
+            );
+          }),
+        ),
+      ),
+    );
+
+    await Effect.runPromise(
+      client.v1.getProject({
+        ref: "abcdefghijklmnopqrst",
+      }),
+    );
+
+    expect(seenRequests).toEqual([
+      {
+        command: "projects get",
+        commandRunId: "run-456",
+        authorization: "Bearer test-token",
+      },
+    ]);
   });
 
   test("fails early when no access token is configured", async () => {
@@ -170,7 +230,7 @@ describe("makeApiClient", () => {
     }
   });
 
-  test("returns unversioned methods plus a version namespace", async () => {
+  test("returns only versioned methods under the v1 namespace", async () => {
     const seenRequests: Array<{ method: string; url: string }> = [];
 
     const client = await Effect.runPromise(
@@ -249,15 +309,15 @@ describe("makeApiClient", () => {
       ),
     );
 
-    expect(typeof client.createAProject).toBe("function");
-    expect(typeof client.getProject).toBe("function");
-    expect(typeof client.listAllProjects).toBe("function");
+    expect("createAProject" in client).toBe(false);
+    expect("getProject" in client).toBe(false);
+    expect("listAllProjects" in client).toBe(false);
     expect(typeof client.v1.createAProject).toBe("function");
     expect(typeof client.v1.getProject).toBe("function");
     expect(typeof client.v1.listAllProjects).toBe("function");
 
     const created = await Effect.runPromise(
-      client.createAProject({
+      client.v1.createAProject({
         db_pass: "hunter2",
         name: "project-name",
         organization_slug: "my-org",
@@ -268,7 +328,7 @@ describe("makeApiClient", () => {
         ref: "abcdefghijklmnopqrst",
       }),
     );
-    const projects = await Effect.runPromise(client.listAllProjects());
+    const projects = await Effect.runPromise(client.v1.listAllProjects());
 
     expect(created.ref).toBe("abcdefghijklmnopqrst");
     expect(project.database.host).toBe("db.supabase.internal");
@@ -319,7 +379,7 @@ describe("makeApiClient", () => {
 
     const body = new Blob(["console.log('blob body');"]);
     const result = await Effect.runPromise(
-      client.createAFunction({
+      client.v1.createAFunction({
         ref: "abcdefghijklmnopqrst",
         slug: "demo",
         verify_jwt: true,

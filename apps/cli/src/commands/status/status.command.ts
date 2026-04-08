@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect";
+import { Layer } from "effect";
 import { DEFAULT_MANAGED_STACK_NAME } from "@supabase/stack/effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
@@ -7,7 +7,8 @@ import { projectLocalServiceVersionsLayer } from "../../config/project-local-ser
 import { provideProjectCommandRuntime } from "../../config/project-runtime.layer.ts";
 import { projectStackStateManagerLayer } from "../../config/project-stack-state-manager.layer.ts";
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
-import { withCommandAnalytics } from "../../telemetry/command-analytics.ts";
+import { commandRuntimeLayer } from "../../runtime/command-runtime.layer.ts";
+import { withCommandInstrumentation } from "../../telemetry/command-instrumentation.ts";
 import { status } from "./status.handler.ts";
 
 const flags = {
@@ -19,11 +20,12 @@ const flags = {
 
 export type StatusFlags = CliCommand.Command.Config.Infer<typeof flags>;
 
-const commandRuntimeLayer = provideProjectCommandRuntime(
+const statusRuntimeLayer = provideProjectCommandRuntime(
   Layer.mergeAll(
     projectLinkStateLayer,
     projectLocalServiceVersionsLayer,
     projectStackStateManagerLayer,
+    commandRuntimeLayer(["status"]),
   ),
 );
 
@@ -31,11 +33,7 @@ export const statusCommand = Command.make("status", flags).pipe(
   Command.withDescription("Show the current local Supabase stack status."),
   Command.withShortDescription("Show local stack connection info and service status"),
   Command.withHandler((flags) =>
-    status(flags).pipe(
-      Effect.withSpan("command.status"),
-      withCommandAnalytics({ command: "status" }),
-      withJsonErrorHandling,
-    ),
+    status(flags).pipe(withCommandInstrumentation(), withJsonErrorHandling),
   ),
-  Command.provide(commandRuntimeLayer),
+  Command.provide(statusRuntimeLayer),
 );

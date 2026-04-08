@@ -688,43 +688,114 @@ export type VoidOperationDefinition<Id extends OperationId = OperationId> = Extr
 `;
 }
 
-function renderEffectOperations(operations: ReadonlyArray<OperationDefinition>): string {
-  const functions = operations
-    .map((operation) => {
-      const isEmptyInput =
-        operation.inputSchema.type === "object" &&
-        Object.keys(operation.inputSchema.properties ?? {}).length === 0;
-      const signature = isEmptyInput
-        ? ""
-        : `input: typeof operationDefinitions.${operation.operationName}.inputSchema.Type`;
-      const inputExpression = isEmptyInput ? "{}" : "input";
+function splitOperationVersion(operationName: string): {
+  readonly version: string;
+  readonly methodName: string;
+} {
+  const match = /^((?:v|V)\d+)(.+)$/u.exec(operationName);
+  if (!match) {
+    throw new Error(`Expected a version-prefixed operation id, got ${operationName}`);
+  }
 
-      return `export const ${operation.operationName} = (
-  ${signature}
-): Effect.Effect<typeof operationDefinitions.${operation.operationName}.outputSchema.Type, SupabaseApiError, SupabaseApiClient> =>
-  Effect.gen(function* () {
-    const client = yield* SupabaseApiClient;
-    return yield* client.execute<${JSON.stringify(operation.operationName)}>(
-      operationDefinitions.${operation.operationName},
-      ${inputExpression},
-    );
-  });
-`;
+  const [, version, methodBase] = match;
+  if (version === undefined || methodBase === undefined || methodBase.length === 0) {
+    throw new Error(`Expected an operation method segment after the version in ${operationName}`);
+  }
+  const first = methodBase.slice(0, 1).toLowerCase();
+
+  return {
+    version,
+    methodName: `${first}${methodBase.slice(1)}`,
+  };
+}
+
+function renderEffectClient(operations: ReadonlyArray<OperationDefinition>): string {
+  const versionedOperations = new Map<string, Array<OperationDefinition>>();
+  for (const operation of operations) {
+    const { version } = splitOperationVersion(operation.operationName);
+    const group = versionedOperations.get(version);
+    if (group === undefined) {
+      versionedOperations.set(version, [operation]);
+    } else {
+      group.push(operation);
+    }
+  }
+
+  const versionedOperationsSource = [...versionedOperations.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([version, groupedOperations]) => {
+      const methods = groupedOperations
+        .map((operation) => {
+          const { methodName } = splitOperationVersion(operation.operationName);
+          const isEmptyInput =
+            operation.inputSchema.type === "object" &&
+            Object.keys(operation.inputSchema.properties ?? {}).length === 0;
+          const signature = isEmptyInput
+            ? ""
+            : `input: typeof operationDefinitions.${operation.operationName}.inputSchema.Type`;
+          const inputExpression = isEmptyInput ? "{}" : "input";
+
+          return `    ${methodName}: (
+      ${signature}
+    ): Effect.Effect<typeof operationDefinitions.${operation.operationName}.outputSchema.Type, SupabaseApiError, SupabaseApiClient> =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<${JSON.stringify(operation.operationName)}>(
+          operationDefinitions.${operation.operationName},
+          ${inputExpression},
+        );
+      }),`;
+        })
+        .join("\n");
+
+      return `  ${version}: {
+${methods}
+  },`;
     })
     .join("\n");
 
-  const registryEntries = operations.map((operation) => `  ${operation.operationName},`).join("\n");
+  const executorCases = operations
+    .map((operation) => {
+      const { version, methodName } = splitOperationVersion(operation.operationName);
+      const isEmptyInput =
+        operation.inputSchema.type === "object" &&
+        Object.keys(operation.inputSchema.properties ?? {}).length === 0;
+      const decodedExpression = `Schema.decodeUnknownEffect(operationDefinitions.${operation.operationName}.inputSchema)(input)`;
+      const decodedParam = isEmptyInput ? "_decoded" : "decoded";
+      const callExpression = isEmptyInput
+        ? `api.${version}.${methodName}()`
+        : `api.${version}.${methodName}(decoded)`;
 
-  return `import { Effect } from "effect";
+      return `    case ${JSON.stringify(operation.operationName)}:
+      return ${decodedExpression}.pipe(
+        Effect.flatMap((${decodedParam}) => ${callExpression}),
+      );`;
+    })
+    .join("\n");
 
+  return `import { Effect, Schema } from "effect";
+
+import type { EffectClient } from "../internal/effect-client.ts";
 import type { SupabaseApiError } from "../internal/client.ts";
 import { SupabaseApiClient } from "../internal/client.ts";
 import { operationDefinitions } from "./contracts.ts";
 
-${functions}
-export const effectOperations = {
-${registryEntries}
-};
+export const versionedEffectOperations = {
+${versionedOperationsSource}
+} as const;
+
+export type GeneratedEffectOperations = typeof versionedEffectOperations;
+type GeneratedApiClient = EffectClient<GeneratedEffectOperations>;
+
+export function executeApiClientOperation(
+  operationId: keyof typeof operationDefinitions,
+  api: GeneratedApiClient,
+  input: unknown,
+) {
+  switch (operationId) {
+${executorCases}
+  }
+}
 `;
 }
 
@@ -736,10 +807,7 @@ function main() {
   mkdirSync(generatedDir, { recursive: true });
 
   writeFileSync(path.join(generatedDir, "contracts.ts"), renderContracts(document, operations));
-  writeFileSync(
-    path.join(generatedDir, "effect-operations.ts"),
-    renderEffectOperations(operations),
-  );
+  writeFileSync(path.join(generatedDir, "effect-client.ts"), renderEffectClient(operations));
   writeFileSync(path.join(generatedDir, "openapi.json"), `${JSON.stringify(document, null, 2)}\n`);
 
   console.log(`Generated ${operations.length} API operations in ${generatedDir}`);

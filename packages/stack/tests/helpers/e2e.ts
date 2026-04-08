@@ -27,5 +27,8 @@ export async function setupTestTable(dbPort: number): Promise<void> {
       ('Build an app', false);
   `);
 
+  // PostgREST caches schema metadata, so tell it to reload after creating test tables.
+  await sql.unsafe(`NOTIFY pgrst, 'reload schema';`);
+
   sql.close();
 }

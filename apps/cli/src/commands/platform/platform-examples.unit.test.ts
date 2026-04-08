@@ -4,10 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { findCommand, getHelpDoc } from "../../docs/command-docs.ts";
+import { getHelpDoc } from "../../docs/command-docs.ts";
+import { apiRequestCommand } from "./request.command.ts";
 import { platformOperationDescriptors } from "./platform-descriptors.ts";
 import { buildPlatformGeneratedExamples } from "./platform-examples.ts";
-import { platformCommand } from "./platform-tree.ts";
 
 function findPlatformOperationDescriptor(operationId: string) {
   const descriptor = platformOperationDescriptors.find(
@@ -28,12 +28,12 @@ describe("platform example generation", () => {
       expect.objectContaining({
         description: "Read raw bytes from a file.",
         command:
-          'supabase platform projects functions create --params \'{"ref":"project-ref"}\' --body-file ./body.bin',
+          'supabase api request /v1/projects/{ref}/functions --method POST --params \'{"ref":"project-ref"}\' --body-file ./body.bin',
       }),
       expect.objectContaining({
         description: "Read raw bytes from stdin.",
         command:
-          'cat ./body.bin | supabase platform projects functions create --params \'{"ref":"project-ref"}\' --body -',
+          'cat ./body.bin | supabase api request /v1/projects/{ref}/functions --method POST --params \'{"ref":"project-ref"}\' --body -',
       }),
     ]);
   });
@@ -49,7 +49,9 @@ describe("platform example generation", () => {
           "Pass structured multipart fields with `--json` and binary parts with `--upload`.",
       }),
     );
-    expect(example?.command).toContain("supabase platform projects functions deploy");
+    expect(example?.command).toContain(
+      "supabase api request /v1/projects/{ref}/functions/deploy --method POST",
+    );
     expect(example?.command).toContain('--params \'{"ref":"project-ref"}\'');
     expect(example?.command).toContain(
       '--json \'{"metadata":{"entrypoint_path":"entrypoint_path-value"}}\'',
@@ -66,7 +68,7 @@ describe("platform example generation", () => {
     expect(example).toEqual(
       expect.objectContaining({
         command:
-          'supabase platform oauth token exchange --json \'{"grant_type":"refresh_token","refresh_token":"refresh-token"}\'',
+          'supabase api request /v1/oauth/token --method POST --json \'{"grant_type":"refresh_token","refresh_token":"refresh-token"}\'',
       }),
     );
   });
@@ -79,36 +81,22 @@ describe("platform example generation", () => {
     expect(example).toEqual(
       expect.objectContaining({
         command: expect.stringContaining(
-          `--json '{"db_pass":"<redacted>","name":"example-name","organization_slug":"organization_slug-value"}'`,
+          `supabase api request /v1/projects --method POST --json '{"db_pass":"<redacted>","name":"example-name","organization_slug":"organization_slug-value"}'`,
         ),
       }),
     );
   });
 
-  it("adds generated examples to leaf command help docs", () => {
-    const leaf = findCommand(platformCommand, ["projects", "functions", "create"]);
-    expect(leaf).toBeDefined();
-    const helpDoc = getHelpDoc(leaf!, ["supabase", "platform", "projects", "functions", "create"]);
+  it("shows request examples on the request help docs", () => {
+    const helpDoc = getHelpDoc(apiRequestCommand, ["supabase", "api", "request"]);
 
     expect(helpDoc.examples).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          command: expect.stringContaining("--body-file ./body.bin"),
+          command: "supabase api request /v1/projects",
         }),
-      ]),
-    );
-  });
-
-  it("keeps no-input help text aligned for commands without request input", () => {
-    const leaf = findCommand(platformCommand, ["projects", "list"]);
-    expect(leaf).toBeDefined();
-    const helpDoc = getHelpDoc(leaf!, ["supabase", "platform", "projects", "list"]);
-
-    expect(helpDoc.examples).toEqual(
-      expect.arrayContaining([
         expect.objectContaining({
-          description: "Run the command with no additional input.",
-          command: "supabase platform projects list",
+          command: expect.stringContaining("--method POST"),
         }),
       ]),
     );
@@ -121,19 +109,20 @@ describe("platform example generation", () => {
     expect(generated.commandExamples).toEqual([
       expect.objectContaining({
         description: "Pass the required path, query, or header input with `--params`.",
-        command: `supabase ${descriptor.commandPath.join(" ")} --params '{"branch_id_or_ref":"branch-ref"}'`,
+        command:
+          'supabase api request /v1/branches/{branch_id_or_ref} --method DELETE --params \'{"branch_id_or_ref":"branch-ref"}\'',
       }),
     ]);
   });
 
-  it("generates no-input examples for leaf commands with no request input", () => {
+  it("generates no-input examples for routes with no request input", () => {
     const descriptor = findPlatformOperationDescriptor("v1ListAllProjects");
     const generated = buildPlatformGeneratedExamples(descriptor);
 
     expect(generated.commandExamples).toEqual([
       expect.objectContaining({
         description: "Run the command with no additional input.",
-        command: `supabase ${descriptor.commandPath.join(" ")}`,
+        command: "supabase api request /v1/projects",
       }),
     ]);
   });

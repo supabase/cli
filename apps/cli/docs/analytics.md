@@ -33,12 +33,13 @@ The core pieces are:
 
 - `CurrentAnalyticsContext`
 - `withAnalyticsContext(...)`
-- `withCommandAnalytics(...)`
+- `withCommandInstrumentation(...)`
 
 `CurrentAnalyticsContext` is a `ServiceMap.Reference` that carries the current analytics context
 for the running effect scope.
 
-`withCommandAnalytics(...)` wraps command handlers and installs per-invocation context such as:
+`withCommandInstrumentation(...)` wraps command handlers and installs per-invocation tracing plus
+the per-invocation analytics context such as:
 
 - `command_run_id`
 - `command`

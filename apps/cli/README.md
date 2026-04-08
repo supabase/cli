@@ -31,18 +31,18 @@ From the workspace:
 
 ```sh
 cd apps/cli
-bun src/cli/main.ts --help
+pnpm exec bun src/cli/main.ts --help
 ```
 
 Examples:
 
 ```sh
-bun src/cli/main.ts start
-bun src/cli/main.ts start --mode docker
-bun src/cli/main.ts start --detach
-bun src/cli/main.ts status
-bun src/cli/main.ts logs
-bun src/cli/main.ts login --no-browser
+pnpm exec bun src/cli/main.ts start
+pnpm exec bun src/cli/main.ts start --mode docker
+pnpm exec bun src/cli/main.ts start --detach
+pnpm exec bun src/cli/main.ts status
+pnpm exec bun src/cli/main.ts logs
+pnpm exec bun src/cli/main.ts login --no-browser
 ```
 
 ## Build
@@ -50,7 +50,7 @@ bun src/cli/main.ts login --no-browser
 From `apps/cli`:
 
 ```sh
-bun run build
+pnpm build
 ```
 
 Build output:
@@ -85,16 +85,16 @@ Useful companion docs:
 From `apps/cli`:
 
 ```sh
-pnpm run check:all
-pnpm run fix:all
-pnpm run test
+pnpm check:all
+pnpm fix:all
+pnpm test
 ```
 
 Useful subsets:
 
 ```sh
-pnpm run test:core
-pnpm run test:e2e
+pnpm test:core
+pnpm test:e2e
 ```
 
 ## Publishing

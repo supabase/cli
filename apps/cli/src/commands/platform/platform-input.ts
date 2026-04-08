@@ -3,6 +3,7 @@ import { Effect, FileSystem, Option, Schema } from "effect";
 import { NonInteractiveError } from "../../output/errors.ts";
 import { Output } from "../../output/output.service.ts";
 import { Stdin } from "../../runtime/stdin.service.ts";
+import { formatPlatformApiSchemaCommand } from "./platform-cli.ts";
 import { PlatformInputError } from "./platform.errors.ts";
 import type {
   PlatformOperationDescriptor,
@@ -19,9 +20,6 @@ const isRecord = (value: unknown): value is JsonRecord =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const formatSourceLabel = (kind: "json" | "params") => (kind === "json" ? "--json" : "--params");
-
-const formatPlatformMethod = (descriptor: PlatformOperationDescriptor): string =>
-  descriptor.commandPath.slice(1).join(".");
 
 const invalidJsonInput = (kind: "json" | "params", detail: string) =>
   new PlatformInputError({
@@ -167,7 +165,7 @@ const validateInputKeys = (
     new PlatformInputError({
       message: `Unexpected field(s) in ${formatSourceLabel(kind)}.`,
       detail: unknown.join(", "),
-      suggestion: `Run \`supabase platform schema ${formatPlatformMethod(descriptor)}\` or re-run \`supabase ${descriptor.commandPath.join(" ")} --schema\` to inspect the supported request shape.`,
+      suggestion: `Run \`${formatPlatformApiSchemaCommand(descriptor)}\` to inspect the supported request shape.`,
     }),
   );
 };
@@ -392,7 +390,7 @@ export const decodePlatformInput = <S extends Schema.Decoder<unknown, never>>(
       new PlatformInputError({
         message: "The request payload does not match the operation schema.",
         detail: cause instanceof Error ? cause.message : String(cause),
-        suggestion: `Run \`supabase platform schema ${formatPlatformMethod(descriptor)}\` or re-run \`supabase ${descriptor.commandPath.join(" ")} --schema\` to inspect the documented request and response shape.`,
+        suggestion: `Run \`${formatPlatformApiSchemaCommand(descriptor)}\` to inspect the documented request and response shape.`,
       }),
   });
 
@@ -885,7 +883,7 @@ export const parsePlatformUploadSources = (
         return yield* Effect.fail(
           invalidUploadInput(
             `Unknown multipart upload field: ${field}`,
-            "Run `supabase platform schema <method>` to inspect the multipart body shape.",
+            "Run `supabase api request <route> --schema` to inspect the multipart body shape.",
           ),
         );
       }

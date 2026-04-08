@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect";
-import { supabaseApiClientLayer, v1GetProfile } from "@supabase/api/effect";
+import { makeApiClient } from "@supabase/api/effect";
 import {
   FetchHttpClient,
   HttpClient,
@@ -40,15 +40,12 @@ export const makeApi = Effect.gen(function* () {
     ),
     fetchProfile: Effect.fnUntraced(
       function* (apiUrl, accessToken) {
-        return yield* v1GetProfile().pipe(
-          Effect.provide(
-            supabaseApiClientLayer({
-              baseUrl: apiUrl,
-              accessToken,
-              userAgent: "@supabase/cli",
-            }).pipe(Layer.provide(httpClientLayer)),
-          ),
-        );
+        const api = yield* makeApiClient({
+          baseUrl: apiUrl,
+          accessToken,
+          userAgent: "@supabase/cli",
+        }).pipe(Effect.provide(httpClientLayer));
+        return yield* api.v1.getProfile();
       },
       (effect) =>
         effect.pipe(

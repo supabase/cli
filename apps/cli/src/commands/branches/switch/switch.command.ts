@@ -1,18 +1,23 @@
-import { Effect, Layer } from "effect";
+import { Layer } from "effect";
 import { Argument, Command } from "effect/unstable/cli";
 import { credentialsLayer } from "../../../auth/credentials.layer.ts";
-import { platformApiClientLayer } from "../../../auth/platform-api-client.layer.ts";
+import { platformApiLayer } from "../../../auth/platform-api.layer.ts";
 import { projectLinkStateLayer } from "../../../config/project-link-state.layer.ts";
+import { provideProjectCommandRuntime } from "../../../config/project-runtime.layer.ts";
 import { projectStackStateManagerLayer } from "../../../config/project-stack-state-manager.layer.ts";
 import { withJsonErrorHandling } from "../../../output/json-error-handling.ts";
-import { withCommandAnalytics } from "../../../telemetry/command-analytics.ts";
+import { commandRuntimeLayer } from "../../../runtime/command-runtime.layer.ts";
+import { withCommandInstrumentation } from "../../../telemetry/command-instrumentation.ts";
 import { switchBranch } from "./switch.handler.ts";
 
-const branchesPlatformApiLayer = platformApiClientLayer.pipe(Layer.provide(credentialsLayer));
-const branchesRuntimeLayer = Layer.mergeAll(
-  branchesPlatformApiLayer,
-  projectLinkStateLayer,
-  projectStackStateManagerLayer,
+const branchesPlatformApiLayer = platformApiLayer.pipe(Layer.provide(credentialsLayer));
+const branchesRuntimeLayer = provideProjectCommandRuntime(
+  Layer.mergeAll(
+    branchesPlatformApiLayer,
+    projectLinkStateLayer,
+    projectStackStateManagerLayer,
+    commandRuntimeLayer(["branches", "switch"]),
+  ),
 );
 
 const args = {
@@ -45,11 +50,7 @@ export const switchBranchesCommand = Command.make("switch", args).pipe(
     },
   ]),
   Command.withHandler((args) =>
-    switchBranch(args).pipe(
-      Effect.withSpan("command.branches.switch"),
-      withCommandAnalytics({ command: "branches switch" }),
-      withJsonErrorHandling,
-    ),
+    switchBranch(args).pipe(withCommandInstrumentation(), withJsonErrorHandling),
   ),
   Command.provide(branchesRuntimeLayer),
 );

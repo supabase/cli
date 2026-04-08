@@ -1,8 +1,8 @@
-import { Effect } from "effect";
 import { Command } from "effect/unstable/cli";
 import { projectCommandBaseLayer } from "../../config/project-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
-import { withCommandAnalytics } from "../../telemetry/command-analytics.ts";
+import { commandRuntimeLayer } from "../../runtime/command-runtime.layer.ts";
+import { withCommandInstrumentation } from "../../telemetry/command-instrumentation.ts";
 import { list } from "./list.handler.ts";
 
 export const listCommand = Command.make("list").pipe(
@@ -14,12 +14,7 @@ export const listCommand = Command.make("list").pipe(
       description: "Show all known local stacks for the current project",
     },
   ]),
-  Command.withHandler(() =>
-    list().pipe(
-      Effect.withSpan("command.stack.list"),
-      withCommandAnalytics({ command: "stack list" }),
-      withJsonErrorHandling,
-    ),
-  ),
+  Command.withHandler(() => list().pipe(withCommandInstrumentation(), withJsonErrorHandling)),
+  Command.provide(commandRuntimeLayer(["stack", "list"])),
   Command.provide(projectCommandBaseLayer),
 );

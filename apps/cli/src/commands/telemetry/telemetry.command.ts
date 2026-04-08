@@ -2,7 +2,8 @@ import { Effect } from "effect";
 import { Command } from "effect/unstable/cli";
 import { Output } from "../../output/output.service.ts";
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
-import { withCommandAnalytics } from "../../telemetry/command-analytics.ts";
+import { commandRuntimeLayer } from "../../runtime/command-runtime.layer.ts";
+import { withCommandInstrumentation } from "../../telemetry/command-instrumentation.ts";
 import {
   getConfigDir,
   getEffectiveConsent,
@@ -64,28 +65,27 @@ const telemetryEnableCommand = Command.make("enable").pipe(
   Command.withDescription("Enable CLI telemetry."),
   Command.withShortDescription("Enable telemetry"),
   Command.withHandler(() =>
-    enableTelemetry.pipe(Effect.withSpan("command.telemetry.enable"), withJsonErrorHandling),
+    enableTelemetry.pipe(withCommandInstrumentation({ analytics: false }), withJsonErrorHandling),
   ),
+  Command.provide(commandRuntimeLayer(["telemetry", "enable"])),
 );
 
 const telemetryDisableCommand = Command.make("disable").pipe(
   Command.withDescription("Disable CLI telemetry."),
   Command.withShortDescription("Disable telemetry"),
   Command.withHandler(() =>
-    disableTelemetry.pipe(Effect.withSpan("command.telemetry.disable"), withJsonErrorHandling),
+    disableTelemetry.pipe(withCommandInstrumentation({ analytics: false }), withJsonErrorHandling),
   ),
+  Command.provide(commandRuntimeLayer(["telemetry", "disable"])),
 );
 
 const telemetryStatusCommand = Command.make("status").pipe(
   Command.withDescription("Show the effective CLI telemetry state."),
   Command.withShortDescription("Show telemetry status"),
   Command.withHandler(() =>
-    telemetryStatus.pipe(
-      Effect.withSpan("command.telemetry.status"),
-      withCommandAnalytics({ command: "telemetry status" }),
-      withJsonErrorHandling,
-    ),
+    telemetryStatus.pipe(withCommandInstrumentation(), withJsonErrorHandling),
   ),
+  Command.provide(commandRuntimeLayer(["telemetry", "status"])),
 );
 
 export const telemetryCommand = Command.make("telemetry").pipe(

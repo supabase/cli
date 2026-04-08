@@ -1,10 +1,6 @@
 import type { Effect, Schema } from "effect";
-import type {
-  OperationDefinition,
-  OperationId,
-  SupabaseApiClient,
-  SupabaseApiError,
-} from "@supabase/api/effect";
+import type { OperationDefinition, OperationId, SupabaseApiError } from "@supabase/api/effect";
+import type { PlatformApi } from "../../auth/platform-api.service.ts";
 
 export type PlatformHttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD";
 
@@ -35,6 +31,7 @@ export interface PlatformSchemaNode {
 
 export interface PlatformRequestBodyDescriptor {
   readonly kind: PlatformBodyKind;
+  readonly required: boolean;
   readonly contentType?: string;
   readonly schema?: PlatformSchemaNode;
   readonly fieldName?: string;
@@ -63,23 +60,33 @@ export interface PlatformGeneratedExamples {
 
 export interface PlatformOperationDescriptor {
   readonly operationId: OperationId;
-  readonly commandPath: readonly [string, ...string[]];
   readonly method: PlatformHttpMethod;
   readonly path: string;
+  readonly group: string;
+  readonly availableMethods: ReadonlyArray<PlatformHttpMethod>;
   readonly shortDescription: string;
   readonly description: string;
   readonly successMessage: string;
   readonly confirmsMutation: boolean;
   readonly inputSchema: Schema.Decoder<unknown, never>;
   readonly definition: OperationDefinition;
-  readonly execute: (
-    input: unknown,
-  ) => Effect.Effect<unknown, PlatformOperationError, SupabaseApiClient>;
+  readonly execute: (input: unknown) => Effect.Effect<unknown, PlatformOperationError, PlatformApi>;
   readonly request: {
     readonly params: ReadonlyArray<PlatformSchemaNode>;
     readonly body: PlatformRequestBodyDescriptor;
   };
   readonly responseSchema?: PlatformSchemaNode;
+}
+
+export interface PlatformRouteDescriptor {
+  readonly path: string;
+  readonly group: string;
+  readonly groupSlug: string;
+  readonly methods: ReadonlyArray<{
+    readonly method: PlatformHttpMethod;
+    readonly summary: string;
+    readonly isDefault: boolean;
+  }>;
 }
 
 export type PlatformOperationError = PlatformInputError | SupabaseApiError;

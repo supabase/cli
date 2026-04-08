@@ -5,7 +5,8 @@ import {
   projectPlatformFields,
   renderPlatformValue,
 } from "./platform-fields.ts";
-import { buildPlatformSchemaPayload } from "./platform-schema.ts";
+import { writePlatformJsonStdout } from "./platform-output.ts";
+import { buildPlatformSchemaPayload, renderPlatformSchemaPayload } from "./platform-schema.ts";
 import {
   buildPlatformRequestPreview,
   decodePlatformInput,
@@ -17,6 +18,7 @@ import {
   redactPlatformInputForPreview,
   validatePlatformStdinUsage,
 } from "./platform-input.ts";
+import { formatPlatformApiCommand } from "./platform-cli.ts";
 import type { PlatformOperationDescriptor } from "./platform-types.ts";
 
 type BasePlatformFlags = {
@@ -60,11 +62,20 @@ export function runPlatformOperation<
     if (flags.schema) {
       const payload = buildPlatformSchemaPayload(descriptor);
       if (output.format === "text") {
-        yield* output.info(renderPlatformValue(payload));
+        yield* output.info(renderPlatformSchemaPayload(payload));
         return;
       }
 
-      yield* output.success("", payload);
+      if (output.format === "json") {
+        yield* writePlatformJsonStdout(payload);
+        return;
+      }
+
+      yield* output.event({
+        type: "result",
+        data: payload,
+        timestamp: new Date().toISOString(),
+      });
       return;
     }
 
@@ -104,7 +115,7 @@ export function runPlatformOperation<
     }
 
     if (descriptor.confirmsMutation && !flags.yes) {
-      const confirmed = yield* output.promptConfirm(`Run ${descriptor.commandPath.join(" ")}?`);
+      const confirmed = yield* output.promptConfirm(`Run ${formatPlatformApiCommand(descriptor)}?`);
       if (!confirmed) {
         yield* output.outro("Cancelled.");
         return;

@@ -1,9 +1,9 @@
 import { DEFAULT_MANAGED_STACK_NAME } from "@supabase/stack/effect";
-import { Effect } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
-import { withCommandAnalytics } from "../../telemetry/command-analytics.ts";
+import { commandRuntimeLayer } from "../../runtime/command-runtime.layer.ts";
+import { withCommandInstrumentation } from "../../telemetry/command-instrumentation.ts";
 import { logs } from "./logs.handler.ts";
 
 const flags = {
@@ -57,10 +57,7 @@ export const logsCommand = Command.make("logs", flags).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    logs(flags).pipe(
-      Effect.withSpan("command.logs"),
-      withCommandAnalytics({ command: "logs" }),
-      withJsonErrorHandling,
-    ),
+    logs(flags).pipe(withCommandInstrumentation(), withJsonErrorHandling),
   ),
+  Command.provide(commandRuntimeLayer(["logs"])),
 );

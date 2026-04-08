@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { openApiOperationIdMap, operationDefinitions } from "@supabase/api/effect";
+import {
+  executeApiClientOperation,
+  openApiOperationIdMap,
+  operationDefinitions,
+} from "@supabase/api/effect";
 
-import { platformOperationMap } from "./platform-operation-map.ts";
 import { platformOperationDescriptors } from "./platform-descriptors.ts";
+import { platformRouteDescriptors, platformRouteDescriptorsByPath } from "./platform-routes.ts";
+import {
+  platformRouteDescriptorMap,
+  platformRouteDescriptorsByPath as platformRouteResolverDescriptorsByPath,
+} from "./platform-route-resolver.ts";
 import {
   platformOpenApiOperationEntries,
   resolvePlatformOpenApiSchema,
@@ -18,10 +26,6 @@ function findPlatformOperationDescriptor(operationId: string) {
     throw new Error(`No platform operation descriptor was found for ${operationId}.`);
   }
   return descriptor;
-}
-
-function hasPrefix(left: ReadonlyArray<string>, right: ReadonlyArray<string>): boolean {
-  return left.length < right.length && left.every((segment, index) => segment === right[index]);
 }
 
 function walkSchemaNodes(node: PlatformSchemaNode | undefined): ReadonlyArray<PlatformSchemaNode> {
@@ -44,10 +48,7 @@ function rawUnionVariantsFor(schema: PlatformOpenApiSchema): ReadonlyArray<Platf
 
 function isScalarLikeRawSchema(schema: PlatformOpenApiSchema): boolean {
   const resolved = resolvePlatformOpenApiSchema(schema);
-  if (resolved.type === "string") {
-    return true;
-  }
-  if (resolved.type === "boolean") {
+  if (resolved.type === "string" || resolved.type === "boolean") {
     return true;
   }
   if (resolved.type === "integer" || resolved.type === "number") {
@@ -64,70 +65,77 @@ function isScalarLikeRawSchema(schema: PlatformOpenApiSchema): boolean {
   );
 }
 
-describe("platform command metadata", () => {
+describe("platform route metadata", () => {
   it("covers every exported OpenAPI operation exactly once", () => {
     const operationCount = Object.keys(operationDefinitions).length;
 
     expect(Object.keys(openApiOperationIdMap)).toHaveLength(operationCount);
-    expect(platformOperationMap.size).toBe(operationCount);
+    expect(platformRouteDescriptorMap.size).toBe(operationCount);
     expect(platformOperationDescriptors).toHaveLength(operationCount);
   });
 
-  it("normalizes awkward command paths and exposes the missing bulk endpoints", () => {
-    expect(findPlatformOperationDescriptor("v1AuthorizeUser").commandPath).toEqual([
-      "platform",
-      "oauth",
-      "authorize",
-    ]);
-    expect(findPlatformOperationDescriptor("v1DiffABranch").commandPath).toEqual([
-      "platform",
-      "branches",
-      "diff",
-    ]);
-    expect(findPlatformOperationDescriptor("v1ListJitAccess").commandPath).toEqual([
-      "platform",
-      "projects",
-      "database",
-      "jit",
-      "list",
-    ]);
-    expect(findPlatformOperationDescriptor("v1BulkCreateSecrets").commandPath).toEqual([
-      "platform",
-      "projects",
-      "secrets",
-      "bulk-create",
-    ]);
-    expect(findPlatformOperationDescriptor("v1BulkDeleteSecrets").commandPath).toEqual([
-      "platform",
-      "projects",
-      "secrets",
-      "bulk-delete",
-    ]);
-    expect(findPlatformOperationDescriptor("v1BulkUpdateFunctions").commandPath).toEqual([
-      "platform",
-      "projects",
-      "functions",
-      "bulk-update",
-    ]);
-  });
-
-  it("has no duplicate or prefix-conflicting command paths", () => {
+  it("indexes descriptors by unique method and route pairs", () => {
     const seen = new Set<string>();
-    const paths = platformOperationDescriptors.map((descriptor) => descriptor.commandPath);
 
-    for (const commandPath of paths) {
-      const key = commandPath.join("/");
+    for (const descriptor of platformOperationDescriptors) {
+      const key = `${descriptor.method} ${descriptor.path}`;
       expect(seen.has(key)).toBe(false);
       seen.add(key);
     }
+  });
 
-    for (const left of paths) {
-      for (const right of paths) {
-        if (left === right) {
-          continue;
-        }
-        expect(hasPrefix(left, right)).toBe(false);
-      }
+  it("tracks all available methods for multi-method routes", () => {
+    expect(
+      platformRouteResolverDescriptorsByPath
+        .get("/v1/projects")
+        ?.map((descriptor) => descriptor.method),
+    ).toEqual(["GET", "POST"]);
+    expect(findPlatformOperationDescriptor("v1GetProject").availableMethods).toEqual([
+      "GET",
+      "PATCH",
+      "DELETE",
+    ]);
+    expect(findPlatformOperationDescriptor("v1GetAuthServiceConfig").availableMethods).toEqual([
+      "GET",
+      "PATCH",
+    ]);
+  });
+
+  it("derives one route listing per unique path", () => {
+    expect(platformRouteDescriptors).toHaveLength(platformRouteResolverDescriptorsByPath.size);
+    expect(platformRouteDescriptorsByPath.get("/v1/projects")).toEqual(
+      expect.objectContaining({
+        group: "Projects",
+        methods: [
+          expect.objectContaining({
+            method: "GET",
+            summary: "List all projects",
+            isDefault: true,
+          }),
+          expect.objectContaining({
+            method: "POST",
+            summary: "Create a project",
+            isDefault: false,
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("keeps route group metadata consistent with operation tags", () => {
+    for (const route of platformRouteDescriptors) {
+      const operations = platformRouteResolverDescriptorsByPath.get(route.path);
+      expect(operations).toBeDefined();
+      expect(new Set(operations?.map((descriptor) => descriptor.group))).toEqual(
+        new Set([route.group]),
+      );
+    }
+  });
+
+  it("uses the generated API-owned platform executor", () => {
+    expect(typeof executeApiClientOperation).toBe("function");
+    for (const descriptor of platformOperationDescriptors) {
+      expect(typeof descriptor.execute).toBe("function");
     }
   });
 
@@ -227,29 +235,24 @@ describe("platform command metadata", () => {
 
       const entry = entriesByOperationId.get(descriptor.operationId);
       expect(entry).toBeDefined();
+      if (entry === undefined) {
+        continue;
+      }
 
+      const rawParams = entry.parameters;
       for (const field of descriptor.request.params) {
-        if (
-          field.kind !== "union" ||
-          field.name === undefined ||
-          (field.location !== "path" && field.location !== "query" && field.location !== "header")
-        ) {
+        if (field.name === undefined || field.kind === "union") {
           continue;
         }
 
-        const rawParameter = entry?.parameters.find(
-          (parameter) => parameter.name === field.name && parameter.in === field.location,
-        );
-
-        expect(rawParameter?.schema).toBeDefined();
-        if (rawParameter?.schema === undefined) {
+        const rawParam = rawParams.find((candidate) => candidate.name === field.name);
+        if (!rawParam?.schema) {
           continue;
         }
 
-        const rawVariants = rawUnionVariantsFor(rawParameter.schema);
-
-        if (rawVariants.length > 0) {
-          expect(rawVariants.every(isScalarLikeRawSchema)).toBe(false);
+        const rawVariants = rawUnionVariantsFor(rawParam.schema);
+        if (rawVariants.length > 0 && rawVariants.every(isScalarLikeRawSchema)) {
+          expect(field.kind === "string" || field.kind === "enum").toBe(true);
         }
       }
     }

@@ -1,15 +1,20 @@
-import { Effect, Layer } from "effect";
+import { Layer } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { credentialsLayer } from "../../../auth/credentials.layer.ts";
-import { platformApiClientLayer } from "../../../auth/platform-api-client.layer.ts";
+import { platformApiLayer } from "../../../auth/platform-api.layer.ts";
 import { projectLinkStateLayer } from "../../../config/project-link-state.layer.ts";
 import { withJsonErrorHandling } from "../../../output/json-error-handling.ts";
-import { withCommandAnalytics } from "../../../telemetry/command-analytics.ts";
+import { commandRuntimeLayer } from "../../../runtime/command-runtime.layer.ts";
+import { withCommandInstrumentation } from "../../../telemetry/command-instrumentation.ts";
 import { create } from "./create.handler.ts";
 
-const branchesPlatformApiLayer = platformApiClientLayer.pipe(Layer.provide(credentialsLayer));
-const branchesRuntimeLayer = Layer.mergeAll(branchesPlatformApiLayer, projectLinkStateLayer);
+const branchesPlatformApiLayer = platformApiLayer.pipe(Layer.provide(credentialsLayer));
+const branchesRuntimeLayer = Layer.mergeAll(
+  branchesPlatformApiLayer,
+  projectLinkStateLayer,
+  commandRuntimeLayer(["branches", "create"]),
+);
 
 const BRANCH_REGIONS = [
   "us-east-1",
@@ -115,11 +120,7 @@ export const createBranchesCommand = Command.make("create", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    create(flags).pipe(
-      Effect.withSpan("command.branches.create"),
-      withCommandAnalytics({ command: "branches create" }),
-      withJsonErrorHandling,
-    ),
+    create(flags).pipe(withCommandInstrumentation(), withJsonErrorHandling),
   ),
   Command.provide(branchesRuntimeLayer),
 );

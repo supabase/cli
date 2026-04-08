@@ -279,7 +279,7 @@ function buildRequestBody(
     (content["application/json"] ? "application/json" : undefined);
 
   if (contentType === undefined) {
-    return { kind: "none" };
+    return { kind: "none", required: false };
   }
 
   const schema = requestBodySchema(entry, contentType);
@@ -305,6 +305,7 @@ function buildRequestBody(
 
     return {
       kind: "json",
+      required: entry.requestBody?.required !== false,
       contentType,
       schema: {
         label: "JSON Body",
@@ -320,6 +321,7 @@ function buildRequestBody(
 
   return {
     kind: requestBodyKind(contentType),
+    required: entry.requestBody?.required === true,
     contentType,
     fieldName: "body",
     schema: toPlatformSchemaNode({

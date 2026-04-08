@@ -1,5 +1,5 @@
-import { SupabaseApiClient, v1CreateABranch } from "@supabase/api/effect";
 import { Effect, FileSystem, Option, Path } from "effect";
+import { PlatformApi } from "../../../auth/platform-api.service.ts";
 import {
   ProjectLinkState,
   ProjectNotLinkedError,
@@ -93,7 +93,7 @@ const BRANCH_HEADERS = ["ID", "NAME", "DEFAULT", "GIT BRANCH", "STATUS", "CREATE
 export const create = Effect.fn("branches.create")(function* (flags: CreateFlags) {
   const output = yield* Output;
   const projectLinkState = yield* ProjectLinkState;
-  const apiClient = yield* SupabaseApiClient;
+  const api = yield* PlatformApi;
 
   yield* output.intro("Create branch");
 
@@ -115,21 +115,20 @@ export const create = Effect.fn("branches.create")(function* (flags: CreateFlags
 
   const creating = yield* output.task("Creating branch...");
 
-  const apiEffect = v1CreateABranch({
-    ref: project.ref,
-    branch_name: branchName,
-    ...(Option.isSome(gitBranch) ? { git_branch: gitBranch.value } : undefined),
-    ...(Option.isSome(flags.region) ? { region: flags.region.value } : undefined),
-    ...(desiredInstanceSize !== undefined
-      ? { desired_instance_size: desiredInstanceSize }
-      : undefined),
-    ...(flags.persistent ? { persistent: flags.persistent } : undefined),
-    ...(flags.withData ? { with_data: flags.withData } : undefined),
-    ...(Option.isSome(flags.notifyUrl) ? { notify_url: flags.notifyUrl.value } : undefined),
-  }).pipe(
-    Effect.provideService(SupabaseApiClient, apiClient),
-    Effect.tapError(() => creating.fail()),
-  );
+  const apiEffect = api.v1
+    .createABranch({
+      ref: project.ref,
+      branch_name: branchName,
+      ...(Option.isSome(gitBranch) ? { git_branch: gitBranch.value } : undefined),
+      ...(Option.isSome(flags.region) ? { region: flags.region.value } : undefined),
+      ...(desiredInstanceSize !== undefined
+        ? { desired_instance_size: desiredInstanceSize }
+        : undefined),
+      ...(flags.persistent ? { persistent: flags.persistent } : undefined),
+      ...(flags.withData ? { with_data: flags.withData } : undefined),
+      ...(Option.isSome(flags.notifyUrl) ? { notify_url: flags.notifyUrl.value } : undefined),
+    })
+    .pipe(Effect.tapError(() => creating.fail()));
 
   const branch = yield* apiEffect.pipe(
     Effect.mapError((err) => {

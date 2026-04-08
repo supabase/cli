@@ -1,14 +1,19 @@
-import { Effect, Layer } from "effect";
+import { Layer } from "effect";
 import { Command } from "effect/unstable/cli";
 import { credentialsLayer } from "../../../auth/credentials.layer.ts";
-import { platformApiClientLayer } from "../../../auth/platform-api-client.layer.ts";
+import { platformApiLayer } from "../../../auth/platform-api.layer.ts";
 import { projectLinkStateLayer } from "../../../config/project-link-state.layer.ts";
 import { withJsonErrorHandling } from "../../../output/json-error-handling.ts";
-import { withCommandAnalytics } from "../../../telemetry/command-analytics.ts";
+import { commandRuntimeLayer } from "../../../runtime/command-runtime.layer.ts";
+import { withCommandInstrumentation } from "../../../telemetry/command-instrumentation.ts";
 import { list } from "./list.handler.ts";
 
-const branchesPlatformApiLayer = platformApiClientLayer.pipe(Layer.provide(credentialsLayer));
-const branchesRuntimeLayer = Layer.mergeAll(branchesPlatformApiLayer, projectLinkStateLayer);
+const branchesPlatformApiLayer = platformApiLayer.pipe(Layer.provide(credentialsLayer));
+const branchesRuntimeLayer = Layer.mergeAll(
+  branchesPlatformApiLayer,
+  projectLinkStateLayer,
+  commandRuntimeLayer(["branches", "list"]),
+);
 
 export const listBranchesCommand = Command.make("list").pipe(
   Command.withDescription(
@@ -27,12 +32,6 @@ export const listBranchesCommand = Command.make("list").pipe(
       description: "Machine-readable output with an `active` field per branch",
     },
   ]),
-  Command.withHandler(() =>
-    list().pipe(
-      Effect.withSpan("command.branches.list"),
-      withCommandAnalytics({ command: "branches list" }),
-      withJsonErrorHandling,
-    ),
-  ),
+  Command.withHandler(() => list().pipe(withCommandInstrumentation(), withJsonErrorHandling)),
   Command.provide(branchesRuntimeLayer),
 );

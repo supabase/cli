@@ -1,8 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Stdio } from "effect";
+import { commandRuntimeLayer } from "../runtime/command-runtime.layer.ts";
 import { CurrentAnalyticsContext } from "./analytics-context.ts";
 import { Analytics } from "./analytics.service.ts";
-import { withCommandAnalytics } from "./command-analytics.ts";
+import { withCommandInstrumentation } from "./command-instrumentation.ts";
 
 function mockContextualAnalytics() {
   const captured: Array<{
@@ -33,7 +34,27 @@ function mockContextualAnalytics() {
   return { layer, captured };
 }
 
-describe("withCommandAnalytics", () => {
+describe("withCommandInstrumentation", () => {
+  it.live("creates a command span and annotates it with command metadata", () => {
+    const analytics = mockContextualAnalytics();
+
+    return Effect.gen(function* () {
+      const span = yield* Effect.currentSpan;
+      expect(span.name).toBe("command.branches.list");
+      expect(span.attributes.get("command")).toBe("branches list");
+      expect(typeof span.attributes.get("command_run_id")).toBe("string");
+    }).pipe(
+      withCommandInstrumentation({ analytics: false }),
+      Effect.provide(analytics.layer),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["branches", "list"]),
+        }),
+      ),
+      Effect.provide(commandRuntimeLayer(["branches", "list"])),
+    );
+  });
+
   it.live("shares one command_run_id across milestone and command events", () => {
     const analytics = mockContextualAnalytics();
 
@@ -45,13 +66,14 @@ describe("withCommandAnalytics", () => {
         command_run_id: context.command_run_id,
       });
     }).pipe(
-      withCommandAnalytics({ command: "start" }),
+      withCommandInstrumentation(),
       Effect.provide(analytics.layer),
       Effect.provide(
         Stdio.layerTest({
           args: Effect.succeed(["start", "--detach", "--exclude=auth"]),
         }),
       ),
+      Effect.provide(commandRuntimeLayer(["start"])),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(2);
@@ -75,15 +97,14 @@ describe("withCommandAnalytics", () => {
   it.live("captures failed commands with a non-zero exit code", () => {
     const analytics = mockContextualAnalytics();
 
-    const program = withCommandAnalytics({
-      command: "login",
-    })(Effect.fail(new Error("boom"))).pipe(
+    const program = withCommandInstrumentation()(Effect.fail(new Error("boom"))).pipe(
       Effect.provide(analytics.layer),
       Effect.provide(
         Stdio.layerTest({
           args: Effect.succeed(["login"]),
         }),
       ),
+      Effect.provide(commandRuntimeLayer(["login"])),
       Effect.exit,
       Effect.tap(() =>
         Effect.sync(() => {
@@ -101,8 +122,7 @@ describe("withCommandAnalytics", () => {
     const analytics = mockContextualAnalytics();
 
     return Effect.void.pipe(
-      withCommandAnalytics({
-        command: "start",
+      withCommandInstrumentation({
         flags: {
           stack: "default",
           mode: "docker" as const,
@@ -126,6 +146,7 @@ describe("withCommandAnalytics", () => {
           ]),
         }),
       ),
+      Effect.provide(commandRuntimeLayer(["start"])),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
@@ -147,8 +168,7 @@ describe("withCommandAnalytics", () => {
     const analytics = mockContextualAnalytics();
 
     return Effect.void.pipe(
-      withCommandAnalytics({
-        command: "login",
+      withCommandInstrumentation({
         flags: {
           token: Option.none<string>(),
           name: Option.some("my-machine"),
@@ -162,6 +182,7 @@ describe("withCommandAnalytics", () => {
           args: Effect.succeed(["login", "--name", "my-machine", "--no-browser"]),
         }),
       ),
+      Effect.provide(commandRuntimeLayer(["login"])),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
@@ -170,6 +191,26 @@ describe("withCommandAnalytics", () => {
             name: "my-machine",
             "no-browser": true,
           });
+        }),
+      ),
+    );
+  });
+
+  it.live("skips analytics capture when analytics are disabled", () => {
+    const analytics = mockContextualAnalytics();
+
+    return Effect.sync(() => "ok").pipe(
+      withCommandInstrumentation({ analytics: false }),
+      Effect.provide(analytics.layer),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["telemetry", "enable"]),
+        }),
+      ),
+      Effect.provide(commandRuntimeLayer(["telemetry", "enable"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(analytics.captured).toEqual([]);
         }),
       ),
     );

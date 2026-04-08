@@ -3,24 +3,16 @@ import {
   makeSupabaseApiClient,
   type SupabaseApiClientOptions,
   type SupabaseApiConfig,
-  SupabaseApiClient,
-  supabaseApiClientLayer,
 } from "./internal/client.ts";
-import * as EffectModule from "effect/Effect";
-import { makeEffectApiClient, makeV1ApiClientFacade } from "./internal/effect-client.ts";
-import { effectOperations } from "./generated/effect-operations.ts";
+import { makeEffectApiClient, type EffectClient } from "./internal/effect-client.ts";
+import {
+  executeApiClientOperation,
+  type GeneratedEffectOperations,
+  versionedEffectOperations,
+} from "./generated/effect-client.ts";
 
-export type {
-  SupabaseApiClientShape,
-  SupabaseApiError,
-  SupabaseApiRetryOptions,
-} from "./internal/client.ts";
-export {
-  makeSupabaseApiClient,
-  SupabaseApiClient,
-  SupabaseApiConfigError,
-  supabaseApiClientLayer,
-} from "./internal/client.ts";
+export type { SupabaseApiError, SupabaseApiRetryOptions } from "./internal/client.ts";
+export { SupabaseApiConfigError } from "./internal/client.ts";
 export type { SupabaseApiClientOptions, SupabaseApiConfig } from "./internal/client.ts";
 export { apiConfigLayer, DEFAULT_SUPABASE_API_URL } from "./config/api-config.layer.ts";
 export { ApiConfig } from "./config/api-config.service.ts";
@@ -33,11 +25,11 @@ export {
   operationDefinitions,
 } from "./generated/contracts.ts";
 export * from "./generated/contracts.ts";
-export * from "./generated/effect-operations.ts";
+export { executeApiClientOperation } from "./generated/effect-client.ts";
 
 export const makeApiClient = (config: SupabaseApiConfig = {}, options?: SupabaseApiClientOptions) =>
   Effect.map(makeSupabaseApiClient(config, options), (client) =>
-    makeV1ApiClientFacade(makeEffectApiClient(client, effectOperations)),
+    makeEffectApiClient(client, versionedEffectOperations),
   );
 
-export type ApiClient = EffectModule.Success<ReturnType<typeof makeApiClient>>;
+export type ApiClient = EffectClient<GeneratedEffectOperations>;

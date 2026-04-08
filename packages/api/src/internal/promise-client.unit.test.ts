@@ -78,7 +78,7 @@ const config = {
 } as const;
 
 describe("makePromiseClient", () => {
-  test("preserves the unversioned facade and the v1 namespace", async () => {
+  test("preserves only the versioned facade namespace", async () => {
     const seenRequests: Array<{ method: string; url: string }> = [];
     const runtime = ManagedRuntime.make(
       httpClientLayer((request) => {
@@ -148,20 +148,16 @@ describe("makePromiseClient", () => {
 
     try {
       const effectClient = await runtime.runPromise(makeApiClient(config));
-      const { v1, ...unversioned } = effectClient;
-      const client = {
-        ...makePromiseClient(runtime, unversioned),
-        v1: makePromiseClient(runtime, v1),
-      };
+      const client = makePromiseClient(runtime, effectClient);
 
-      expect(Object.keys(client)).toContain("createAProject");
-      expect(Object.keys(client)).toContain("getProject");
-      expect(Object.keys(client)).toContain("listAllProjects");
+      expect("createAProject" in client).toBe(false);
+      expect("getProject" in client).toBe(false);
+      expect("listAllProjects" in client).toBe(false);
       expect(typeof client.v1.createAProject).toBe("function");
       expect(typeof client.v1.getProject).toBe("function");
       expect(typeof client.v1.listAllProjects).toBe("function");
 
-      const created = await client.createAProject({
+      const created = await client.v1.createAProject({
         db_pass: "hunter2",
         name: "project-name",
         organization_slug: "my-org",
@@ -169,7 +165,7 @@ describe("makePromiseClient", () => {
       const project = await client.v1.getProject({
         ref: "abcdefghijklmnopqrst",
       });
-      const projects = await client.listAllProjects();
+      const projects = await client.v1.listAllProjects();
 
       expect(created.ref).toBe("abcdefghijklmnopqrst");
       expect(project.database.host).toBe("db.supabase.internal");
@@ -218,11 +214,7 @@ describe("makePromiseClient", () => {
 
     try {
       const effectClient = await runtime.runPromise(makeApiClient(config));
-      const { v1, ...unversioned } = effectClient;
-      const client = {
-        ...makePromiseClient(runtime, unversioned),
-        v1: makePromiseClient(runtime, v1),
-      };
+      const client = makePromiseClient(runtime, effectClient);
 
       const metadata = {
         entrypoint_path: "functions/demo/index.ts",

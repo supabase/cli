@@ -1,4 +1,3 @@
-import { Effect } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { apiLayer } from "../../auth/api.layer.ts";
@@ -6,7 +5,8 @@ import { credentialsLayer } from "../../auth/credentials.layer.ts";
 import { cryptoLayer } from "../../auth/crypto.layer.ts";
 import { withJsonErrorHandling } from "../../output/json-error-handling.ts";
 import { browserLayer } from "../../runtime/browser.layer.ts";
-import { withCommandAnalytics } from "../../telemetry/command-analytics.ts";
+import { commandRuntimeLayer } from "../../runtime/command-runtime.layer.ts";
+import { withCommandInstrumentation } from "../../telemetry/command-instrumentation.ts";
 import { stdinLayer } from "../../runtime/stdin.layer.ts";
 import { login } from "./login.handler.ts";
 
@@ -60,15 +60,12 @@ export const loginCommand = Command.make("login", flags).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    login(flags).pipe(
-      Effect.withSpan("command.login"),
-      withCommandAnalytics({ command: "login" }),
-      withJsonErrorHandling,
-    ),
+    login(flags).pipe(withCommandInstrumentation(), withJsonErrorHandling),
   ),
   Command.provide(apiLayer),
   Command.provide(credentialsLayer),
   Command.provide(cryptoLayer),
   Command.provide(browserLayer),
   Command.provide(stdinLayer),
+  Command.provide(commandRuntimeLayer(["login"])),
 );

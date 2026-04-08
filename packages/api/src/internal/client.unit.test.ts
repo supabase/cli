@@ -234,6 +234,59 @@ describe("makeSupabaseApiClient", () => {
     expect(result.ref).toBe("abcdefghijklmnopqrst");
   });
 
+  test("applies default headers alongside auth, user agent, and request headers", async () => {
+    let seenHeaders:
+      | {
+          authorization: string | undefined;
+          userAgent: string | undefined;
+          command: string | undefined;
+          commandRunId: string | undefined;
+          idempotencyKey: string | undefined;
+        }
+      | undefined;
+
+    await Effect.runPromise(
+      makeSupabaseApiClient({
+        ...config,
+        headers: {
+          "X-Supabase-Command": "branches list",
+          "X-Supabase-Command-Run-ID": "run-123",
+        },
+      }).pipe(
+        Effect.flatMap((client) =>
+          client.execute<"v1ApplyAMigration">(operationDefinitions.v1ApplyAMigration, {
+            ref: "abcdefghijklmnopqrst",
+            query: "select 1",
+            name: "smoke_test",
+            "Idempotency-Key": "migration-123",
+          }),
+        ),
+        Effect.provide(
+          httpClientLayer((request) => {
+            seenHeaders = {
+              authorization: request.headers.authorization,
+              userAgent: request.headers["user-agent"],
+              command: request.headers["x-supabase-command"],
+              commandRunId: request.headers["x-supabase-command-run-id"],
+              idempotencyKey: request.headers["idempotency-key"],
+            };
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response(null, { status: 204 })),
+            );
+          }),
+        ),
+      ),
+    );
+
+    expect(seenHeaders).toEqual({
+      authorization: "Bearer test-token",
+      userAgent: "supabase-api/test",
+      command: "branches list",
+      commandRunId: "run-123",
+      idempotencyKey: "migration-123",
+    });
+  });
+
   test("retries 5xx responses for idempotent GET requests", async () => {
     let attempts = 0;
 
