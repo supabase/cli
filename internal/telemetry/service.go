@@ -153,6 +153,10 @@ func (s *Service) ClearDistinctID() error {
 	return SaveState(s.state, s.fsys)
 }
 
+func (s *Service) NeedsIdentityStitch() bool {
+	return s != nil && s.state.DistinctID == "" && s.canSend()
+}
+
 func (s *Service) GroupIdentify(groupType string, groupKey string, properties map[string]any) error {
 	if !s.canSend() {
 		return nil
