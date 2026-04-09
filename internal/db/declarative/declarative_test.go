@@ -45,7 +45,7 @@ func TestWriteDeclarativeSchemas(t *testing.T) {
 
 	cfg, err := afero.ReadFile(fsys, utils.ConfigPath)
 	require.NoError(t, err)
-	assert.Contains(t, string(cfg), `"database"`)
+	assert.Contains(t, string(cfg), `"schemas"`)
 }
 
 func TestTryCacheMigrationsCatalogWritesPrefixedCache(t *testing.T) {
