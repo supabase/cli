@@ -127,7 +127,7 @@ func GetSupabase() *supabase.ClientWithResponses {
 		}
 		transport := &identityTransport{
 			RoundTripper: http.DefaultTransport,
-			onGotrueID:   OnGotrueID,
+			onGotrueID:   &OnGotrueID,
 		}
 		apiClient, err = supabase.NewClientWithResponses(
 			GetSupabaseAPIHost(),

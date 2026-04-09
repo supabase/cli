@@ -9,6 +9,7 @@ import (
 
 func TestIdentityTransport_CapturesGotrueIdHeader(t *testing.T) {
 	var captured string
+	cb := func(id string) { captured = id }
 	transport := &identityTransport{
 		RoundTripper: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			return &http.Response{
@@ -16,7 +17,7 @@ func TestIdentityTransport_CapturesGotrueIdHeader(t *testing.T) {
 				Header:     http.Header{"X-Gotrue-Id": []string{"user-abc-123"}},
 			}, nil
 		}),
-		onGotrueID: func(id string) { captured = id },
+		onGotrueID: &cb,
 	}
 	req, _ := http.NewRequest("GET", "https://api.supabase.io/v1/projects", nil)
 	resp, err := transport.RoundTrip(req)
@@ -27,6 +28,7 @@ func TestIdentityTransport_CapturesGotrueIdHeader(t *testing.T) {
 
 func TestIdentityTransport_IgnoresWhenHeaderMissing(t *testing.T) {
 	var captured string
+	cb := func(id string) { captured = id }
 	transport := &identityTransport{
 		RoundTripper: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			return &http.Response{
@@ -34,7 +36,7 @@ func TestIdentityTransport_IgnoresWhenHeaderMissing(t *testing.T) {
 				Header:     http.Header{},
 			}, nil
 		}),
-		onGotrueID: func(id string) { captured = id },
+		onGotrueID: &cb,
 	}
 	req, _ := http.NewRequest("GET", "https://api.supabase.io/v1/projects", nil)
 	_, err := transport.RoundTrip(req)
@@ -58,13 +60,31 @@ func TestIdentityTransport_NilCallbackDoesNotPanic(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode)
 }
 
+func TestIdentityTransport_NilFuncBehindPointerDoesNotPanic(t *testing.T) {
+	var cb func(string) // nil func
+	transport := &identityTransport{
+		RoundTripper: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: 200,
+				Header:     http.Header{"X-Gotrue-Id": []string{"user-abc-123"}},
+			}, nil
+		}),
+		onGotrueID: &cb,
+	}
+	req, _ := http.NewRequest("GET", "https://api.supabase.io/v1/projects", nil)
+	resp, err := transport.RoundTrip(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+}
+
 func TestIdentityTransport_InnerTransportError(t *testing.T) {
 	var captured string
+	cb := func(id string) { captured = id }
 	transport := &identityTransport{
 		RoundTripper: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			return nil, assert.AnError
 		}),
-		onGotrueID: func(id string) { captured = id },
+		onGotrueID: &cb,
 	}
 	req, _ := http.NewRequest("GET", "https://api.supabase.io/v1/projects", nil)
 	resp, err := transport.RoundTrip(req)
