@@ -85,6 +85,13 @@ var (
 		},
 	}
 
+	authAccessMode = utils.EnumFlag{
+		Allowed: []string{
+			string(new_.AuthAccessModeAlways),
+			string(new_.AuthAccessModeApiKey),
+			string(new_.AuthAccessModeUser),
+		},
+	}
 	functionsNewCmd = &cobra.Command{
 		Use:   "new <Function name>",
 		Short: "Create a new Function locally",
@@ -94,7 +101,12 @@ var (
 			return cmd.Root().PersistentPreRunE(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return new_.Run(cmd.Context(), args[0], afero.NewOsFs())
+			authMode := new_.AuthAccessModeAlways
+			if len(authAccessMode.Value) > 0 {
+				authMode = new_.AuthAccessMode(authAccessMode.Value)
+			}
+
+			return new_.Run(cmd.Context(), args[0], authMode, afero.NewOsFs())
 		},
 	}
 
@@ -172,6 +184,7 @@ func init() {
 	functionsDownloadCmd.MarkFlagsMutuallyExclusive("use-api", "use-docker", "legacy-bundle")
 	cobra.CheckErr(downloadFlags.MarkHidden("legacy-bundle"))
 	cobra.CheckErr(downloadFlags.MarkHidden("use-docker"))
+	functionsNewCmd.Flags().Var(&authAccessMode, "auth", "use a specific auth access (default always)")
 	functionsCmd.AddCommand(functionsListCmd)
 	functionsCmd.AddCommand(functionsDeleteCmd)
 	functionsCmd.AddCommand(functionsDeployCmd)

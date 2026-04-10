@@ -4,20 +4,20 @@
 
 // Setup type definitions for built-in Supabase Runtime APIs
 import "@supabase/functions-js/edge-runtime.d.ts"
+import { withSupabase } from '@supabase/server'
 
 console.log("Hello from Functions!")
 
-Deno.serve(async (req) => {
-  const { name } = await req.json()
-  const data = {
-    message: `Hello ${name}!`,
-  }
+// This endpoint uses 'user' access, credentials is required.
+export default {
+  fetch: withSupabase({ allow: 'user' }, async (_req, ctx) => {
+    const email = ctx.userClaims?.email;
 
-  return new Response(
-    JSON.stringify(data),
-    { headers: { "Content-Type": "application/json" } },
-  )
-})
+    return Response.json({
+      message: `Hello ${email}!`,
+    })
+  }),
+}
 
 /* To invoke locally:
 
@@ -25,8 +25,6 @@ Deno.serve(async (req) => {
   2. Make an HTTP request:
 
   curl -i --location --request POST '{{ .URL }}' \
-    --header 'Authorization: Bearer {{ .Token }}' \
-    --header 'Content-Type: application/json' \
-    --data '{"name":"Functions"}'
-
+    --header 'apiKey: {{ .PublishableKey }}'
+    --header 'Authorization: Bearer <UserToken>'
 */
