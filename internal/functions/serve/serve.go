@@ -243,7 +243,7 @@ func parseEnvFile(envFilePath string, fsys afero.Fs) ([]string, error) {
 		envFilePath = filepath.Join(utils.CurrentDirAbs, envFilePath)
 	}
 	env := []string{}
-	secrets, err := set.ListSecrets(envFilePath, fsys)
+	secrets, err := set.ListSecrets(envFilePath, fsys, nil)
 	for _, v := range secrets {
 		env = append(env, fmt.Sprintf("%s=%s", v.Name, v.Value))
 	}

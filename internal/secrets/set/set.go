@@ -13,8 +13,10 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
+	"golang.org/x/term"
 )
 
 func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsys afero.Fs) error {
@@ -25,7 +27,22 @@ func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsy
 	if len(envFilePath) > 0 && !filepath.IsAbs(envFilePath) {
 		envFilePath = filepath.Join(utils.CurrentDirAbs, envFilePath)
 	}
-	secrets, err := ListSecrets(envFilePath, fsys, args...)
+	promptSecret := func(name string) (string, error) {
+		// Guard: without this check, PromptMasked would silently consume all piped stdin
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			return "", errors.Errorf("Cannot prompt for secret value in non-interactive mode. Use %s format instead.", name+"=VALUE")
+		}
+		fmt.Fprintf(os.Stderr, "Paste your secret for %s: ", utils.Aqua(name))
+		value, err := credentials.PromptMaskedWithAsterisks(os.Stdin)
+		if err != nil {
+			return "", err
+		}
+		if len(value) == 0 {
+			return "", errors.New("Secret value cannot be empty. Use NAME= to explicitly set an empty value.")
+		}
+		return value, nil
+	}
+	secrets, err := ListSecrets(envFilePath, fsys, promptSecret, args...)
 	if err != nil {
 		return err
 	}
@@ -43,7 +60,7 @@ func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsy
 	return nil
 }
 
-func ListSecrets(envFilePath string, fsys afero.Fs, envArgs ...string) (api.CreateSecretBody, error) {
+func ListSecrets(envFilePath string, fsys afero.Fs, promptSecret func(string) (string, error), envArgs ...string) (api.CreateSecretBody, error) {
 	envMap := map[string]string{}
 	for name, secret := range utils.Config.EdgeRuntime.Secrets {
 		if len(secret.SHA256) > 0 {
@@ -60,7 +77,19 @@ func ListSecrets(envFilePath string, fsys afero.Fs, envArgs ...string) (api.Crea
 	for _, pair := range envArgs {
 		name, value, found := strings.Cut(pair, "=")
 		if !found {
-			return nil, errors.Errorf("Invalid secret pair: %s. Must be NAME=VALUE.", pair)
+			if promptSecret == nil {
+				return nil, errors.Errorf("Invalid secret pair: %s. Must be NAME=VALUE.", pair)
+			}
+			// Skip early to avoid prompting for a name that would be discarded below
+			if strings.HasPrefix(name, "SUPABASE_") {
+				fmt.Fprintln(os.Stderr, "Env name cannot start with SUPABASE_, skipping: "+name)
+				continue
+			}
+			var err error
+			value, err = promptSecret(name)
+			if err != nil {
+				return nil, err
+			}
 		}
 		envMap[name] = value
 	}
