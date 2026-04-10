@@ -112,7 +112,7 @@ func createEntrypointFile(slug string, authMode AuthAccessMode, fsys afero.Fs) e
 	defer f.Close()
 	indexTemplate, hasTemplate := indexAuthTemplates[authMode]
 	if !hasTemplate {
-		return errors.Errorf("failed to write entrypoint: '%w' is not a valid template", authMode)
+		return errors.Errorf("failed to write entrypoint: '%v' is not a valid template", authMode)
 	}
 	if err := indexTemplate.Option("missingkey=error").Execute(f, indexConfig{
 		URL:            utils.GetApiUrl("/functions/v1/" + slug),
