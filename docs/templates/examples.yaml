@@ -310,7 +310,7 @@ supabase-db-schema-declarative-sync:
       Reset local database to match migrations first? (local data will be lost) [y/N] y
       Resetting database...
       ...
-      Declarative schema written to supabase/declarative
+      Declarative schema written to supabase/database
       Finished supabase db schema declarative generate.
 supabase-test-db:
   - id: basic-usage
