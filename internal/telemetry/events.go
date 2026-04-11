@@ -32,12 +32,12 @@ const (
 	//     added directly by this event, but linked project groups may still be
 	//     attached when available.
 	EventStackStarted = "cli_stack_started"
-	//   - EventUpgradeSuggested: sent when a CLI command receives a 402 Payment
-	//     Required response and displays a billing upgrade link to the user.
-	//     This helps measure how often users hit plan-gated features and how
-	//     large the upgrade conversion opportunity is. Event-specific properties
-	//     are PropFeatureKey (the entitlement key that was gated) and
-	//     PropOrgSlug (the organization slug, empty if lookup failed).
+	//   - EventUpgradeSuggested: sent when a CLI command hits a plan-gated
+	//     feature and displays a billing upgrade link. This helps identify
+	//     which plan gates users encounter most often so we can improve
+	//     error messages and documentation. Event-specific properties are
+	//     PropFeatureKey (the entitlement key that was gated) and PropOrgSlug
+	//     (the organization slug, empty if lookup failed).
 	EventUpgradeSuggested = "cli_upgrade_suggested"
 )
 
