@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/sso/internal/render"
 	"github.com/supabase/cli/internal/sso/internal/saml"
+	"github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
@@ -44,10 +45,12 @@ func Run(ctx context.Context, params RunParams) error {
 	}
 
 	if getResp.JSON200 == nil {
+		if orgSlug, isGated := utils.SuggestUpgradeOnError(ctx, params.ProjectRef, "auth.saml_2", getResp.StatusCode()); isGated {
+			trackUpgradeSuggested(ctx, "auth.saml_2", orgSlug)
+		}
 		if getResp.StatusCode() == http.StatusNotFound {
 			return errors.Errorf("An identity provider with ID %q could not be found.", parsed)
 		}
-
 		return errors.New("unexpected error fetching identity provider: " + string(getResp.Body))
 	}
 
@@ -123,6 +126,9 @@ func Run(ctx context.Context, params RunParams) error {
 	}
 
 	if putResp.JSON200 == nil {
+		if orgSlug, isGated := utils.SuggestUpgradeOnError(ctx, params.ProjectRef, "auth.saml_2", putResp.StatusCode()); isGated {
+			trackUpgradeSuggested(ctx, "auth.saml_2", orgSlug)
+		}
 		return errors.New("unexpected error fetching identity provider: " + string(putResp.Body))
 	}
 
@@ -133,5 +139,14 @@ func Run(ctx context.Context, params RunParams) error {
 		return nil
 	default:
 		return utils.EncodeOutput(params.Format, os.Stdout, putResp.JSON200)
+	}
+}
+
+func trackUpgradeSuggested(ctx context.Context, featureKey, orgSlug string) {
+	if svc := telemetry.FromContext(ctx); svc != nil {
+		_ = svc.Capture(ctx, telemetry.EventUpgradeSuggested, map[string]any{
+			telemetry.PropFeatureKey: featureKey,
+			telemetry.PropOrgSlug:    orgSlug,
+		}, nil)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/google/uuid"
 	"github.com/supabase/cli/internal/sso/internal/render"
+	"github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -23,10 +24,12 @@ func Run(ctx context.Context, ref, providerId, format string) error {
 	}
 
 	if resp.JSON200 == nil {
+		if orgSlug, isGated := utils.SuggestUpgradeOnError(ctx, ref, "auth.saml_2", resp.StatusCode()); isGated {
+			trackUpgradeSuggested(ctx, "auth.saml_2", orgSlug)
+		}
 		if resp.StatusCode() == http.StatusNotFound {
 			return errors.Errorf("An identity provider with ID %q could not be found.", providerId)
 		}
-
 		return errors.New("Unexpected error removing identity provider: " + string(resp.Body))
 	}
 
@@ -37,5 +40,14 @@ func Run(ctx context.Context, ref, providerId, format string) error {
 		return nil
 	default:
 		return utils.EncodeOutput(format, os.Stdout, resp.JSON200)
+	}
+}
+
+func trackUpgradeSuggested(ctx context.Context, featureKey, orgSlug string) {
+	if svc := telemetry.FromContext(ctx); svc != nil {
+		_ = svc.Capture(ctx, telemetry.EventUpgradeSuggested, map[string]any{
+			telemetry.PropFeatureKey: featureKey,
+			telemetry.PropOrgSlug:    orgSlug,
+		}, nil)
 	}
 }
