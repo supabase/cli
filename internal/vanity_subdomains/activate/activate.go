@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -18,6 +19,9 @@ func Run(ctx context.Context, projectRef string, desiredSubdomain string, fsys a
 	if err != nil {
 		return errors.Errorf("failed activate vanity subdomain: %w", err)
 	} else if resp.JSON201 == nil {
+		if orgSlug, isGated := utils.SuggestUpgradeOnError(ctx, projectRef, "vanity_subdomain", resp.StatusCode()); isGated {
+			trackUpgradeSuggested(ctx, "vanity_subdomain", orgSlug)
+		}
 		return errors.Errorf("unexpected activate vanity subdomain status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 	if utils.OutputFormat.Value != utils.OutputPretty {
@@ -25,4 +29,13 @@ func Run(ctx context.Context, projectRef string, desiredSubdomain string, fsys a
 	}
 	fmt.Printf("Activated vanity subdomain at %s\n", resp.JSON201.CustomDomain)
 	return nil
+}
+
+func trackUpgradeSuggested(ctx context.Context, featureKey, orgSlug string) {
+	if svc := telemetry.FromContext(ctx); svc != nil {
+		_ = svc.Capture(ctx, telemetry.EventUpgradeSuggested, map[string]any{
+			telemetry.PropFeatureKey: featureKey,
+			telemetry.PropOrgSlug:    orgSlug,
+		}, nil)
+	}
 }
