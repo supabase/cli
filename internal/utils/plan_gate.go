@@ -24,29 +24,29 @@ func GetOrgBillingURL(orgSlug string) string {
 // by looking up the org's entitlements. Only sets CmdSuggestion when the entitlements
 // API confirms the feature is gated (hasAccess == false). Returns the resolved org
 // slug and true if a billing suggestion was shown (so callers can fire telemetry).
-func SuggestUpgradeOnError(ctx context.Context, projectRef, featureKey string, statusCode int) (string, bool) {
+func SuggestUpgradeOnError(ctx context.Context, projectRef, featureKey string, statusCode int) (orgSlug string, isGated bool) {
 	if statusCode >= 200 && statusCode < 300 {
-		return "", false
+		return
 	}
 
 	orgSlug, err := GetOrgSlugFromProjectRef(ctx, projectRef)
 	if err != nil {
-		return "", false
+		return
 	}
-
-	billingURL := GetOrgBillingURL(orgSlug)
 
 	resp, err := GetSupabase().V1GetOrganizationEntitlementsWithResponse(ctx, orgSlug)
 	if err != nil || resp.JSON200 == nil {
-		return orgSlug, false
+		return
 	}
 
 	for _, e := range resp.JSON200.Entitlements {
 		if string(e.Feature.Key) == featureKey && !e.HasAccess {
+			billingURL := GetOrgBillingURL(orgSlug)
 			CmdSuggestion = fmt.Sprintf("Your organization does not have access to this feature. Upgrade your plan: %s", Bold(billingURL))
-			return orgSlug, true
+			isGated = true
+			return
 		}
 	}
 
-	return orgSlug, false
+	return
 }
