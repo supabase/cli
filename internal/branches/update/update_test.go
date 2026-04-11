@@ -102,10 +102,6 @@ func TestUpdateBranch(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Patch("/v1/branches/" + flags.ProjectRef).
 			Reply(http.StatusServiceUnavailable)
-		// SuggestUpgradeOnError triggers on non-2xx; project lookup will 404
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + flags.ProjectRef).
-			Reply(http.StatusNotFound)
 		// Run test
 		err := Run(context.Background(), flags.ProjectRef, api.UpdateBranchBody{}, nil)
 		assert.ErrorContains(t, err, "unexpected update branch status 503:")

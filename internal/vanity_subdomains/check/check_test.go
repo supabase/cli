@@ -66,10 +66,6 @@ func TestCheckSubdomain(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/projects/" + flags.ProjectRef + "/vanity-subdomain/check-availability").
 			Reply(http.StatusServiceUnavailable)
-		// SuggestUpgradeOnError triggers on non-2xx; project lookup will 404
-		gock.New(utils.DefaultApiHost).
-			Get("/v1/projects/" + flags.ProjectRef).
-			Reply(http.StatusNotFound)
 		// Run test
 		err := Run(context.Background(), flags.ProjectRef, "example.com", nil)
 		assert.ErrorContains(t, err, "unexpected check vanity subdomain status 503:")

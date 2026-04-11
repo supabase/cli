@@ -24,8 +24,9 @@ func GetOrgBillingURL(orgSlug string) string {
 // by looking up the org's entitlements. Only sets CmdSuggestion when the entitlements
 // API confirms the feature is gated (hasAccess == false). Returns the resolved org
 // slug and true if a billing suggestion was shown (so callers can fire telemetry).
+// Only checks on 4xx client errors; skips 2xx (success) and 5xx (server errors).
 func SuggestUpgradeOnError(ctx context.Context, projectRef, featureKey string, statusCode int) (orgSlug string, isGated bool) {
-	if statusCode >= 200 && statusCode < 300 {
+	if statusCode < 400 || statusCode >= 500 {
 		return
 	}
 

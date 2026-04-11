@@ -156,6 +156,13 @@ func TestSuggestUpgradeOnError(t *testing.T) {
 		assert.Empty(t, CmdSuggestion)
 	})
 
+	t.Run("skips on 503 server error", func(t *testing.T) {
+		CmdSuggestion = ""
+		_, got := SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusServiceUnavailable)
+		assert.False(t, got)
+		assert.Empty(t, CmdSuggestion)
+	})
+
 	t.Run("skips on 200", func(t *testing.T) {
 		CmdSuggestion = ""
 		_, got := SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusOK)
