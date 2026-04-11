@@ -3,7 +3,6 @@ package utils
 import (
 	"context"
 	"fmt"
-	"net/http"
 )
 
 func GetOrgSlugFromProjectRef(ctx context.Context, projectRef string) (string, error) {
@@ -22,27 +21,24 @@ func GetOrgBillingURL(orgSlug string) string {
 }
 
 // SuggestUpgradeOnError checks if a failed API response is due to plan limitations
-// and sets CmdSuggestion with a billing upgrade link. Best-effort: never returns errors.
-// Only triggers on 402 Payment Required (not 403, which could be a permissions issue).
-// Returns the resolved org slug and true if the status code was 402 (so callers
-// can fire telemetry). The org slug may be empty if the project lookup failed.
+// by looking up the org's entitlements. Only sets CmdSuggestion when the entitlements
+// API confirms the feature is gated (hasAccess == false). Returns the resolved org
+// slug and true if a billing suggestion was shown (so callers can fire telemetry).
 func SuggestUpgradeOnError(ctx context.Context, projectRef, featureKey string, statusCode int) (string, bool) {
-	if statusCode != http.StatusPaymentRequired {
+	if statusCode >= 200 && statusCode < 300 {
 		return "", false
 	}
 
 	orgSlug, err := GetOrgSlugFromProjectRef(ctx, projectRef)
 	if err != nil {
-		CmdSuggestion = fmt.Sprintf("This feature may require a plan upgrade. Manage billing: %s", Bold(GetSupabaseDashboardURL()))
-		return "", true
+		return "", false
 	}
 
 	billingURL := GetOrgBillingURL(orgSlug)
 
 	resp, err := GetSupabase().V1GetOrganizationEntitlementsWithResponse(ctx, orgSlug)
 	if err != nil || resp.JSON200 == nil {
-		CmdSuggestion = fmt.Sprintf("This feature may require a plan upgrade. Manage billing: %s", Bold(billingURL))
-		return orgSlug, true
+		return orgSlug, false
 	}
 
 	for _, e := range resp.JSON200.Entitlements {
@@ -52,6 +48,5 @@ func SuggestUpgradeOnError(ctx context.Context, projectRef, featureKey string, s
 		}
 	}
 
-	CmdSuggestion = fmt.Sprintf("This feature may require a plan upgrade. Manage billing: %s", Bold(billingURL))
-	return orgSlug, true
+	return orgSlug, false
 }

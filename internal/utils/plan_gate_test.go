@@ -71,20 +71,25 @@ func entitlementsJSON(featureKey string, hasAccess bool) map[string]interface{} 
 	}
 }
 
+// mockEntitlementsCheck sets up gock mocks for project lookup + entitlements.
+func mockEntitlementsCheck(ref string, featureKey string, hasAccess bool) {
+	gock.New(DefaultApiHost).
+		Get("/v1/projects/" + ref).
+		Reply(http.StatusOK).
+		JSON(planGateProjectJSON)
+	gock.New(DefaultApiHost).
+		Get("/v1/organizations/my-org/entitlements").
+		Reply(http.StatusOK).
+		JSON(entitlementsJSON(featureKey, hasAccess))
+}
+
 func TestSuggestUpgradeOnError(t *testing.T) {
 	ref := apitest.RandomProjectRef()
 
-	t.Run("sets specific suggestion on 402 with gated feature", func(t *testing.T) {
+	t.Run("sets suggestion on 402 with gated feature", func(t *testing.T) {
 		t.Cleanup(apitest.MockPlatformAPI(t))
 		t.Cleanup(func() { CmdSuggestion = "" })
-		gock.New(DefaultApiHost).
-			Get("/v1/projects/" + ref).
-			Reply(http.StatusOK).
-			JSON(planGateProjectJSON)
-		gock.New(DefaultApiHost).
-			Get("/v1/organizations/my-org/entitlements").
-			Reply(http.StatusOK).
-			JSON(entitlementsJSON("branching_limit", false))
+		mockEntitlementsCheck(ref, "branching_limit", false)
 		slug, got := SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusPaymentRequired)
 		assert.True(t, got)
 		assert.Equal(t, "my-org", slug)
@@ -92,7 +97,28 @@ func TestSuggestUpgradeOnError(t *testing.T) {
 		assert.Contains(t, CmdSuggestion, "does not have access")
 	})
 
-	t.Run("sets generic suggestion when entitlements lookup fails", func(t *testing.T) {
+	t.Run("sets suggestion on 400 with gated feature", func(t *testing.T) {
+		t.Cleanup(apitest.MockPlatformAPI(t))
+		t.Cleanup(func() { CmdSuggestion = "" })
+		mockEntitlementsCheck(ref, "vanity_subdomain", false)
+		slug, got := SuggestUpgradeOnError(context.Background(), ref, "vanity_subdomain", http.StatusBadRequest)
+		assert.True(t, got)
+		assert.Equal(t, "my-org", slug)
+		assert.Contains(t, CmdSuggestion, "/org/my-org/billing")
+		assert.Contains(t, CmdSuggestion, "does not have access")
+	})
+
+	t.Run("sets suggestion on 404 with gated feature", func(t *testing.T) {
+		t.Cleanup(apitest.MockPlatformAPI(t))
+		t.Cleanup(func() { CmdSuggestion = "" })
+		mockEntitlementsCheck(ref, "auth.saml_2", false)
+		slug, got := SuggestUpgradeOnError(context.Background(), ref, "auth.saml_2", http.StatusNotFound)
+		assert.True(t, got)
+		assert.Equal(t, "my-org", slug)
+		assert.Contains(t, CmdSuggestion, "/org/my-org/billing")
+	})
+
+	t.Run("no suggestion when entitlements lookup fails", func(t *testing.T) {
 		t.Cleanup(apitest.MockPlatformAPI(t))
 		t.Cleanup(func() { CmdSuggestion = "" })
 		gock.New(DefaultApiHost).
@@ -103,61 +129,43 @@ func TestSuggestUpgradeOnError(t *testing.T) {
 			Get("/v1/organizations/my-org/entitlements").
 			Reply(http.StatusInternalServerError)
 		slug, got := SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusPaymentRequired)
-		assert.True(t, got)
+		assert.False(t, got)
 		assert.Equal(t, "my-org", slug)
-		assert.Contains(t, CmdSuggestion, "/org/my-org/billing")
-		assert.Contains(t, CmdSuggestion, "may require a plan upgrade")
+		assert.Empty(t, CmdSuggestion)
 	})
 
-	t.Run("sets fallback suggestion when project lookup fails", func(t *testing.T) {
+	t.Run("no suggestion when project lookup fails", func(t *testing.T) {
 		t.Cleanup(apitest.MockPlatformAPI(t))
 		t.Cleanup(func() { CmdSuggestion = "" })
 		gock.New(DefaultApiHost).
 			Get("/v1/projects/" + ref).
 			Reply(http.StatusNotFound)
 		slug, got := SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusPaymentRequired)
-		assert.True(t, got)
+		assert.False(t, got)
 		assert.Empty(t, slug)
-		assert.Contains(t, CmdSuggestion, "plan upgrade")
-		assert.Contains(t, CmdSuggestion, GetSupabaseDashboardURL())
-		assert.NotContains(t, CmdSuggestion, "/org/")
+		assert.Empty(t, CmdSuggestion)
 	})
 
-	t.Run("sets generic suggestion when feature has access", func(t *testing.T) {
+	t.Run("no suggestion when feature has access", func(t *testing.T) {
 		t.Cleanup(apitest.MockPlatformAPI(t))
 		t.Cleanup(func() { CmdSuggestion = "" })
-		gock.New(DefaultApiHost).
-			Get("/v1/projects/" + ref).
-			Reply(http.StatusOK).
-			JSON(planGateProjectJSON)
-		gock.New(DefaultApiHost).
-			Get("/v1/organizations/my-org/entitlements").
-			Reply(http.StatusOK).
-			JSON(entitlementsJSON("branching_limit", true))
+		mockEntitlementsCheck(ref, "branching_limit", true)
 		slug, got := SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusPaymentRequired)
-		assert.True(t, got)
+		assert.False(t, got)
 		assert.Equal(t, "my-org", slug)
-		assert.Contains(t, CmdSuggestion, "/org/my-org/billing")
-		assert.Contains(t, CmdSuggestion, "may require a plan upgrade")
-	})
-
-	t.Run("skips suggestion on 403 forbidden", func(t *testing.T) {
-		CmdSuggestion = ""
-		_, got := SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusForbidden)
-		assert.False(t, got)
 		assert.Empty(t, CmdSuggestion)
 	})
 
-	t.Run("skips suggestion on non-billing status codes", func(t *testing.T) {
-		CmdSuggestion = ""
-		_, got := SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusInternalServerError)
-		assert.False(t, got)
-		assert.Empty(t, CmdSuggestion)
-	})
-
-	t.Run("skips suggestion on success status codes", func(t *testing.T) {
+	t.Run("skips on 200", func(t *testing.T) {
 		CmdSuggestion = ""
 		_, got := SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusOK)
+		assert.False(t, got)
+		assert.Empty(t, CmdSuggestion)
+	})
+
+	t.Run("skips on 201", func(t *testing.T) {
+		CmdSuggestion = ""
+		_, got := SuggestUpgradeOnError(context.Background(), ref, "branching_limit", http.StatusCreated)
 		assert.False(t, got)
 		assert.Empty(t, CmdSuggestion)
 	})
