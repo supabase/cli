@@ -382,7 +382,7 @@ EOF
 			} else if strings.HasSuffix(parsed.Host, "/.docker/run/docker.sock") ||
 				strings.HasSuffix(parsed.Host, "/.docker/desktop/docker.sock") ||
 				strings.Contains(parsed.Host, "/.colima/") {
-				// Docker will not mount rootless socket directly;
+				// Docker Desktop and Colima will not mount rootless socket directly;
 				// instead, specify root socket to have it handled under the hood
 				binds = append(binds, fmt.Sprintf("%[1]s:%[1]s:ro", dindHost.Host))
 			} else {
