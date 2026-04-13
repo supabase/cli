@@ -3,7 +3,9 @@ package start
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"regexp"
 	"testing"
@@ -120,6 +122,17 @@ func TestStartCommand(t *testing.T) {
 
 func TestDatabaseStart(t *testing.T) {
 	t.Run("starts database locally", func(t *testing.T) {
+		apiExternalURL := utils.Config.Api.ExternalUrl
+		jwtIssuer := utils.Config.Auth.JwtIssuer
+		authEnabled := utils.Config.Auth.Enabled
+		t.Cleanup(func() {
+			utils.Config.Api.ExternalUrl = apiExternalURL
+			utils.Config.Auth.JwtIssuer = jwtIssuer
+			utils.Config.Auth.Enabled = authEnabled
+		})
+		utils.Config.Api.ExternalUrl = "http://127.0.0.1:54321"
+		utils.Config.Auth.JwtIssuer = utils.Config.Api.ExternalUrl + "/auth/v1"
+		utils.Config.Auth.Enabled = true
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		t.Setenv("SUPABASE_HOME", "/tmp/supabase-home")
@@ -137,6 +150,32 @@ func TestDatabaseStart(t *testing.T) {
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
+		t.Cleanup(func() {
+			gock.Observe(nil)
+		})
+		containerCreatePath := "/v" + utils.Docker.ClientVersion() + "/containers/create"
+		var gotrueEnv []string
+		gock.Observe(func(req *http.Request, _ gock.Mock) {
+			if req.Method != http.MethodPost || req.URL.Path != containerCreatePath {
+				return
+			}
+			body, err := io.ReadAll(req.Body)
+			if err != nil {
+				return
+			}
+			var payload struct {
+				Env []string `json:"Env"`
+			}
+			if err := json.Unmarshal(body, &payload); err != nil {
+				return
+			}
+			for _, env := range payload.Env {
+				if env == "GOTRUE_API_PORT=9999" {
+					gotrueEnv = payload.Env
+					return
+				}
+			}
+		})
 		gock.New(utils.Docker.DaemonHost()).
 			Head("/_ping").
 			Reply(http.StatusOK)
@@ -244,6 +283,7 @@ func TestDatabaseStart(t *testing.T) {
 		err = run(ctx, fsys, []string{}, pgconn.Config{Host: utils.DbId}, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
+		assert.Contains(t, gotrueEnv, "API_EXTERNAL_URL="+utils.Config.Auth.JwtIssuer)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 		require.Len(t, analytics.captures, 1)
 		assert.Equal(t, phtelemetry.EventStackStarted, analytics.captures[0].event)

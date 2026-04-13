@@ -51,6 +51,21 @@ func TestInitBranch(t *testing.T) {
 	})
 }
 
+func TestInitAuthJob(t *testing.T) {
+	apiExternalURL := utils.Config.Api.ExternalUrl
+	jwtIssuer := utils.Config.Auth.JwtIssuer
+	t.Cleanup(func() {
+		utils.Config.Api.ExternalUrl = apiExternalURL
+		utils.Config.Auth.JwtIssuer = jwtIssuer
+	})
+	utils.Config.Api.ExternalUrl = "http://127.0.0.1:54321"
+	utils.Config.Auth.JwtIssuer = utils.Config.Api.ExternalUrl + "/auth/v1"
+
+	job := initAuthJob("db")
+
+	assert.Contains(t, job.Env, "API_EXTERNAL_URL="+utils.Config.Auth.JwtIssuer)
+}
+
 func TestStartDatabase(t *testing.T) {
 	t.Run("initialize main branch", func(t *testing.T) {
 		utils.Config.Db.MajorVersion = 15

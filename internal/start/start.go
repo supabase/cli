@@ -579,7 +579,8 @@ EOF
 		}
 
 		env := []string{
-			"API_EXTERNAL_URL=" + utils.Config.Api.ExternalUrl,
+			// GoTrue constructs external auth URLs relative to the public auth API base.
+			"API_EXTERNAL_URL=" + utils.Config.Auth.JwtIssuer,
 
 			"GOTRUE_API_HOST=0.0.0.0",
 			"GOTRUE_API_PORT=9999",
