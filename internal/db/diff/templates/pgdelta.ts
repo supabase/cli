@@ -2,8 +2,8 @@ import {
   createPlan,
   deserializeCatalog,
   formatSqlStatements,
-} from "npm:@supabase/pg-delta@1.0.0-alpha.9";
-import { supabase } from "npm:@supabase/pg-delta@1.0.0-alpha.9/integrations/supabase";
+} from "npm:@supabase/pg-delta@1.0.0-alpha.11";
+import { supabase } from "npm:@supabase/pg-delta@1.0.0-alpha.11/integrations/supabase";
 
 async function resolveInput(ref: string | undefined) {
   if (!ref) {
