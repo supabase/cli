@@ -180,6 +180,9 @@ password_requirements = ""
 # Configure passkey sign-ins.
 # [auth.passkey]
 # enabled = false
+
+# Configure WebAuthn relying party settings (required when passkey is enabled).
+# [auth.webauthn]
 # rp_display_name = "Supabase"
 # rp_id = "localhost"
 # rp_origins = ["http://127.0.0.1:3000"]
