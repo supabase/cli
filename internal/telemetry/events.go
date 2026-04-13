@@ -1,5 +1,7 @@
 package telemetry
 
+import "context"
+
 // CLI telemetry catalog.
 //
 // This file is the single place to review what analytics events the CLI sends
@@ -48,6 +50,17 @@ const (
 	// PropOrgSlug is the organization slug associated with the project.
 	PropOrgSlug = "org_slug"
 )
+
+// TrackUpgradeSuggested fires an EventUpgradeSuggested telemetry event.
+// Safe to call with any context; no-ops when telemetry is not configured.
+func TrackUpgradeSuggested(ctx context.Context, featureKey, orgSlug string) {
+	if svc := FromContext(ctx); svc != nil {
+		_ = svc.Capture(ctx, EventUpgradeSuggested, map[string]any{
+			PropFeatureKey: featureKey,
+			PropOrgSlug:    orgSlug,
+		}, nil)
+	}
+}
 
 // Shared event properties added to every captured event by Service.Capture.
 const (

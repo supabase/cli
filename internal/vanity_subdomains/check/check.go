@@ -20,7 +20,7 @@ func Run(ctx context.Context, projectRef string, desiredSubdomain string, fsys a
 		return errors.Errorf("failed to check vanity subdomain: %w", err)
 	} else if resp.JSON201 == nil {
 		if orgSlug, isGated := utils.SuggestUpgradeOnError(ctx, projectRef, "vanity_subdomain", resp.StatusCode()); isGated {
-			trackUpgradeSuggested(ctx, "vanity_subdomain", orgSlug)
+			telemetry.TrackUpgradeSuggested(ctx, "vanity_subdomain", orgSlug)
 		}
 		return errors.Errorf("unexpected check vanity subdomain status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
@@ -29,13 +29,4 @@ func Run(ctx context.Context, projectRef string, desiredSubdomain string, fsys a
 	}
 	fmt.Printf("Subdomain %s available: %+v\n", desiredSubdomain, resp.JSON201.Available)
 	return nil
-}
-
-func trackUpgradeSuggested(ctx context.Context, featureKey, orgSlug string) {
-	if svc := telemetry.FromContext(ctx); svc != nil {
-		_ = svc.Capture(ctx, telemetry.EventUpgradeSuggested, map[string]any{
-			telemetry.PropFeatureKey: featureKey,
-			telemetry.PropOrgSlug:    orgSlug,
-		}, nil)
-	}
 }

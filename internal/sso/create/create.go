@@ -80,7 +80,7 @@ func Run(ctx context.Context, params RunParams) error {
 
 	if resp.JSON201 == nil {
 		if orgSlug, isGated := utils.SuggestUpgradeOnError(ctx, params.ProjectRef, "auth.saml_2", resp.StatusCode()); isGated {
-			trackUpgradeSuggested(ctx, "auth.saml_2", orgSlug)
+			telemetry.TrackUpgradeSuggested(ctx, "auth.saml_2", orgSlug)
 		}
 		if resp.StatusCode() == http.StatusNotFound {
 			return errors.New("SAML 2.0 support is not enabled for this project. Please enable it through the dashboard")
@@ -95,14 +95,5 @@ func Run(ctx context.Context, params RunParams) error {
 		return nil
 	default:
 		return utils.EncodeOutput(params.Format, os.Stdout, resp.JSON201)
-	}
-}
-
-func trackUpgradeSuggested(ctx context.Context, featureKey, orgSlug string) {
-	if svc := telemetry.FromContext(ctx); svc != nil {
-		_ = svc.Capture(ctx, telemetry.EventUpgradeSuggested, map[string]any{
-			telemetry.PropFeatureKey: featureKey,
-			telemetry.PropOrgSlug:    orgSlug,
-		}, nil)
 	}
 }
