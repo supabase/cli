@@ -235,10 +235,9 @@ func WriteDeclarativeSchemas(output diff.DeclarativeOutput, fsys afero.Fs) error
 			return err
 		}
 	}
-	// When pg-delta has its own config section, the declarative path is the single
-	// source of truth there; do not overwrite [db.migrations] schema_paths.
-	if utils.IsPgDeltaEnabled() && utils.Config.Experimental.PgDelta != nil &&
-		len(utils.Config.Experimental.PgDelta.DeclarativeSchemaPath) > 0 {
+	// When pg-delta is enabled, the declarative directory (default or configured)
+	// is the source of truth; do not overwrite [db.migrations] schema_paths.
+	if utils.IsPgDeltaEnabled() {
 		return nil
 	}
 	utils.Config.Db.Migrations.SchemaPaths = []string{
