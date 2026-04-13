@@ -21,6 +21,8 @@ const (
 	DNS_OVER_HTTPS = "https"
 )
 
+var OnGotrueID func(string)
+
 var (
 	clientOnce sync.Once
 	apiClient  *supabase.ClientWithResponses
@@ -123,8 +125,13 @@ func GetSupabase() *supabase.ClientWithResponses {
 		if t, ok := http.DefaultTransport.(*http.Transport); ok {
 			t.DialContext = withFallbackDNS(t.DialContext)
 		}
+		transport := &identityTransport{
+			RoundTripper: http.DefaultTransport,
+			onGotrueID:   &OnGotrueID,
+		}
 		apiClient, err = supabase.NewClientWithResponses(
 			GetSupabaseAPIHost(),
+			supabase.WithHTTPClient(&http.Client{Transport: transport}),
 			supabase.WithRequestEditorFn(func(ctx context.Context, req *http.Request) error {
 				req.Header.Set("Authorization", "Bearer "+token)
 				req.Header.Set("User-Agent", "SupabaseCLI/"+Version)

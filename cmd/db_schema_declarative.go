@@ -53,17 +53,21 @@ var (
 			// so in the rest of the code we can know that we're running pg-delta logic.
 			if viper.GetBool("EXPERIMENTAL") && !utils.IsPgDeltaEnabled() {
 				utils.Config.Experimental.PgDelta = &config.PgDeltaConfig{Enabled: true}
-				return nil
 			}
-			if utils.IsPgDeltaEnabled() {
-				return nil
+			if !utils.IsPgDeltaEnabled() {
+				utils.CmdSuggestion = fmt.Sprintf("Either pass %s or add %s with %s to %s",
+					utils.Aqua("--experimental"),
+					utils.Aqua("[experimental.pgdelta]"),
+					utils.Aqua("enabled = true"),
+					utils.Bold(utils.ConfigPath))
+				return errors.New("declarative commands require --experimental flag or pg-delta enabled in config")
 			}
-			utils.CmdSuggestion = fmt.Sprintf("Either pass %s or add %s with %s to %s",
-				utils.Aqua("--experimental"),
-				utils.Aqua("[experimental.pgdelta]"),
-				utils.Aqua("enabled = true"),
-				utils.Bold(utils.ConfigPath))
-			return errors.New("declarative commands require --experimental flag or pg-delta enabled in config")
+			// If the config.toml has [experimental.pgdelta] enabled = true, set the EXPERIMENTAL flag to true
+			// so the follow-up PersistentPreRunE can run the pg-delta logic.
+			if utils.Config.Experimental.PgDelta.Enabled {
+				viper.Set("EXPERIMENTAL", true)
+			}
+			return cmd.Root().PersistentPreRunE(cmd, args)
 		},
 	}
 
