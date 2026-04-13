@@ -168,6 +168,83 @@ func TestPoolerConfig(t *testing.T) {
 	})
 }
 
+func TestSetConnectSuggestion(t *testing.T) {
+	oldProfile := CurrentProfile
+	CurrentProfile = allProfiles[0]
+	defer t.Cleanup(func() { CurrentProfile = oldProfile })
+
+	cases := []struct {
+		name       string
+		err        error
+		suggestion string
+		debug      bool
+	}{
+		{
+			name:       "no-op on nil error",
+			err:        nil,
+			suggestion: "",
+		},
+		{
+			name:       "no-op on unrecognised error",
+			err:        errors.New("some unknown error"),
+			suggestion: "",
+		},
+		{
+			name:       "connection refused",
+			err:        errors.New("connect: connection refused"),
+			suggestion: "Make sure your local IP is allowed in Network Restrictions and Network Bans",
+		},
+		{
+			name:       "address not in allow list",
+			err:        errors.New("server error (FATAL: Address not in tenant allow_list: {1,2,3} (SQLSTATE XX000))"),
+			suggestion: "Make sure your local IP is allowed in Network Restrictions and Network Bans",
+		},
+		{
+			name:       "ssl required without debug flag",
+			err:        errors.New("SSL connection is required"),
+			suggestion: "",
+		},
+		{
+			name:       "ssl required with debug flag",
+			err:        errors.New("SSL connection is required"),
+			debug:      true,
+			suggestion: "SSL connection is not supported with --debug flag",
+		},
+		{
+			name:       "wrong password via SCRAM",
+			err:        errors.New("SCRAM exchange: Wrong password"),
+			suggestion: "Connect to your database by setting the env var correctly: SUPABASE_DB_PASSWORD",
+		},
+		{
+			name:       "failed SASL auth",
+			err:        errors.New("failed SASL auth"),
+			suggestion: "Connect to your database by setting the env var correctly: SUPABASE_DB_PASSWORD",
+		},
+		{
+			name:       "no route to host",
+			err:        errors.New("connect: no route to host"),
+			suggestion: "Make sure your project exists on profile: " + CurrentProfile.Name,
+		},
+		{
+			name:       "tenant or user not found",
+			err:        errors.New("Tenant or user not found"),
+			suggestion: "Make sure your project exists on profile: " + CurrentProfile.Name,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			CmdSuggestion = ""
+			viper.Set("DEBUG", tc.debug)
+			SetConnectSuggestion(tc.err)
+			if tc.suggestion == "" {
+				assert.Empty(t, CmdSuggestion)
+			} else {
+				assert.Contains(t, CmdSuggestion, tc.suggestion)
+			}
+		})
+	}
+}
+
 func TestPostgresURL(t *testing.T) {
 	url := ToPostgresURL(pgconn.Config{
 		Host:     "2406:da18:4fd:9b0d:80ec:9812:3e65:450b",

@@ -163,7 +163,10 @@ func TestStopCommand(t *testing.T) {
 
 func TestStopServices(t *testing.T) {
 	t.Run("stops all services", func(t *testing.T) {
-		containers := []container.Summary{{ID: "c1", State: "running"}, {ID: "c2"}}
+		containers := []container.Summary{
+			{ID: "c1", State: "running"},
+			{ID: "c2", State: "exited"},
+		}
 		// Setup mock docker
 		require.NoError(t, apitest.MockDocker(utils.Docker))
 		defer gock.OffAll()
@@ -174,6 +177,9 @@ func TestStopServices(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + containers[0].ID + "/stop").
 			Reply(http.StatusOK)
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + containers[1].ID + "/stop").
+			Reply(http.StatusNotModified)
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/prune").
 			Reply(http.StatusOK).

@@ -152,6 +152,7 @@ var (
 func init() {
 	persistentFlags := ssoCmd.PersistentFlags()
 	persistentFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
+	markFlagTelemetrySafe(persistentFlags.Lookup("project-ref"))
 	ssoAddFlags := ssoAddCmd.Flags()
 	ssoAddFlags.VarP(&ssoProviderType, "type", "t", "Type of identity provider (according to supported protocol).")
 	ssoAddFlags.StringSliceVar(&ssoDomains, "domains", nil, "Comma separated list of email domains to associate with the added identity provider.")

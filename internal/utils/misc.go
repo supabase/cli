@@ -22,8 +22,10 @@ import (
 
 // Assigned using `-ldflags` https://stackoverflow.com/q/11354518
 var (
-	Version   string
-	SentryDsn string
+	Version         string
+	SentryDsn       string
+	PostHogAPIKey   string
+	PostHogEndpoint string
 )
 
 func ShortContainerImageName(imageName string) string {
@@ -78,7 +80,7 @@ var (
 	CurrBranchPath       = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
 	// DeclarativeDir is the canonical location for pg-delta declarative schema
 	// files generated or synced by `supabase db schema declarative` commands.
-	DeclarativeDir        = filepath.Join(SupabaseDirPath, "declarative")
+	DeclarativeDir        = filepath.Join(SupabaseDirPath, "database")
 	ClusterDir            = filepath.Join(SupabaseDirPath, "cluster")
 	SchemasDir            = filepath.Join(SupabaseDirPath, "schemas")
 	MigrationsDir         = filepath.Join(SupabaseDirPath, "migrations")

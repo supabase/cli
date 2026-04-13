@@ -39,6 +39,7 @@ import (
 	"github.com/supabase/cli/internal/seed/buckets"
 	"github.com/supabase/cli/internal/services"
 	"github.com/supabase/cli/internal/status"
+	phtelemetry "github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/config"
@@ -378,8 +379,10 @@ EOF
 		case "unix":
 			if dindHost, err = client.ParseHostURL(client.DefaultDockerHost); err != nil {
 				return errors.Errorf("failed to parse default host: %w", err)
-			} else if strings.HasSuffix(parsed.Host, "/.docker/run/docker.sock") {
-				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires mounting default docker socket:", dindHost.Host)
+			} else if strings.HasSuffix(parsed.Host, "/.docker/run/docker.sock") ||
+				strings.HasSuffix(parsed.Host, "/.docker/desktop/docker.sock") {
+				// Docker will not mount rootless socket directly;
+				// instead, specify root socket to have it handled under the hood
 				binds = append(binds, fmt.Sprintf("%[1]s:%[1]s:ro", dindHost.Host))
 			} else {
 				// Podman and OrbStack can mount root-less socket without issue
@@ -470,12 +473,12 @@ vector --config /etc/vector/vector.yaml
 		}
 
 		binds := []string{}
-		for id, tmpl := range utils.Config.Auth.Email.Template {
-			if len(tmpl.ContentPath) == 0 {
-				continue
+		mountEmailTemplates := func(id, contentPath string) error {
+			if len(contentPath) == 0 {
+				return nil
 			}
-			hostPath := tmpl.ContentPath
-			if !filepath.IsAbs(tmpl.ContentPath) {
+			hostPath := contentPath
+			if !filepath.IsAbs(contentPath) {
 				var err error
 				hostPath, err = filepath.Abs(hostPath)
 				if err != nil {
@@ -484,6 +487,23 @@ vector --config /etc/vector/vector.yaml
 			}
 			dockerPath := path.Join(nginxEmailTemplateDir, id+filepath.Ext(hostPath))
 			binds = append(binds, fmt.Sprintf("%s:%s:rw", hostPath, dockerPath))
+			return nil
+		}
+
+		for id, tmpl := range utils.Config.Auth.Email.Template {
+			err := mountEmailTemplates(id, tmpl.ContentPath)
+			if err != nil {
+				return err
+			}
+		}
+
+		for id, tmpl := range utils.Config.Auth.Email.Notification {
+			if tmpl.Enabled {
+				err := mountEmailTemplates(id+"_notification", tmpl.ContentPath)
+				if err != nil {
+					return err
+				}
+			}
 		}
 
 		dockerPort := uint16(8000)
@@ -661,20 +681,31 @@ EOF
 			env = append(env, fmt.Sprintf("GOTRUE_SESSIONS_INACTIVITY_TIMEOUT=%v", utils.Config.Auth.Sessions.InactivityTimeout))
 		}
 
-		for id, tmpl := range utils.Config.Auth.Email.Template {
-			if len(tmpl.ContentPath) > 0 {
+		addMailerEnvVars := func(id, contentPath string, subject *string) {
+			if len(contentPath) > 0 {
 				env = append(env, fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_%s=http://%s:%d/email/%s",
 					strings.ToUpper(id),
 					utils.KongId,
 					nginxTemplateServerPort,
-					id+filepath.Ext(tmpl.ContentPath),
+					id+filepath.Ext(contentPath),
 				))
 			}
-			if tmpl.Subject != nil {
+			if subject != nil {
 				env = append(env, fmt.Sprintf("GOTRUE_MAILER_SUBJECTS_%s=%s",
 					strings.ToUpper(id),
-					*tmpl.Subject,
+					*subject,
 				))
+			}
+		}
+
+		for id, tmpl := range utils.Config.Auth.Email.Template {
+			addMailerEnvVars(id, tmpl.ContentPath, tmpl.Subject)
+		}
+
+		for id, tmpl := range utils.Config.Auth.Email.Notification {
+			if tmpl.Enabled {
+				env = append(env, fmt.Sprintf("GOTRUE_MAILER_NOTIFICATIONS_%s_ENABLED=true", strings.ToUpper(id)))
+				addMailerEnvVars(id+"_notification", tmpl.ContentPath, tmpl.Subject)
 			}
 		}
 
@@ -1298,7 +1329,15 @@ EOF
 			return err
 		}
 	}
-	return start.WaitForHealthyService(ctx, serviceTimeout, started...)
+	if err := start.WaitForHealthyService(ctx, serviceTimeout, started...); err != nil {
+		return err
+	}
+	if service := phtelemetry.FromContext(ctx); service != nil {
+		if err := service.Capture(ctx, phtelemetry.EventStackStarted, nil, nil); err != nil {
+			fmt.Fprintln(utils.GetDebugLogger(), err)
+		}
+	}
+	return nil
 }
 
 func isContainerExcluded(imageName string, excluded map[string]bool) bool {

@@ -177,6 +177,13 @@ minimum_password_length = 6
 # are: `letters_digits`, `lower_upper_letters_digits`, `lower_upper_letters_digits_symbols`
 password_requirements = ""
 
+# Configure passkey sign-ins.
+# [auth.passkey]
+# enabled = false
+# rp_display_name = "Supabase"
+# rp_id = "localhost"
+# rp_origins = ["http://127.0.0.1:3000"]
+
 [auth.rate_limit]
 # Number of emails that can be sent per hour. Requires auth.email.smtp to be enabled.
 email_sent = 2
@@ -391,6 +398,6 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # When enabled, pg-delta becomes the active engine for supported schema flows.
 # enabled = false
 # Directory under `supabase/` where declarative files are written.
-# declarative_schema_path = "./declarative"
+# declarative_schema_path = "./database"
 # JSON string passed through to pg-delta SQL formatting.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
