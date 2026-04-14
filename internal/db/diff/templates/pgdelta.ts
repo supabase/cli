@@ -21,7 +21,14 @@ const target = Deno.env.get("TARGET");
 
 const includedSchemas = Deno.env.get("INCLUDED_SCHEMAS");
 if (includedSchemas) {
-  supabase.filter = { schema: includedSchemas.split(",") };
+  const schemas = includedSchemas.split(",");
+  const schemaFilter = {
+    or: [{ "*/schema": schemas }, { "schema/name": schemas }],
+  };
+  // CompositionPattern `and` is valid FilterDSL; Deno's structural typing is strict on `or` branches.
+  supabase.filter = {
+    and: [supabase.filter!, schemaFilter],
+  } as typeof supabase.filter;
 }
 
 const formatOptionsRaw = Deno.env.get("FORMAT_OPTIONS");
