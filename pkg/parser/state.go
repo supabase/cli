@@ -46,12 +46,38 @@ func (s *ReadyState) Next(r rune, data []byte) State {
 	case 'c':
 		fallthrough
 	case 'C':
-		offset := len(data) - len(BEGIN_ATOMIC)
-		if offset >= 0 && strings.EqualFold(string(data[offset:]), BEGIN_ATOMIC) {
+		if isBeginAtomic(data) {
 			return &AtomicState{prev: s, delimiter: []byte(END_ATOMIC)}
 		}
 	}
 	return s
+}
+
+func isBeginAtomic(data []byte) bool {
+	offset := len(data) - len(BEGIN_ATOMIC)
+	if offset < 0 || !strings.EqualFold(string(data[offset:]), BEGIN_ATOMIC) {
+		return false
+	}
+	if offset > 0 {
+		r, _ := utf8.DecodeLastRune(data[:offset])
+		if isIdentifierRune(r) {
+			return false
+		}
+	}
+	prefix := bytes.TrimRightFunc(data[:offset], unicode.IsSpace)
+	offset = len(prefix) - len("BEGIN")
+	if offset < 0 || !strings.EqualFold(string(prefix[offset:]), "BEGIN") {
+		return false
+	}
+	if offset == 0 {
+		return true
+	}
+	r, _ := utf8.DecodeLastRune(prefix[:offset])
+	return !isIdentifierRune(r)
+}
+
+func isIdentifierRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '$'
 }
 
 // Opened a line comment
