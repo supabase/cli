@@ -101,7 +101,7 @@ var (
 			return cmd.Root().PersistentPreRunE(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			authMode := new_.AuthAccessModeAlways
+			authMode := new_.AuthAccessModeApiKey
 			if len(authAccessMode.Value) > 0 {
 				authMode = new_.AuthAccessMode(authAccessMode.Value)
 			}
@@ -184,7 +184,7 @@ func init() {
 	functionsDownloadCmd.MarkFlagsMutuallyExclusive("use-api", "use-docker", "legacy-bundle")
 	cobra.CheckErr(downloadFlags.MarkHidden("legacy-bundle"))
 	cobra.CheckErr(downloadFlags.MarkHidden("use-docker"))
-	functionsNewCmd.Flags().Var(&authAccessMode, "auth", "use a specific auth access (default always)")
+	functionsNewCmd.Flags().Var(&authAccessMode, "auth", "use a specific auth access (default apikey)")
 	functionsCmd.AddCommand(functionsListCmd)
 	functionsCmd.AddCommand(functionsDeleteCmd)
 	functionsCmd.AddCommand(functionsDeployCmd)
