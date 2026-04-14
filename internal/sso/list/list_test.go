@@ -2,6 +2,7 @@ package list
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/h2non/gock"
@@ -83,6 +84,10 @@ func TestSSOProvidersListCommand(t *testing.T) {
 			Get("/v1/projects/" + projectRef + "/config/auth/sso/providers").
 			Reply(404).
 			JSON(map[string]string{})
+		// SuggestUpgradeOnError triggers on non-2xx; project lookup will 404
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + projectRef).
+			Reply(http.StatusNotFound)
 
 		err := Run(context.Background(), projectRef, utils.OutputPretty)
 

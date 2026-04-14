@@ -3,6 +3,7 @@ package remove
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"testing"
 
 	"github.com/h2non/gock"
@@ -82,6 +83,10 @@ func TestSSOProvidersRemoveCommand(t *testing.T) {
 			Delete("/v1/projects/" + projectRef + "/config/auth/sso/providers/" + providerId).
 			Reply(404).
 			JSON(map[string]string{})
+		// SuggestUpgradeOnError triggers on non-2xx; project lookup will 404
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + projectRef).
+			Reply(http.StatusNotFound)
 
 		err := Run(context.Background(), projectRef, providerId, utils.OutputPretty)
 

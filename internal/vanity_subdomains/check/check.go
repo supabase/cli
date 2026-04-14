@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
 )
@@ -18,6 +19,9 @@ func Run(ctx context.Context, projectRef string, desiredSubdomain string, fsys a
 	if err != nil {
 		return errors.Errorf("failed to check vanity subdomain: %w", err)
 	} else if resp.JSON201 == nil {
+		if orgSlug, isGated := utils.SuggestUpgradeOnError(ctx, projectRef, "vanity_subdomain", resp.StatusCode()); isGated {
+			telemetry.TrackUpgradeSuggested(ctx, "vanity_subdomain", orgSlug)
+		}
 		return errors.Errorf("unexpected check vanity subdomain status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 	if utils.OutputFormat.Value != utils.OutputPretty {
