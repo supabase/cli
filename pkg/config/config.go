@@ -644,6 +644,8 @@ func (c *config) Load(path string, fsys fs.FS, overrides ...ConfigEditor) error 
 		c.Db.Image = pg14
 	case 15:
 		c.Db.Image = pg15
+	case 17:
+		c.Db.Image = pg17
 	}
 	if c.Db.MajorVersion > 14 {
 		if version, err := fs.ReadFile(fsys, builder.PostgresVersionPath); err == nil {
