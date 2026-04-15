@@ -1,7 +1,9 @@
 package telemetry
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -46,6 +48,33 @@ func LoadLinkedProject(fsys afero.Fs) (LinkedProject, error) {
 		return LinkedProject{}, errors.Errorf("failed to parse linked project: %w", err)
 	}
 	return linked, nil
+}
+
+// EnsureProjectGroupsCached fetches project metadata from the API and caches it
+// in linked-project.json when a project ref is available but no matching cache
+// exists. This ensures linkedProjectGroups returns org/project groups for all
+// events, not just those fired after `supabase link`.
+//
+// Best-effort: silently returns on any error so telemetry never breaks commands.
+func EnsureProjectGroupsCached(ctx context.Context, projectRef string, fsys afero.Fs) {
+	if projectRef == "" {
+		return
+	}
+	// Already cached and matches current ref? Nothing to do.
+	if existing, err := LoadLinkedProject(fsys); err == nil && existing.Ref == projectRef {
+		return
+	}
+	resp, err := utils.GetSupabase().V1GetProjectWithResponse(ctx, projectRef)
+	if err != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), err)
+		return
+	}
+	if resp.JSON200 == nil {
+		return
+	}
+	if err := SaveLinkedProject(*resp.JSON200, fsys); err != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), err)
+	}
 }
 
 func linkedProjectGroups(fsys afero.Fs) map[string]string {

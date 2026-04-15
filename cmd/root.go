@@ -173,6 +173,7 @@ func Execute() {
 	executedCmd, err := rootCmd.ExecuteC()
 	if executedCmd != nil {
 		if service := telemetry.FromContext(executedCmd.Context()); service != nil {
+			telemetry.EnsureProjectGroupsCached(executedCmd.Context(), flags.ProjectRef, afero.NewOsFs())
 			_ = service.Capture(executedCmd.Context(), telemetry.EventCommandExecuted, map[string]any{
 				telemetry.PropExitCode:   exitCode(err),
 				telemetry.PropDurationMs: time.Since(startedAt).Milliseconds(),
