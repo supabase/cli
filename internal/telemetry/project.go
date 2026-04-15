@@ -1,7 +1,6 @@
 package telemetry
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -50,30 +49,41 @@ func LoadLinkedProject(fsys afero.Fs) (LinkedProject, error) {
 	return linked, nil
 }
 
-// EnsureProjectGroupsCached fetches project metadata from the API and caches it
-// in linked-project.json when a project ref is available but no matching cache
-// exists. This ensures linkedProjectGroups returns org/project groups for all
-// events, not just those fired after `supabase link`.
+// HasLinkedProject reports whether a cached linked-project.json exists.
+func HasLinkedProject(fsys afero.Fs) bool {
+	_, err := LoadLinkedProject(fsys)
+	return err == nil
+}
+
+// CacheProjectAndIdentifyGroups writes project metadata to linked-project.json
+// and fires GroupIdentify for the org and project so PostHog has group metadata.
+// This matches the behavior of the `supabase link` flow.
 //
-// Best-effort: silently returns on any error so telemetry never breaks commands.
-func EnsureProjectGroupsCached(ctx context.Context, projectRef string, fsys afero.Fs) {
-	if projectRef == "" {
-		return
-	}
-	// Already cached and matches current ref? Nothing to do.
-	if existing, err := LoadLinkedProject(fsys); err == nil && existing.Ref == projectRef {
-		return
-	}
-	resp, err := utils.GetSupabase().V1GetProjectWithResponse(ctx, projectRef)
-	if err != nil {
+// The caller is responsible for fetching the project from the API and checking
+// auth — this function only handles caching and PostHog group identification.
+//
+// Best-effort: logs errors to debug output, never returns them.
+func CacheProjectAndIdentifyGroups(project api.V1ProjectWithDatabaseResponse, service *Service, fsys afero.Fs) {
+	if err := SaveLinkedProject(project, fsys); err != nil {
 		fmt.Fprintln(utils.GetDebugLogger(), err)
+	}
+	if service == nil {
 		return
 	}
-	if resp.JSON200 == nil {
-		return
+	if project.OrganizationId != "" {
+		if err := service.GroupIdentify(GroupOrganization, project.OrganizationId, map[string]any{
+			"organization_slug": project.OrganizationSlug,
+		}); err != nil {
+			fmt.Fprintln(utils.GetDebugLogger(), err)
+		}
 	}
-	if err := SaveLinkedProject(*resp.JSON200, fsys); err != nil {
-		fmt.Fprintln(utils.GetDebugLogger(), err)
+	if project.Ref != "" {
+		if err := service.GroupIdentify(GroupProject, project.Ref, map[string]any{
+			"name":              project.Name,
+			"organization_slug": project.OrganizationSlug,
+		}); err != nil {
+			fmt.Fprintln(utils.GetDebugLogger(), err)
+		}
 	}
 }
 
