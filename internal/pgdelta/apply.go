@@ -18,17 +18,27 @@ import (
 //go:embed templates/pgdelta_declarative_apply.ts
 var pgDeltaDeclarativeApplyScript string
 
+// StuckStatement models a single statement that pg-delta could not apply,
+// as emitted by pgdelta_declarative_apply.ts. The full statement payload is
+// retained as a raw JSON object so future fields don't break parsing.
+type StuckStatement struct {
+	Statement         json.RawMessage `json:"statement"`
+	Code              string          `json:"code"`
+	Message           string          `json:"message"`
+	IsDependencyError bool            `json:"isDependencyError"`
+}
+
 // ApplyResult models the JSON payload emitted by pgdelta_declarative_apply.ts.
 //
 // The fields are surfaced to provide concise CLI feedback after apply runs.
 type ApplyResult struct {
-	Status          string   `json:"status"`
-	TotalStatements int      `json:"totalStatements"`
-	TotalRounds     int      `json:"totalRounds"`
-	TotalApplied    int      `json:"totalApplied"`
-	TotalSkipped    int      `json:"totalSkipped"`
-	Errors          []string `json:"errors"`
-	StuckStatements []string `json:"stuckStatements"`
+	Status          string           `json:"status"`
+	TotalStatements int              `json:"totalStatements"`
+	TotalRounds     int              `json:"totalRounds"`
+	TotalApplied    int              `json:"totalApplied"`
+	TotalSkipped    int              `json:"totalSkipped"`
+	Errors          []string         `json:"errors"`
+	StuckStatements []StuckStatement `json:"stuckStatements"`
 }
 
 // ApplyDeclarative applies files from supabase/declarative to the target
@@ -71,7 +81,10 @@ func ApplyDeclarative(ctx context.Context, config pgconn.Config, fsys afero.Fs) 
 			fmt.Fprintf(os.Stderr, "Errors: %v\n", result.Errors)
 		}
 		if len(result.StuckStatements) > 0 {
-			fmt.Fprintf(os.Stderr, "Stuck statements: %v\n", result.StuckStatements)
+			fmt.Fprintln(os.Stderr, "Stuck statements:")
+			for _, s := range result.StuckStatements {
+				fmt.Fprintf(os.Stderr, "  - %s: %s\n", s.Code, s.Message)
+			}
 		}
 		return errors.Errorf("pg-delta declarative apply failed with status: %s", result.Status)
 	}
