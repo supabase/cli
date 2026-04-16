@@ -215,8 +215,8 @@ func TestCaptchaDiff(t *testing.T) {
 func TestPasskeyConfigMapping(t *testing.T) {
 	t.Run("serializes passkey config to update body", func(t *testing.T) {
 		c := newWithDefaults()
-		c.Passkey = &passkey{
-			Enabled:       true,
+		c.Passkey = &passkey{Enabled: true}
+		c.Webauthn = &webauthn{
 			RpDisplayName: "Supabase CLI",
 			RpId:          "localhost",
 			RpOrigins: []string{
@@ -235,14 +235,9 @@ func TestPasskeyConfigMapping(t *testing.T) {
 		assert.Equal(t, "http://127.0.0.1:3000,https://localhost:3000", ValOrDefault(body.WebauthnRpOrigins, ""))
 	})
 
-	t.Run("does not serialize rp fields when passkey is disabled", func(t *testing.T) {
+	t.Run("does not serialize rp fields when webauthn is undefined", func(t *testing.T) {
 		c := newWithDefaults()
-		c.Passkey = &passkey{
-			Enabled:       false,
-			RpDisplayName: "Supabase CLI",
-			RpId:          "localhost",
-			RpOrigins:     []string{"http://127.0.0.1:3000"},
-		}
+		c.Passkey = &passkey{Enabled: false}
 		// Run test
 		body := c.ToUpdateAuthConfigBody()
 		// Check result
@@ -257,11 +252,26 @@ func TestPasskeyConfigMapping(t *testing.T) {
 		assert.Error(t, err)
 	})
 
-	t.Run("hydrates passkey config from remote", func(t *testing.T) {
+	t.Run("serializes webauthn fields independently of passkey", func(t *testing.T) {
 		c := newWithDefaults()
-		c.Passkey = &passkey{
-			Enabled: true,
+		c.Webauthn = &webauthn{
+			RpDisplayName: "Supabase CLI",
+			RpId:          "localhost",
+			RpOrigins:     []string{"http://127.0.0.1:3000"},
 		}
+		// Run test
+		body := c.ToUpdateAuthConfigBody()
+		// Check result
+		assert.Nil(t, body.PasskeyEnabled)
+		assert.Equal(t, "Supabase CLI", ValOrDefault(body.WebauthnRpDisplayName, ""))
+		assert.Equal(t, "localhost", ValOrDefault(body.WebauthnRpId, ""))
+		assert.Equal(t, "http://127.0.0.1:3000", ValOrDefault(body.WebauthnRpOrigins, ""))
+	})
+
+	t.Run("hydrates passkey and webauthn config from remote", func(t *testing.T) {
+		c := newWithDefaults()
+		c.Passkey = &passkey{Enabled: true}
+		c.Webauthn = &webauthn{}
 		// Run test
 		c.FromRemoteAuthConfig(v1API.AuthConfigResponse{
 			PasskeyEnabled:        true,
@@ -272,12 +282,14 @@ func TestPasskeyConfigMapping(t *testing.T) {
 		// Check result
 		if assert.NotNil(t, c.Passkey) {
 			assert.True(t, c.Passkey.Enabled)
-			assert.Equal(t, "Supabase CLI", c.Passkey.RpDisplayName)
-			assert.Equal(t, "localhost", c.Passkey.RpId)
+		}
+		if assert.NotNil(t, c.Webauthn) {
+			assert.Equal(t, "Supabase CLI", c.Webauthn.RpDisplayName)
+			assert.Equal(t, "localhost", c.Webauthn.RpId)
 			assert.Equal(t, []string{
 				"http://127.0.0.1:3000",
 				"https://localhost:3000",
-			}, c.Passkey.RpOrigins)
+			}, c.Webauthn.RpOrigins)
 		}
 	})
 
@@ -292,6 +304,7 @@ func TestPasskeyConfigMapping(t *testing.T) {
 		})
 		// Check result
 		assert.Nil(t, c.Passkey)
+		assert.Nil(t, c.Webauthn)
 	})
 }
 

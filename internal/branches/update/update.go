@@ -11,7 +11,6 @@ import (
 	"github.com/supabase/cli/internal/branches/pause"
 	"github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
 )
 
@@ -24,8 +23,8 @@ func Run(ctx context.Context, branchId string, body api.UpdateBranchBody, fsys a
 	if err != nil {
 		return errors.Errorf("failed to update preview branch: %w", err)
 	} else if resp.JSON200 == nil {
-		if orgSlug, was402 := utils.SuggestUpgradeOnError(ctx, flags.ProjectRef, "branching_persistent", resp.StatusCode()); was402 {
-			trackUpgradeSuggested(ctx, "branching_persistent", orgSlug)
+		if orgSlug, isGated := utils.SuggestUpgradeOnError(ctx, projectRef, "branching_persistent", resp.StatusCode()); isGated {
+			telemetry.TrackUpgradeSuggested(ctx, "branching_persistent", orgSlug)
 		}
 		return errors.Errorf("unexpected update branch status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
@@ -35,13 +34,4 @@ func Run(ctx context.Context, branchId string, body api.UpdateBranchBody, fsys a
 		return utils.RenderTable(table)
 	}
 	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, *resp.JSON200)
-}
-
-func trackUpgradeSuggested(ctx context.Context, featureKey, orgSlug string) {
-	if svc := telemetry.FromContext(ctx); svc != nil {
-		_ = svc.Capture(ctx, telemetry.EventUpgradeSuggested, map[string]any{
-			telemetry.PropFeatureKey: featureKey,
-			telemetry.PropOrgSlug:    orgSlug,
-		}, nil)
-	}
 }

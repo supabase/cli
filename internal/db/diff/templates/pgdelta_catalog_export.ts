@@ -5,7 +5,7 @@ import {
   extractCatalog,
   serializeCatalog,
   stringifyCatalogSnapshot,
-} from "npm:@supabase/pg-delta@1.0.0-alpha.9";
+} from "npm:@supabase/pg-delta@1.0.0-alpha.13";
 
 const target = Deno.env.get("TARGET");
 const role = Deno.env.get("ROLE") ?? undefined;

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/getsentry/sentry-go"
@@ -139,6 +140,18 @@ var (
 				fmt.Fprintln(utils.GetDebugLogger(), err)
 			} else {
 				ctx = telemetry.WithService(ctx, service)
+			}
+			if service != nil {
+				var stitchOnce sync.Once
+				utils.OnGotrueID = func(gotrueID string) {
+					if service.NeedsIdentityStitch() {
+						stitchOnce.Do(func() {
+							if err := service.StitchLogin(gotrueID); err != nil {
+								fmt.Fprintln(utils.GetDebugLogger(), err)
+							}
+						})
+					}
+				}
 			}
 			ctx = telemetry.WithCommandContext(ctx, commandAnalyticsContext(cmd))
 			cmd.SetContext(ctx)
