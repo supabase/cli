@@ -90,6 +90,41 @@ Always check `src/shared/` before writing new infrastructure. Do not duplicate w
 
 ---
 
+## Phase 0: Go Binary Wrapper
+
+Before any command is natively implemented in TypeScript, the first step for each command is to **wrap** it: define the command in the TS command tree and proxy all invocations to the bundled Go binary via subprocess.
+
+### Proxy handler pattern
+
+A proxy handler passes argv through to the Go binary, forwarding stdin/stdout/stderr and propagating the exit code. Use the shared `LegacyGoProxy` service:
+
+```ts
+// src/legacy/commands/orgs/list/list.handler.ts (Phase 0 proxy)
+export const legacyOrgsList = Effect.fn("legacy.orgs.list")(function* (
+  _flags: LegacyOrgsListFlags,
+) {
+  const proxy = yield* LegacyGoProxy;
+  yield* proxy.exec(["orgs", "list"]);
+});
+```
+
+### When wrapping a command
+
+For each command added to the Phase 0 wrapper, complete all three steps:
+
+1. **Reconstruct the command definition** — flags, subcommands, and argument types must exactly match the Go CLI (use `.repos/supabase-cli-go/` as the reference).
+2. **Write a proxy handler** — forward invocations to the Go binary via `LegacyGoProxy`.
+3. **Update `docs/go-cli-porting-status.md`** — mark the command as `wrapped`.
+
+### When porting a command (Phase 1+)
+
+When replacing a proxy handler with a native TS implementation:
+
+1. Implement the business logic in `<command>.handler.ts` using Effect services (see Legacy Port sections below).
+2. Update `docs/go-cli-porting-status.md` — mark the command as `ported`.
+
+---
+
 ## Legacy Port: File Structure and Naming
 
 ### Directory layout
@@ -98,12 +133,10 @@ One directory per top-level command under `src/legacy/commands/`:
 
 ```
 src/legacy/commands/<command>/
-  <command>.command.ts          # Effect CLI Command definition, flag wiring, layer provision
-  <command>.handler.ts          # Pure Effect business logic (exported handler)
-  <command>.errors.ts           # Domain error types (Data.TaggedError)
-  <command>.integration.test.ts
-  <command>.e2e.test.ts         # Minimal golden-path only
-  SIDE_EFFECTS.md               # Required for every legacy command — see section below
+  <command>.command.ts   # Effect CLI Command definition, flag wiring, layer provision
+  <command>.handler.ts   # Phase 0: proxy handler. Phase 1+: native Effect implementation
+  <command>.errors.ts    # Domain error types (Data.TaggedError) — add when porting
+  SIDE_EFFECTS.md        # Required for every legacy command — see section below
 ```
 
 Commands with subcommands use nested directories:
@@ -169,7 +202,7 @@ The legacy shell is a **strict 1:1 port** — not a redesign. The compatibility 
 - Same API routes and request shapes
 - Same exit codes
 
-When in doubt about expected output or behavior, run the equivalent command against the Go CLI reference at `.repos/supabase-cli-go/` and match it exactly. The E2E compatibility test suite diffs Go binary output against TypeScript port output — any divergence is a test failure.
+When in doubt about expected output or behavior, run the equivalent command against the Go CLI reference at `.repos/supabase-cli-go/` and match it exactly.
 
 ---
 
@@ -249,7 +282,7 @@ yield * creating.succeed("Branch created");
 
 Use `bun run test` (not `bun test`) to run tests. The `package.json` `test` script runs all Vitest projects with coverage enabled for the `core` project.
 
-Use `bun run test:core` for the main in-process suite and `bun run test:e2e` for the sequential subprocess suite.
+Use `bun run test:core` for the main in-process suite, and `bun run test:e2e` for the sequential subprocess suite.
 
 Always run the relevant unit and integration tests automatically for the command or workspace you changed.
 Do not run the full e2e suite automatically. Only run e2e when the user asks, or when you need extra confidence for the command you touched.
@@ -278,29 +311,6 @@ Read https://www.effect.solutions/testing for Effect testing patterns. Note that
 - If a test needs multiple service replacements or `Layer.mergeAll(...)`, it likely belongs in `*.integration.test.ts`.
 - Prefer assertions on outputs and accumulated state over spy-heavy interaction tests.
 - Keep `*.e2e.test.ts` focused on golden paths, CLI surface behavior, and subprocess correctness, not branch-by-branch coverage.
-
-### Integration test pattern (legacy)
-
-Mock helper and layer setup functions for legacy tests must follow the `Legacy`/`legacy` prefix rule:
-
-```ts
-function setupLegacyTty(opts: { existingToken?: string } = {}) {
-  const creds = mockLegacyCredentials(opts);
-  const out = mockLegacyOutput();
-  const layer = Layer.mergeAll(emptyEnv(), creds.layer, out.layer, …);
-  return { layer, creds, out };
-}
-
-it.live("saves the token on login", () => {
-  const { layer, creds, out } = setupLegacyTty();
-  return Effect.gen(function* () {
-    yield* legacyLogin({ token: Option.some("sbp_token"), … });
-    expect(creds.savedToken).toBe("sbp_token");
-  }).pipe(Effect.provide(layer));
-});
-```
-
-See `src/next/commands/login/` for the canonical integration test example (adapt naming conventions for legacy).
 
 ---
 

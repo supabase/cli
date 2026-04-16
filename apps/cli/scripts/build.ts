@@ -79,6 +79,17 @@ const TARGETS = [
 const root = path.resolve(import.meta.dir, "../../..");
 const entrypoint = path.join(root, "apps/cli/src", shell, "main.ts");
 const distDir = path.join(root, "dist");
+const goSource = path.resolve(root, ".repos/supabase-cli-go");
+
+type BunTarget = (typeof TARGETS)[number]["bunTarget"];
+
+const GO_TARGETS: Record<BunTarget, { goos: string; goarch: string }> = {
+  "bun-darwin-arm64": { goos: "darwin", goarch: "arm64" },
+  "bun-darwin-x64": { goos: "darwin", goarch: "amd64" },
+  "bun-linux-arm64": { goos: "linux", goarch: "arm64" },
+  "bun-linux-x64": { goos: "linux", goarch: "amd64" },
+  "bun-windows-x64": { goos: "windows", goarch: "amd64" },
+};
 
 async function buildTarget(target: (typeof TARGETS)[number]) {
   const binDir = path.join(root, "packages", target.pkg, "bin");
@@ -91,6 +102,23 @@ async function buildTarget(target: (typeof TARGETS)[number]) {
   console.log(`[${target.pkg}] Done.`);
 }
 
+async function buildGoTarget(target: (typeof TARGETS)[number]) {
+  const binDir = path.join(root, "packages", target.pkg, "bin");
+  await mkdir(binDir, { recursive: true });
+
+  const { goos, goarch } = GO_TARGETS[target.bunTarget];
+  const outfile = path.join(binDir, `supabase-go${target.ext}`);
+
+  console.log(`[${target.pkg}] Compiling Go CLI (${goos}/${goarch})...`);
+  await $`go build -trimpath -ldflags="-s -w" -o ${outfile} ${goSource}`.env({
+    ...process.env,
+    GOOS: goos,
+    GOARCH: goarch,
+    CGO_ENABLED: "0",
+  });
+  console.log(`[${target.pkg}] Go binary done.`);
+}
+
 async function archiveTarget(target: (typeof TARGETS)[number]) {
   const binDir = path.join(root, "packages", target.pkg, "bin");
   const archivePath = path.join(distDir, target.archive);
@@ -98,9 +126,13 @@ async function archiveTarget(target: (typeof TARGETS)[number]) {
   console.log(`[${target.pkg}] Creating archive ${target.archive}...`);
 
   if (target.archive.endsWith(".zip")) {
-    await $`zip -j ${archivePath} ${path.join(binDir, `supabase${target.ext}`)}`;
+    const files = [path.join(binDir, `supabase${target.ext}`)];
+    if (shell === "legacy") files.push(path.join(binDir, `supabase-go${target.ext}`));
+    await $`zip -j ${archivePath} ${files}`;
   } else {
-    await $`tar -czf ${archivePath} -C ${binDir} supabase${target.ext}`;
+    const files = [`supabase${target.ext}`];
+    if (shell === "legacy") files.push(`supabase-go${target.ext}`);
+    await $`tar -czf ${archivePath} -C ${binDir} ${files}`;
   }
 }
 
@@ -132,6 +164,19 @@ async function buildLinuxPackages(version: string) {
       const outPath = path.join(distDir, outFile);
       const binDir = fmt === "apk" ? muslBinDir : glibcBinDir;
 
+      // Go binary is CGO_ENABLED=0 (fully static), so the glibc Linux build works on
+      // musl too. For apk (musl), binDir is muslBinDir for the TS binary but we still
+      // reference supabase-go from the glibc dir where it was built.
+      const contents: Array<{ src: string; dst: string }> = [
+        { src: path.join(binDir, "supabase"), dst: "/usr/bin/supabase" },
+      ];
+      if (shell === "legacy") {
+        contents.push({
+          src: path.join(glibcBinDir, "supabase-go"),
+          dst: "/usr/bin/supabase-go",
+        });
+      }
+
       const nfpmConfig: Record<string, unknown> = {
         name: "supabase",
         arch: target.nfpmArch,
@@ -141,7 +186,7 @@ async function buildLinuxPackages(version: string) {
         description: "Supabase CLI",
         homepage: "https://supabase.com",
         license: "MIT",
-        contents: [{ src: path.join(binDir, "supabase"), dst: "/usr/bin/supabase" }],
+        contents,
       };
 
       if (fmt === "apk") {
@@ -192,6 +237,11 @@ async function generateChecksums() {
 console.log(`Building ${shell} CLI for ${TARGETS.length} targets...\n`);
 
 await Promise.all(TARGETS.map(buildTarget));
+
+if (shell === "legacy") {
+  console.log("\nCompiling Go CLI for all targets...");
+  await Promise.all(TARGETS.map(buildGoTarget));
+}
 
 await mkdir(distDir, { recursive: true });
 await Promise.all(TARGETS.map(archiveTarget));

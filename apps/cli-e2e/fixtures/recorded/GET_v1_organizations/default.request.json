@@ -1,0 +1,12 @@
+{
+  "method": "GET",
+  "path": "/v1/organizations",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "authorization": "Bearer <ACCESS_TOKEN>",
+    "host": "127.0.0.1:51850",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": null
+}

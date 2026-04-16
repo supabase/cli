@@ -25,7 +25,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      
+
       - name: Setup
         uses: ./.github/actions/setup
 
@@ -39,7 +39,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      
+
       - name: Setup
         uses: ./.github/actions/setup
 
@@ -53,10 +53,25 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      
+
       - name: Setup
         uses: ./.github/actions/setup
+
+      - name: Initialize Go CLI submodule
+        run: git submodule update --init .repos/supabase-cli-go
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: .repos/supabase-cli-go/go.mod
+          cache-dependency-path: .repos/supabase-cli-go/go.sum
+
+      - name: Build Go CLI
+        run: go build -o supabase-go .
+        working-directory: .repos/supabase-cli-go
 
       # TODO: Shard e2e tests across multiple machines: https://github.com/vitest-tests/test-sharding/blob/90ef5183fd30f7e4aa745adfaa750e071f86a6a0/.github/workflows/ci.yml
       - name: Run end-to-end tests
         run: pnpm run test:e2e
+        env:
+          SUPABASE_GO_BINARY: ${{ github.workspace }}/.repos/supabase-cli-go/supabase-go

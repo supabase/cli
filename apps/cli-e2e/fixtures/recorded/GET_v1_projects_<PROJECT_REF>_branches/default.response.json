@@ -1,0 +1,25 @@
+{
+  "status": 200,
+  "headers": {
+    "access-control-allow-credentials": "true",
+    "access-control-expose-headers": "x-connection-encrypted,x-forwarded-for,user-agent,CF-Connecting-IP,Retry-After",
+    "alt-svc": "h3=\":443\"; ma=86400",
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "9ecb2e122dbeb3c0-MAN",
+    "connection": "keep-alive",
+    "content-type": "application/json; charset=utf-8",
+    "date": "Wed, 15 Apr 2026 13:08:37 GMT",
+    "etag": "W/\"2-l9Fw4VUO7kr8CvBlt4zaMCqXZ0w\"",
+    "nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+    "report-to": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=aEwFuPqQd1L71yOEUX%2F2cJq32fOepPRK3FzD7m5JBdxsexxPttuZ8C71aBM1xfbYsl1eet3IIhX1gm8ltTR6s4JJOaCZIi3EiHs1780%2FDvOH4ugfOPRuk1pmAQ6%2FO6zPniWmmXA%3D\"}]}",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+    "vary": "Origin",
+    "x-powered-by": "Express",
+    "x-ratelimit-limit": "120",
+    "x-ratelimit-remaining": "119",
+    "x-ratelimit-reset": "60",
+    "set-cookie": "__cf_bm=ub_AntQEnJIbmMJv5sI3AJdzM1ZToo5aLBL1rhEohyk-1776258516.829374-1.0.1.1-T95y3kIC1yW1wTFQkOF0dUiffTUzDL2vK8TzCJ_tb_7MRaIYG260cwl9Ave_dN3uupfvDrcCpEX9XEDfi7NGRQyR2jar_byWGevecp.9EhNFKPP8sz48zO6tn59hShho; HttpOnly; Secure; Path=/; Domain=supabase.green; Expires=Wed, 15 Apr 2026 13:38:37 GMT"
+  },
+  "body": []
+}

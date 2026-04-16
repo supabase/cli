@@ -22,6 +22,7 @@ const concernSlices = [
 
 function walk(dir: string): Array<string> {
   return readdirSync(dir).flatMap((entry) => {
+    if (entry === "__fixtures__") return [];
     const fullPath = path.join(dir, entry);
     const stats = statSync(fullPath);
     if (stats.isDirectory()) {
