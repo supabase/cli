@@ -492,9 +492,8 @@ const (
 
 // Defines values for JitAccessRequestRequestState.
 const (
-	Disabled    JitAccessRequestRequestState = "disabled"
-	Enabled     JitAccessRequestRequestState = "enabled"
-	Unavailable JitAccessRequestRequestState = "unavailable"
+	Disabled JitAccessRequestRequestState = "disabled"
+	Enabled  JitAccessRequestRequestState = "enabled"
 )
 
 // Defines values for ListActionRunResponseRunStepsName.
