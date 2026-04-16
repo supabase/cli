@@ -445,6 +445,10 @@ func NewConfig(editors ...ConfigEditor) config {
 	return initial
 }
 
+func (c *config) AuthExternalURL() string {
+	return c.Auth.GetExternalURL(c.Api.ExternalUrl)
+}
+
 var (
 	//go:embed templates/certs/kong.local.crt
 	kongCert []byte
@@ -632,9 +636,12 @@ func (c *config) Load(path string, fsys fs.FS, overrides ...ConfigEditor) error 
 		}
 		c.Api.ExternalUrl = apiUrl.String()
 	}
+	if len(c.Auth.ExternalUrl) == 0 {
+		c.Auth.ExternalUrl = c.AuthExternalURL()
+	}
 	// Set default JWT issuer if not configured
 	if len(c.Auth.JwtIssuer) == 0 {
-		c.Auth.JwtIssuer = c.Api.ExternalUrl + "/auth/v1"
+		c.Auth.JwtIssuer = c.Auth.ExternalUrl
 	}
 	// Update image versions
 	switch c.Db.MajorVersion {

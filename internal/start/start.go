@@ -573,78 +573,7 @@ EOF
 
 	// Start GoTrue.
 	if utils.Config.Auth.Enabled && !isContainerExcluded(utils.Config.Auth.Image, excluded) {
-		var testOTP bytes.Buffer
-		if len(utils.Config.Auth.Sms.TestOTP) > 0 {
-			formatMapForEnvConfig(utils.Config.Auth.Sms.TestOTP, &testOTP)
-		}
-
-		env := []string{
-			"API_EXTERNAL_URL=" + utils.Config.Api.ExternalUrl,
-
-			"GOTRUE_API_HOST=0.0.0.0",
-			"GOTRUE_API_PORT=9999",
-
-			"GOTRUE_DB_DRIVER=postgres",
-			fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:%d/%s", dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
-
-			"GOTRUE_SITE_URL=" + utils.Config.Auth.SiteUrl,
-			"GOTRUE_URI_ALLOW_LIST=" + strings.Join(utils.Config.Auth.AdditionalRedirectUrls, ","),
-			fmt.Sprintf("GOTRUE_DISABLE_SIGNUP=%v", !utils.Config.Auth.EnableSignup),
-
-			"GOTRUE_JWT_ADMIN_ROLES=service_role",
-			"GOTRUE_JWT_AUD=authenticated",
-			"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
-			fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
-			"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
-			"GOTRUE_JWT_ISSUER=" + utils.Config.Auth.JwtIssuer,
-
-			fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", utils.Config.Auth.Email.EnableSignup),
-			fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", utils.Config.Auth.Email.DoubleConfirmChanges),
-			fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !utils.Config.Auth.Email.EnableConfirmations),
-			fmt.Sprintf("GOTRUE_MAILER_OTP_LENGTH=%v", utils.Config.Auth.Email.OtpLength),
-			fmt.Sprintf("GOTRUE_MAILER_OTP_EXP=%v", utils.Config.Auth.Email.OtpExpiry),
-			"GOTRUE_MAILER_TEMPLATE_RELOADING_ENABLED=true",
-
-			fmt.Sprintf("GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED=%v", utils.Config.Auth.EnableAnonymousSignIns),
-
-			fmt.Sprintf("GOTRUE_SMTP_MAX_FREQUENCY=%v", utils.Config.Auth.Email.MaxFrequency),
-
-			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_INVITE=%s/verify", utils.Config.Auth.JwtIssuer),
-			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_CONFIRMATION=%s/verify", utils.Config.Auth.JwtIssuer),
-			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_RECOVERY=%s/verify", utils.Config.Auth.JwtIssuer),
-			fmt.Sprintf("GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=%s/verify", utils.Config.Auth.JwtIssuer),
-			"GOTRUE_RATE_LIMIT_EMAIL_SENT=360000",
-
-			fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
-			fmt.Sprintf("GOTRUE_SMS_AUTOCONFIRM=%v", !utils.Config.Auth.Sms.EnableConfirmations),
-			fmt.Sprintf("GOTRUE_SMS_MAX_FREQUENCY=%v", utils.Config.Auth.Sms.MaxFrequency),
-			"GOTRUE_SMS_OTP_EXP=6000",
-			"GOTRUE_SMS_OTP_LENGTH=6",
-			fmt.Sprintf("GOTRUE_SMS_TEMPLATE=%v", utils.Config.Auth.Sms.Template),
-			"GOTRUE_SMS_TEST_OTP=" + testOTP.String(),
-
-			fmt.Sprintf("GOTRUE_PASSWORD_MIN_LENGTH=%v", utils.Config.Auth.MinimumPasswordLength),
-			fmt.Sprintf("GOTRUE_PASSWORD_REQUIRED_CHARACTERS=%v", utils.Config.Auth.PasswordRequirements.ToChar()),
-			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
-			fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
-			fmt.Sprintf("GOTRUE_SECURITY_MANUAL_LINKING_ENABLED=%v", utils.Config.Auth.EnableManualLinking),
-			fmt.Sprintf("GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION=%v", utils.Config.Auth.Email.SecurePasswordChange),
-			fmt.Sprintf("GOTRUE_MFA_PHONE_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.Phone.EnrollEnabled),
-			fmt.Sprintf("GOTRUE_MFA_PHONE_VERIFY_ENABLED=%v", utils.Config.Auth.MFA.Phone.VerifyEnabled),
-			fmt.Sprintf("GOTRUE_MFA_TOTP_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.TOTP.EnrollEnabled),
-			fmt.Sprintf("GOTRUE_MFA_TOTP_VERIFY_ENABLED=%v", utils.Config.Auth.MFA.TOTP.VerifyEnabled),
-			fmt.Sprintf("GOTRUE_MFA_WEB_AUTHN_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.WebAuthn.EnrollEnabled),
-			fmt.Sprintf("GOTRUE_MFA_WEB_AUTHN_VERIFY_ENABLED=%v", utils.Config.Auth.MFA.WebAuthn.VerifyEnabled),
-			fmt.Sprintf("GOTRUE_MFA_MAX_ENROLLED_FACTORS=%v", utils.Config.Auth.MFA.MaxEnrolledFactors),
-
-			// Add rate limit configurations
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_ANONYMOUS_USERS=%v", utils.Config.Auth.RateLimit.AnonymousUsers),
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_TOKEN_REFRESH=%v", utils.Config.Auth.RateLimit.TokenRefresh),
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_OTP=%v", utils.Config.Auth.RateLimit.SignInSignUps),
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_VERIFY=%v", utils.Config.Auth.RateLimit.TokenVerifications),
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_SMS_SENT=%v", utils.Config.Auth.RateLimit.SmsSent),
-			fmt.Sprintf("GOTRUE_RATE_LIMIT_WEB3=%v", utils.Config.Auth.RateLimit.Web3),
-		}
+		env := buildGotrueEnv(dbConfig)
 
 		// Serialise default or custom signing keys
 		if keys, err := json.Marshal(utils.Config.Auth.SigningKeys); err == nil {
@@ -817,26 +746,7 @@ EOF
 			)
 		}
 
-		for name, config := range utils.Config.Auth.External {
-			env = append(
-				env,
-				fmt.Sprintf("GOTRUE_EXTERNAL_%s_ENABLED=%v", strings.ToUpper(name), config.Enabled),
-				fmt.Sprintf("GOTRUE_EXTERNAL_%s_CLIENT_ID=%s", strings.ToUpper(name), config.ClientId),
-				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SECRET=%s", strings.ToUpper(name), config.Secret.Value),
-				fmt.Sprintf("GOTRUE_EXTERNAL_%s_SKIP_NONCE_CHECK=%t", strings.ToUpper(name), config.SkipNonceCheck),
-				fmt.Sprintf("GOTRUE_EXTERNAL_%s_EMAIL_OPTIONAL=%t", strings.ToUpper(name), config.EmailOptional),
-			)
-
-			redirectUri := config.RedirectUri
-			if redirectUri == "" {
-				redirectUri = utils.Config.Auth.JwtIssuer + "/callback"
-			}
-			env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=%s", strings.ToUpper(name), redirectUri))
-
-			if config.Url != "" {
-				env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_%s_URL=%s", strings.ToUpper(name), config.Url))
-			}
-		}
+		env = appendGotrueExternalProviderEnv(env)
 		env = append(env,
 			fmt.Sprintf("GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED=%v", utils.Config.Auth.Web3.Solana.Enabled),
 			fmt.Sprintf("GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED=%v", utils.Config.Auth.Web3.Ethereum.Enabled),
@@ -1366,6 +1276,100 @@ func formatMapForEnvConfig(input map[string]string, output *bytes.Buffer) {
 			output.WriteString(",")
 		}
 	}
+}
+
+func buildGotrueEnv(dbConfig pgconn.Config) []string {
+	var testOTP bytes.Buffer
+	if len(utils.Config.Auth.Sms.TestOTP) > 0 {
+		formatMapForEnvConfig(utils.Config.Auth.Sms.TestOTP, &testOTP)
+	}
+
+	return []string{
+		"API_EXTERNAL_URL=" + utils.Config.AuthExternalURL(),
+
+		"GOTRUE_API_HOST=0.0.0.0",
+		"GOTRUE_API_PORT=9999",
+
+		"GOTRUE_DB_DRIVER=postgres",
+		fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:%d/%s", dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
+
+		"GOTRUE_SITE_URL=" + utils.Config.Auth.SiteUrl,
+		"GOTRUE_URI_ALLOW_LIST=" + strings.Join(utils.Config.Auth.AdditionalRedirectUrls, ","),
+		fmt.Sprintf("GOTRUE_DISABLE_SIGNUP=%v", !utils.Config.Auth.EnableSignup),
+
+		"GOTRUE_JWT_ADMIN_ROLES=service_role",
+		"GOTRUE_JWT_AUD=authenticated",
+		"GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
+		fmt.Sprintf("GOTRUE_JWT_EXP=%v", utils.Config.Auth.JwtExpiry),
+		"GOTRUE_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
+		"GOTRUE_JWT_ISSUER=" + utils.Config.Auth.JwtIssuer,
+
+		fmt.Sprintf("GOTRUE_EXTERNAL_EMAIL_ENABLED=%v", utils.Config.Auth.Email.EnableSignup),
+		fmt.Sprintf("GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED=%v", utils.Config.Auth.Email.DoubleConfirmChanges),
+		fmt.Sprintf("GOTRUE_MAILER_AUTOCONFIRM=%v", !utils.Config.Auth.Email.EnableConfirmations),
+		fmt.Sprintf("GOTRUE_MAILER_OTP_LENGTH=%v", utils.Config.Auth.Email.OtpLength),
+		fmt.Sprintf("GOTRUE_MAILER_OTP_EXP=%v", utils.Config.Auth.Email.OtpExpiry),
+		"GOTRUE_MAILER_TEMPLATE_RELOADING_ENABLED=true",
+
+		fmt.Sprintf("GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED=%v", utils.Config.Auth.EnableAnonymousSignIns),
+
+		fmt.Sprintf("GOTRUE_SMTP_MAX_FREQUENCY=%v", utils.Config.Auth.Email.MaxFrequency),
+
+		"GOTRUE_MAILER_URLPATHS_INVITE=/verify",
+		"GOTRUE_MAILER_URLPATHS_CONFIRMATION=/verify",
+		"GOTRUE_MAILER_URLPATHS_RECOVERY=/verify",
+		"GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=/verify",
+		"GOTRUE_RATE_LIMIT_EMAIL_SENT=360000",
+
+		fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
+		fmt.Sprintf("GOTRUE_SMS_AUTOCONFIRM=%v", !utils.Config.Auth.Sms.EnableConfirmations),
+		fmt.Sprintf("GOTRUE_SMS_MAX_FREQUENCY=%v", utils.Config.Auth.Sms.MaxFrequency),
+		"GOTRUE_SMS_OTP_EXP=6000",
+		"GOTRUE_SMS_OTP_LENGTH=6",
+		fmt.Sprintf("GOTRUE_SMS_TEMPLATE=%v", utils.Config.Auth.Sms.Template),
+		"GOTRUE_SMS_TEST_OTP=" + testOTP.String(),
+
+		fmt.Sprintf("GOTRUE_PASSWORD_MIN_LENGTH=%v", utils.Config.Auth.MinimumPasswordLength),
+		fmt.Sprintf("GOTRUE_PASSWORD_REQUIRED_CHARACTERS=%v", utils.Config.Auth.PasswordRequirements.ToChar()),
+		fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=%v", utils.Config.Auth.EnableRefreshTokenRotation),
+		fmt.Sprintf("GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL=%v", utils.Config.Auth.RefreshTokenReuseInterval),
+		fmt.Sprintf("GOTRUE_SECURITY_MANUAL_LINKING_ENABLED=%v", utils.Config.Auth.EnableManualLinking),
+		fmt.Sprintf("GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION=%v", utils.Config.Auth.Email.SecurePasswordChange),
+		fmt.Sprintf("GOTRUE_MFA_PHONE_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.Phone.EnrollEnabled),
+		fmt.Sprintf("GOTRUE_MFA_PHONE_VERIFY_ENABLED=%v", utils.Config.Auth.MFA.Phone.VerifyEnabled),
+		fmt.Sprintf("GOTRUE_MFA_TOTP_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.TOTP.EnrollEnabled),
+		fmt.Sprintf("GOTRUE_MFA_TOTP_VERIFY_ENABLED=%v", utils.Config.Auth.MFA.TOTP.VerifyEnabled),
+		fmt.Sprintf("GOTRUE_MFA_WEB_AUTHN_ENROLL_ENABLED=%v", utils.Config.Auth.MFA.WebAuthn.EnrollEnabled),
+		fmt.Sprintf("GOTRUE_MFA_WEB_AUTHN_VERIFY_ENABLED=%v", utils.Config.Auth.MFA.WebAuthn.VerifyEnabled),
+		fmt.Sprintf("GOTRUE_MFA_MAX_ENROLLED_FACTORS=%v", utils.Config.Auth.MFA.MaxEnrolledFactors),
+
+		fmt.Sprintf("GOTRUE_RATE_LIMIT_ANONYMOUS_USERS=%v", utils.Config.Auth.RateLimit.AnonymousUsers),
+		fmt.Sprintf("GOTRUE_RATE_LIMIT_TOKEN_REFRESH=%v", utils.Config.Auth.RateLimit.TokenRefresh),
+		fmt.Sprintf("GOTRUE_RATE_LIMIT_OTP=%v", utils.Config.Auth.RateLimit.SignInSignUps),
+		fmt.Sprintf("GOTRUE_RATE_LIMIT_VERIFY=%v", utils.Config.Auth.RateLimit.TokenVerifications),
+		fmt.Sprintf("GOTRUE_RATE_LIMIT_SMS_SENT=%v", utils.Config.Auth.RateLimit.SmsSent),
+		fmt.Sprintf("GOTRUE_RATE_LIMIT_WEB3=%v", utils.Config.Auth.RateLimit.Web3),
+	}
+}
+
+func appendGotrueExternalProviderEnv(env []string) []string {
+	for name, config := range utils.Config.Auth.External {
+		env = append(
+			env,
+			fmt.Sprintf("GOTRUE_EXTERNAL_%s_ENABLED=%v", strings.ToUpper(name), config.Enabled),
+			fmt.Sprintf("GOTRUE_EXTERNAL_%s_CLIENT_ID=%s", strings.ToUpper(name), config.ClientId),
+			fmt.Sprintf("GOTRUE_EXTERNAL_%s_SECRET=%s", strings.ToUpper(name), config.Secret.Value),
+			fmt.Sprintf("GOTRUE_EXTERNAL_%s_SKIP_NONCE_CHECK=%t", strings.ToUpper(name), config.SkipNonceCheck),
+			fmt.Sprintf("GOTRUE_EXTERNAL_%s_EMAIL_OPTIONAL=%t", strings.ToUpper(name), config.EmailOptional),
+		)
+		if config.RedirectUri != "" {
+			env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=%s", strings.ToUpper(name), config.RedirectUri))
+		}
+		if config.Url != "" {
+			env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_%s_URL=%s", strings.ToUpper(name), config.Url))
+		}
+	}
+	return env
 }
 
 func printSecurityNotice() {
