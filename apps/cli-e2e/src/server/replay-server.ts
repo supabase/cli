@@ -212,13 +212,31 @@ async function proxyAndRecord(
     .json()
     .catch(() => null);
 
-  // Strip headers that describe the encoding of the raw wire bytes. We store
-  // the decoded body as JSON, so these headers would cause the CLI to try
-  // (and fail) to decompress a response that is already plain JSON.
+  // Strip headers that are either wire-encoding artifacts (would break replay)
+  // or infrastructure noise with no value in fixtures (tracking, caching, session).
   const STRIP_RESPONSE_HEADERS = new Set([
+    // Wire encoding — body is stored as decoded JSON
     "content-encoding",
     "transfer-encoding",
     "content-length",
+    // Cloudflare / CDN noise
+    "cf-ray",
+    "cf-cache-status",
+    "alt-svc",
+    "nel",
+    "report-to",
+    // Session cookies — never needed for replay
+    "set-cookie",
+    // Irrelevant transport headers
+    "connection",
+    "date",
+    "etag",
+    "server",
+    "strict-transport-security",
+    "vary",
+    "x-powered-by",
+    "access-control-allow-credentials",
+    "access-control-expose-headers",
   ]);
   const responseHeaders: Record<string, string> = {};
   for (const [k, v] of upstreamRes.headers.entries()) {

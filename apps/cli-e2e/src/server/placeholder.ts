@@ -3,9 +3,13 @@
 
 const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const PROJECT_REF_PATTERN = /\b[a-z]{20}\b/g;
-const ISO_TIMESTAMP_PATTERN = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g;
+const ISO_TIMESTAMP_PATTERN = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g;
 // Matches any Bearer token — JWT style (a.b.c) or opaque (sbp_..., etc.)
 const BEARER_TOKEN_PATTERN = /Bearer\s+[A-Za-z0-9._-]+/g;
+// Matches bare JWTs in response bodies (always start with eyJ = base64url of '{"')
+const JWT_PATTERN = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
+// Matches Supabase publishable and secret API keys
+const SUPABASE_KEY_PATTERN = /sb_(?:publishable|secret)_[A-Za-z0-9_-]+/g;
 
 type PlaceholderMap = Record<string, string>;
 
@@ -26,11 +30,13 @@ export function applyPlaceholders(
     uuid: Object.keys(map).filter((k) => k.startsWith("<UUID_")).length + 1,
     ref: Object.keys(map).filter((k) => k.startsWith("<PROJECT_REF_")).length + 1,
     ts: Object.keys(map).filter((k) => k.startsWith("<TIMESTAMP_")).length + 1,
+    jwt: Object.keys(map).filter((k) => k.startsWith("<JWT_")).length + 1,
+    key: Object.keys(map).filter((k) => k.startsWith("<API_KEY_")).length + 1,
   };
 
   let output = input;
 
-  // Replace bearer tokens first (before UUID/ref patterns)
+  // Replace bearer tokens first (before JWT/UUID/ref patterns)
   output = output.replace(BEARER_TOKEN_PATTERN, (match) => {
     const token = match.slice("Bearer ".length);
     if (reverseMap[token]) return `Bearer ${reverseMap[token]}`;
@@ -38,6 +44,24 @@ export function applyPlaceholders(
     map[placeholder] = token;
     reverseMap[token] = placeholder;
     return `Bearer ${placeholder}`;
+  });
+
+  // Replace bare JWTs in response bodies (e.g. api_key fields)
+  output = output.replace(JWT_PATTERN, (match) => {
+    if (reverseMap[match]) return reverseMap[match];
+    const placeholder = `<JWT_${counter.jwt++}>`;
+    map[placeholder] = match;
+    reverseMap[match] = placeholder;
+    return placeholder;
+  });
+
+  // Replace Supabase publishable/secret API keys
+  output = output.replace(SUPABASE_KEY_PATTERN, (match) => {
+    if (reverseMap[match]) return reverseMap[match];
+    const placeholder = `<API_KEY_${counter.key++}>`;
+    map[placeholder] = match;
+    reverseMap[match] = placeholder;
+    return placeholder;
   });
 
   // Replace UUIDs

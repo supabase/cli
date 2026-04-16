@@ -1,25 +1,7 @@
 {
   "status": 200,
   "headers": {
-    "access-control-allow-credentials": "true",
-    "access-control-expose-headers": "x-connection-encrypted,x-forwarded-for,user-agent,CF-Connecting-IP,Retry-After",
-    "alt-svc": "h3=\":443\"; ma=86400",
-    "cf-cache-status": "DYNAMIC",
-    "cf-ray": "9eca90ee4f8c54b7-MAN",
-    "connection": "keep-alive",
-    "content-type": "application/json; charset=utf-8",
-    "date": "Wed, 15 Apr 2026 11:21:22 GMT",
-    "etag": "W/\"30e-m9i4niEUysvrXR4FzDH3o7E0aJU\"",
-    "nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
-    "report-to": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=xEI3YamjP3X2PoWkQ%2FELzc50NPK%2BJnacC2%2BNLQz7o7zz3%2B%2BESJCxjd57i1tp2Ch6ltZrXmYFz810Ub1aESH8aOjkGDd7Lh6G%2FbyhWHFCEPvb8By4osHkVZZYCKXo2rp74gBr85M%3D\"}]}",
-    "server": "cloudflare",
-    "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
-    "vary": "Origin",
-    "x-powered-by": "Express",
-    "x-ratelimit-limit": "120",
-    "x-ratelimit-remaining": "119",
-    "x-ratelimit-reset": "60",
-    "set-cookie": "__cf_bm=Ay3PT1FXLb_hUJQ99nJJwSjAMBQipRXUmRf1Z2otx7o-1776252080.3702972-1.0.1.1-vErloVSFD14S8ITcenqY.GwL43m1ZpLhm6vacouNoWQ8ytHa4GHWS4BIzp8oSP5WuqU1_03OL1MGiJw8dREJr38901HoIJOsEXT8OxR5_KA_fMwdo3ELO3kZG74HaVQ5; HttpOnly; Secure; Path=/; Domain=supabase.green; Expires=Wed, 15 Apr 2026 11:51:22 GMT"
+    "content-type": "application/json; charset=utf-8"
   },
   "body": [
     {
@@ -27,7 +9,7 @@
       "ref": "<PROJECT_REF_1>",
       "organization_id": "<PROJECT_REF_2>",
       "organization_slug": "<PROJECT_REF_2>",
-      "name": "colum.ferry@supabase.io's Project",
+      "name": "Test Project",
       "region": "us-east-1",
       "status": "ACTIVE_HEALTHY",
       "database": {
