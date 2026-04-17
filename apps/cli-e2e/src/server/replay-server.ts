@@ -4,12 +4,7 @@ import { URL } from "node:url";
 import type { FixtureStore } from "./fixture-loader.ts";
 import { loadFixtures } from "./fixture-loader.ts";
 import { applyPlaceholders, fixtureKey } from "./placeholder.ts";
-import {
-  describeRequest,
-  matchFixture,
-  resetCounters,
-  type SequenceCounters,
-} from "./request-matcher.ts";
+import { matchFixture, resetCounters, type SequenceCounters } from "./request-matcher.ts";
 
 interface RecordedRequest {
   method: string;
@@ -145,7 +140,7 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
         );
       }
 
-      return serveFromFixtures(store, counters, method, pathname);
+      return serveFromFixtures(store, counters, method, pathname, { query, body: requestBody });
     },
   });
 
@@ -323,21 +318,18 @@ function serveFromFixtures(
   counters: SequenceCounters,
   method: string,
   pathname: string,
+  incoming: { query: Record<string, string>; body: unknown },
 ): Response {
-  const entry = matchFixture(store, counters, method, pathname);
-  if (!entry) {
-    const description = describeRequest(method, pathname);
-    return new Response(
-      JSON.stringify({
-        message: `Missing fixture: ${description} — run with RECORD=true to record`,
-      }),
-      { status: 502, headers: { "Content-Type": "application/json" } },
-    );
+  const result = matchFixture(store, counters, method, pathname, incoming);
+  if (!result.ok) {
+    return new Response(JSON.stringify({ message: result.message }), {
+      status: result.status,
+      headers: { "Content-Type": "application/json" },
+    });
   }
-
-  return Response.json(entry.response.body, {
-    status: entry.response.status,
-    headers: entry.response.headers,
+  return Response.json(result.entry.response.body, {
+    status: result.entry.response.status,
+    headers: result.entry.response.headers,
   });
 }
 
