@@ -9,6 +9,8 @@ const BEARER_TOKEN_PATTERN = /Bearer\s+[A-Za-z0-9._-]+/g;
 const JWT_PATTERN = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
 // Matches Supabase publishable and secret API keys
 const SUPABASE_KEY_PATTERN = /sb_(?:publishable|secret)_[A-Za-z0-9_-]+/g;
+// Matches the local replay server host header (127.0.0.1 or localhost with a dynamic port)
+const LOCAL_HOST_PORT_PATTERN = /(?:127\.0\.0\.1|localhost):\d+/g;
 
 // A fixed valid ISO 8601 timestamp used in place of real timestamps so that
 // CLI code that calls time.Parse on response fields doesn't fail.
@@ -18,6 +20,7 @@ const FIXED_TIMESTAMP = "2000-01-01T00:00:00Z";
  *  Timestamps become a fixed valid ISO string so CLIs that parse them don't fail. */
 export function applyPlaceholders(input: string): { output: string } {
   let output = input;
+  output = output.replace(LOCAL_HOST_PORT_PATTERN, "localhost:<PORT>");
   // Bearer tokens first (before JWT/ref patterns consume sub-parts)
   output = output.replace(BEARER_TOKEN_PATTERN, "Bearer <ACCESS_TOKEN>");
   output = output.replace(JWT_PATTERN, "<JWT>");
