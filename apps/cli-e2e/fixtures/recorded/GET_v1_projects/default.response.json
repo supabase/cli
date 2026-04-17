@@ -1,40 +1,44 @@
 {
   "status": 200,
   "headers": {
-    "content-type": "application/json; charset=utf-8"
+    "content-type": "application/json; charset=utf-8",
+    "x-gotrue-id": "<UUID>",
+    "x-ratelimit-limit": "120",
+    "x-ratelimit-remaining": "119",
+    "x-ratelimit-reset": "60"
   },
   "body": [
     {
-      "id": "<PROJECT_REF_1>",
-      "ref": "<PROJECT_REF_1>",
-      "organization_id": "<PROJECT_REF_2>",
-      "organization_slug": "<PROJECT_REF_2>",
-      "name": "Test Project",
+      "id": "<PROJECT_REF>",
+      "ref": "<PROJECT_REF>",
+      "organization_id": "<PROJECT_REF>",
+      "organization_slug": "<PROJECT_REF>",
+      "name": "colum.ferry@supabase.io's Project",
       "region": "us-east-1",
       "status": "ACTIVE_HEALTHY",
       "database": {
-        "host": "db.<PROJECT_REF_1>.supabase.red",
+        "host": "db.<PROJECT_REF>.supabase.red",
         "version": "17.6.1.084",
         "postgres_engine": "17",
         "release_channel": "ga"
       },
-      "created_at": "<TIMESTAMP_1>"
+      "created_at": "2000-01-01T00:00:00Z"
     },
     {
-      "id": "<PROJECT_REF_3>",
-      "ref": "<PROJECT_REF_3>",
-      "organization_id": "<PROJECT_REF_4>",
-      "organization_slug": "<PROJECT_REF_4>",
+      "id": "<PROJECT_REF>",
+      "ref": "<PROJECT_REF>",
+      "organization_id": "<PROJECT_REF>",
+      "organization_slug": "<PROJECT_REF>",
       "name": "CLIPort-TEST",
       "region": "us-east-1",
       "status": "COMING_UP",
       "database": {
-        "host": "db.<PROJECT_REF_3>.supabase.red",
+        "host": "db.<PROJECT_REF>.supabase.red",
         "version": "17.6.1.104",
         "postgres_engine": "17",
         "release_channel": "ga"
       },
-      "created_at": "<TIMESTAMP_2>"
+      "created_at": "2000-01-01T00:00:00Z"
     }
   ]
 }

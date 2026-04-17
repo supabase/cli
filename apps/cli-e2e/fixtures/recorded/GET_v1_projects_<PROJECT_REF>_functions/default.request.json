@@ -1,11 +1,11 @@
 {
   "method": "GET",
-  "path": "/v1/projects/<PROJECT_REF_1>/functions",
+  "path": "/v1/projects/<PROJECT_REF>/functions",
   "query": {},
   "headers": {
     "accept-encoding": "gzip",
     "authorization": "Bearer <ACCESS_TOKEN>",
-    "host": "127.0.0.1:51850",
+    "host": "127.0.0.1:57512",
     "user-agent": "SupabaseCLI/"
   },
   "body": null

@@ -1,0 +1,72 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>/api-keys",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "127.0.0.1:57512",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": [
+        {
+          "name": "anon",
+          "api_key": "<JWT>",
+          "id": "anon",
+          "type": "legacy",
+          "hash": "5_hj3ibS_1XaZbt-V9j_irP7lrLfHStqVgZ0RjM1_mY",
+          "prefix": "AiQBC",
+          "description": "Legacy anon API key"
+        },
+        {
+          "name": "service_role",
+          "api_key": "<JWT>",
+          "id": "service_role",
+          "type": "legacy",
+          "hash": "13hVvkL2qtcsdm5-X5adu8CZt42sFUfL56w_kb98CIQ",
+          "prefix": "5GnAa",
+          "description": "Legacy service_role API key"
+        },
+        {
+          "id": "<UUID>",
+          "name": "default",
+          "type": "publishable",
+          "api_key": "<API_KEY>",
+          "description": null,
+          "secret_jwt_template": null,
+          "hash": "8s8Ns5CjZCnAzys5HROzz9GpNo_mN0pDHu6nRFf6oDA",
+          "prefix": "<API_KEY>",
+          "inserted_at": "2000-01-01T00:00:00Z",
+          "updated_at": "2000-01-01T00:00:00Z"
+        },
+        {
+          "id": "<UUID>",
+          "name": "default",
+          "type": "secret",
+          "api_key": "<API_KEY>··························",
+          "description": null,
+          "secret_jwt_template": {
+            "role": "service_role"
+          },
+          "hash": "e9tjZcHpGhuKccBeoEvORag7plDYhJRjxy8w7zYJU8Y",
+          "prefix": "<API_KEY>",
+          "inserted_at": "2000-01-01T00:00:00Z",
+          "updated_at": "2000-01-01T00:00:00Z"
+        }
+      ]
+    }
+  }
+]

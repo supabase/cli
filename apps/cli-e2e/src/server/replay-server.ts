@@ -1,9 +1,14 @@
 import { existsSync, mkdirSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { URL } from "node:url";
-import type { FixtureStore } from "./fixture-loader.ts";
-import { loadFixtures } from "./fixture-loader.ts";
-import { applyPlaceholders, fixtureKey } from "./placeholder.ts";
+import type {
+  FixtureEntry,
+  FixtureRequest,
+  FixtureResponse,
+  FixtureStore,
+} from "./fixture-loader.ts";
+import { loadFixtures, loadScenario } from "./fixture-loader.ts";
+import { applyPlaceholders, fixtureKey, normalizeUrlPath } from "./placeholder.ts";
 import { matchFixture, resetCounters, type SequenceCounters } from "./request-matcher.ts";
 
 interface RecordedRequest {
@@ -24,6 +29,17 @@ interface RateLimitOverride {
   retryAfterSeconds: number;
 }
 
+interface ScenarioState {
+  name: string | null;
+  queue: FixtureEntry[];
+  index: number;
+  log: Array<{ request: FixtureRequest; response: FixtureResponse }>;
+}
+
+interface GlobalErrorRef {
+  value: { status: number; body: unknown } | null;
+}
+
 interface ReplayServerHandle {
   readonly url: string;
   readonly port: number;
@@ -36,7 +52,7 @@ interface ReplayServerHandle {
   setErrorResponse(method: string, path: string, status: number, body?: unknown): void;
   /** Simulate 429 rate limiting for a path. */
   setRateLimit(path: string, retryAfterSeconds: number): void;
-  /** Remove all error and rate-limit overrides. */
+  /** Remove all error and rate-limit overrides (including global). */
   clearErrorOverrides(): void;
 }
 
@@ -61,9 +77,10 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
   const requestLog: RecordedRequest[] = [];
   const errorOverrides = new Map<string, ErrorOverride>();
   const rateLimitOverrides = new Map<string, RateLimitOverride>();
-  // Track which fixture keys have been written in this session so that the
-  // first write clears stale files and re-recording is idempotent.
   const recordedKeys = new Set<string>();
+
+  const scenario: ScenarioState = { name: null, queue: [], index: 0, log: [] };
+  const globalErrorRef: GlobalErrorRef = { value: null };
 
   function overrideKey(method: string, path: string): string {
     return `${method.toUpperCase()} ${path}`;
@@ -74,13 +91,17 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
     async fetch(req: Request) {
       const url = new URL(req.url);
 
-      // Control plane — not forwarded to the CLI target or staging
+      // Control plane — not forwarded to CLI or staging
       if (url.pathname.startsWith("/_ctrl/")) {
         return handleControl(req, url, {
           requestLog,
           counters,
           errorOverrides,
           rateLimitOverrides,
+          scenario,
+          globalErrorRef,
+          isRecord,
+          fixturesDir: options.fixturesDir,
         });
       }
 
@@ -99,7 +120,6 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
         }
       }
 
-      // Record every incoming request for test assertions
       requestLog.push({
         method,
         pathname,
@@ -109,7 +129,12 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
         timestamp: new Date().toISOString(),
       });
 
-      // Check error overrides first
+      // Global error override — returned for all API requests regardless of endpoint.
+      if (globalErrorRef.value) {
+        return Response.json(globalErrorRef.value.body, { status: globalErrorRef.value.status });
+      }
+
+      // Per-endpoint error overrides
       const errKey = overrideKey(method, pathname);
       const errorOverride = errorOverrides.get(errKey);
       if (errorOverride) {
@@ -137,7 +162,13 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
           stagingUrl!,
           options.fixturesDir,
           recordedKeys,
+          scenario,
         );
+      }
+
+      // Replay mode: scenario takes priority over per-endpoint fixtures.
+      if (scenario.name !== null) {
+        return serveFromScenario(scenario, method, pathname, { query, body: requestBody });
       }
 
       return serveFromFixtures(store, counters, method, pathname, { query, body: requestBody });
@@ -165,6 +196,7 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
     clearErrorOverrides: () => {
       errorOverrides.clear();
       rateLimitOverrides.clear();
+      globalErrorRef.value = null;
     },
   };
 }
@@ -178,15 +210,13 @@ async function proxyAndRecord(
   stagingUrl: string,
   fixturesDir: string,
   recordedKeys: Set<string>,
+  scenario: ScenarioState,
 ): Promise<Response> {
   const targetUrl = new URL(pathname, stagingUrl);
   for (const [k, v] of Object.entries(query)) {
     targetUrl.searchParams.set(k, v);
   }
 
-  // Only forward headers that are meaningful to the upstream API. Drop
-  // hop-by-hop headers (host, connection, etc.) which are specific to the
-  // local CLI→server leg and must not be sent to a different host.
   const FORWARD_HEADERS = new Set(["authorization", "content-type", "accept", "user-agent"]);
   const upstreamHeaders: Record<string, string> = {};
   for (const [k, v] of Object.entries(requestHeaders)) {
@@ -207,22 +237,16 @@ async function proxyAndRecord(
     .json()
     .catch(() => null);
 
-  // Strip headers that are either wire-encoding artifacts (would break replay)
-  // or infrastructure noise with no value in fixtures (tracking, caching, session).
   const STRIP_RESPONSE_HEADERS = new Set([
-    // Wire encoding — body is stored as decoded JSON
     "content-encoding",
     "transfer-encoding",
     "content-length",
-    // Cloudflare / CDN noise
     "cf-ray",
     "cf-cache-status",
     "alt-svc",
     "nel",
     "report-to",
-    // Session cookies — never needed for replay
     "set-cookie",
-    // Irrelevant transport headers
     "connection",
     "date",
     "etag",
@@ -238,33 +262,23 @@ async function proxyAndRecord(
     if (!STRIP_RESPONSE_HEADERS.has(k.toLowerCase())) responseHeaders[k] = v;
   }
 
-  // Normalize dynamic values before writing to disk
   const rawPair = JSON.stringify({
-    request: {
-      method,
-      path: pathname,
-      query,
-      headers: requestHeaders,
-      body: requestBody,
-    },
-    response: {
-      status: upstreamRes.status,
-      headers: responseHeaders,
-      body: responseBody,
-    },
+    request: { method, path: pathname, query, headers: requestHeaders, body: requestBody },
+    response: { status: upstreamRes.status, headers: responseHeaders, body: responseBody },
   });
   const { output } = applyPlaceholders(rawPair);
   const normalized = JSON.parse(output) as {
-    request: object;
-    response: object;
+    request: FixtureRequest;
+    response: FixtureResponse;
   };
+  // Scenario interactions use unnumbered path placeholders so that comparison
+  // against incoming paths (normalized the same way) is always idempotent.
+  normalized.request.path = normalizeUrlPath(pathname);
 
-  // Write fixture pair — find the next available index in this key's directory
+  // Write to recorded/ (per-endpoint defaults, idempotent re-recording)
   const key = fixtureKey(method, pathname);
   const keyDir = join(fixturesDir, "recorded", key);
 
-  // On first write for this key in this session, delete stale fixture files so
-  // re-running in record mode is idempotent rather than appending indefinitely.
   if (!recordedKeys.has(key)) {
     recordedKeys.add(key);
     if (existsSync(keyDir)) {
@@ -288,6 +302,12 @@ async function proxyAndRecord(
     JSON.stringify(normalized.response, null, 2),
   );
 
+  // If a scenario is active, also append this interaction to interactions.json.
+  if (scenario.name !== null) {
+    scenario.log.push({ request: normalized.request, response: normalized.response });
+    writeScenarioInteractions(fixturesDir, scenario.name, scenario.log);
+  }
+
   return Response.json(responseBody, {
     status: upstreamRes.status,
     headers: {
@@ -296,7 +316,16 @@ async function proxyAndRecord(
   });
 }
 
-/** Find the next integer index to use when writing a new fixture pair. */
+function writeScenarioInteractions(
+  fixturesDir: string,
+  scenarioName: string,
+  interactions: Array<{ request: FixtureRequest; response: FixtureResponse }>,
+): void {
+  const scenarioDir = join(fixturesDir, "scenarios", scenarioName);
+  mkdirSync(scenarioDir, { recursive: true });
+  writeFileSync(join(scenarioDir, "interactions.json"), JSON.stringify(interactions, null, 2));
+}
+
 function nextFixtureIndex(keyDir: string): number {
   if (!existsSync(keyDir)) return 1;
   const files = readdirSync(keyDir);
@@ -307,7 +336,6 @@ function nextFixtureIndex(keyDir: string): number {
       const n = match[1] != null ? parseInt(match[1], 10) : 0;
       if (n > max) max = n;
     }
-    // "default" counts as 1
     if (file.startsWith("default.")) max = Math.max(max, 1);
   }
   return max + 1;
@@ -333,11 +361,96 @@ function serveFromFixtures(
   });
 }
 
+function serveFromScenario(
+  state: ScenarioState,
+  method: string,
+  pathname: string,
+  incoming: { query: Record<string, string>; body: unknown },
+): Response {
+  const label = `${method.toUpperCase()} ${pathname}`;
+
+  if (state.index >= state.queue.length) {
+    return new Response(
+      JSON.stringify({
+        message: `Scenario "${state.name}" exhausted — unexpected request: ${label}`,
+      }),
+      { status: 502, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  const expected = state.queue[state.index];
+  if (!expected) {
+    return new Response(
+      JSON.stringify({ message: `Scenario "${state.name}" — no entry at index ${state.index}` }),
+      { status: 502, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  state.index++;
+  const position = state.index;
+
+  // The stored path was written with normalizeUrlPath during recording; apply the
+  // same transform to the incoming path so both sides are trivially comparable.
+  if (
+    expected.request.method.toUpperCase() !== method.toUpperCase() ||
+    expected.request.path !== normalizeUrlPath(pathname)
+  ) {
+    return new Response(
+      JSON.stringify({
+        message: [
+          `Scenario "${state.name}" interaction ${position} method/path mismatch:`,
+          `  expected: ${expected.request.method.toUpperCase()} ${expected.request.path}`,
+          `  actual:   ${label}`,
+        ].join("\n"),
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  if (JSON.stringify(expected.request.query) !== JSON.stringify(incoming.query)) {
+    return new Response(
+      JSON.stringify({
+        message: [
+          `Scenario "${state.name}" interaction ${position} query mismatch for ${label}:`,
+          `  expected: ${JSON.stringify(expected.request.query)}`,
+          `  actual:   ${JSON.stringify(incoming.query)}`,
+        ].join("\n"),
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  if (
+    expected.request.body !== null &&
+    JSON.stringify(expected.request.body) !== JSON.stringify(incoming.body)
+  ) {
+    return new Response(
+      JSON.stringify({
+        message: [
+          `Scenario "${state.name}" interaction ${position} body mismatch for ${label}:`,
+          `  expected: ${JSON.stringify(expected.request.body)}`,
+          `  actual:   ${JSON.stringify(incoming.body)}`,
+        ].join("\n"),
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  return Response.json(expected.response.body, {
+    status: expected.response.status,
+    headers: expected.response.headers,
+  });
+}
+
 interface ControlContext {
   requestLog: RecordedRequest[];
   counters: SequenceCounters;
   errorOverrides: Map<string, ErrorOverride>;
   rateLimitOverrides: Map<string, RateLimitOverride>;
+  scenario: ScenarioState;
+  globalErrorRef: GlobalErrorRef;
+  isRecord: boolean;
+  fixturesDir: string;
 }
 
 async function handleControl(req: Request, url: URL, ctx: ControlContext): Promise<Response> {
@@ -350,6 +463,45 @@ async function handleControl(req: Request, url: URL, ctx: ControlContext): Promi
     if (req.method === "DELETE") {
       ctx.requestLog.length = 0;
       resetCounters(ctx.counters);
+      return new Response(null, { status: 204 });
+    }
+  }
+
+  if (subpath === "/scenario") {
+    if (req.method === "POST") {
+      const { name } = (await req.json()) as { name: string };
+
+      if (!ctx.isRecord) {
+        const interactions = loadScenario(join(ctx.fixturesDir, "scenarios"), name);
+        if (!interactions) {
+          return new Response(
+            JSON.stringify({
+              message: `Missing scenario: "${name}" — re-record with RECORD=true`,
+            }),
+            { status: 404, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        ctx.scenario.queue = interactions;
+      } else {
+        ctx.scenario.queue = [];
+        ctx.scenario.log = [];
+      }
+
+      ctx.scenario.name = name;
+      ctx.scenario.index = 0;
+      return new Response(null, { status: 204 });
+    }
+
+    if (req.method === "DELETE") {
+      // In record mode, always flush interactions.json (even when empty) so that
+      // tests which trigger a global error before any API call still get a scenario file.
+      if (ctx.isRecord && ctx.scenario.name !== null) {
+        writeScenarioInteractions(ctx.fixturesDir, ctx.scenario.name, ctx.scenario.log);
+      }
+      ctx.scenario.name = null;
+      ctx.scenario.queue = [];
+      ctx.scenario.index = 0;
+      ctx.scenario.log = [];
       return new Response(null, { status: 204 });
     }
   }
@@ -368,20 +520,28 @@ async function handleControl(req: Request, url: URL, ctx: ControlContext): Promi
     return new Response(null, { status: 204 });
   }
 
+  if (subpath === "/error-all" && req.method === "POST") {
+    const body = (await req.json()) as { status: number; body?: unknown };
+    ctx.globalErrorRef.value = {
+      status: body.status,
+      body: body.body ?? { message: "Error" },
+    };
+    return new Response(null, { status: 204 });
+  }
+
   if (subpath === "/rate-limit" && req.method === "POST") {
     const body = (await req.json()) as {
       path: string;
       retryAfterSeconds: number;
     };
-    ctx.rateLimitOverrides.set(body.path, {
-      retryAfterSeconds: body.retryAfterSeconds,
-    });
+    ctx.rateLimitOverrides.set(body.path, { retryAfterSeconds: body.retryAfterSeconds });
     return new Response(null, { status: 204 });
   }
 
   if (subpath === "/overrides" && req.method === "DELETE") {
     ctx.errorOverrides.clear();
     ctx.rateLimitOverrides.clear();
+    ctx.globalErrorRef.value = null;
     return new Response(null, { status: 204 });
   }
 

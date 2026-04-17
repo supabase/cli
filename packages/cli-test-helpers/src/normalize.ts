@@ -25,15 +25,22 @@ export function normalize(output: string): string {
       .replace(/\/(?:home|Users|tmp|var|opt|usr)\/\S+/g, "<PATH>")
       // 8. Windows absolute paths (C:\…)
       .replace(/[A-Z]:\\\S+/g, "<PATH>")
-      // 9. Go goroutine stack trace blocks (goroutine N [state]:\n...)
+      // 9. Go stack frame addresses (0x1a2b3c4d) — vary per run due to ASLR
+      .replace(/\(0x[0-9a-f]+\)/gi, "(0xADDR)")
+      // 10. CLI version-update notification lines emitted by the Go binary
+      .replace(
+        /^.*(?:A new version of Supabase CLI is available|upgrade at:|upgrade using:).*\n?/gim,
+        "",
+      )
+      // 11. Go goroutine stack trace blocks (goroutine N [state]:\n...)
       .replace(/^goroutine \d+ \[.*?\]:(?:\n[^\n]+)*/gm, "<STACK_TRACE>")
-      // 10. Node/Bun stack trace lines (one or more consecutive "    at …" lines)
+      // 12. Node/Bun stack trace lines (one or more consecutive "    at …" lines)
       .replace(/(?:^[ \t]+at [^\n]+\n?)+/gm, "<STACK_TRACE>\n")
-      // 11. File reference line numbers (file.ts:123 or file.ts:123:45)
+      // 13. File reference line numbers (file.ts:123 or file.ts:123:45)
       .replace(/\b(\w[\w.-]*\.(?:ts|js|go|tsx|jsx|mts|mjs|cjs)):\d+(?::\d+)?\b/g, "$1:<LINE>")
-      // 12. Trailing whitespace on each line
+      // 14. Trailing whitespace on each line
       .replace(/[ \t]+$/gm, "")
-      // 13. Collapse 3+ consecutive blank lines to two newlines
+      // 15. Collapse 3+ consecutive blank lines to two newlines
       .replace(/\n{3,}/g, "\n\n")
   );
 }

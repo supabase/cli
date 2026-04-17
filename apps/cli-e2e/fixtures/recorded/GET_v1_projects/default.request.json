@@ -5,7 +5,7 @@
   "headers": {
     "accept-encoding": "gzip",
     "authorization": "Bearer <ACCESS_TOKEN>",
-    "host": "127.0.0.1:54137",
+    "host": "127.0.0.1:57512",
     "user-agent": "SupabaseCLI/"
   },
   "body": null

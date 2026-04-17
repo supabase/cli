@@ -1,91 +1,37 @@
-import { afterEach, beforeEach, describe, expect, inject, test } from "vitest";
-import {
-  createHarness,
-  exec,
-  makeTempDir,
-  runParity,
-  type TempDir,
-} from "@supabase/cli-test-helpers";
-import { ACCESS_TOKEN, isRecording, PROJECT_REF, TARGET } from "./env.ts";
+import { describe, expect } from "vitest";
+import { PROJECT_REF } from "./env.ts";
+import { testBehaviour, testParity } from "./test-context.ts";
 
 describe("functions", () => {
-  const serverUrl = inject("replayServerUrl");
-  let tempDir: TempDir;
-
-  beforeEach(() => {
-    tempDir = makeTempDir("cli-e2e-functions-");
-  });
-
-  afterEach(async () => {
-    tempDir[Symbol.dispose]();
-    await fetch(`${serverUrl}/_ctrl/requests`, { method: "DELETE" });
-  });
-
-  function makeHarness() {
-    return createHarness(TARGET, {
-      apiUrl: serverUrl,
-      accessToken: ACCESS_TOKEN,
-      cwd: tempDir.path,
-    });
-  }
-
-  describe("function:list", () => {
-    test("functions list renders fixture data in output", async () => {
-      const result = await exec(makeHarness(), ["functions", "list", "--project-ref", PROJECT_REF]);
-
+  describe("functions:list", () => {
+    testBehaviour("renders fixture data in output", async ({ run }) => {
+      const result = await run(["functions", "list", "--project-ref", PROJECT_REF]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("NAME");
       expect(result.stdout).toContain("STATUS");
     });
 
-    test("functions list exits non-zero on 401", async () => {
-      await fetch(`${serverUrl}/_ctrl/error`, {
+    testBehaviour("exits non-zero on 401", async ({ run, apiUrl }) => {
+      await fetch(`${apiUrl}/_ctrl/error-all`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          method: "GET",
-          path: `/v1/projects/${PROJECT_REF}/functions`,
-          status: 401,
-          body: { message: "Invalid token" },
-        }),
+        body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
       });
-
-      try {
-        const result = await exec(makeHarness(), [
-          "functions",
-          "list",
-          "--project-ref",
-          PROJECT_REF,
-        ]);
-        expect(result.exitCode).not.toBe(0);
-      } finally {
-        await fetch(`${serverUrl}/_ctrl/overrides`, { method: "DELETE" });
-      }
+      const result = await run(["functions", "list", "--project-ref", PROJECT_REF]);
+      expect(result.exitCode).not.toBe(0);
     });
 
-    test.skipIf(isRecording)("functions list: ts-legacy stdout matches go", () =>
-      runParity({ apiUrl: serverUrl, accessToken: ACCESS_TOKEN, cwd: tempDir.path }, [
-        "functions",
-        "list",
-        "--project-ref",
-        PROJECT_REF,
-      ]),
-    );
+    testParity(["functions", "list", "--project-ref", PROJECT_REF]);
+    testParity(["functions", "list", "--project-ref", PROJECT_REF], { failureType: "NON_AUTH" });
   });
 
   describe("functions:new", () => {
-    test("functions new should successfully create a new function", async () => {
-      const result = await exec(makeHarness(), ["functions", "new", "testFunction"]);
+    testBehaviour("successfully creates a new function", async ({ run }) => {
+      const result = await run(["functions", "new", "testFunction"]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("Created new Function at supabase/functions/testFunction");
     });
 
-    test.skipIf(isRecording)("functions new: ts-legacy stdout matches go", () =>
-      runParity({ apiUrl: serverUrl, accessToken: ACCESS_TOKEN, cwd: tempDir.path }, [
-        "functions",
-        "new",
-        "testFunction",
-      ]),
-    );
+    testParity(["functions", "new", "testFunction"]);
   });
 });

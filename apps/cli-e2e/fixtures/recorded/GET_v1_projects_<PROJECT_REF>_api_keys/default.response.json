@@ -1,52 +1,56 @@
 {
   "status": 200,
   "headers": {
-    "content-type": "application/json; charset=utf-8"
+    "content-type": "application/json; charset=utf-8",
+    "x-gotrue-id": "<UUID>",
+    "x-ratelimit-limit": "120",
+    "x-ratelimit-remaining": "119",
+    "x-ratelimit-reset": "60"
   },
   "body": [
     {
       "name": "anon",
-      "api_key": "<JWT_1>",
+      "api_key": "<JWT>",
       "id": "anon",
       "type": "legacy",
-      "hash": "<HASH_1>",
-      "prefix": "<PREFIX_1>",
+      "hash": "5_hj3ibS_1XaZbt-V9j_irP7lrLfHStqVgZ0RjM1_mY",
+      "prefix": "AiQBC",
       "description": "Legacy anon API key"
     },
     {
       "name": "service_role",
-      "api_key": "<JWT_2>",
+      "api_key": "<JWT>",
       "id": "service_role",
       "type": "legacy",
-      "hash": "<HASH_2>",
-      "prefix": "<PREFIX_2>",
+      "hash": "13hVvkL2qtcsdm5-X5adu8CZt42sFUfL56w_kb98CIQ",
+      "prefix": "5GnAa",
       "description": "Legacy service_role API key"
     },
     {
-      "id": "<UUID_2>",
+      "id": "<UUID>",
       "name": "default",
       "type": "publishable",
-      "api_key": "<API_KEY_1>",
+      "api_key": "<API_KEY>",
       "description": null,
       "secret_jwt_template": null,
-      "hash": "<HASH_3>",
-      "prefix": "<PREFIX_3>",
-      "inserted_at": "2026-01-01T00:00:00.000000+00:00",
-      "updated_at": "2026-01-01T00:00:00.000000+00:00"
+      "hash": "8s8Ns5CjZCnAzys5HROzz9GpNo_mN0pDHu6nRFf6oDA",
+      "prefix": "<API_KEY>",
+      "inserted_at": "2000-01-01T00:00:00Z",
+      "updated_at": "2000-01-01T00:00:00Z"
     },
     {
-      "id": "<UUID_3>",
+      "id": "<UUID>",
       "name": "default",
       "type": "secret",
-      "api_key": "<API_KEY_2>",
+      "api_key": "<API_KEY>··························",
       "description": null,
       "secret_jwt_template": {
         "role": "service_role"
       },
-      "hash": "<HASH_4>",
-      "prefix": "<PREFIX_4>",
-      "inserted_at": "2026-01-01T00:00:00.000000+00:00",
-      "updated_at": "2026-01-01T00:00:00.000000+00:00"
+      "hash": "e9tjZcHpGhuKccBeoEvORag7plDYhJRjxy8w7zYJU8Y",
+      "prefix": "<API_KEY>",
+      "inserted_at": "2000-01-01T00:00:00Z",
+      "updated_at": "2000-01-01T00:00:00Z"
     }
   ]
 }

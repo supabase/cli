@@ -1,17 +1,21 @@
 {
   "status": 200,
   "headers": {
-    "content-type": "application/json; charset=utf-8"
+    "content-type": "application/json; charset=utf-8",
+    "x-gotrue-id": "<UUID>",
+    "x-ratelimit-limit": "120",
+    "x-ratelimit-remaining": "119",
+    "x-ratelimit-reset": "60"
   },
   "body": [
     {
-      "id": "<PROJECT_REF_1>",
-      "slug": "<PROJECT_REF_1>",
-      "name": "Test Org"
+      "id": "<PROJECT_REF>",
+      "slug": "<PROJECT_REF>",
+      "name": "colum.ferry@supabase.io's Org"
     },
     {
-      "id": "<PROJECT_REF_2>",
-      "slug": "<PROJECT_REF_2>",
+      "id": "<PROJECT_REF>",
+      "slug": "<PROJECT_REF>",
       "name": "CLIPort-TEST"
     }
   ]

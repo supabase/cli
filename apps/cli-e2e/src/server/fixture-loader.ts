@@ -24,6 +24,15 @@ export interface FixtureEntry {
  *  an ordered queue of entries (for sequential calls to the same endpoint). */
 export type FixtureStore = Map<string, FixtureEntry[]>;
 
+/** Load an ordered scenario from scenarios/<name>/interactions.json.
+ *  Returns null if the scenario file does not exist — caller decides whether
+ *  to fail loudly or fall back to per-endpoint fixtures. */
+export function loadScenario(scenariosDir: string, name: string): FixtureEntry[] | null {
+  const scenarioFile = join(scenariosDir, name, "interactions.json");
+  if (!existsSync(scenarioFile)) return null;
+  return parseFixtureFile<FixtureEntry[]>(scenarioFile);
+}
+
 /** Load all fixture pairs from the recorded/ directory into a FixtureStore.
  *  Fails fast with a descriptive error if any fixture file is malformed. */
 export function loadFixtures(fixturesDir: string): FixtureStore {

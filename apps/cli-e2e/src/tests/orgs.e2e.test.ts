@@ -1,68 +1,24 @@
-import { afterEach, beforeEach, describe, expect, inject, test } from "vitest";
-import {
-  createHarness,
-  exec,
-  makeTempDir,
-  runParity,
-  type TempDir,
-} from "@supabase/cli-test-helpers";
-import { ACCESS_TOKEN, isRecording, TARGET } from "./env.ts";
+import { describe, expect } from "vitest";
+import { testBehaviour, testParity } from "./test-context.ts";
 
 describe("orgs", () => {
-  const serverUrl = inject("replayServerUrl");
-  let tempDir: TempDir;
-
-  beforeEach(() => {
-    tempDir = makeTempDir("cli-e2e-orgs-");
-  });
-
-  afterEach(async () => {
-    tempDir[Symbol.dispose]();
-    await fetch(`${serverUrl}/_ctrl/requests`, { method: "DELETE" });
-  });
-
-  function makeHarness() {
-    return createHarness(TARGET, {
-      apiUrl: serverUrl,
-      accessToken: ACCESS_TOKEN,
-      cwd: tempDir.path,
-    });
-  }
-
-  test("orgs list renders org data", async () => {
-    const result = await exec(makeHarness(), ["orgs", "list"]);
-
+  testBehaviour("renders org data", async ({ run }) => {
+    const result = await run(["orgs", "list"]);
     expect(result.exitCode).toBe(0);
-    // Org IDs are 20-char alpha strings — they become <PROJECT_REF_N> in the
-    // fixture and must appear in the rendered table.
-    expect(result.stdout).toContain("<PROJECT_REF_1>");
+    expect(result.stdout).toContain("<PROJECT_REF>");
     expect(result.stdout).toContain("ID");
   });
 
-  test("orgs list exits non-zero on 401", async () => {
-    await fetch(`${serverUrl}/_ctrl/error`, {
+  testBehaviour("exits non-zero on 401", async ({ run, apiUrl }) => {
+    await fetch(`${apiUrl}/_ctrl/error-all`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        method: "GET",
-        path: "/v1/organizations",
-        status: 401,
-        body: { message: "Invalid token" },
-      }),
+      body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
     });
-
-    try {
-      const result = await exec(makeHarness(), ["orgs", "list"]);
-      expect(result.exitCode).not.toBe(0);
-    } finally {
-      await fetch(`${serverUrl}/_ctrl/overrides`, { method: "DELETE" });
-    }
+    const result = await run(["orgs", "list"]);
+    expect(result.exitCode).not.toBe(0);
   });
 
-  test.skipIf(isRecording)("orgs list: ts-legacy stdout matches go", () =>
-    runParity({ apiUrl: serverUrl, accessToken: ACCESS_TOKEN, cwd: tempDir.path }, [
-      "orgs",
-      "list",
-    ]),
-  );
+  testParity(["orgs", "list"]);
+  testParity(["orgs", "list"], { failureType: "NON_AUTH" });
 });
