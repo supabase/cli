@@ -7,10 +7,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/progress"
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/progress"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/muesli/reflow/wrap"
 	"golang.org/x/term"
 )
@@ -27,7 +27,7 @@ func NewProgram(model tea.Model, opts ...tea.ProgramOption) Program {
 
 // An interface describing the parts of BubbleTea's Program that we actually use.
 type Program interface {
-	Start() error
+	Run() (tea.Model, error)
 	Send(msg tea.Msg)
 	Quit()
 }
@@ -45,13 +45,16 @@ type fakeProgram struct {
 	model tea.Model
 }
 
-func (p *fakeProgram) Start() error {
+func (p *fakeProgram) Run() (tea.Model, error) {
 	initCmd := p.model.Init()
+	if initCmd == nil {
+		return p.model, nil
+	}
 	message := initCmd()
 	if message != nil {
 		p.model.Update(message)
 	}
-	return nil
+	return p.model, nil
 }
 
 func (p *fakeProgram) Send(msg tea.Msg) {
@@ -106,7 +109,7 @@ func RunProgram(ctx context.Context, f func(p Program, ctx context.Context) erro
 		p.Quit()
 	}()
 
-	if err := p.Start(); err != nil {
+	if _, err := p.Run(); err != nil {
 		return err
 	}
 	return <-errCh
@@ -129,16 +132,14 @@ func (m logModel) Init() tea.Cmd {
 
 func (m logModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyCtrlC:
+	case tea.KeyPressMsg:
+		if msg.String() == "ctrl+c" {
 			if m.cancel != nil {
 				m.cancel()
 			}
 			return m, tea.Quit
-		default:
-			return m, nil
 		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		return m, nil
@@ -151,8 +152,7 @@ func (m logModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		tmp, cmd := m.progress.Update(msg)
-		progressModel := tmp.(progress.Model)
+		progressModel, cmd := m.progress.Update(msg)
 		m.progress = &progressModel
 		return m, cmd
 	case StatusMsg:
@@ -165,7 +165,7 @@ func (m logModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.progress == nil {
-			progressModel := progress.New(progress.WithGradient("#1c1c1c", "#34b27b"))
+			progressModel := progress.New(progress.WithColors(lipgloss.Color("#1c1c1c"), lipgloss.Color("#34b27b")))
 			m.progress = &progressModel
 		}
 
@@ -186,7 +186,7 @@ func (m logModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m logModel) View() string {
+func (m logModel) View() tea.View {
 	var progress string
 	if m.progress != nil {
 		progress = "\n\n" + m.progress.View()
@@ -197,5 +197,5 @@ func (m logModel) View() string {
 		psqlOutputs = "\n\n" + strings.Join(m.psqlOutputs, "\n")
 	}
 
-	return wrap.String(m.spinner.View()+m.status+progress+psqlOutputs, m.width)
+	return tea.NewView(wrap.String(m.spinner.View()+m.status+progress+psqlOutputs, m.width))
 }

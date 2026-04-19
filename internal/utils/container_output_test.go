@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -127,8 +127,8 @@ func (m *MockProgram) Send(msg tea.Msg) {
 	}
 }
 
-func (m *MockProgram) Start() error {
-	return nil
+func (m *MockProgram) Run() (tea.Model, error) {
+	return nil, nil
 }
 
 func (m *MockProgram) Quit() {}
