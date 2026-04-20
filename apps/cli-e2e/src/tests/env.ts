@@ -17,4 +17,4 @@ export const PROJECT_REF = process.env["SUPABASE_TEST_PROJECT_REF"] ?? "aaaaaaaa
 
 // In replay mode any 20-char lowercase alpha string normalises to <PROJECT_REF>.
 // In record mode supply a real org slug via env, or let the resolver derive it.
-export const ORG_ID = process.env["SUPABASE_TEST_ORG_ID"] ?? "aaaaaaaaaaaaaaaaaaaa";
+export const ORG_ID = process.env["SUPABASE_TEST_ORG_ID"] ?? "bbbbbbbbbbbbbbbbbbbb";
