@@ -76,31 +76,62 @@ export function makeGoProxyLayer(opts?: {
   cwd?: string;
   env?: Record<string, string>;
   globalArgs?: ReadonlyArray<string>;
+  /**
+   * Override the binary path. Primarily a test seam so specs don't have to
+   * mutate `process.env.SUPABASE_GO_BINARY`. In production, leave unset and
+   * let `resolveBinary()` pick the right artifact for the host platform.
+   */
+  binary?: string;
 }): Layer.Layer<LegacyGoProxy, never, ProcessControl | ChildProcessSpawner> {
   return Layer.effect(
     LegacyGoProxy,
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
       const spawner = yield* ChildProcessSpawner;
-      const binary = resolveBinary();
+      const binary = opts?.binary ?? resolveBinary();
       const globalArgs = opts?.globalArgs ?? [];
 
       return LegacyGoProxy.of({
         exec: (args) =>
-          Effect.gen(function* () {
-            const command = ChildProcess.make(binary, [...globalArgs, ...args], {
-              cwd: opts?.cwd,
-              env: opts?.env,
-              extendEnv: true,
-              stdin: "inherit",
-              stdout: "inherit",
-              stderr: "inherit",
-            });
-            const exitCode = yield* spawner.exitCode(command).pipe(Effect.orDie);
-            if (exitCode !== 0) {
-              yield* processControl.exit(exitCode);
-            }
-          }),
+          Effect.scoped(
+            Effect.gen(function* () {
+              // Hold the terminal-signals on the parent for the duration of
+              // the child's lifetime. Rationale:
+              //
+              // 1. Effect's Node/Bun ChildProcessSpawner defaults
+              //    `detached: true` on non-Windows (see NodeChildProcessSpawner.ts),
+              //    which puts the child in its own process group and makes it
+              //    miss tty signals. We explicitly pass `detached: false` below
+              //    so Ctrl+C → SIGINT → foreground pgrp reaches the Go binary,
+              //    and the Go CLI's own handlers (docker cleanup on `start`,
+              //    context cancellation, etc.) run as expected.
+              //
+              // 2. Without a userland listener, Bun/Node default-terminates
+              //    the parent on SIGINT with exit code 130, which would race
+              //    the child's graceful shutdown and lose its real exit code.
+              //    `processControl.holdSignals` installs no-op listeners that
+              //    disable the default action so the parent stays blocked on
+              //    `spawner.exitCode` and propagates the Go binary's exit
+              //    status verbatim.
+              //
+              // Scoped via `Effect.scoped` so listeners are always removed on
+              // normal completion, failure, or fiber interruption.
+              yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
+              const command = ChildProcess.make(binary, [...globalArgs, ...args], {
+                cwd: opts?.cwd,
+                env: opts?.env,
+                extendEnv: true,
+                stdin: "inherit",
+                stdout: "inherit",
+                stderr: "inherit",
+                detached: false,
+              });
+              const exitCode = yield* spawner.exitCode(command).pipe(Effect.orDie);
+              if (exitCode !== 0) {
+                yield* processControl.exit(exitCode);
+              }
+            }),
+          ),
       });
     }),
   );

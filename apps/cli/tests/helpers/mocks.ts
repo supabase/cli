@@ -164,6 +164,7 @@ export function mockProcessControl(
         return Effect.never;
       },
       awaitShutdown: opts.awaitShutdown ?? Effect.never,
+      holdSignals: (_signals) => Effect.void,
       exit: (code: number) =>
         Effect.sync(() => {
           exitCalls.push(code);

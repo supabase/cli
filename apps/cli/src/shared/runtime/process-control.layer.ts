@@ -63,6 +63,29 @@ export const processControlLayer = Layer.sync(ProcessControl, () =>
 
       return Effect.sync(cleanup);
     }),
+    // `holdSignals` is the no-resume dual of `awaitSignal`. It installs a
+    // no-op listener per signal for the lifetime of the caller's scope. The
+    // only purpose is to suppress the runtime's default terminate-on-signal
+    // behavior so a child process spawned with `detached:false` can receive
+    // the signal via the shared process group and handle it itself, while
+    // the parent waits for the child's real exit code instead of being
+    // killed with 130 by Bun/Node's default action.
+    holdSignals: (signals) =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          const noop = () => {};
+          for (const signal of signals) {
+            process.on(signal, noop);
+          }
+          return noop;
+        }),
+        (noop) =>
+          Effect.sync(() => {
+            for (const signal of signals) {
+              process.removeListener(signal, noop);
+            }
+          }),
+      ).pipe(Effect.asVoid),
     exit: (code: number) => Effect.sync(() => process.exit(code)),
     setExitCode: (code: number) =>
       Effect.sync(() => {
