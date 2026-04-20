@@ -41,6 +41,7 @@ func init() {
 	dbFlags.String("db-url", "", "Tests the database specified by the connection string (must be percent-encoded).")
 	dbFlags.Bool("linked", false, "Runs pgTAP tests on the linked project.")
 	dbFlags.Bool("local", true, "Runs pgTAP tests on the local database.")
+	dbFlags.Bool("use-shadow-db", false, "Creates a temporary database from migrations for running tests in isolation.")
 	testDbCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	testCmd.AddCommand(testDbCmd)
 	// Build new command

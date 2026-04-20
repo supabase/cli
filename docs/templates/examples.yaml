@@ -322,6 +322,17 @@ supabase-test-db:
       All tests successful.
       Files=2, Tests=2,  6 wallclock secs ( 0.03 usr  0.01 sys +  0.05 cusr  0.02 csys =  0.11 CPU)
       Result: PASS
+  - id: shadow-db
+    name: Run tests against an isolated shadow database
+    code: supabase test db --use-shadow-db
+    response: |
+      Creating shadow database...
+      Applying migration 20220810154537_create_employees_table.sql...
+      /tmp/supabase/tests/nested/order_test.pg .. ok
+      /tmp/supabase/tests/pet_test.sql .......... ok
+      All tests successful.
+      Files=2, Tests=2,  6 wallclock secs ( 0.03 usr  0.01 sys +  0.05 cusr  0.02 csys =  0.11 CPU)
+      Result: PASS
 # TODO: use actual cli response for sso commands
 supabase-sso-show:
   - id: basic-usage

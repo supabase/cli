@@ -253,7 +253,8 @@ var (
 		Use:    "test [path] ...",
 		Short:  "Tests local database with pgTAP",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return test.Run(cmd.Context(), args, flags.DbConfig, afero.NewOsFs())
+			useShadow, _ := cmd.Flags().GetBool("use-shadow-db")
+			return test.Run(cmd.Context(), args, flags.DbConfig, useShadow, afero.NewOsFs())
 		},
 	}
 
@@ -461,6 +462,7 @@ func init() {
 	testFlags.String("db-url", "", "Tests the database specified by the connection string (must be percent-encoded).")
 	testFlags.Bool("linked", false, "Runs pgTAP tests on the linked project.")
 	testFlags.Bool("local", true, "Runs pgTAP tests on the local database.")
+	testFlags.Bool("use-shadow-db", false, "Creates a temporary database from migrations for running tests in isolation.")
 	dbTestCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	// Build query command
 	queryFlags := dbQueryCmd.Flags()
