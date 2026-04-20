@@ -18,6 +18,9 @@ func Connect(ctx context.Context, connString string, options ...func(*pgx.ConnCo
 	if err != nil {
 		return nil, errors.Errorf("failed to parse connection string: %w", err)
 	}
+	if strings.EqualFold(config.RuntimeParams["sslmode"], "disable") {
+		config.TLSConfig = nil
+	}
 	config.OnNotice = func(pc *pgconn.PgConn, n *pgconn.Notice) {
 		if !shouldIgnore(n.Message) {
 			fmt.Fprintf(os.Stderr, "%s (%s): %s\n", n.Severity, n.Code, n.Message)
