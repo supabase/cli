@@ -18,8 +18,8 @@
         "content-type": "application/json; charset=utf-8",
         "x-gotrue-id": "<UUID>",
         "x-ratelimit-limit": "120",
-        "x-ratelimit-remaining": "119",
-        "x-ratelimit-reset": "60"
+        "x-ratelimit-remaining": "118",
+        "x-ratelimit-reset": "49"
       },
       "body": [
         {
@@ -43,12 +43,12 @@
           "ref": "<PROJECT_REF>",
           "organization_id": "<PROJECT_REF>",
           "organization_slug": "<PROJECT_REF>",
-          "name": "CLIPort-TEST",
+          "name": "cli-e2e-test",
           "region": "us-east-1",
-          "status": "COMING_UP",
+          "status": "ACTIVE_HEALTHY",
           "database": {
             "host": "db.<PROJECT_REF>.supabase.red",
-            "version": "17.6.1.104",
+            "version": "17.6.1.105",
             "postgres_engine": "17",
             "release_channel": "ga"
           },

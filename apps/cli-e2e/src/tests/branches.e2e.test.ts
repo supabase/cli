@@ -3,8 +3,8 @@ import { PROJECT_REF } from "./env.ts";
 import { testBehaviour, testParity } from "./test-context.ts";
 
 describe("branches", () => {
-  testBehaviour("renders fixture data in output", async ({ run }) => {
-    const result = await run(["branches", "list", "--project-ref", PROJECT_REF]);
+  testBehaviour("renders fixture data in output", async ({ run, projectRef }) => {
+    const result = await run(["branches", "list", "--project-ref", projectRef]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("NAME");
     expect(result.stdout).toContain("STATUS");

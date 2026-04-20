@@ -14,3 +14,7 @@ export const TARGET = (process.env["CLI_HARNESS_TARGET"] ?? "ts-legacy") as CLIT
 // In replay mode any 20-char lowercase alpha string normalises to <PROJECT_REF>
 // in the fixture key. In record mode supply a real project ref via env.
 export const PROJECT_REF = process.env["SUPABASE_TEST_PROJECT_REF"] ?? "aaaaaaaaaaaaaaaaaaaa";
+
+// In replay mode any 20-char lowercase alpha string normalises to <PROJECT_REF>.
+// In record mode supply a real org slug via env, or let the resolver derive it.
+export const ORG_ID = process.env["SUPABASE_TEST_ORG_ID"] ?? "aaaaaaaaaaaaaaaaaaaa";

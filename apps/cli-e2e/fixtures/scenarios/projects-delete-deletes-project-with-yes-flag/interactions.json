@@ -1,0 +1,27 @@
+[
+  {
+    "request": {
+      "method": "DELETE",
+      "path": "/v1/projects/<PROJECT_REF>",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8"
+      },
+      "body": {
+        "id": 1,
+        "name": "cli-e2e-test",
+        "ref": "<PROJECT_REF>"
+      }
+    }
+  }
+]

@@ -1,0 +1,28 @@
+[
+  {
+    "request": {
+      "method": "DELETE",
+      "path": "/v1/projects/<PROJECT_REF>/secrets",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "content-length": "7",
+        "content-type": "application/json",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": ["FOO"]
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": null
+    }
+  }
+]

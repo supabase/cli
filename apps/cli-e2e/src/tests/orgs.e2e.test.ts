@@ -5,7 +5,7 @@ describe("orgs", () => {
   testBehaviour("renders org data", async ({ run }) => {
     const result = await run(["orgs", "list"]);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("<PROJECT_REF>");
+    expect(result.stdout).toMatch(/[a-z]{20}|<PROJECT_REF>/);
     expect(result.stdout).toContain("ID");
   });
 

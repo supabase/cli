@@ -1,0 +1,10 @@
+{
+  "status": 201,
+  "headers": {
+    "x-gotrue-id": "<UUID>",
+    "x-ratelimit-limit": "120",
+    "x-ratelimit-remaining": "117",
+    "x-ratelimit-reset": "58"
+  },
+  "body": null
+}

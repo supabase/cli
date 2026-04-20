@@ -4,8 +4,8 @@ import { testBehaviour, testParity } from "./test-context.ts";
 
 describe("functions", () => {
   describe("functions:list", () => {
-    testBehaviour("renders fixture data in output", async ({ run }) => {
-      const result = await run(["functions", "list", "--project-ref", PROJECT_REF]);
+    testBehaviour("renders fixture data in output", async ({ run, projectRef }) => {
+      const result = await run(["functions", "list", "--project-ref", projectRef]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("NAME");
       expect(result.stdout).toContain("STATUS");

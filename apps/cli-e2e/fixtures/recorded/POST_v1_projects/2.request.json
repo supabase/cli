@@ -1,0 +1,20 @@
+{
+  "method": "POST",
+  "path": "/v1/projects",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "authorization": "Bearer <ACCESS_TOKEN>",
+    "content-length": "141",
+    "content-type": "application/json",
+    "host": "localhost:<PORT>",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": {
+    "db_pass": "password123",
+    "desired_instance_size": "micro",
+    "name": "my-project",
+    "organization_slug": "<PROJECT_REF>",
+    "region": "us-east-1"
+  }
+}

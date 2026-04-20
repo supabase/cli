@@ -22,6 +22,8 @@ function scenarioSlug(task: { name: string; suite?: { name: string } | null }): 
 }
 
 interface BehaviourFixtures {
+  projectRef: string;
+  orgId: string;
   workspace: TempDir;
   run: (cmd: string[]) => Promise<CLIResult>;
   apiUrl: string;
@@ -30,6 +32,8 @@ interface BehaviourFixtures {
 /** Custom test function for behavioural CLI tests.
  *
  *  Provides per-test:
+ *  - `projectRef` — a real project ref (record mode) or the replay default
+ *  - `orgId` — a real org slug (record mode) or the replay default
  *  - `workspace` — fresh temp dir, auto-disposed after the test
  *  - `run` — pre-configured `exec()` for the current TARGET
  *  - `apiUrl` — the replay server base URL (for setting up error overrides)
@@ -38,6 +42,16 @@ interface BehaviourFixtures {
  *  server knows which ordered interaction sequence to serve. Auto-clears the
  *  request log, error overrides, and active scenario after every test. */
 export const testBehaviour = test.extend<BehaviourFixtures>({
+  // eslint-disable-next-line no-empty-pattern
+  projectRef: async ({}, use) => {
+    await use(inject("projectRef") as string);
+  },
+
+  // eslint-disable-next-line no-empty-pattern
+  orgId: async ({}, use) => {
+    await use(inject("orgId") as string);
+  },
+
   workspace: async ({ task }, use) => {
     const serverUrl = inject("replayServerUrl");
     const slug = scenarioSlug(task);

@@ -361,6 +361,11 @@ function serveFromFixtures(
   });
 }
 
+function normalizePlaceholders(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  return JSON.parse(applyPlaceholders(JSON.stringify(value)).output) as unknown;
+}
+
 function serveFromScenario(
   state: ScenarioState,
   method: string,
@@ -422,7 +427,8 @@ function serveFromScenario(
 
   if (
     expected.request.body !== null &&
-    JSON.stringify(expected.request.body) !== JSON.stringify(incoming.body)
+    JSON.stringify(normalizePlaceholders(expected.request.body)) !==
+      JSON.stringify(normalizePlaceholders(incoming.body))
   ) {
     return new Response(
       JSON.stringify({

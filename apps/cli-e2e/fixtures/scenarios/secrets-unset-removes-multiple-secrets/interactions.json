@@ -1,0 +1,63 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/projects/<PROJECT_REF>/secrets",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "content-length": "59",
+        "content-type": "application/json",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": [
+        {
+          "name": "FOO",
+          "value": "bar"
+        },
+        {
+          "name": "BAR",
+          "value": "baz"
+        }
+      ]
+    },
+    "response": {
+      "status": 201,
+      "headers": {
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "116",
+        "x-ratelimit-reset": "54"
+      },
+      "body": null
+    }
+  },
+  {
+    "request": {
+      "method": "DELETE",
+      "path": "/v1/projects/<PROJECT_REF>/secrets",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "content-length": "13",
+        "content-type": "application/json",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": ["FOO", "BAR"]
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "118",
+        "x-ratelimit-reset": "57"
+      },
+      "body": null
+    }
+  }
+]
