@@ -2,32 +2,29 @@
   {
     "request": {
       "method": "POST",
-      "path": "/v1/projects/<PROJECT_REF>/secrets",
+      "path": "/v1/organizations",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
         "authorization": "Bearer <ACCESS_TOKEN>",
-        "content-length": "30",
         "content-type": "application/json",
         "host": "localhost:<PORT>",
         "user-agent": "SupabaseCLI/"
       },
-      "body": [
-        {
-          "name": "FOO",
-          "value": "bar"
-        }
-      ]
+      "body": {
+        "name": "My Test Org"
+      }
     },
     "response": {
       "status": 201,
       "headers": {
-        "x-gotrue-id": "<UUID>",
-        "x-ratelimit-limit": "120",
-        "x-ratelimit-remaining": "117",
-        "x-ratelimit-reset": "59"
+        "content-type": "application/json; charset=utf-8"
       },
-      "body": null
+      "body": {
+        "id": "<PROJECT_REF>",
+        "slug": "<PROJECT_REF>",
+        "name": "My Test Org"
+      }
     }
   }
 ]
