@@ -1,8 +1,8 @@
 [
   {
     "request": {
-      "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>/secrets",
+      "method": "DELETE",
+      "path": "/v1/projects/<PROJECT_REF>/functions/hello-world",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
@@ -18,10 +18,10 @@
         "content-type": "application/json; charset=utf-8",
         "x-gotrue-id": "<UUID>",
         "x-ratelimit-limit": "120",
-        "x-ratelimit-remaining": "117",
-        "x-ratelimit-reset": "58"
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
       },
-      "body": []
+      "body": { "message": "ok" }
     }
   }
 ]

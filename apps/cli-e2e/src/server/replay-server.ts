@@ -40,6 +40,68 @@ interface GlobalErrorRef {
   value: { status: number; body: unknown } | null;
 }
 
+interface MultipartPart {
+  headers: Record<string, string>;
+  text?: string;
+  base64?: string;
+}
+
+interface MultipartBody {
+  __type: "multipart";
+  boundary: string;
+  parts: MultipartPart[];
+}
+
+function isMultipartBody(body: unknown): body is MultipartBody {
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    "__type" in body &&
+    (body as { __type: unknown }).__type === "multipart"
+  );
+}
+
+function buildMultipartResponse(
+  body: MultipartBody,
+  status: number,
+  headers: Record<string, string>,
+): Response {
+  const encoder = new TextEncoder();
+  const { boundary, parts } = body;
+  const chunks: Uint8Array[] = [];
+
+  for (const part of parts) {
+    chunks.push(encoder.encode(`--${boundary}\r\n`));
+    for (const [k, v] of Object.entries(part.headers)) {
+      chunks.push(encoder.encode(`${k}: ${v}\r\n`));
+    }
+    chunks.push(encoder.encode("\r\n"));
+    if (part.base64 !== undefined) {
+      chunks.push(Buffer.from(part.base64, "base64"));
+    } else if (part.text !== undefined) {
+      chunks.push(encoder.encode(part.text));
+    }
+    chunks.push(encoder.encode("\r\n"));
+  }
+  chunks.push(encoder.encode(`--${boundary}--\r\n`));
+
+  const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return new Response(result, {
+    status,
+    headers: {
+      ...headers,
+      "content-type": `multipart/form-data; boundary=${boundary}`,
+    },
+  });
+}
+
 interface ReplayServerHandle {
   readonly url: string;
   readonly port: number;
@@ -111,6 +173,7 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
       const requestHeaders = Object.fromEntries(req.headers.entries());
 
       let requestBody: unknown = null;
+      let rawBody: ReadableStream<Uint8Array> | null = null;
       const contentType = req.headers.get("content-type") ?? "";
       if (contentType.includes("application/json")) {
         try {
@@ -118,6 +181,8 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
         } catch {
           // not JSON — leave as null
         }
+      } else {
+        rawBody = req.body;
       }
 
       requestLog.push({
@@ -159,6 +224,7 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
           query,
           requestHeaders,
           requestBody,
+          rawBody,
           stagingUrl!,
           options.fixturesDir,
           recordedKeys,
@@ -207,6 +273,7 @@ async function proxyAndRecord(
   query: Record<string, string>,
   requestHeaders: Record<string, string>,
   requestBody: unknown,
+  rawBody: ReadableStream<Uint8Array> | null,
   stagingUrl: string,
   fixturesDir: string,
   recordedKeys: Set<string>,
@@ -227,8 +294,10 @@ async function proxyAndRecord(
     method,
     headers: upstreamHeaders,
     body:
-      method !== "GET" && method !== "HEAD" && requestBody != null
-        ? JSON.stringify(requestBody)
+      method !== "GET" && method !== "HEAD"
+        ? requestBody != null
+          ? JSON.stringify(requestBody)
+          : (rawBody ?? undefined)
         : undefined,
   });
 
@@ -355,6 +424,13 @@ function serveFromFixtures(
       headers: { "Content-Type": "application/json" },
     });
   }
+  if (isMultipartBody(result.entry.response.body)) {
+    return buildMultipartResponse(
+      result.entry.response.body,
+      result.entry.response.status,
+      result.entry.response.headers,
+    );
+  }
   return Response.json(result.entry.response.body, {
     status: result.entry.response.status,
     headers: result.entry.response.headers,
@@ -442,6 +518,13 @@ function serveFromScenario(
     );
   }
 
+  if (isMultipartBody(expected.response.body)) {
+    return buildMultipartResponse(
+      expected.response.body,
+      expected.response.status,
+      expected.response.headers,
+    );
+  }
   return Response.json(expected.response.body, {
     status: expected.response.status,
     headers: expected.response.headers,

@@ -16,24 +16,22 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
         "x-ratelimit-limit": "120",
-        "x-ratelimit-remaining": "119",
+        "x-ratelimit-remaining": "118",
         "x-ratelimit-reset": "60"
       },
       "body": [
         {
-          "id": "00000000-0000-0000-0000-000000000000",
-          "name": "my-branch",
-          "project_ref": "<PROJECT_REF>",
+          "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+          "name": "test-branch",
+          "project_ref": "branchrefaaaaaaaaa",
           "parent_project_ref": "<PROJECT_REF>",
           "is_default": false,
-          "git_branch": "main",
           "persistent": false,
           "status": "MIGRATIONS_PASSED",
-          "created_at": "2000-01-01T00:00:00Z",
-          "updated_at": "2000-01-01T00:00:00Z",
-          "with_data": false
+          "with_data": false,
+          "created_at": "2024-01-01T00:00:00.000Z",
+          "updated_at": "2024-01-01T00:00:00.000Z"
         }
       ]
     }

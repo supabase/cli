@@ -29,7 +29,7 @@ export function normalize(output: string): string {
       .replace(/\(0x[0-9a-f]+\)/gi, "(0xADDR)")
       // 10. CLI version-update notification lines emitted by the Go binary
       .replace(
-        /^.*(?:A new version of Supabase CLI is available|upgrade at:|upgrade using:).*\n?/gim,
+        /^.*(?:A new version of Supabase CLI is available|We recommend updating regularly|upgrade at:|upgrade using:).*\n?/gim,
         "",
       )
       // 11. Go goroutine stack trace blocks (goroutine N [state]:\n...)
