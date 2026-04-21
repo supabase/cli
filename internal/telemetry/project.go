@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -46,6 +47,44 @@ func LoadLinkedProject(fsys afero.Fs) (LinkedProject, error) {
 		return LinkedProject{}, errors.Errorf("failed to parse linked project: %w", err)
 	}
 	return linked, nil
+}
+
+// HasLinkedProject reports whether a cached linked-project.json exists.
+func HasLinkedProject(fsys afero.Fs) bool {
+	_, err := LoadLinkedProject(fsys)
+	return err == nil
+}
+
+// CacheProjectAndIdentifyGroups writes project metadata to linked-project.json
+// and fires GroupIdentify for the org and project so PostHog has group metadata.
+// This matches the behavior of the `supabase link` flow.
+//
+// The caller is responsible for fetching the project from the API and checking
+// auth — this function only handles caching and PostHog group identification.
+//
+// Best-effort: logs errors to debug output, never returns them.
+func CacheProjectAndIdentifyGroups(project api.V1ProjectWithDatabaseResponse, service *Service, fsys afero.Fs) {
+	if err := SaveLinkedProject(project, fsys); err != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), err)
+	}
+	if service == nil {
+		return
+	}
+	if project.OrganizationId != "" {
+		if err := service.GroupIdentify(GroupOrganization, project.OrganizationId, map[string]any{
+			"organization_slug": project.OrganizationSlug,
+		}); err != nil {
+			fmt.Fprintln(utils.GetDebugLogger(), err)
+		}
+	}
+	if project.Ref != "" {
+		if err := service.GroupIdentify(GroupProject, project.Ref, map[string]any{
+			"name":              project.Name,
+			"organization_slug": project.OrganizationSlug,
+		}); err != nil {
+			fmt.Fprintln(utils.GetDebugLogger(), err)
+		}
+	}
 }
 
 func linkedProjectGroups(fsys afero.Fs) map[string]string {
