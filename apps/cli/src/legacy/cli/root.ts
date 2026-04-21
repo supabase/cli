@@ -31,6 +31,7 @@ import { legacyStatusCommand } from "../commands/status/status.command.ts";
 import { legacyStopCommand } from "../commands/stop/stop.command.ts";
 import { legacyStorageCommand } from "../commands/storage/storage.command.ts";
 import { legacyTestCommand } from "../commands/test/test.command.ts";
+import { legacyTelemetryCommand } from "../commands/telemetry/telemetry.command.ts";
 import { legacyUnlinkCommand } from "../commands/unlink/unlink.command.ts";
 import { legacyVanitySubdomainsCommand } from "../commands/vanity-subdomains/vanity-subdomains.command.ts";
 import { OutputFormatFlag } from "../../shared/cli/global-flags.ts";
@@ -84,6 +85,7 @@ export const legacyRoot = Command.make("supabase").pipe(
     legacyStatusCommand,
     legacyStopCommand,
     legacyStorageCommand,
+    legacyTelemetryCommand,
     legacyTestCommand,
     legacyUnlinkCommand,
     legacyVanitySubdomainsCommand,

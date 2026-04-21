@@ -27,7 +27,7 @@
         "x-gotrue-id": "<UUID>",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "118",
-        "x-ratelimit-reset": "50"
+        "x-ratelimit-reset": "51"
       },
       "body": {
         "id": "<PROJECT_REF>",

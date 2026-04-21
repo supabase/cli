@@ -142,3 +142,25 @@ SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_STAGING_URL=https://api.supabase.green \
 ```
 
 After recording, replay must pass with no changes between the two commands.
+
+## Go binary version requirement
+
+The ts-legacy CLI proxies commands to a Go binary (`SUPABASE_GO_BINARY` → bundled package binary → system `supabase`). If you are testing commands that were added to the Go CLI after your system `supabase` binary was installed, `testBehaviour` tests for those commands will fail with "unknown command".
+
+Build the Go CLI from source and point `SUPABASE_GO_BINARY` at it:
+
+```sh
+cd .repos/supabase-cli-go && go build -o /tmp/supabase-test-binary .
+
+# Replay
+SUPABASE_GO_BINARY=/tmp/supabase-test-binary pnpm nx run @supabase/cli-e2e:test:legacy
+
+# Record
+SUPABASE_GO_BINARY=/tmp/supabase-test-binary \
+  SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_STAGING_URL=https://api.supabase.green \
+  pnpm nx run @supabase/cli-e2e:record
+```
+
+`SUPABASE_GO_BINARY` is inherited by the ts-legacy subprocess via `exec()` in the harness, so you only need to set it once in the shell.
+
+Commands currently requiring this: `telemetry enable`, `telemetry disable`, `telemetry status`.

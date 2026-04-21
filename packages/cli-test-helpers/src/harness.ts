@@ -71,7 +71,11 @@ export async function exec(harness: CLIHarness, args: string[]): Promise<CLIResu
     ...(process.env as Record<string, string>),
     SUPABASE_ACCESS_TOKEN: harness.options.accessToken,
     SUPABASE_NO_KEYRING: "true",
-    SUPABASE_TELEMETRY_DISABLED: "true",
+    SUPABASE_TELEMETRY_DISABLED: "1",
+    // Isolate CLI filesystem side-effects (e.g. telemetry.json) to the CWD so
+    // tests don't touch the developer's real ~/.supabase and parity tests can
+    // track file changes via snapshotChangedFiles().
+    SUPABASE_HOME: harness.options.cwd ?? tmpdir(),
   };
 
   // The Go CLI (and the ts-legacy CLI which shells out to Go) uses a profile

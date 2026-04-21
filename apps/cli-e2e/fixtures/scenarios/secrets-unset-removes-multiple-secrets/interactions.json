@@ -29,7 +29,7 @@
         "x-gotrue-id": "<UUID>",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "116",
-        "x-ratelimit-reset": "54"
+        "x-ratelimit-reset": "56"
       },
       "body": null
     }
@@ -55,7 +55,7 @@
         "x-gotrue-id": "<UUID>",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "118",
-        "x-ratelimit-reset": "57"
+        "x-ratelimit-reset": "59"
       },
       "body": null
     }

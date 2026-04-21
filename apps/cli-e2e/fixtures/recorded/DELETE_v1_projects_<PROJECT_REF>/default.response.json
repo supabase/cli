@@ -8,8 +8,8 @@
     "x-ratelimit-reset": "60"
   },
   "body": {
-    "id": 652552,
-    "name": "cli-e2e-test",
+    "id": 653978,
+    "name": "my-project",
     "ref": "<PROJECT_REF>",
     "slug": "<PROJECT_REF>"
   }
