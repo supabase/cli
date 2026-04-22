@@ -1,0 +1,80 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8"
+      },
+      "body": {
+        "id": "<PROJECT_REF>",
+        "ref": "<PROJECT_REF>",
+        "name": "cli-e2e-test",
+        "organization_id": "test-org",
+        "organization_slug": "test-org",
+        "region": "us-east-1",
+        "created_at": "2000-01-01T00:00:00Z",
+        "status": "ACTIVE_HEALTHY",
+        "database": {
+          "host": "<PROJECT_REF>.supabase.co",
+          "postgres_engine": "postgres",
+          "release_channel": "ga",
+          "version": "15.6.1.143"
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>/api-keys",
+      "query": {
+        "reveal": "true"
+      },
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8"
+      },
+      "body": [
+        {
+          "id": "anon",
+          "name": "anon",
+          "type": "legacy",
+          "api_key": "<JWT>",
+          "description": "Legacy anon API key",
+          "secret_jwt_template": null
+        },
+        {
+          "id": "service_role",
+          "name": "service_role",
+          "type": "legacy",
+          "api_key": "<JWT>",
+          "description": "Legacy service_role API key",
+          "secret_jwt_template": {
+            "role": "service_role"
+          }
+        }
+      ]
+    }
+  }
+]

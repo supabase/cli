@@ -13,8 +13,8 @@
       "api_key": "<JWT>",
       "id": "anon",
       "type": "legacy",
-      "hash": "NPRSa4S2_WJWFtd6w-q9gZkzq1khzdL_zvKDWXlIZBk",
-      "prefix": "aEvCa",
+      "hash": "39fThOI14KNefhZYbB-4g9oOrh4YtU6YNTk8_f00X70",
+      "prefix": "rfcCU",
       "description": "Legacy anon API key"
     },
     {
@@ -22,8 +22,8 @@
       "api_key": "<JWT>",
       "id": "service_role",
       "type": "legacy",
-      "hash": "p5s7B2va9U4E8sFzfVYRze5r-T4nzKMdI4rTTRqm5nQ",
-      "prefix": "OF374",
+      "hash": "F95ws8B4LTBccQg3rNCd1dujmW_gNv2InhYaj4gI2Xo",
+      "prefix": "ojKUp",
       "description": "Legacy service_role API key"
     },
     {
@@ -33,7 +33,7 @@
       "api_key": "<API_KEY>",
       "description": null,
       "secret_jwt_template": null,
-      "hash": "_SxkzlTbqshF5qhVkkszD3DtdBQ6fq4TUkGyqZXssTQ",
+      "hash": "rI8aAKNjxFqy2m6OQT6adgkHOvH_7BtrLhmvMIUU18M",
       "prefix": "<API_KEY>",
       "inserted_at": "2000-01-01T00:00:00Z",
       "updated_at": "2000-01-01T00:00:00Z"
@@ -47,7 +47,7 @@
       "secret_jwt_template": {
         "role": "service_role"
       },
-      "hash": "5XGC4O6GI9Jghz3V7IpFWcUQ6rx9w4qYUQalUaV04nI",
+      "hash": "pTOlXOiKJSgOs8qYBS_pIwt1Qx8iRxO3Ck5hQgyC5U0",
       "prefix": "<API_KEY>",
       "inserted_at": "2000-01-01T00:00:00Z",
       "updated_at": "2000-01-01T00:00:00Z"

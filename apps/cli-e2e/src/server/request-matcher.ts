@@ -63,7 +63,7 @@ export function matchFixture(
 
   // Only validate body when the fixture recorded a non-null body.
   if (entry.request.body !== null) {
-    if (JSON.stringify(entry.request.body) !== JSON.stringify(incoming.body)) {
+    if (JSON.stringify(sortBody(entry.request.body)) !== JSON.stringify(sortBody(incoming.body))) {
       return {
         ok: false,
         status: 400,
@@ -82,6 +82,19 @@ export function matchFixture(
 /** Reset sequence counters so tests start from the beginning of each fixture queue. */
 export function resetCounters(counters: SequenceCounters): void {
   counters.clear();
+}
+
+/** Sort array bodies canonically so body comparison is order-insensitive for
+ *  APIs where element ordering is not semantically meaningful (e.g. bulk-create
+ *  secrets). Go maps iterate in non-deterministic order, so proxy commands that
+ *  build request bodies from maps produce different orderings on Linux vs macOS.
+ *  Nested object fields are still compared exactly — only the top-level array
+ *  order is normalized. */
+function sortBody(body: unknown): unknown {
+  if (Array.isArray(body)) {
+    return [...body].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  }
+  return body;
 }
 
 /** Build a human-readable key string for error messages. */
