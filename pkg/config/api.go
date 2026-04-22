@@ -15,12 +15,11 @@ type (
 		ExtraSearchPath []string `toml:"extra_search_path" json:"extra_search_path"`
 		MaxRows         uint     `toml:"max_rows" json:"max_rows"`
 		// Local only config
-		Image     string  `toml:"-" json:"-"`
-		KongImage string  `toml:"-" json:"-"`
-		Port      uint16  `toml:"port" json:"port"`
-		Tls       tlsKong `toml:"tls" json:"tls"`
-		// TODO: replace [auth|studio].api_url
-		ExternalUrl string `toml:"external_url" json:"external_url"`
+		Image     string  `toml:"-"`
+		KongImage string  `toml:"-"`
+		Port      uint16  `toml:"port"`
+		Tls       tlsKong `toml:"tls"`
+		ExternalUrl string `toml:"external_url"`
 	}
 
 	tlsKong struct {

@@ -1196,7 +1196,7 @@ EOF
 					"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
 					"POSTGRES_PASSWORD=" + dbConfig.Password,
 					"SUPABASE_URL=http://" + utils.KongId + ":8000",
-					"SUPABASE_PUBLIC_URL=" + utils.Config.Studio.ApiUrl,
+					"SUPABASE_PUBLIC_URL=" + utils.Config.Api.ExternalUrl,
 					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
 					"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey.Value,
 					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
