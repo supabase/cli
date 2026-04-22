@@ -219,9 +219,9 @@ func downloadOne(ctx context.Context, slug, projectRef string, fsys afero.Fs) (s
 }
 
 func extractOne(ctx context.Context, slug, eszipPath string) error {
-	hostFuncDirPath, err := filepath.Abs(filepath.Join(utils.FunctionsDir, slug))
+	hostFuncDirPath, err := filepath.Abs(utils.FunctionsDir)
 	if err != nil {
-		return errors.Errorf("failed to resolve absolute path: %w", err)
+		return errors.Errorf("failed to resolve functions path: %w", err)
 	}
 
 	hostEszipPath, err := filepath.Abs(eszipPath)
@@ -229,6 +229,7 @@ func extractOne(ctx context.Context, slug, eszipPath string) error {
 		return errors.Errorf("failed to resolve eszip path: %w", err)
 	}
 	dockerEszipPath := path.Join(utils.DockerEszipDir, filepath.Base(hostEszipPath))
+	dockerOutputPath := path.Join(utils.DockerDenoDir, slug)
 
 	binds := []string{
 		// Reuse deno cache directory, ie. DENO_DIR, between container restarts
@@ -242,7 +243,7 @@ func extractOne(ctx context.Context, slug, eszipPath string) error {
 		ctx,
 		container.Config{
 			Image: utils.Config.EdgeRuntime.Image,
-			Cmd:   []string{"unbundle", "--eszip", dockerEszipPath, "--output", utils.DockerDenoDir},
+			Cmd:   []string{"unbundle", "--eszip", dockerEszipPath, "--output", dockerOutputPath},
 		},
 		container.HostConfig{
 			Binds: binds,
