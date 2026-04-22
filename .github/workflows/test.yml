@@ -70,13 +70,22 @@ jobs:
       - name: Initialize Go CLI submodule
         run: git submodule update --init .repos/supabase-cli-go
 
+      - name: Cache Go CLI binary
+        id: cache-go-binary
+        uses: actions/cache@v4
+        with:
+          path: .repos/supabase-cli-go/supabase-go
+          key: go-cli-${{ runner.os }}-${{ hashFiles('.repos/supabase-cli-go/**/*.go', '.repos/supabase-cli-go/go.mod', '.repos/supabase-cli-go/go.sum') }}
+
       - name: Setup Go
+        if: steps.cache-go-binary.outputs.cache-hit != 'true'
         uses: actions/setup-go@v5
         with:
           go-version-file: .repos/supabase-cli-go/go.mod
           cache-dependency-path: .repos/supabase-cli-go/go.sum
 
       - name: Build Go CLI
+        if: steps.cache-go-binary.outputs.cache-hit != 'true'
         run: go build -o supabase-go .
         working-directory: .repos/supabase-cli-go
 
