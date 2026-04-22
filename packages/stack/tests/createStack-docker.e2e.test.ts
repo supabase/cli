@@ -69,9 +69,9 @@ dockerDescribe("createStack e2e (docker mode)", () => {
     { timeout: STACK_DOCKER_E2E_TEST_TIMEOUT_MS },
     async () => {
       const runningImages = execSync("docker ps --format '{{.Image}}'").toString();
-      expect(runningImages).toContain("public.ecr.aws/supabase/postgres");
-      expect(runningImages).toContain("public.ecr.aws/supabase/postgrest");
-      expect(runningImages).toContain("public.ecr.aws/supabase/gotrue");
+      expect(runningImages).toContain("supabase/postgrest");
+      expect(runningImages).toContain("supabase/postgres");
+      expect(runningImages).toContain("supabase/gotrue");
 
       const [proxyRes, authRes] = await Promise.all([
         fetch(`${stack.url}/health`),
