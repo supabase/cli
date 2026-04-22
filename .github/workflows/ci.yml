@@ -23,7 +23,7 @@ jobs:
           cache: true
 
       # Required by: internal/utils/credentials/keyring_test.go
-      - uses: t1m0thyj/unlock-keyring@728cc718a07b5e7b62c269fc89295e248b24cba7 # v1.1.0
+      - uses: t1m0thyj/unlock-keyring@cbcf205c879ebd86add70bab3a6abfcce59a5cae # v1.2.0
       - run: |
           pkgs=$(go list ./pkg/... | grep -Ev 'pkg/api' | paste -sd ',' -)
           go tool gotestsum -- -race -v -count=1 ./... \
