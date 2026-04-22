@@ -5,8 +5,8 @@ import {
   createPlan,
   deserializeCatalog,
   exportDeclarativeSchema,
-} from "npm:@supabase/pg-delta@1.0.0-alpha.13";
-import { supabase } from "npm:@supabase/pg-delta@1.0.0-alpha.13/integrations/supabase";
+} from "npm:@supabase/pg-delta@1.0.0-alpha.17";
+import { supabase } from "npm:@supabase/pg-delta@1.0.0-alpha.17/integrations/supabase";
 
 async function resolveInput(ref: string | undefined) {
   if (!ref) {
