@@ -1,6 +1,6 @@
 {
   "method": "GET",
-  "path": "/v1/projects/<PROJECT_REF>/branches",
+  "path": "/v1/projects/<PROJECT_REF>",
   "query": {},
   "headers": {
     "accept-encoding": "gzip",

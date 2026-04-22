@@ -19,7 +19,7 @@
         "x-gotrue-id": "<UUID>",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "117",
-        "x-ratelimit-reset": "58"
+        "x-ratelimit-reset": "59"
       },
       "body": []
     }
