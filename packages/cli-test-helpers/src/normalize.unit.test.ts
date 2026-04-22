@@ -95,6 +95,40 @@ describe("normalize", () => {
     expect(normalize("a\n\n\nb")).toBe("a\n\nb");
   });
 
+  it("normalizes JWT tokens to <JWT>", () => {
+    const jwt =
+      "eyJhbGciOiJFUzI1NiIsImtpZCI6ImI4MTI2OWYxLTIxZDgtNGYyZS1iNzE5LWMyMjQwYTg0MGQ5MCIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MTM0NTY3ODksImV4cCI6MTcxMzQ1ODU4OSwicm9sZSI6ImFub24ifQ.SomeSignatureHere";
+    expect(normalize(jwt)).toBe("<JWT>");
+    expect(normalize(`Bearer ${jwt}`)).toBe("Bearer <JWT>");
+    expect(normalize(`token: ${jwt}\nother: text`)).toBe("token: <JWT>\nother: text");
+  });
+
+  it("normalizes JWK key material fields", () => {
+    const jwk = `{"kty":"EC","kid":"b81269f1-21d8-4f2e-b719-c2240a840d90","use":"sig","key_ops":["sign","verify"],"alg":"ES256","ext":true,"crv":"P-256","x":"M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4","y":"P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ","d":"dIhR8wywJlqlua4y_yMq2SLhlFXDZJBCvFrY1DCHyVU"}`;
+    const normalized = normalize(jwk);
+    expect(normalized).toContain('"x":"<KEY_BYTES>"');
+    expect(normalized).toContain('"y":"<KEY_BYTES>"');
+    expect(normalized).toContain('"d":"<KEY_BYTES>"');
+    expect(normalized).toContain('"kid":"<UUID>"');
+    // Non-key fields must not be affected
+    expect(normalized).toContain('"kty":"EC"');
+    expect(normalized).toContain('"alg":"ES256"');
+    expect(normalized).toContain('"crv":"P-256"');
+  });
+
+  it("normalizes RSA JWK key material fields", () => {
+    const jwk = `{"kty":"RSA","alg":"RS256","n":"someModulus","e":"AQAB","d":"privateExp","p":"prime1","q":"prime2","dp":"exp1","dq":"exp2","qi":"coeff"}`;
+    const normalized = normalize(jwk);
+    expect(normalized).toContain('"n":"<KEY_BYTES>"');
+    expect(normalized).toContain('"e":"<KEY_BYTES>"');
+    expect(normalized).toContain('"d":"<KEY_BYTES>"');
+    expect(normalized).toContain('"p":"<KEY_BYTES>"');
+    expect(normalized).toContain('"q":"<KEY_BYTES>"');
+    expect(normalized).toContain('"dp":"<KEY_BYTES>"');
+    expect(normalized).toContain('"dq":"<KEY_BYTES>"');
+    expect(normalized).toContain('"qi":"<KEY_BYTES>"');
+  });
+
   it("is a no-op on clean CLI table output", () => {
     const table =
       "\n  \n   ID                   | NAME\n  ----------------------|----------\n   <PROJECT_REF_1>      | My Org\n\n";

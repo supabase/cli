@@ -38,9 +38,17 @@ export function normalize(output: string): string {
       .replace(/(?:^[ \t]+at [^\n]+\n?)+/gm, "<STACK_TRACE>\n")
       // 13. File reference line numbers (file.ts:123 or file.ts:123:45)
       .replace(/\b(\w[\w.-]*\.(?:ts|js|go|tsx|jsx|mts|mjs|cjs)):\d+(?::\d+)?\b/g, "$1:<LINE>")
-      // 14. Trailing whitespace on each line
+      // 14. JWT tokens (header starts with eyJ — base64url of `{"`)
+      //     Replaces full three-part token so non-deterministic signatures and
+      //     Unix-integer timestamps in the payload don't cause false parity failures.
+      .replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g, "<JWT>")
+      // 15. JWK key material fields (base64url-encoded cryptographic bytes).
+      //     UUIDs in "kid" are already handled by rule 5. These fields contain
+      //     random key bytes that differ across invocations.
+      .replace(/"(d|x|y|n|e|p|q|dp|dq|qi|k)"\s*:\s*"[A-Za-z0-9_-]+"/g, '"$1":"<KEY_BYTES>"')
+      // 16. Trailing whitespace on each line
       .replace(/[ \t]+$/gm, "")
-      // 15. Collapse 3+ consecutive blank lines to two newlines
+      // 17. Collapse 3+ consecutive blank lines to two newlines
       .replace(/\n{3,}/g, "\n\n")
   );
 }
