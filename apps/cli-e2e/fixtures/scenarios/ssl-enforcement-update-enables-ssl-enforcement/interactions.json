@@ -1,0 +1,38 @@
+[
+  {
+    "request": {
+      "method": "PUT",
+      "path": "/v1/projects/<PROJECT_REF>/ssl-enforcement",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "content-length": "37",
+        "content-type": "application/json",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": {
+        "requestedConfig": {
+          "database": true
+        }
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": {
+        "currentConfig": {
+          "database": true
+        },
+        "appliedSuccessfully": true
+      }
+    }
+  }
+]

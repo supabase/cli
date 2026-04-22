@@ -13,19 +13,22 @@ describe("branches", () => {
       expect(result.stdout).toContain("STATUS");
     });
 
-    testBehaviour("returns json output with --output json", async ({ run, projectRef }) => {
-      const result = await run([
-        "branches",
-        "list",
-        "--output",
-        "json",
-        "--project-ref",
-        projectRef,
-      ]);
-      expect(result.exitCode).toBe(0);
-      const parsed = JSON.parse(result.stdout) as unknown[];
-      expect(Array.isArray(parsed)).toBe(true);
-    });
+    testBehaviour.skipIf(isRecording)(
+      "returns json output with --output json",
+      async ({ run, projectRef }) => {
+        const result = await run([
+          "branches",
+          "list",
+          "--output",
+          "json",
+          "--project-ref",
+          projectRef,
+        ]);
+        expect(result.exitCode).toBe(0);
+        const parsed = JSON.parse(result.stdout) as unknown[];
+        expect(Array.isArray(parsed)).toBe(true);
+      },
+    );
 
     testBehaviour("includes debug output with --debug", async ({ run, projectRef }) => {
       const result = await run(["branches", "list", "--debug", "--project-ref", projectRef]);
