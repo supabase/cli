@@ -236,5 +236,6 @@ services:
         strip_path: true
         paths:
           - /mcp
+          - /mcp/
     plugins:
       - name: cors
