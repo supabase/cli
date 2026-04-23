@@ -175,3 +175,153 @@ To run from source:
 # Go >= 1.22
 go run . help
 ```
+
+### Project Structure
+
+```
+Supabase-CLI/
+├── .github/ # GitHub Actions workflows, automation, release pipelines
+├── api/ # OpenAPI specs and generated API clients
+├── cmd/ # CLI commands (Cobra entrypoints)
+├── docs/ # Additional CLI documentation
+├── examples/ # Example projects, functions, templates
+├── fsevents/ # File system event helpers (primarily macOS)
+├── internal/ # Core business logic for the CLI
+│ ├── api/ # Wrapped API client logic
+│ ├── db/ # Migrations, schema tooling, dump/reset logic
+│ ├── functions/ # Edge Functions tooling (build, deploy, logs)
+│ ├── local/ # Local development orchestration (Docker stack)
+│ ├── testing/ # Mocks and helpers for unit tests
+│ └── ... # Additional internal packages
+├── main.go # CLI entrypoint
+├── go.mod # Go module definition
+├── go.sum
+├── package.json # JS tooling (type generation, scripts)
+├── README.md
+├── LICENSE
+├── .gitignore
+├── .golangci.yml # Linter configuration
+└── .goreleaser.yml # Build & release configuration
+```
+### Release Process
+
+**Stable Release**
+- Published every __two weeks__ from `main` 
+
+**Beta Releases**
+- Published every merge to `develop`
+
+**Hotfix Releases**
+
+Create branch `N.N.x` from latest stable
+
+Cherry-pick changes
+
+Run __Release (Beta)__ workflow
+
+Test via:
+
+```npx supabase@N.N.x help```
+
+Mark release as latest stable
+
+### Updating the API Client
+
+The CLI’s API client is generated from Supabase’s OpenAPI schema. Regenerate when updating API definitions.
+
+## Trouble Shooting
+
+This section helps you fix common issues when running or developing the Supabase CLI.  
+
+### Local Stack Won’t Start**  
+**Problem:** `supabase start` hangs, errors, or services don’t respond.
+
+**Common Causes**  
+- Docker not Running
+- Old containers/conflicting ports
+- Missing environment files (`.env`)
+
+**Fix**
+```sh
+# Make sure Docker is running
+docker --version
+
+
+# Stop any running Supabase stack
+supabase stop
+
+
+# Remove old containers if stuck
+docker-compose down
+
+
+# Start the local stack again
+supabase start
+```
+### Database Migrations Out of Sync**
+
+**Problem:** CLI shows errors like ``migration already applied`` or schema mismatch.
+
+**Fix:**
+
+- Reset the local database (WARNING: deletes all data)
+```sh
+supabase db reset
+```
+- Apply migrations fresh
+```sh
+supabase db push
+```
+### CLI Shows Unexpected Errors
+
+**Problem:** Commands fail after updating CLI or Go version.
+
+**Fix:**
+
+- Clear Go cache
+```sh
+go clean -cache
+```
+
+- Rebuild CLI binary
+```sh
+go build -o supabase .
+```
+
+- Check CLI works
+```sh
+./supabase help
+```
+### TypeScript Type Generation Fails
+
+**Problem:** `supabase gen types typescript` produces errors.
+
+**Fix:**
+
+- Ensure Node.js / npm / pnpm versions are correct
+
+- Check database is running (`supabase start`)
+
+```sh
+npx supabase gen types typescript --local
+```
+### Edge Functions Deployment Fails
+
+**Problem:** Functions don’t deploy or logs show errors.
+
+**Fix:**
+
+- Make sure Docker is running
+
+- Ensure folder structure under ``supabase/functions/`` is correct
+
+```sh
+supabase functions build <function-name>
+supabase functions deploy <function-name>
+```
+
+## Thanks for Contributing
+
+Every contribution — docs, tests, or code — makes Supabase better for everyone.
+
+For detailed contribution workflow, branching, testing, and PR guidelines, see [CONTRIBUTING.md](./CONTRIBUTING.md).
