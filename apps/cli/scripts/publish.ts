@@ -12,6 +12,7 @@ const PLATFORM_PACKAGES = [
   "cli-linux-arm64-musl",
   "cli-linux-x64",
   "cli-linux-x64-musl",
+  "cli-windows-arm64",
   "cli-windows-x64",
 ];
 

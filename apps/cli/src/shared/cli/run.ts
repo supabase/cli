@@ -3,6 +3,7 @@ import { ProjectConfigStore } from "@supabase/config";
 import { unixHttpClientLayer } from "@supabase/stack";
 import { Cause, Effect, Exit, Fiber, Layer, Stdio } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
+import { CLI_VERSION } from "./version.ts";
 import { Credentials } from "../../next/auth/credentials.service.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
 import { outputLayerFor } from "../output/output.layer.ts";
@@ -88,7 +89,7 @@ function cliProgramFor(rootCommand: Command.Command.Any, args: ReadonlyArray<str
       }),
     ),
   );
-  return Command.runWith(rootCommand, { version: "0.1.0" })(args).pipe(
+  return Command.runWith(rootCommand, { version: CLI_VERSION })(args).pipe(
     Effect.provide(formatterLayerFor(args)),
     Effect.provide(analyticsLayer),
     Effect.provide(tracingLayer),

@@ -11,7 +11,7 @@ const PLATFORMS: Record<string, Record<string, string[]>> = {
     arm64: ["linux-arm64", "linux-arm64-musl"],
     x64: ["linux-x64", "linux-x64-musl"],
   },
-  win32: { x64: ["windows-x64"] },
+  win32: { arm64: ["windows-arm64"], x64: ["windows-x64"] },
 };
 
 const platformMap = PLATFORMS[process.platform];

@@ -74,6 +74,12 @@ const TARGETS = [
     archive: `supabase_${version}_windows_amd64.zip`,
     ext: ".exe",
   },
+  {
+    bunTarget: "bun-windows-arm64",
+    pkg: "cli-windows-arm64",
+    archive: `supabase_${version}_windows_arm64.zip`,
+    ext: ".exe",
+  },
 ] as const;
 
 const root = path.resolve(import.meta.dir, "../../..");
@@ -89,6 +95,7 @@ const GO_TARGETS: Record<BunTarget, { goos: string; goarch: string }> = {
   "bun-linux-arm64": { goos: "linux", goarch: "arm64" },
   "bun-linux-x64": { goos: "linux", goarch: "amd64" },
   "bun-windows-x64": { goos: "windows", goarch: "amd64" },
+  "bun-windows-arm64": { goos: "windows", goarch: "arm64" },
 };
 
 async function buildTarget(target: (typeof TARGETS)[number]) {
@@ -98,7 +105,7 @@ async function buildTarget(target: (typeof TARGETS)[number]) {
   const outfile = path.join(binDir, `supabase${target.ext}`);
 
   console.log(`[${target.pkg}] Compiling Bun CLI...`);
-  await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --outfile=${outfile}`;
+  await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --outfile=${outfile}`;
   console.log(`[${target.pkg}] Done.`);
 }
 
@@ -110,7 +117,7 @@ async function buildGoTarget(target: (typeof TARGETS)[number]) {
   const outfile = path.join(binDir, `supabase-go${target.ext}`);
 
   console.log(`[${target.pkg}] Compiling Go CLI (${goos}/${goarch})...`);
-  await $`go build -trimpath -ldflags="-s -w" -o ${outfile} ${goSource}`.env({
+  await $`go build -trimpath -ldflags="-s -w" -o ${outfile} .`.cwd(goSource).env({
     ...process.env,
     GOOS: goos,
     GOARCH: goarch,
@@ -144,7 +151,7 @@ async function buildMuslBinaries() {
 
       const outfile = path.join(binDir, "supabase");
       console.log(`[${target.pkg}] Compiling Bun CLI (musl)...`);
-      await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --outfile=${outfile}`;
+      await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --outfile=${outfile}`;
       console.log(`[${target.pkg}] Done.`);
     }),
   );

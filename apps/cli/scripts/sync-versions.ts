@@ -10,6 +10,7 @@ const PACKAGE_PATHS = {
   "cli-linux-arm64-musl": ["packages", "cli-linux-arm64-musl"],
   "cli-linux-x64": ["packages", "cli-linux-x64"],
   "cli-linux-x64-musl": ["packages", "cli-linux-x64-musl"],
+  "cli-windows-arm64": ["packages", "cli-windows-arm64"],
   "cli-windows-x64": ["packages", "cli-windows-x64"],
 } as const;
 

@@ -48,7 +48,7 @@ jobs:
 
       - name: Verify build artifacts
         run: |
-          for pkg in cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-arm64-musl cli-linux-x64 cli-linux-x64-musl cli-windows-x64; do
+          for pkg in cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-arm64-musl cli-linux-x64 cli-linux-x64-musl cli-windows-arm64 cli-windows-x64; do
             echo "Checking packages/$pkg/bin/..."
             ls -la "packages/$pkg/bin/"
           done
@@ -148,6 +148,7 @@ jobs:
             dist/supabase_${{ inputs.version }}_linux_arm64.apk
             dist/supabase_${{ inputs.version }}_linux_amd64.apk
             dist/supabase_${{ inputs.version }}_windows_amd64.zip
+            dist/supabase_${{ inputs.version }}_windows_arm64.zip
             dist/checksums.txt
 
       - name: Publish GitHub Release (immutable)

@@ -31,6 +31,7 @@ const PLATFORM_PACKAGES = [
 	"cli-linux-arm64-musl",
 	"cli-linux-x64",
 	"cli-linux-x64-musl",
+	"cli-windows-arm64",
 	"cli-windows-x64",
 ] as const;
 
@@ -77,6 +78,13 @@ const PLATFORM_MAP: Record<string, PlatformInfo> = {
 		ext: ".exe",
 		goos: "windows",
 		goarch: "amd64",
+	},
+	"win32-arm64": {
+		bunTarget: "bun-windows-arm64",
+		platformPkg: "cli-windows-arm64",
+		ext: ".exe",
+		goos: "windows",
+		goarch: "arm64",
 	},
 };
 

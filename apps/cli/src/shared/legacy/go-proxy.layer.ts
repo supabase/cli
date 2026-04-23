@@ -20,7 +20,7 @@ const PLATFORM_CANDIDATES: Partial<Record<string, Partial<Record<string, Readonl
       arm64: ["linux-arm64", "linux-arm64-musl"],
       x64: ["linux-x64", "linux-x64-musl"],
     },
-    win32: { x64: ["windows-x64"] },
+    win32: { arm64: ["windows-arm64"], x64: ["windows-x64"] },
   };
 
 const require = createRequire(import.meta.url);

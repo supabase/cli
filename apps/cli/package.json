@@ -60,6 +60,7 @@
     "@supabase/cli-linux-arm64-musl": "workspace:*",
     "@supabase/cli-linux-x64": "workspace:*",
     "@supabase/cli-linux-x64-musl": "workspace:*",
+    "@supabase/cli-windows-arm64": "workspace:*",
     "@supabase/cli-windows-x64": "workspace:*"
   },
   "knip": {

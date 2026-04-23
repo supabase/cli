@@ -34,6 +34,7 @@ packages/
   cli-linux-x64/bin/      supabase + supabase-go
   cli-linux-arm64-musl/bin/ supabase (musl TS binary only)
   cli-linux-x64-musl/bin/   supabase (musl TS binary only)
+  cli-windows-arm64/bin/  supabase.exe + supabase-go.exe
   cli-windows-x64/bin/    supabase.exe + supabase-go.exe
 ```
 
@@ -96,3 +97,8 @@ This:
 2. Cross-compiles the Go CLI (`CGO_ENABLED=0`) for each platform → `packages/cli-{platform}/bin/supabase-go`
 3. Bundles both binaries into the platform archives (`.tar.gz` / `.zip`)
 4. Includes both binaries in the Linux package manager packages (deb/rpm/apk)
+
+## See Also
+
+- [ADR 0011](../../../docs/adr/0011-cli-release-and-distribution-strategy.md) — the release & distribution strategy decision (binary packaging choice, per-channel publish mechanisms, CI pipeline design, open blockers).
+- [`release-process.md`](./release-process.md) — operational playbook for local, PoC, and production releases.

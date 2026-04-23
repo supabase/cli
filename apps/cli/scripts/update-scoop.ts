@@ -10,6 +10,7 @@ const { values } = parseArgs({
     version: { type: "string" },
     repo: { type: "string", default: "supabase/cli" },
     bucket: { type: "string", default: "supabase/scoop-bucket" },
+    name: { type: "string", default: "supabase" },
     local: { type: "boolean", default: false },
     "dry-run": { type: "boolean", default: false },
   },
@@ -18,15 +19,23 @@ const { values } = parseArgs({
 const version = values.version;
 if (!version) {
   console.error(
-    "Usage: bun run scripts/update-scoop.ts --version <version> [--repo <owner/repo>] [--bucket <owner/repo>] [--local] [--dry-run]",
+    "Usage: bun run scripts/update-scoop.ts --version <version> [--repo <owner/repo>] [--bucket <owner/repo>] [--name <manifest-name>] [--local] [--dry-run]",
   );
   process.exit(1);
 }
 
 const repo = values.repo!;
 const bucket = values.bucket!;
+const name = values.name!;
 const local = values.local!;
 const dryRun = values["dry-run"]!;
+
+// When name != "supabase", rename the binary on install so it doesn't clash
+// with the official `supabase` CLI a user may already have installed.
+// Scoop's `bin` field accepts either a string (no rename) or a
+// [source, alias] tuple. See https://github.com/ScoopInstaller/Scoop/wiki/App-Manifests#bin
+const binEntry: string | [string, string] =
+  name === "supabase" ? "supabase.exe" : ["supabase.exe", name];
 const root = path.resolve(import.meta.dir, "../../..");
 const distDir = path.join(root, "dist");
 
@@ -58,7 +67,12 @@ const manifest = {
     "64bit": {
       url: `${baseUrl}/supabase_${version}_windows_amd64.zip`,
       hash: sha(`supabase_${version}_windows_amd64.zip`),
-      bin: ["supabase.exe"],
+      bin: [binEntry],
+    },
+    arm64: {
+      url: `${baseUrl}/supabase_${version}_windows_arm64.zip`,
+      hash: sha(`supabase_${version}_windows_arm64.zip`),
+      bin: [binEntry],
     },
   },
   checkver: {
@@ -69,12 +83,16 @@ const manifest = {
       "64bit": {
         url: `https://github.com/${repo}/releases/download/v$version/supabase_$version_windows_amd64.zip`,
       },
+      arm64: {
+        url: `https://github.com/${repo}/releases/download/v$version/supabase_$version_windows_arm64.zip`,
+      },
     },
   },
 };
 
+const manifestFileName = `${name}.json`;
 const manifestJson = `${JSON.stringify(manifest, null, 4)}\n`;
-const manifestOut = path.join(distDir, "supabase.json");
+const manifestOut = path.join(distDir, manifestFileName);
 await writeFile(manifestOut, manifestJson);
 console.log(`Manifest written to ${manifestOut}`);
 
@@ -88,11 +106,11 @@ const tmpDir = await mkdtemp(path.join(tmpdir(), "scoop-bucket-"));
 try {
   await $`gh repo clone ${bucket} ${tmpDir}`;
 
-  const bucketManifestPath = path.join(tmpDir, "supabase.json");
+  const bucketManifestPath = path.join(tmpDir, manifestFileName);
   await writeFile(bucketManifestPath, manifestJson);
 
-  await $`git -C ${tmpDir} add supabase.json`;
-  await $`git -C ${tmpDir} commit -m ${"supabase " + version}`;
+  await $`git -C ${tmpDir} add ${manifestFileName}`;
+  await $`git -C ${tmpDir} commit -m ${name + " " + version}`;
   await $`git -C ${tmpDir} push`;
 
   console.log(`Pushed manifest update to ${bucket}`);

@@ -214,7 +214,7 @@ describe("tracingLayer – span behaviour", () => {
       expect(typeof span.attributes.get("is_ci")).toBe("boolean");
       expect(span.attributes.get("os")).toBe("linux");
       expect(span.attributes.get("arch")).toBe("x64");
-      expect(span.attributes.get("cli_version")).toBe("0.1.0");
+      expect(span.attributes.get("cli_version")).toBe("0.0.0-dev");
     }).pipe(
       Effect.provide(buildTracingLayer({ home })),
       Effect.ensuring(Effect.sync(() => rmSync(home, { recursive: true, force: true }))),

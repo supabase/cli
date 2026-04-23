@@ -10,6 +10,7 @@ const { values } = parseArgs({
     version: { type: "string" },
     repo: { type: "string", default: "supabase/cli" },
     tap: { type: "string", default: "supabase/homebrew-tap" },
+    name: { type: "string", default: "supabase" },
     local: { type: "boolean", default: false },
     "dry-run": { type: "boolean", default: false },
   },
@@ -18,17 +19,43 @@ const { values } = parseArgs({
 const version = values.version;
 if (!version) {
   console.error(
-    "Usage: bun run scripts/update-homebrew.ts --version <version> [--repo <owner/repo>] [--tap <owner/repo>] [--local] [--dry-run]",
+    "Usage: bun run scripts/update-homebrew.ts --version <version> [--repo <owner/repo>] [--tap <owner/repo>] [--name <formula-name>] [--local] [--dry-run]",
   );
   process.exit(1);
 }
 
 const repo = values.repo!;
 const tap = values.tap!;
+const name = values.name!;
 const local = values.local!;
 const dryRun = values["dry-run"]!;
 const root = path.resolve(import.meta.dir, "../../..");
 const distDir = path.join(root, "dist");
+
+// Convert name (e.g. "supabase-shim-poc") to the Ruby class name
+// Homebrew expects (e.g. "SupabaseShimPoc").
+const className = name
+  .split(/[-_]/)
+  .filter(Boolean)
+  .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+  .join("");
+
+// When name != "supabase", rename the main binary on install so it doesn't
+// clash with the official `supabase` CLI a user may already have installed.
+//
+// `supabase-go` is the Go sidecar the legacy shell spawns via
+// apps/cli/src/shared/legacy/go-proxy.layer.ts. It is looked up by exact
+// filename colocated with process.execPath, so we MUST install it with its
+// original name (not renamed) right next to the SFE. The `if File.exist?`
+// guard makes the formula work for both the `legacy` shell (ships both
+// binaries) and the future `next` shell (SFE only).
+const installLines = [
+  name === "supabase" ? `    bin.install "supabase"` : `    bin.install "supabase" => "${name}"`,
+  `    bin.install "supabase-go" if File.exist?("supabase-go")`,
+];
+const installBlock = installLines.join("\n");
+
+const testInvocation = `#{bin}/${name}`;
 
 // Parse checksums
 const checksums = new Map<string, string>();
@@ -48,7 +75,7 @@ const baseUrl = local
   ? `file://${distDir}`
   : `https://github.com/${repo}/releases/download/v${version}`;
 
-const formula = `class Supabase < Formula
+const formula = `class ${className} < Formula
   desc "Supabase CLI"
   homepage "https://supabase.com"
   version "${version}"
@@ -75,16 +102,17 @@ const formula = `class Supabase < Formula
   end
 
   def install
-    bin.install "supabase"
+${installBlock}
   end
 
   test do
-    assert_match version.to_s, shell_output("#{bin}/supabase --version")
+    assert_match version.to_s, shell_output("${testInvocation} --version")
   end
 end
 `;
 
-const formulaOut = path.join(distDir, "supabase.rb");
+const formulaFileName = `${name}.rb`;
+const formulaOut = path.join(distDir, formulaFileName);
 await writeFile(formulaOut, formula);
 console.log(`Formula written to ${formulaOut}`);
 
@@ -98,11 +126,13 @@ const tmpDir = await mkdtemp(path.join(tmpdir(), "homebrew-tap-"));
 try {
   await $`gh repo clone ${tap} ${tmpDir}`;
 
-  const tapFormulaPath = path.join(tmpDir, "Formula", "supabase.rb");
+  const formulaDir = path.join(tmpDir, "Formula");
+  await $`mkdir -p ${formulaDir}`;
+  const tapFormulaPath = path.join(formulaDir, formulaFileName);
   await writeFile(tapFormulaPath, formula);
 
-  await $`git -C ${tmpDir} add Formula/supabase.rb`;
-  await $`git -C ${tmpDir} commit -m ${"supabase " + version}`;
+  await $`git -C ${tmpDir} add Formula/${formulaFileName}`;
+  await $`git -C ${tmpDir} commit -m ${name + " " + version}`;
   await $`git -C ${tmpDir} push`;
 
   console.log(`Pushed formula update to ${tap}`);

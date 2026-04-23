@@ -54,6 +54,7 @@ When an ADR becomes outdated, mark it as `deprecated` or reference the supersedi
 | 0008 | [Authentication & Token Management](0008-authentication-and-token-management.md)        | proposed |
 | 0009 | [Configuration Schema & Validation](0009-configuration-schema-and-validation.md)         | proposed |
 | 0010 | [Process Manager Architecture](0010-process-manager-architecture.md)                     | proposed |
+| 0011 | [CLI Release & Distribution Strategy](0011-cli-release-and-distribution-strategy.md)     | proposed |
 
 ## Template
 
