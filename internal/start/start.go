@@ -39,6 +39,7 @@ import (
 	"github.com/supabase/cli/internal/seed/buckets"
 	"github.com/supabase/cli/internal/services"
 	"github.com/supabase/cli/internal/status"
+	phtelemetry "github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/config"
@@ -82,6 +83,7 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 
 	fmt.Fprintf(os.Stderr, "Started %s local development setup.\n\n", utils.Aqua("supabase"))
 	status.PrettyPrint(os.Stdout, excludedContainers...)
+	printSecurityNotice()
 	return nil
 }
 
@@ -377,8 +379,10 @@ EOF
 		case "unix":
 			if dindHost, err = client.ParseHostURL(client.DefaultDockerHost); err != nil {
 				return errors.Errorf("failed to parse default host: %w", err)
-			} else if strings.HasSuffix(parsed.Host, "/.docker/run/docker.sock") {
-				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "analytics requires mounting default docker socket:", dindHost.Host)
+			} else if strings.HasSuffix(parsed.Host, "/.docker/run/docker.sock") ||
+				strings.HasSuffix(parsed.Host, "/.docker/desktop/docker.sock") {
+				// Docker will not mount rootless socket directly;
+				// instead, specify root socket to have it handled under the hood
 				binds = append(binds, fmt.Sprintf("%[1]s:%[1]s:ro", dindHost.Host))
 			} else {
 				// Podman and OrbStack can mount root-less socket without issue
@@ -391,9 +395,11 @@ EOF
 			container.Config{
 				Image: utils.Config.Analytics.VectorImage,
 				Env:   env,
-				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml && vector --config /etc/vector/vector.yaml
+				Entrypoint: []string{"sh", "-c", `cat <<'EOF' > /etc/vector/vector.yaml
 ` + vectorConfigBuf.String() + `
 EOF
+until wget --no-verbose --tries=1 --spider http://` + utils.LogflareId + `:4000/health 2>/dev/null; do sleep 2; done
+vector --config /etc/vector/vector.yaml
 `},
 				Healthcheck: &container.HealthConfig{
 					Test: []string{
@@ -467,12 +473,12 @@ EOF
 		}
 
 		binds := []string{}
-		for id, tmpl := range utils.Config.Auth.Email.Template {
-			if len(tmpl.ContentPath) == 0 {
-				continue
+		mountEmailTemplates := func(id, contentPath string) error {
+			if len(contentPath) == 0 {
+				return nil
 			}
-			hostPath := tmpl.ContentPath
-			if !filepath.IsAbs(tmpl.ContentPath) {
+			hostPath := contentPath
+			if !filepath.IsAbs(contentPath) {
 				var err error
 				hostPath, err = filepath.Abs(hostPath)
 				if err != nil {
@@ -481,6 +487,23 @@ EOF
 			}
 			dockerPath := path.Join(nginxEmailTemplateDir, id+filepath.Ext(hostPath))
 			binds = append(binds, fmt.Sprintf("%s:%s:rw", hostPath, dockerPath))
+			return nil
+		}
+
+		for id, tmpl := range utils.Config.Auth.Email.Template {
+			err := mountEmailTemplates(id, tmpl.ContentPath)
+			if err != nil {
+				return err
+			}
+		}
+
+		for id, tmpl := range utils.Config.Auth.Email.Notification {
+			if tmpl.Enabled {
+				err := mountEmailTemplates(id+"_notification", tmpl.ContentPath)
+				if err != nil {
+					return err
+				}
+			}
 		}
 
 		dockerPort := uint16(8000)
@@ -658,20 +681,31 @@ EOF
 			env = append(env, fmt.Sprintf("GOTRUE_SESSIONS_INACTIVITY_TIMEOUT=%v", utils.Config.Auth.Sessions.InactivityTimeout))
 		}
 
-		for id, tmpl := range utils.Config.Auth.Email.Template {
-			if len(tmpl.ContentPath) > 0 {
+		addMailerEnvVars := func(id, contentPath string, subject *string) {
+			if len(contentPath) > 0 {
 				env = append(env, fmt.Sprintf("GOTRUE_MAILER_TEMPLATES_%s=http://%s:%d/email/%s",
 					strings.ToUpper(id),
 					utils.KongId,
 					nginxTemplateServerPort,
-					id+filepath.Ext(tmpl.ContentPath),
+					id+filepath.Ext(contentPath),
 				))
 			}
-			if tmpl.Subject != nil {
+			if subject != nil {
 				env = append(env, fmt.Sprintf("GOTRUE_MAILER_SUBJECTS_%s=%s",
 					strings.ToUpper(id),
-					*tmpl.Subject,
+					*subject,
 				))
+			}
+		}
+
+		for id, tmpl := range utils.Config.Auth.Email.Template {
+			addMailerEnvVars(id, tmpl.ContentPath, tmpl.Subject)
+		}
+
+		for id, tmpl := range utils.Config.Auth.Email.Notification {
+			if tmpl.Enabled {
+				env = append(env, fmt.Sprintf("GOTRUE_MAILER_NOTIFICATIONS_%s_ENABLED=true", strings.ToUpper(id)))
+				addMailerEnvVars(id+"_notification", tmpl.ContentPath, tmpl.Subject)
 			}
 		}
 
@@ -1295,7 +1329,15 @@ EOF
 			return err
 		}
 	}
-	return start.WaitForHealthyService(ctx, serviceTimeout, started...)
+	if err := start.WaitForHealthyService(ctx, serviceTimeout, started...); err != nil {
+		return err
+	}
+	if service := phtelemetry.FromContext(ctx); service != nil {
+		if err := service.Capture(ctx, phtelemetry.EventStackStarted, nil, nil); err != nil {
+			fmt.Fprintln(utils.GetDebugLogger(), err)
+		}
+	}
+	return nil
 }
 
 func isContainerExcluded(imageName string, excluded map[string]bool) bool {
@@ -1324,4 +1366,12 @@ func formatMapForEnvConfig(input map[string]string, output *bytes.Buffer) {
 			output.WriteString(",")
 		}
 	}
+}
+
+func printSecurityNotice() {
+	fmt.Fprintln(os.Stderr, utils.Yellow("Local dev security notice"))
+	fmt.Fprintln(os.Stderr, "All services bind to 0.0.0.0 (network-accessible, not just localhost)")
+	fmt.Fprintln(os.Stderr, "API keys and JWT secrets are shared defaults. Do not use in production")
+	fmt.Fprintln(os.Stderr, "Studio, pgMeta (/pg/*), and analytics have no authentication")
+	fmt.Fprintln(os.Stderr)
 }

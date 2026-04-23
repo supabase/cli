@@ -8,11 +8,13 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/db/advisors"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
 	"github.com/supabase/cli/internal/db/lint"
 	"github.com/supabase/cli/internal/db/pull"
 	"github.com/supabase/cli/internal/db/push"
+	"github.com/supabase/cli/internal/db/query"
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/db/test"
@@ -22,7 +24,6 @@ import (
 	"github.com/supabase/cli/legacy/branch/delete"
 	"github.com/supabase/cli/legacy/branch/list"
 	"github.com/supabase/cli/legacy/branch/switch_"
-	legacy "github.com/supabase/cli/legacy/diff"
 	"github.com/supabase/cli/pkg/migration"
 )
 
@@ -79,28 +80,44 @@ var (
 		},
 	}
 
-	useMigra    bool
-	usePgAdmin  bool
-	usePgSchema bool
-	usePgDelta  bool
-	schema      []string
-	file        string
+	useMigra       bool
+	usePgAdmin     bool
+	usePgSchema    bool
+	usePgDelta     bool
+	pullDiffEngine = utils.EnumFlag{
+		Allowed: []string{"migra", "pg-delta"},
+		Value:   "migra",
+	}
+	diffFrom   string
+	diffTo     string
+	outputPath string
+	schema     []string
+	file       string
 
 	dbDiffCmd = &cobra.Command{
 		Use:   "diff",
 		Short: "Diffs the local database for schema changes",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(diffFrom) > 0 || len(diffTo) > 0 {
+				switch {
+				case len(diffFrom) == 0 || len(diffTo) == 0:
+					return fmt.Errorf("must set both --from and --to when using explicit diff mode")
+				default:
+					return diff.RunExplicit(cmd.Context(), diffFrom, diffTo, schema, outputPath, afero.NewOsFs())
+				}
+			}
+			useDelta := shouldUsePgDelta()
 			if usePgAdmin {
-				return legacy.RunPgAdmin(cmd.Context(), schema, file, flags.DbConfig, afero.NewOsFs())
+				return diff.RunPgAdmin(cmd.Context(), schema, file, flags.DbConfig, afero.NewOsFs())
 			}
 			differ := diff.DiffSchemaMigra
 			if usePgSchema {
 				differ = diff.DiffPgSchema
 				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "--use-pg-schema flag is experimental and may not include all entities, such as views and grants.")
-			} else if usePgDelta {
+			} else if useDelta {
 				differ = diff.DiffPgDelta
 			}
-			return diff.Run(cmd.Context(), schema, file, flags.DbConfig, differ, afero.NewOsFs())
+			return diff.Run(cmd.Context(), schema, file, flags.DbConfig, differ, useDelta, afero.NewOsFs())
 		},
 	}
 
@@ -159,7 +176,13 @@ var (
 			if len(args) > 0 {
 				name = args[0]
 			}
-			return pull.Run(cmd.Context(), schema, flags.DbConfig, name, afero.NewOsFs())
+			pullDiffer := diff.DiffSchemaMigra
+			usePgDeltaDiff := pullDiffEngine.Value == "pg-delta"
+			if usePgDeltaDiff {
+				pullDiffer = diff.DiffPgDelta
+			}
+			useDeclarativePgDelta := shouldUsePgDelta()
+			return pull.Run(cmd.Context(), schema, flags.DbConfig, name, useDeclarativePgDelta, usePgDeltaDiff, pullDiffer, afero.NewOsFs())
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Finished " + utils.Aqua("supabase db pull") + ".")
@@ -178,7 +201,7 @@ var (
 		Short:      "Show changes on the remote database",
 		Long:       "Show changes on the remote database since last migration.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return diff.Run(cmd.Context(), schema, file, flags.DbConfig, diff.DiffSchemaMigra, afero.NewOsFs())
+			return diff.Run(cmd.Context(), schema, file, flags.DbConfig, diff.DiffSchemaMigra, false, afero.NewOsFs())
 		},
 	}
 
@@ -187,7 +210,8 @@ var (
 		Use:        "commit",
 		Short:      "Commit remote changes as a new migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return pull.Run(cmd.Context(), schema, flags.DbConfig, "remote_commit", afero.NewOsFs())
+			useDelta := shouldUsePgDelta()
+			return pull.Run(cmd.Context(), schema, flags.DbConfig, "remote_commit", useDelta, false, diff.DiffSchemaMigra, afero.NewOsFs())
 		},
 	}
 
@@ -241,7 +265,98 @@ var (
 			return test.Run(cmd.Context(), args, flags.DbConfig, afero.NewOsFs())
 		},
 	}
+
+	queryFile   string
+	queryOutput = utils.EnumFlag{
+		Allowed: []string{"json", "table", "csv"},
+		Value:   "json",
+	}
+
+	dbQueryCmd = &cobra.Command{
+		Use:   "query [sql]",
+		Short: "Execute a SQL query against the database",
+		Long: `Execute a SQL query against the local or linked database.
+
+When used by an AI coding agent (auto-detected or via --agent=yes), the default
+output format is JSON with an untrusted data warning envelope. When used by a
+human (--agent=no or no agent detected), the default output format is table
+without the envelope.`,
+		Args: cobra.MaximumNArgs(1),
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if flag := cmd.Flags().Lookup("linked"); flag != nil && flag.Changed {
+				fsys := afero.NewOsFs()
+				if _, err := utils.LoadAccessTokenFS(fsys); err != nil {
+					utils.CmdSuggestion = fmt.Sprintf("Run %s first.", utils.Aqua("supabase login"))
+					return err
+				}
+				return flags.LoadProjectRef(fsys)
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sql, err := query.ResolveSQL(args, queryFile, os.Stdin)
+			if err != nil {
+				return err
+			}
+			agentMode := utils.IsAgentMode()
+			// If user didn't explicitly set --output, pick default based on agent mode
+			outputFormat := queryOutput.Value
+			if outputFlag := cmd.Flags().Lookup("output"); outputFlag != nil && !outputFlag.Changed {
+				if agentMode {
+					outputFormat = "json"
+				} else {
+					outputFormat = "table"
+				}
+			}
+			if flag := cmd.Flags().Lookup("linked"); flag != nil && flag.Changed {
+				return query.RunLinked(cmd.Context(), sql, flags.ProjectRef, outputFormat, agentMode, os.Stdout)
+			}
+			return query.RunLocal(cmd.Context(), sql, flags.DbConfig, outputFormat, agentMode, os.Stdout)
+		},
+	}
+
+	advisorType = utils.EnumFlag{
+		Allowed: advisors.AllowedTypes,
+		Value:   advisors.AllowedTypes[0],
+	}
+
+	advisorLevel = utils.EnumFlag{
+		Allowed: advisors.AllowedLevels,
+		Value:   advisors.AllowedLevels[1],
+	}
+
+	advisorFailOn = utils.EnumFlag{
+		Allowed: append([]string{"none"}, advisors.AllowedLevels...),
+		Value:   "none",
+	}
+
+	dbAdvisorsCmd = &cobra.Command{
+		Use:   "advisors",
+		Short: "Checks database for security and performance issues",
+		Long:  "Inspects the database for common security and performance issues such as missing RLS policies, unindexed foreign keys, exposed auth.users, and more.",
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if flag := cmd.Flags().Lookup("linked"); flag != nil && flag.Changed {
+				fsys := afero.NewOsFs()
+				if _, err := utils.LoadAccessTokenFS(fsys); err != nil {
+					utils.CmdSuggestion = fmt.Sprintf("Run %s first.", utils.Aqua("supabase login"))
+					return err
+				}
+				return flags.LoadProjectRef(fsys)
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if flag := cmd.Flags().Lookup("linked"); flag != nil && flag.Changed {
+				return advisors.RunLinked(cmd.Context(), advisorType.Value, advisorLevel.Value, advisorFailOn.Value, flags.ProjectRef)
+			}
+			return advisors.RunLocal(cmd.Context(), advisorType.Value, advisorLevel.Value, advisorFailOn.Value, flags.DbConfig)
+		},
+	}
 )
+
+func shouldUsePgDelta() bool {
+	return utils.IsPgDeltaEnabled() || usePgDelta || viper.GetBool("EXPERIMENTAL_PG_DELTA")
+}
 
 func init() {
 	// Build branch command
@@ -257,6 +372,9 @@ func init() {
 	diffFlags.BoolVar(&usePgSchema, "use-pg-schema", false, "Use pg-schema-diff to generate schema diff.")
 	diffFlags.BoolVar(&usePgDelta, "use-pg-delta", false, "Use pg-delta to generate schema diff.")
 	dbDiffCmd.MarkFlagsMutuallyExclusive("use-migra", "use-pgadmin", "use-pg-schema", "use-pg-delta")
+	diffFlags.StringVar(&diffFrom, "from", "", "Diff from local, linked, migrations, or a Postgres URL.")
+	diffFlags.StringVar(&diffTo, "to", "", "Diff to local, linked, migrations, or a Postgres URL.")
+	diffFlags.StringVarP(&outputPath, "output", "o", "", "Write explicit diff output to a file path.")
 	diffFlags.String("db-url", "", "Diffs against the database specified by the connection string (must be percent-encoded).")
 	diffFlags.Bool("linked", false, "Diffs local migration files against the linked project.")
 	diffFlags.Bool("local", true, "Diffs local migration files against the local database.")
@@ -299,11 +417,16 @@ func init() {
 	dbCmd.AddCommand(dbPushCmd)
 	// Build pull command
 	pullFlags := dbPullCmd.Flags()
+	// This flag activates declarative pull output through pg-delta instead of the
+	// legacy migration SQL pull path.
+	pullFlags.BoolVar(&usePgDelta, "use-pg-delta", false, "Use pg-delta to pull declarative schema.")
+	pullFlags.Var(&pullDiffEngine, "diff-engine", "Diff engine to use for migration-style db pull.")
 	pullFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	pullFlags.String("db-url", "", "Pulls from the database specified by the connection string (must be percent-encoded).")
 	pullFlags.Bool("linked", true, "Pulls from the linked project.")
 	pullFlags.Bool("local", false, "Pulls from the local database.")
 	dbPullCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
+	dbPullCmd.MarkFlagsMutuallyExclusive("use-pg-delta", "diff-engine")
 	pullFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", pullFlags.Lookup("password")))
 	dbCmd.AddCommand(dbPullCmd)
@@ -350,5 +473,24 @@ func init() {
 	testFlags.Bool("linked", false, "Runs pgTAP tests on the linked project.")
 	testFlags.Bool("local", true, "Runs pgTAP tests on the local database.")
 	dbTestCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
+	// Build query command
+	queryFlags := dbQueryCmd.Flags()
+	queryFlags.String("db-url", "", "Queries the database specified by the connection string (must be percent-encoded).")
+	queryFlags.Bool("linked", false, "Queries the linked project's database via Management API.")
+	queryFlags.Bool("local", true, "Queries the local database.")
+	dbQueryCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
+	queryFlags.StringVarP(&queryFile, "file", "f", "", "Path to a SQL file to execute.")
+	queryFlags.VarP(&queryOutput, "output", "o", "Output format: table, json, or csv.")
+	dbCmd.AddCommand(dbQueryCmd)
+	// Build advisors command
+	advisorsFlags := dbAdvisorsCmd.Flags()
+	advisorsFlags.String("db-url", "", "Checks the database specified by the connection string (must be percent-encoded).")
+	advisorsFlags.Bool("linked", false, "Checks the linked project for issues.")
+	advisorsFlags.Bool("local", true, "Checks the local database for issues.")
+	dbAdvisorsCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
+	advisorsFlags.Var(&advisorType, "type", "Type of advisors to check: all, security, performance.")
+	advisorsFlags.Var(&advisorLevel, "level", "Minimum issue level to display: info, warn, error.")
+	advisorsFlags.Var(&advisorFailOn, "fail-on", "Issue level to exit with non-zero status: none, info, warn, error.")
+	dbCmd.AddCommand(dbAdvisorsCmd)
 	rootCmd.AddCommand(dbCmd)
 }

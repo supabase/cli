@@ -201,6 +201,7 @@ var (
 func init() {
 	branchFlags := branchesCmd.PersistentFlags()
 	branchFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
+	markFlagTelemetrySafe(branchFlags.Lookup("project-ref"))
 	createFlags := branchCreateCmd.Flags()
 	createFlags.Var(&region, "region", "Select a region to deploy the branch database.")
 	createFlags.Var(&size, "size", "Select a desired instance size for the branch database.")

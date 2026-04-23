@@ -120,8 +120,6 @@ func RandomString(size int) (string, error) {
 	return string(data), nil
 }
 
-const suggestEnvVar = "Connect to your database by setting the env var: SUPABASE_DB_PASSWORD"
-
 func NewDbConfigWithPassword(ctx context.Context, projectRef string) (pgconn.Config, error) {
 	config := pgconn.Config{
 		Host:     utils.GetSupabaseDbHost(projectRef),
@@ -144,7 +142,10 @@ func NewDbConfigWithPassword(ctx context.Context, projectRef string) (pgconn.Con
 			fmt.Fprintln(logger, "Using database password from env var...")
 			poolerConfig.Password = config.Password
 		} else if err := initPoolerLogin(ctx, projectRef, poolerConfig); err != nil {
-			utils.CmdSuggestion = suggestEnvVar
+			utils.SetConnectSuggestion(err)
+			if utils.CmdSuggestion == "" {
+				utils.CmdSuggestion = utils.SuggestEnvVar
+			}
 			return *poolerConfig, err
 		}
 		return *poolerConfig, nil
@@ -157,7 +158,7 @@ func NewDbConfigWithPassword(ctx context.Context, projectRef string) (pgconn.Con
 		fmt.Fprintln(logger, "Using database password from env var...")
 	} else if err := initLoginRole(ctx, projectRef, &config); err != nil {
 		// Do not prompt because reading masked input is buggy on windows
-		utils.CmdSuggestion = suggestEnvVar
+		utils.CmdSuggestion = utils.SuggestEnvVar
 		return config, err
 	}
 	return config, nil

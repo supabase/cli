@@ -212,6 +212,118 @@ func TestCaptchaDiff(t *testing.T) {
 	})
 }
 
+func TestPasskeyConfigMapping(t *testing.T) {
+	t.Run("serializes passkey config to update body", func(t *testing.T) {
+		c := newWithDefaults()
+		c.Passkey = &passkey{Enabled: true}
+		c.Webauthn = &webauthn{
+			RpDisplayName: "Supabase CLI",
+			RpId:          "localhost",
+			RpOrigins: []string{
+				"http://127.0.0.1:3000",
+				"https://localhost:3000",
+			},
+		}
+		// Run test
+		body := c.ToUpdateAuthConfigBody()
+		// Check result
+		if assert.NotNil(t, body.PasskeyEnabled) {
+			assert.True(t, *body.PasskeyEnabled)
+		}
+		assert.Equal(t, "Supabase CLI", ValOrDefault(body.WebauthnRpDisplayName, ""))
+		assert.Equal(t, "localhost", ValOrDefault(body.WebauthnRpId, ""))
+		assert.Equal(t, "http://127.0.0.1:3000,https://localhost:3000", ValOrDefault(body.WebauthnRpOrigins, ""))
+	})
+
+	t.Run("does not serialize rp fields when webauthn is undefined", func(t *testing.T) {
+		c := newWithDefaults()
+		c.Passkey = &passkey{Enabled: false}
+		// Run test
+		body := c.ToUpdateAuthConfigBody()
+		// Check result
+		if assert.NotNil(t, body.PasskeyEnabled) {
+			assert.False(t, *body.PasskeyEnabled)
+		}
+		_, err := body.WebauthnRpDisplayName.Get()
+		assert.Error(t, err)
+		_, err = body.WebauthnRpId.Get()
+		assert.Error(t, err)
+		_, err = body.WebauthnRpOrigins.Get()
+		assert.Error(t, err)
+	})
+
+	t.Run("serializes webauthn fields independently of passkey", func(t *testing.T) {
+		c := newWithDefaults()
+		c.Webauthn = &webauthn{
+			RpDisplayName: "Supabase CLI",
+			RpId:          "localhost",
+			RpOrigins:     []string{"http://127.0.0.1:3000"},
+		}
+		// Run test
+		body := c.ToUpdateAuthConfigBody()
+		// Check result
+		assert.Nil(t, body.PasskeyEnabled)
+		assert.Equal(t, "Supabase CLI", ValOrDefault(body.WebauthnRpDisplayName, ""))
+		assert.Equal(t, "localhost", ValOrDefault(body.WebauthnRpId, ""))
+		assert.Equal(t, "http://127.0.0.1:3000", ValOrDefault(body.WebauthnRpOrigins, ""))
+	})
+
+	t.Run("hydrates passkey and webauthn config from remote", func(t *testing.T) {
+		c := newWithDefaults()
+		c.Passkey = &passkey{Enabled: true}
+		c.Webauthn = &webauthn{}
+		// Run test
+		c.FromRemoteAuthConfig(v1API.AuthConfigResponse{
+			PasskeyEnabled:        true,
+			WebauthnRpDisplayName: nullable.NewNullableWithValue("Supabase CLI"),
+			WebauthnRpId:          nullable.NewNullableWithValue("localhost"),
+			WebauthnRpOrigins:     nullable.NewNullableWithValue("http://127.0.0.1:3000,https://localhost:3000"),
+		})
+		// Check result
+		if assert.NotNil(t, c.Passkey) {
+			assert.True(t, c.Passkey.Enabled)
+		}
+		if assert.NotNil(t, c.Webauthn) {
+			assert.Equal(t, "Supabase CLI", c.Webauthn.RpDisplayName)
+			assert.Equal(t, "localhost", c.Webauthn.RpId)
+			assert.Equal(t, []string{
+				"http://127.0.0.1:3000",
+				"https://localhost:3000",
+			}, c.Webauthn.RpOrigins)
+		}
+	})
+
+	t.Run("ignores remote settings when local passkey config is undefined", func(t *testing.T) {
+		c := newWithDefaults()
+		// Run test
+		c.FromRemoteAuthConfig(v1API.AuthConfigResponse{
+			PasskeyEnabled:        true,
+			WebauthnRpDisplayName: nullable.NewNullableWithValue("Supabase CLI"),
+			WebauthnRpId:          nullable.NewNullableWithValue("localhost"),
+			WebauthnRpOrigins:     nullable.NewNullableWithValue("http://127.0.0.1:3000"),
+		})
+		// Check result
+		assert.Nil(t, c.Passkey)
+		assert.Nil(t, c.Webauthn)
+	})
+}
+
+func TestPasskeyDiff(t *testing.T) {
+	t.Run("ignores undefined config", func(t *testing.T) {
+		c := newWithDefaults()
+		// Run test
+		diff, err := c.DiffWithRemote(v1API.AuthConfigResponse{
+			PasskeyEnabled:        true,
+			WebauthnRpDisplayName: nullable.NewNullableWithValue("Supabase CLI"),
+			WebauthnRpId:          nullable.NewNullableWithValue("localhost"),
+			WebauthnRpOrigins:     nullable.NewNullableWithValue("http://127.0.0.1:3000"),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, string(diff))
+	})
+}
+
 func TestHookDiff(t *testing.T) {
 	t.Run("local and remote enabled", func(t *testing.T) {
 		c := newWithDefaults()

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/getsentry/sentry-go"
@@ -17,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/debug"
+	"github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"golang.org/x/mod/semver"
@@ -59,6 +61,7 @@ var experimental = []*cobra.Command{
 	genKeysCmd,
 	postgresCmd,
 	storageCmd,
+	dbDeclarativeCmd,
 }
 
 func IsExperimental(cmd *cobra.Command) bool {
@@ -121,6 +124,36 @@ var (
 				fmt.Fprintln(os.Stderr, cmd.Root().Short)
 				fmt.Fprintf(os.Stderr, "Using profile: %s (%s)\n", utils.CurrentProfile.Name, utils.CurrentProfile.ProjectHost)
 			}
+			isTTY := telemetryIsTTY()
+			isCI := telemetryIsCI()
+			isAgent := telemetryIsAgent()
+			envSignals := telemetryEnvSignals()
+			service, err := telemetry.NewService(fsys, telemetry.Options{
+				Now:        time.Now,
+				IsTTY:      isTTY,
+				IsCI:       isCI,
+				IsAgent:    isAgent,
+				EnvSignals: envSignals,
+				CLIName:    utils.Version,
+			})
+			if err != nil {
+				fmt.Fprintln(utils.GetDebugLogger(), err)
+			} else {
+				ctx = telemetry.WithService(ctx, service)
+			}
+			if service != nil {
+				var stitchOnce sync.Once
+				utils.OnGotrueID = func(gotrueID string) {
+					if service.NeedsIdentityStitch() {
+						stitchOnce.Do(func() {
+							if err := service.StitchLogin(gotrueID); err != nil {
+								fmt.Fprintln(utils.GetDebugLogger(), err)
+							}
+						})
+					}
+				}
+			}
+			ctx = telemetry.WithCommandContext(ctx, commandAnalyticsContext(cmd))
 			cmd.SetContext(ctx)
 			// Setup sentry last to ignore errors from parsing cli flags
 			apiHost, err := url.Parse(utils.GetSupabaseAPIHost())
@@ -136,11 +169,27 @@ var (
 
 func Execute() {
 	defer recoverAndExit()
-	if err := rootCmd.Execute(); err != nil {
+	startedAt := time.Now()
+	executedCmd, err := rootCmd.ExecuteC()
+	if executedCmd != nil {
+		if service := telemetry.FromContext(executedCmd.Context()); service != nil {
+			ensureProjectGroupsCached(executedCmd.Context(), service)
+			_ = service.Capture(executedCmd.Context(), telemetry.EventCommandExecuted, map[string]any{
+				telemetry.PropExitCode:   exitCode(err),
+				telemetry.PropDurationMs: time.Since(startedAt).Milliseconds(),
+			}, nil)
+			_ = service.Close()
+		}
+	}
+	if err != nil {
 		panic(err)
 	}
 	// Check upgrade last because --version flag is initialised after execute
-	version, err := checkUpgrade(rootCmd.Context(), afero.NewOsFs())
+	ctx := rootCmd.Context()
+	if executedCmd != nil {
+		ctx = executedCmd.Context()
+	}
+	version, err := checkUpgrade(ctx, afero.NewOsFs())
 	if err != nil {
 		fmt.Fprintln(utils.GetDebugLogger(), err)
 	}
@@ -150,6 +199,42 @@ func Execute() {
 	if len(utils.CmdSuggestion) > 0 {
 		fmt.Fprintln(os.Stderr, utils.CmdSuggestion)
 	}
+}
+
+// ensureProjectGroupsCached populates the telemetry linked-project cache when
+// a project ref is available but no cache exists. This ensures org/project
+// PostHog groups are attached to all CLI events, not just those after `supabase link`.
+//
+// Does not overwrite an existing cache — `supabase link` is the authoritative source.
+// Checks auth before calling the API to avoid the log.Fatalln in GetSupabase().
+func ensureProjectGroupsCached(ctx context.Context, service *telemetry.Service) {
+	ref := flags.ProjectRef
+	if ref == "" {
+		return
+	}
+	fsys := afero.NewOsFs()
+	if telemetry.HasLinkedProject(fsys) {
+		return
+	}
+	if _, err := utils.LoadAccessTokenFS(fsys); err != nil {
+		return
+	}
+	resp, err := utils.GetSupabase().V1GetProjectWithResponse(ctx, ref)
+	if err != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), err)
+		return
+	}
+	if resp.JSON200 == nil {
+		return
+	}
+	telemetry.CacheProjectAndIdentifyGroups(*resp.JSON200, service, fsys)
+}
+
+func exitCode(err error) int {
+	if err != nil {
+		return 1
+	}
+	return 0
 }
 
 func checkUpgrade(ctx context.Context, fsys afero.Fs) (string, error) {
@@ -243,6 +328,7 @@ func init() {
 	flags.VarP(&utils.OutputFormat, "output", "o", "output format of status variables")
 	flags.Var(&utils.DNSResolver, "dns-resolver", "lookup domain names using the specified resolver")
 	flags.BoolVar(&createTicket, "create-ticket", false, "create a support ticket for any CLI error")
+	flags.VarP(&utils.AgentMode, "agent", "", "Override agent detection: yes, no, or auto (default auto)")
 	cobra.CheckErr(viper.BindPFlags(flags))
 
 	rootCmd.SetVersionTemplate("{{.Version}}\n")

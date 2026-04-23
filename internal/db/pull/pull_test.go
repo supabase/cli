@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
@@ -33,7 +34,7 @@ func TestPullCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), nil, pgconn.Config{}, "", fsys)
+		err := Run(context.Background(), nil, pgconn.Config{}, "", false, false, diff.DiffSchemaMigra, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -48,7 +49,7 @@ func TestPullCommand(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			ReplyError(pgerrcode.InvalidCatalogName, `database "postgres" does not exist`)
 		// Run test
-		err := Run(context.Background(), nil, dbConfig, "", fsys, conn.Intercept)
+		err := Run(context.Background(), nil, dbConfig, "", false, false, diff.DiffSchemaMigra, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: database "postgres" does not exist (SQLSTATE 3D000)`)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -74,7 +75,7 @@ func TestPullSchema(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := run(context.Background(), nil, "0_test.sql", conn.MockClient(t), fsys)
+		err := run(context.Background(), nil, "0_test.sql", conn.MockClient(t), false, diff.DiffSchemaMigra, fsys)
 		// Check error
 		assert.ErrorIs(t, err, errNetwork)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -100,7 +101,7 @@ func TestPullSchema(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 1", []any{"0"})
 		// Run test
-		err := run(context.Background(), []string{"public"}, "", conn.MockClient(t), fsys)
+		err := run(context.Background(), []string{"public"}, "", conn.MockClient(t), false, diff.DiffSchemaMigra, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())

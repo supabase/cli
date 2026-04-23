@@ -131,6 +131,7 @@ func init() {
 	// Build squash command
 	squashFlags := migrationSquashCmd.Flags()
 	squashFlags.StringVar(&migrationVersion, "version", "", "Squash up to the specified version.")
+	markFlagTelemetrySafe(squashFlags.Lookup("version"))
 	squashFlags.String("db-url", "", "Squashes migrations of the database specified by the connection string (must be percent-encoded).")
 	squashFlags.Bool("linked", false, "Squashes the migration history of the linked project.")
 	squashFlags.Bool("local", true, "Squashes the migration history of the local database.")

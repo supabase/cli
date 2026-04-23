@@ -8,6 +8,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/branches/list"
+	"github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/api"
@@ -30,6 +31,9 @@ func Run(ctx context.Context, body api.CreateBranchBody, fsys afero.Fs) error {
 	if err != nil {
 		return errors.Errorf("failed to create preview branch: %w", err)
 	} else if resp.JSON201 == nil {
+		if orgSlug, isGated := utils.SuggestUpgradeOnError(ctx, flags.ProjectRef, "branching_limit", resp.StatusCode()); isGated {
+			telemetry.TrackUpgradeSuggested(ctx, "branching_limit", orgSlug)
+		}
 		return errors.Errorf("unexpected create branch status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 
