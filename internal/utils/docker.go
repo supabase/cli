@@ -197,6 +197,10 @@ func GetRegistryImageUrl(imageName string) string {
 	if registry == "docker.io" {
 		return imageName
 	}
+	// Skip registry transformation for minimal images (pulled locally from Docker Hub)
+	if strings.Contains(imageName, "minimal") {
+		return imageName
+	}
 	// Configure mirror registry
 	parts := strings.Split(imageName, "/")
 	imageName = parts[len(parts)-1]
