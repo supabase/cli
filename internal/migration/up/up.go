@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/vault"
 )
@@ -24,7 +25,15 @@ func Run(ctx context.Context, includeAll bool, config pgconn.Config, fsys afero.
 	if err != nil {
 		return err
 	}
-	if err := vault.UpsertVaultSecrets(ctx, utils.Config.Db.Vault, conn); err != nil {
+	secrets := utils.Config.Db.Vault
+	if utils.IsLocalDatabase(config) || len(flags.ProjectRef) > 0 {
+		var projectRef string
+		if !utils.IsLocalDatabase(config) {
+			projectRef = flags.ProjectRef
+		}
+		secrets = vault.WithEdgeFunctionSecrets(secrets, projectRef, utils.Config.Auth.ServiceRoleKey.Value)
+	}
+	if err := vault.UpsertVaultSecrets(ctx, secrets, conn); err != nil {
 		return err
 	}
 	return migration.ApplyMigrations(ctx, pending, conn, afero.NewIOFS(fsys))
