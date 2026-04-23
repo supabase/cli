@@ -11,6 +11,18 @@ const JWT_PATTERN = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
 const SUPABASE_KEY_PATTERN = /sb_(?:publishable|secret)_[A-Za-z0-9_-]+/g;
 // Matches the local replay server host header (127.0.0.1 or localhost with a dynamic port)
 const LOCAL_HOST_PORT_PATTERN = /(?:127\.0\.0\.1|localhost):\d+/g;
+// Rate limit headers: both change every recording session (countdown timer and quota counter).
+// Normalise to fixed valid integers so the CLI can still parse them for retry logic.
+const RATE_LIMIT_RESET_PATTERN = /"x-ratelimit-reset": "\d+"/g;
+const RATE_LIMIT_REMAINING_PATTERN = /"x-ratelimit-remaining": "\d+"/g;
+// API key hash — SHA-256 base64url, rotates when the test project keys are recreated.
+const API_KEY_HASH_PATTERN = /"hash": "[A-Za-z0-9_-]+"/g;
+// Legacy API key prefix — 5-char alphanumeric, rotates with the key.
+// Must run after SUPABASE_KEY_PATTERN so new-style key prefixes are already "<API_KEY>".
+const LEGACY_KEY_PREFIX_PATTERN = /"prefix": "[A-Za-z0-9]{4,10}"/g;
+// Integer IDs from DB auto-increment (project internal ID, SSO provider ID, etc.).
+// Only targets 4+ digit integers to avoid touching small status codes or counts.
+const INTEGER_ID_PATTERN = /"id": \d{4,}/g;
 
 // A fixed valid ISO 8601 timestamp used in place of real timestamps so that
 // CLI code that calls time.Parse on response fields doesn't fail.
@@ -31,6 +43,14 @@ export function applyPlaceholders(input: string): { output: string } {
     match.length !== 20 ? match : "<PROJECT_REF>",
   );
   output = output.replace(ISO_TIMESTAMP_PATTERN, FIXED_TIMESTAMP);
+  // Rate limit headers vary per recording session — normalise to fixed valid integers.
+  output = output.replace(RATE_LIMIT_RESET_PATTERN, '"x-ratelimit-reset": "60"');
+  output = output.replace(RATE_LIMIT_REMAINING_PATTERN, '"x-ratelimit-remaining": "119"');
+  // API key hash and legacy prefix rotate when keys are recreated.
+  output = output.replace(API_KEY_HASH_PATTERN, '"hash": "<KEY_HASH>"');
+  output = output.replace(LEGACY_KEY_PREFIX_PATTERN, '"prefix": "<KEY_PREFIX>"');
+  // DB auto-increment IDs change every time a resource is created.
+  output = output.replace(INTEGER_ID_PATTERN, '"id": 1');
   return { output };
 }
 
