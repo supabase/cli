@@ -209,6 +209,34 @@ import_map = "./import_map.json"
 		assert.ErrorContains(t, err, "No Functions specified or found in supabase/functions")
 	})
 
+	t.Run("throws error on static files without docker", func(t *testing.T) {
+		t.Cleanup(func() { clear(utils.Config.Functions) })
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		f, err := fsys.OpenFile(utils.ConfigPath, os.O_APPEND|os.O_WRONLY, 0600)
+		require.NoError(t, err)
+		_, err = f.WriteString(`
+[functions.` + slug + `]
+static_files = ["./static/*"]
+`)
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.FunctionsDir, slug, "index.ts"), []byte{}, 0644))
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(dockerHost).
+			Head("/_ping").
+			Reply(http.StatusServiceUnavailable)
+		// Run test
+		err = Run(context.Background(), []string{slug}, true, nil, "", 1, false, fsys)
+		// Check error
+		assert.ErrorContains(t, err, "--use-docker was specified but Docker is not running")
+	})
+
 	t.Run("verify_jwt param falls back to config", func(t *testing.T) {
 		t.Cleanup(func() { clear(utils.Config.Functions) })
 		// Setup in-memory fs
