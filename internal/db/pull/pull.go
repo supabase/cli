@@ -34,7 +34,7 @@ var (
 	errConflict = errors.Errorf("The remote database's migration history does not match local files in %s directory.", utils.MigrationsDir)
 )
 
-func Run(ctx context.Context, schema []string, config pgconn.Config, name string, usePgDelta bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, schema []string, config pgconn.Config, name string, usePgDelta bool, usePgDeltaDiff bool, differ diff.DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// 1. Check postgres connection
 	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
@@ -60,7 +60,7 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 	// 2. Pull schema
 	timestamp := utils.GetCurrentTimestamp()
 	path := new.GetMigrationPath(timestamp, name)
-	if err := run(ctx, schema, path, conn, fsys); err != nil {
+	if err := run(ctx, schema, path, conn, usePgDeltaDiff, differ, fsys); err != nil {
 		return err
 	}
 	// 3. Insert a row to `schema_migrations`
@@ -110,7 +110,7 @@ func pullDeclarativePgDelta(ctx context.Context, schema []string, config pgconn.
 	return nil
 }
 
-func run(ctx context.Context, schema []string, path string, conn *pgx.Conn, fsys afero.Fs) error {
+func run(ctx context.Context, schema []string, path string, conn *pgx.Conn, usePgDeltaDiff bool, differ diff.DiffFunc, fsys afero.Fs) error {
 	config := conn.Config().Config
 	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
 	if err := assertRemoteInSync(ctx, conn, fsys); errors.Is(err, errMissing) {
@@ -119,7 +119,7 @@ func run(ctx context.Context, schema []string, path string, conn *pgx.Conn, fsys
 			return err
 		}
 		// Run a second pass to pull in changes from default privileges and managed schemas
-		if err = diffRemoteSchema(ctx, nil, path, config, fsys); errors.Is(err, errInSync) {
+		if err = diffRemoteSchema(ctx, nil, path, config, usePgDeltaDiff, differ, fsys); errors.Is(err, errInSync) {
 			err = nil
 		}
 		return err
@@ -127,7 +127,7 @@ func run(ctx context.Context, schema []string, path string, conn *pgx.Conn, fsys
 		return err
 	}
 	// 2. Fetch remote schema changes
-	return diffRemoteSchema(ctx, schema, path, config, fsys)
+	return diffRemoteSchema(ctx, schema, path, config, usePgDeltaDiff, differ, fsys)
 }
 
 func dumpRemoteSchema(ctx context.Context, path string, config pgconn.Config, fsys afero.Fs) error {
@@ -144,9 +144,9 @@ func dumpRemoteSchema(ctx context.Context, path string, config pgconn.Config, fs
 	return migration.DumpSchema(ctx, config, f, dump.DockerExec)
 }
 
-func diffRemoteSchema(ctx context.Context, schema []string, path string, config pgconn.Config, fsys afero.Fs) error {
+func diffRemoteSchema(ctx context.Context, schema []string, path string, config pgconn.Config, usePgDeltaDiff bool, differ diff.DiffFunc, fsys afero.Fs) error {
 	// Diff remote db (source) & shadow db (target) and write it as a new migration.
-	output, err := diff.DiffDatabase(ctx, schema, config, os.Stderr, fsys, diff.DiffSchemaMigra, false)
+	output, err := diff.DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, usePgDeltaDiff)
 	if err != nil {
 		return err
 	}
