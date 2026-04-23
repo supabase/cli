@@ -19,6 +19,9 @@ export interface HarnessOptions {
   accessToken: string;
   /** Working directory for the subprocess. Defaults to a fresh temp dir. */
   cwd?: string;
+  /** Set as SUPABASE_PROJECT_ID in the subprocess env. Storage commands read
+   *  this via viper (no --project-ref flag) for config validation in --local mode. */
+  projectId?: string;
 }
 
 export interface CLIHarness {
@@ -76,6 +79,7 @@ export async function exec(harness: CLIHarness, args: string[]): Promise<CLIResu
     // tests don't touch the developer's real ~/.supabase and parity tests can
     // track file changes via snapshotChangedFiles().
     SUPABASE_HOME: harness.options.cwd ?? tmpdir(),
+    ...(harness.options.projectId ? { SUPABASE_PROJECT_ID: harness.options.projectId } : {}),
   };
 
   // The Go CLI (and the ts-legacy CLI which shells out to Go) uses a profile

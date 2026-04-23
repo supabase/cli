@@ -1,0 +1,16 @@
+{
+  "method": "POST",
+  "path": "/storage/v1/object/cli-e2e-bucket/upload.txt",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "apikey": "<JWT>",
+    "authorization": "Bearer <ACCESS_TOKEN>",
+    "cache-control": "max-age=3600",
+    "content-type": "text/plain; charset=utf-8",
+    "host": "localhost:<PORT>",
+    "transfer-encoding": "chunked",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": null
+}

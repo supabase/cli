@@ -9,6 +9,12 @@ const config = {
     Flag.withAlias("r"),
     Flag.withDescription("Recursively move a directory."),
   ),
+  local: Flag.boolean("local").pipe(
+    Flag.withDescription("Connects to Storage API of the local database."),
+  ),
+  linked: Flag.boolean("linked").pipe(
+    Flag.withDescription("Connects to Storage API of the linked project."),
+  ),
 } as const;
 
 export type LegacyStorageMvFlags = CliCommand.Command.Config.Infer<typeof config>;

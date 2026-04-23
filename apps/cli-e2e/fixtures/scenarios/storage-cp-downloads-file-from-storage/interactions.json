@@ -1,0 +1,34 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "path": "/storage/v1/object/cli-e2e-bucket/hello.txt",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "apikey": "<JWT>",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "accept-ranges": "bytes",
+        "access-control-allow-origin": "*",
+        "cache-control": "no-cache",
+        "content-type": "text/plain",
+        "last-modified": "Thu, 23 Apr 2026 10:16:07 GMT",
+        "sb-gateway-mode": "direct",
+        "sb-gateway-version": "1",
+        "sb-project-ref": "<PROJECT_REF>",
+        "sb-request-id": "<UUID>",
+        "x-robots-tag": "none",
+        "x-smart-cdn": "true"
+      },
+      "body": null
+    }
+  }
+]

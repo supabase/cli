@@ -10,6 +10,12 @@ const config = {
     Flag.withAlias("r"),
     Flag.withDescription("Recursively remove a directory."),
   ),
+  local: Flag.boolean("local").pipe(
+    Flag.withDescription("Connects to Storage API of the local database."),
+  ),
+  linked: Flag.boolean("linked").pipe(
+    Flag.withDescription("Connects to Storage API of the linked project."),
+  ),
 } as const;
 
 export const legacyStorageRmCommand = Command.make("rm", config).pipe(
@@ -29,6 +35,8 @@ export const legacyStorageRmCommand = Command.make("rm", config).pipe(
     legacyStorageRm({
       files: flags.files.map(String),
       recursive: flags.recursive,
+      local: flags.local,
+      linked: flags.linked,
     }),
   ),
 );

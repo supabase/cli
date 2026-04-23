@@ -281,6 +281,10 @@ export interface ParityOptions {
   accessToken: string;
   /** @deprecated cwd is unused — runParity creates isolated temp dirs internally */
   cwd?: string;
+  /** Set as SUPABASE_PROJECT_ID in both harnesses (e.g. for storage --local mode). */
+  projectId?: string;
+  /** Called on each temp dir before running the CLI — use to write config files. */
+  workspaceSetup?: (dir: string) => void;
 }
 
 /**
@@ -298,8 +302,14 @@ export async function runParity(opts: ParityOptions, cmd: string[]): Promise<voi
     initGitRepo(goDir.path);
     initGitRepo(tsDir.path);
 
+    opts.workspaceSetup?.(goDir.path);
     const goResult = await collectRunResult(
-      createHarness("go", { apiUrl: opts.apiUrl, accessToken: opts.accessToken, cwd: goDir.path }),
+      createHarness("go", {
+        apiUrl: opts.apiUrl,
+        accessToken: opts.accessToken,
+        cwd: goDir.path,
+        projectId: opts.projectId,
+      }),
       cmd,
       goDir.path,
       opts.apiUrl,
@@ -307,11 +317,13 @@ export async function runParity(opts: ParityOptions, cmd: string[]): Promise<voi
 
     await fetch(`${opts.apiUrl}/_ctrl/requests`, { method: "DELETE" });
 
+    opts.workspaceSetup?.(tsDir.path);
     const tsResult = await collectRunResult(
       createHarness("ts-legacy", {
         apiUrl: opts.apiUrl,
         accessToken: opts.accessToken,
         cwd: tsDir.path,
+        projectId: opts.projectId,
       }),
       cmd,
       tsDir.path,

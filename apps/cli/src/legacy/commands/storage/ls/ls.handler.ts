@@ -8,6 +8,8 @@ export const legacyStorageLs = Effect.fn("legacy.storage.ls")(function* (
   const proxy = yield* LegacyGoProxy;
   const args: string[] = ["storage", "ls"];
   if (flags.recursive) args.push("--recursive");
+  if (flags.local) args.push("--local");
+  if (flags.linked) args.push("--linked");
   if (Option.isSome(flags.path)) args.push(flags.path.value);
   yield* proxy.exec(args);
 });

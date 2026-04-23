@@ -116,6 +116,12 @@ interface ReplayServerHandle {
   setRateLimit(path: string, retryAfterSeconds: number): void;
   /** Remove all error and rate-limit overrides (including global). */
   clearErrorOverrides(): void;
+  /** Set the base URL to proxy /storage/v1/ calls to in record mode.
+   *  e.g. "https://<projectRef>.supabase.red" */
+  setStorageProxyUrl(url: string): void;
+  /** Set the Authorization Bearer token to use when proxying storage calls
+   *  to the staging storage URL in record mode. */
+  setStorageProxyAuth(token: string): void;
 }
 
 interface ReplayServerOptions {
@@ -140,6 +146,8 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
   const errorOverrides = new Map<string, ErrorOverride>();
   const rateLimitOverrides = new Map<string, RateLimitOverride>();
   const recordedKeys = new Set<string>();
+  let storageProxyUrl: string | undefined;
+  let storageProxyAuth: string | undefined;
 
   const scenario: ScenarioState = { name: null, queue: [], index: 0, log: [] };
   const globalErrorRef: GlobalErrorRef = { value: null };
@@ -229,6 +237,8 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
           options.fixturesDir,
           recordedKeys,
           scenario,
+          storageProxyUrl,
+          storageProxyAuth,
         );
       }
 
@@ -264,6 +274,12 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
       rateLimitOverrides.clear();
       globalErrorRef.value = null;
     },
+    setStorageProxyUrl: (url) => {
+      storageProxyUrl = url;
+    },
+    setStorageProxyAuth: (token) => {
+      storageProxyAuth = token;
+    },
   };
 }
 
@@ -278,8 +294,12 @@ async function proxyAndRecord(
   fixturesDir: string,
   recordedKeys: Set<string>,
   scenario: ScenarioState,
+  storageProxyUrl?: string,
+  storageProxyAuth?: string,
 ): Promise<Response> {
-  const targetUrl = new URL(pathname, stagingUrl);
+  const isStoragePath = pathname.startsWith("/storage/v1/");
+  const targetBase = isStoragePath && storageProxyUrl ? storageProxyUrl : stagingUrl;
+  const targetUrl = new URL(pathname, targetBase);
   for (const [k, v] of Object.entries(query)) {
     targetUrl.searchParams.set(k, v);
   }
@@ -288,6 +308,9 @@ async function proxyAndRecord(
   const upstreamHeaders: Record<string, string> = {};
   for (const [k, v] of Object.entries(requestHeaders)) {
     if (FORWARD_HEADERS.has(k.toLowerCase())) upstreamHeaders[k] = v;
+  }
+  if (isStoragePath && storageProxyAuth) {
+    upstreamHeaders["authorization"] = `Bearer ${storageProxyAuth}`;
   }
 
   const upstreamRes = await fetch(targetUrl.toString(), {

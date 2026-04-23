@@ -8,6 +8,8 @@ export const legacyStorageMv = Effect.fn("legacy.storage.mv")(function* (
   const proxy = yield* LegacyGoProxy;
   const args: string[] = ["storage", "mv"];
   if (flags.recursive) args.push("--recursive");
+  if (flags.local) args.push("--local");
+  if (flags.linked) args.push("--linked");
   args.push(flags.src, flags.dst);
   yield* proxy.exec(args);
 });

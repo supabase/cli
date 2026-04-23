@@ -10,6 +10,7 @@ declare module "vitest" {
     replayServerUrl: string;
     projectRef: string;
     orgId: string;
+    storageBucket: string;
   }
 }
 
@@ -41,6 +42,25 @@ async function cleanupProjectsByName(serverUrl: string, names: string[]): Promis
       await exec(harness(serverUrl), ["projects", "delete", ref, "--yes"]);
     }
   }
+}
+
+async function waitForProjectReady(
+  stagingApiUrl: string,
+  projectRef: string,
+  timeoutMs = 120_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const res = await fetch(`${stagingApiUrl}/v1/projects/${projectRef}`, {
+      headers: { Authorization: `Bearer ${ACCESS_TOKEN}` },
+    });
+    if (res.ok) {
+      const project = (await res.json()) as { status?: string };
+      if (project.status === "ACTIVE_HEALTHY") return;
+    }
+    await new Promise((r) => setTimeout(r, 5_000));
+  }
+  throw new Error(`Project ${projectRef} did not become ACTIVE_HEALTHY within ${timeoutMs}ms`);
 }
 
 async function createTestProject(serverUrl: string, orgId: string): Promise<string> {
@@ -90,6 +110,7 @@ export async function setup({
     // project ref because fixture paths normalize it to <PROJECT_REF>.
     provide("projectRef", PROJECT_REF);
     provide("orgId", ORG_ID);
+    provide("storageBucket", "cli-e2e-bucket");
     return async () => {
       await server.stop();
     };
@@ -109,6 +130,51 @@ export async function setup({
   const projectRef = await createTestProject(server.url, orgId);
   provide("projectRef", projectRef);
   provide("orgId", orgId);
+
+  // Wire storage proxy so /storage/v1/ calls from --local mode reach staging.
+  const stagingApiUrl = process.env["SUPABASE_STAGING_URL"]!;
+  // Wait for the project to be fully initialised before fetching api-keys — the
+  // api-keys endpoint is unavailable while the project is in COMING_SOON/BUILDING state.
+  await waitForProjectReady(stagingApiUrl, projectRef);
+  // Retry api-keys fetch: even after ACTIVE_HEALTHY, the endpoint may briefly return 4xx.
+  let serviceRoleKey = "";
+  for (let attempt = 1; attempt <= 12; attempt++) {
+    const keysRes = await fetch(`${stagingApiUrl}/v1/projects/${projectRef}/api-keys`, {
+      headers: { Authorization: `Bearer ${ACCESS_TOKEN}` },
+    });
+    if (keysRes.ok) {
+      const keys = (await keysRes.json()) as Array<{ name: string; api_key: string }>;
+      serviceRoleKey = keys.find((k) => k.name === "service_role")?.api_key ?? "";
+      break;
+    }
+    if (attempt === 12) {
+      throw new Error(`Failed to fetch api-keys after 12 attempts: ${await keysRes.text()}`);
+    }
+    await new Promise((r) => setTimeout(r, 10_000));
+  }
+
+  const storageBaseUrl = `https://${projectRef}.supabase.red`;
+  server.setStorageProxyUrl(storageBaseUrl);
+  server.setStorageProxyAuth(serviceRoleKey);
+
+  // Create test bucket and seed a file — direct calls to staging, not via relay.
+  await fetch(`${storageBaseUrl}/storage/v1/bucket`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${serviceRoleKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ id: "cli-e2e-bucket", name: "cli-e2e-bucket", public: false }),
+  });
+  await fetch(`${storageBaseUrl}/storage/v1/object/cli-e2e-bucket/hello.txt`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${serviceRoleKey}`,
+      "Content-Type": "text/plain",
+    },
+    body: "hello world",
+  });
+  provide("storageBucket", "cli-e2e-bucket");
 
   return async () => {
     // The projects:delete test is self-contained (it creates and deletes its own

@@ -27,6 +27,7 @@ interface BehaviourFixtures {
   workspace: TempDir;
   run: (cmd: string[]) => Promise<CLIResult>;
   apiUrl: string;
+  storageBucket: string;
 }
 
 /** Custom test function for behavioural CLI tests.
@@ -85,8 +86,14 @@ export const testBehaviour = test.extend<BehaviourFixtures>({
       apiUrl: serverUrl,
       accessToken: ACCESS_TOKEN,
       cwd: workspace.path,
+      projectId: inject("projectRef") as string,
     });
     await use((cmd) => exec(harness, cmd));
+  },
+
+  // eslint-disable-next-line no-empty-pattern
+  storageBucket: async ({}, use) => {
+    await use(inject("storageBucket") as string);
   },
 
   // eslint-disable-next-line no-empty-pattern

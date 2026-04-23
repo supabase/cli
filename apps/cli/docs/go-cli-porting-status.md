@@ -155,12 +155,12 @@ The old Go `storage` family could target either the linked project or the local 
 
 Current TS only exposes low-level Management API routes under [`api`](../src/next/commands/platform/api.command.ts). This tracker does not count those routes as parity for the old `storage` object-management CLI surface, especially because there is no TS equivalent for the old local Storage API workflow.
 
-| Old command  | TS status | New TS counterpart(s) | Notes                                                                                          |
-| ------------ | --------- | --------------------- | ---------------------------------------------------------------------------------------------- |
-| `storage cp` | `missing` | `missing`             | No TS object copy command for linked or local Storage API targets. Wrapped in legacy shell.    |
-| `storage ls` | `missing` | `missing`             | No TS object listing command for linked or local Storage API targets. Wrapped in legacy shell. |
-| `storage mv` | `missing` | `missing`             | No TS object move command for linked or local Storage API targets. Wrapped in legacy shell.    |
-| `storage rm` | `missing` | `missing`             | No TS object remove command for linked or local Storage API targets. Wrapped in legacy shell.  |
+| Old command  | TS status | New TS counterpart(s) | Notes                                                                                                                                                                                                      |
+| ------------ | --------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `storage cp` | `missing` | `missing`             | No TS object copy command in `next/`. Legacy shell proxy exposes `--recursive`, `--local`, `--linked`, `--cache-control`, `--content-type`, `--copy-metadata` matching the Go CLI flag surface.            |
+| `storage ls` | `missing` | `missing`             | No TS object listing command in `next/`. Legacy shell proxy exposes `--recursive`, `--local`, `--linked` matching the Go CLI flag surface.                                                                 |
+| `storage mv` | `missing` | `missing`             | No TS object move command in `next/`. Legacy shell proxy exposes `--recursive`, `--local`, `--linked` matching the Go CLI flag surface.                                                                    |
+| `storage rm` | `missing` | `missing`             | No TS object remove command in `next/`. Legacy shell proxy exposes `--recursive`, `--local`, `--linked` matching the Go CLI flag surface. Pass global `--yes` to skip the interactive confirmation prompt. |
 
 ## Management APIs
 
