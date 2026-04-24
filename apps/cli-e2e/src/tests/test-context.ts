@@ -115,8 +115,14 @@ type FailureType = keyof typeof FAILURE_PRESETS;
  *  across stdout, stderr, exit code, API request log, and filesystem changes.
  *
  *  `failureType` injects a named error preset (e.g. 401, 429) before running,
- *  so tests don't need to know the underlying HTTP details. */
-export function testParity(cmd: string[], opts?: { failureType?: FailureType }): void {
+ *  so tests don't need to know the underlying HTTP details.
+ *
+ *  `workspaceSetup` is called on each temp dir before running either binary —
+ *  use it to write config files (e.g. `.supabase/.temp/project-ref`). */
+export function testParity(
+  cmd: string[],
+  opts?: { failureType?: FailureType; workspaceSetup?: (dir: string) => void },
+): void {
   const label = opts?.failureType
     ? `parity: ${cmd.join(" ")} [${opts.failureType}]`
     : `parity: ${cmd.join(" ")}`;
@@ -133,7 +139,10 @@ export function testParity(cmd: string[], opts?: { failureType?: FailureType }):
     }
 
     try {
-      await runParity({ apiUrl: serverUrl, accessToken: ACCESS_TOKEN }, cmd);
+      await runParity(
+        { apiUrl: serverUrl, accessToken: ACCESS_TOKEN, workspaceSetup: opts?.workspaceSetup },
+        cmd,
+      );
     } finally {
       if (opts?.failureType) {
         await fetch(`${serverUrl}/_ctrl/overrides`, { method: "DELETE" });

@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect } from "vitest";
-import { isRecording, PROJECT_REF } from "./env.ts";
+import { describe, expect, inject, test } from "vitest";
+import { createHarness, exec, makeTempDir } from "@supabase/cli-test-helpers";
+import { ACCESS_TOKEN, isRecording, PROJECT_REF, TARGET } from "./env.ts";
 import { testBehaviour, testParity } from "./test-context.ts";
 
 describe("init", () => {
@@ -64,10 +65,30 @@ describe("init", () => {
 });
 
 describe("link", () => {
-  testBehaviour("exits non-zero without --project-ref in non-TTY", async ({ run }) => {
-    const result = await run(["link"]);
+  // Not using testBehaviour here because the testBehaviour `run` fixture always
+  // injects SUPABASE_PROJECT_ID, which the new Go CLI accepts as a substitute for
+  // --project-ref in non-TTY mode, bypassing the required-flag check. A raw test
+  // lets us omit projectId so the CLI correctly requires the --project-ref flag.
+  test("exits non-zero without --project-ref in non-TTY", async () => {
+    const serverUrl = inject("replayServerUrl") as string;
+    const dir = makeTempDir("cli-e2e-link-no-ref-");
+    using _ = dir;
+    const harness = createHarness(TARGET, {
+      apiUrl: serverUrl,
+      accessToken: ACCESS_TOKEN,
+      cwd: dir.path,
+    });
+    const result = await exec(harness, ["link"]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("project-ref");
+  });
+
+  // The testBehaviour run fixture always injects SUPABASE_PROJECT_ID, which the
+  // new Go CLI accepts in place of --project-ref, bypassing the required-flag
+  // check. Link therefore proceeds to the API and succeeds.
+  testBehaviour("links when only SUPABASE_PROJECT_ID is set in non-TTY", async ({ run }) => {
+    const result = await run(["link"]);
+    expect(result.exitCode).toBe(0);
   });
 
   testBehaviour("exits non-zero on 401", async ({ run, apiUrl }) => {

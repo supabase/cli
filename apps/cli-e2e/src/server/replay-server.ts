@@ -9,7 +9,7 @@ import type {
 } from "./fixture-loader.ts";
 import { loadFixtures, loadScenario } from "./fixture-loader.ts";
 import { applyPlaceholders, fixtureKey, normalizeUrlPath } from "./placeholder.ts";
-import { matchFixture, resetCounters, type SequenceCounters } from "./request-matcher.ts";
+import { matchFixture, resetCounters, sortBody, type SequenceCounters } from "./request-matcher.ts";
 
 interface RecordedRequest {
   method: string;
@@ -242,9 +242,18 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
         );
       }
 
-      // Replay mode: scenario takes priority over per-endpoint fixtures.
+      // Replay mode: scenario takes priority for matching requests; out-of-band
+      // requests (e.g., post-command telemetry calls inserted by the Go CLI after
+      // every --project-ref command) fall through to the per-endpoint fixture store.
       if (scenario.name !== null) {
-        return serveFromScenario(scenario, method, pathname, { query, body: requestBody });
+        const expected = scenario.queue[scenario.index];
+        if (
+          expected !== undefined &&
+          expected.request.method.toUpperCase() === method.toUpperCase() &&
+          expected.request.path === normalizeUrlPath(pathname)
+        ) {
+          return serveFromScenario(scenario, method, pathname, { query, body: requestBody });
+        }
       }
 
       return serveFromFixtures(store, counters, method, pathname, { query, body: requestBody });
@@ -526,8 +535,8 @@ function serveFromScenario(
 
   if (
     expected.request.body !== null &&
-    JSON.stringify(normalizePlaceholders(expected.request.body)) !==
-      JSON.stringify(normalizePlaceholders(incoming.body))
+    JSON.stringify(sortBody(normalizePlaceholders(expected.request.body))) !==
+      JSON.stringify(sortBody(normalizePlaceholders(incoming.body)))
   ) {
     return new Response(
       JSON.stringify({

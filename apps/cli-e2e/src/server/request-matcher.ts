@@ -90,7 +90,7 @@ export function resetCounters(counters: SequenceCounters): void {
  *  build request bodies from maps produce different orderings on Linux vs macOS.
  *  Nested object fields are still compared exactly — only the top-level array
  *  order is normalized. */
-function sortBody(body: unknown): unknown {
+export function sortBody(body: unknown): unknown {
   if (Array.isArray(body)) {
     return [...body].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
   }

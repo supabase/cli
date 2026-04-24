@@ -80,6 +80,11 @@ export async function exec(harness: CLIHarness, args: string[]): Promise<CLIResu
     // track file changes via snapshotChangedFiles().
     SUPABASE_HOME: harness.options.cwd ?? tmpdir(),
     ...(harness.options.projectId ? { SUPABASE_PROJECT_ID: harness.options.projectId } : {}),
+    // When a test writes a pooler-url file the Go CLI takes the pooler path in
+    // ParseDatabaseConfig. Setting a non-empty password avoids the initPoolerLogin
+    // API call so the only network traffic is the actual Management API call
+    // under test. Safe to set globally: it is only used when pooler-url exists.
+    SUPABASE_DB_PASSWORD: "test-placeholder-password",
   };
 
   // The Go CLI (and the ts-legacy CLI which shells out to Go) uses a profile

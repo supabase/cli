@@ -7,6 +7,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
   const args: string[] = ["db", "pull"];
   if (Option.isSome(flags.name)) args.push(flags.name.value);
   if (flags.usePgDelta) args.push("--use-pg-delta");
+  if (Option.isSome(flags.diffEngine)) args.push("--diff-engine", flags.diffEngine.value);
   for (const s of flags.schema) {
     args.push("--schema", s);
   }

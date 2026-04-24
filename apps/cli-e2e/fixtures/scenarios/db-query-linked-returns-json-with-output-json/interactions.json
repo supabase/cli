@@ -1,0 +1,36 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/projects/<PROJECT_REF>/database/query",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "content-length": "20",
+        "content-type": "application/json",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": {
+        "query": "SELECT 1"
+      }
+    },
+    "response": {
+      "status": 201,
+      "headers": {
+        "cache-control": "no-cache",
+        "content-type": "application/json",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "118",
+        "x-ratelimit-reset": "58"
+      },
+      "body": [
+        {
+          "?column?": 1
+        }
+      ]
+    }
+  }
+]

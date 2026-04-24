@@ -1,0 +1,12 @@
+{
+  "method": "GET",
+  "path": "/v1/projects/<PROJECT_REF>/advisors/security",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "authorization": "Bearer <ACCESS_TOKEN>",
+    "host": "localhost:<PORT>",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": null
+}

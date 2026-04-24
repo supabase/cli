@@ -46,9 +46,17 @@ export function normalize(output: string): string {
       //     UUIDs in "kid" are already handled by rule 5. These fields contain
       //     random key bytes that differ across invocations.
       .replace(/"(d|x|y|n|e|p|q|dp|dq|qi|k)"\s*:\s*"[A-Za-z0-9_-]+"/g, '"$1":"<KEY_BYTES>"')
-      // 16. Trailing whitespace on each line
+      // 16. db query agent-mode boundary: a 32-char hex string generated randomly
+      //     per process. Both the JSON key value and its appearance inside the
+      //     warning string (unicode-escaped in raw JSON) must be replaced.
+      .replace(/"boundary"\s*:\s*"[0-9a-f]{32}"/g, '"boundary": "<BOUNDARY>"')
+      .replace(/\\u003c[0-9a-f]{32}\\u003e/g, "\\u003c<BOUNDARY>\\u003e")
+      // 17. Docker shadow-DB endpoint lines emitted when a container starts:
+      //     "endpoint <adjective_noun> (<64-hex>)" — both parts are random per container.
+      .replace(/\bendpoint \w+_\w+ \([0-9a-f]{64}\)/g, "endpoint <CONTAINER> (<ENDPOINT_HASH>)")
+      // 18. Trailing whitespace on each line
       .replace(/[ \t]+$/gm, "")
-      // 17. Collapse 3+ consecutive blank lines to two newlines
+      // 19. Collapse 3+ consecutive blank lines to two newlines
       .replace(/\n{3,}/g, "\n\n")
   );
 }

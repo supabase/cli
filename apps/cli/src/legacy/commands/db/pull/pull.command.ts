@@ -10,6 +10,10 @@ const config = {
   usePgDelta: Flag.boolean("use-pg-delta").pipe(
     Flag.withDescription("Use pg-delta to pull declarative schema."),
   ),
+  diffEngine: Flag.choice("diff-engine", ["migra", "pg-delta"] as const).pipe(
+    Flag.withDescription("Diff engine to use for migration-style db pull."),
+    Flag.optional,
+  ),
   schema: Flag.string("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),

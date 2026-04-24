@@ -11,6 +11,7 @@ import { legacyDbAdvisorsCommand } from "./advisors/advisors.command.ts";
 import { legacyDbTestCommand } from "./test/test.command.ts";
 import { legacyDbBranchCommand } from "./branch/branch.command.ts";
 import { legacyDbRemoteCommand } from "./remote/remote.command.ts";
+import { legacyDbSchemaCommand } from "./schema/schema.command.ts";
 
 export const legacyDbCommand = Command.make("db").pipe(
   Command.withDescription("Manage Postgres databases."),
@@ -28,5 +29,6 @@ export const legacyDbCommand = Command.make("db").pipe(
     legacyDbTestCommand,
     legacyDbBranchCommand,
     legacyDbRemoteCommand,
+    legacyDbSchemaCommand,
   ]),
 );

@@ -53,3 +53,4 @@ Not applicable.
 - `--schema` / `-s` restricts pull to specific schemas.
 - `--db-url`, `--linked` (default true), and `--local` are mutually exclusive.
 - `--use-pg-delta` activates declarative pull output through pg-delta.
+- `--diff-engine migra|pg-delta` selects the diff engine for migration-style pull; mutually exclusive with `--use-pg-delta`.
