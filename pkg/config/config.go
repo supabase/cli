@@ -667,10 +667,7 @@ func (c *config) Load(path string, fsys fs.FS, overrides ...ConfigEditor) error 
 		}
 	}
 	if version, err := fs.ReadFile(fsys, builder.StorageVersionPath); err == nil && len(version) > 0 {
-		// Only replace image if local storage version is newer
-		if i := strings.IndexByte(Images.Storage, ':'); semver.Compare(strings.TrimSpace(string(version)), Images.Storage[i+1:]) > 0 {
-			c.Storage.Image = replaceImageTag(Images.Storage, string(version))
-		}
+		c.Storage.Image = replaceImageTag(Images.Storage, string(version))
 	}
 	if version, err := fs.ReadFile(fsys, builder.StorageMigrationPath); err == nil && len(version) > 0 {
 		c.Storage.TargetMigration = strings.TrimSpace(string(version))
