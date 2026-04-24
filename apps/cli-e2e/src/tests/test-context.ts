@@ -140,7 +140,11 @@ export function testParity(
 
     try {
       await runParity(
-        { apiUrl: serverUrl, accessToken: ACCESS_TOKEN, workspaceSetup: opts?.workspaceSetup },
+        {
+          apiUrl: serverUrl,
+          accessToken: ACCESS_TOKEN,
+          workspaceSetup: opts?.workspaceSetup,
+        },
         cmd,
       );
     } finally {

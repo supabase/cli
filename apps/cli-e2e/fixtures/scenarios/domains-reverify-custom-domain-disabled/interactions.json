@@ -1,0 +1,30 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/projects/<PROJECT_REF>/custom-hostname/reverify",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "content-length": "0",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/2.90.0"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "9",
+        "x-ratelimit-reset": "60"
+      },
+      "body": {
+        "message": "Please enable the Custom Domain add-on for the project first."
+      }
+    }
+  }
+]

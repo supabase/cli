@@ -124,7 +124,12 @@ const GIT_ENV: Record<string, string> = {
 };
 
 function initGitRepo(dir: string): void {
-  Bun.spawnSync(["git", "init"], { cwd: dir, env: GIT_ENV, stdout: "pipe", stderr: "pipe" });
+  Bun.spawnSync(["git", "init"], {
+    cwd: dir,
+    env: GIT_ENV,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   Bun.spawnSync(["git", "commit", "--allow-empty", "-m", "init"], {
     cwd: dir,
     env: GIT_ENV,
@@ -186,7 +191,12 @@ async function fetchRequestLog(apiUrl: string): Promise<RequestRecord[]> {
     query: Record<string, string>;
     body: unknown;
   }>;
-  return raw.map(({ method, pathname, query, body }) => ({ method, pathname, query, body }));
+  return raw.map(({ method, pathname, query, body }) => ({
+    method,
+    pathname,
+    query,
+    body,
+  }));
 }
 
 async function collectRunResult(
@@ -303,6 +313,7 @@ export async function runParity(opts: ParityOptions, cmd: string[]): Promise<voi
     initGitRepo(tsDir.path);
 
     opts.workspaceSetup?.(goDir.path);
+
     const goResult = await collectRunResult(
       createHarness("go", {
         apiUrl: opts.apiUrl,
