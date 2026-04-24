@@ -1,0 +1,4 @@
+{
+  "columns": ["type", "name", "bloat", "waste"],
+  "rows": [["table", "public.users", "1.4", "10 MB"]]
+}

@@ -1,0 +1,5 @@
+{
+  "columns": ["name", "table_size", "index_size", "total_size", "estimated_row_count", "seq_scans"],
+  "typeOids": [25, 25, 25, 25, 20, 20],
+  "rows": [["public.orders", "512 MB", "128 MB", "640 MB", "1000000", "50"]]
+}

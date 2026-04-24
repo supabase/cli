@@ -1,0 +1,30 @@
+{
+  "columns": [
+    "name",
+    "last_vacuum",
+    "last_autovacuum",
+    "last_analyze",
+    "last_autoanalyze",
+    "rowcount",
+    "dead_rowcount",
+    "autovacuum_threshold",
+    "autoanalyze_threshold",
+    "expect_autovacuum",
+    "expect_autoanalyze"
+  ],
+  "rows": [
+    [
+      "public.events",
+      "2026-04-24 00:00",
+      "2026-04-23 12:00",
+      "2026-04-24 00:00",
+      "2026-04-23 12:00",
+      "        10,000",
+      "           100",
+      "       2,050",
+      "         550",
+      "no",
+      "no"
+    ]
+  ]
+}

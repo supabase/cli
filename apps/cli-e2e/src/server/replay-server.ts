@@ -10,6 +10,7 @@ import type {
 import { loadFixtures, loadScenario } from "./fixture-loader.ts";
 import { applyPlaceholders, fixtureKey, normalizeUrlPath } from "./placeholder.ts";
 import { matchFixture, resetCounters, sortBody, type SequenceCounters } from "./request-matcher.ts";
+import type { PgFixture, PgMockHandle } from "./pg-mock.ts";
 
 interface RecordedRequest {
   method: string;
@@ -129,6 +130,8 @@ interface ReplayServerOptions {
   fixturesDir: string;
   /** Port to listen on (0 = random). */
   port?: number;
+  /** Optional Postgres mock server to control via /_ctrl/pg-* endpoints. */
+  pgMock?: PgMockHandle;
 }
 
 export async function startReplayServer(options: ReplayServerOptions): Promise<ReplayServerHandle> {
@@ -172,6 +175,7 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
           globalErrorRef,
           isRecord,
           fixturesDir: options.fixturesDir,
+          pgMock: options.pgMock,
         });
       }
 
@@ -572,6 +576,7 @@ interface ControlContext {
   globalErrorRef: GlobalErrorRef;
   isRecord: boolean;
   fixturesDir: string;
+  pgMock?: PgMockHandle;
 }
 
 async function handleControl(req: Request, url: URL, ctx: ControlContext): Promise<Response> {
@@ -663,6 +668,41 @@ async function handleControl(req: Request, url: URL, ctx: ControlContext): Promi
     ctx.errorOverrides.clear();
     ctx.rateLimitOverrides.clear();
     ctx.globalErrorRef.value = null;
+    ctx.pgMock?.setState({ type: "empty" });
+    return new Response(null, { status: 204 });
+  }
+
+  if (subpath === "/pg-fixture" && req.method === "POST") {
+    if (!ctx.pgMock) {
+      return new Response(JSON.stringify({ message: "No PG mock configured" }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    const { key } = (await req.json()) as { key: string };
+    const fixturePath = join(ctx.fixturesDir, "pg", `${key}.json`);
+    let fixture: unknown;
+    try {
+      fixture = await Bun.file(fixturePath).json();
+    } catch {
+      return new Response(JSON.stringify({ message: `PG fixture not found: ${key}` }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    ctx.pgMock.setState({ type: "fixture", fixture: fixture as PgFixture });
+    return new Response(null, { status: 204 });
+  }
+
+  if (subpath === "/pg-error" && req.method === "POST") {
+    if (!ctx.pgMock) {
+      return new Response(JSON.stringify({ message: "No PG mock configured" }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    const error = (await req.json()) as { code: string; message: string; severity?: string };
+    ctx.pgMock.setState({ type: "error", error });
     return new Response(null, { status: 204 });
   }
 

@@ -1,5 +1,6 @@
 import type { ProvidedContext } from "vitest";
 import { createHarness, exec } from "@supabase/cli-test-helpers";
+import { startPgMock } from "../src/server/pg-mock.ts";
 import { startReplayServer } from "../src/server/replay-server.ts";
 import { ACCESS_TOKEN, isRecording, ORG_ID, PROJECT_REF, TARGET } from "../src/tests/env.ts";
 
@@ -11,6 +12,7 @@ declare module "vitest" {
     projectRef: string;
     orgId: string;
     storageBucket: string;
+    pgMockPort: number;
   }
 }
 
@@ -102,7 +104,10 @@ export async function setup({
 }: {
   provide: <K extends keyof ProvidedContext>(key: K, value: ProvidedContext[K]) => void;
 }) {
-  const server = await startReplayServer({ fixturesDir: FIXTURES_DIR });
+  const pgMock = startPgMock();
+  provide("pgMockPort", pgMock.port);
+
+  const server = await startReplayServer({ fixturesDir: FIXTURES_DIR, pgMock });
   provide("replayServerUrl", server.url);
 
   if (!isRecording) {
@@ -112,6 +117,7 @@ export async function setup({
     provide("orgId", ORG_ID);
     provide("storageBucket", "cli-e2e-bucket");
     return async () => {
+      pgMock.stop();
       await server.stop();
     };
   }
@@ -182,6 +188,7 @@ export async function setup({
     // does not delete it, so we clean it up here.
     await cleanupProjectsByName(server.url, ["my-project"]);
     await deleteTestProject(server.url, projectRef);
+    pgMock.stop();
     await server.stop();
   };
 }

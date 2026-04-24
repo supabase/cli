@@ -28,6 +28,7 @@ interface BehaviourFixtures {
   run: (cmd: string[]) => Promise<CLIResult>;
   apiUrl: string;
   storageBucket: string;
+  pgMockPort: number;
 }
 
 /** Custom test function for behavioural CLI tests.
@@ -99,6 +100,11 @@ export const testBehaviour = test.extend<BehaviourFixtures>({
   // eslint-disable-next-line no-empty-pattern
   apiUrl: async ({}, use) => {
     await use(inject("replayServerUrl"));
+  },
+
+  // eslint-disable-next-line no-empty-pattern
+  pgMockPort: async ({}, use) => {
+    await use(inject("pgMockPort") as number);
   },
 });
 
