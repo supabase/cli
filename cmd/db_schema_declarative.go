@@ -321,7 +321,10 @@ func runDeclarativeSync(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, "Generated migration SQL:")
-	fmt.Fprintln(os.Stderr, utils.Bold(result.DiffSQL))
+	// Don't wrap with utils.Bold: lipgloss renders multi-line input as a block
+	// and pads every line with trailing spaces to match the widest line, which
+	// produces a wall of whitespace for long CREATE FUNCTION bodies.
+	fmt.Fprintln(os.Stderr, result.DiffSQL)
 
 	// Step 4: Resolve migration name
 	migrationName := resolveDeclarativeMigrationName(declarativeName, declarativeFile)

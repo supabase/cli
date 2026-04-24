@@ -31,6 +31,11 @@ type ApplyResult struct {
 	TotalSkipped    int          `json:"totalSkipped"`
 	Errors          []ApplyIssue `json:"errors"`
 	StuckStatements []ApplyIssue `json:"stuckStatements"`
+	// ValidationErrors captures failures from pg-delta's final
+	// check_function_bodies=on pass. They are reported even when all
+	// statements applied cleanly, so must be surfaced explicitly.
+	ValidationErrors []ApplyIssue     `json:"validationErrors,omitempty"`
+	Diagnostics      []ApplyDiagnosis `json:"diagnostics,omitempty"`
 }
 
 // ApplyIssue models a pg-delta apply error or stuck statement.
@@ -42,6 +47,71 @@ type ApplyIssue struct {
 	Code              string          `json:"code,omitempty"`
 	Message           string          `json:"message,omitempty"`
 	IsDependencyError bool            `json:"isDependencyError,omitempty"`
+	Position          int             `json:"position,omitempty"`
+	Detail            string          `json:"detail,omitempty"`
+	Hint              string          `json:"hint,omitempty"`
+}
+
+// ApplyDiagnosis mirrors pg-topo's Diagnostic entries: static-analysis
+// warnings that are surfaced alongside the apply result but don't cause
+// failure on their own. Shape must stay in sync with the pg-topo package.
+//
+// UnmarshalJSON is implemented defensively so new or changed fields in
+// pg-topo's Diagnostic do not break the whole apply result parse. Losing a
+// diagnostic here would also swallow validationErrors and stuckStatements,
+// leaving the user with a useless "failed to parse pg-delta apply output"
+// message instead of the actual SQL error.
+type ApplyDiagnosis struct {
+	Code         string                  `json:"code,omitempty"`
+	Message      string                  `json:"message,omitempty"`
+	StatementID  *ApplyStatementLocation `json:"statementId,omitempty"`
+	SuggestedFix string                  `json:"suggestedFix,omitempty"`
+}
+
+// ApplyStatementLocation matches pg-topo's StatementId shape.
+type ApplyStatementLocation struct {
+	FilePath       string `json:"filePath,omitempty"`
+	StatementIndex int    `json:"statementIndex,omitempty"`
+	SourceOffset   int    `json:"sourceOffset,omitempty"`
+}
+
+func (d *ApplyDiagnosis) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if bytes.Equal(trimmed, []byte("null")) {
+		*d = ApplyDiagnosis{}
+		return nil
+	}
+	// Unmarshal into a shadow type first so an unexpected statementId shape
+	// (string, missing fields, future additions) degrades gracefully instead
+	// of aborting the whole ApplyResult parse.
+	var raw struct {
+		Code         string          `json:"code"`
+		Message      string          `json:"message"`
+		StatementID  json.RawMessage `json:"statementId"`
+		SuggestedFix string          `json:"suggestedFix"`
+	}
+	if err := json.Unmarshal(trimmed, &raw); err != nil {
+		return err
+	}
+	d.Code = raw.Code
+	d.Message = raw.Message
+	d.SuggestedFix = raw.SuggestedFix
+	if len(bytes.TrimSpace(raw.StatementID)) == 0 || bytes.Equal(bytes.TrimSpace(raw.StatementID), []byte("null")) {
+		d.StatementID = nil
+		return nil
+	}
+	var loc ApplyStatementLocation
+	if err := json.Unmarshal(raw.StatementID, &loc); err == nil {
+		d.StatementID = &loc
+		return nil
+	}
+	// Fallback: accept a bare string (older pg-topo revisions) so we keep
+	// something printable instead of dropping the diagnostic entirely.
+	var asString string
+	if err := json.Unmarshal(raw.StatementID, &asString); err == nil {
+		d.StatementID = &ApplyStatementLocation{FilePath: asString}
+	}
+	return nil
 }
 
 type ApplyStatement struct {
@@ -70,7 +140,13 @@ func (i *ApplyIssue) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func formatApplyFailure(result ApplyResult) string {
+// formatApplyFailure renders a human-readable summary of an unsuccessful
+// pg-delta apply result. When verbose is false (the default CLI output),
+// pg-topo diagnostics are collapsed to a single-line summary because they are
+// static-analysis warnings – not fatal errors – and can number in the
+// hundreds for large schemas. Passing verbose=true (set by --debug) expands
+// them to the full per-diagnostic listing.
+func formatApplyFailure(result ApplyResult, verbose bool) string {
 	totalStatements := result.TotalStatements
 	if totalStatements == 0 {
 		totalStatements = result.TotalApplied + result.TotalSkipped + len(result.StuckStatements)
@@ -91,6 +167,33 @@ func formatApplyFailure(result ApplyResult) string {
 			lines = append(lines, formatApplyIssue(issue))
 		}
 	}
+	if len(result.ValidationErrors) > 0 {
+		lines = append(lines, "Validation errors (from check_function_bodies=on pass):")
+		for _, issue := range result.ValidationErrors {
+			lines = append(lines, formatApplyIssue(issue))
+		}
+	}
+	if len(result.Diagnostics) > 0 {
+		if verbose {
+			lines = append(lines, "Diagnostics:")
+			for _, d := range result.Diagnostics {
+				lines = append(lines, formatApplyDiagnosis(d))
+			}
+		} else {
+			lines = append(lines, fmt.Sprintf("%d pg-topo diagnostic(s) omitted (re-run with --debug to view).", len(result.Diagnostics)))
+		}
+	}
+	// pg-delta may report status "error" without populating any issue arrays
+	// (e.g. an internal assertion in a future pg-delta release). Tell the user
+	// how to collect more information rather than leaving them with just the
+	// bare status line.
+	if len(result.Errors) == 0 && len(result.StuckStatements) == 0 && len(result.ValidationErrors) == 0 {
+		lines = append(lines,
+			"No per-statement diagnostics were reported by pg-delta.",
+			"Re-run with --debug to print the raw pg-delta payload, or open an issue at",
+			"https://github.com/supabase/pg-toolbelt/issues with the debug bundle attached.",
+		)
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -104,6 +207,12 @@ func formatApplyIssue(issue ApplyIssue) string {
 	}
 	lines := []string{title}
 	lines = append(lines, "  "+formatApplyIssueMessage(issue))
+	if detail := strings.TrimSpace(issue.Detail); detail != "" {
+		lines = append(lines, "  Detail: "+detail)
+	}
+	if hint := strings.TrimSpace(issue.Hint); hint != "" {
+		lines = append(lines, "  Hint: "+hint)
+	}
 	if sql := formatStatementSQL(issue.Statement.SQL); sql != "" {
 		lines = append(lines, "  SQL: "+sql)
 	}
@@ -119,6 +228,9 @@ func formatApplyIssueMessage(issue ApplyIssue) string {
 	if issue.Code != "" {
 		metadata = append(metadata, "SQLSTATE "+issue.Code)
 	}
+	if issue.Position > 0 {
+		metadata = append(metadata, fmt.Sprintf("position %d", issue.Position))
+	}
 	if issue.IsDependencyError {
 		metadata = append(metadata, "dependency error")
 	}
@@ -126,6 +238,39 @@ func formatApplyIssueMessage(issue ApplyIssue) string {
 		return message
 	}
 	return fmt.Sprintf("%s (%s)", message, strings.Join(metadata, ", "))
+}
+
+func formatApplyDiagnosis(d ApplyDiagnosis) string {
+	message := strings.TrimSpace(d.Message)
+	if message == "" {
+		message = "unknown pg-delta diagnostic"
+	}
+	parts := []string{"- "}
+	if code := strings.TrimSpace(d.Code); code != "" {
+		parts = append(parts, "["+code+"] ")
+	}
+	parts = append(parts, message)
+	if loc := formatStatementLocation(d.StatementID); loc != "" {
+		parts = append(parts, " ("+loc+")")
+	}
+	if fix := strings.TrimSpace(d.SuggestedFix); fix != "" {
+		parts = append(parts, "\n  Suggested fix: "+fix)
+	}
+	return strings.Join(parts, "")
+}
+
+func formatStatementLocation(loc *ApplyStatementLocation) string {
+	if loc == nil {
+		return ""
+	}
+	path := strings.TrimSpace(loc.FilePath)
+	if path == "" {
+		return ""
+	}
+	if loc.StatementIndex > 0 {
+		return fmt.Sprintf("%s#%d", path, loc.StatementIndex)
+	}
+	return path
 }
 
 func formatStatementSQL(sql string) string {
@@ -188,13 +333,17 @@ func ApplyDeclarative(ctx context.Context, config pgconn.Config, fsys afero.Fs) 
 		return errors.Errorf("failed to parse pg-delta apply output: %w", err)
 	}
 	if result.Status != "success" {
-		if viper.GetBool("DEBUG") {
+		// Always print the human-readable summary so failures are actionable
+		// even when --debug is set. In debug mode the summary also expands
+		// pg-topo diagnostics inline and we additionally dump the raw
+		// pg-delta payload so users can forward it when reporting bugs.
+		verbose := viper.GetBool("DEBUG")
+		fmt.Fprintln(os.Stderr, formatApplyFailure(result, verbose))
+		if verbose {
 			if debugJSON := formatDebugJSON(stdout.Bytes()); len(debugJSON) > 0 {
 				fmt.Fprintln(os.Stderr, "pg-delta apply result:")
 				fmt.Fprintln(os.Stderr, debugJSON)
 			}
-		} else {
-			fmt.Fprintln(os.Stderr, formatApplyFailure(result))
 		}
 		return errors.Errorf("pg-delta declarative apply failed with status: %s", result.Status)
 	}
