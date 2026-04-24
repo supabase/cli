@@ -28,6 +28,7 @@ const SB_SPECIFIC_ERROR_REASON = {
 
 // OS stuff - we don't want to expose these to the functions.
 const EXCLUDED_ENVS = ["HOME", "HOSTNAME", "PATH", "PWD"];
+
 const HOST_PORT = Deno.env.get("SUPABASE_INTERNAL_HOST_PORT")!;
 const JWT_SECRET = Deno.env.get("SUPABASE_INTERNAL_JWT_SECRET")!;
 const JWKS_ENDPOINT = new URL('/auth/v1/.well-known/jwks.json', Deno.env.get("SUPABASE_URL")!)
@@ -35,9 +36,6 @@ const DEBUG = Deno.env.get("SUPABASE_INTERNAL_DEBUG") === "true";
 const FUNCTIONS_CONFIG_STRING = Deno.env.get(
   "SUPABASE_INTERNAL_FUNCTIONS_CONFIG",
 )!;
-
-const SUPABASE_PUBLISHABLE_KEY = Deno.env.get('SUPABASE_INTERNAL_PUBLISHABLE_KEY')
-const SUPABASE_SECRET_KEY = Deno.env.get('SUPABASE_INTERNAL_SECRET_KEY')
 
 const WALLCLOCK_LIMIT_SEC = parseInt(
   Deno.env.get("SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC"),
@@ -130,7 +128,7 @@ let jwks = (() => {
   }
 })();
 
-async function isValidJWT(jwksUrl: URL, jwt: string): Promise<boolean> {
+async function isValidJWT(jwksUrl: string, jwt: string): Promise<boolean> {
   try {
     if (!jwks) {
       // Loading from remote-url on fly
@@ -148,7 +146,7 @@ async function isValidJWT(jwksUrl: URL, jwt: string): Promise<boolean> {
  * Applies hybrid JWT verification, using JWK as primary and Legacy Secret as fallback.
  * Use only during 'New JWT Keys' migration period, while `JWT_SECRET` is still available.
  */
-export async function verifyHybridJWT(jwtSecret: string, jwksUrl: URL, jwt: string): Promise<boolean> {
+export async function verifyHybridJWT(jwtSecret: string, jwksUrl: string, jwt: string): Promise<boolean> {
   const { alg: jwtAlgorithm } = jose.decodeProtectedHeader(jwt)
 
   if (jwtAlgorithm === 'HS256') {
@@ -225,17 +223,6 @@ Deno.serve({
     const workerTimeoutMs = isFinite(WALLCLOCK_LIMIT_SEC) ? WALLCLOCK_LIMIT_SEC * 1000 : 400 * 1000;
     const noModuleCache = false;
     const envVarsObj = Deno.env.toObject();
-    if (SUPABASE_PUBLISHABLE_KEY) {
-      envVarsObj['SUPABASE_PUBLISHABLE_KEYS'] = JSON.stringify({
-        default: SUPABASE_PUBLISHABLE_KEY
-      })
-    }
-    if (SUPABASE_SECRET_KEY) {
-      envVarsObj['SUPABASE_SECRET_KEYS'] = JSON.stringify({
-        default: SUPABASE_SECRET_KEY
-      })
-    }
-
     const envVars = Object.entries(envVarsObj)
       .filter(([name, _]) =>
         !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_")

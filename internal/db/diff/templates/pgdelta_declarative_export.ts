@@ -5,8 +5,8 @@ import {
   createPlan,
   deserializeCatalog,
   exportDeclarativeSchema,
-} from "npm:@supabase/pg-delta@1.0.0-alpha.20";
-import { supabase } from "npm:@supabase/pg-delta@1.0.0-alpha.20/integrations/supabase";
+} from "npm:@supabase/pg-delta@1.0.0-alpha.11";
+import { supabase } from "npm:@supabase/pg-delta@1.0.0-alpha.11/integrations/supabase";
 
 async function resolveInput(ref: string | undefined) {
   if (!ref) {
@@ -21,16 +21,21 @@ async function resolveInput(ref: string | undefined) {
 
 const source = Deno.env.get("SOURCE");
 const target = Deno.env.get("TARGET");
+supabase.filter = {
+  // Also allow dropped extensions from migrations to be capted in the declarative schema export
+  // TODO: fix upstream bug into pgdelta supabase integration
+  or: [
+    ...supabase.filter.or,
+    { type: "extension", operation: "drop", scope: "object" },
+  ],
+};
 
 const includedSchemas = Deno.env.get("INCLUDED_SCHEMAS");
 if (includedSchemas) {
-  const schemas = includedSchemas.split(",");
-  const schemaFilter = {
-    or: [{ "*/schema": schemas }, { "schema/name": schemas }],
-  };
-  supabase.filter = {
-    and: [supabase.filter!, schemaFilter],
-  } as unknown as typeof supabase.filter;
+  const schemaFilter = { schema: includedSchemas.split(",") };
+  supabase.filter = supabase.filter
+    ? { and: [supabase.filter, schemaFilter] }
+    : schemaFilter;
 }
 
 const formatOptionsRaw = Deno.env.get("FORMAT_OPTIONS");
@@ -38,6 +43,7 @@ let formatOptions = undefined;
 if (formatOptionsRaw) {
   formatOptions = JSON.parse(formatOptionsRaw);
 }
+
 try {
   const result = await createPlan(
     await resolveInput(source),
@@ -57,7 +63,6 @@ try {
     );
   } else {
     const output = exportDeclarativeSchema(result, {
-      integration: supabase,
       formatOptions,
     });
     console.log(

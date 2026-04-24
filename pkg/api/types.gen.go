@@ -492,8 +492,9 @@ const (
 
 // Defines values for JitAccessRequestRequestState.
 const (
-	Disabled JitAccessRequestRequestState = "disabled"
-	Enabled  JitAccessRequestRequestState = "enabled"
+	Disabled    JitAccessRequestRequestState = "disabled"
+	Enabled     JitAccessRequestRequestState = "enabled"
+	Unavailable JitAccessRequestRequestState = "unavailable"
 )
 
 // Defines values for ListActionRunResponseRunStepsName.
@@ -1417,7 +1418,6 @@ const (
 	V1ListEntitlementsResponseEntitlementsFeatureKeyReplicationEtl                        V1ListEntitlementsResponseEntitlementsFeatureKey = "replication.etl"
 	V1ListEntitlementsResponseEntitlementsFeatureKeySecurityAuditLogsDays                 V1ListEntitlementsResponseEntitlementsFeatureKey = "security.audit_logs_days"
 	V1ListEntitlementsResponseEntitlementsFeatureKeySecurityEnforceMfa                    V1ListEntitlementsResponseEntitlementsFeatureKey = "security.enforce_mfa"
-	V1ListEntitlementsResponseEntitlementsFeatureKeySecurityIso27001Certificate           V1ListEntitlementsResponseEntitlementsFeatureKey = "security.iso27001_certificate"
 	V1ListEntitlementsResponseEntitlementsFeatureKeySecurityMemberRoles                   V1ListEntitlementsResponseEntitlementsFeatureKey = "security.member_roles"
 	V1ListEntitlementsResponseEntitlementsFeatureKeySecurityPrivateLink                   V1ListEntitlementsResponseEntitlementsFeatureKey = "security.private_link"
 	V1ListEntitlementsResponseEntitlementsFeatureKeySecurityQuestionnaire                 V1ListEntitlementsResponseEntitlementsFeatureKey = "security.questionnaire"

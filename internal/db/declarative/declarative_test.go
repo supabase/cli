@@ -48,34 +48,6 @@ func TestWriteDeclarativeSchemas(t *testing.T) {
 	assert.Contains(t, string(cfg), `"database"`)
 }
 
-func TestWriteDeclarativeSchemasSkipsConfigUpdateWhenPgDeltaEnabled(t *testing.T) {
-	fsys := afero.NewMemMapFs()
-	originalConfig := "[db]\n"
-	require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte(originalConfig), 0644))
-	original := utils.Config.Experimental.PgDelta
-	utils.Config.Experimental.PgDelta = &config.PgDeltaConfig{Enabled: true}
-	t.Cleanup(func() {
-		utils.Config.Experimental.PgDelta = original
-	})
-
-	output := diff.DeclarativeOutput{
-		Files: []diff.DeclarativeFile{
-			{Path: "schemas/public/tables/users.sql", SQL: "create table users(id bigint);"},
-		},
-	}
-
-	err := WriteDeclarativeSchemas(output, fsys)
-	require.NoError(t, err)
-
-	users, err := afero.ReadFile(fsys, filepath.Join(utils.DeclarativeDir, "schemas", "public", "tables", "users.sql"))
-	require.NoError(t, err)
-	assert.Equal(t, "create table users(id bigint);", string(users))
-
-	cfg, err := afero.ReadFile(fsys, utils.ConfigPath)
-	require.NoError(t, err)
-	assert.Equal(t, originalConfig, string(cfg))
-}
-
 func TestTryCacheMigrationsCatalogWritesPrefixedCache(t *testing.T) {
 	fsys := afero.NewMemMapFs()
 	original := utils.Config.Experimental.PgDelta
@@ -172,38 +144,6 @@ func TestWriteDeclarativeSchemasUsesConfiguredDir(t *testing.T) {
 	cfg, err := afero.ReadFile(fsys, utils.ConfigPath)
 	require.NoError(t, err)
 	assert.Contains(t, string(cfg), `db/decl`)
-}
-
-func TestWriteDeclarativeSchemasSkipsConfigUpdateForPgDeltaCustomDir(t *testing.T) {
-	fsys := afero.NewMemMapFs()
-	originalConfig := "[db]\n"
-	require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte(originalConfig), 0644))
-	original := utils.Config.Experimental.PgDelta
-	utils.Config.Experimental.PgDelta = &config.PgDeltaConfig{
-		Enabled:               true,
-		DeclarativeSchemaPath: filepath.Join(utils.SupabaseDirPath, "db", "decl"),
-	}
-	t.Cleanup(func() {
-		utils.Config.Experimental.PgDelta = original
-	})
-
-	output := diff.DeclarativeOutput{
-		Files: []diff.DeclarativeFile{
-			{Path: "cluster/roles.sql", SQL: "create role app;"},
-		},
-	}
-
-	err := WriteDeclarativeSchemas(output, fsys)
-	require.NoError(t, err)
-
-	rolesPath := filepath.Join(utils.SupabaseDirPath, "db", "decl", "cluster", "roles.sql")
-	roles, err := afero.ReadFile(fsys, rolesPath)
-	require.NoError(t, err)
-	assert.Equal(t, "create role app;", string(roles))
-
-	cfg, err := afero.ReadFile(fsys, utils.ConfigPath)
-	require.NoError(t, err)
-	assert.Equal(t, originalConfig, string(cfg))
 }
 
 func TestWriteDeclarativeSchemasRejectsUnsafePath(t *testing.T) {

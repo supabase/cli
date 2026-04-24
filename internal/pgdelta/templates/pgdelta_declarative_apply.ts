@@ -3,7 +3,7 @@
 import {
   applyDeclarativeSchema,
   loadDeclarativeSchema,
-} from "npm:@supabase/pg-delta@1.0.0-alpha.20/declarative";
+} from "npm:@supabase/pg-delta@1.0.0-alpha.11/declarative";
 
 const schemaPath = Deno.env.get("SCHEMA_PATH");
 const target = Deno.env.get("TARGET");
@@ -36,13 +36,6 @@ try {
       totalSkipped: apply.totalSkipped ?? 0,
       errors: apply.errors ?? [],
       stuckStatements: apply.stuckStatements ?? [],
-      // validationErrors is populated when the final
-      // check_function_bodies=on pass catches issues that didn't surface during
-      // the initial apply rounds (e.g. a function body that references a
-      // column whose type changed). Without surfacing this field, callers see
-      // status=error with empty errors/stuckStatements and no actionable info.
-      validationErrors: apply.validationErrors ?? [],
-      diagnostics: result.diagnostics ?? [],
     };
     console.log(JSON.stringify(payload));
     if (apply.status !== "success") {

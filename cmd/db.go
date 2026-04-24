@@ -80,19 +80,15 @@ var (
 		},
 	}
 
-	useMigra       bool
-	usePgAdmin     bool
-	usePgSchema    bool
-	usePgDelta     bool
-	pullDiffEngine = utils.EnumFlag{
-		Allowed: []string{"migra", "pg-delta"},
-		Value:   "migra",
-	}
-	diffFrom   string
-	diffTo     string
-	outputPath string
-	schema     []string
-	file       string
+	useMigra    bool
+	usePgAdmin  bool
+	usePgSchema bool
+	usePgDelta  bool
+	diffFrom    string
+	diffTo      string
+	outputPath  string
+	schema      []string
+	file        string
 
 	dbDiffCmd = &cobra.Command{
 		Use:   "diff",
@@ -176,13 +172,8 @@ var (
 			if len(args) > 0 {
 				name = args[0]
 			}
-			pullDiffer := diff.DiffSchemaMigra
-			usePgDeltaDiff := pullDiffEngine.Value == "pg-delta"
-			if usePgDeltaDiff {
-				pullDiffer = diff.DiffPgDelta
-			}
-			useDeclarativePgDelta := shouldUsePgDelta()
-			return pull.Run(cmd.Context(), schema, flags.DbConfig, name, useDeclarativePgDelta, usePgDeltaDiff, pullDiffer, afero.NewOsFs())
+			useDelta := shouldUsePgDelta()
+			return pull.Run(cmd.Context(), schema, flags.DbConfig, name, useDelta, afero.NewOsFs())
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Finished " + utils.Aqua("supabase db pull") + ".")
@@ -211,7 +202,7 @@ var (
 		Short:      "Commit remote changes as a new migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			useDelta := shouldUsePgDelta()
-			return pull.Run(cmd.Context(), schema, flags.DbConfig, "remote_commit", useDelta, false, diff.DiffSchemaMigra, afero.NewOsFs())
+			return pull.Run(cmd.Context(), schema, flags.DbConfig, "remote_commit", useDelta, afero.NewOsFs())
 		},
 	}
 
@@ -420,13 +411,11 @@ func init() {
 	// This flag activates declarative pull output through pg-delta instead of the
 	// legacy migration SQL pull path.
 	pullFlags.BoolVar(&usePgDelta, "use-pg-delta", false, "Use pg-delta to pull declarative schema.")
-	pullFlags.Var(&pullDiffEngine, "diff-engine", "Diff engine to use for migration-style db pull.")
 	pullFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	pullFlags.String("db-url", "", "Pulls from the database specified by the connection string (must be percent-encoded).")
 	pullFlags.Bool("linked", true, "Pulls from the linked project.")
 	pullFlags.Bool("local", false, "Pulls from the local database.")
 	dbPullCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
-	dbPullCmd.MarkFlagsMutuallyExclusive("use-pg-delta", "diff-engine")
 	pullFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", pullFlags.Lookup("password")))
 	dbCmd.AddCommand(dbPullCmd)

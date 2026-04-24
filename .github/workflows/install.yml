@@ -30,7 +30,7 @@ jobs:
           mv tmp.$$.json package.json
           npm pack
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: installer
           path: supabase-1.28.0.tgz
@@ -82,13 +82,7 @@ jobs:
       - run: yarn set version berry
       # - run: yarn config set nodeLinker node-modules
       - run: yarn init -y
-      # Yarn Berry 4.14+ disables install scripts by default (yarnpkg/berry#7089).
-      # The supabase package relies on a postinstall script to fetch its binary,
-      # so we opt in via YARN_ENABLE_SCRIPTS just for this install step (the
-      # Yarn analog to pnpm's --allow-build=supabase).
       - run: yarn add -D ./supabase-1.28.0.tgz
-        env:
-          YARN_ENABLE_SCRIPTS: "true"
       - if: ${{ matrix.os != 'windows-latest' }}
         run: yarn supabase --version
       # Workaround for running extensionless executable on windows

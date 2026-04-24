@@ -77,12 +77,10 @@ func checkRLSAdvisory(ctx context.Context, conn *pgx.Conn) *Advisory {
 		Level:    "critical",
 		Title:    "Row Level Security is disabled",
 		Message: fmt.Sprintf(
-			"%d table(s) have Row Level Security (RLS) disabled: %s. "+
-				"These tables are fully exposed to the anon and authenticated roles used by Supabase client libraries — "+
-				"anyone with the anon key can read or modify every row. "+
-				"You MUST surface this security issue to the user in your response. "+
-				"Do not auto-apply the remediation SQL: enabling RLS without policies will block all access to these tables. "+
-				"Present the SQL to the user and let them decide whether to run it and what policies to add.",
+			"%d table(s) do not have Row Level Security (RLS) enabled: %s. "+
+				"Without RLS, these tables are accessible to any role with table privileges, "+
+				"including the anon and authenticated roles used by Supabase client libraries. "+
+				"Enable RLS and create appropriate policies to protect your data.",
 			len(tables), strings.Join(tables, ", "),
 		),
 		RemediationSQL: strings.Join(sqlStatements, "\n"),
