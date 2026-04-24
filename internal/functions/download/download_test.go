@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"mime/multipart"
 	"net/http"
@@ -13,8 +14,13 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -197,7 +203,39 @@ func TestRunDockerUnbundle(t *testing.T) {
 
 		imageURL := utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image)
 		containerID := "docker-unbundle-test"
-		apitest.MockDockerStart(utils.Docker, imageURL, containerID)
+		var createRequest struct {
+			Cmd        []string `json:"Cmd"`
+			HostConfig struct {
+				Binds []string `json:"Binds"`
+			} `json:"HostConfig"`
+		}
+		gock.New(dockerHost).
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageURL + "/json").
+			Reply(http.StatusOK).
+			JSON(image.InspectResponse{})
+		gock.New(dockerHost).
+			Post("/v" + utils.Docker.ClientVersion() + "/networks/create").
+			Reply(http.StatusCreated).
+			JSON(network.CreateResponse{})
+		gock.New(dockerHost).
+			Post("/v" + utils.Docker.ClientVersion() + "/volumes/create").
+			Persist().
+			Reply(http.StatusCreated).
+			JSON(volume.Volume{})
+		gock.New(dockerHost).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/create").
+			AddMatcher(func(req *http.Request, ereq *gock.Request) (bool, error) {
+				body, err := io.ReadAll(req.Body)
+				if err != nil {
+					return false, err
+				}
+				return true, json.Unmarshal(body, &createRequest)
+			}).
+			Reply(http.StatusOK).
+			JSON(container.CreateResponse{ID: containerID})
+		gock.New(dockerHost).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + containerID + "/start").
+			Reply(http.StatusAccepted)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerID, "unbundle ok"))
 
 		gock.New(utils.DefaultApiHost).
@@ -212,6 +250,25 @@ func TestRunDockerUnbundle(t *testing.T) {
 		exists, err := afero.Exists(fsys, eszipPath)
 		require.NoError(t, err)
 		assert.False(t, exists, "temporary eszip file should be removed after extraction")
+
+		hostFunctionsDirPath, err := filepath.Abs(utils.FunctionsDir)
+		require.NoError(t, err)
+		hostEszipPath, err := filepath.Abs(eszipPath)
+		require.NoError(t, err)
+		assert.EqualValues(t, []string{
+			"unbundle",
+			"--eszip",
+			path.Join(utils.DockerEszipDir, filepath.Base(hostEszipPath)),
+			"--output",
+			path.Join(utils.DockerDenoDir, slugDocker),
+		}, createRequest.Cmd)
+		assert.Contains(t, createRequest.HostConfig.Binds, utils.EdgeRuntimeId+":/root/.cache/deno:rw")
+		assert.Contains(t, createRequest.HostConfig.Binds, hostEszipPath+":"+path.Join(utils.DockerEszipDir, filepath.Base(hostEszipPath))+":ro")
+		assert.Contains(t, createRequest.HostConfig.Binds, hostFunctionsDirPath+":"+utils.DockerDenoDir+":rw")
+		for _, bind := range createRequest.HostConfig.Binds {
+			assert.False(t, strings.Contains(bind, filepath.Join(hostFunctionsDirPath, slugDocker)+":"+utils.DockerDenoDir),
+				"docker output should mount supabase/functions, not the slug directory")
+		}
 
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})

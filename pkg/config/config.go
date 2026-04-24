@@ -262,8 +262,12 @@ func (a *auth) Clone() auth {
 	}
 	if copy.Passkey != nil {
 		passkey := *a.Passkey
-		passkey.RpOrigins = slices.Clone(a.Passkey.RpOrigins)
 		copy.Passkey = &passkey
+	}
+	if copy.Webauthn != nil {
+		webauthn := *a.Webauthn
+		webauthn.RpOrigins = slices.Clone(a.Webauthn.RpOrigins)
+		copy.Webauthn = &webauthn
 	}
 	copy.External = maps.Clone(a.External)
 	if a.Email.Smtp != nil {
@@ -656,10 +660,7 @@ func (c *config) Load(path string, fsys fs.FS, overrides ...ConfigEditor) error 
 		}
 	}
 	if version, err := fs.ReadFile(fsys, builder.StorageVersionPath); err == nil && len(version) > 0 {
-		// Only replace image if local storage version is newer
-		if i := strings.IndexByte(Images.Storage, ':'); semver.Compare(strings.TrimSpace(string(version)), Images.Storage[i+1:]) > 0 {
-			c.Storage.Image = replaceImageTag(Images.Storage, string(version))
-		}
+		c.Storage.Image = replaceImageTag(Images.Storage, string(version))
 	}
 	if version, err := fs.ReadFile(fsys, builder.StorageMigrationPath); err == nil && len(version) > 0 {
 		c.Storage.TargetMigration = strings.TrimSpace(string(version))
@@ -921,21 +922,22 @@ func (c *config) Validate(fsys fs.FS) error {
 				return errors.Errorf("failed to decode signing keys: %w", err)
 			}
 		}
-		if c.Auth.Passkey != nil {
-			if c.Auth.Passkey.Enabled {
-				if len(c.Auth.Passkey.RpId) == 0 {
-					return errors.New("Missing required field in config: auth.passkey.rp_id")
-				}
-				if len(c.Auth.Passkey.RpOrigins) == 0 {
-					return errors.New("Missing required field in config: auth.passkey.rp_origins")
-				}
-				if err := assertEnvLoaded(c.Auth.Passkey.RpId); err != nil {
-					return errors.Errorf("Invalid config for auth.passkey.rp_id: %v", err)
-				}
-				for i, origin := range c.Auth.Passkey.RpOrigins {
-					if err := assertEnvLoaded(origin); err != nil {
-						return errors.Errorf("Invalid config for auth.passkey.rp_origins[%d]: %v", i, err)
-					}
+		if c.Auth.Passkey != nil && c.Auth.Passkey.Enabled {
+			if c.Auth.Webauthn == nil {
+				return errors.New("Missing required config section: auth.webauthn (required when auth.passkey.enabled is true)")
+			}
+			if len(c.Auth.Webauthn.RpId) == 0 {
+				return errors.New("Missing required field in config: auth.webauthn.rp_id")
+			}
+			if len(c.Auth.Webauthn.RpOrigins) == 0 {
+				return errors.New("Missing required field in config: auth.webauthn.rp_origins")
+			}
+			if err := assertEnvLoaded(c.Auth.Webauthn.RpId); err != nil {
+				return errors.Errorf("Invalid config for auth.webauthn.rp_id: %v", err)
+			}
+			for i, origin := range c.Auth.Webauthn.RpOrigins {
+				if err := assertEnvLoaded(origin); err != nil {
+					return errors.Errorf("Invalid config for auth.webauthn.rp_origins[%d]: %v", i, err)
 				}
 			}
 		}

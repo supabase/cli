@@ -26,6 +26,7 @@ var (
 		"_realtime",
 		"_supavisor",
 		"auth",
+		"etl",
 		"extensions",
 		"pgbouncer",
 		"realtime",
@@ -72,6 +73,7 @@ var (
 		"vault",
 		// Managed by Supabase
 		// "auth",
+		"etl",
 		"extensions",
 		"pgbouncer",
 		"realtime",

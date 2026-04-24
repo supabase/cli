@@ -167,4 +167,44 @@ END
 ;`}
 		checkSplit(t, sql)
 	})
+
+	t.Run("ignores atomic in identifiers", func(t *testing.T) {
+		names := []string{
+			"fn_atomic",
+			"atomic_fn",
+			"my_atomic_thing",
+			"xatomicx",
+			"fn_ATomiC",
+		}
+		for _, name := range names {
+			t.Run(name, func(t *testing.T) {
+				sql := []string{
+					`CREATE OR REPLACE FUNCTION ` + name + `()
+RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  NULL;
+END;
+$$;`,
+					`
+SELECT 1;`,
+				}
+				checkSplit(t, sql)
+			})
+		}
+	})
+
+	t.Run("does not treat schema-qualified atomic function names as begin atomic", func(t *testing.T) {
+		sql := []string{`CREATE OR REPLACE FUNCTION public.atomic_example()
+RETURNS INTEGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RETURN 1;
+END;
+$$;`,
+			`
+GRANT EXECUTE ON FUNCTION public.atomic_example() TO authenticated;`,
+		}
+		checkSplit(t, sql)
+	})
 }
