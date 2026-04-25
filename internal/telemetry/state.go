@@ -17,6 +17,12 @@ const SchemaVersion = 1
 
 const sessionRotationThreshold = 30 * time.Minute
 
+// errMalformedState marks any read where the file existed but couldn't be
+// decoded into a State — covers JSON syntax errors, unexpected types
+// (e.g. session_last_active stored as a number), and field-level unmarshal
+// failures from time.Time / uuid. Used to trigger fresh-state creation.
+var errMalformedState = errors.New("malformed telemetry state")
+
 type State struct {
 	Enabled           bool      `json:"enabled"`
 	DeviceID          string    `json:"device_id"`
@@ -48,7 +54,7 @@ func LoadState(fsys afero.Fs) (State, error) {
 	}
 	var state State
 	if err := json.Unmarshal(contents, &state); err != nil {
-		return State{}, errors.Errorf("failed to parse telemetry file: %w", err)
+		return State{}, errors.Errorf("%w: %v", errMalformedState, err)
 	}
 	return state, nil
 }
@@ -74,7 +80,11 @@ func LoadOrCreateState(fsys afero.Fs, now time.Time) (State, bool, error) {
 		state.SessionLastActive = now.UTC()
 		return state, false, SaveState(state, fsys)
 	}
-	if !errors.Is(err, os.ErrNotExist) {
+	// Treat a missing file OR an unparseable file as "no existing state" and
+	// recreate. Identity fields (device_id, session_id) are not worth
+	// surfacing an error for — losing them is harmless. We only propagate
+	// genuine I/O errors (permissions, disk full) so the user can act.
+	if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, errMalformedState) {
 		return State{}, false, err
 	}
 	state = State{
