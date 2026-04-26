@@ -331,11 +331,6 @@ func TestUpdateRemoteConfig(t *testing.T) {
 			JSON(v1API.PostgresConfigResponse{
 				MaxConnections: cast.Ptr(cast.UintToInt(100)),
 			})
-		// Network config
-		gock.New(server).
-			Get("/v1/projects/test-project/network-restrictions").
-			Reply(http.StatusOK).
-			JSON(v1API.V1GetNetworkRestrictionsResponse{})
 		// Auth config
 		gock.New(server).
 			Get("/v1/projects/test-project/config/auth").
