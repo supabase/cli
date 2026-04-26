@@ -68,6 +68,9 @@ func (b *dockerBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	if custom_registry := os.Getenv("NPM_CONFIG_REGISTRY"); custom_registry != "" {
 		env = append(env, "NPM_CONFIG_REGISTRY="+custom_registry)
 	}
+	if authToken := os.Getenv("NPM_AUTH_TOKEN"); authToken != "" {
+		env = append(env, "NPM_AUTH_TOKEN="+authToken)
+	}
 	// Run bundle
 	if err := utils.DockerRunOnceWithConfig(
 		ctx,
