@@ -44,12 +44,20 @@ func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsy
 }
 
 func ListSecrets(envFilePath string, fsys afero.Fs, envArgs ...string) (api.CreateSecretBody, error) {
+	return parseSecrets(map[string]string{}, envFilePath, fsys, envArgs...)
+}
+
+func ListSecretsWithConfig(envFilePath string, fsys afero.Fs, envArgs ...string) (api.CreateSecretBody, error) {
 	envMap := map[string]string{}
 	for name, secret := range utils.Config.EdgeRuntime.Secrets {
 		if len(secret.SHA256) > 0 {
 			envMap[name] = secret.Value
 		}
 	}
+	return parseSecrets(envMap, envFilePath, fsys, envArgs...)
+}
+
+func parseSecrets(envMap map[string]string, envFilePath string, fsys afero.Fs, envArgs ...string) (api.CreateSecretBody, error) {
 	if len(envFilePath) > 0 {
 		parsed, err := parseEnvFile(envFilePath, fsys)
 		if err != nil {
