@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/go-errors/errors"
@@ -47,12 +48,14 @@ func isPostgresURL(ref string) bool {
 
 // containerRef translates a host-relative catalog file path into the absolute
 // path where it appears inside the edge runtime container (CWD mounted at
-// /workspace). Postgres URLs and empty strings pass through unchanged.
+// /workspace). Postgres URLs and empty strings pass through unchanged. Path
+// separators are normalised to forward slashes so Windows paths (with `\`)
+// resolve correctly inside the Linux container.
 func containerRef(ref string) string {
 	if ref == "" || isPostgresURL(ref) {
 		return ref
 	}
-	return "/workspace/" + ref
+	return "/workspace/" + filepath.ToSlash(ref)
 }
 
 // pgDeltaFormatOptions returns the experimental.pgdelta.format_options config for
@@ -143,6 +146,9 @@ func DeclarativeExportPgDeltaRef(ctx context.Context, sourceRef, targetRef strin
 	if err := utils.RunEdgeRuntimeScript(ctx, env, pgDeltaDeclarativeExportScript, binds, "error exporting declarative schema", &stdout, &stderr); err != nil {
 		return DeclarativeOutput{}, err
 	}
+	if stdout.Len() == 0 {
+		return DeclarativeOutput{}, errors.Errorf("error exporting declarative schema: edge-runtime script produced no output:\n%s", stderr.String())
+	}
 	var result DeclarativeOutput
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		return DeclarativeOutput{}, errors.Errorf("failed to parse declarative export output: %w", err)
@@ -176,5 +182,9 @@ func ExportCatalogPgDelta(ctx context.Context, targetRef, role string, options .
 	if err := utils.RunEdgeRuntimeScript(ctx, env, pgDeltaCatalogExportScript, binds, "error exporting pg-delta catalog", &stdout, &stderr); err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	snapshot := strings.TrimSpace(stdout.String())
+	if len(snapshot) == 0 {
+		return "", errors.Errorf("error exporting pg-delta catalog: edge-runtime script produced no output:\n%s", stderr.String())
+	}
+	return snapshot, nil
 }
