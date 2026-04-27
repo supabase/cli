@@ -79,6 +79,38 @@ func TestLoadOrCreateState(t *testing.T) {
 		assert.Equal(t, now, state.SessionLastActive)
 	})
 
+	t.Run("recovers from corrupted state file", func(t *testing.T) {
+		// Each entry simulates a real-world corruption shape we've observed.
+		corruptions := map[string][]byte{
+			"empty file":     {},
+			"truncated json": []byte(`{"enabled":tru`),
+			"session_last_active is a number (not a string)": []byte(`{"enabled":true,"device_id":"d","session_id":"s","session_last_active":1776770348993,"schema_version":1}`),
+			"session_last_active is a malformed string":      []byte(`{"enabled":true,"device_id":"d","session_id":"s","session_last_active":"not-a-time","schema_version":1}`),
+		}
+		for label, contents := range corruptions {
+			t.Run(label, func(t *testing.T) {
+				t.Setenv("SUPABASE_HOME", "/tmp/supabase-home")
+				fsys := afero.NewMemMapFs()
+				path, err := telemetryPath()
+				require.NoError(t, err)
+				require.NoError(t, fsys.MkdirAll("/tmp/supabase-home", 0755))
+				require.NoError(t, afero.WriteFile(fsys, path, contents, 0644))
+
+				state, created, err := LoadOrCreateState(fsys, now)
+
+				require.NoError(t, err)
+				assert.True(t, created)
+				assert.True(t, state.Enabled)
+				assert.Equal(t, SchemaVersion, state.SchemaVersion)
+				assert.NoError(t, uuid.Validate(state.DeviceID))
+				assert.NoError(t, uuid.Validate(state.SessionID))
+				saved, err := LoadState(fsys)
+				require.NoError(t, err)
+				assert.Equal(t, state, saved)
+			})
+		}
+	})
+
 	t.Run("rotates stale session after inactivity threshold", func(t *testing.T) {
 		t.Setenv("SUPABASE_HOME", "/tmp/supabase-home")
 		fsys := afero.NewMemMapFs()
