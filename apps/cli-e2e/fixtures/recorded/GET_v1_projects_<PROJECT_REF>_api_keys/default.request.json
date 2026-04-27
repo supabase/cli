@@ -1,7 +1,9 @@
 {
   "method": "GET",
   "path": "/v1/projects/<PROJECT_REF>/api-keys",
-  "query": { "reveal": "true" },
+  "query": {
+    "reveal": "true"
+  },
   "headers": {
     "accept-encoding": "gzip",
     "authorization": "Bearer <ACCESS_TOKEN>",

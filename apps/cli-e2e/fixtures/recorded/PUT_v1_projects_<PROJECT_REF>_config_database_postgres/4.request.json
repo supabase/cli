@@ -1,0 +1,17 @@
+{
+  "method": "PUT",
+  "path": "/v1/projects/<PROJECT_REF>/config/database/postgres",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "authorization": "Bearer <ACCESS_TOKEN>",
+    "content-length": "48",
+    "content-type": "application/json",
+    "host": "localhost:<PORT>",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": {
+    "max_connections": 200,
+    "restart_database": false
+  }
+}

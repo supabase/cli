@@ -26,6 +26,7 @@ interface BehaviourFixtures {
   orgId: string;
   workspace: TempDir;
   run: (cmd: string[]) => Promise<CLIResult>;
+  runNoProjectId: (cmd: string[]) => Promise<CLIResult>;
   apiUrl: string;
   storageBucket: string;
   pgMockPort: number;
@@ -92,6 +93,16 @@ export const testBehaviour = test.extend<BehaviourFixtures>({
     await use((cmd) => exec(harness, cmd));
   },
 
+  runNoProjectId: async ({ workspace }, use) => {
+    const serverUrl = inject("replayServerUrl");
+    const harness = createHarness(TARGET, {
+      apiUrl: serverUrl,
+      accessToken: ACCESS_TOKEN,
+      cwd: workspace.path,
+    });
+    await use((cmd) => exec(harness, cmd));
+  },
+
   // eslint-disable-next-line no-empty-pattern
   storageBucket: async ({}, use) => {
     await use(inject("storageBucket") as string);
@@ -127,7 +138,11 @@ type FailureType = keyof typeof FAILURE_PRESETS;
  *  use it to write config files (e.g. `.supabase/.temp/project-ref`). */
 export function testParity(
   cmd: string[],
-  opts?: { failureType?: FailureType; workspaceSetup?: (dir: string) => void },
+  opts?: {
+    failureType?: FailureType;
+    workspaceSetup?: (dir: string) => void;
+    sortStdoutRows?: boolean;
+  },
 ): void {
   const label = opts?.failureType
     ? `parity: ${cmd.join(" ")} [${opts.failureType}]`
@@ -150,6 +165,7 @@ export function testParity(
           apiUrl: serverUrl,
           accessToken: ACCESS_TOKEN,
           workspaceSetup: opts?.workspaceSetup,
+          sortStdoutRows: opts?.sortStdoutRows,
         },
         cmd,
       );

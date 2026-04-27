@@ -1,9 +1,7 @@
 {
   "method": "GET",
-  "path": "/v1/projects/<PROJECT_REF>/types/typescript",
-  "query": {
-    "included_schemas": "public"
-  },
+  "path": "/v1/projects/<PROJECT_REF>",
+  "query": {},
   "headers": {
     "accept-encoding": "gzip",
     "authorization": "Bearer <ACCESS_TOKEN>",

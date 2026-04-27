@@ -67,8 +67,8 @@ describe("gen", () => {
       expect(result.stderr).toContain("db-url");
     });
 
-    testBehaviour("exits non-zero with no data source specified", async ({ run }) => {
-      const result = await run(["gen", "types"]);
+    testBehaviour("exits non-zero with no data source specified", async ({ runNoProjectId }) => {
+      const result = await runNoProjectId(["gen", "types"]);
       expect(result.exitCode).not.toBe(0);
     });
 

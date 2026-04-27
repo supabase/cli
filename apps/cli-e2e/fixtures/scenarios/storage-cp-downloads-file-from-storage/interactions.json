@@ -20,7 +20,7 @@
         "access-control-allow-origin": "*",
         "cache-control": "no-cache",
         "content-type": "text/plain",
-        "last-modified": "Thu, 23 Apr 2026 10:16:07 GMT",
+        "last-modified": "Mon, 27 Apr 2026 10:30:57 GMT",
         "sb-gateway-mode": "direct",
         "sb-gateway-version": "1",
         "sb-project-ref": "<PROJECT_REF>",

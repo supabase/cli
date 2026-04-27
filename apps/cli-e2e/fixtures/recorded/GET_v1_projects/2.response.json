@@ -34,7 +34,7 @@
       "status": "ACTIVE_HEALTHY",
       "database": {
         "host": "db.<PROJECT_REF>.supabase.red",
-        "version": "17.6.1.105",
+        "version": "17.6.1.111",
         "postgres_engine": "17",
         "release_channel": "ga"
       },

@@ -12,6 +12,6 @@
     "max_rows": 1000,
     "db_extra_search_path": "public, extensions",
     "db_pool": null,
-    "jwt_secret": "lHKW2FVHCQ+hUTqvcDCZuYI93eKBzEYzBpDJInDV72fu1fRniNqaeynLWKJun0h44gYNviSggtKm2ICPAvTS8Q=="
+    "jwt_secret": "wYu1Y5zcq5XMI/BHlkIl6p9LkFCuWMLyiAVVoKKcIKJkp2un+UF9KkNth/4YXd2nLagAXtJ0wq/DaixwsuUfww=="
   }
 }

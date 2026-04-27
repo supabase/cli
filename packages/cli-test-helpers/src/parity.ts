@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHarness, exec, makeTempDir } from "./harness.ts";
-import { normalize } from "./normalize.ts";
+import { normalize, sortTableRows } from "./normalize.ts";
 
 // ---------------------------------------------------------------------------
 // Table parsing (Level 2)
@@ -295,6 +295,9 @@ export interface ParityOptions {
   projectId?: string;
   /** Called on each temp dir before running the CLI — use to write config files. */
   workspaceSetup?: (dir: string) => void;
+  /** Sort table data rows before comparing stdout. Use when the Go CLI produces
+   *  non-deterministic row order (e.g. from map iteration). */
+  sortStdoutRows?: boolean;
 }
 
 /**
@@ -344,7 +347,14 @@ export async function runParity(opts: ParityOptions, cmd: string[]): Promise<voi
     // Self-cleaning: reset after ts-legacy so callers start with a clean log.
     await fetch(`${opts.apiUrl}/_ctrl/requests`, { method: "DELETE" });
 
-    compareRunResults(cmd.join(" "), goResult, tsResult);
+    const finalGoResult = opts.sortStdoutRows
+      ? { ...goResult, stdout: sortTableRows(goResult.stdout) }
+      : goResult;
+    const finalTsResult = opts.sortStdoutRows
+      ? { ...tsResult, stdout: sortTableRows(tsResult.stdout) }
+      : tsResult;
+
+    compareRunResults(cmd.join(" "), finalGoResult, finalTsResult);
   } finally {
     goDir[Symbol.dispose]();
     tsDir[Symbol.dispose]();

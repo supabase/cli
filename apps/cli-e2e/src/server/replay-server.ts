@@ -524,7 +524,10 @@ function serveFromScenario(
     );
   }
 
-  if (JSON.stringify(expected.request.query) !== JSON.stringify(incoming.query)) {
+  if (
+    JSON.stringify(normalizePlaceholders(expected.request.query)) !==
+    JSON.stringify(normalizePlaceholders(incoming.query))
+  ) {
     return new Response(
       JSON.stringify({
         message: [

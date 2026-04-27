@@ -1,5 +1,5 @@
 {
-  "status": 400,
+  "status": 200,
   "headers": {
     "content-type": "application/json; charset=utf-8",
     "x-gotrue-id": "<UUID>",
@@ -8,6 +8,6 @@
     "x-ratelimit-reset": "60"
   },
   "body": {
-    "message": "Project must be active and healthy."
+    "data": []
   }
 }

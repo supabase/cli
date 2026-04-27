@@ -1,0 +1,13 @@
+{
+  "status": 400,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "x-gotrue-id": "<UUID>",
+    "x-ratelimit-limit": "120",
+    "x-ratelimit-remaining": "115",
+    "x-ratelimit-reset": "6"
+  },
+  "body": {
+    "message": "Resource has been removed"
+  }
+}

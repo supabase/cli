@@ -7,7 +7,7 @@
     "authorization": "Bearer <ACCESS_TOKEN>",
     "content-length": "0",
     "host": "localhost:<PORT>",
-    "user-agent": "SupabaseCLI/2.90.0"
+    "user-agent": "SupabaseCLI/"
   },
   "body": null
 }

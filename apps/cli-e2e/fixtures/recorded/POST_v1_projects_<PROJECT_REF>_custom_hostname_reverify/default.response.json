@@ -8,6 +8,6 @@
     "x-ratelimit-reset": "60"
   },
   "body": {
-    "message": "Please enable the Custom Domain add-on for the project first."
+    "message": "Resource has been removed"
   }
 }

@@ -6,7 +6,7 @@
     "accept-encoding": "gzip",
     "authorization": "Bearer <ACCESS_TOKEN>",
     "host": "localhost:<PORT>",
-    "user-agent": "SupabaseCLI/2.90.0"
+    "user-agent": "SupabaseCLI/"
   },
   "body": null
 }

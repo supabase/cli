@@ -1,0 +1,17 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "x-gotrue-id": "<UUID>",
+    "x-ratelimit-limit": "120",
+    "x-ratelimit-remaining": "118",
+    "x-ratelimit-reset": "59"
+  },
+  "body": {
+    "region": "us-east-1",
+    "pitr_enabled": false,
+    "walg_enabled": true,
+    "backups": [],
+    "physical_backup_data": {}
+  }
+}

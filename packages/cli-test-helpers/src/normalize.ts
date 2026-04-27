@@ -1,4 +1,35 @@
 /**
+ * Sort data rows within each pipe-separated table block so that non-deterministic
+ * map-iteration order in the Go CLI doesn't cause flaky parity failures.
+ * Only the rows after each separator line are sorted; header and non-table lines
+ * are left in place.
+ */
+export function sortTableRows(output: string): string {
+  const lines = output.split("\n");
+  let i = 0;
+  const result: string[] = [];
+
+  while (i < lines.length) {
+    const line = lines[i]!;
+    result.push(line);
+    if (/^[\s\-|]+$/.test(line) && line.includes("-")) {
+      i++;
+      const dataRows: string[] = [];
+      while (i < lines.length && lines[i]!.trim() !== "") {
+        dataRows.push(lines[i]!);
+        i++;
+      }
+      dataRows.sort();
+      result.push(...dataRows);
+    } else {
+      i++;
+    }
+  }
+
+  return result.join("\n");
+}
+
+/**
  * Normalize CLI output by stripping non-deterministic content before parity
  * comparisons. Applied to both Go and ts-legacy output so spurious differences
  * in timestamps, versions, paths, and stack traces don't produce false failures.

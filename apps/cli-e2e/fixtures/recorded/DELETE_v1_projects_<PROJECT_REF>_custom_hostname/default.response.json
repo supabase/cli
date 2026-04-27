@@ -8,6 +8,6 @@
     "x-ratelimit-reset": "60"
   },
   "body": {
-    "message": "Custom hostname not configured for project"
+    "message": "Resource has been removed"
   }
 }

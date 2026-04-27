@@ -3,8 +3,8 @@
   "headers": {
     "x-gotrue-id": "<UUID>",
     "x-ratelimit-limit": "120",
-    "x-ratelimit-remaining": "119",
-    "x-ratelimit-reset": "60"
+    "x-ratelimit-remaining": "118",
+    "x-ratelimit-reset": "58"
   },
   "body": null
 }

@@ -1,5 +1,5 @@
 {
-  "status": 200,
+  "status": 400,
   "headers": {
     "content-type": "application/json; charset=utf-8",
     "x-gotrue-id": "<UUID>",
@@ -8,9 +8,6 @@
     "x-ratelimit-reset": "60"
   },
   "body": {
-    "id": 1,
-    "name": "cli-e2e-test",
-    "ref": "<PROJECT_REF>",
-    "slug": "<PROJECT_REF>"
+    "message": "Project not ready for deletion."
   }
 }
