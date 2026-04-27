@@ -82,8 +82,8 @@ func TestLoadOrCreateState(t *testing.T) {
 	t.Run("recovers from corrupted state file", func(t *testing.T) {
 		// Each entry simulates a real-world corruption shape we've observed.
 		corruptions := map[string][]byte{
-			"empty file":             []byte{},
-			"truncated json":         []byte(`{"enabled":tru`),
+			"empty file":     {},
+			"truncated json": []byte(`{"enabled":tru`),
 			"session_last_active is a number (not a string)": []byte(`{"enabled":true,"device_id":"d","session_id":"s","session_last_active":1776770348993,"schema_version":1}`),
 			"session_last_active is a malformed string":      []byte(`{"enabled":true,"device_id":"d","session_id":"s","session_last_active":"not-a-time","schema_version":1}`),
 		}

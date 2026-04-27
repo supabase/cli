@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,6 +18,9 @@ func TestContainerRef(t *testing.T) {
 	})
 
 	t.Run("normalises Windows path separators", func(t *testing.T) {
+		if runtime.GOOS != "windows" {
+			t.Skip("path separator behaviour is Windows-only")
+		}
 		// On Windows, filepath.Join produces backslashes which the Linux
 		// container cannot read; containerRef must convert them.
 		ref := `supabase\.temp\pgdelta\catalog-baseline-17.6.1.106.json`
