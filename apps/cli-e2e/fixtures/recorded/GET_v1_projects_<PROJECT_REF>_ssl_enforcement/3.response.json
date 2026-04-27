@@ -9,7 +9,7 @@
   },
   "body": {
     "currentConfig": {
-      "database": true
+      "database": false
     },
     "appliedSuccessfully": true
   }

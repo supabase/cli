@@ -1,0 +1,12 @@
+{
+  "method": "GET",
+  "path": "/v1/projects/<PROJECT_REF>/billing/addons",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "authorization": "Bearer <ACCESS_TOKEN>",
+    "host": "localhost:<PORT>",
+    "user-agent": "SupabaseCLI/2.90.0"
+  },
+  "body": null
+}

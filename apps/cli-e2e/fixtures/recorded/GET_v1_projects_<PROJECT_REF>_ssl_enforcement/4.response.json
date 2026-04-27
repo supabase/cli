@@ -4,12 +4,12 @@
     "content-type": "application/json; charset=utf-8",
     "x-gotrue-id": "<UUID>",
     "x-ratelimit-limit": "120",
-    "x-ratelimit-remaining": "119",
+    "x-ratelimit-remaining": "118",
     "x-ratelimit-reset": "60"
   },
   "body": {
     "currentConfig": {
-      "database": true
+      "database": false
     },
     "appliedSuccessfully": true
   }

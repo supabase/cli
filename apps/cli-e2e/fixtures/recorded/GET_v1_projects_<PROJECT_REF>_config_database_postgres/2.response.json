@@ -5,12 +5,12 @@
     "x-gotrue-id": "<UUID>",
     "x-ratelimit-limit": "120",
     "x-ratelimit-remaining": "118",
-    "x-ratelimit-reset": "42"
+    "x-ratelimit-reset": "36"
   },
   "body": {
-    "currentConfig": {
-      "database": true
-    },
-    "appliedSuccessfully": true
+    "shared_buffers": "256MB",
+    "max_connections": 100,
+    "statement_timeout": "8s",
+    "effective_cache_size": "768MB"
   }
 }
