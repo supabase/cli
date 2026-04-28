@@ -41,6 +41,9 @@ actions:
 - target: $.components.schemas.DiskRequestBody.properties.attributes.discriminator
   description: Replaces discriminated union with concrete type
   remove: true
+- target: $.components.schemas.JitStateResponse.discriminator
+  description: Replaces discriminated union with concrete type
+  remove: true
 - target: $.paths.*.*.parameters[?(@.name=='branch_id_or_ref')]
   update:
     schema:
