@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -300,6 +301,59 @@ func TestDatabaseStart(t *testing.T) {
 	})
 }
 
+func TestBuildGotrueEnv(t *testing.T) {
+	original := utils.Config
+	t.Cleanup(func() {
+		utils.Config = original
+	})
+
+	t.Run("uses auth scoped external url and relative mailer paths", func(t *testing.T) {
+		utils.Config = config.NewConfig()
+		utils.Config.Api.ExternalUrl = "http://127.0.0.1:54321"
+		utils.Config.Auth.ExternalUrl = "http://127.0.0.1:54321/auth/v1"
+		utils.Config.Auth.JwtIssuer = utils.Config.Auth.ExternalUrl
+		utils.Config.Auth.SiteUrl = "http://127.0.0.1:3000"
+		provider := utils.Config.Auth.External["github"]
+		provider.Enabled = true
+		provider.ClientId = "client-id"
+		provider.Secret.Value = "secret"
+		utils.Config.Auth.External["github"] = provider
+
+		env := envToMap(appendGotrueExternalProviderEnv(buildGotrueEnv(pgconn.Config{
+			Host:     "db",
+			Port:     5432,
+			Database: "postgres",
+			Password: "postgres",
+		})))
+
+		assert.Equal(t, "http://127.0.0.1:54321/auth/v1", env["API_EXTERNAL_URL"])
+		assert.Equal(t, "http://127.0.0.1:54321/auth/v1", env["GOTRUE_JWT_ISSUER"])
+		assert.Equal(t, "/verify", env["GOTRUE_MAILER_URLPATHS_INVITE"])
+		assert.Equal(t, "/verify", env["GOTRUE_MAILER_URLPATHS_CONFIRMATION"])
+		assert.Equal(t, "/verify", env["GOTRUE_MAILER_URLPATHS_RECOVERY"])
+		assert.Equal(t, "/verify", env["GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE"])
+		assert.NotContains(t, env, "GOTRUE_EXTERNAL_GITHUB_REDIRECT_URI")
+	})
+
+	t.Run("preserves explicit provider redirect override", func(t *testing.T) {
+		utils.Config = config.NewConfig()
+		utils.Config.Api.ExternalUrl = "http://127.0.0.1:54321"
+		utils.Config.Auth.ExternalUrl = "http://127.0.0.1:54321/auth/v1"
+		utils.Config.Auth.JwtIssuer = "https://issuer.example.com/auth/v1"
+		utils.Config.Auth.SiteUrl = "http://127.0.0.1:3000"
+		provider := utils.Config.Auth.External["azure"]
+		provider.Enabled = true
+		provider.RedirectUri = "https://example.com/custom/callback"
+		utils.Config.Auth.External["azure"] = provider
+
+		env := envToMap(appendGotrueExternalProviderEnv(buildGotrueEnv(pgconn.Config{})))
+
+		assert.Equal(t, "http://127.0.0.1:54321/auth/v1", env["API_EXTERNAL_URL"])
+		assert.Equal(t, "https://issuer.example.com/auth/v1", env["GOTRUE_JWT_ISSUER"])
+		assert.Equal(t, "https://example.com/custom/callback", env["GOTRUE_EXTERNAL_AZURE_REDIRECT_URI"])
+	})
+}
+
 func TestFormatMapForEnvConfig(t *testing.T) {
 	t.Run("It produces the correct format and removes the trailing comma", func(t *testing.T) {
 		testcases := []struct {
@@ -346,4 +400,15 @@ func TestFormatMapForEnvConfig(t *testing.T) {
 			assert.Regexp(t, r, result)
 		}
 	})
+}
+
+func envToMap(env []string) map[string]string {
+	result := make(map[string]string, len(env))
+	for _, item := range env {
+		key, value, ok := strings.Cut(item, "=")
+		if ok {
+			result[key] = value
+		}
+	}
+	return result
 }
