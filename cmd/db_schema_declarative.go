@@ -463,7 +463,7 @@ func init() {
 	generateFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	generateFlags.String("db-url", "", "Generates declarative schema from the database specified by the connection string (must be percent-encoded).")
 	generateFlags.Bool("linked", false, "Generates declarative schema from the linked project.")
-	generateFlags.BoolVar(&declarativeLocal, "local", false, "Generates declarative schema from the local database.")
+	generateFlags.BoolVar(&declarativeLocal, "local", true, "Generates declarative schema from the local database.")
 	dbDeclarativeGenerateCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	generateFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", generateFlags.Lookup("password")))

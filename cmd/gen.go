@@ -145,8 +145,8 @@ Supported algorithms:
 
 func init() {
 	typeFlags := genTypesCmd.Flags()
-	typeFlags.Bool("local", false, "Generate types from the local dev database.")
 	typeFlags.Bool("linked", false, "Generate types from the linked project.")
+	typeFlags.Bool("local", true, "Generate types from the local dev database.")
 	typeFlags.String("db-url", "", "Generate types from a database url.")
 	typeFlags.StringVar(&flags.ProjectRef, "project-id", "", "Generate types from a project ID.")
 	markFlagTelemetrySafe(typeFlags.Lookup("project-id"))
