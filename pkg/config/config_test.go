@@ -358,6 +358,48 @@ func TestFileSizeLimitConfigParsing(t *testing.T) {
 	})
 }
 
+func TestResolveEmailContentPath(t *testing.T) {
+	t.Run("resolves template and notification content_path consistently", func(t *testing.T) {
+		c := baseConfig{
+			Auth: auth{
+				Email: email{
+					Template: map[string]emailTemplate{
+						"invite": {ContentPath: "templates/invite.html"},
+					},
+					Notification: map[string]notification{
+						"password_changed": {emailTemplate: emailTemplate{ContentPath: "templates/password_changed.html"}},
+					},
+				},
+			},
+		}
+		builder := NewPathBuilder(path.Join("supabase", "config.toml"))
+		err := c.resolve(builder, fs.MapFS{})
+		require.NoError(t, err)
+		assert.Equal(t, path.Join("supabase", "templates", "invite.html"), c.Auth.Email.Template["invite"].ContentPath)
+		assert.Equal(t, path.Join("supabase", "templates", "password_changed.html"), c.Auth.Email.Notification["password_changed"].ContentPath)
+	})
+
+	t.Run("preserves absolute content_path", func(t *testing.T) {
+		c := baseConfig{
+			Auth: auth{
+				Email: email{
+					Template: map[string]emailTemplate{
+						"invite": {ContentPath: "/abs/templates/invite.html"},
+					},
+					Notification: map[string]notification{
+						"password_changed": {emailTemplate: emailTemplate{ContentPath: "/abs/templates/password_changed.html"}},
+					},
+				},
+			},
+		}
+		builder := NewPathBuilder(path.Join("supabase", "config.toml"))
+		err := c.resolve(builder, fs.MapFS{})
+		require.NoError(t, err)
+		assert.Equal(t, "/abs/templates/invite.html", c.Auth.Email.Template["invite"].ContentPath)
+		assert.Equal(t, "/abs/templates/password_changed.html", c.Auth.Email.Notification["password_changed"].ContentPath)
+	})
+}
+
 func TestSanitizeProjectI(t *testing.T) {
 	// Preserves valid consecutive characters
 	assert.Equal(t, "abc", sanitizeProjectId("abc"))

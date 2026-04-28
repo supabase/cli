@@ -712,10 +712,8 @@ func VersionCompare(a, b string) int {
 func (c *baseConfig) resolve(builder pathBuilder, fsys fs.FS) error {
 	// Update content paths
 	for name, tmpl := range c.Auth.Email.Template {
-		// FIXME: only email template is relative to repo directory
-		cwd := filepath.Dir(builder.SupabaseDirPath)
 		if len(tmpl.ContentPath) > 0 && !filepath.IsAbs(tmpl.ContentPath) {
-			tmpl.ContentPath = filepath.Join(cwd, tmpl.ContentPath)
+			tmpl.ContentPath = filepath.Join(builder.SupabaseDirPath, tmpl.ContentPath)
 		}
 		c.Auth.Email.Template[name] = tmpl
 	}
