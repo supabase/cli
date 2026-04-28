@@ -33,6 +33,29 @@ Every time an API endpoint is called during a recording session, it writes a fil
 
 The directory is **cleared on the first call** to each endpoint per session, so re-recording always produces a clean set. Files do not accumulate across runs. The numbered sequence is necessary so parity tests (which call the same endpoint twice — once per CLI target) each get their own fixture entry.
 
+Each endpoint is capped at `MAX_FIXTURE_ENTRIES` (5) — the matcher wraps with
+`entries[index % entries.length]`, so additional entries past the cap add bytes
+without adding coverage. Polling loops therefore self-truncate.
+
+## Recording hygiene
+
+Recording is destructive. `RECORD=true` wipes both `fixtures/recorded/` and
+`fixtures/scenarios/` before any traffic is captured, then repopulates only what
+the running tests exercise. The implications:
+
+- A recording run **must exercise every test that should have a fixture**. Don't
+  skip tests when recording — anything not run loses its fixtures.
+- `test.todo` tests have no scenario file. Either turn the test into a real
+  `testBehaviour` before recording, or accept that no fixture is produced.
+- Container/image SHAs in URL paths are normalized to `<CONTAINER_ID>` so each
+  Docker container does not produce its own fixture directory. If you see
+  recording produce many sha-named directories, the normalization rule in
+  `placeholder.ts:normalizeUrlPath` is probably stale.
+- The `fixture-guard` CI job fails any PR that adds more than 250 files under
+  `apps/cli-e2e/fixtures/`. If you trip it, the recorder almost certainly
+  captured polling traffic or per-resource interactions that should be
+  collapsed via a placeholder.
+
 ## Writing tests
 
 ### `testBehaviour` — the default for all success and error tests

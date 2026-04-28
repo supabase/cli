@@ -66,7 +66,11 @@ export function createHarness(target: CLITarget, options: HarnessOptions): CLIHa
   return { target, options };
 }
 
-export async function exec(harness: CLIHarness, args: string[]): Promise<CLIResult> {
+export async function exec(
+  harness: CLIHarness,
+  args: string[],
+  opts?: { env?: Record<string, string> },
+): Promise<CLIResult> {
   const start = performance.now();
   const cmd = buildCommand(harness.target);
 
@@ -85,6 +89,7 @@ export async function exec(harness: CLIHarness, args: string[]): Promise<CLIResu
     // API call so the only network traffic is the actual Management API call
     // under test. Safe to set globally: it is only used when pooler-url exists.
     SUPABASE_DB_PASSWORD: "test-placeholder-password",
+    ...opts?.env,
   };
 
   // The Go CLI (and the ts-legacy CLI which shells out to Go) uses a profile

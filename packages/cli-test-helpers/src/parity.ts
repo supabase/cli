@@ -138,6 +138,14 @@ function initGitRepo(dir: string): void {
   });
 }
 
+// Files written as side-effects of the Go binary's upgrade-check (PersistentPostRun
+// in the Go CLI's root command) whose content depends on GitHub network state at the
+// moment of each invocation, not on command behavior. Both `go` and `ts-legacy`
+// harnesses shell out to the Go binary, so each run independently writes this file
+// — flaky network or rate-limited GitHub responses produce non-deterministic content
+// that has nothing to do with the command under test.
+const PARITY_IGNORED_PATHS = new Set(["supabase/.temp/cli-latest"]);
+
 /** Snapshot files changed since the initial commit using git status.
  *  Only files that the CLI command actually created, modified, or deleted
  *  appear in the result — pre-existing files are not included. */
@@ -157,6 +165,8 @@ function snapshotChangedFiles(dir: string): FileRecord[] {
     // git status --porcelain format: "XY filename" where XY is a 2-char status code.
     const xy = line.slice(0, 2);
     const filePath = line.slice(3).trim();
+
+    if (PARITY_IGNORED_PATHS.has(filePath)) continue;
 
     if (xy[0] === "D" || xy[1] === "D") {
       records.push({ path: filePath, hash: "deleted" });
@@ -204,8 +214,9 @@ async function collectRunResult(
   cmd: string[],
   dir: string,
   apiUrl: string,
+  extraEnv?: Record<string, string>,
 ): Promise<RunResult> {
-  const result = await exec(harness, cmd);
+  const result = await exec(harness, cmd, extraEnv ? { env: extraEnv } : undefined);
   const requests = await fetchRequestLog(apiUrl);
   const files = snapshotChangedFiles(dir);
   return {
@@ -298,6 +309,8 @@ export interface ParityOptions {
   /** Sort table data rows before comparing stdout. Use when the Go CLI produces
    *  non-deterministic row order (e.g. from map iteration). */
   sortStdoutRows?: boolean;
+  /** Additional environment variables injected into both CLI subprocesses. */
+  extraEnv?: Record<string, string>;
 }
 
 /**
@@ -327,6 +340,7 @@ export async function runParity(opts: ParityOptions, cmd: string[]): Promise<voi
       cmd,
       goDir.path,
       opts.apiUrl,
+      opts.extraEnv,
     );
 
     await fetch(`${opts.apiUrl}/_ctrl/requests`, { method: "DELETE" });
@@ -342,6 +356,7 @@ export async function runParity(opts: ParityOptions, cmd: string[]): Promise<voi
       cmd,
       tsDir.path,
       opts.apiUrl,
+      opts.extraEnv,
     );
 
     // Self-cleaning: reset after ts-legacy so callers start with a clean log.

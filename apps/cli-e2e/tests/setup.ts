@@ -13,7 +13,17 @@ declare module "vitest" {
     orgId: string;
     storageBucket: string;
     pgMockPort: number;
+    /** DOCKER_HOST value (tcp://host:port) pointing at the relay server.
+     *  In record mode the relay forwards to the real Docker socket; in replay
+     *  mode it serves recorded Docker API fixtures. */
+    dockerHostUrl: string;
   }
+}
+
+function resolveDockerSocket(): string {
+  const dockerHost = process.env["DOCKER_HOST"];
+  if (dockerHost?.startsWith("unix://")) return dockerHost.slice("unix://".length);
+  return "/var/run/docker.sock";
 }
 
 function harness(serverUrl: string) {
@@ -49,7 +59,7 @@ async function cleanupProjectsByName(serverUrl: string, names: string[]): Promis
 async function waitForProjectReady(
   stagingApiUrl: string,
   projectRef: string,
-  timeoutMs = 120_000,
+  timeoutMs = 300_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -110,6 +120,12 @@ export async function setup({
   const server = await startReplayServer({ fixturesDir: FIXTURES_DIR, pgMock });
   provide("replayServerUrl", server.url);
 
+  // Docker host URL: relay server in TCP form so DOCKER_HOST env can point at it.
+  // In record mode the relay proxies to the real Docker socket; in replay mode it
+  // serves recorded Docker API fixtures unchanged.
+  const dockerHostUrl = server.url.replace(/^http:\/\//, "tcp://");
+  provide("dockerHostUrl", dockerHostUrl);
+
   if (!isRecording) {
     // Replay mode — no real API calls; any valid 20-char string works as the
     // project ref because fixture paths normalize it to <PROJECT_REF>.
@@ -121,6 +137,10 @@ export async function setup({
       await server.stop();
     };
   }
+
+  // Record mode — wire up Docker proxy so Docker SDK calls (via DOCKER_HOST) are
+  // intercepted by the relay server and forwarded to the real Docker socket.
+  server.setDockerProxyUrl(resolveDockerSocket());
 
   // Record mode — resolve org, then wipe any projects left over from previous
   // failed recording runs before creating a fresh dedicated test project.

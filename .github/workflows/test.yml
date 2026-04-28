@@ -36,6 +36,26 @@ jobs:
       - name: Check code quality
         run: pnpm run check:all
 
+  fixture-guard:
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    name: Cap cli-e2e fixture additions per PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+
+      - name: Cap fixture additions
+        run: |
+          base="origin/${{ github.event.pull_request.base.ref }}"
+          added=$(git diff --name-only --diff-filter=A "$base"...HEAD apps/cli-e2e/fixtures/ | wc -l | tr -d ' ')
+          echo "PR adds $added files under apps/cli-e2e/fixtures/"
+          if [ "$added" -gt 250 ]; then
+            echo "::error ::PR adds $added fixture files (>250). The recorder probably captured polling traffic or per-container interactions — re-record with a clean recorded/ directory and verify the count drops below the cap."
+            exit 1
+          fi
+
   test-core:
     if: github.event.pull_request.draft == false || github.event_name == 'push'
     name: Run unit and integration tests

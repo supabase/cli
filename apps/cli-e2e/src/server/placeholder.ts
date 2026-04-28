@@ -2,6 +2,10 @@
 // when recording and replaying.
 
 const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+// Docker container/image IDs — 64-char lowercase hex (distinct from UUIDs which have dashes).
+// Must run before the 20-char project-ref pattern since container IDs also satisfy [a-z0-9]{20}.
+const DOCKER_SHA256_PATTERN = /\bsha256:[0-9a-f]{64}\b/g;
+const DOCKER_FULL_ID_PATTERN = /\b[0-9a-f]{64}\b/g;
 const ISO_TIMESTAMP_PATTERN = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g;
 // Matches any Bearer token — JWT style (a.b.c) or opaque (sbp_..., etc.)
 const BEARER_TOKEN_PATTERN = /Bearer\s+[A-Za-z0-9._-]+/g;
@@ -38,6 +42,9 @@ export function applyPlaceholders(input: string): { output: string } {
   output = output.replace(JWT_PATTERN, "<JWT>");
   output = output.replace(SUPABASE_KEY_PATTERN, "<API_KEY>");
   output = output.replace(UUID_PATTERN, "<UUID>");
+  // Docker IDs — normalize before the 20-char project-ref pattern fires on sub-matches.
+  output = output.replace(DOCKER_SHA256_PATTERN, "sha256:<IMAGE_ID>");
+  output = output.replace(DOCKER_FULL_ID_PATTERN, "<CONTAINER_ID>");
   // 20-char lowercase alpha strings — project refs
   output = output.replace(/\b[a-z]{20}\b/g, (match) =>
     match.length !== 20 ? match : "<PROJECT_REF>",
@@ -58,7 +65,17 @@ export function applyPlaceholders(input: string): { output: string } {
  *  Apply this to both the stored fixture path and the incoming request path so
  *  both sides of a scenario comparison transform identically. */
 export function normalizeUrlPath(urlPath: string): string {
-  return urlPath.replace(UUID_PATTERN, "<UUID>").replace(/\/[a-z]{20}(\/|$)/g, "/<PROJECT_REF>$1");
+  return (
+    urlPath
+      .replace(UUID_PATTERN, "<UUID>")
+      .replace(/\/[a-z]{20}(\/|$)/g, "/<PROJECT_REF>$1")
+      // Docker API version (/v1.47/ → /<DOCKER_VERSION>/) so fixture keys are
+      // stable across minor Docker Engine upgrades that bump the negotiated API version.
+      .replace(/\/v1\.\d+(\/|$)/g, "/<DOCKER_VERSION>$1")
+      // Docker container/image IDs in URL paths (64-char lowercase hex) — collapse
+      // to a single fixture key so each container does not produce its own dir.
+      .replace(/\/[0-9a-f]{64}(\/|$)/g, "/<CONTAINER_ID>$1")
+  );
 }
 
 /** Normalize a URL path for use as a fixture directory key. */

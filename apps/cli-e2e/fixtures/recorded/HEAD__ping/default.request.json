@@ -1,0 +1,10 @@
+{
+  "method": "HEAD",
+  "path": "/_ping",
+  "query": {},
+  "headers": {
+    "host": "localhost:<PORT>",
+    "user-agent": "Docker-Client/unknown-version (darwin)"
+  },
+  "body": null
+}

@@ -1,0 +1,13 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "api-version": "1.53",
+    "docker-experimental": "false",
+    "ostype": "linux"
+  },
+  "body": {
+    "Volumes": [],
+    "Warnings": null
+  }
+}

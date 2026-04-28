@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 import { join } from "node:path";
 import { URL } from "node:url";
 import type {
@@ -53,12 +54,30 @@ interface MultipartBody {
   parts: MultipartPart[];
 }
 
+/** Envelope used when a recorded body is not parseable as JSON — typically a
+ *  Docker streaming endpoint (image pull progress, container logs, events).
+ *  Stored as base64 so binary frames survive a JSON round-trip.  Replay decodes
+ *  and returns the raw bytes verbatim. */
+interface RawBody {
+  __type: "raw";
+  base64: string;
+}
+
 function isMultipartBody(body: unknown): body is MultipartBody {
   return (
     typeof body === "object" &&
     body !== null &&
     "__type" in body &&
     (body as { __type: unknown }).__type === "multipart"
+  );
+}
+
+function isRawBody(body: unknown): body is RawBody {
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    "__type" in body &&
+    (body as { __type: unknown }).__type === "raw"
   );
 }
 
@@ -123,6 +142,10 @@ interface ReplayServerHandle {
   /** Set the Authorization Bearer token to use when proxying storage calls
    *  to the staging storage URL in record mode. */
   setStorageProxyAuth(token: string): void;
+  /** Set the Docker socket path for proxying versioned Docker API calls in record mode.
+   *  e.g. "/var/run/docker.sock".  In replay mode the path is irrelevant — requests
+   *  are served from pre-recorded fixtures like any other endpoint. */
+  setDockerProxyUrl(socketPath: string): void;
 }
 
 interface ReplayServerOptions {
@@ -142,6 +165,16 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
     throw new Error("RECORD=true requires SUPABASE_STAGING_URL to be set");
   }
 
+  // In record mode, wipe both fixture stores before serving any traffic.  The
+  // recording session will repopulate only what the running tests exercise, so
+  // any orphan from a prior session (e.g. a scenario whose test became test.todo,
+  // or a recorded key the current run doesn't touch) is dropped.  Replay mode is
+  // unaffected.
+  if (isRecord) {
+    rmSync(join(options.fixturesDir, "recorded"), { recursive: true, force: true });
+    rmSync(join(options.fixturesDir, "scenarios"), { recursive: true, force: true });
+  }
+
   const store: FixtureStore = isRecord ? new Map() : loadFixtures(options.fixturesDir);
 
   const counters: SequenceCounters = new Map();
@@ -151,6 +184,7 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
   const recordedKeys = new Set<string>();
   let storageProxyUrl: string | undefined;
   let storageProxyAuth: string | undefined;
+  let dockerProxySocketPath: string | undefined;
 
   const scenario: ScenarioState = { name: null, queue: [], index: 0, log: [] };
   const globalErrorRef: GlobalErrorRef = { value: null };
@@ -243,6 +277,7 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
           scenario,
           storageProxyUrl,
           storageProxyAuth,
+          dockerProxySocketPath,
         );
       }
 
@@ -293,8 +328,37 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
     setStorageProxyAuth: (token) => {
       storageProxyAuth = token;
     },
+    setDockerProxyUrl: (socketPath) => {
+      dockerProxySocketPath = socketPath;
+    },
   };
 }
+
+// Maximum number of recorded entries kept per endpoint key.  More than this
+// adds no test coverage (the matcher wraps with `index % entries.length`) and
+// allows polling loops to inflate the fixture tree indefinitely.
+const MAX_FIXTURE_ENTRIES = 5;
+
+const STRIP_RESPONSE_HEADERS = new Set([
+  "content-encoding",
+  "transfer-encoding",
+  "content-length",
+  "cf-ray",
+  "cf-cache-status",
+  "alt-svc",
+  "nel",
+  "report-to",
+  "set-cookie",
+  "connection",
+  "date",
+  "etag",
+  "server",
+  "strict-transport-security",
+  "vary",
+  "x-powered-by",
+  "access-control-allow-credentials",
+  "access-control-expose-headers",
+]);
 
 async function proxyAndRecord(
   method: string,
@@ -309,18 +373,62 @@ async function proxyAndRecord(
   scenario: ScenarioState,
   storageProxyUrl?: string,
   storageProxyAuth?: string,
+  dockerProxySocketPath?: string,
 ): Promise<Response> {
   const isStoragePath = pathname.startsWith("/storage/v1/");
-  const targetBase = isStoragePath && storageProxyUrl ? storageProxyUrl : stagingUrl;
-  const targetUrl = new URL(pathname, targetBase);
-  for (const [k, v] of Object.entries(query)) {
-    targetUrl.searchParams.set(k, v);
-  }
+  // Docker versioned API paths start with /v1. (decimal) to distinguish from
+  // management API paths which start with /v1/ (slash). /_ping is the Docker
+  // health-check endpoint (no version prefix).
+  const isDockerPath = pathname.startsWith("/v1.") || pathname === "/_ping";
 
   const FORWARD_HEADERS = new Set(["authorization", "content-type", "accept", "user-agent"]);
   const upstreamHeaders: Record<string, string> = {};
   for (const [k, v] of Object.entries(requestHeaders)) {
     if (FORWARD_HEADERS.has(k.toLowerCase())) upstreamHeaders[k] = v;
+  }
+
+  if (isDockerPath && dockerProxySocketPath) {
+    const dockerResult = await proxyToDockerSocket(
+      dockerProxySocketPath,
+      method,
+      pathname,
+      query,
+      upstreamHeaders,
+      requestBody,
+      rawBody,
+    );
+    const responseHeaders: Record<string, string> = {};
+    for (const [k, v] of Object.entries(dockerResult.headers)) {
+      if (!STRIP_RESPONSE_HEADERS.has(k.toLowerCase())) responseHeaders[k] = v;
+    }
+
+    // Stream the response back to the caller immediately.  Recording happens
+    // asynchronously after the body has fully drained — long-running streaming
+    // endpoints (image pull progress, container logs) are not blocked on it.
+    void recordDockerInteraction({
+      bodyPromise: dockerResult.bodyPromise,
+      method,
+      pathname,
+      query,
+      requestHeaders,
+      requestBody,
+      responseStatus: dockerResult.status,
+      responseHeaders,
+      fixturesDir,
+      recordedKeys,
+      scenario,
+    });
+
+    return new Response(dockerResult.stream, {
+      status: dockerResult.status,
+      headers: responseHeaders,
+    });
+  }
+
+  const targetBase = isStoragePath && storageProxyUrl ? storageProxyUrl : stagingUrl;
+  const targetUrl = new URL(pathname, targetBase);
+  for (const [k, v] of Object.entries(query)) {
+    targetUrl.searchParams.set(k, v);
   }
   if (isStoragePath && storageProxyAuth) {
     upstreamHeaders["authorization"] = `Bearer ${storageProxyAuth}`;
@@ -337,39 +445,119 @@ async function proxyAndRecord(
         : undefined,
   });
 
-  const responseBody: unknown = await upstreamRes
+  const responseBody = await upstreamRes
     .clone()
     .json()
     .catch(() => null);
-
-  const STRIP_RESPONSE_HEADERS = new Set([
-    "content-encoding",
-    "transfer-encoding",
-    "content-length",
-    "cf-ray",
-    "cf-cache-status",
-    "alt-svc",
-    "nel",
-    "report-to",
-    "set-cookie",
-    "connection",
-    "date",
-    "etag",
-    "server",
-    "strict-transport-security",
-    "vary",
-    "x-powered-by",
-    "access-control-allow-credentials",
-    "access-control-expose-headers",
-  ]);
   const responseHeaders: Record<string, string> = {};
   for (const [k, v] of upstreamRes.headers.entries()) {
     if (!STRIP_RESPONSE_HEADERS.has(k.toLowerCase())) responseHeaders[k] = v;
   }
+  const upstreamStatus = upstreamRes.status;
+  const responseContentType = upstreamRes.headers.get("content-type") ?? "application/json";
 
+  recordFixture({
+    method,
+    pathname,
+    query,
+    requestHeaders,
+    requestBody,
+    responseStatus: upstreamStatus,
+    responseHeaders,
+    responseBody,
+    fixturesDir,
+    recordedKeys,
+    scenario,
+  });
+
+  return buildApiResponse(responseBody, upstreamStatus, {
+    ...responseHeaders,
+    "content-type": responseContentType,
+  });
+}
+
+/** Record a Docker interaction once its streamed body has fully drained.  Errors
+ *  are logged but do not surface — recording is best-effort and must not affect
+ *  the response the caller already received. */
+async function recordDockerInteraction(params: {
+  bodyPromise: Promise<Buffer>;
+  method: string;
+  pathname: string;
+  query: Record<string, string>;
+  requestHeaders: Record<string, string>;
+  requestBody: unknown;
+  responseStatus: number;
+  responseHeaders: Record<string, string>;
+  fixturesDir: string;
+  recordedKeys: Set<string>;
+  scenario: ScenarioState;
+}): Promise<void> {
+  let body: Buffer;
+  try {
+    body = await params.bodyPromise;
+  } catch (err) {
+    console.error(
+      `[replay-server] failed to capture Docker body for ${params.method} ${params.pathname}:`,
+      err,
+    );
+    return;
+  }
+
+  let responseBody: unknown;
+  if (body.length === 0) {
+    responseBody = null;
+  } else {
+    try {
+      responseBody = JSON.parse(body.toString("utf8"));
+    } catch {
+      // Non-JSON or chunked NDJSON (image pull progress, container log frames,
+      // event streams) — preserve as a base64 envelope so replay can return the
+      // bytes verbatim instead of silently dropping them.
+      responseBody = { __type: "raw", base64: body.toString("base64") };
+    }
+  }
+
+  recordFixture({
+    method: params.method,
+    pathname: params.pathname,
+    query: params.query,
+    requestHeaders: params.requestHeaders,
+    requestBody: params.requestBody,
+    responseStatus: params.responseStatus,
+    responseHeaders: params.responseHeaders,
+    responseBody,
+    fixturesDir: params.fixturesDir,
+    recordedKeys: params.recordedKeys,
+    scenario: params.scenario,
+  });
+}
+
+function recordFixture(params: {
+  method: string;
+  pathname: string;
+  query: Record<string, string>;
+  requestHeaders: Record<string, string>;
+  requestBody: unknown;
+  responseStatus: number;
+  responseHeaders: Record<string, string>;
+  responseBody: unknown;
+  fixturesDir: string;
+  recordedKeys: Set<string>;
+  scenario: ScenarioState;
+}): void {
   const rawPair = JSON.stringify({
-    request: { method, path: pathname, query, headers: requestHeaders, body: requestBody },
-    response: { status: upstreamRes.status, headers: responseHeaders, body: responseBody },
+    request: {
+      method: params.method,
+      path: params.pathname,
+      query: params.query,
+      headers: params.requestHeaders,
+      body: params.requestBody,
+    },
+    response: {
+      status: params.responseStatus,
+      headers: params.responseHeaders,
+      body: params.responseBody,
+    },
   });
   const { output } = applyPlaceholders(rawPair);
   const normalized = JSON.parse(output) as {
@@ -378,14 +566,13 @@ async function proxyAndRecord(
   };
   // Scenario interactions use unnumbered path placeholders so that comparison
   // against incoming paths (normalized the same way) is always idempotent.
-  normalized.request.path = normalizeUrlPath(pathname);
+  normalized.request.path = normalizeUrlPath(params.pathname);
 
-  // Write to recorded/ (per-endpoint defaults, idempotent re-recording)
-  const key = fixtureKey(method, pathname);
-  const keyDir = join(fixturesDir, "recorded", key);
+  const key = fixtureKey(params.method, params.pathname);
+  const keyDir = join(params.fixturesDir, "recorded", key);
 
-  if (!recordedKeys.has(key)) {
-    recordedKeys.add(key);
+  if (!params.recordedKeys.has(key)) {
+    params.recordedKeys.add(key);
     if (existsSync(keyDir)) {
       for (const file of readdirSync(keyDir)) {
         unlinkSync(join(keyDir, file));
@@ -396,28 +583,145 @@ async function proxyAndRecord(
   mkdirSync(keyDir, { recursive: true });
 
   const nextIndex = nextFixtureIndex(keyDir);
-  const indexStr = nextIndex === 1 ? "default" : String(nextIndex);
+  // Cap: the matcher's `index % entries.length` wrap means more than a few
+  // entries adds bytes without adding coverage.  Stop persisting after the cap
+  // is reached; the proxied response is still returned to the caller.
+  if (nextIndex <= MAX_FIXTURE_ENTRIES) {
+    const indexStr = nextIndex === 1 ? "default" : String(nextIndex);
 
-  writeFileSync(
-    join(keyDir, `${indexStr}.request.json`),
-    JSON.stringify(normalized.request, null, 2),
-  );
-  writeFileSync(
-    join(keyDir, `${indexStr}.response.json`),
-    JSON.stringify(normalized.response, null, 2),
-  );
-
-  // If a scenario is active, also append this interaction to interactions.json.
-  if (scenario.name !== null) {
-    scenario.log.push({ request: normalized.request, response: normalized.response });
-    writeScenarioInteractions(fixturesDir, scenario.name, scenario.log);
+    writeFileSync(
+      join(keyDir, `${indexStr}.request.json`),
+      JSON.stringify(normalized.request, null, 2),
+    );
+    writeFileSync(
+      join(keyDir, `${indexStr}.response.json`),
+      JSON.stringify(normalized.response, null, 2),
+    );
   }
 
-  return Response.json(responseBody, {
-    status: upstreamRes.status,
-    headers: {
-      "content-type": upstreamRes.headers.get("content-type") ?? "application/json",
-    },
+  // If a scenario is active, also append this interaction to interactions.json.
+  if (params.scenario.name !== null) {
+    params.scenario.log.push({ request: normalized.request, response: normalized.response });
+    writeScenarioInteractions(params.fixturesDir, params.scenario.name, params.scenario.log);
+  }
+}
+
+interface DockerProxyResult {
+  status: number;
+  headers: Record<string, string>;
+  /** Streamed back to the caller — chunks arrive as Docker emits them, so
+   *  long-running streaming endpoints (image pull progress, container logs,
+   *  events) are not blocked on the full upstream body. */
+  stream: ReadableStream<Uint8Array>;
+  /** Resolves with the full concatenated body once the upstream stream ends.
+   *  Used by `proxyAndRecord` to write the fixture *after* the response has
+   *  flushed to the caller. */
+  bodyPromise: Promise<Buffer>;
+}
+
+/** Idle timeout: abort if the upstream socket goes silent for this long.  The
+ *  previous hard timeout (60s wall-clock) killed legitimate slow operations
+ *  like first-time image pulls.  An idle timeout only kills truly stuck
+ *  connections — anything still emitting progress events stays alive. */
+const DOCKER_SOCKET_IDLE_TIMEOUT_MS = 60_000;
+
+async function proxyToDockerSocket(
+  socketPath: string,
+  method: string,
+  pathname: string,
+  query: Record<string, string>,
+  headers: Record<string, string>,
+  requestBody: unknown,
+  rawBody: ReadableStream<Uint8Array> | null,
+): Promise<DockerProxyResult> {
+  const qStr = new URLSearchParams(query).toString();
+  const path = qStr ? `${pathname}?${qStr}` : pathname;
+
+  let bodyBuf: Buffer | undefined;
+  if (requestBody != null) {
+    bodyBuf = Buffer.from(JSON.stringify(requestBody), "utf8");
+  } else if (rawBody != null) {
+    const ab = await new Response(rawBody).arrayBuffer();
+    bodyBuf = Buffer.from(ab);
+  }
+
+  // Strip hop-by-hop headers that must not be forwarded to the upstream socket.
+  const HOP_BY_HOP = new Set([
+    "connection",
+    "transfer-encoding",
+    "host",
+    "keep-alive",
+    "content-length",
+  ]);
+  const reqHeaders: Record<string, string | number> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    if (!HOP_BY_HOP.has(k.toLowerCase())) reqHeaders[k] = v;
+  }
+  if (bodyBuf) {
+    reqHeaders["Content-Length"] = bodyBuf.length;
+  }
+
+  return new Promise<DockerProxyResult>((resolve, reject) => {
+    const req = httpRequest({ socketPath, method, path, headers: reqHeaders }, (res) => {
+      if (res.statusCode == null) {
+        reject(new Error("Docker socket returned response with no status code"));
+        return;
+      }
+
+      const resHeaders: Record<string, string> = {};
+      for (const [k, v] of Object.entries(res.headers)) {
+        if (typeof v === "string") resHeaders[k] = v;
+        else if (Array.isArray(v)) resHeaders[k] = v.join(", ");
+      }
+
+      const chunks: Buffer[] = [];
+      let bodyResolve: (buf: Buffer) => void = () => {};
+      let bodyReject: (err: Error) => void = () => {};
+      const bodyPromise = new Promise<Buffer>((res2, rej2) => {
+        bodyResolve = res2;
+        bodyReject = rej2;
+      });
+
+      let lastActivity = Date.now();
+      const idleTimer = setInterval(() => {
+        if (Date.now() - lastActivity > DOCKER_SOCKET_IDLE_TIMEOUT_MS) {
+          clearInterval(idleTimer);
+          req.destroy(new Error(`Docker socket idle for ${DOCKER_SOCKET_IDLE_TIMEOUT_MS / 1000}s`));
+        }
+      }, 5_000);
+
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          res.on("data", (chunk: Buffer) => {
+            lastActivity = Date.now();
+            chunks.push(chunk);
+            controller.enqueue(new Uint8Array(chunk));
+          });
+          res.on("end", () => {
+            clearInterval(idleTimer);
+            controller.close();
+            bodyResolve(Buffer.concat(chunks));
+          });
+          res.on("error", (err) => {
+            clearInterval(idleTimer);
+            controller.error(err);
+            bodyReject(err);
+          });
+        },
+        cancel(reason) {
+          clearInterval(idleTimer);
+          req.destroy(reason instanceof Error ? reason : undefined);
+        },
+      });
+
+      resolve({ status: res.statusCode, headers: resHeaders, stream, bodyPromise });
+    });
+    req.on("error", (err) => {
+      req.destroy();
+      reject(err);
+    });
+    if (bodyBuf) req.write(bodyBuf);
+    req.end();
   });
 }
 
@@ -446,6 +750,29 @@ function nextFixtureIndex(keyDir: string): number {
   return max + 1;
 }
 
+/** Build an API response, respecting HTTP no-body status codes (204, 304, 205). */
+function buildApiResponse(
+  body: unknown,
+  status: number,
+  headers: Record<string, string>,
+): Response {
+  if (status === 204 || status === 304 || status === 205) {
+    return new Response(null, { status, headers });
+  }
+  if (isMultipartBody(body)) {
+    return buildMultipartResponse(body, status, headers);
+  }
+  if (isRawBody(body)) {
+    return new Response(Buffer.from(body.base64, "base64"), { status, headers });
+  }
+  // Docker endpoints frequently return an empty body where Response.json(null)
+  // would emit the JSON literal "null".  Honor the empty intent for null bodies.
+  if (body === null) {
+    return new Response(null, { status, headers });
+  }
+  return Response.json(body, { status, headers });
+}
+
 function serveFromFixtures(
   store: FixtureStore,
   counters: SequenceCounters,
@@ -460,17 +787,11 @@ function serveFromFixtures(
       headers: { "Content-Type": "application/json" },
     });
   }
-  if (isMultipartBody(result.entry.response.body)) {
-    return buildMultipartResponse(
-      result.entry.response.body,
-      result.entry.response.status,
-      result.entry.response.headers,
-    );
-  }
-  return Response.json(result.entry.response.body, {
-    status: result.entry.response.status,
-    headers: result.entry.response.headers,
-  });
+  return buildApiResponse(
+    result.entry.response.body,
+    result.entry.response.status,
+    result.entry.response.headers,
+  );
 }
 
 function normalizePlaceholders(value: unknown): unknown {
@@ -557,17 +878,11 @@ function serveFromScenario(
     );
   }
 
-  if (isMultipartBody(expected.response.body)) {
-    return buildMultipartResponse(
-      expected.response.body,
-      expected.response.status,
-      expected.response.headers,
-    );
-  }
-  return Response.json(expected.response.body, {
-    status: expected.response.status,
-    headers: expected.response.headers,
-  });
+  return buildApiResponse(
+    expected.response.body,
+    expected.response.status,
+    expected.response.headers,
+  );
 }
 
 interface ControlContext {
