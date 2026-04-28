@@ -166,6 +166,27 @@ SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_STAGING_URL=https://api.supabase.green \
 
 After recording, replay must pass with no changes between the two commands.
 
+### Sharding (replay only)
+
+CI splits the replay suite across 3 parallel shards via vitest's `--shard`
+flag (https://vitest.dev/guide/improving-performance.html#sharding).
+Locally, invoke vitest directly so the flag isn't eaten by a `--`
+passthrough quirk in `pnpm run` / `nx run-many`:
+
+```sh
+pnpm --filter @supabase/cli-e2e exec bun --bun vitest run --shard=1/3
+pnpm --filter @supabase/cli-e2e exec bun --bun vitest run --shard=2/3
+pnpm --filter @supabase/cli-e2e exec bun --bun vitest run --shard=3/3
+```
+
+The custom file sequencer in `vitest.config.ts` (lexicographic) runs
+per-process, so each shard still has deterministic intra-shard ordering.
+
+**Sharding is replay-only — never shard a recording run.** The recorder
+is a single-job operation; parallel shards would race on the shared
+`fixtures/recorded/` directory. The `record` script does not accept
+`--shard`.
+
 ## Go binary version requirement
 
 The ts-legacy CLI proxies commands to a Go binary (`SUPABASE_GO_BINARY` → bundled package binary → system `supabase`). If you are testing commands that were added to the Go CLI after your system `supabase` binary was installed, `testBehaviour` tests for those commands will fail with "unknown command".
