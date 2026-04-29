@@ -34,8 +34,9 @@ var (
 		},
 	}
 
-	options storage.FileOptions
-	maxJobs uint
+	options   storage.FileOptions
+	maxJobs   uint
+	noClobber bool
 
 	cpCmd = &cobra.Command{
 		Use: "cp <src> <dst>",
@@ -50,7 +51,7 @@ cp -r ss:///bucket/docs .
 				fo.CacheControl = options.CacheControl
 				fo.ContentType = options.ContentType
 			}
-			return cp.Run(cmd.Context(), args[0], args[1], recursive, maxJobs, afero.NewOsFs(), opts)
+			return cp.Run(cmd.Context(), args[0], args[1], recursive, maxJobs, noClobber, afero.NewOsFs(), opts)
 		},
 	}
 
@@ -89,6 +90,7 @@ func init() {
 	cpFlags.StringVar(&options.ContentType, "content-type", "", "Custom Content-Type header for HTTP upload.")
 	cpFlags.Lookup("content-type").DefValue = "auto-detect"
 	cpFlags.UintVarP(&maxJobs, "jobs", "j", 1, "Maximum number of parallel jobs.")
+	cpFlags.BoolVarP(&noClobber, "no-clobber", "n", false, "Do not overwrite an existing file.")
 	storageCmd.AddCommand(cpCmd)
 	rmCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively remove a directory.")
 	storageCmd.AddCommand(rmCmd)
