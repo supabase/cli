@@ -4,13 +4,13 @@
 
 // Setup type definitions for built-in Supabase Runtime APIs
 import "@supabase/functions-js/edge-runtime.d.ts"
-import { withSupabase } from '@supabase/server'
+import { withSupabase } from "@supabase/server"
 
 console.log("Hello from Functions!")
 
 // This endpoint uses 'user' access, credentials is required.
 export default {
-  fetch: withSupabase({ allow: 'user' }, async (_req, ctx) => {
+  fetch: withSupabase({ allow: "user" }, async (_req, ctx) => {
     const email = ctx.userClaims?.email;
 
     return Response.json({
