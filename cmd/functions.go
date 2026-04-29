@@ -91,6 +91,7 @@ var (
 			string(new_.AuthAccessModeApiKey),
 			string(new_.AuthAccessModeUser),
 		},
+		Value: string(new_.AuthAccessModeApiKey),
 	}
 	functionsNewCmd = &cobra.Command{
 		Use:   "new <Function name>",
@@ -101,10 +102,7 @@ var (
 			return cmd.Root().PersistentPreRunE(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			authMode := new_.AuthAccessModeApiKey
-			if len(authAccessMode.Value) > 0 {
-				authMode = new_.AuthAccessMode(authAccessMode.Value)
-			}
+			authMode := new_.AuthAccessMode(authAccessMode.Value)
 
 			return new_.Run(cmd.Context(), args[0], authMode, afero.NewOsFs())
 		},
@@ -184,7 +182,7 @@ func init() {
 	functionsDownloadCmd.MarkFlagsMutuallyExclusive("use-api", "use-docker", "legacy-bundle")
 	cobra.CheckErr(downloadFlags.MarkHidden("legacy-bundle"))
 	cobra.CheckErr(downloadFlags.MarkHidden("use-docker"))
-	functionsNewCmd.Flags().Var(&authAccessMode, "auth", "use a specific auth access (default apikey)")
+	functionsNewCmd.Flags().Var(&authAccessMode, "auth", "use a specific auth access")
 	functionsCmd.AddCommand(functionsListCmd)
 	functionsCmd.AddCommand(functionsDeleteCmd)
 	functionsCmd.AddCommand(functionsDeployCmd)
