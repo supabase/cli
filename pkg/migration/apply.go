@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgx/v4"
@@ -23,9 +22,8 @@ func FindPendingMigrations(localMigrations, remoteMigrations []string) ([]string
 	i, j := 0, 0
 	for i < len(remoteMigrations) && j < len(localMigrations) {
 		remote := remoteMigrations[i]
-		filename := filepath.Base(localMigrations[j])
-		// Check if migration has been applied before, LoadLocalMigrations guarantees a match
-		local := migrateFilePattern.FindStringSubmatch(filename)[1]
+		// Extract version from path, supporting both flat files and folder-based migrations
+		local, _, _ := ParseVersion(localMigrations[j])
 		if remote == local {
 			j++
 			i++
@@ -60,8 +58,7 @@ func ApplyMigrations(ctx context.Context, pending []string, conn *pgx.Conn, fsys
 		}
 	}
 	for _, path := range pending {
-		filename := filepath.Base(path)
-		fmt.Fprintf(os.Stderr, "Applying migration %s...\n", filename)
+		fmt.Fprintf(os.Stderr, "Applying migration %s...\n", MigrationName(path))
 		// Reset all connection settings that might have been modified by another statement on the same connection
 		// eg: `SELECT pg_catalog.set_config('search_path', '', false);`
 		if _, err := conn.Exec(ctx, "RESET ALL"); err != nil {

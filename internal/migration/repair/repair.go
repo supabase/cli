@@ -88,15 +88,28 @@ func UpdateMigrationTable(ctx context.Context, conn *pgx.Conn, version []string,
 }
 
 func GetMigrationFile(version string, fsys afero.Fs) (string, error) {
+	// Try flat file first: version_*.sql
 	path := filepath.Join(utils.MigrationsDir, version+"_*.sql")
 	matches, err := afero.Glob(fsys, path)
 	if err != nil {
 		return "", errors.Errorf("failed to glob migration files: %w", err)
 	}
-	if len(matches) == 0 {
-		return "", errors.Errorf("glob %s: %w", path, os.ErrNotExist)
+	if len(matches) > 0 {
+		return matches[0], nil
 	}
-	return matches[0], nil
+	// Try folder-based migration: version_*/*.sql
+	dirPath := filepath.Join(utils.MigrationsDir, version+"_*", "*.sql")
+	dirMatches, err := afero.Glob(fsys, dirPath)
+	if err != nil {
+		return "", errors.Errorf("failed to glob migration directories: %w", err)
+	}
+	if len(dirMatches) == 1 {
+		return dirMatches[0], nil
+	}
+	if len(dirMatches) > 1 {
+		return "", errors.Errorf("multiple .sql files found for version %s", version)
+	}
+	return "", errors.Errorf("no migration found for version %s: %w", version, os.ErrNotExist)
 }
 
 func NewMigrationFromVersion(version string, fsys afero.Fs) (*migration.MigrationFile, error) {

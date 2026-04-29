@@ -89,4 +89,58 @@ func TestLocalMigrations(t *testing.T) {
 		// Check error
 		assert.ErrorContains(t, err, "failed to read directory:")
 	})
+
+	t.Run("loads folder-based migrations", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := fs.MapFS{
+			"20220727064246_test.sql":                        &fs.MapFile{},
+			"20242409125510_premium_mister_fear/schema.sql":  &fs.MapFile{},
+			"20242409125510_premium_mister_fear/snapshot.json": &fs.MapFile{},
+		}
+		// Run test
+		versions, err := ListLocalMigrations(".", fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Equal(t, []string{
+			"20220727064246_test.sql",
+			"20242409125510_premium_mister_fear/schema.sql",
+		}, versions)
+	})
+
+	t.Run("skips directory without .sql file", func(t *testing.T) {
+		// Setup in-memory fs — directory with only snapshot.json, no .sql file
+		fsys := fs.MapFS{
+			"20242409125510_premium_mister_fear/snapshot.json": &fs.MapFile{},
+		}
+		// Run test
+		versions, err := ListLocalMigrations(".", fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, versions)
+	})
+
+	t.Run("skips directory with multiple .sql files", func(t *testing.T) {
+		// Setup in-memory fs — directory with more than one .sql file
+		fsys := fs.MapFS{
+			"20242409125510_premium_mister_fear/schema.sql": &fs.MapFile{},
+			"20242409125510_premium_mister_fear/extra.sql":  &fs.MapFile{},
+		}
+		// Run test
+		versions, err := ListLocalMigrations(".", fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, versions)
+	})
+
+	t.Run("skips directory with non-matching name", func(t *testing.T) {
+		// Setup in-memory fs — directory name doesn't start with digits
+		fsys := fs.MapFS{
+			"some_random_dir/schema.sql": &fs.MapFile{},
+		}
+		// Run test
+		versions, err := ListLocalMigrations(".", fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, versions)
+	})
 }

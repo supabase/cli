@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
@@ -118,8 +117,7 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 
 func confirmPushAll(pending []string) (msg string) {
 	for _, path := range pending {
-		filename := filepath.Base(path)
-		msg += fmt.Sprintf(" • %s\n", utils.Bold(filename))
+		msg += fmt.Sprintf(" • %s\n", utils.Bold(migration.MigrationName(path)))
 	}
 	return msg
 }

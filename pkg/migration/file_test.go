@@ -100,6 +100,21 @@ func TestMigrationFile(t *testing.T) {
 		assert.ErrorContains(t, err, "At statement: 0")
 	})
 
+	t.Run("new from folder-based migration", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := fs.MapFS{
+			"20242409125510_premium_mister_fear/schema.sql":   &fs.MapFile{Data: []byte("CREATE TABLE foo (id int)")},
+			"20242409125510_premium_mister_fear/snapshot.json": &fs.MapFile{Data: []byte("{}")},
+		}
+		// Run test
+		migration, err := NewMigrationFromFile("20242409125510_premium_mister_fear/schema.sql", fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Equal(t, "20242409125510", migration.Version)
+		assert.Equal(t, "premium_mister_fear", migration.Name)
+		assert.Len(t, migration.Statements, 1)
+	})
+
 	t.Run("skips hint for schema-qualified type errors", func(t *testing.T) {
 		migration := MigrationFile{
 			Statements: []string{"CREATE TABLE test (path extensions.ltree NOT NULL)"},
@@ -157,4 +172,61 @@ func TestIsSchemaQualified(t *testing.T) {
 	assert.True(t, IsSchemaQualified("public.my_type"))
 	assert.False(t, IsSchemaQualified("ltree"))
 	assert.False(t, IsSchemaQualified(""))
+}
+
+func TestParseVersion(t *testing.T) {
+	t.Run("extracts version from flat file", func(t *testing.T) {
+		version, name, ok := ParseVersion("20220727064247_create_table.sql")
+		assert.True(t, ok)
+		assert.Equal(t, "20220727064247", version)
+		assert.Equal(t, "create_table", name)
+	})
+
+	t.Run("extracts version from flat file with path", func(t *testing.T) {
+		version, name, ok := ParseVersion("supabase/migrations/20220727064247_create_table.sql")
+		assert.True(t, ok)
+		assert.Equal(t, "20220727064247", version)
+		assert.Equal(t, "create_table", name)
+	})
+
+	t.Run("extracts version from folder-based migration", func(t *testing.T) {
+		version, name, ok := ParseVersion("supabase/migrations/20242409125510_premium_mister_fear/schema.sql")
+		assert.True(t, ok)
+		assert.Equal(t, "20242409125510", version)
+		assert.Equal(t, "premium_mister_fear", name)
+	})
+
+	t.Run("extracts version from folder-based migration without parent path", func(t *testing.T) {
+		version, name, ok := ParseVersion("20242409125510_premium_mister_fear/schema.sql")
+		assert.True(t, ok)
+		assert.Equal(t, "20242409125510", version)
+		assert.Equal(t, "premium_mister_fear", name)
+	})
+
+	t.Run("returns false for non-matching path", func(t *testing.T) {
+		_, _, ok := ParseVersion("random_file.txt")
+		assert.False(t, ok)
+	})
+
+	t.Run("returns false for .sql without matching parent dir", func(t *testing.T) {
+		_, _, ok := ParseVersion("some_dir/schema.sql")
+		assert.False(t, ok)
+	})
+}
+
+func TestMigrationName(t *testing.T) {
+	t.Run("returns filename for flat migration", func(t *testing.T) {
+		assert.Equal(t, "20220727064247_create_table.sql", MigrationName("supabase/migrations/20220727064247_create_table.sql"))
+	})
+
+	t.Run("returns dir/file for folder-based migration", func(t *testing.T) {
+		assert.Equal(t,
+			"20242409125510_premium_mister_fear/schema.sql",
+			MigrationName("supabase/migrations/20242409125510_premium_mister_fear/schema.sql"),
+		)
+	})
+
+	t.Run("returns filename when no parent directory", func(t *testing.T) {
+		assert.Equal(t, "20220727064247_create_table.sql", MigrationName("20220727064247_create_table.sql"))
+	})
 }
