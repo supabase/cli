@@ -25,6 +25,6 @@ export default {
   2. Make an HTTP request:
 
   curl -i --location --request POST '{{ .URL }}' \
-    --header 'apiKey: {{ .PublishableKey }}'
+    --header 'apiKey: {{ .PublishableKey }}' \
     --header 'Authorization: Bearer <UserToken>'
 */
