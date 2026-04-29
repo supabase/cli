@@ -238,3 +238,11 @@ services:
           - /mcp
     plugins:
       - name: cors
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Host: localhost"
+          replace:
+            headers:
+              - "Host: localhost"
