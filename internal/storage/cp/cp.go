@@ -22,7 +22,7 @@ import (
 
 var errUnsupportedOperation = errors.New("Unsupported operation")
 
-func Run(ctx context.Context, src, dst string, recursive bool, maxJobs uint, fsys afero.Fs, opts ...func(*storage.FileOptions)) error {
+func Run(ctx context.Context, src, dst string, recursive bool, maxJobs uint, noClobber bool, fsys afero.Fs, opts ...func(*storage.FileOptions)) error {
 	srcParsed, err := url.Parse(src)
 	if err != nil {
 		return errors.Errorf("failed to parse src url: %w", err)
@@ -41,7 +41,7 @@ func Run(ctx context.Context, src, dst string, recursive bool, maxJobs uint, fsy
 			localPath = filepath.Join(utils.CurrentDirAbs, dst)
 		}
 		if recursive {
-			return DownloadStorageObjectAll(ctx, api, srcParsed.Path, localPath, maxJobs, fsys)
+			return DownloadStorageObjectAll(ctx, api, srcParsed.Path, localPath, maxJobs, noClobber, fsys)
 		}
 		return api.DownloadObject(ctx, srcParsed.Path, localPath, fsys)
 	} else if srcParsed.Scheme == "" && strings.EqualFold(dstParsed.Scheme, client.STORAGE_SCHEME) {
@@ -50,7 +50,7 @@ func Run(ctx context.Context, src, dst string, recursive bool, maxJobs uint, fsy
 			localPath = filepath.Join(utils.CurrentDirAbs, localPath)
 		}
 		if recursive {
-			return UploadStorageObjectAll(ctx, api, dstParsed.Path, localPath, maxJobs, fsys, opts...)
+			return UploadStorageObjectAll(ctx, api, dstParsed.Path, localPath, maxJobs, noClobber, fsys, opts...)
 		}
 		return api.UploadObject(ctx, dstParsed.Path, src, utils.NewRootFS(fsys), opts...)
 	} else if strings.EqualFold(srcParsed.Scheme, client.STORAGE_SCHEME) && strings.EqualFold(dstParsed.Scheme, client.STORAGE_SCHEME) {
@@ -60,7 +60,7 @@ func Run(ctx context.Context, src, dst string, recursive bool, maxJobs uint, fsy
 	return errors.New(errUnsupportedOperation)
 }
 
-func DownloadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remotePath, localPath string, maxJobs uint, fsys afero.Fs) error {
+func DownloadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remotePath, localPath string, maxJobs uint, noClobber bool, fsys afero.Fs) error {
 	// Prepare local directory for download
 	if fi, err := fsys.Stat(localPath); err == nil && fi.IsDir() {
 		localPath = filepath.Join(localPath, path.Base(remotePath))
@@ -71,7 +71,6 @@ func DownloadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remot
 	err := ls.IterateStoragePathsAll(ctx, api, remotePath, func(objectPath string) error {
 		relPath := strings.TrimPrefix(objectPath, remotePath)
 		dstPath := filepath.Join(localPath, filepath.FromSlash(relPath))
-		fmt.Fprintln(os.Stderr, "Downloading:", objectPath, "=>", dstPath)
 		count++
 		job := func() error {
 			if strings.HasSuffix(objectPath, "/") {
@@ -81,9 +80,21 @@ func DownloadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remot
 				return err
 			}
 			// Overwrites existing file when using --recursive flag
-			f, err := fsys.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+			var f afero.File
+			var err error
+			if noClobber {
+				f, err = fsys.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+			} else {
+				f, err = fsys.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+			}
 			if err != nil {
+				if errors.Is(err, afero.ErrFileExists) {
+					fmt.Fprintln(os.Stderr, "Skipped (already exists):", objectPath, "=>", dstPath)
+					return nil
+				}
 				return errors.Errorf("failed to create file: %w", err)
+			} else {
+				fmt.Fprintln(os.Stderr, "Downloading:", objectPath, "=>", dstPath)
 			}
 			defer f.Close()
 			return api.DownloadObjectStream(ctx, objectPath, f)
@@ -96,7 +107,7 @@ func DownloadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remot
 	return errors.Join(err, jq.Collect())
 }
 
-func UploadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remotePath, localPath string, maxJobs uint, fsys afero.Fs, opts ...func(*storage.FileOptions)) error {
+func UploadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remotePath, localPath string, maxJobs uint, noClobber bool, fsys afero.Fs, opts ...func(*storage.FileOptions)) error {
 	noSlash := strings.TrimSuffix(remotePath, "/")
 	// Check if directory exists on remote
 	dirExists := false
@@ -115,9 +126,9 @@ func UploadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remoteP
 			return err
 		}
 	}
-	// Overwrites existing object when using --recursive flag
+	// Overwrites existing object when using --recursive flag except when using --no-clobber (shorthand -n) flag
 	opts = append(opts, func(fo *storage.FileOptions) {
-		fo.Overwrite = true
+		fo.Overwrite = !noClobber
 	})
 	baseName := filepath.Base(localPath)
 	jq := queue.NewJobQueue(maxJobs)
@@ -145,6 +156,15 @@ func UploadStorageObjectAll(ctx context.Context, api storage.StorageAPI, remoteP
 				dstPath = path.Join(dstPath, baseName)
 			}
 			dstPath = path.Join(dstPath, relPath)
+		}
+		if noClobber {
+			bucket, prefix := client.SplitBucketPrefix(dstPath)
+			objects, err := api.ListObjects(ctx, bucket, prefix, 0)
+			fileExists := err == nil && len(objects) == 1 && objects[0].Id != nil
+			if fileExists {
+				fmt.Fprintln(os.Stderr, "Skipped (already exists):", filePath, "=>", dstPath)
+				return nil
+			}
 		}
 		fmt.Fprintln(os.Stderr, "Uploading:", filePath, "=>", dstPath)
 		job := func() error {
