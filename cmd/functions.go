@@ -46,14 +46,14 @@ var (
 	functionsDownloadCmd = &cobra.Command{
 		Use:   "download [Function name]",
 		Short: "Download a Function from Supabase",
-		Long:  "Download the source code for a Function from the linked Supabase project. If no function name is provided, downloads all functions.",
+		Long:  "Download the source code for a Function from the linked Supabase project. If no function name is provided, or if --all is used, downloads all functions.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if useApi {
 				useDocker = false
 			}
 			slug := ""
-			if len(args) > 0 {
+			if len(args) > 0 && !downloadAll {
 				slug = args[0]
 			}
 			return download.Run(cmd.Context(), slug, flags.ProjectRef, useLegacyBundle, useDocker, afero.NewOsFs())
@@ -63,6 +63,7 @@ var (
 	useApi          bool
 	useDocker       bool
 	useLegacyBundle bool
+	downloadAll     bool
 	noVerifyJWT     = new(bool)
 	importMapPath   string
 	prune           bool
