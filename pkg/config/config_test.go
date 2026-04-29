@@ -321,6 +321,21 @@ func TestRemoteOverride(t *testing.T) {
 	})
 }
 
+func TestEnvOverridesSkipInternalFields(t *testing.T) {
+	config := NewConfig()
+	fsys := fs.MapFS{
+		"supabase/config.toml":           &fs.MapFile{Data: testInitConfigEmbed},
+		"supabase/templates/invite.html": &fs.MapFile{},
+	}
+	t.Setenv("SUPABASE_HOSTNAME", "evil.example.com")
+	t.Setenv("SUPABASE_AUTH_SITE_URL", "http://preview.com")
+	t.Setenv("AUTH_SEND_SMS_SECRETS", "v1,whsec_aWxpa2VzdXBhYmFzZXZlcnltdWNoYW5kaWhvcGV5b3Vkb3Rvbw==")
+
+	require.NoError(t, config.Load("", fsys))
+	assert.Equal(t, "127.0.0.1", config.Hostname)
+	assert.Equal(t, "http://preview.com", config.Auth.SiteUrl)
+}
+
 func TestFileSizeLimitConfigParsing(t *testing.T) {
 	t.Run("test file size limit parsing number", func(t *testing.T) {
 		var testConfig config

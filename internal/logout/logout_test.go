@@ -6,10 +6,10 @@ import (
 	"testing"
 
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
-	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/zalando/go-keyring"
@@ -20,7 +20,8 @@ func TestLogoutCommand(t *testing.T) {
 
 	t.Run("login with token and logout", func(t *testing.T) {
 		keyring.MockInitWithError(keyring.ErrUnsupportedPlatform)
-		t.Cleanup(fstest.MockStdin(t, "y"))
+		viper.Set("YES", true)
+		t.Cleanup(viper.Reset)
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.SaveAccessToken(token, fsys))
@@ -35,10 +36,11 @@ func TestLogoutCommand(t *testing.T) {
 
 	t.Run("removes all Supabase CLI credentials", func(t *testing.T) {
 		keyring.MockInit()
+		viper.Set("YES", true)
+		t.Cleanup(viper.Reset)
 		require.NoError(t, credentials.StoreProvider.Set(utils.CurrentProfile.Name, token))
 		require.NoError(t, credentials.StoreProvider.Set("project1", "password1"))
 		require.NoError(t, credentials.StoreProvider.Set("project2", "password2"))
-		t.Cleanup(fstest.MockStdin(t, "y"))
 		// Run test
 		err := Run(context.Background(), os.Stdout, afero.NewMemMapFs())
 		// Check error
@@ -70,7 +72,8 @@ func TestLogoutCommand(t *testing.T) {
 
 	t.Run("exits 0 if not logged in", func(t *testing.T) {
 		keyring.MockInit()
-		t.Cleanup(fstest.MockStdin(t, "y"))
+		viper.Set("YES", true)
+		t.Cleanup(viper.Reset)
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
@@ -81,7 +84,8 @@ func TestLogoutCommand(t *testing.T) {
 
 	t.Run("throws error on failure to delete", func(t *testing.T) {
 		keyring.MockInitWithError(keyring.ErrNotFound)
-		t.Cleanup(fstest.MockStdin(t, "y"))
+		viper.Set("YES", true)
+		t.Cleanup(viper.Reset)
 		// Setup empty home directory
 		t.Setenv("HOME", "")
 		// Setup in-memory fs
