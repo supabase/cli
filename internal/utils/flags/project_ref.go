@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
