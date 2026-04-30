@@ -243,6 +243,57 @@ format_options = "not-json"
 	})
 }
 
+func TestPgDeltaNpmVersionPinning(t *testing.T) {
+	t.Run("defaults when pgdelta-version file missing", func(t *testing.T) {
+		c := NewConfig()
+		require.NoError(t, c.Load("", fs.MapFS{}))
+		require.NotNil(t, c.Experimental.PgDelta)
+		assert.Equal(t, DefaultPgDeltaNpmVersion, c.Experimental.PgDelta.NpmVersion)
+		assert.Equal(t, DefaultPgDeltaNpmVersion, EffectivePgDeltaNpmVersion(Config(&c)))
+	})
+
+	t.Run("EffectivePgDeltaNpmVersion nil config uses default", func(t *testing.T) {
+		assert.Equal(t, DefaultPgDeltaNpmVersion, EffectivePgDeltaNpmVersion(nil))
+	})
+
+	t.Run("reads trimmed version from supabase/.temp/pgdelta-version", func(t *testing.T) {
+		c := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[experimental.pgdelta]
+enabled = true
+`)},
+			"supabase/.temp/pgdelta-version": &fs.MapFile{Data: []byte("  9.9.9-test  \n")},
+		}
+		require.NoError(t, c.Load("", fsys))
+		require.NotNil(t, c.Experimental.PgDelta)
+		assert.Equal(t, "9.9.9-test", c.Experimental.PgDelta.NpmVersion)
+		assert.Equal(t, "9.9.9-test", EffectivePgDeltaNpmVersion(Config(&c)))
+	})
+
+	t.Run("whitespace-only pgdelta-version keeps default", func(t *testing.T) {
+		c := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[experimental.pgdelta]
+enabled = true
+`)},
+			"supabase/.temp/pgdelta-version": &fs.MapFile{Data: []byte("   \n")},
+		}
+		require.NoError(t, c.Load("", fsys))
+		require.NotNil(t, c.Experimental.PgDelta)
+		assert.Equal(t, DefaultPgDeltaNpmVersion, c.Experimental.PgDelta.NpmVersion)
+	})
+
+	t.Run("InterpolatePgDeltaScript substitutes placeholder", func(t *testing.T) {
+		c := NewConfig()
+		require.NoError(t, c.Load("", fs.MapFS{}))
+		// Embedded TS pins use this semver literal before InterpolatePgDeltaScript runs.
+		got := InterpolatePgDeltaScript(Config(&c), `from "npm:@supabase/pg-delta@1.0.0-alpha.20";`)
+		assert.Equal(t, `from "npm:@supabase/pg-delta@`+DefaultPgDeltaNpmVersion+`";`, got)
+	})
+}
+
 func TestRemoteOverride(t *testing.T) {
 	t.Run("load staging override", func(t *testing.T) {
 		config := NewConfig()
