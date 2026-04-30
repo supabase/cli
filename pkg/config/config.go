@@ -229,6 +229,8 @@ type (
 		Enabled               bool   `toml:"enabled" json:"enabled"`
 		DeclarativeSchemaPath string `toml:"declarative_schema_path" json:"declarative_schema_path"`
 		FormatOptions         string `toml:"format_options" json:"format_options"`
+		// NpmVersion is set from .temp/pgdelta-version during Load (not from TOML).
+		NpmVersion string `toml:"-" json:"-"`
 	}
 
 	inspect struct {
@@ -690,6 +692,16 @@ func (c *config) Load(path string, fsys fs.FS, overrides ...ConfigEditor) error 
 	if version, err := fs.ReadFile(fsys, builder.LogflareVersionPath); err == nil && len(version) > 0 {
 		c.Analytics.Image = replaceImageTag(Images.Logflare, string(version))
 	}
+	v := DefaultPgDeltaNpmVersion
+	if version, err := fs.ReadFile(fsys, builder.PgDeltaVersionPath); err == nil {
+		if trimmed := strings.TrimSpace(string(version)); len(trimmed) > 0 {
+			v = trimmed
+		}
+	}
+	if c.Experimental.PgDelta == nil {
+		c.Experimental.PgDelta = &PgDeltaConfig{}
+	}
+	c.Experimental.PgDelta.NpmVersion = v
 	// TODO: replace derived config resolution with viper decode hooks
 	if err := c.resolve(builder, fsys); err != nil {
 		return err

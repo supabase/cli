@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/gen/types"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/migration"
 )
 
@@ -253,7 +254,8 @@ func exportCatalog(ctx context.Context, targetRef string, options ...func(*pgx.C
 	}
 	binds := []string{utils.EdgeRuntimeId + ":/root/.cache/deno:rw"}
 	var stdout, stderr bytes.Buffer
-	if err := utils.RunEdgeRuntimeScript(ctx, env, pgDeltaCatalogExportTS, binds, "error exporting pg-delta catalog", &stdout, &stderr); err != nil {
+	script := config.InterpolatePgDeltaScript(config.Config(&utils.Config), pgDeltaCatalogExportTS)
+	if err := utils.RunEdgeRuntimeScript(ctx, env, script, binds, "error exporting pg-delta catalog", &stdout, &stderr); err != nil {
 		return "", err
 	}
 	snapshot := strings.TrimSpace(stdout.String())

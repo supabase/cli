@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
+	pkgconfig "github.com/supabase/cli/pkg/config"
 )
 
 //go:embed templates/pgdelta_declarative_apply.ts
@@ -321,7 +322,8 @@ func ApplyDeclarative(ctx context.Context, config pgconn.Config, fsys afero.Fs) 
 
 	fmt.Fprintln(os.Stderr, "Applying declarative schemas via pg-delta...")
 	var stdout, stderr bytes.Buffer
-	if err := utils.RunEdgeRuntimeScript(ctx, env, pgDeltaDeclarativeApplyScript, binds, "error running pg-delta script", &stdout, &stderr); err != nil {
+	script := pkgconfig.InterpolatePgDeltaScript(pkgconfig.Config(&utils.Config), pgDeltaDeclarativeApplyScript)
+	if err := utils.RunEdgeRuntimeScript(ctx, env, script, binds, "error running pg-delta script", &stdout, &stderr); err != nil {
 		return err
 	}
 

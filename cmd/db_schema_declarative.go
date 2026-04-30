@@ -52,7 +52,12 @@ var (
 			// If the user has passed the --experimental flag and pg-delta is not enabled, enable it
 			// so in the rest of the code we can know that we're running pg-delta logic.
 			if viper.GetBool("EXPERIMENTAL") && !utils.IsPgDeltaEnabled() {
-				utils.Config.Experimental.PgDelta = &config.PgDeltaConfig{Enabled: true}
+				if utils.Config.Experimental.PgDelta == nil {
+					utils.Config.Experimental.PgDelta = &config.PgDeltaConfig{Enabled: true}
+				} else {
+					// We preserve the version set into `.temp/pgdelta-version` by just enabling pg-delta.
+					utils.Config.Experimental.PgDelta.Enabled = true
+				}
 			}
 			if !utils.IsPgDeltaEnabled() {
 				utils.CmdSuggestion = fmt.Sprintf("Either pass %s or add %s with %s to %s",
