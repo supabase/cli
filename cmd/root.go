@@ -196,6 +196,9 @@ func Execute() {
 	if semver.Compare(version, "v"+utils.Version) > 0 {
 		fmt.Fprintln(os.Stderr, suggestUpgrade(version))
 	}
+	if hint := utils.SuggestClaudePlugin(); hint != "" {
+		fmt.Fprintln(os.Stderr, hint)
+	}
 	if len(utils.CmdSuggestion) > 0 {
 		fmt.Fprintln(os.Stderr, utils.CmdSuggestion)
 	}

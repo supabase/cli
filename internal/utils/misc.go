@@ -38,6 +38,15 @@ func ShortContainerImageName(imageName string) string {
 
 const SuggestDebugFlag = "Try rerunning the command with --debug to troubleshoot the error."
 
+const claudeCodeHint = `<claude-code-hint v="1" type="plugin" value="supabase@claude-plugins-official" />`
+
+func SuggestClaudePlugin() string {
+	if os.Getenv("CLAUDECODE") != "" {
+		return claudeCodeHint
+	}
+	return ""
+}
+
 var (
 	CmdSuggestion string
 	CurrentDirAbs string
