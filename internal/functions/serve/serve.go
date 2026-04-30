@@ -223,6 +223,15 @@ EOF
 		container.HostConfig{
 			Binds:        binds,
 			PortBindings: portBindings,
+			Resources: container.Resources{
+				Ulimits: []*container.Ulimit{
+					{
+						Name: "nofile",
+						Soft: 65536,
+						Hard: 65536,
+					},
+				},
+			},
 		},
 		network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
