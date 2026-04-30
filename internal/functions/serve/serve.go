@@ -224,6 +224,7 @@ EOF
 			Binds:        binds,
 			PortBindings: portBindings,
 			Resources: container.Resources{
+                                  // Raise nofile to accommodate FD usage from many concurrent Deno isolates (see #5151).
 				Ulimits: []*container.Ulimit{
 					{
 						Name: "nofile",
