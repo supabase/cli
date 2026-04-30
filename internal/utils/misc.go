@@ -256,6 +256,12 @@ func ValidateFunctionSlug(slug string) error {
 }
 
 func GetHostname() string {
+	// Overrides the host for local service connections. Useful when
+	// running inside a dev container when the Docker host is not
+	// 127.0.0.1 (container's own loopback).
+	if h := os.Getenv("SUPABASE_SERVICES_HOSTNAME"); h != "" {
+		return h
+	}
 	host := Docker.DaemonHost()
 	if parsed, err := client.ParseHostURL(host); err == nil && parsed.Scheme == "tcp" {
 		if host, _, err := net.SplitHostPort(parsed.Host); err == nil {
