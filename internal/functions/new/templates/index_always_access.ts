@@ -3,21 +3,22 @@
 // This enables autocomplete, go to definition, etc.
 
 // Setup type definitions for built-in Supabase Runtime APIs
-import "@supabase/functions-js/edge-runtime.d.ts"
+import "@supabase/functions-js/edge-runtime.d.ts";
+import { withSupabase } from "@supabase/server";
 
-console.log("Hello from Functions!")
+console.log("Hello from Functions!");
 
-Deno.serve(async (req) => {
-  const { name } = await req.json()
-  const data = {
-    message: `Hello ${name}!`,
-  }
+// This endpoint uses 'always' access, no credentials required, every request is accepted.
+// Use it for health checks, public APIs, or when you need to implement your own auth logic.
+export default {
+  fetch: withSupabase({ allow: "always" }, async (req, ctx) => {
+    const { name } = await req.json();
 
-  return new Response(
-    JSON.stringify(data),
-    { headers: { "Content-Type": "application/json" } },
-  )
-})
+    return Response.json({
+      message: `Hello ${name}!`,
+    });
+  }),
+};
 
 /* To invoke locally:
 
@@ -25,7 +26,6 @@ Deno.serve(async (req) => {
   2. Make an HTTP request:
 
   curl -i --location --request POST '{{ .URL }}' \
-    --header 'Authorization: Bearer {{ .Token }}' \
     --header 'Content-Type: application/json' \
     --data '{"name":"Functions"}'
 
