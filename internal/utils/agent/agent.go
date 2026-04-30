@@ -5,6 +5,11 @@ import (
 	"strings"
 )
 
+// IsClaudeCode reports whether the CLI is running inside Claude Code.
+func IsClaudeCode() bool {
+	return os.Getenv("CLAUDECODE") != "" || os.Getenv("CLAUDE_CODE") != ""
+}
+
 // IsAgent checks environment variables to detect if the CLI is being invoked
 // by an AI coding agent. Based on the detection logic from Vercel's
 // @vercel/functions/ai package.
@@ -37,7 +42,7 @@ func IsAgent() bool {
 		return true
 	}
 	// Claude Code
-	if os.Getenv("CLAUDECODE") != "" || os.Getenv("CLAUDE_CODE") != "" {
+	if IsClaudeCode() {
 		return true
 	}
 	// Replit

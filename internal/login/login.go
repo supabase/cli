@@ -172,6 +172,9 @@ func Run(ctx context.Context, stdout io.Writer, params RunParams) error {
 		}
 		handleTelemetryAfterLogin(ctx, params)
 		fmt.Println(loggedInMsg)
+		if hint := utils.SuggestClaudePlugin(); hint != "" {
+			fmt.Fprintln(os.Stderr, hint)
+		}
 		return nil
 	}
 
@@ -223,6 +226,9 @@ func Run(ctx context.Context, stdout io.Writer, params RunParams) error {
 
 	fmt.Fprintf(stdout, "Token %s created successfully.\n\n", utils.Bold(params.TokenName))
 	fmt.Fprintln(stdout, loggedInMsg)
+	if hint := utils.SuggestClaudePlugin(); hint != "" {
+		fmt.Fprintln(os.Stderr, hint)
+	}
 
 	return nil
 }

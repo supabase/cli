@@ -150,6 +150,7 @@ type (
 		Image   string `toml:"-" json:"-"`
 
 		SiteUrl                    string               `toml:"site_url" json:"site_url"`
+		ExternalUrl                string               `toml:"external_url" json:"external_url"`
 		AdditionalRedirectUrls     []string             `toml:"additional_redirect_urls" json:"additional_redirect_urls"`
 		JwtExpiry                  uint                 `toml:"jwt_expiry" json:"jwt_expiry"`
 		JwtIssuer                  string               `toml:"jwt_issuer" json:"jwt_issuer"`
@@ -396,6 +397,13 @@ type (
 		AuthorizationUrlPath     string `toml:"authorization_url_path" json:"authorization_url_path"`
 	}
 )
+
+func (a auth) GetExternalURL(apiExternalURL string) string {
+	if len(a.ExternalUrl) > 0 {
+		return a.ExternalUrl
+	}
+	return strings.TrimRight(apiExternalURL, "/") + "/auth/v1"
+}
 
 func (a *auth) ToUpdateAuthConfigBody() v1API.UpdateAuthConfigBody {
 	body := v1API.UpdateAuthConfigBody{

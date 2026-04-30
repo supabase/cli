@@ -17,6 +17,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/utils/agent"
 	"github.com/supabase/cli/pkg/migration"
 )
 
@@ -37,6 +38,15 @@ func ShortContainerImageName(imageName string) string {
 }
 
 const SuggestDebugFlag = "Try rerunning the command with --debug to troubleshoot the error."
+
+const claudeCodeHint = `<claude-code-hint v="1" type="plugin" value="supabase@claude-plugins-official" />`
+
+func SuggestClaudePlugin() string {
+	if agent.IsClaudeCode() {
+		return claudeCodeHint
+	}
+	return ""
+}
 
 var (
 	CmdSuggestion string
@@ -256,6 +266,12 @@ func ValidateFunctionSlug(slug string) error {
 }
 
 func GetHostname() string {
+	// Overrides the host for local service connections. Useful when
+	// running inside a dev container when the Docker host is not
+	// 127.0.0.1 (container's own loopback).
+	if h := os.Getenv("SUPABASE_SERVICES_HOSTNAME"); h != "" {
+		return h
+	}
 	host := Docker.DaemonHost()
 	if parsed, err := client.ParseHostURL(host); err == nil && parsed.Scheme == "tcp" {
 		if host, _, err := net.SplitHostPort(parsed.Host); err == nil {
