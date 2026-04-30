@@ -76,6 +76,7 @@ var (
 	PgmetaVersionPath    = filepath.Join(TempDir, "pgmeta-version")
 	PoolerVersionPath    = filepath.Join(TempDir, "pooler-version")
 	RealtimeVersionPath  = filepath.Join(TempDir, "realtime-version")
+	PgDeltaVersionPath   = filepath.Join(TempDir, "pgdelta-version")
 	CliVersionPath       = filepath.Join(TempDir, "cli-latest")
 	CurrBranchPath       = filepath.Join(SupabaseDirPath, ".branches", "_current_branch")
 	// DeclarativeDir is the canonical location for pg-delta declarative schema

@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/supabase/cli/internal/gen/types"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/config"
 )
 
 //go:embed templates/pgdelta.ts
@@ -104,7 +105,8 @@ func DiffPgDeltaRef(ctx context.Context, sourceRef, targetRef string, schema []s
 		binds = append(binds, cwd+":/workspace")
 	}
 	var stdout, stderr bytes.Buffer
-	if err := utils.RunEdgeRuntimeScript(ctx, env, pgDeltaScript, binds, "error diffing schema", &stdout, &stderr); err != nil {
+	script := config.InterpolatePgDeltaScript(config.Config(&utils.Config), pgDeltaScript)
+	if err := utils.RunEdgeRuntimeScript(ctx, env, script, binds, "error diffing schema", &stdout, &stderr); err != nil {
 		return "", err
 	}
 	return stdout.String(), nil
@@ -143,7 +145,8 @@ func DeclarativeExportPgDeltaRef(ctx context.Context, sourceRef, targetRef strin
 		binds = append(binds, cwd+":/workspace")
 	}
 	var stdout, stderr bytes.Buffer
-	if err := utils.RunEdgeRuntimeScript(ctx, env, pgDeltaDeclarativeExportScript, binds, "error exporting declarative schema", &stdout, &stderr); err != nil {
+	script := config.InterpolatePgDeltaScript(config.Config(&utils.Config), pgDeltaDeclarativeExportScript)
+	if err := utils.RunEdgeRuntimeScript(ctx, env, script, binds, "error exporting declarative schema", &stdout, &stderr); err != nil {
 		return DeclarativeOutput{}, err
 	}
 	if stdout.Len() == 0 {
@@ -179,7 +182,8 @@ func ExportCatalogPgDelta(ctx context.Context, targetRef, role string, options .
 		binds = append(binds, cwd+":/workspace")
 	}
 	var stdout, stderr bytes.Buffer
-	if err := utils.RunEdgeRuntimeScript(ctx, env, pgDeltaCatalogExportScript, binds, "error exporting pg-delta catalog", &stdout, &stderr); err != nil {
+	script := config.InterpolatePgDeltaScript(config.Config(&utils.Config), pgDeltaCatalogExportScript)
+	if err := utils.RunEdgeRuntimeScript(ctx, env, script, binds, "error exporting pg-delta catalog", &stdout, &stderr); err != nil {
 		return "", err
 	}
 	snapshot := strings.TrimSpace(stdout.String())
