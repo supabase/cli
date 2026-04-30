@@ -14260,7 +14260,7 @@ func (r V1GetServicesHealthResponse) StatusCode() int {
 type V1GetJitAccessConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *JitAccessResponse
+	JSON200      *JitStateResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -14282,7 +14282,7 @@ func (r V1GetJitAccessConfigResponse) StatusCode() int {
 type V1UpdateJitAccessConfigResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *JitAccessResponse
+	JSON200      *JitStateResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -19925,7 +19925,7 @@ func ParseV1GetJitAccessConfigResponse(rsp *http.Response) (*V1GetJitAccessConfi
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest JitAccessResponse
+		var dest JitStateResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -19951,7 +19951,7 @@ func ParseV1UpdateJitAccessConfigResponse(rsp *http.Response) (*V1UpdateJitAcces
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest JitAccessResponse
+		var dest JitStateResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

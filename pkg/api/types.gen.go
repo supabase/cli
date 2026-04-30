@@ -492,8 +492,26 @@ const (
 
 // Defines values for JitAccessRequestRequestState.
 const (
-	Disabled JitAccessRequestRequestState = "disabled"
-	Enabled  JitAccessRequestRequestState = "enabled"
+	JitAccessRequestRequestStateDisabled JitAccessRequestRequestState = "disabled"
+	JitAccessRequestRequestStateEnabled  JitAccessRequestRequestState = "enabled"
+)
+
+// Defines values for JitStateResponse0State.
+const (
+	JitStateResponse0StateDisabled JitStateResponse0State = "disabled"
+	JitStateResponse0StateEnabled  JitStateResponse0State = "enabled"
+)
+
+// Defines values for JitStateResponse1State.
+const (
+	Unavailable JitStateResponse1State = "unavailable"
+)
+
+// Defines values for JitStateResponse1UnavailableReason.
+const (
+	ManualMigrationRequired JitStateResponse1UnavailableReason = "manual_migration_required"
+	PostgresUpgradeRequired JitStateResponse1UnavailableReason = "postgres_upgrade_required"
+	TemporarilyUnavailable  JitStateResponse1UnavailableReason = "temporarily_unavailable"
 )
 
 // Defines values for ListActionRunResponseRunStepsName.
@@ -2855,6 +2873,32 @@ type JitListAccessResponse struct {
 		} `json:"user_roles"`
 	} `json:"items"`
 }
+
+// JitStateResponse defines model for JitStateResponse.
+type JitStateResponse struct {
+	union json.RawMessage
+}
+
+// JitStateResponse0 defines model for .
+type JitStateResponse0 struct {
+	AppliedSuccessfully *bool                  `json:"appliedSuccessfully,omitempty"`
+	State               JitStateResponse0State `json:"state"`
+}
+
+// JitStateResponse0State defines model for JitStateResponse.0.State.
+type JitStateResponse0State string
+
+// JitStateResponse1 defines model for .
+type JitStateResponse1 struct {
+	State             JitStateResponse1State             `json:"state"`
+	UnavailableReason JitStateResponse1UnavailableReason `json:"unavailableReason"`
+}
+
+// JitStateResponse1State defines model for JitStateResponse.1.State.
+type JitStateResponse1State string
+
+// JitStateResponse1UnavailableReason defines model for JitStateResponse.1.UnavailableReason.
+type JitStateResponse1UnavailableReason string
 
 // LegacyApiKeysResponse defines model for LegacyApiKeysResponse.
 type LegacyApiKeysResponse struct {
@@ -5934,6 +5978,68 @@ func (t DiskResponse_Attributes) MarshalJSON() ([]byte, error) {
 }
 
 func (t *DiskResponse_Attributes) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsJitStateResponse0 returns the union data inside the JitStateResponse as a JitStateResponse0
+func (t JitStateResponse) AsJitStateResponse0() (JitStateResponse0, error) {
+	var body JitStateResponse0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromJitStateResponse0 overwrites any union data inside the JitStateResponse as the provided JitStateResponse0
+func (t *JitStateResponse) FromJitStateResponse0(v JitStateResponse0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeJitStateResponse0 performs a merge with any union data inside the JitStateResponse, using the provided JitStateResponse0
+func (t *JitStateResponse) MergeJitStateResponse0(v JitStateResponse0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsJitStateResponse1 returns the union data inside the JitStateResponse as a JitStateResponse1
+func (t JitStateResponse) AsJitStateResponse1() (JitStateResponse1, error) {
+	var body JitStateResponse1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromJitStateResponse1 overwrites any union data inside the JitStateResponse as the provided JitStateResponse1
+func (t *JitStateResponse) FromJitStateResponse1(v JitStateResponse1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeJitStateResponse1 performs a merge with any union data inside the JitStateResponse, using the provided JitStateResponse1
+func (t *JitStateResponse) MergeJitStateResponse1(v JitStateResponse1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t JitStateResponse) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *JitStateResponse) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }

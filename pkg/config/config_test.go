@@ -39,14 +39,43 @@ func TestConfigParsing(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
+	t.Run("auth external url defaults from api external url", func(t *testing.T) {
+		config := NewConfig()
+		require.NoError(t, config.Load("", fs.MapFS{}))
+
+		assert.Equal(t, strings.TrimRight(config.Api.ExternalUrl, "/")+"/auth/v1", config.Auth.ExternalUrl)
+		assert.Equal(t, config.Auth.ExternalUrl, config.Auth.JwtIssuer)
+	})
+
+	t.Run("auth external url and jwt issuer preserve explicit overrides", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"config.toml": &fs.MapFile{Data: []byte(`
+[api]
+external_url = "https://api.example.com/"
+
+[auth]
+site_url = "https://app.example.com"
+external_url = "https://auth.example.com/custom/"
+jwt_issuer = "https://issuer.example.com/custom/"
+`)},
+		}
+
+		require.NoError(t, config.Load("config.toml", fsys))
+		assert.Equal(t, "https://auth.example.com/custom/", config.Auth.ExternalUrl)
+		assert.Equal(t, "https://issuer.example.com/custom/", config.Auth.JwtIssuer)
+	})
+
 	t.Run("config file with environment variables", func(t *testing.T) {
 		config := NewConfig()
 		// Setup in-memory fs
 		fsys := fs.MapFS{
-			"supabase/config.toml":           &fs.MapFile{Data: testInitConfigEmbed},
-			"supabase/templates/invite.html": &fs.MapFile{},
-			"certs/my-cert.pem":              &fs.MapFile{},
-			"certs/my-key.pem":               &fs.MapFile{},
+			"supabase/config.toml":                                  &fs.MapFile{Data: testInitConfigEmbed},
+			"supabase/templates/invite.html":                        &fs.MapFile{},
+			"supabase/templates/password_changed_notification.html": &fs.MapFile{},
+			"supabase/signing_keys.json":                            &fs.MapFile{Data: []byte("[]")},
+			"certs/my-cert.pem":                                     &fs.MapFile{},
+			"certs/my-key.pem":                                      &fs.MapFile{},
 		}
 		// Run test
 		t.Setenv("TWILIO_AUTH_TOKEN", "token")

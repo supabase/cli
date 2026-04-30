@@ -2,7 +2,7 @@ _format_version: "1.1"
 services:
   # Tenant project endpoints
   - name: auth-v1-open
-    _comment: "GoTrue: /auth/v1/verify* -> http://auth:9999/verify*"
+    _comment: "GoTrue external /auth/v1/verify* -> internal root /verify*"
     url: http://{{ .GotrueId }}:9999/verify
     routes:
       - name: auth-v1-open
@@ -12,7 +12,7 @@ services:
     plugins:
       - name: cors
   - name: auth-v1-open-callback
-    _comment: "GoTrue: /auth/v1/callback* -> http://auth:9999/callback*"
+    _comment: "GoTrue external /auth/v1/callback* -> internal root /callback*"
     url: http://{{ .GotrueId }}:9999/callback
     routes:
       - name: auth-v1-open-callback
@@ -22,7 +22,7 @@ services:
     plugins:
       - name: cors
   - name: auth-v1-open-authorize
-    _comment: "GoTrue: /auth/v1/authorize* -> http://auth:9999/authorize*"
+    _comment: "GoTrue external /auth/v1/authorize* -> internal root /authorize*"
     url: http://{{ .GotrueId }}:9999/authorize
     routes:
       - name: auth-v1-open-authorize
@@ -32,7 +32,7 @@ services:
     plugins:
       - name: cors
   - name: auth-v1
-    _comment: "GoTrue: /auth/v1/* -> http://auth:9999/*"
+    _comment: "GoTrue external /auth/v1/* -> internal root /*"
     url: http://{{ .GotrueId }}:9999/
     routes:
       - name: auth-v1-all

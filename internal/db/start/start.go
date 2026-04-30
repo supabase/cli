@@ -320,7 +320,7 @@ func initAuthJob(host string) utils.DockerJob {
 	return utils.DockerJob{
 		Image: utils.Config.Auth.Image,
 		Env: []string{
-			"API_EXTERNAL_URL=" + utils.Config.Api.ExternalUrl,
+			"API_EXTERNAL_URL=" + utils.Config.AuthExternalURL(),
 			"GOTRUE_LOG_LEVEL=error",
 			"GOTRUE_DB_DRIVER=postgres",
 			fmt.Sprintf("GOTRUE_DB_DATABASE_URL=postgresql://supabase_auth_admin:%s@%s:5432/postgres", utils.Config.Db.Password, host),
