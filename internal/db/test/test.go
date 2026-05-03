@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
@@ -34,23 +35,33 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 		}
 		testFiles = append(testFiles, absTestsDir)
 	}
-	binds := make([]string, len(testFiles))
+	bindsSet := map[string]struct{}{}
 	cmd := []string{"pg_prove", "--ext", ".pg", "--ext", ".sql", "-r"}
 	var workingDir string
-	for i, fp := range testFiles {
+	for _, fp := range testFiles {
 		if !filepath.IsAbs(fp) {
 			fp = filepath.Join(utils.CurrentDirAbs, fp)
 		}
 		dockerPath := utils.ToDockerPath(fp)
 		cmd = append(cmd, dockerPath)
-		binds[i] = fmt.Sprintf("%s:%s:ro", fp, dockerPath)
+
+		hostDir := fp
+		dockerDir := dockerPath
+		if path.Ext(dockerPath) != "" {
+			hostDir = filepath.Dir(fp)
+			dockerDir = path.Dir(dockerPath)
+		}
+		bindsSet[fmt.Sprintf("%s:%s:ro", hostDir, dockerDir)] = struct{}{}
+
 		if workingDir == "" {
-			workingDir = dockerPath
-			if path.Ext(dockerPath) != "" {
-				workingDir = path.Dir(dockerPath)
-			}
+			workingDir = dockerDir
 		}
 	}
+	binds := make([]string, 0, len(bindsSet))
+	for b := range bindsSet {
+		binds = append(binds, b)
+	}
+	sort.Strings(binds)
 	if viper.GetBool("DEBUG") {
 		cmd = append(cmd, "--verbose")
 	}
