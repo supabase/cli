@@ -16,6 +16,8 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/internal/db/diff"
+	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/utils"
 	cliConfig "github.com/supabase/cli/pkg/config"
 )
@@ -25,7 +27,31 @@ const (
 	DISABLE_PGTAP = "drop extension if exists pgtap"
 )
 
-func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, testFiles []string, config pgconn.Config, useShadowDb bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	// Create and migrate shadow database if requested
+	if useShadowDb {
+		fmt.Fprintln(os.Stderr, "Creating shadow database for testing...")
+		shadow, err := diff.CreateShadowDatabase(ctx, utils.Config.Db.ShadowPort)
+		if err != nil {
+			return err
+		}
+		defer utils.DockerRemove(shadow)
+		if err := start.WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, shadow); err != nil {
+			return err
+		}
+		if err := diff.MigrateShadowDatabase(ctx, shadow, fsys, options...); err != nil {
+			return err
+		}
+		// Override config to point at shadow DB
+		config = pgconn.Config{
+			Host:     utils.Config.Hostname,
+			Port:     utils.Config.Db.ShadowPort,
+			User:     "postgres",
+			Password: utils.Config.Db.Password,
+			Database: "postgres",
+		}
+		fmt.Fprintln(os.Stderr, "Shadow database ready. Running tests...")
+	}
 	// Build test command
 	if len(testFiles) == 0 {
 		absTestsDir, err := filepath.Abs(utils.DbTestsDir)
@@ -79,7 +105,11 @@ func Run(ctx context.Context, testFiles []string, config pgconn.Config, fsys afe
 	// Use custom network when connecting to local database
 	// disable selinux via security-opt to allow pg-tap to work properly
 	hostConfig := container.HostConfig{Binds: binds, SecurityOpt: []string{"label:disable"}}
-	if utils.IsLocalDatabase(config) {
+	if useShadowDb {
+		// Shadow container has no Docker DNS alias; use host networking
+		// so pg_prove reaches it via 127.0.0.1:<ShadowPort>
+		hostConfig.NetworkMode = network.NetworkHost
+	} else if utils.IsLocalDatabase(config) {
 		config.Host = utils.DbAliases[0]
 		config.Port = 5432
 	} else {
