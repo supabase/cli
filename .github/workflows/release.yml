@@ -11,6 +11,7 @@ permissions:
 jobs:
   fast-forward:
     if: |
+      github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.head.ref == 'develop' &&
       github.event.pull_request.base.ref == 'main' &&
       github.event.review.state == 'approved'
