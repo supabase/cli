@@ -109,8 +109,8 @@ func init() {
 	// Build list command
 	listFlags := migrationListCmd.Flags()
 	listFlags.String("db-url", "", "Lists migrations of the database specified by the connection string (must be percent-encoded).")
-	listFlags.Bool("linked", true, "Lists migrations applied to the linked project.")
-	listFlags.Bool("local", false, "Lists migrations applied to the local database.")
+	listFlags.Bool("linked", false, "Lists migrations applied to the linked project.")
+	listFlags.Bool("local", true, "Lists migrations applied to the local database.")
 	migrationListCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	listFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", listFlags.Lookup("password")))
@@ -121,8 +121,8 @@ func init() {
 	repairFlags.Var(&targetStatus, "status", "Version status to update.")
 	cobra.CheckErr(migrationRepairCmd.MarkFlagRequired("status"))
 	repairFlags.String("db-url", "", "Repairs migrations of the database specified by the connection string (must be percent-encoded).")
-	repairFlags.Bool("linked", true, "Repairs the migration history of the linked project.")
-	repairFlags.Bool("local", false, "Repairs the migration history of the local database.")
+	repairFlags.Bool("linked", false, "Repairs the migration history of the linked project.")
+	repairFlags.Bool("local", true, "Repairs the migration history of the local database.")
 	migrationRepairCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	repairFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", repairFlags.Lookup("password")))
@@ -158,8 +158,8 @@ func init() {
 	// Build up command
 	fetchFlags := migrationFetchCmd.Flags()
 	fetchFlags.String("db-url", "", "Fetches migrations from the database specified by the connection string (must be percent-encoded).")
-	fetchFlags.Bool("linked", true, "Fetches migration history from the linked project.")
-	fetchFlags.Bool("local", false, "Fetches migration history from the local database.")
+	fetchFlags.Bool("linked", false, "Fetches migration history from the linked project.")
+	fetchFlags.Bool("local", true, "Fetches migration history from the local database.")
 	migrationFetchCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	migrationCmd.AddCommand(migrationFetchCmd)
 	// Build new command

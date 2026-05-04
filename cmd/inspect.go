@@ -258,8 +258,8 @@ var (
 func init() {
 	inspectFlags := inspectCmd.PersistentFlags()
 	inspectFlags.String("db-url", "", "Inspect the database specified by the connection string (must be percent-encoded).")
-	inspectFlags.Bool("linked", true, "Inspect the linked project.")
-	inspectFlags.Bool("local", false, "Inspect the local database.")
+	inspectFlags.Bool("linked", false, "Inspect the linked project.")
+	inspectFlags.Bool("local", true, "Inspect the local database.")
 	inspectCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	inspectDBCmd.AddCommand(inspectReplicationSlotsCmd)
 	inspectDBCmd.AddCommand(inspectIndexStatsCmd)
