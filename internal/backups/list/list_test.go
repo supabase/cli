@@ -58,10 +58,12 @@ func TestListBackup(t *testing.T) {
 			JSON(api.V1BackupsResponse{
 				Region: "ap-southeast-1",
 				Backups: []struct {
+					Id               int                                `json:"id"`
 					InsertedAt       string                             `json:"inserted_at"`
 					IsPhysicalBackup bool                               `json:"is_physical_backup"`
 					Status           api.V1BackupsResponseBackupsStatus `json:"status"`
 				}{{
+					Id:               1,
 					InsertedAt:       "2026-02-08 16:44:07",
 					IsPhysicalBackup: true,
 					Status:           api.V1BackupsResponseBackupsStatusCOMPLETED,
