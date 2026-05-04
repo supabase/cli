@@ -431,6 +431,11 @@ type ClientInterface interface {
 	// V1ListAllBackups request
 	V1ListAllBackups(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1RestorePhysicalBackupWithBody request with any body
+	V1RestorePhysicalBackupWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1RestorePhysicalBackup(ctx context.Context, ref string, body V1RestorePhysicalBackupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1RestorePitrBackupWithBody request with any body
 	V1RestorePitrBackupWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2142,6 +2147,30 @@ func (c *Client) V1VerifyDnsConfig(ctx context.Context, ref string, reqEditors .
 
 func (c *Client) V1ListAllBackups(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1ListAllBackupsRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1RestorePhysicalBackupWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1RestorePhysicalBackupRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1RestorePhysicalBackup(ctx context.Context, ref string, body V1RestorePhysicalBackupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1RestorePhysicalBackupRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7713,6 +7742,53 @@ func NewV1ListAllBackupsRequest(server string, ref string) (*http.Request, error
 	return req, nil
 }
 
+// NewV1RestorePhysicalBackupRequest calls the generic V1RestorePhysicalBackup builder with application/json body
+func NewV1RestorePhysicalBackupRequest(server string, ref string, body V1RestorePhysicalBackupJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1RestorePhysicalBackupRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1RestorePhysicalBackupRequestWithBody generates requests for V1RestorePhysicalBackup with any type of body
+func NewV1RestorePhysicalBackupRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/backups/restore", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewV1RestorePitrBackupRequest calls the generic V1RestorePitrBackup builder with application/json body
 func NewV1RestorePitrBackupRequest(server string, ref string, body V1RestorePitrBackupJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -11279,6 +11355,11 @@ type ClientWithResponsesInterface interface {
 	// V1ListAllBackupsWithResponse request
 	V1ListAllBackupsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListAllBackupsResponse, error)
 
+	// V1RestorePhysicalBackupWithBodyWithResponse request with any body
+	V1RestorePhysicalBackupWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RestorePhysicalBackupResponse, error)
+
+	V1RestorePhysicalBackupWithResponse(ctx context.Context, ref string, body V1RestorePhysicalBackupJSONRequestBody, reqEditors ...RequestEditorFn) (*V1RestorePhysicalBackupResponse, error)
+
 	// V1RestorePitrBackupWithBodyWithResponse request with any body
 	V1RestorePitrBackupWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RestorePitrBackupResponse, error)
 
@@ -13602,6 +13683,27 @@ func (r V1ListAllBackupsResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1ListAllBackupsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1RestorePhysicalBackupResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1RestorePhysicalBackupResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1RestorePhysicalBackupResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -16110,6 +16212,23 @@ func (c *ClientWithResponses) V1ListAllBackupsWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseV1ListAllBackupsResponse(rsp)
+}
+
+// V1RestorePhysicalBackupWithBodyWithResponse request with arbitrary body returning *V1RestorePhysicalBackupResponse
+func (c *ClientWithResponses) V1RestorePhysicalBackupWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1RestorePhysicalBackupResponse, error) {
+	rsp, err := c.V1RestorePhysicalBackupWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1RestorePhysicalBackupResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1RestorePhysicalBackupWithResponse(ctx context.Context, ref string, body V1RestorePhysicalBackupJSONRequestBody, reqEditors ...RequestEditorFn) (*V1RestorePhysicalBackupResponse, error) {
+	rsp, err := c.V1RestorePhysicalBackup(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1RestorePhysicalBackupResponse(rsp)
 }
 
 // V1RestorePitrBackupWithBodyWithResponse request with arbitrary body returning *V1RestorePitrBackupResponse
@@ -19235,6 +19354,22 @@ func ParseV1ListAllBackupsResponse(rsp *http.Response) (*V1ListAllBackupsRespons
 		}
 		response.JSON200 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseV1RestorePhysicalBackupResponse parses an HTTP response from a V1RestorePhysicalBackupWithResponse call
+func ParseV1RestorePhysicalBackupResponse(rsp *http.Response) (*V1RestorePhysicalBackupResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1RestorePhysicalBackupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
 	}
 
 	return response, nil
