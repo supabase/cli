@@ -7,9 +7,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/go-errors/errors"
 )
 
@@ -17,8 +17,8 @@ var (
 	titleStyle        = lipgloss.NewStyle().MarginLeft(2)
 	itemStyle         = lipgloss.NewStyle().PaddingLeft(4)
 	selectedItemStyle = lipgloss.NewStyle().PaddingLeft(2).Foreground(lipgloss.Color("170"))
-	paginationStyle   = list.DefaultStyles().PaginationStyle.PaddingLeft(4)
-	helpStyle         = list.DefaultStyles().HelpStyle.PaddingLeft(4).PaddingBottom(1)
+	paginationStyle   = list.DefaultStyles(true).PaginationStyle.PaddingLeft(4)
+	helpStyle         = list.DefaultStyles(true).HelpStyle.PaddingLeft(4).PaddingBottom(1)
 )
 
 // PromptItem is exposed as prompt input, empty summary + details will be excluded.
@@ -77,13 +77,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list.SetWidth(msg.Width)
 		return m, nil
 
-	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyCtrlC:
+	case tea.KeyPressMsg:
+		switch msg.String() {
+		case "ctrl+c":
 			m.cancel()
 			return m, tea.Quit
 
-		case tea.KeyEnter:
+		case "enter":
 			if choice, ok := m.list.SelectedItem().(PromptItem); ok {
 				m.choice = choice
 			}
@@ -96,11 +96,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m model) View() string {
+func (m model) View() tea.View {
 	if m.choice.Summary != "" {
-		return ""
+		return tea.NewView("")
 	}
-	return "\n" + m.list.View()
+	return tea.NewView("\n" + m.list.View())
 }
 
 // Prompt user to choose from a list of items, returns the chosen index.
