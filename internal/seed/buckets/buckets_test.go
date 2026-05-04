@@ -54,16 +54,24 @@ public = false`
 	})
 
 	t.Run("ignores unconfigured buckets", func(t *testing.T) {
-		// Setup mock api
-		defer gock.OffAll()
+		t.Cleanup(func() {
+			utils.Config.Storage.TargetMigration = ""
+			gock.OffAll()
+		})
+		utils.Config.Storage.TargetMigration = "custom-metadata"
 		gock.New(utils.Config.Api.ExternalUrl).
 			Get("/storage/v1/bucket").
-			Reply(http.StatusOK).
-			JSON([]storage.BucketResponse{})
+			Reply(http.StatusBadRequest).
+			JSON(map[string]string{
+				"statusCode": "403",
+				"error":      "Unauthorized",
+				"message":    "new row violates row-level security policy",
+			})
 		// Run test
 		err := Run(context.Background(), "", false, afero.NewMemMapFs())
 		// Check error
 		assert.NoError(t, err)
+		assert.Len(t, gock.Pending(), 1)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
