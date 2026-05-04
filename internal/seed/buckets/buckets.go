@@ -11,6 +11,9 @@ import (
 )
 
 func Run(ctx context.Context, projectRef string, interactive bool, fsys afero.Fs) error {
+	if len(projectRef) == 0 && len(utils.Config.Storage.Buckets) == 0 {
+		return nil
+	}
 	api, err := client.NewStorageAPI(ctx, projectRef)
 	if err != nil {
 		return err
