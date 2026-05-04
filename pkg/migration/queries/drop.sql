@@ -7,7 +7,7 @@ begin
     from pg_namespace pn
     left join pg_depend pd on pd.objid = pn.oid
     where pd.deptype is null
-      and not pn.nspname like any(array['information\_schema', 'pg\_%', '\_analytics', '\_realtime', '\_supavisor', 'pgbouncer', 'pgmq', 'pgsodium', 'pgtle', 'supabase\_migrations', 'vault', 'extensions', 'public'])
+      and not pn.nspname like any(array['information\_schema', 'pg\_%', '\_analytics', '\_realtime', '\_supavisor', 'pgbouncer', 'pgsodium', 'pgtle', 'supabase\_migrations', 'vault', 'extensions', 'public'])
       and pn.nspowner::regrole::text != 'supabase_admin'
   loop
     -- If an extension uses a schema it doesn't create, dropping the schema will cascade to also
