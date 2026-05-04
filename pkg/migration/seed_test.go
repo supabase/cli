@@ -1,8 +1,12 @@
 package migration
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"os"
 	"testing"
 	fs "testing/fstest"
@@ -85,6 +89,26 @@ func TestPendingSeeds(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 	})
+
+	t.Run("finds gzipped seeds", func(t *testing.T) {
+		pending := []string{"testdata/seed.sql.gz"}
+		fsys := fs.MapFS{
+			pending[0]: &fs.MapFile{Data: gzipData(t, testSeed)},
+		}
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(SELECT_SEED_TABLE).
+			Reply("SELECT 0")
+		// Run test
+		seeds, err := GetPendingSeeds(context.Background(), pending, conn.MockClient(t), fsys)
+		// Check error
+		assert.NoError(t, err)
+		require.Len(t, seeds, 1)
+		assert.Equal(t, pending[0], seeds[0].Path)
+		assert.Equal(t, hashString(testSeed), seeds[0].Hash)
+		assert.False(t, seeds[0].Dirty)
+	})
 }
 
 func TestSeedData(t *testing.T) {
@@ -123,6 +147,28 @@ func TestSeedData(t *testing.T) {
 		}), testMigrations)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: null value in column "age" of relation "employees" (SQLSTATE 23502)`)
+	})
+
+	t.Run("seeds from gzipped file", func(t *testing.T) {
+		seed := SeedFile{
+			Path: "testdata/seed.sql.gz",
+			Hash: hashString(testSeed),
+		}
+		fsys := fs.MapFS{
+			seed.Path: &fs.MapFile{Data: gzipData(t, testSeed)},
+		}
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		mockSeedHistory(conn).
+			Query(testSeed).
+			Reply("INSERT 0 1").
+			Query(UPSERT_SEED_FILE, seed.Path, seed.Hash).
+			Reply("INSERT 0 1")
+		// Run test
+		err := SeedData(context.Background(), []SeedFile{seed}, conn.MockClient(t), fsys)
+		// Check error
+		assert.NoError(t, err)
 	})
 }
 
@@ -173,4 +219,35 @@ func TestSeedGlobals(t *testing.T) {
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: database "postgres" does not exist (SQLSTATE 3D000)`)
 	})
+
+	t.Run("seeds from gzipped file", func(t *testing.T) {
+		pending := []string{"testdata/1_globals.sql.gz"}
+		fsys := fs.MapFS{
+			pending[0]: &fs.MapFile{Data: gzipData(t, testGlobals)},
+		}
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(testGlobals).
+			Reply("CREATE ROLE")
+		// Run test
+		err := SeedGlobals(context.Background(), pending, conn.MockClient(t), fsys)
+		// Check error
+		assert.NoError(t, err)
+	})
+}
+
+func gzipData(t *testing.T, input string) []byte {
+	t.Helper()
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	_, err := writer.Write([]byte(input))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	return compressed.Bytes()
+}
+
+func hashString(input string) string {
+	digest := sha256.Sum256([]byte(input))
+	return hex.EncodeToString(digest[:])
 }

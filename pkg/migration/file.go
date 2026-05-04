@@ -2,6 +2,7 @@ package migration
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -31,6 +32,8 @@ var (
 	typeNamePattern    = regexp.MustCompile(`type "([^"]+)" does not exist`)
 )
 
+const compressedSQLSizeMultiplier = 8
+
 func NewMigrationFromFile(path string, fsys fs.FS) (*MigrationFile, error) {
 	lines, err := parseFile(path, fsys)
 	if err != nil {
@@ -48,17 +51,15 @@ func NewMigrationFromFile(path string, fsys fs.FS) (*MigrationFile, error) {
 }
 
 func parseFile(path string, fsys fs.FS) ([]string, error) {
-	sql, err := fsys.Open(path)
+	sql, scannerBuffer, err := openSQL(path, fsys, "migration file")
 	if err != nil {
-		return nil, errors.Errorf("failed to open migration file: %w", err)
+		return nil, err
 	}
 	defer sql.Close()
-	// Unless explicitly specified, Use file length as max buffer size
+	// Unless explicitly specified, use file length (or an estimate for .sql.gz) as max buffer size.
 	if !viper.IsSet("SCANNER_BUFFER_SIZE") {
-		if fi, err := sql.Stat(); err == nil {
-			if size := int(fi.Size()); size > parser.MaxScannerCapacity {
-				parser.MaxScannerCapacity = size
-			}
+		if scannerBuffer > parser.MaxScannerCapacity {
+			parser.MaxScannerCapacity = scannerBuffer
 		}
 	}
 	return parser.SplitAndTrim(sql)
@@ -182,9 +183,9 @@ type SeedFile struct {
 }
 
 func NewSeedFile(path string, fsys fs.FS) (*SeedFile, error) {
-	sql, err := fsys.Open(path)
+	sql, _, err := openSQL(path, fsys, "seed file")
 	if err != nil {
-		return nil, errors.Errorf("failed to open seed file: %w", err)
+		return nil, err
 	}
 	defer sql.Close()
 	hash := sha256.New()
@@ -193,6 +194,66 @@ func NewSeedFile(path string, fsys fs.FS) (*SeedFile, error) {
 	}
 	digest := hex.EncodeToString(hash.Sum(nil))
 	return &SeedFile{Path: path, Hash: digest}, nil
+}
+
+func openSQL(path string, fsys fs.FS, kind string) (io.ReadCloser, int, error) {
+	sql, err := fsys.Open(path)
+	if err != nil {
+		return nil, 0, errors.Errorf("failed to open %s: %w", kind, err)
+	}
+	bufferSize := scannerBufferSize(path, sql)
+	if !isCompressedSQL(path) {
+		return sql, bufferSize, nil
+	}
+	gz, err := gzip.NewReader(sql)
+	if err != nil {
+		_ = sql.Close()
+		return nil, 0, errors.Errorf("failed to decompress %s: %w", kind, err)
+	}
+	return &compressedSQLReader{Reader: gz, gz: gz, file: sql}, bufferSize, nil
+}
+
+func scannerBufferSize(path string, sql fs.File) int {
+	info, err := sql.Stat()
+	if err != nil {
+		return 0
+	}
+	maxInt := int64(^uint(0) >> 1)
+	size := info.Size()
+	if size <= 0 {
+		return 0
+	}
+	if isCompressedSQL(path) {
+		if size > maxInt/compressedSQLSizeMultiplier {
+			return int(maxInt)
+		}
+		size *= compressedSQLSizeMultiplier
+	}
+	if size > maxInt {
+		return int(maxInt)
+	}
+	return int(size)
+}
+
+func isCompressedSQL(path string) bool {
+	return strings.HasSuffix(strings.ToLower(path), ".sql.gz")
+}
+
+type compressedSQLReader struct {
+	io.Reader
+	gz   *gzip.Reader
+	file fs.File
+}
+
+func (r *compressedSQLReader) Close() error {
+	var firstErr error
+	if err := r.gz.Close(); err != nil {
+		firstErr = err
+	}
+	if err := r.file.Close(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return firstErr
 }
 
 func (m *SeedFile) ExecBatchWithCache(ctx context.Context, conn *pgx.Conn, fsys fs.FS) error {
