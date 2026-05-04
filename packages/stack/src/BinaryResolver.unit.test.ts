@@ -5,6 +5,7 @@ import { DEFAULT_VERSIONS } from "./versions.ts";
 const postgresVersion = DEFAULT_VERSIONS.postgres;
 const postgrestVersion = DEFAULT_VERSIONS.postgrest;
 const authVersion = DEFAULT_VERSIONS.auth;
+const edgeRuntimeVersion = DEFAULT_VERSIONS["edge-runtime"];
 
 describe("BinaryResolver.downloadUrl", () => {
   it("constructs postgres URL (appends -cli suffix for native binaries)", () => {
@@ -50,6 +51,17 @@ describe("BinaryResolver.downloadUrl", () => {
       `https://github.com/supabase/auth/releases/download/rc${authVersion}/auth-v${authVersion}-arm64.tar.gz`,
     );
   });
+
+  it("constructs edge-runtime URL", () => {
+    const url = BinaryResolver.downloadUrl({
+      service: "edge-runtime",
+      version: edgeRuntimeVersion,
+      assetName: "aarch64-darwin",
+    });
+    expect(url).toBe(
+      `https://github.com/supabase/edge-runtime/releases/download/v${edgeRuntimeVersion}/edge-runtime-v${edgeRuntimeVersion}-aarch64-darwin.tar.gz`,
+    );
+  });
 });
 
 describe("BinaryResolver.checksumUrl", () => {
@@ -80,6 +92,16 @@ describe("BinaryResolver.checksumUrl", () => {
         service: "auth",
         version: authVersion,
         assetName: "arm64",
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null for edge-runtime (no checksum published)", () => {
+    expect(
+      BinaryResolver.checksumUrl({
+        service: "edge-runtime",
+        version: edgeRuntimeVersion,
+        assetName: "aarch64-darwin",
       }),
     ).toBeNull();
   });

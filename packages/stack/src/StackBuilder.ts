@@ -13,6 +13,10 @@ import {
 import type { ServiceResolution } from "./resolve.ts";
 import { makeAnalyticsServiceDocker } from "./services/analytics.ts";
 import { makeAuthServiceDocker, makeAuthServiceNative } from "./services/auth.ts";
+import {
+  makeEdgeRuntimeServiceDocker,
+  makeEdgeRuntimeServiceNative,
+} from "./services/edge-runtime.ts";
 import { makeImgproxyServiceDocker } from "./services/imgproxy.ts";
 import { makeMailpitServiceDocker } from "./services/mailpit.ts";
 import { makePgmetaServiceDocker } from "./services/pgmeta.ts";
@@ -58,6 +62,15 @@ export interface RealtimeConfig {
   readonly encryptionKey?: string;
   readonly secretKeyBase?: string;
   readonly maxHeaderLength?: number;
+}
+
+export interface EdgeRuntimeConfig {
+  readonly enabled?: boolean;
+  readonly port?: number;
+  readonly inspectorPort?: number;
+  readonly policy?: "oneshot" | "per_worker";
+  readonly version?: string;
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 export interface StorageConfig {
@@ -128,6 +141,7 @@ export interface StackConfig {
   readonly postgres?: PostgresConfig;
   readonly postgrest?: PostgrestConfig | false;
   readonly auth?: AuthConfig | false;
+  readonly edgeRuntime?: EdgeRuntimeConfig | false;
   readonly realtime?: RealtimeConfig | false;
   readonly storage?: StorageConfig | false;
   readonly imgproxy?: ImgproxyConfig | false;
@@ -169,6 +183,15 @@ export interface ResolvedRealtimeConfig {
   readonly encryptionKey: string;
   readonly secretKeyBase: string;
   readonly maxHeaderLength: number;
+}
+
+export interface ResolvedEdgeRuntimeConfig {
+  readonly enabled: boolean;
+  readonly port: number;
+  readonly inspectorPort: number;
+  readonly policy: "oneshot" | "per_worker";
+  readonly version: string;
+  readonly env: Readonly<Record<string, string>>;
 }
 
 export interface ResolvedStorageConfig {
@@ -244,6 +267,7 @@ export interface ResolvedStackConfig {
   readonly postgres: ResolvedPostgresConfig;
   readonly postgrest: ResolvedPostgrestConfig | false;
   readonly auth: ResolvedAuthConfig | false;
+  readonly edgeRuntime: ResolvedEdgeRuntimeConfig | false;
   readonly realtime: ResolvedRealtimeConfig | false;
   readonly storage: ResolvedStorageConfig | false;
   readonly imgproxy: ResolvedImgproxyConfig | false;
@@ -262,6 +286,7 @@ export interface BuildResult {
 }
 
 const dockerOnlyServices = [
+  "edge-runtime",
   "realtime",
   "storage",
   "imgproxy",
@@ -312,12 +337,19 @@ const hasAutoManagedPath = (config: ResolvedStackConfig, path: string) =>
       path.startsWith(`${managedPath}\\`),
   );
 
+const resolvedConfigForService = (
+  config: ResolvedStackConfig,
+  service: Exclude<ServiceName, "postgres">,
+) => (service === "edge-runtime" ? config.edgeRuntime : config[service]);
+
 export const validateResolvedConfig = (
   config: ResolvedStackConfig,
 ): Effect.Effect<void, StackBuildError> =>
   Effect.gen(function* () {
     if (config.mode === "native") {
-      const enabledDockerOnly = dockerOnlyServices.filter((service) => config[service] !== false);
+      const enabledDockerOnly = dockerOnlyServices.filter(
+        (service) => resolvedConfigForService(config, service) !== false,
+      );
       if (enabledDockerOnly.length > 0) {
         return yield* Effect.fail(
           new StackBuildError({
@@ -363,6 +395,9 @@ export const enabledServicesForConfig = (
   if (config.auth !== false) {
     services.push("auth");
   }
+  if (config.edgeRuntime !== false) {
+    services.push("edge-runtime");
+  }
   if (config.realtime !== false) {
     services.push("realtime");
   }
@@ -398,6 +433,7 @@ export const versionsForConfig = (config: ResolvedStackConfig): Partial<VersionM
   postgres: config.postgres.version,
   ...(config.postgrest === false ? {} : { postgrest: config.postgrest.version }),
   ...(config.auth === false ? {} : { auth: config.auth.version }),
+  ...(config.edgeRuntime === false ? {} : { "edge-runtime": config.edgeRuntime.version }),
   ...(config.realtime === false ? {} : { realtime: config.realtime.version }),
   ...(config.storage === false ? {} : { storage: config.storage.version }),
   ...(config.imgproxy === false ? {} : { imgproxy: config.imgproxy.version }),
@@ -461,6 +497,11 @@ export class StackBuilder extends ServiceMap.Service<
         const authResolution =
           config.auth === false ? false : yield* requirePreparedResolution(prepared, "auth");
 
+        const edgeRuntimeResolution =
+          config.edgeRuntime === false
+            ? false
+            : yield* requirePreparedResolution(prepared, "edge-runtime");
+
         const postgrestResolution =
           config.postgrest === false
             ? false
@@ -476,6 +517,7 @@ export class StackBuilder extends ServiceMap.Service<
           config.analytics !== false ||
           config.vector !== false ||
           config.pooler !== false ||
+          (edgeRuntimeResolution !== false && edgeRuntimeResolution.type === "docker") ||
           (authResolution !== false && authResolution.type === "docker") ||
           (postgrestResolution !== false && postgrestResolution.type === "docker");
 
@@ -588,6 +630,33 @@ export class StackBuilder extends ServiceMap.Service<
                   smtpSenderName: config.mailpit !== false ? config.mailpit.senderName : undefined,
                   networkArgs: dockerNetworkArgs(platform.os, [config.auth.port]),
                   apiPort: config.apiPort,
+                  dependencies: postgresDeps,
+                })),
+            enabled: true,
+          });
+        }
+
+        if (config.edgeRuntime !== false && edgeRuntimeResolution !== false) {
+          defs.push({
+            ...(edgeRuntimeResolution.type === "binary"
+              ? makeEdgeRuntimeServiceNative({
+                  binPath: edgeRuntimeResolution.path,
+                  runtimeRoot: config.runtimeRoot,
+                  port: config.edgeRuntime.port,
+                  inspectorPort: config.edgeRuntime.inspectorPort,
+                  policy: config.edgeRuntime.policy,
+                  env: config.edgeRuntime.env,
+                  dependencies: postgresDeps,
+                })
+              : makeEdgeRuntimeServiceDocker({
+                  image: edgeRuntimeResolution.image,
+                  apiPort: config.apiPort,
+                  runtimeRoot: config.runtimeRoot,
+                  port: config.edgeRuntime.port,
+                  inspectorPort: config.edgeRuntime.inspectorPort,
+                  policy: config.edgeRuntime.policy,
+                  env: config.edgeRuntime.env,
+                  networkArgs: dockerNetworkArgs(platform.os, [config.edgeRuntime.port]),
                   dependencies: postgresDeps,
                 })),
             enabled: true,

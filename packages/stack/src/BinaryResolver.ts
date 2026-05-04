@@ -6,6 +6,7 @@ import { BinaryNotFoundError, ChecksumMismatchError, DownloadError } from "./err
 import {
   authAssetName,
   detectPlatform,
+  edgeRuntimeAssetName,
   postgresAssetName,
   postgrestAssetName,
 } from "./Platform.ts";
@@ -49,6 +50,8 @@ const downloadUrl = (info: AssetInfo): string => {
     }
     case "auth":
       return `https://github.com/supabase/auth/releases/download/${authReleaseTag(version)}/auth-v${version}-${assetName}.tar.gz`;
+    case "edge-runtime":
+      return `https://github.com/supabase/edge-runtime/releases/download/v${version}/edge-runtime-v${version}-${assetName}.tar.gz`;
     default:
       throw new Error(`No native binary download available for service: ${service}`);
   }
@@ -156,6 +159,9 @@ export class BinaryResolver extends ServiceMap.Service<
               case "auth":
                 assetName = authAssetName(platform);
                 break;
+              case "edge-runtime":
+                assetName = edgeRuntimeAssetName(platform);
+                break;
               default:
                 assetName = null;
                 break;
@@ -173,6 +179,7 @@ export class BinaryResolver extends ServiceMap.Service<
             const info: AssetInfo = { service: spec.service, version: spec.version, assetName };
             const baseDir = spec.cacheDir ?? binDir;
             const cacheDir = cachePath(baseDir, info);
+            const url = downloadUrl(info);
 
             // Check if already cached (directory exists AND has files)
             const isCached = yield* fs.exists(cacheDir);
@@ -191,7 +198,6 @@ export class BinaryResolver extends ServiceMap.Service<
             yield* options?.onDownloadStart ?? Effect.void;
 
             // Download tarball via HttpClient
-            const url = downloadUrl(info);
             const tarballResponse = yield* httpClient
               .get(url)
               .pipe(

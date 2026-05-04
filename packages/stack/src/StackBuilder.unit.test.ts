@@ -20,6 +20,8 @@ const basePorts: AllocatedPorts = {
   authPort: 9999,
   postgrestPort: 3001,
   postgrestAdminPort: 3002,
+  edgeRuntimePort: 3003,
+  edgeRuntimeInspectorPort: 3004,
   realtimePort: 3010,
   storagePort: 3011,
   imgproxyPort: 3012,
@@ -67,6 +69,7 @@ const baseConfig: ResolvedStackConfig = {
     externalUrl: "http://localhost:9999",
     version: DEFAULT_VERSIONS.auth,
   },
+  edgeRuntime: false,
   realtime: false,
   storage: false,
   imgproxy: false,
@@ -81,6 +84,19 @@ const baseConfig: ResolvedStackConfig = {
 const dockerConfig: ResolvedStackConfig = {
   ...baseConfig,
   mode: "docker",
+};
+
+const edgeRuntimeConfig: ResolvedStackConfig = {
+  ...baseConfig,
+  mode: "auto",
+  edgeRuntime: {
+    enabled: true,
+    port: basePorts.edgeRuntimePort,
+    inspectorPort: basePorts.edgeRuntimeInspectorPort,
+    policy: "per_worker",
+    version: DEFAULT_VERSIONS["edge-runtime"],
+    env: {},
+  },
 };
 
 const encoder = new TextEncoder();
@@ -343,6 +359,56 @@ describe("StackBuilder", () => {
       // postgrest depends on postgres(healthy) — no postgres-init in Docker mode
       const postgrestDef = graph.startOrder.find((s) => s.name === "postgrest");
       expect(postgrestDef?.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("uses docker-backed edge-runtime even when a native binary is available", () => {
+    const resolver = mockBinaryResolver();
+    const layer = builderLayer(resolver);
+
+    return Effect.gen(function* () {
+      const builder = yield* StackBuilder;
+      const preparation = yield* StackPreparation;
+      const { graph, cleanupTargets } = yield* prepareAndBuild(
+        builder,
+        preparation,
+        edgeRuntimeConfig,
+      );
+
+      const edgeRuntimeDef = graph.startOrder.find((service) => service.name === "edge-runtime");
+      expect(edgeRuntimeDef).toBeDefined();
+      expect(edgeRuntimeDef?.command).toBe("docker");
+      expect(edgeRuntimeDef?.dependencies).toEqual([
+        { service: "postgres-init", condition: "completed" },
+      ]);
+      expect(cleanupTargets.dockerContainerNames).toContain(
+        `supabase-edge-runtime-${edgeRuntimeConfig.apiPort}`,
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("uses docker-backed edge-runtime when the binary is unavailable", () => {
+    const resolver = mockBinaryResolver({ failServices: ["edge-runtime"] });
+    const layer = builderLayer(resolver);
+
+    return Effect.gen(function* () {
+      const builder = yield* StackBuilder;
+      const preparation = yield* StackPreparation;
+      const { graph, cleanupTargets } = yield* prepareAndBuild(
+        builder,
+        preparation,
+        edgeRuntimeConfig,
+      );
+
+      const edgeRuntimeDef = graph.startOrder.find((service) => service.name === "edge-runtime");
+      expect(edgeRuntimeDef).toBeDefined();
+      expect(edgeRuntimeDef?.command).toBe("docker");
+      expect(edgeRuntimeDef?.dependencies).toEqual([
+        { service: "postgres-init", condition: "completed" },
+      ]);
+      expect(cleanupTargets.dockerContainerNames).toContain(
+        `supabase-edge-runtime-${edgeRuntimeConfig.apiPort}`,
+      );
     }).pipe(Effect.provide(layer));
   });
 

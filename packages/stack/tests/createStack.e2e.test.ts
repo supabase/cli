@@ -60,6 +60,28 @@ describe("createStack e2e", () => {
   );
 
   test(
+    "exposes edge runtime status and serves the functions placeholder through the local gateway",
+    { timeout: STACK_E2E_TEST_TIMEOUT_MS },
+    async () => {
+      const [states, functionsRes] = await Promise.all([
+        stack.getStatus(),
+        fetch(`${stack.url}/functions/v1/test`),
+      ]);
+
+      expect(states).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "edge-runtime", status: "Healthy" }),
+        ]),
+      );
+      expect(functionsRes.status).toBe(501);
+      expect(await functionsRes.json()).toEqual({
+        code: "FUNCTIONS_NOT_CONFIGURED",
+        message: "Edge Functions are not configured for this local stack yet.",
+      });
+    },
+  );
+
+  test(
     "supports the auth signup and session golden path",
     { timeout: STACK_E2E_TEST_TIMEOUT_MS },
     async () => {

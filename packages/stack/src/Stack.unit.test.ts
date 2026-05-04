@@ -21,6 +21,8 @@ const defaultPorts: AllocatedPorts = {
   authPort: 9999,
   postgrestPort: 54323,
   postgrestAdminPort: 54324,
+  edgeRuntimePort: 54325,
+  edgeRuntimeInspectorPort: 54326,
   realtimePort: 54330,
   storagePort: 54331,
   imgproxyPort: 54332,
@@ -68,6 +70,7 @@ const defaultConfig: ResolvedStackConfig = {
     externalUrl: "http://127.0.0.1:54321",
     version: DEFAULT_VERSIONS.auth,
   },
+  edgeRuntime: false,
   realtime: false,
   storage: false,
   imgproxy: false,
@@ -77,6 +80,19 @@ const defaultConfig: ResolvedStackConfig = {
   analytics: false,
   vector: false,
   pooler: false,
+};
+
+const edgeRuntimeConfig: ResolvedStackConfig = {
+  ...defaultConfig,
+  mode: "auto",
+  edgeRuntime: {
+    enabled: true,
+    port: defaultPorts.edgeRuntimePort,
+    inspectorPort: defaultPorts.edgeRuntimeInspectorPort,
+    policy: "per_worker",
+    version: DEFAULT_VERSIONS["edge-runtime"],
+    env: {},
+  },
 };
 
 function setupLayer(config: ResolvedStackConfig = defaultConfig) {
@@ -107,6 +123,18 @@ describe("Stack", () => {
 
       expect(info.url).toBe("http://127.0.0.1:54321");
       expect(info.dbUrl).toBe("postgresql://postgres:postgres@127.0.0.1:54322/postgres");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("getInfo includes functions and edge runtime endpoints when enabled", () => {
+    const { layer } = setupLayer(edgeRuntimeConfig);
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      const info = yield* stack.getInfo();
+
+      expect(info.serviceEndpoints.functions).toBe("http://127.0.0.1:54321/functions/v1");
+      expect(info.serviceEndpoints.edge_runtime).toBe("http://127.0.0.1:54325");
     }).pipe(Effect.provide(layer));
   });
 
@@ -240,6 +268,17 @@ describe("Stack", () => {
         expect(state.startedAt).toBeNull();
         expect(state.error).toBeNull();
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("getAllStates includes edge-runtime when enabled", () => {
+    const { layer } = setupLayer(edgeRuntimeConfig);
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      const states = yield* stack.getAllStates();
+
+      expect(states.map((state) => state.name)).toContain("edge-runtime");
     }).pipe(Effect.provide(layer));
   });
 

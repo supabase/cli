@@ -3,11 +3,12 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ReadyOptions, StackHandle } from "./createStack.ts";
-import { resolveDaemonConfig } from "./createStack.ts";
+import { resolveConfig, resolveDaemonConfig } from "./createStack.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
 import { DEFAULT_MANAGED_STACK_NAME, projectKeyForProjectDir } from "./paths.ts";
 import { stackMetadata } from "./StackMetadata.ts";
 import type { AuthConfig, PostgresConfig, PostgrestConfig, StackConfig } from "./StackBuilder.ts";
+import { DEFAULT_VERSIONS } from "./versions.ts";
 
 const DEFAULT_PORTS: AllocatedPorts = {
   apiPort: 54321,
@@ -15,17 +16,19 @@ const DEFAULT_PORTS: AllocatedPorts = {
   authPort: 55001,
   postgrestPort: 55002,
   postgrestAdminPort: 55003,
-  realtimePort: 55004,
-  storagePort: 55005,
-  imgproxyPort: 55006,
+  edgeRuntimePort: 55004,
+  edgeRuntimeInspectorPort: 55005,
+  realtimePort: 55006,
+  storagePort: 55007,
+  imgproxyPort: 55008,
   mailpitPort: 54324,
   mailpitSmtpPort: 54325,
   mailpitPop3Port: 54326,
-  pgmetaPort: 55007,
+  pgmetaPort: 55009,
   studioPort: 54323,
   analyticsPort: 54327,
   poolerPort: 54329,
-  poolerApiPort: 55008,
+  poolerApiPort: 55010,
 };
 
 function withTempCacheRoot(run: (cacheRoot: string) => Promise<void>) {
@@ -48,20 +51,7 @@ function writeStackMetadata(
     JSON.stringify(
       stackMetadata({
         ports,
-        services: {
-          postgres: "17.6.1.081",
-          postgrest: "14.5",
-          auth: "2.188.0-rc.15",
-          realtime: "2.78.10",
-          storage: "1.41.8",
-          imgproxy: "v3.8.0",
-          mailpit: "v1.22.3",
-          pgmeta: "0.96.1",
-          studio: "2026.03.04-sha-0043607",
-          analytics: "1.34.7",
-          vector: "0.28.1-alpine",
-          pooler: "2.7.4",
-        },
+        services: DEFAULT_VERSIONS,
         launch: { mode: "auto", excludedServices: [] },
       }),
       null,
@@ -208,5 +198,38 @@ describe("createStack types", () => {
         }),
       ).rejects.toThrow("Port 54321 is not available");
     });
+  });
+});
+
+describe("resolveConfig edge runtime defaults", () => {
+  it("disables edge runtime when omitted in native mode", async () => {
+    const config = await resolveConfig({ mode: "native" });
+
+    expect(config.mode).toBe("native");
+    expect(config.edgeRuntime).toBe(false);
+  });
+
+  it("enables edge runtime when omitted in auto mode", async () => {
+    const config = await resolveConfig();
+
+    expect(config.mode).toBe("auto");
+    expect(config.edgeRuntime).toEqual(
+      expect.objectContaining({
+        enabled: true,
+        version: DEFAULT_VERSIONS["edge-runtime"],
+      }),
+    );
+  });
+
+  it("preserves explicit edge runtime opt-in in native mode for builder validation", async () => {
+    const config = await resolveConfig({ mode: "native", edgeRuntime: {} });
+
+    expect(config.mode).toBe("native");
+    expect(config.edgeRuntime).toEqual(
+      expect.objectContaining({
+        enabled: true,
+        version: DEFAULT_VERSIONS["edge-runtime"],
+      }),
+    );
   });
 });

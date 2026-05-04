@@ -200,17 +200,18 @@ interface PlatformInfo {
 export const detectPlatform: Effect.Effect<PlatformInfo>;
 ```
 
-The three mapping functions return `null` for unsupported platforms — `BinaryResolver` converts `null` into a `BinaryNotFoundError`. Returning `null` rather than throwing keeps the logic pure and easy to test without an Effect context.
+The four mapping functions return `null` for unsupported platforms — `BinaryResolver` converts `null` into a `BinaryNotFoundError`. Returning `null` rather than throwing keeps the logic pure and easy to test without an Effect context.
 
 **Platform support matrix:**
 
-| Service   | darwin-arm64    | linux-x64             | linux-arm64      | win32-x64        |
-| --------- | --------------- | --------------------- | ---------------- | ---------------- |
-| postgres  | `darwin-arm64`  | `linux-x64`           | `linux-arm64`    | `null` (Docker)  |
-| postgrest | `macos-aarch64` | `linux-static-x86-64` | `ubuntu-aarch64` | `windows-x86-64` |
-| auth      | `null` (Docker) | `x86`                 | `arm64`          | `null` (Docker)  |
+| Service      | darwin-arm64     | linux-x64             | linux-arm64      | win32-x64        |
+| ------------ | ---------------- | --------------------- | ---------------- | ---------------- |
+| postgres     | `darwin-arm64`   | `linux-x64`           | `linux-arm64`    | `null` (Docker)  |
+| postgrest    | `macos-aarch64`  | `linux-static-x86-64` | `ubuntu-aarch64` | `windows-x86-64` |
+| auth         | `darwin-arm64`   | `x86`                 | `arm64`          | `null` (Docker)  |
+| edge-runtime | `aarch64-darwin` | `x86_64-linux`        | `aarch64-linux`  | `null` (Docker)  |
 
-When a mapping function returns `null`, `BinaryResolver` fails with `BinaryNotFoundError`. `StackBuilder` catches that specific error for postgres and auth and falls back to Docker-based service definitions. Auth is Linux-only as a native binary — on macOS and Windows it uses Docker. Postgres has no Windows binary — on Windows it uses Docker. PostgREST has native binaries on all supported platforms including Windows (as a `.zip` archive instead of `.tar.xz`).
+When a mapping function returns `null`, `BinaryResolver` fails with `BinaryNotFoundError` and the stack can fall back to Docker in `auto` mode. Postgres has no Windows binary. PostgREST has native binaries on all supported platforms including Windows (as a `.zip` archive instead of `.tar.xz`). Auth has native macOS arm64 and Linux binaries. Edge Runtime release assets exist for macOS arm64 and Linux, but the stack currently keeps Edge Runtime on Docker while the native path is not exposed.
 
 ```mermaid
 flowchart LR
@@ -638,13 +639,13 @@ The anonymous role is hardcoded to `anon`: this matches the Supabase database co
 
 #### auth (two factories)
 
-Auth has two factories because the native binary is Linux-only:
+Auth has two factories because the stack supports both native and Docker auth launches:
 
 ```ts
-// Native binary — Linux only
+// Native binary
 export const makeAuthServiceNative = (opts: NativeAuthOptions): ServiceDef
 
-// Docker — fallback for macOS and Windows
+// Docker fallback
 export const makeAuthServiceDocker = (opts: DockerAuthOptions): ServiceDef
 ```
 

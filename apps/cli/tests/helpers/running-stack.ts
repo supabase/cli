@@ -34,6 +34,8 @@ const DEFAULT_PORTS = {
   authPort: 54323,
   postgrestPort: 54324,
   postgrestAdminPort: 54325,
+  edgeRuntimePort: 54337,
+  edgeRuntimeInspectorPort: 54338,
   realtimePort: 54326,
   storagePort: 54327,
   imgproxyPort: 54328,

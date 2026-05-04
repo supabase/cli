@@ -4,7 +4,7 @@ import { BunServices } from "@effect/platform-bun";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { stackMetadata } from "@supabase/stack/effect";
+import { DEFAULT_VERSIONS, stackMetadata } from "@supabase/stack/effect";
 import { list } from "./list.handler.ts";
 import { ProjectHome } from "../../config/project-home.service.ts";
 import { mockOutput, withEnv } from "../../../../tests/helpers/mocks.ts";
@@ -20,6 +20,8 @@ function writeStackMetadata(stackDir: string, apiPort: number, dbPort: number) {
           authPort: 54323,
           postgrestPort: 54324,
           postgrestAdminPort: 54325,
+          edgeRuntimePort: 54337,
+          edgeRuntimeInspectorPort: 54338,
           realtimePort: 54326,
           storagePort: 54327,
           imgproxyPort: 54328,
@@ -36,6 +38,7 @@ function writeStackMetadata(stackDir: string, apiPort: number, dbPort: number) {
           postgres: "17.6.1.081",
           postgrest: "14.5",
           auth: "2.188.0-rc.15",
+          "edge-runtime": DEFAULT_VERSIONS["edge-runtime"],
           realtime: "2.78.10",
           storage: "1.41.8",
           imgproxy: "v3.8.0",

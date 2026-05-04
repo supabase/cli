@@ -2,6 +2,7 @@ export type ServiceName =
   | "postgres"
   | "postgrest"
   | "auth"
+  | "edge-runtime"
   | "realtime"
   | "storage"
   | "imgproxy"
@@ -16,6 +17,7 @@ export const SERVICE_NAMES = [
   "postgres",
   "postgrest",
   "auth",
+  "edge-runtime",
   "realtime",
   "storage",
   "imgproxy",
@@ -31,6 +33,7 @@ export interface VersionManifest {
   readonly postgres: string;
   readonly postgrest: string;
   readonly auth: string;
+  readonly "edge-runtime": string;
   readonly realtime: string;
   readonly storage: string;
   readonly imgproxy: string;
@@ -43,9 +46,10 @@ export interface VersionManifest {
 }
 
 export const DEFAULT_VERSIONS: VersionManifest = {
-  postgres: "17.6.1.081",
+  postgres: "17.6.1.107",
   postgrest: "14.5",
   auth: "2.188.0-rc.15",
+  "edge-runtime": "1.73.13",
   realtime: "2.78.10",
   storage: "1.41.8",
   imgproxy: "v3.8.0",
@@ -66,6 +70,7 @@ const IMAGE_REPOSITORIES: Record<ServiceName, string> = {
   postgres: "postgres",
   postgrest: "postgrest",
   auth: "gotrue",
+  "edge-runtime": "edge-runtime",
   realtime: "realtime",
   storage: "storage-api",
   imgproxy: "darthsim/imgproxy",
@@ -81,6 +86,7 @@ const SUPABASE_REGISTRY_SERVICES = new Set<ServiceName>([
   "postgres",
   "postgrest",
   "auth",
+  "edge-runtime",
   "realtime",
   "storage",
   "pgmeta",
@@ -92,6 +98,7 @@ const SUPABASE_REGISTRY_SERVICES = new Set<ServiceName>([
 export const IMAGE_TAG_PREFIX: Partial<Record<ServiceName, string>> = {
   postgrest: "v",
   auth: "v",
+  "edge-runtime": "v",
   realtime: "v",
   storage: "v",
   pgmeta: "v",

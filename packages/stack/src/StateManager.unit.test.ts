@@ -11,6 +11,7 @@ import {
 } from "./StateManager.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
 import { stackMetadata } from "./StackMetadata.ts";
+import { DEFAULT_VERSIONS } from "./versions.ts";
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -22,6 +23,8 @@ const DEFAULT_PORTS: AllocatedPorts = {
   authPort: 54330,
   postgrestPort: 54331,
   postgrestAdminPort: 54332,
+  edgeRuntimePort: 54338,
+  edgeRuntimeInspectorPort: 54339,
   realtimePort: 54333,
   storagePort: 54334,
   imgproxyPort: 54335,
@@ -270,20 +273,7 @@ describe("StateManager", () => {
           "my-project",
           stackMetadata({
             ports: DEFAULT_PORTS,
-            services: {
-              postgres: "17.6.1.081",
-              postgrest: "14.5",
-              auth: "2.188.0-rc.15",
-              realtime: "2.78.10",
-              storage: "1.41.8",
-              imgproxy: "v3.8.0",
-              mailpit: "v1.22.3",
-              pgmeta: "0.96.1",
-              studio: "2026.03.04-sha-0043607",
-              analytics: "1.34.7",
-              vector: "0.28.1-alpine",
-              pooler: "2.7.4",
-            },
+            services: DEFAULT_VERSIONS,
             launch: { mode: "auto", excludedServices: [] },
           }),
         );
@@ -314,20 +304,7 @@ describe("StateManager", () => {
           "my-project",
           stackMetadata({
             ports: DEFAULT_PORTS,
-            services: {
-              postgres: "17.6.1.081",
-              postgrest: "14.5",
-              auth: "2.188.0-rc.15",
-              realtime: "2.78.10",
-              storage: "1.41.8",
-              imgproxy: "v3.8.0",
-              mailpit: "v1.22.3",
-              pgmeta: "0.96.1",
-              studio: "2026.03.04-sha-0043607",
-              analytics: "1.34.7",
-              vector: "0.28.1-alpine",
-              pooler: "2.7.4",
-            },
+            services: DEFAULT_VERSIONS,
             launch: { mode: "auto", excludedServices: [] },
           }),
         );
@@ -347,20 +324,7 @@ describe("StateManager", () => {
           "my-project",
           stackMetadata({
             ports: DEFAULT_PORTS,
-            services: {
-              postgres: "17.6.1.081",
-              postgrest: "14.5",
-              auth: "2.188.0-rc.15",
-              realtime: "2.78.10",
-              storage: "1.41.8",
-              imgproxy: "v3.8.0",
-              mailpit: "v1.22.3",
-              pgmeta: "0.96.1",
-              studio: "2026.03.04-sha-0043607",
-              analytics: "1.34.7",
-              vector: "0.28.1-alpine",
-              pooler: "2.7.4",
-            },
+            services: DEFAULT_VERSIONS,
             launch: { mode: "auto", excludedServices: [] },
           }),
         );
@@ -379,20 +343,7 @@ describe("StateManager", () => {
         const mgr = yield* StateManager;
         const metadata = stackMetadata({
           ports: DEFAULT_PORTS,
-          services: {
-            postgres: "17.6.1.081",
-            postgrest: "14.5",
-            auth: "2.188.0-rc.15",
-            realtime: "2.78.10",
-            storage: "1.41.8",
-            imgproxy: "v3.8.0",
-            mailpit: "v1.22.3",
-            pgmeta: "0.96.1",
-            studio: "2026.03.04-sha-0043607",
-            analytics: "1.34.7",
-            vector: "0.28.1-alpine",
-            pooler: "2.7.4",
-          },
+          services: DEFAULT_VERSIONS,
           launch: { mode: "auto", excludedServices: [] },
         });
         yield* mgr.writeMetadata("my-project", metadata);
@@ -409,20 +360,7 @@ describe("StateManager", () => {
           "project-a",
           stackMetadata({
             ports: DEFAULT_PORTS,
-            services: {
-              postgres: "17.6.1.081",
-              postgrest: "14.5",
-              auth: "2.188.0-rc.15",
-              realtime: "2.78.10",
-              storage: "1.41.8",
-              imgproxy: "v3.8.0",
-              mailpit: "v1.22.3",
-              pgmeta: "0.96.1",
-              studio: "2026.03.04-sha-0043607",
-              analytics: "1.34.7",
-              vector: "0.28.1-alpine",
-              pooler: "2.7.4",
-            },
+            services: DEFAULT_VERSIONS,
             launch: { mode: "auto", excludedServices: [] },
           }),
         );
@@ -434,20 +372,7 @@ describe("StateManager", () => {
               apiPort: 55001,
               dbPort: 55002,
             },
-            services: {
-              postgres: "17.6.1.081",
-              postgrest: "14.5",
-              auth: "2.188.0-rc.15",
-              realtime: "2.78.10",
-              storage: "1.41.8",
-              imgproxy: "v3.8.0",
-              mailpit: "v1.22.3",
-              pgmeta: "0.96.1",
-              studio: "2026.03.04-sha-0043607",
-              analytics: "1.34.7",
-              vector: "0.28.1-alpine",
-              pooler: "2.7.4",
-            },
+            services: DEFAULT_VERSIONS,
             launch: { mode: "auto", excludedServices: [] },
           }),
         );
@@ -467,20 +392,7 @@ describe("StateManager", () => {
           "my-project",
           stackMetadata({
             ports: DEFAULT_PORTS,
-            services: {
-              postgres: "17.6.1.081",
-              postgrest: "14.5",
-              auth: "2.188.0-rc.15",
-              realtime: "2.78.10",
-              storage: "1.41.8",
-              imgproxy: "v3.8.0",
-              mailpit: "v1.22.3",
-              pgmeta: "0.96.1",
-              studio: "2026.03.04-sha-0043607",
-              analytics: "1.34.7",
-              vector: "0.28.1-alpine",
-              pooler: "2.7.4",
-            },
+            services: DEFAULT_VERSIONS,
             launch: { mode: "auto", excludedServices: [] },
           }),
         );

@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeAnalyticsServiceDocker } from "./analytics.ts";
 import { makeAuthServiceNative, makeAuthServiceDocker } from "./auth.ts";
+import { makeEdgeRuntimeServiceDocker, makeEdgeRuntimeServiceNative } from "./edge-runtime.ts";
 import { makeImgproxyServiceDocker } from "./imgproxy.ts";
 import { makeMailpitServiceDocker } from "./mailpit.ts";
 import { makePostgresInitService } from "./postgres-init.ts";
@@ -19,6 +20,7 @@ const API_PORT = 54321;
 const POSTGRES_BIN_PATH = `/cache/postgres/${DEFAULT_VERSIONS.postgres}/darwin-arm64`;
 const POSTGREST_BIN_PATH = `/cache/postgrest/${DEFAULT_VERSIONS.postgrest}/macos-aarch64`;
 const AUTH_BIN_PATH = `/cache/auth/${DEFAULT_VERSIONS.auth}/arm64`;
+const EDGE_RUNTIME_BIN_PATH = `/cache/edge-runtime/${DEFAULT_VERSIONS["edge-runtime"]}/aarch64-darwin`;
 
 describe("makePostgresService", () => {
   it("creates a postgres ServiceDef with correct defaults", () => {
@@ -256,6 +258,87 @@ describe("makeAuthServiceDocker", () => {
     expect(def.supervision).toEqual({
       orphanCleanup: [{ _tag: "DockerRemove", containerName: `supabase-auth-${API_PORT}` }],
     });
+  });
+});
+
+describe("makeEdgeRuntimeServiceDocker", () => {
+  it("creates a docker-based edge runtime service with a generated bootstrap script", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "stack-edge-runtime-"));
+
+    try {
+      const def = makeEdgeRuntimeServiceDocker({
+        image: dockerImageForService("edge-runtime", DEFAULT_VERSIONS["edge-runtime"]),
+        apiPort: API_PORT,
+        runtimeRoot: tempDir,
+        port: 54340,
+        inspectorPort: 54341,
+        policy: "per_worker",
+        env: { SUPABASE_INTERNAL_DEBUG: "true" },
+        networkArgs: ["--network=host"],
+        dependencies: [{ service: "postgres", condition: "healthy" }],
+      });
+
+      const bootstrapPath = path.join(tempDir, "edge-runtime", "index.ts");
+      expect(readFileSync(bootstrapPath, "utf8")).toContain("FUNCTIONS_NOT_CONFIGURED");
+      expect(readFileSync(bootstrapPath, "utf8")).toContain("/_internal/health");
+      expect(def.name).toBe("edge-runtime");
+      expect(def.command).toBe("docker");
+      expect(def.args).toContain(`supabase-edge-runtime-${API_PORT}`);
+      expect(def.args).toContain("--network=host");
+      expect(def.args).toContain(`--port=54340`);
+      expect(def.args).toContain(`--policy=per_worker`);
+      expect(def.args).toContain(`${bootstrapPath}:/workspace/index.ts:ro`);
+      expect(def.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
+      expect(def.healthCheck?.probe).toEqual({
+        _tag: "Http",
+        host: "127.0.0.1",
+        port: 54340,
+        path: "/_internal/health",
+        scheme: "http",
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("makeEdgeRuntimeServiceNative", () => {
+  it("creates a native edge runtime service with a generated bootstrap script", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "stack-edge-runtime-native-"));
+
+    try {
+      const def = makeEdgeRuntimeServiceNative({
+        binPath: EDGE_RUNTIME_BIN_PATH,
+        runtimeRoot: tempDir,
+        port: 54340,
+        inspectorPort: 54341,
+        policy: "per_worker",
+        env: { SUPABASE_INTERNAL_DEBUG: "true" },
+        dependencies: [{ service: "postgres-init", condition: "completed" }],
+      });
+
+      const bootstrapPath = path.join(tempDir, "edge-runtime", "index.ts");
+      expect(readFileSync(bootstrapPath, "utf8")).toContain("FUNCTIONS_NOT_CONFIGURED");
+      expect(readFileSync(bootstrapPath, "utf8")).toContain("/_internal/health");
+      expect(def.name).toBe("edge-runtime");
+      expect(def.command).toBe(`${EDGE_RUNTIME_BIN_PATH}/bin/edge-runtime`);
+      expect(def.args).toContain("start");
+      expect(def.args).toContain(`--main-service=${path.join(tempDir, "edge-runtime")}`);
+      expect(def.args).toContain(`--port=54340`);
+      expect(def.args).toContain(`--policy=per_worker`);
+      expect(def.env?.EDGE_RUNTIME_INSPECTOR_PORT).toBe("54341");
+      expect(def.dependencies).toEqual([{ service: "postgres-init", condition: "completed" }]);
+      expect(def.healthCheck?.probe).toEqual({
+        _tag: "Http",
+        host: "127.0.0.1",
+        port: 54340,
+        path: "/_internal/health",
+        scheme: "http",
+      });
+      expect(def.supervision).toEqual({});
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
 

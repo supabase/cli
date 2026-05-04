@@ -69,6 +69,12 @@ const stackInfoFor = (config: ResolvedStackConfig): StackInfo => ({
     ...(config.postgrest === false
       ? {}
       : { postgrest: `http://127.0.0.1:${config.postgrest.port}` }),
+    ...(config.edgeRuntime === false
+      ? {}
+      : {
+          functions: `http://127.0.0.1:${config.apiPort}/functions/v1`,
+          edge_runtime: `http://127.0.0.1:${config.edgeRuntime.port}`,
+        }),
     ...(config.realtime === false ? {} : { realtime: `http://127.0.0.1:${config.realtime.port}` }),
     ...(config.storage === false
       ? {}

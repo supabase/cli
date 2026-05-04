@@ -8,6 +8,7 @@ const VersionManifestSchema = Schema.Struct({
   postgres: Schema.String,
   postgrest: Schema.String,
   auth: Schema.String,
+  "edge-runtime": Schema.String,
   realtime: Schema.String,
   storage: Schema.String,
   imgproxy: Schema.String,
@@ -23,6 +24,7 @@ export const PartialVersionManifestSchema = Schema.Struct({
   postgres: Schema.optionalKey(Schema.String),
   postgrest: Schema.optionalKey(Schema.String),
   auth: Schema.optionalKey(Schema.String),
+  "edge-runtime": Schema.optionalKey(Schema.String),
   realtime: Schema.optionalKey(Schema.String),
   storage: Schema.optionalKey(Schema.String),
   imgproxy: Schema.optionalKey(Schema.String),
@@ -82,7 +84,7 @@ export function runningServiceVersionsForConfig(
     if (service === "postgres") {
       continue;
     }
-    const serviceConfig = config[service];
+    const serviceConfig = service === "edge-runtime" ? config.edgeRuntime : config[service];
     if (serviceConfig !== false) {
       versions[service] = serviceConfig.version;
     }

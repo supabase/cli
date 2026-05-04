@@ -7,6 +7,7 @@ import {
   postgresAssetName,
   postgrestAssetName,
   authAssetName,
+  edgeRuntimeAssetName,
 } from "./Platform.ts";
 
 describe("detectPlatform", () => {
@@ -76,6 +77,24 @@ describe("authAssetName", () => {
 
   it("returns null for unsupported", () => {
     expect(authAssetName({ os: "darwin", arch: "x64" })).toBeNull();
+  });
+});
+
+describe("edgeRuntimeAssetName", () => {
+  it("maps darwin-arm64 to aarch64-darwin", () => {
+    expect(edgeRuntimeAssetName({ os: "darwin", arch: "arm64" })).toBe("aarch64-darwin");
+  });
+
+  it("maps linux-x64 to x86_64-linux", () => {
+    expect(edgeRuntimeAssetName({ os: "linux", arch: "x64" })).toBe("x86_64-linux");
+  });
+
+  it("maps linux-arm64 to aarch64-linux", () => {
+    expect(edgeRuntimeAssetName({ os: "linux", arch: "arm64" })).toBe("aarch64-linux");
+  });
+
+  it("returns null for unsupported", () => {
+    expect(edgeRuntimeAssetName({ os: "win32", arch: "x64" })).toBeNull();
   });
 });
 

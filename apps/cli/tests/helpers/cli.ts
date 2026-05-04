@@ -92,6 +92,8 @@ export async function makeTempStackProject(prefix = "supabase-stack-e2e-") {
     authPort: await pickFreePort(),
     postgrestPort: await pickFreePort(),
     postgrestAdminPort: await pickFreePort(),
+    edgeRuntimePort: await pickFreePort(),
+    edgeRuntimeInspectorPort: await pickFreePort(),
     realtimePort: await pickFreePort(),
     storagePort: await pickFreePort(),
     imgproxyPort: await pickFreePort(),

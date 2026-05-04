@@ -38,6 +38,7 @@ import { UnixHttpClient } from "./UnixHttpClient.ts";
 import type {
   AnalyticsConfig,
   AuthConfig,
+  EdgeRuntimeConfig,
   ImgproxyConfig,
   MailpitConfig,
   PgmetaConfig,
@@ -46,6 +47,7 @@ import type {
   RealtimeConfig,
   ResolvedAnalyticsConfig,
   ResolvedAuthConfig,
+  ResolvedEdgeRuntimeConfig,
   ResolvedImgproxyConfig,
   ResolvedMailpitConfig,
   ResolvedPgmetaConfig,
@@ -314,6 +316,23 @@ function resolveRealtimeConfig(
   };
 }
 
+function resolveEdgeRuntimeConfig(
+  input: EdgeRuntimeConfig | undefined,
+  raw: EdgeRuntimeConfig | false | undefined,
+  ports: AllocatedPorts,
+): ResolvedEdgeRuntimeConfig | false {
+  if (raw === false || raw?.enabled === false) return false;
+  const cfg = input ?? {};
+  return {
+    enabled: cfg.enabled ?? true,
+    port: ports.edgeRuntimePort,
+    inspectorPort: ports.edgeRuntimeInspectorPort,
+    policy: cfg.policy ?? "per_worker",
+    version: cfg.version ?? DEFAULT_VERSIONS["edge-runtime"],
+    env: cfg.env ?? {},
+  };
+}
+
 function resolveStorageConfig(
   input: StorageConfig | undefined,
   raw: StorageConfig | false | undefined,
@@ -441,10 +460,15 @@ export async function resolveConfig(
   opts: ResolveConfigOptions = {},
 ): Promise<ResolvedStackConfig> {
   const config = input ?? {};
+  const resolvedMode = config.mode ?? "auto";
   const roots = resolveRoots(config, opts);
   const postgresInput = config.postgres ?? {};
   const postgrestInput = config.postgrest !== false ? (config.postgrest ?? undefined) : undefined;
   const authInput = config.auth !== false ? (config.auth ?? undefined) : undefined;
+  const edgeRuntimeEnabled =
+    !(resolvedMode === "native" && config.edgeRuntime === undefined) &&
+    config.edgeRuntime !== false &&
+    (config.edgeRuntime?.enabled ?? true) !== false;
   const realtimeEnabled = config.realtime !== undefined && config.realtime !== false;
   const storageEnabled = config.storage !== undefined && config.storage !== false;
   const imgproxyEnabled = config.imgproxy !== undefined && config.imgproxy !== false;
@@ -454,6 +478,7 @@ export async function resolveConfig(
   const analyticsEnabled = config.analytics !== undefined && config.analytics !== false;
   const vectorEnabled = config.vector !== undefined && config.vector !== false;
   const poolerEnabled = config.pooler !== undefined && config.pooler !== false;
+  const edgeRuntimeInput = edgeRuntimeEnabled ? (config.edgeRuntime ?? undefined) : undefined;
   const realtimeInput = realtimeEnabled ? (config.realtime ?? undefined) : undefined;
   const storageInput = storageEnabled ? (config.storage ?? undefined) : undefined;
   const imgproxyInput = imgproxyEnabled ? (config.imgproxy ?? undefined) : undefined;
@@ -474,6 +499,8 @@ export async function resolveConfig(
         authPort: authInput?.port,
         postgrestPort: undefined,
         postgrestAdminPort: undefined,
+        edgeRuntimePort: edgeRuntimeInput?.port,
+        edgeRuntimeInspectorPort: edgeRuntimeInput?.inspectorPort,
         realtimePort: realtimeInput?.port,
         storagePort: storageInput?.port,
         imgproxyPort: imgproxyInput?.port,
@@ -503,7 +530,7 @@ export async function resolveConfig(
     cacheRoot: roots.cacheRoot,
     stackRoot: roots.stackRoot,
     runtimeRoot: roots.runtimeRoot,
-    mode: config.mode ?? "native",
+    mode: resolvedMode,
     jwtSecret,
     ports,
     apiPort: ports.apiPort,
@@ -520,6 +547,9 @@ export async function resolveConfig(
     },
     postgrest: resolvePostgrestConfig(postgrestInput, config.postgrest, ports),
     auth: resolveAuthConfig(authInput, config.auth, ports, ports.apiPort),
+    edgeRuntime: edgeRuntimeEnabled
+      ? resolveEdgeRuntimeConfig(edgeRuntimeInput, config.edgeRuntime, ports)
+      : false,
     realtime: realtimeEnabled
       ? resolveRealtimeConfig(realtimeInput, config.realtime, ports)
       : false,
@@ -630,6 +660,8 @@ function possibleCleanupTargetsForConfig(config: ResolvedStackConfig): CleanupTa
   const dockerContainerNames = [`supabase-postgres-${config.apiPort}`];
   if (config.postgrest !== false) dockerContainerNames.push(`supabase-postgrest-${config.apiPort}`);
   if (config.auth !== false) dockerContainerNames.push(`supabase-auth-${config.apiPort}`);
+  if (config.edgeRuntime !== false)
+    dockerContainerNames.push(`supabase-edge-runtime-${config.apiPort}`);
   if (config.realtime !== false) dockerContainerNames.push(`supabase-realtime-${config.apiPort}`);
   if (config.storage !== false) dockerContainerNames.push(`supabase-storage-${config.apiPort}`);
   if (config.imgproxy !== false) dockerContainerNames.push(`supabase-imgproxy-${config.apiPort}`);

@@ -1,5 +1,6 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as http from "node:http";
+import { gzipSync } from "node:zlib";
 import { Layer, ManagedRuntime } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -16,6 +17,18 @@ function startEchoBackend(): Promise<EchoServer> {
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, incomingRes) => {
       const url = new URL(req.url ?? "/", `http://127.0.0.1`);
+      if (url.pathname === "/encoded") {
+        const body = gzipSync(JSON.stringify({ ok: true }));
+        incomingRes.writeHead(200, {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+          "Content-Encoding": "gzip",
+          Date: new Date(0).toUTCString(),
+        });
+        incomingRes.end(body);
+        return;
+      }
+
       const body = JSON.stringify({
         path: url.pathname + url.search,
         method: req.method,
@@ -72,6 +85,7 @@ describe("ApiProxy", () => {
       gotruePort: echoPort,
       postgrestPort: echoPort,
       postgrestAdminPort: echoPort,
+      edgeRuntimePort: echoPort,
       realtimePort: echoPort,
       storagePort: echoPort,
       pgmetaPort: echoPort,
@@ -209,6 +223,23 @@ describe("ApiProxy", () => {
     expect(body.path).toBe("/users");
   });
 
+  test("/functions/v1/test strips prefix and transforms auth", async () => {
+    const res = await fetch(`${proxyUrl}/functions/v1/test`, {
+      headers: { apikey: SECRET_KEY },
+    });
+    const body = (await res.json()) as { path: string; headers: Record<string, string> };
+    expect(body.path).toBe("/test");
+    expect(body.headers["authorization"]).toBe(`Bearer ${SERVICE_ROLE_JWT}`);
+  });
+
+  test("strips upstream content-encoding metadata from proxied function responses", async () => {
+    const res = await fetch(`${proxyUrl}/functions/v1/encoded`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-encoding")).toBeNull();
+    expect(res.headers.get("date")).not.toBe(new Date(0).toUTCString());
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
   // ---------------------------------------------------------------------------
   // Auth open endpoints — no auth transformation
   // ---------------------------------------------------------------------------
@@ -252,6 +283,7 @@ describe("ApiProxy", () => {
       gotruePort: deadPort,
       postgrestPort: deadPort,
       postgrestAdminPort: deadPort,
+      edgeRuntimePort: deadPort,
       realtimePort: deadPort,
       storagePort: deadPort,
       pgmetaPort: deadPort,

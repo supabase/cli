@@ -21,6 +21,7 @@ export function mockBinaryResolver(
     postgres: `/cache/postgres/${DEFAULT_VERSIONS.postgres}/darwin-arm64`,
     postgrest: `/cache/postgrest/${DEFAULT_VERSIONS.postgrest}/macos-aarch64`,
     auth: `/cache/auth/${DEFAULT_VERSIONS.auth}/arm64`,
+    "edge-runtime": `/cache/edge-runtime/${DEFAULT_VERSIONS["edge-runtime"]}/aarch64-darwin`,
   };
   const resolveWithMetadata = (spec: BinarySpec, options?: ResolveBinaryOptions) =>
     Effect.gen(function* () {

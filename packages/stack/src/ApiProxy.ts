@@ -15,6 +15,7 @@ export interface ProxyConfig {
   readonly gotruePort: number;
   readonly postgrestPort: number;
   readonly postgrestAdminPort: number;
+  readonly edgeRuntimePort: number;
   readonly realtimePort: number;
   readonly storagePort: number;
   readonly pgmetaPort: number;
@@ -60,6 +61,23 @@ function addProxyHeaders(
     Headers.set(Headers.set(headers, "x-real-ip", clientIp), "x-forwarded-for", xForwardedFor),
     "x-forwarded-proto",
     "http",
+  );
+}
+
+const STRIP_PROXY_RESPONSE_HEADERS = new Set([
+  "content-encoding",
+  "content-length",
+  "date",
+  "transfer-encoding",
+]);
+
+function sanitizeProxyResponseHeaders(headers: Headers.Headers): Headers.Headers {
+  return Headers.fromInput(
+    Object.fromEntries(
+      Object.entries(headers).filter(
+        ([name]) => !STRIP_PROXY_RESPONSE_HEADERS.has(name.toLowerCase()),
+      ),
+    ),
   );
 }
 
@@ -129,9 +147,10 @@ function makeProxyHandler(
       });
 
       const outRes = yield* client.execute(outReq);
+      const responseHeaders = sanitizeProxyResponseHeaders(outRes.headers);
       return HttpServerResponse.stream(outRes.stream, {
         status: outRes.status,
-        headers: outRes.headers,
+        headers: responseHeaders,
       });
     }).pipe(
       Effect.catchTag("HttpClientError", (error) =>
@@ -226,6 +245,15 @@ export class ApiProxy extends ServiceMap.Service<
               backendPath: "/rpc/graphql",
               transformAuth: true,
               extraHeaders: { "content-profile": "graphql_public" },
+            }),
+          ),
+          HttpRouter.route(
+            "*",
+            "/functions/v1/*",
+            makeProxyHandler(client, config, {
+              backendPort: config.edgeRuntimePort,
+              stripPrefix: "/functions/v1",
+              transformAuth: true,
             }),
           ),
           HttpRouter.route(

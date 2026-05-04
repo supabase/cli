@@ -21,6 +21,10 @@ function makeResult(type: "binary" | "docker"): PrefetchResult {
     postgrest:
       type === "docker" ? { type, image: "postgrest:image" } : { type, path: "/tmp/postgrest" },
     auth: type === "docker" ? { type, image: "auth:image" } : { type, path: "/tmp/auth" },
+    "edge-runtime":
+      type === "docker"
+        ? { type, image: "edge-runtime:image" }
+        : { type, path: "/tmp/edge-runtime" },
   };
 }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Fiber, Layer } from "effect";
 import type { StackServiceStatus } from "@supabase/stack";
-import { stackMetadata, type StackInfo } from "@supabase/stack/effect";
+import { DEFAULT_VERSIONS, stackMetadata, type StackInfo } from "@supabase/stack/effect";
 import { start } from "./start.handler.ts";
 import { StartVersionState } from "./start.command.ts";
 import { startForegroundWithStopSignal } from "./flows/foreground.flow.ts";
@@ -49,6 +49,8 @@ function mockStartVersionState(
             authPort: 54323,
             postgrestPort: 54324,
             postgrestAdminPort: 54325,
+            edgeRuntimePort: 54337,
+            edgeRuntimeInspectorPort: 54338,
             realtimePort: 54326,
             storagePort: 54327,
             imgproxyPort: 54328,
@@ -65,6 +67,7 @@ function mockStartVersionState(
             postgres: "17.6.1.081",
             postgrest: "14.5",
             auth: "2.188.0-rc.15",
+            "edge-runtime": DEFAULT_VERSIONS["edge-runtime"],
             realtime: "2.78.10",
             storage: "1.41.8",
             imgproxy: "v3.8.0",
@@ -82,6 +85,7 @@ function mockStartVersionState(
           postgres: "17.6.1.081",
           postgrest: "14.5",
           auth: "2.188.0-rc.15",
+          "edge-runtime": DEFAULT_VERSIONS["edge-runtime"],
           realtime: "2.78.10",
           storage: "1.41.8",
           imgproxy: "v3.8.0",
@@ -96,6 +100,7 @@ function mockStartVersionState(
           postgres: "17.6.1.081",
           postgrest: "14.5",
           auth: "2.188.0-rc.15",
+          "edge-runtime": DEFAULT_VERSIONS["edge-runtime"],
           realtime: "2.78.10",
           storage: "1.41.8",
           imgproxy: "v3.8.0",
@@ -110,6 +115,7 @@ function mockStartVersionState(
           postgres: "17.6.1.081",
           postgrest: "14.5",
           auth: "2.188.0-rc.15",
+          "edge-runtime": DEFAULT_VERSIONS["edge-runtime"],
           realtime: "2.78.10",
           storage: "1.41.8",
           imgproxy: "v3.8.0",
@@ -345,6 +351,8 @@ describe("start", () => {
             authPort: 54323,
             postgrestPort: 54324,
             postgrestAdminPort: 54325,
+            edgeRuntimePort: 54337,
+            edgeRuntimeInspectorPort: 54338,
             realtimePort: 54326,
             storagePort: 54327,
             imgproxyPort: 54328,
@@ -361,6 +369,7 @@ describe("start", () => {
             postgres: "17.6.1.081",
             postgrest: "14.5",
             auth: "2.187.0",
+            "edge-runtime": DEFAULT_VERSIONS["edge-runtime"],
             realtime: "2.78.10",
             storage: "1.41.8",
             imgproxy: "v3.8.0",
@@ -395,6 +404,8 @@ describe("start", () => {
                 authPort: 54323,
                 postgrestPort: 54324,
                 postgrestAdminPort: 54325,
+                edgeRuntimePort: 54337,
+                edgeRuntimeInspectorPort: 54338,
                 realtimePort: 54326,
                 storagePort: 54327,
                 imgproxyPort: 54328,
@@ -411,6 +422,7 @@ describe("start", () => {
                 postgres: "17.6.1.081",
                 postgrest: "14.5",
                 auth: "2.187.0",
+                "edge-runtime": DEFAULT_VERSIONS["edge-runtime"],
                 realtime: "2.78.10",
                 storage: "1.41.8",
                 imgproxy: "v3.8.0",

@@ -8,6 +8,7 @@ import { deleteManagedStackPersistence, listStacks, resolveStackSummary } from "
 import { projectKeyForProjectDir } from "./paths.ts";
 import { stackMetadata } from "./StackMetadata.ts";
 import type { StackState } from "./StateManager.ts";
+import { DEFAULT_VERSIONS } from "./versions.ts";
 
 const defaultPorts = {
   apiPort: 54321,
@@ -15,6 +16,8 @@ const defaultPorts = {
   authPort: 54323,
   postgrestPort: 54324,
   postgrestAdminPort: 54325,
+  edgeRuntimePort: 54337,
+  edgeRuntimeInspectorPort: 54338,
   realtimePort: 54326,
   storagePort: 54327,
   imgproxyPort: 54328,
@@ -34,20 +37,7 @@ function writeStackMetadataFile(stackDir: string) {
     JSON.stringify(
       stackMetadata({
         ports: defaultPorts,
-        services: {
-          postgres: "17.6.1.081",
-          postgrest: "14.5",
-          auth: "2.188.0-rc.15",
-          realtime: "2.78.10",
-          storage: "1.41.8",
-          imgproxy: "v3.8.0",
-          mailpit: "v1.22.3",
-          pgmeta: "0.96.1",
-          studio: "2026.03.04-sha-0043607",
-          analytics: "1.34.7",
-          vector: "0.28.1-alpine",
-          pooler: "2.7.4",
-        },
+        services: DEFAULT_VERSIONS,
         launch: { mode: "auto", excludedServices: [] },
       }),
       null,
@@ -93,6 +83,8 @@ describe("deleteManagedStackPersistence", () => {
                   authPort: 54323,
                   postgrestPort: 54324,
                   postgrestAdminPort: 54325,
+                  edgeRuntimePort: 54337,
+                  edgeRuntimeInspectorPort: 54338,
                   realtimePort: 54326,
                   storagePort: 54327,
                   imgproxyPort: 54328,
@@ -105,20 +97,7 @@ describe("deleteManagedStackPersistence", () => {
                   poolerPort: 54335,
                   poolerApiPort: 54336,
                 },
-                services: {
-                  postgres: "17.6.1.081",
-                  postgrest: "14.5",
-                  auth: "2.188.0-rc.15",
-                  realtime: "2.78.10",
-                  storage: "1.41.8",
-                  imgproxy: "v3.8.0",
-                  mailpit: "v1.22.3",
-                  pgmeta: "0.96.1",
-                  studio: "2026.03.04-sha-0043607",
-                  analytics: "1.34.7",
-                  vector: "0.28.1-alpine",
-                  pooler: "2.7.4",
-                },
+                services: DEFAULT_VERSIONS,
                 launch: { mode: "auto", excludedServices: [] },
               }),
             ),
@@ -172,7 +151,7 @@ describe("stack discovery", () => {
           name: "default",
           running: false,
           ports: expect.objectContaining({ apiPort: 54321, dbPort: 54322 }),
-          versions: expect.objectContaining({ postgres: "17.6.1.081" }),
+          versions: DEFAULT_VERSIONS,
         }),
       ]);
     }));

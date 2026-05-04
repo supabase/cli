@@ -87,6 +87,30 @@ dockerDescribe("createStack e2e (docker mode)", () => {
   );
 
   test(
+    "runs the edge runtime in Docker and serves the functions placeholder through the local gateway",
+    { timeout: STACK_DOCKER_E2E_TEST_TIMEOUT_MS },
+    async () => {
+      const [runningImages, states, functionsRes] = await Promise.all([
+        Promise.resolve(execSync("docker ps --format '{{.Image}}'").toString()),
+        stack.getStatus(),
+        fetch(`${stack.url}/functions/v1/test`),
+      ]);
+
+      expect(runningImages).toContain("public.ecr.aws/supabase/edge-runtime");
+      expect(states).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "edge-runtime", status: "Healthy" }),
+        ]),
+      );
+      expect(functionsRes.status).toBe(501);
+      expect(await functionsRes.json()).toEqual({
+        code: "FUNCTIONS_NOT_CONFIGURED",
+        message: "Edge Functions are not configured for this local stack yet.",
+      });
+    },
+  );
+
+  test(
     "supports the docker auth signup and session golden path",
     { timeout: STACK_DOCKER_E2E_TEST_TIMEOUT_MS },
     async () => {

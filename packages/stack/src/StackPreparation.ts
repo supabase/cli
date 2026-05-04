@@ -38,6 +38,19 @@ type StackPreparationEvent =
   | ServiceDownloadFinished
   | PreparationCompleted;
 
+const dockerOnlyServices = new Set<ServiceName>([
+  "edge-runtime",
+  "realtime",
+  "storage",
+  "imgproxy",
+  "mailpit",
+  "pgmeta",
+  "studio",
+  "analytics",
+  "vector",
+  "pooler",
+]);
+
 const DOCKER_PULL_RETRY_DELAYS_MS = [500] as const;
 const RETRYABLE_PULL_PATTERNS = [
   /toomanyrequests/i,
@@ -76,7 +89,7 @@ export const prepareAssetsWithDependencies = (
   Effect.gen(function* () {
     const versions = { ...DEFAULT_VERSIONS, ...input?.versions };
     const services: ReadonlyArray<ServiceName> =
-      input?.services ?? (["postgres", "postgrest", "auth"] as const);
+      input?.services ?? (["postgres", "postgrest", "auth", "edge-runtime"] as const);
     const mode = input?.mode ?? "auto";
 
     type Entry = readonly [ServiceName, ServiceResolution];
@@ -99,6 +112,15 @@ export const prepareAssetsWithDependencies = (
         );
 
       if (mode === "docker") {
+        return resolveDockerImageForService(spawner, service, versions[service], {
+          onDownloadStart: markDownloadStart(),
+        }).pipe(
+          Effect.map((image): Entry => [service, { type: "docker", image }]),
+          Effect.ensuring(markDownloadFinished()),
+        );
+      }
+
+      if (dockerOnlyServices.has(service)) {
         return resolveDockerImageForService(spawner, service, versions[service], {
           onDownloadStart: markDownloadStart(),
         }).pipe(

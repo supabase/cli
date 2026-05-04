@@ -32,6 +32,13 @@ export const authAssetName = (p: PlatformInfo): string | null => {
   return null;
 };
 
+export const edgeRuntimeAssetName = (p: PlatformInfo): string | null => {
+  if (p.os === "darwin" && p.arch === "arm64") return "aarch64-darwin";
+  if (p.os === "linux" && p.arch === "x64") return "x86_64-linux";
+  if (p.os === "linux" && p.arch === "arm64") return "aarch64-linux";
+  return null;
+};
+
 /**
  * Host address that Docker containers should use to reach services on the host machine.
  * On Linux, --network=host makes 127.0.0.1 work. On macOS/Windows, Docker runs in a VM

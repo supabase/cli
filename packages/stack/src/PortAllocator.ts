@@ -9,6 +9,8 @@ const DEFAULT_MAILPIT_SMTP_PORT = 54325;
 const DEFAULT_MAILPIT_POP3_PORT = 54326;
 const DEFAULT_ANALYTICS_PORT = 54327;
 const DEFAULT_POOLER_PORT = 54329;
+const DEFAULT_EDGE_RUNTIME_PORT = 54341;
+const DEFAULT_EDGE_RUNTIME_INSPECTOR_PORT = 54342;
 
 export class PortAllocationError extends Data.TaggedError("PortAllocationError")<{
   readonly detail: string;
@@ -21,6 +23,8 @@ export interface PortInput {
   readonly authPort?: number;
   readonly postgrestPort?: number;
   readonly postgrestAdminPort?: number;
+  readonly edgeRuntimePort?: number;
+  readonly edgeRuntimeInspectorPort?: number;
   readonly realtimePort?: number;
   readonly storagePort?: number;
   readonly imgproxyPort?: number;
@@ -40,6 +44,8 @@ export interface AllocatedPorts {
   readonly authPort: number;
   readonly postgrestPort: number;
   readonly postgrestAdminPort: number;
+  readonly edgeRuntimePort: number;
+  readonly edgeRuntimeInspectorPort: number;
   readonly realtimePort: number;
   readonly storagePort: number;
   readonly imgproxyPort: number;
@@ -59,6 +65,8 @@ export const AllocatedPortsSchema = Schema.Struct({
   authPort: Schema.Number,
   postgrestPort: Schema.Number,
   postgrestAdminPort: Schema.Number,
+  edgeRuntimePort: Schema.Number,
+  edgeRuntimeInspectorPort: Schema.Number,
   realtimePort: Schema.Number,
   storagePort: Schema.Number,
   imgproxyPort: Schema.Number,
@@ -78,6 +86,8 @@ export const PORT_FIELDS = [
   "authPort",
   "postgrestPort",
   "postgrestAdminPort",
+  "edgeRuntimePort",
+  "edgeRuntimeInspectorPort",
   "realtimePort",
   "storagePort",
   "imgproxyPort",
@@ -102,6 +112,8 @@ export const DEFAULT_PORTS: Partial<AllocatedPorts> = {
   mailpitPop3Port: DEFAULT_MAILPIT_POP3_PORT,
   analyticsPort: DEFAULT_ANALYTICS_PORT,
   poolerPort: DEFAULT_POOLER_PORT,
+  edgeRuntimePort: DEFAULT_EDGE_RUNTIME_PORT,
+  edgeRuntimeInspectorPort: DEFAULT_EDGE_RUNTIME_INSPECTOR_PORT,
 };
 
 interface PortAllocationOptions {

@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import { prefetch, type PrefetchOptions, type PrefetchResult } from "../../src/node.ts";
 
-export const STACK_E2E_WARMUP_SERVICES = ["postgres", "postgrest", "auth"] as const;
+export const STACK_E2E_WARMUP_SERVICES = ["postgres", "postgrest", "auth", "edge-runtime"] as const;
 
 interface WarmupLogger {
   warn(message: string): void;

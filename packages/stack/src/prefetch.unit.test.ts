@@ -10,6 +10,7 @@ import {
   StackPreparation,
 } from "./StackPreparation.ts";
 import { prepareAssetsWithDependencies } from "./StackPreparation.ts";
+import { DEFAULT_VERSIONS } from "./versions.ts";
 
 const encoder = new TextEncoder();
 
@@ -223,5 +224,28 @@ describe("prefetch", () => {
       "ServiceDownloadFinished:postgrest",
       "PreparationCompleted",
     ]);
+  });
+
+  test("uses docker for edge-runtime in auto mode even when a native binary exists", async () => {
+    const resolver = mockBinaryResolver();
+    const spawner = mockSequenceSpawner([{ exitCode: 0 }]);
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const resolverService = yield* BinaryResolver;
+        const spawnerService = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const artifacts = yield* prepareAssetsWithDependencies(resolverService, spawnerService, {
+          mode: "auto",
+          services: ["edge-runtime"],
+        });
+        return artifacts.resolutions;
+      }).pipe(Effect.provide(resolver.layer), Effect.provide(spawner.layer)),
+    );
+
+    expect(result["edge-runtime"]).toEqual({
+      type: "docker",
+      image: `public.ecr.aws/supabase/edge-runtime:v${DEFAULT_VERSIONS["edge-runtime"]}`,
+    });
+    expect(resolver.resolved).toEqual([]);
   });
 });

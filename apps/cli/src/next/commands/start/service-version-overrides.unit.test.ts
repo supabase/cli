@@ -1,3 +1,4 @@
+import { DEFAULT_VERSIONS } from "@supabase/stack/effect";
 import { describe, expect, test } from "vitest";
 import { Effect, Layer } from "effect";
 import {
@@ -23,6 +24,13 @@ describe("service version overrides", () => {
   });
 
   test("resolves flag > local file > link state precedence", async () => {
+    const candidateBaseline = {
+      ...DEFAULT_VERSIONS,
+      postgres: "17.6.1.090",
+      postgrest: "14.5",
+      auth: "2.187.0",
+    };
+
     const layer = Layer.mergeAll(
       mockProjectLinkState({
         project: {
@@ -55,47 +63,13 @@ describe("service version overrides", () => {
         ),
       ),
     ).resolves.toEqual({
-      candidateBaseline: {
-        postgres: "17.6.1.090",
-        postgrest: "14.5",
-        auth: "2.187.0",
-        realtime: "2.78.10",
-        storage: "1.41.8",
-        imgproxy: "v3.8.0",
-        mailpit: "v1.22.3",
-        pgmeta: "0.96.1",
-        studio: "2026.03.04-sha-0043607",
-        analytics: "1.34.7",
-        vector: "0.28.1-alpine",
-        pooler: "2.7.4",
-      },
-      pinnedBaseline: {
-        postgres: "17.6.1.090",
-        postgrest: "14.5",
-        auth: "2.187.0",
-        realtime: "2.78.10",
-        storage: "1.41.8",
-        imgproxy: "v3.8.0",
-        mailpit: "v1.22.3",
-        pgmeta: "0.96.1",
-        studio: "2026.03.04-sha-0043607",
-        analytics: "1.34.7",
-        vector: "0.28.1-alpine",
-        pooler: "2.7.4",
-      },
+      candidateBaseline,
+      pinnedBaseline: candidateBaseline,
       runtimeVersions: {
+        ...candidateBaseline,
         postgres: "17.4.1.045",
-        postgrest: "14.5",
         auth: "2.170.0",
-        realtime: "2.78.10",
         storage: "1.40.0",
-        imgproxy: "v3.8.0",
-        mailpit: "v1.22.3",
-        pgmeta: "0.96.1",
-        studio: "2026.03.04-sha-0043607",
-        analytics: "1.34.7",
-        vector: "0.28.1-alpine",
-        pooler: "2.7.4",
       },
       activeOverrides: [
         { service: "postgres", version: "17.4.1.045", source: "flag" },

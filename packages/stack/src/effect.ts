@@ -55,6 +55,7 @@ export { ApiProxy } from "./ApiProxy.ts";
 export type {
   AnalyticsConfig,
   AuthConfig,
+  EdgeRuntimeConfig,
   ImgproxyConfig,
   MailpitConfig,
   PgmetaConfig,
@@ -64,6 +65,7 @@ export type {
   RealtimeConfig,
   ResolvedAnalyticsConfig,
   ResolvedAuthConfig,
+  ResolvedEdgeRuntimeConfig,
   ResolvedImgproxyConfig,
   ResolvedMailpitConfig,
   ResolvedPgmetaConfig,

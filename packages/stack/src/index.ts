@@ -6,6 +6,7 @@ export type { StackServiceStatus } from "./StackServiceState.ts";
 export type {
   AnalyticsConfig,
   AuthConfig,
+  EdgeRuntimeConfig,
   ImgproxyConfig,
   MailpitConfig,
   PgmetaConfig,
