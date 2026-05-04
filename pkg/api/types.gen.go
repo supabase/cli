@@ -4398,6 +4398,7 @@ type UpgradeDatabaseBodyReleaseChannel string
 // V1BackupsResponse defines model for V1BackupsResponse.
 type V1BackupsResponse struct {
 	Backups []struct {
+		Id               int                            `json:"id"`
 		InsertedAt       string                         `json:"inserted_at"`
 		IsPhysicalBackup bool                           `json:"is_physical_backup"`
 		Status           V1BackupsResponseBackupsStatus `json:"status"`
@@ -4820,6 +4821,11 @@ type V1ProjectWithDatabaseResponseStatus string
 type V1ReadOnlyQueryBody struct {
 	Parameters *[]interface{} `json:"parameters,omitempty"`
 	Query      string         `json:"query"`
+}
+
+// V1RestoreBackupBody defines model for V1RestoreBackupBody.
+type V1RestoreBackupBody struct {
+	Id int `json:"id"`
 }
 
 // V1RestorePitrBody defines model for V1RestorePitrBody.
@@ -5335,6 +5341,9 @@ type V1UpdateStorageConfigJSONRequestBody = UpdateStorageConfigBody
 
 // V1UpdateHostnameConfigJSONRequestBody defines body for V1UpdateHostnameConfig for application/json ContentType.
 type V1UpdateHostnameConfigJSONRequestBody = UpdateCustomHostnameBody
+
+// V1RestorePhysicalBackupJSONRequestBody defines body for V1RestorePhysicalBackup for application/json ContentType.
+type V1RestorePhysicalBackupJSONRequestBody = V1RestoreBackupBody
 
 // V1RestorePitrBackupJSONRequestBody defines body for V1RestorePitrBackup for application/json ContentType.
 type V1RestorePitrBackupJSONRequestBody = V1RestorePitrBody
