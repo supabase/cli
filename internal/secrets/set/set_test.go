@@ -13,6 +13,7 @@ import (
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/config"
 )
 
 func TestSecretSetCommand(t *testing.T) {
@@ -63,6 +64,21 @@ func TestSecretSetCommand(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("Ignores edge runtime config secrets", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		secrets := utils.Config.EdgeRuntime.Secrets
+		t.Cleanup(func() { utils.Config.EdgeRuntime.Secrets = secrets })
+		utils.Config.EdgeRuntime.Secrets = config.SecretsConfig{
+			"FOO": {Value: "foo", SHA256: "hash"},
+		}
+		// Run test
+		result, err := ListSecrets("", fsys, "BAR=bar")
+		// Check error
+		assert.NoError(t, err)
+		assert.ElementsMatch(t, api.CreateSecretBody{{Name: "BAR", Value: "bar"}}, result)
 	})
 
 	t.Run("throws error on empty secret", func(t *testing.T) {
