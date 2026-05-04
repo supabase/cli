@@ -1315,10 +1315,10 @@ func buildGotrueEnv(dbConfig pgconn.Config) []string {
 
 		fmt.Sprintf("GOTRUE_SMTP_MAX_FREQUENCY=%v", utils.Config.Auth.Email.MaxFrequency),
 
-		"GOTRUE_MAILER_URLPATHS_INVITE=/verify",
-		"GOTRUE_MAILER_URLPATHS_CONFIRMATION=/verify",
-		"GOTRUE_MAILER_URLPATHS_RECOVERY=/verify",
-		"GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=/verify",
+		fmt.Sprintf("GOTRUE_MAILER_URLPATHS_INVITE=%s/verify", utils.Config.Auth.JwtIssuer),
+		fmt.Sprintf("GOTRUE_MAILER_URLPATHS_CONFIRMATION=%s/verify", utils.Config.Auth.JwtIssuer),
+		fmt.Sprintf("GOTRUE_MAILER_URLPATHS_RECOVERY=%s/verify", utils.Config.Auth.JwtIssuer),
+		fmt.Sprintf("GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=%s/verify", utils.Config.Auth.JwtIssuer),
 		"GOTRUE_RATE_LIMIT_EMAIL_SENT=360000",
 
 		fmt.Sprintf("GOTRUE_EXTERNAL_PHONE_ENABLED=%v", utils.Config.Auth.Sms.EnableSignup),
