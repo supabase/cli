@@ -3,12 +3,14 @@ package deploy
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/docker/docker/client"
 	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
@@ -197,6 +199,42 @@ import_map = "./import_map.json"
 		err := Run(context.Background(), []string{"_invalid"}, true, nil, "", 1, false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Invalid Function name.")
+	})
+
+	t.Run("throws error when static_files configured but Docker not running", func(t *testing.T) {
+		t.Cleanup(func() { clear(utils.Config.Functions) })
+		// Point docker client at an unreachable host to simulate daemon down.
+		// WithHost needs an *http.Transport on the client, so install one first.
+		require.NoError(t, client.WithHTTPClient(&http.Client{Transport: &http.Transport{}})(utils.Docker))
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		unreachable := "tcp://" + listener.Addr().String()
+		require.NoError(t, listener.Close())
+		require.NoError(t, client.WithHost(unreachable)(utils.Docker))
+		// Setup in-memory fs with static_files configured
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		f, err := fsys.OpenFile(utils.ConfigPath, os.O_APPEND|os.O_WRONLY, 0600)
+		require.NoError(t, err)
+		_, err = f.WriteString(`
+[functions.` + slug + `]
+static_files = ["./functions/` + slug + `/templates/*.html"]
+`)
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+		entrypointPath := filepath.Join(utils.FunctionsDir, slug, "index.ts")
+		require.NoError(t, afero.WriteFile(fsys, entrypointPath, []byte{}, 0644))
+		templatePath := filepath.Join(utils.FunctionsDir, slug, "templates", "welcome.html")
+		require.NoError(t, afero.WriteFile(fsys, templatePath, []byte("<html></html>"), 0644))
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Run test
+		err = Run(context.Background(), []string{slug}, true, nil, "", 1, false, fsys)
+		// Check error: deploy must fail loudly rather than silently dropping static files
+		assert.ErrorContains(t, err, "Docker is not running")
+		assert.ErrorContains(t, err, "static_files")
+		assert.ErrorContains(t, err, slug)
 	})
 
 	t.Run("throws error on empty functions", func(t *testing.T) {

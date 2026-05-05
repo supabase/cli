@@ -57,6 +57,20 @@ func Run(ctx context.Context, slugs []string, useDocker bool, noVerifyJWT *bool,
 		if utils.IsDockerRunning(ctx) {
 			opt = function.WithBundler(NewDockerBundler(fsys))
 		} else {
+			// Bundling static_files requires the eszip bundler, which only runs
+			// inside the edge-runtime Docker image. Without Docker, the API
+			// upload path silently drops static_files and the deployed function
+			// ships without them. Fail fast so the user can start Docker or
+			// switch to --use-api with static_files removed.
+			var withStatic []string
+			for slug, fc := range functionConfig {
+				if fc.Enabled && len(fc.StaticFiles) > 0 {
+					withStatic = append(withStatic, slug)
+				}
+			}
+			if len(withStatic) > 0 {
+				return errors.Errorf("Docker is not running, but static_files is configured for: %s.\nStart Docker and re-run, or remove static_files from config.toml.", strings.Join(withStatic, ", "))
+			}
 			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Docker is not running")
 		}
 	}
