@@ -222,6 +222,7 @@ export function mockOutput(
     confirmRelogin?: boolean;
     confirmLogout?: boolean;
     promptTextFail?: boolean;
+    promptTextResponses?: ReadonlyArray<string>;
     promptSelectResponses?: ReadonlyArray<string>;
   } = {},
 ) {
@@ -244,6 +245,7 @@ export function mockOutput(
         }
       | undefined;
   }> = [];
+  const promptTextResponses = [...(opts.promptTextResponses ?? [])];
   const promptSelectResponses = [...(opts.promptSelectResponses ?? [])];
   return {
     layer: Layer.succeed(Output, {
@@ -363,7 +365,7 @@ export function mockOutput(
               }),
             );
           }
-          return Effect.succeed("123456");
+          return Effect.succeed(promptTextResponses.shift() ?? "123456");
         };
       })(),
       promptPassword: () => Effect.succeed(""),

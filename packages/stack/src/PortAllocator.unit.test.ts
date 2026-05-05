@@ -35,11 +35,10 @@ describe("allocatePorts", () => {
     }
   });
 
-  it("sequential allocations return non-overlapping ports", async () => {
+  it("reserved ports are skipped by later allocations", async () => {
     const a = await Effect.runPromise(allocatePorts({}));
-    const b = await Effect.runPromise(allocatePorts({}));
-
     const aPorts = new Set(Object.values(a) as number[]);
+    const b = await Effect.runPromise(allocatePorts({}, { reserved: aPorts }));
     const bPorts = Object.values(b) as number[];
 
     for (const port of bPorts) {

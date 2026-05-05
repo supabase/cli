@@ -3,6 +3,7 @@ import { Layer, ManagedRuntime } from "effect";
 import type { LoadedProjectConfig, SaveProjectConfigOptions } from "./io.ts";
 import type { ProjectPaths } from "./paths.ts";
 import type { LoadProjectEnvironmentOptions, ProjectEnvironment } from "./project.ts";
+import { inferFunctionsManifest, type FunctionsManifest } from "./functions-manifest.ts";
 import { loadProjectEnvironment } from "./project.ts";
 import { findProjectPaths, findProjectRoot } from "./paths.ts";
 import { projectConfigStoreLayer } from "./project-config.layer.ts";
@@ -51,4 +52,9 @@ export async function saveProjectConfig(
 ): Promise<LoadedProjectConfig> {
   const runtime = makeRuntime();
   return runtime.runPromise(ProjectConfigStore.use((store) => store.save(options)));
+}
+
+export async function loadFunctionsManifest(cwd: string): Promise<FunctionsManifest> {
+  const runtime = makeRuntime();
+  return runtime.runPromise(inferFunctionsManifest({ cwd }));
 }

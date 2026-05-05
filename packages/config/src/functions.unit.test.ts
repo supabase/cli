@@ -3,7 +3,7 @@ import { Schema } from "effect";
 import { functions } from "./functions.ts";
 
 describe("functions schema", () => {
-  test("includes the legacy function properties in generated JSON schema", () => {
+  test("includes function properties in generated JSON schema", () => {
     const json = Schema.toJsonSchemaDocument(functions).schema;
     const normalized = JSON.parse(JSON.stringify(json));
     const recordSchema = normalized.anyOf?.find(
@@ -18,18 +18,31 @@ describe("functions schema", () => {
     expect(funcSchema?.properties?.import_map).toBeDefined();
     expect(funcSchema?.properties?.entrypoint).toBeDefined();
     expect(funcSchema?.properties?.static_files).toBeDefined();
+    expect(funcSchema?.properties?.env).toBeDefined();
   });
 
-  test("does not expose non-legacy function env settings", () => {
-    const json = Schema.toJsonSchemaDocument(functions).schema;
-    const normalized = JSON.parse(JSON.stringify(json));
-    const recordSchema = normalized.anyOf?.find(
-      (entry: { type?: string }) => entry?.type === "object",
-    );
-    const funcSchema = recordSchema?.patternProperties?.["^[a-zA-Z0-9_-]+$"]?.anyOf?.find(
-      (entry: { type?: string }) => entry?.type === "object",
-    );
+  test("decodes per-function env references", () => {
+    const decodeFunctions = Schema.decodeUnknownSync(functions);
 
-    expect(funcSchema?.properties?.env).toBeUndefined();
+    expect(
+      decodeFunctions({
+        "hello-world": {
+          env: {
+            OPENAI_API_KEY: "env(OPENAI_API_KEY)",
+          },
+        },
+      }),
+    ).toEqual({
+      "hello-world": {
+        enabled: true,
+        verify_jwt: true,
+        import_map: "",
+        entrypoint: "",
+        static_files: [],
+        env: {
+          OPENAI_API_KEY: "env(OPENAI_API_KEY)",
+        },
+      },
+    });
   });
 });

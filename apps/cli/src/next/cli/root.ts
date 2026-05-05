@@ -2,6 +2,7 @@ import { Effect, Layer } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import { OutputFormatFlag } from "../../shared/cli/global-flags.ts";
 import { branchesCommand } from "../commands/branches/branches.command.ts";
+import { functionsCommand } from "../commands/functions/functions.command.ts";
 import { linkCommand } from "../commands/link/link.command.ts";
 import { initCommand } from "../commands/init/init.command.ts";
 import { listCommand } from "../commands/list/list.command.ts";
@@ -30,6 +31,7 @@ export const nextRoot = Command.make("supabase").pipe(
     loginCommand,
     logoutCommand,
     telemetryCommand,
+    functionsCommand,
     branchesCommand,
     linkCommand,
     unlinkCommand,

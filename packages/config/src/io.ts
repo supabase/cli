@@ -26,6 +26,14 @@ export interface SaveProjectConfigOptions {
 const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
 const encodeProjectConfig = Schema.encodeSync(ProjectConfigSchema);
 const defaultEncodedProjectConfig = encodeProjectConfig(decodeProjectConfig({}));
+const defaultEncodedFunctionConfig = {
+  enabled: true,
+  verify_jwt: true,
+  import_map: "",
+  entrypoint: "",
+  static_files: [],
+  env: {},
+};
 
 function configJsonPathWith(path: Path.Path, cwd: string): string {
   return path.join(cwd, "supabase", "config.json");
@@ -105,8 +113,26 @@ function stripDefaults(value: unknown, defaults: unknown): unknown {
   return isEqualValue(value, defaults) ? undefined : value;
 }
 
+function stripFunctionRecordDefaults(value: unknown): unknown {
+  if (!isObject(value)) {
+    return value;
+  }
+
+  const functionsValue = value.functions;
+  if (!isObject(functionsValue)) {
+    return value;
+  }
+
+  const functions: Record<string, unknown> = {};
+  for (const [name, functionConfig] of Object.entries(functionsValue)) {
+    functions[name] = stripDefaults(functionConfig, defaultEncodedFunctionConfig) ?? {};
+  }
+
+  return { ...value, functions };
+}
+
 function encodeMinimalProjectConfig(config: ProjectConfig): Record<string, unknown> {
-  const encoded = encodeProjectConfig(config);
+  const encoded = stripFunctionRecordDefaults(encodeProjectConfig(config));
   const stripped = stripDefaults(encoded, defaultEncodedProjectConfig);
   return isObject(stripped) ? stripped : {};
 }

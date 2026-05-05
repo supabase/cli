@@ -1,5 +1,6 @@
 import dedent from "dedent";
 import { Schema } from "effect";
+import { env } from "./lib/env.ts";
 
 const tags = ["functions"];
 
@@ -18,6 +19,8 @@ const defaultFunction = {};
 const defaultImportMap = "";
 const defaultEntrypoint = "";
 const defaultStaticFiles: string[] = [];
+const defaultEnv = {};
+const envName = Schema.String.check(Schema.isPattern(/^[A-Z_][A-Z0-9_]*$/));
 
 const func = Schema.Struct({
   enabled: Schema.Boolean.annotate({
@@ -62,6 +65,24 @@ const func = Schema.Struct({
       links,
     })
     .pipe(Schema.withDecodingDefaultKey(() => [...defaultStaticFiles])),
+  env: Schema.Record(
+    envName.annotate({
+      description: "Environment variable name exposed to the Function.",
+      tags,
+      links,
+    }),
+    env({
+      description: "Reference to a project environment variable available to the Function.",
+    }),
+  )
+    .annotate({
+      default: defaultEnv,
+      description:
+        "Environment variables from the project environment that this Function can access.",
+      tags,
+      links,
+    })
+    .pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultEnv }))),
 }).pipe(Schema.withDecodingDefault(() => ({ ...defaultFunction })));
 
 export const functions = Schema.Record(functionName, func)

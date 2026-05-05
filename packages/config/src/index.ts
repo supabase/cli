@@ -18,6 +18,14 @@ export {
   saveProjectConfig,
 } from "./io.ts";
 export {
+  edgeFunctionDenoConfigFileName,
+  edgeFunctionEntrypointFileName,
+  edgeFunctionsDirectoryName,
+  type FunctionsManifest,
+  type ResolvedFunctionConfig,
+  inferFunctionsManifest,
+} from "./functions-manifest.ts";
+export {
   type LoadProjectEnvironmentOptions,
   type ProjectEnvironment,
   type ResolvedProjectValue,
