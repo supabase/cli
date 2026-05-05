@@ -87,7 +87,7 @@ var (
 
 	authAccessMode = utils.EnumFlag{
 		Allowed: []string{
-			string(new_.AuthAccessModeAlways),
+			string(new_.AuthAccessModeNone),
 			string(new_.AuthAccessModeApiKey),
 			string(new_.AuthAccessModeUser),
 		},

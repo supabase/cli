@@ -19,14 +19,14 @@ import (
 type AuthAccessMode string
 
 const (
-	AuthAccessModeAlways AuthAccessMode = "always"
+	AuthAccessModeNone   AuthAccessMode = "none"
 	AuthAccessModeApiKey AuthAccessMode = "apikey"
 	AuthAccessModeUser   AuthAccessMode = "user"
 )
 
 var (
-	//go:embed templates/index_always_access.ts
-	indexAuthAlwaysEmbed string
+	//go:embed templates/index_no_auth_access.ts
+	indexAuthNoneEmbed string
 	//go:embed templates/index_apikey_access.ts
 	indexAuthApiKeyEmbed string
 	//go:embed templates/index_user_access.ts
@@ -40,7 +40,7 @@ var (
 	configEmbed string
 
 	indexAuthTemplates = map[AuthAccessMode]*template.Template{
-		AuthAccessModeAlways: template.Must(template.New("index").Parse(indexAuthAlwaysEmbed)),
+		AuthAccessModeNone:   template.Must(template.New("index").Parse(indexAuthNoneEmbed)),
 		AuthAccessModeApiKey: template.Must(template.New("index").Parse(indexAuthApiKeyEmbed)),
 		AuthAccessModeUser:   template.Must(template.New("index").Parse(indexAuthUserEmbed)),
 	}

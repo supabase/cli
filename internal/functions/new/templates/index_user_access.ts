@@ -10,7 +10,7 @@ console.log("Hello from Functions!")
 
 // This endpoint uses 'user' access, credentials is required.
 export default {
-  fetch: withSupabase({ allow: "user" }, async (_req, ctx) => {
+  fetch: withSupabase({ auth: "user" }, async (_req, ctx) => {
     const email = ctx.userClaims?.email;
 
     return Response.json({
