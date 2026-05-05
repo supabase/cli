@@ -16,12 +16,12 @@ import (
 	"github.com/supabase/cli/internal/utils/flags"
 )
 
-type AuthAccessMode string
+type AuthMode string
 
 const (
-	AuthAccessModeNone   AuthAccessMode = "none"
-	AuthAccessModeApiKey AuthAccessMode = "apikey"
-	AuthAccessModeUser   AuthAccessMode = "user"
+	AuthModeNone   AuthMode = "none"
+	AuthModeApiKey AuthMode = "apikey"
+	AuthModeUser   AuthMode = "user"
 )
 
 var (
@@ -39,10 +39,10 @@ var (
 	//go:embed templates/config.toml
 	configEmbed string
 
-	indexAuthTemplates = map[AuthAccessMode]*template.Template{
-		AuthAccessModeNone:   template.Must(template.New("index").Parse(indexAuthNoneEmbed)),
-		AuthAccessModeApiKey: template.Must(template.New("index").Parse(indexAuthApiKeyEmbed)),
-		AuthAccessModeUser:   template.Must(template.New("index").Parse(indexAuthUserEmbed)),
+	indexAuthTemplates = map[AuthMode]*template.Template{
+		AuthModeNone:   template.Must(template.New("index").Parse(indexAuthNoneEmbed)),
+		AuthModeApiKey: template.Must(template.New("index").Parse(indexAuthApiKeyEmbed)),
+		AuthModeUser:   template.Must(template.New("index").Parse(indexAuthUserEmbed)),
 	}
 
 	configTemplate = template.Must(template.New("config").Parse(configEmbed))
@@ -58,7 +58,7 @@ type functionConfig struct {
 	VerifyJWT bool
 }
 
-func Run(ctx context.Context, slug string, authMode AuthAccessMode, fsys afero.Fs) error {
+func Run(ctx context.Context, slug string, authMode AuthMode, fsys afero.Fs) error {
 	// 1. Sanity checks.
 	if err := utils.ValidateFunctionSlug(slug); err != nil {
 		return err
@@ -82,7 +82,7 @@ func Run(ctx context.Context, slug string, authMode AuthAccessMode, fsys afero.F
 	if err := createEntrypointFile(slug, authMode, fsys); err != nil {
 		return err
 	}
-	verifyJWT := authMode == AuthAccessModeUser
+	verifyJWT := authMode == AuthModeUser
 	if err := appendConfigFile(slug, verifyJWT, fsys); err != nil {
 		return err
 	}
@@ -103,7 +103,7 @@ func Run(ctx context.Context, slug string, authMode AuthAccessMode, fsys afero.F
 	return nil
 }
 
-func createEntrypointFile(slug string, authMode AuthAccessMode, fsys afero.Fs) error {
+func createEntrypointFile(slug string, authMode AuthMode, fsys afero.Fs) error {
 	entrypointPath := filepath.Join(utils.FunctionsDir, slug, "index.ts")
 	f, err := fsys.OpenFile(entrypointPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {

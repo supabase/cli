@@ -17,7 +17,7 @@ func TestNewCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		assert.NoError(t, Run(context.Background(), "test-func", AuthAccessModeNone, fsys))
+		assert.NoError(t, Run(context.Background(), "test-func", AuthModeNone, fsys))
 		// Validate output
 		funcPath := filepath.Join(utils.FunctionsDir, "test-func", "index.ts")
 		content, err := afero.ReadFile(fsys, funcPath)
@@ -46,7 +46,7 @@ func TestNewCommand(t *testing.T) {
 
 	t.Run("creates new function with apikey access", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
-		assert.NoError(t, Run(context.Background(), "test-func", AuthAccessModeApiKey, fsys))
+		assert.NoError(t, Run(context.Background(), "test-func", AuthModeApiKey, fsys))
 
 		// Validate output
 		funcPath := filepath.Join(utils.FunctionsDir, "test-func", "index.ts")
@@ -61,7 +61,7 @@ func TestNewCommand(t *testing.T) {
 
 	t.Run("creates new function with user access", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
-		assert.NoError(t, Run(context.Background(), "test-func", AuthAccessModeUser, fsys))
+		assert.NoError(t, Run(context.Background(), "test-func", AuthModeUser, fsys))
 
 		// Validate output
 		funcPath := filepath.Join(utils.FunctionsDir, "test-func", "index.ts")
@@ -76,7 +76,7 @@ func TestNewCommand(t *testing.T) {
 	})
 
 	t.Run("throws error on malformed slug", func(t *testing.T) {
-		assert.Error(t, Run(context.Background(), "@", AuthAccessModeNone, afero.NewMemMapFs()))
+		assert.Error(t, Run(context.Background(), "@", AuthModeNone, afero.NewMemMapFs()))
 	})
 
 	t.Run("throws error on duplicate slug", func(t *testing.T) {
@@ -85,13 +85,13 @@ func TestNewCommand(t *testing.T) {
 		funcPath := filepath.Join(utils.FunctionsDir, "test-func", "index.ts")
 		require.NoError(t, afero.WriteFile(fsys, funcPath, []byte{}, 0o644))
 		// Run test
-		assert.Error(t, Run(context.Background(), "test-func", AuthAccessModeNone, fsys))
+		assert.Error(t, Run(context.Background(), "test-func", AuthModeNone, fsys))
 	})
 
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
 		// Run test
-		assert.Error(t, Run(context.Background(), "test-func", AuthAccessModeNone, fsys))
+		assert.Error(t, Run(context.Background(), "test-func", AuthModeNone, fsys))
 	})
 }
