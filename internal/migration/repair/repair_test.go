@@ -61,6 +61,23 @@ func TestRepairCommand(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
+	t.Run("applies folder-based migration version", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		sqlPath := filepath.Join(utils.MigrationsDir, "20242409125510_premium_mister_fear", "schema.sql")
+		require.NoError(t, afero.WriteFile(fsys, sqlPath, []byte("select 1"), 0644))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		helper.MockMigrationHistory(conn).
+			Query(migration.UPSERT_MIGRATION_VERSION, "20242409125510", "premium_mister_fear", []string{"select 1"}).
+			Reply("INSERT 0 1")
+		// Run test
+		err := Run(context.Background(), dbConfig, []string{"20242409125510"}, Applied, fsys, conn.Intercept)
+		// Check error
+		assert.NoError(t, err)
+	})
+
 	t.Run("throws error on invalid version", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -94,6 +111,45 @@ func TestRepairCommand(t *testing.T) {
 		err := Run(context.Background(), dbConfig, []string{"0"}, Applied, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: relation "supabase_migrations.schema_migrations" does not exist (SQLSTATE 42710)`)
+	})
+}
+
+func TestGetMigrationFile(t *testing.T) {
+	t.Run("finds flat migration file", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		require.NoError(t, afero.WriteFile(fsys, path, []byte("select 1"), 0644))
+		// Run test
+		result, err := GetMigrationFile("0", fsys)
+		assert.NoError(t, err)
+		assert.Equal(t, path, result)
+	})
+
+	t.Run("finds folder-based migration file", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		sqlPath := filepath.Join(utils.MigrationsDir, "20242409125510_premium_mister_fear", "schema.sql")
+		require.NoError(t, afero.WriteFile(fsys, sqlPath, []byte("select 1"), 0644))
+		// Run test
+		result, err := GetMigrationFile("20242409125510", fsys)
+		assert.NoError(t, err)
+		assert.Equal(t, sqlPath, result)
+	})
+
+	t.Run("returns error for multiple .sql files in directory", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		dir := filepath.Join(utils.MigrationsDir, "20242409125510_premium_mister_fear")
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(dir, "schema.sql"), []byte("select 1"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(dir, "extra.sql"), []byte("select 2"), 0644))
+		// Run test
+		_, err := GetMigrationFile("20242409125510", fsys)
+		assert.ErrorContains(t, err, "multiple .sql files found")
+	})
+
+	t.Run("returns error when version not found", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		// Run test
+		_, err := GetMigrationFile("99999", fsys)
+		assert.ErrorIs(t, err, os.ErrNotExist)
 	})
 }
 

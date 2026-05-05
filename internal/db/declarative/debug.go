@@ -104,9 +104,9 @@ func CollectMigrationsList(fsys afero.Fs) []string {
 	if err != nil {
 		return nil
 	}
-	// Strip directory prefix to return just filenames
+	// Strip directory prefix to return display names
 	for i, m := range migrations {
-		migrations[i] = filepath.Base(m)
+		migrations[i] = migration.MigrationName(m)
 	}
 	return migrations
 }
