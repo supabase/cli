@@ -1,7 +1,80 @@
-import { STATUS_CODE, STATUS_TEXT } from "https://deno.land/std/http/status.ts";
-import * as posix from "https://deno.land/std/path/posix/mod.ts";
-
 import * as jose from "jsr:@panva/jose@6";
+
+// Inlined from std/http/status to avoid remote-import resolution at boot,
+// which fails when `supabase start` runs offline (no network reachable from
+// the edge-runtime container). Only the values referenced below are kept.
+// Ref: supabase/supabase#45570
+const STATUS_CODE = {
+  OK: 200,
+  Unauthorized: 401,
+  NotFound: 404,
+  InternalServerError: 500,
+  ServiceUnavailable: 503,
+} as const;
+
+const STATUS_TEXT: Record<number, string> = {
+  [STATUS_CODE.OK]: "OK",
+  [STATUS_CODE.Unauthorized]: "Unauthorized",
+  [STATUS_CODE.NotFound]: "Not Found",
+  [STATUS_CODE.InternalServerError]: "Internal Server Error",
+  [STATUS_CODE.ServiceUnavailable]: "Service Unavailable",
+};
+
+// Inlined from std/path/posix. Same offline-boot reason as above.
+// Only the three helpers used by this file are reproduced.
+const posix = {
+  dirname(path: string): string {
+    if (path.length === 0) return ".";
+    let end = -1;
+    let matched = false;
+    for (let i = path.length - 1; i >= 1; --i) {
+      if (path.charCodeAt(i) === 0x2f /* / */) {
+        if (matched) {
+          end = i;
+          break;
+        }
+      } else {
+        matched = true;
+      }
+    }
+    if (end === -1) return path.charCodeAt(0) === 0x2f ? "/" : ".";
+    if (end === 0 && path.charCodeAt(0) === 0x2f) return "/";
+    return path.slice(0, end);
+  },
+  join(...segments: string[]): string {
+    if (segments.length === 0) return ".";
+    let joined = "";
+    for (const segment of segments) {
+      if (segment.length > 0) {
+        joined = joined.length === 0 ? segment : `${joined}/${segment}`;
+      }
+    }
+    if (joined.length === 0) return ".";
+    // Normalize duplicate slashes and `.`/`..` segments while keeping a leading slash.
+    const isAbsolute = joined.charCodeAt(0) === 0x2f;
+    const parts: string[] = [];
+    for (const part of joined.split("/")) {
+      if (part === "" || part === ".") continue;
+      if (part === "..") {
+        if (parts.length > 0 && parts[parts.length - 1] !== "..") parts.pop();
+        else if (!isAbsolute) parts.push("..");
+        continue;
+      }
+      parts.push(part);
+    }
+    let result = parts.join("/");
+    if (isAbsolute) result = "/" + result;
+    return result.length === 0 ? (isAbsolute ? "/" : ".") : result;
+  },
+  toFileUrl(path: string): URL {
+    if (path.charCodeAt(0) !== 0x2f) {
+      throw new TypeError(`Path must be absolute: received "${path}"`);
+    }
+    const url = new URL("file:///");
+    url.pathname = encodeURI(path).replace(/[?#]/g, encodeURIComponent);
+    return url;
+  },
+};
 
 const SB_SPECIFIC_ERROR_CODE = {
   BootError:
