@@ -4,9 +4,7 @@ on:
   repository_dispatch:
     types:
       - api-sync
-  workflow_dispatch:
-    paths:
-      - apps/cli-go/**
+  workflow_dispatch: # allow manual triggering
 permissions:
   contents: write
   pull-requests: write
