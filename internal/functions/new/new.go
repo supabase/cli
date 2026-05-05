@@ -25,12 +25,12 @@ const (
 )
 
 var (
-	//go:embed templates/index_no_auth_access.ts
-	indexAuthNoneEmbed string
-	//go:embed templates/index_apikey_access.ts
-	indexAuthApiKeyEmbed string
-	//go:embed templates/index_user_access.ts
-	indexAuthUserEmbed string
+	//go:embed templates/index_auth_mode_none.ts
+	indexAuthModeNoneEmbed string
+	//go:embed templates/index_auth_mode_apikey.ts
+	indexAuthModeApiKeyEmbed string
+	//go:embed templates/index_auth_mode_user.ts
+	indexAuthModeUserEmbed string
 
 	//go:embed templates/deno.json
 	denoEmbed string
@@ -40,9 +40,9 @@ var (
 	configEmbed string
 
 	indexAuthTemplates = map[AuthMode]*template.Template{
-		AuthModeNone:   template.Must(template.New("index").Parse(indexAuthNoneEmbed)),
-		AuthModeApiKey: template.Must(template.New("index").Parse(indexAuthApiKeyEmbed)),
-		AuthModeUser:   template.Must(template.New("index").Parse(indexAuthUserEmbed)),
+		AuthModeNone:   template.Must(template.New("index").Parse(indexAuthModeNoneEmbed)),
+		AuthModeApiKey: template.Must(template.New("index").Parse(indexAuthModeApiKeyEmbed)),
+		AuthModeUser:   template.Must(template.New("index").Parse(indexAuthModeUserEmbed)),
 	}
 
 	configTemplate = template.Must(template.New("config").Parse(configEmbed))
