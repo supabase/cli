@@ -194,7 +194,7 @@ The ts-legacy CLI proxies commands to a Go binary (`SUPABASE_GO_BINARY` → bund
 Build the Go CLI from source and point `SUPABASE_GO_BINARY` at it:
 
 ```sh
-cd .repos/supabase-cli-go && go build -o /tmp/supabase-test-binary .
+cd apps/cli-go && go build -o /tmp/supabase-test-binary .
 
 # Replay
 SUPABASE_GO_BINARY=/tmp/supabase-test-binary pnpm nx run @supabase/cli-e2e:test:legacy

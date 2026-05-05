@@ -85,7 +85,7 @@ const TARGETS = [
 const root = path.resolve(import.meta.dir, "../../..");
 const entrypoint = path.join(root, "apps/cli/src", shell, "main.ts");
 const distDir = path.join(root, "dist");
-const goSource = path.resolve(root, ".repos/supabase-cli-go");
+const goSource = path.resolve(root, "apps/cli-go");
 
 type BunTarget = (typeof TARGETS)[number]["bunTarget"];
 

@@ -51,7 +51,7 @@ When a Phase 0 command runs, `go-proxy.layer.ts` resolves the Go binary in this 
 
 ## Source of the Go Binary
 
-The Go CLI source lives in `.repos/supabase-cli-go/` and is managed via:
+The Go CLI source lives in `apps/cli-go/` and is managed via:
 
 ```sh
 pnpm repos:install
@@ -63,7 +63,7 @@ This must be run after a fresh clone before building a legacy release.
 
 No build step is required to run the legacy CLI from source. The PATH fallback handles Go binary resolution automatically.
 
-1. Install the Go CLI on your PATH (via npm, brew, or building from `.repos/supabase-cli-go/`).
+1. Install the Go CLI on your PATH (via npm, brew, or building from `apps/cli-go/`).
 2. Create a shell alias to run the legacy CLI from source. For example in `.zshrc`:
 
    ```sh

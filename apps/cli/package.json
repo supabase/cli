@@ -88,11 +88,22 @@
       "build": {
         "outputs": [
           "{projectRoot}/dist"
+        ],
+        "dependsOn": [
+          {
+            "projects": [
+              "cli-go"
+            ],
+            "target": "build"
+          }
         ]
       },
       "test:smoke": {
         "cache": false
       }
-    }
+    },
+    "implicitDependencies": [
+      "cli-go"
+    ]
   }
 }

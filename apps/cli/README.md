@@ -102,7 +102,7 @@ bun scripts/build.ts --shell next --version X.Y.Z
 bun scripts/build.ts --shell legacy --version X.Y.Z
 ```
 
-For the legacy shell, this also cross-compiles the Go CLI binary from `.repos/supabase-cli-go/` and places both binaries in `packages/cli-{platform}/bin/`.
+For the legacy shell, this also cross-compiles the Go CLI binary from `apps/cli-go/` and places both binaries in `packages/cli-{platform}/bin/`.
 
 See [`docs/binary-distribution.md`](./docs/binary-distribution.md) for a full explanation of the packaging model.
 
@@ -174,6 +174,6 @@ Each platform package ships two binaries for the legacy stable channel:
 - `bin/supabase` — the compiled TypeScript SFE (Bun single-file executable)
 - `bin/supabase-go` — the compiled Go CLI binary, used by Phase 0 proxy commands
 
-The Go binary is compiled from `.repos/supabase-cli-go/` at release time. Run `pnpm repos:install` after a fresh clone to make that source available.
+The Go binary is compiled from `apps/cli-go/` at release time. Run `pnpm repos:install` after a fresh clone to make that source available.
 
 See [`docs/binary-distribution.md`](./docs/binary-distribution.md) for the full packaging model.

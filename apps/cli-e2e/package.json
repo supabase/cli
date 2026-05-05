@@ -51,6 +51,12 @@
               "@supabase/cli"
             ],
             "target": "build"
+          },
+          {
+            "projects": [
+              "cli-go"
+            ],
+            "target": "build"
           }
         ],
         "inputs": [
@@ -58,6 +64,9 @@
           "{workspaceRoot}/apps/cli/dist/**/*"
         ]
       }
-    }
+    },
+    "implicitDependencies": [
+      "cli-go"
+    ]
   }
 }

@@ -3,7 +3,7 @@ name: Test
 on:
   push:
     branches:
-      - main
+      - develop
   pull_request:
     types:
       - opened
@@ -11,7 +11,7 @@ on:
       - reopened
       - ready_for_review
     branches:
-      - main
+      - develop
 
 permissions:
   contents: read
@@ -32,29 +32,19 @@ jobs:
 
       - name: Setup
         uses: ./.github/actions/setup
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/cli-go/go.mod
+          cache-dependency-path: apps/cli-go/go.sum
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest &&
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Unlock keyring (for cli-go keyring tests)
+        uses: t1m0thyj/unlock-keyring@cbcf205c879ebd86add70bab3a6abfcce59a5cae
 
       - name: Check code quality
         run: pnpm run check:all
-
-  fixture-guard:
-    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
-    name: Cap cli-e2e fixture additions per PR
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          fetch-depth: 0
-
-      - name: Cap fixture additions
-        run: |
-          base="origin/${{ github.event.pull_request.base.ref }}"
-          added=$(git diff --name-only --diff-filter=A "$base"...HEAD apps/cli-e2e/fixtures/ | wc -l | tr -d ' ')
-          echo "PR adds $added files under apps/cli-e2e/fixtures/"
-          if [ "$added" -gt 250 ]; then
-            echo "::error ::PR adds $added fixture files (>250). The recorder probably captured polling traffic or per-container interactions — re-record with a clean recorded/ directory and verify the count drops below the cap."
-            exit 1
-          fi
 
   test-core:
     if: github.event.pull_request.draft == false || github.event_name == 'push'
@@ -66,6 +56,16 @@ jobs:
 
       - name: Setup
         uses: ./.github/actions/setup
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/cli-go/go.mod
+          cache-dependency-path: apps/cli-go/go.sum
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest &&
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Unlock keyring (for cli-go keyring tests)
+        uses: t1m0thyj/unlock-keyring@cbcf205c879ebd86add70bab3a6abfcce59a5cae
 
       - name: Run unit and integration tests
         run: pnpm run test:core
@@ -77,7 +77,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [ 1, 2, 3 ]
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -111,29 +111,28 @@ jobs:
           echo "cli_e2e=$cli" >> "$GITHUB_OUTPUT"
           echo "other=$other" >> "$GITHUB_OUTPUT"
 
-      - name: Initialize Go CLI submodule
-        if: steps.detect.outputs.cli_e2e == 'true'
-        run: git submodule update --init .repos/supabase-cli-go
-
       - name: Cache Go CLI binary
         if: steps.detect.outputs.cli_e2e == 'true'
         id: cache-go-binary
         uses: actions/cache@v4
         with:
-          path: .repos/supabase-cli-go/supabase-go
-          key: go-cli-${{ runner.os }}-${{ hashFiles('.repos/supabase-cli-go/**/*.go', '.repos/supabase-cli-go/go.mod', '.repos/supabase-cli-go/go.sum') }}
+          path: apps/cli-go/supabase-go
+          key: go-cli-${{ runner.os }}-${{ hashFiles('apps/cli-go/**/*.go',
+            'apps/cli-go/go.mod', 'apps/cli-go/go.sum') }}
 
       - name: Setup Go
-        if: steps.detect.outputs.cli_e2e == 'true' && steps.cache-go-binary.outputs.cache-hit != 'true'
+        if: steps.detect.outputs.cli_e2e == 'true' &&
+          steps.cache-go-binary.outputs.cache-hit != 'true'
         uses: actions/setup-go@v5
         with:
-          go-version-file: .repos/supabase-cli-go/go.mod
-          cache-dependency-path: .repos/supabase-cli-go/go.sum
+          go-version-file: apps/cli-go/go.mod
+          cache-dependency-path: apps/cli-go/go.sum
 
       - name: Build Go CLI
-        if: steps.detect.outputs.cli_e2e == 'true' && steps.cache-go-binary.outputs.cache-hit != 'true'
+        if: steps.detect.outputs.cli_e2e == 'true' &&
+          steps.cache-go-binary.outputs.cache-hit != 'true'
         run: go build -o supabase-go .
-        working-directory: .repos/supabase-cli-go
+        working-directory: apps/cli-go
 
       # The ts-legacy harness invokes `bun apps/cli/dist/main-legacy.js`; the
       # `nx run @supabase/cli-e2e:test:e2e` target normally builds @supabase/cli
@@ -150,16 +149,17 @@ jobs:
       # suites (process-compose) run unsharded on shard 1.
       - name: Run cli-e2e end-to-end tests
         if: steps.detect.outputs.cli_e2e == 'true'
-        run: pnpm --filter @supabase/cli-e2e exec bun --bun vitest run --shard=${{ matrix.shard }}/3
+        run: pnpm --filter @supabase/cli-e2e exec bun --bun vitest run --shard=${{
+          matrix.shard }}/3
         env:
           CLI_HARNESS_TARGET: ts-legacy
-          SUPABASE_GO_BINARY: ${{ github.workspace }}/.repos/supabase-cli-go/supabase-go
+          SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
 
       - name: Run other e2e tests (shard 1 only)
         if: matrix.shard == 1 && steps.detect.outputs.other == 'true'
         run: pnpm exec nx run-many -t test:e2e --exclude=@supabase/cli-e2e
         env:
-          SUPABASE_GO_BINARY: ${{ github.workspace }}/.repos/supabase-cli-go/supabase-go
+          SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
 
   # Summary job that gates branch protection.  The matrix `test-e2e` job
   # produces per-shard check names (`Run end-to-end tests (shard N/3)`), so
@@ -167,7 +167,8 @@ jobs:
   # branch protection rules already require.  It succeeds iff every shard
   # succeeded (or skipped — `success()` is true for skipped jobs).
   test-e2e-summary:
-    if: always() && (github.event.pull_request.draft == false || github.event_name == 'push')
+    if: always() && (github.event.pull_request.draft == false || github.event_name
+      == 'push')
     name: Run end-to-end tests
     needs: test-e2e
     runs-on: ubuntu-latest

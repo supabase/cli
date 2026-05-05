@@ -137,10 +137,10 @@ async function checkGo(): Promise<void> {
 }
 
 async function checkGoSource(): Promise<string> {
-	const goSource = path.join(root, ".repos", "supabase-cli-go");
+	const goSource = path.join(root, "apps", "cli-go");
 	const goMod = Bun.file(path.join(goSource, "go.mod"));
 	if (!(await goMod.exists())) {
-		console.error("\nError: Go CLI source not found at .repos/supabase-cli-go");
+		console.error("\nError: Go CLI source not found at apps/cli-go");
 		console.error("Run: pnpm repos:install\n");
 		process.exit(1);
 	}

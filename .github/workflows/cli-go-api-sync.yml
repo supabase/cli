@@ -4,9 +4,9 @@ on:
   repository_dispatch:
     types:
       - api-sync
-  workflow_dispatch: # allow manual triggering
-
-# Add explicit permissions
+  workflow_dispatch:
+    paths:
+      - apps/cli-go/**
 permissions:
   contents: write
   pull-requests: write
@@ -20,7 +20,7 @@ jobs:
 
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version-file: go.mod
+          go-version-file: apps/cli-go/go.mod
           cache: true
 
       - name: Run codegen
@@ -70,3 +70,6 @@ jobs:
         run: gh pr merge --auto --squash "${{ steps.cpr.outputs.pull-request-number }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+defaults:
+  run:
+    working-directory: apps/cli-go

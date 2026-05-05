@@ -7,6 +7,8 @@ on:
         description: "pkg version to tag (e.g. v1.2.2)"
         required: true
         type: string
+    paths:
+      - apps/cli-go/**
 
 permissions:
   contents: write
@@ -35,3 +37,6 @@ jobs:
           fi
           git tag "$TAG"
           git push origin "$TAG"
+defaults:
+  run:
+    working-directory: apps/cli-go

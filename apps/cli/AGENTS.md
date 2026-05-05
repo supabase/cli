@@ -112,7 +112,7 @@ export const legacyOrgsList = Effect.fn("legacy.orgs.list")(function* (
 
 For each command added to the Phase 0 wrapper, complete all three steps:
 
-1. **Reconstruct the command definition** — flags, subcommands, and argument types must exactly match the Go CLI (use `.repos/supabase-cli-go/` as the reference).
+1. **Reconstruct the command definition** — flags, subcommands, and argument types must exactly match the Go CLI (use `apps/cli-go/` as the reference).
 2. **Write a proxy handler** — forward invocations to the Go binary via `LegacyGoProxy`.
 3. **Update `docs/go-cli-porting-status.md`** — mark the command as `wrapped`.
 
@@ -202,7 +202,7 @@ The legacy shell is a **strict 1:1 port** — not a redesign. The compatibility 
 - Same API routes and request shapes
 - Same exit codes
 
-When in doubt about expected output or behavior, run the equivalent command against the Go CLI reference at `.repos/supabase-cli-go/` and match it exactly.
+When in doubt about expected output or behavior, run the equivalent command against the Go CLI reference at `apps/cli-go/` and match it exactly.
 
 ---
 
@@ -346,6 +346,6 @@ bun run --parallel "*:check"
 
 [effect-patterns](https://github.com/effect-ts-community/effect-patterns) contains practical patterns for structuring Effect services, layers, and error handling. Note that the code targets **Effect V3** — adapt the idioms to V4 APIs using `.repos/effect/MIGRATION.md` and the V4 source code.
 
-### `.repos/supabase-cli-go/`
+### `apps/cli-go/`
 
 The [old Supabase CLI](https://github.com/supabase/cli) written in Go. When porting a command to the legacy shell, use this as the authoritative source for expected output, flags, and behavior. Match it exactly.
