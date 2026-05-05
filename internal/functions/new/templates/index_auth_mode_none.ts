@@ -8,7 +8,7 @@ import { withSupabase } from "@supabase/server";
 
 console.log("Hello from Functions!");
 
-// This endpoint uses 'always' access, no credentials required, every request is accepted.
+// This endpoint uses auth 'none', no credentials required, every request is accepted.
 // Use it for health checks, public APIs, or when you need to implement your own auth logic.
 export default {
   fetch: withSupabase({ auth: "none" }, async (req, ctx) => {
