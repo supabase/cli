@@ -307,7 +307,7 @@ func TestBuildGotrueEnv(t *testing.T) {
 		utils.Config = original
 	})
 
-	t.Run("uses auth scoped external url and relative mailer paths", func(t *testing.T) {
+	t.Run("uses auth scoped external url and absolute mailer urls", func(t *testing.T) {
 		utils.Config = config.NewConfig()
 		utils.Config.Api.ExternalUrl = "http://127.0.0.1:54321"
 		utils.Config.Auth.ExternalUrl = "http://127.0.0.1:54321/auth/v1"
@@ -328,10 +328,10 @@ func TestBuildGotrueEnv(t *testing.T) {
 
 		assert.Equal(t, "http://127.0.0.1:54321/auth/v1", env["API_EXTERNAL_URL"])
 		assert.Equal(t, "http://127.0.0.1:54321/auth/v1", env["GOTRUE_JWT_ISSUER"])
-		assert.Equal(t, "/verify", env["GOTRUE_MAILER_URLPATHS_INVITE"])
-		assert.Equal(t, "/verify", env["GOTRUE_MAILER_URLPATHS_CONFIRMATION"])
-		assert.Equal(t, "/verify", env["GOTRUE_MAILER_URLPATHS_RECOVERY"])
-		assert.Equal(t, "/verify", env["GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE"])
+		assert.Equal(t, "http://127.0.0.1:54321/auth/v1/verify", env["GOTRUE_MAILER_URLPATHS_INVITE"])
+		assert.Equal(t, "http://127.0.0.1:54321/auth/v1/verify", env["GOTRUE_MAILER_URLPATHS_CONFIRMATION"])
+		assert.Equal(t, "http://127.0.0.1:54321/auth/v1/verify", env["GOTRUE_MAILER_URLPATHS_RECOVERY"])
+		assert.Equal(t, "http://127.0.0.1:54321/auth/v1/verify", env["GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE"])
 		assert.NotContains(t, env, "GOTRUE_EXTERNAL_GITHUB_REDIRECT_URI")
 	})
 
