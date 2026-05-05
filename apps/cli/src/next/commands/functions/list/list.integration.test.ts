@@ -11,7 +11,11 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import { CliConfig } from "../../../config/cli-config.service.ts";
-import type { ProjectLinkStateValue } from "../../../config/project-link-state.service.ts";
+import {
+  InvalidProjectLinkStateError,
+  ProjectLinkState,
+  type ProjectLinkStateValue,
+} from "../../../config/project-link-state.service.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import {
   mockAnalytics,
@@ -129,6 +133,24 @@ function mockFunctionsApi(
       return requests;
     },
   };
+}
+
+function mockInvalidProjectLinkState() {
+  const error = new InvalidProjectLinkStateError({
+    detail: "The linked project state file is invalid or unreadable.",
+    suggestion: "Fix or remove project.json, then retry the command.",
+  });
+
+  return Layer.succeed(
+    ProjectLinkState,
+    ProjectLinkState.of({
+      load: Effect.fail(error),
+      save: () => Effect.void,
+      clear: Effect.void,
+      getActiveBranch: Effect.fail(error),
+      setActiveBranch: () => Effect.fail(error),
+    }),
+  );
 }
 
 async function writeLocalFunction(cwd: string, slug: string, opts: { denoJson?: boolean } = {}) {
@@ -273,6 +295,33 @@ describe("functions list", () => {
           remote: null,
         }),
       ]);
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("fails when the linked project state is invalid", () => {
+    const tempDir = makeTempDir();
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+      const out = mockOutput({ format: "text", interactive: false });
+      const api = mockFunctionsApi([]);
+      const layer = Layer.mergeAll(
+        BunServices.layer,
+        out.layer,
+        mockRuntimeInfo({ cwd: tempDir }),
+        cliConfigLayer(),
+        mockInvalidProjectLinkState(),
+        mockCredentials({ existingToken: "test-token" }).layer,
+        commandRuntimeLayer(["functions", "list"]),
+        api.layer,
+      );
+
+      const error = yield* functionsList().pipe(Effect.provide(layer), Effect.flip);
+
+      expect(error).toBeInstanceOf(InvalidProjectLinkStateError);
+      expect(api.requests).toHaveLength(0);
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );

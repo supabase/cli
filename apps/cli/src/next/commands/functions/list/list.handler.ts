@@ -113,9 +113,7 @@ const loadRemoteInventory = Effect.fnUntraced(function* () {
   const credentials = yield* Credentials;
   const commandRuntime = yield* CommandRuntime;
 
-  const maybeLinkState = yield* projectLinkState.load.pipe(
-    Effect.catch(() => Effect.succeed(Option.none())),
-  );
+  const maybeLinkState = yield* projectLinkState.load;
   if (Option.isNone(maybeLinkState)) {
     return {
       source: { checked: false, reason: "not_linked" },
