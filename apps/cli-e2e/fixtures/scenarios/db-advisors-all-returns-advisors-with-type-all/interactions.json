@@ -1,0 +1,112 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>/advisors/security",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "117",
+        "x-ratelimit-reset": "50"
+      },
+      "body": {
+        "lints": []
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>/advisors/performance",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "118",
+        "x-ratelimit-reset": "54"
+      },
+      "body": {
+        "lints": [
+          {
+            "name": "auth_db_connections_absolute",
+            "title": "Auth DB Connection Strategy is not Percentage",
+            "level": "INFO",
+            "facing": "EXTERNAL",
+            "categories": ["PERFORMANCE"],
+            "description": "Using a percentage based allocation connection strategy for Auth can help to improve the server's performance when increasing instance size.",
+            "detail": "Your project's Auth server is configured to use at most 10 connections. Increasing the instance size without manually adjusting this number will not improve the performance of the Auth server. Switch to a percentage based connection allocation strategy instead.",
+            "cache_key": "auth_db_connections_absolute",
+            "remediation": "https://supabase.com/docs/guides/deployment/going-into-prod",
+            "metadata": {
+              "type": "auth",
+              "entity": "Auth"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "113",
+        "x-ratelimit-reset": "39"
+      },
+      "body": {
+        "id": "<PROJECT_REF>",
+        "ref": "<PROJECT_REF>",
+        "organization_id": "<PROJECT_REF>",
+        "organization_slug": "<PROJECT_REF>",
+        "name": "cli-e2e-test",
+        "region": "us-east-1",
+        "status": "ACTIVE_HEALTHY",
+        "database": {
+          "host": "db.<PROJECT_REF>.supabase.red",
+          "version": "17.6.1.111",
+          "postgres_engine": "17",
+          "release_channel": "ga"
+        },
+        "created_at": "2000-01-01T00:00:00Z"
+      }
+    }
+  }
+]

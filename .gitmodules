@@ -1,0 +1,24 @@
+[submodule ".repos/effect"]
+	path = .repos/effect
+	url = https://github.com/Effect-TS/effect-smol.git
+[submodule ".repos/effect-patterns"]
+	path = .repos/effect-patterns
+	url = https://github.com/PaulJPhilp/EffectPatterns
+[submodule ".repos/effect-v3"]
+	path = .repos/effect-v3
+	url = https://github.com/Effect-TS/effect.git
+[submodule ".repos/lalph"]
+	path = .repos/lalph
+	url = https://github.com/tim-smart/lalph.git
+[submodule ".repos/cheffect"]
+	path = .repos/cheffect
+	url = https://github.com/tim-smart/cheffect.git
+[submodule ".repos/process-compose"]
+	path = .repos/process-compose
+	url = https://github.com/F1bonacc1/process-compose.git
+[submodule ".repos/supabase-cli-go"]
+	path = .repos/supabase-cli-go
+	url = https://github.com/supabase/cli.git
+[submodule ".repos/t3code"]
+	path = .repos/t3code
+	url = https://github.com/pingdotgg/t3code.git

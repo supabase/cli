@@ -1,0 +1,25 @@
+name: Release Stable
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable npm package version to publish
+        required: true
+        type: string
+      dry_run:
+        description: Dry run (skip actual publishing)
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  release:
+    uses: ./.github/workflows/release-shared.yml
+    with:
+      version: ${{ inputs.version }}
+      shell: legacy
+      npm_tag: latest
+      prerelease: false
+      dry_run: ${{ inputs.dry_run }}
+    secrets: inherit

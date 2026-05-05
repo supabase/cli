@@ -1,0 +1,35 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "x-gotrue-id": "<UUID>",
+    "x-ratelimit-limit": "120",
+    "x-ratelimit-remaining": "119",
+    "x-ratelimit-reset": "60"
+  },
+  "body": {
+    "config": {
+      "dbAllowedCidrs": [
+        {
+          "address": "0.0.0.0/0",
+          "type": "v4"
+        },
+        {
+          "address": "8.8.8.0/24",
+          "type": "v4"
+        }
+      ]
+    },
+    "status": "stored",
+    "old_config": {
+      "dbAllowedCidrs": [
+        {
+          "address": "0.0.0.0/0",
+          "type": "v4"
+        }
+      ]
+    },
+    "updated_at": "2000-01-01T00:00:00Z",
+    "entitlement": "allowed"
+  }
+}

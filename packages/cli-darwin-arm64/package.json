@@ -1,0 +1,13 @@
+{
+  "name": "@supabase/cli-darwin-arm64",
+  "version": "0.0.0",
+  "description": "Supabase CLI binary (darwin-arm64)",
+  "license": "MIT",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "preferUnplugged": true,
+  "files": ["bin/"],
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "status": 201,
+  "headers": {
+    "content-type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "id": "<PROJECT_REF>",
+    "slug": "<PROJECT_REF>",
+    "name": "Test Org"
+  }
+}

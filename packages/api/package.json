@@ -1,0 +1,77 @@
+{
+  "name": "@supabase/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "bun": "./src/bun.ts",
+      "default": "./src/node.ts"
+    },
+    "./effect": "./src/effect.ts",
+    "./openapi.json": "./src/generated/openapi.json"
+  },
+  "scripts": {
+    "generate:spec": "bun run scripts/download-openapi.ts",
+    "generate": "bun run generate:spec && bun run scripts/generate.ts",
+    "test": "nx run-many -t test:core test:e2e --projects=$npm_package_name",
+    "test:core": "nx run-many -t test:unit test:integration --projects=$npm_package_name",
+    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name",
+    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "effect": "catalog:",
+    "undici": "^8.1.0"
+  },
+  "devDependencies": {
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:",
+    "@typescript/native-preview": "catalog:",
+    "@vitest/coverage-istanbul": "catalog:",
+    "knip": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "oxlint-tsgolint": "catalog:",
+    "vitest": "catalog:"
+  },
+  "knip": {
+    "entry": [
+      "src/effect.ts",
+      "src/bun.ts",
+      "src/node.ts",
+      "src/**/*.test.ts",
+      "scripts/download-openapi.ts",
+      "scripts/download-openapi.unit.test.ts",
+      "scripts/generate.ts"
+    ],
+    "ignoreDependencies": [
+      "undici",
+      "@typescript/native-preview",
+      "oxfmt",
+      "oxlint",
+      "oxlint-tsgolint"
+    ],
+    "ignoreBinaries": [
+      "nx"
+    ]
+  },
+  "nx": {
+    "targets": {
+      "generate": {
+        "executor": "nx:run-commands",
+        "options": {
+          "command": "pnpm run generate",
+          "cwd": "{projectRoot}"
+        },
+        "outputs": [
+          "{projectRoot}/src/generated"
+        ]
+      }
+    }
+  },
+  "oxlint": {
+    "typeAware": true
+  }
+}

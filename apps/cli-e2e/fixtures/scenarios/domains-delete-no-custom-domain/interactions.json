@@ -1,0 +1,29 @@
+[
+  {
+    "request": {
+      "method": "DELETE",
+      "path": "/v1/projects/<PROJECT_REF>/custom-hostname",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/2.84.2"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 400,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "9",
+        "x-ratelimit-reset": "60"
+      },
+      "body": {
+        "message": "Custom hostname not configured for project"
+      }
+    }
+  }
+]

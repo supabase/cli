@@ -1,0 +1,16 @@
+{
+  "status": 201,
+  "headers": {
+    "cache-control": "no-cache",
+    "content-type": "application/json",
+    "x-gotrue-id": "<UUID>",
+    "x-ratelimit-limit": "120",
+    "x-ratelimit-remaining": "118",
+    "x-ratelimit-reset": "58"
+  },
+  "body": [
+    {
+      "?column?": 1
+    }
+  ]
+}

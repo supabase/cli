@@ -1,0 +1,21 @@
+{
+  "columns": [
+    "blocked_pid",
+    "blocking_statement",
+    "blocking_duration",
+    "blocking_pid",
+    "blocked_statement",
+    "blocked_duration"
+  ],
+  "typeOids": [23, 25, 25, 23, 25, 25],
+  "rows": [
+    [
+      "1234",
+      "UPDATE test_table SET val = 1",
+      "00:00:10.123456",
+      "5678",
+      "SELECT * FROM test_table WHERE id = 1",
+      "00:00:10.123456"
+    ]
+  ]
+}

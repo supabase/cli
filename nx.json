@@ -1,0 +1,57 @@
+{
+  "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "analytics": false,
+  "parallel": 6,
+  "plugins": [
+    "./tools/nx-plugins/src/knip.plugin.ts",
+    "./tools/nx-plugins/src/oxfmt.plugin.ts",
+    "./tools/nx-plugins/src/oxlint.plugin.ts",
+    "./tools/nx-plugins/src/tsgo.plugin.ts",
+    "./tools/nx-plugins/src/test.plugin.ts"
+  ],
+  "namedInputs": {
+    "sharedGlobals": [
+      "{workspaceRoot}/package.json",
+      "{workspaceRoot}/pnpm-workspace.yaml"
+    ],
+    "default": [
+      "{projectRoot}/**/*",
+      "sharedGlobals"
+    ],
+    "production": [
+      "default",
+      "!{projectRoot}/**/*.test.ts",
+      "!{projectRoot}/**/*.integration.test.ts",
+      "!{projectRoot}/**/*.e2e.test.ts",
+      "!{projectRoot}/vitest.config*",
+      "!{projectRoot}/tests/**/*"
+    ]
+  },
+  "targetDefaults": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["production", "^production"],
+      "cache": true
+    },
+    "generate": {
+      "inputs": ["default"],
+      "cache": true
+    },
+    "test": {
+      "inputs": ["default", "^production"],
+      "outputs": ["{projectRoot}/coverage/**"],
+      "cache": true
+    },
+    "test:core": {
+      "inputs": ["default", "^production"],
+      "outputs": ["{projectRoot}/coverage/**"],
+      "cache": true
+    },
+    "test:e2e": {
+      "parallelism": false,
+      "dependsOn": ["build"],
+      "inputs": ["default", "{projectRoot}/dist/**/*"]
+    },
+    "dev": { "cache": false }
+  }
+}

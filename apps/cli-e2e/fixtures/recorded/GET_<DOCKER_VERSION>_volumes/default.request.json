@@ -1,0 +1,13 @@
+{
+  "method": "GET",
+  "path": "/<DOCKER_VERSION>/volumes",
+  "query": {
+    "filters": "{\"label\":{\"com.supabase.cli.project=test-project\":true}}"
+  },
+  "headers": {
+    "accept-encoding": "gzip",
+    "host": "localhost:<PORT>",
+    "user-agent": "Docker-Client/unknown-version (darwin)"
+  },
+  "body": null
+}

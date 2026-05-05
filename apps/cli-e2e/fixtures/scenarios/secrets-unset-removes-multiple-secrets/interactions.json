@@ -1,0 +1,103 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/projects/<PROJECT_REF>/secrets",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "content-length": "59",
+        "content-type": "application/json",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": [
+        {
+          "name": "FOO",
+          "value": "bar"
+        },
+        {
+          "name": "BAR",
+          "value": "baz"
+        }
+      ]
+    },
+    "response": {
+      "status": 201,
+      "headers": {
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "116",
+        "x-ratelimit-reset": "53"
+      },
+      "body": null
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "112",
+        "x-ratelimit-reset": "50"
+      },
+      "body": {
+        "id": "<PROJECT_REF>",
+        "ref": "<PROJECT_REF>",
+        "organization_id": "<PROJECT_REF>",
+        "organization_slug": "<PROJECT_REF>",
+        "name": "cli-e2e-test",
+        "region": "us-east-1",
+        "status": "ACTIVE_HEALTHY",
+        "database": {
+          "host": "db.<PROJECT_REF>.supabase.red",
+          "version": "17.6.1.111",
+          "postgres_engine": "17",
+          "release_channel": "ga"
+        },
+        "created_at": "2000-01-01T00:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "DELETE",
+      "path": "/v1/projects/<PROJECT_REF>/secrets",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "content-length": "13",
+        "content-type": "application/json",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": ["FOO", "BAR"]
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "118",
+        "x-ratelimit-reset": "57"
+      },
+      "body": null
+    }
+  }
+]

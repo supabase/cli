@@ -1,0 +1,154 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>/api-keys",
+      "query": {
+        "reveal": "true"
+      },
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "116",
+        "x-ratelimit-reset": "14"
+      },
+      "body": [
+        {
+          "name": "anon",
+          "api_key": "<JWT>",
+          "id": "anon",
+          "type": "legacy",
+          "hash": "LISgX5HjrnfDQtpQWu-HlRYKY1JeLrcfe2ZPKfnIbys",
+          "prefix": "Rjc1P",
+          "description": "Legacy anon API key"
+        },
+        {
+          "name": "service_role",
+          "api_key": "<JWT>",
+          "id": "service_role",
+          "type": "legacy",
+          "hash": "TL3YJDQN_nQzt_vRhp3i4DJGk_40kaIYvdi33fEI-HA",
+          "prefix": "AvqaD",
+          "description": "Legacy service_role API key"
+        },
+        {
+          "id": "<UUID>",
+          "name": "default",
+          "type": "publishable",
+          "api_key": "<API_KEY>",
+          "description": null,
+          "secret_jwt_template": null,
+          "hash": "KRJMbEjTRvVPggKQJRX3lHTe5g-dNvRK4eZg_8Z11sQ",
+          "prefix": "<API_KEY>",
+          "inserted_at": "2000-01-01T00:00:00Z",
+          "updated_at": "2000-01-01T00:00:00Z"
+        },
+        {
+          "id": "<UUID>",
+          "name": "default",
+          "type": "secret",
+          "api_key": "<API_KEY>",
+          "description": null,
+          "secret_jwt_template": {
+            "role": "service_role"
+          },
+          "hash": "qOh0Bja70x3bpaPUPuqjWG7HzM6ACXqu9OZkZm3ITGM",
+          "prefix": "<API_KEY>",
+          "inserted_at": "2000-01-01T00:00:00Z",
+          "updated_at": "2000-01-01T00:00:00Z"
+        }
+      ]
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "105",
+        "x-ratelimit-reset": "34"
+      },
+      "body": {
+        "id": "<PROJECT_REF>",
+        "ref": "<PROJECT_REF>",
+        "organization_id": "<PROJECT_REF>",
+        "organization_slug": "<PROJECT_REF>",
+        "name": "cli-e2e-test",
+        "region": "us-east-1",
+        "status": "ACTIVE_HEALTHY",
+        "database": {
+          "host": "db.<PROJECT_REF>.supabase.red",
+          "version": "17.6.1.111",
+          "postgres_engine": "17",
+          "release_channel": "ga"
+        },
+        "created_at": "2000-01-01T00:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "104",
+        "x-ratelimit-reset": "33"
+      },
+      "body": {
+        "id": "<PROJECT_REF>",
+        "ref": "<PROJECT_REF>",
+        "organization_id": "<PROJECT_REF>",
+        "organization_slug": "<PROJECT_REF>",
+        "name": "cli-e2e-test",
+        "region": "us-east-1",
+        "status": "ACTIVE_HEALTHY",
+        "database": {
+          "host": "db.<PROJECT_REF>.supabase.red",
+          "version": "17.6.1.111",
+          "postgres_engine": "17",
+          "release_channel": "ga"
+        },
+        "created_at": "2000-01-01T00:00:00Z"
+      }
+    }
+  }
+]

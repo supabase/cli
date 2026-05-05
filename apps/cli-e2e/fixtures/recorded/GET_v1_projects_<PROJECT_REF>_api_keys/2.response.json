@@ -1,0 +1,56 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "x-gotrue-id": "<UUID>",
+    "x-ratelimit-limit": "120",
+    "x-ratelimit-remaining": "118",
+    "x-ratelimit-reset": "52"
+  },
+  "body": [
+    {
+      "name": "anon",
+      "api_key": "<JWT>",
+      "id": "anon",
+      "type": "legacy",
+      "hash": "siXHwep1ApnLzvWXuo9Z9T8gGEi_5wsAy961FvvL7tA",
+      "prefix": "tbn2D",
+      "description": "Legacy anon API key"
+    },
+    {
+      "name": "service_role",
+      "api_key": "<JWT>",
+      "id": "service_role",
+      "type": "legacy",
+      "hash": "NhRBjpTWK-RLWwdqHIg-s57vOf7jkIEWjuUe0N0cEbo",
+      "prefix": "OxwOz",
+      "description": "Legacy service_role API key"
+    },
+    {
+      "id": "<UUID>",
+      "name": "default",
+      "type": "publishable",
+      "api_key": "<API_KEY>",
+      "description": null,
+      "secret_jwt_template": null,
+      "hash": "WeAFS20kmJFGweFuqH67uz_how1IsOEN9zV5frxlxdQ",
+      "prefix": "<API_KEY>",
+      "inserted_at": "2000-01-01T00:00:00Z",
+      "updated_at": "2000-01-01T00:00:00Z"
+    },
+    {
+      "id": "<UUID>",
+      "name": "default",
+      "type": "secret",
+      "api_key": "<API_KEY>··························",
+      "description": null,
+      "secret_jwt_template": {
+        "role": "service_role"
+      },
+      "hash": "FvtYm3yeZhdzPqOOwrGv685cJXzUJINIUxptXTRI05E",
+      "prefix": "<API_KEY>",
+      "inserted_at": "2000-01-01T00:00:00Z",
+      "updated_at": "2000-01-01T00:00:00Z"
+    }
+  ]
+}
