@@ -11,5 +11,5 @@ interface LegacyGoProxyShape {
 }
 
 export class LegacyGoProxy extends ServiceMap.Service<LegacyGoProxy, LegacyGoProxyShape>()(
-  "@supabase/cli/legacy/LegacyGoProxy",
+  "supabase/legacy/LegacyGoProxy",
 ) {}

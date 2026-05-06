@@ -12,4 +12,4 @@ interface InkShape {
   readonly render: (element: ReactElement) => Effect.Effect<InkInstance>;
 }
 
-export class Ink extends ServiceMap.Service<Ink, InkShape>()("@supabase/cli/runtime/Ink") {}
+export class Ink extends ServiceMap.Service<Ink, InkShape>()("supabase/runtime/Ink") {}

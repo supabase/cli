@@ -1,10 +1,10 @@
-# @supabase/cli
+# supabase
 
 The TypeScript/Bun Supabase CLI in this repo.
 
 This workspace contains:
 
-- the published `@supabase/cli` package
+- the published `supabase` package
 - the `supabase` binary entrypoint
 - local-development commands backed by `@supabase/stack`
 - login and machine-readable output support
@@ -149,7 +149,7 @@ pnpm test:e2e                  # end-to-end subprocess tests
 
 ## Publishing
 
-This workspace publishes the main `@supabase/cli` package.
+This workspace publishes the main `supabase` package.
 
 Release channels are split by npm dist-tag:
 

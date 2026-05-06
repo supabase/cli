@@ -1,4 +1,4 @@
-type ReleaseTag = "latest" | "alpha";
+type ReleaseTag = "latest" | "alpha" | "beta";
 
 type ShellCheckResult = {
   readonly passed: boolean;
@@ -28,7 +28,7 @@ export async function verifyExpectedShell(
   binPath: string,
   tag: ReleaseTag,
 ): Promise<ShellCheckResult> {
-  if (tag === "latest") {
+  if (tag === "latest" || tag === "beta") {
     const result = await runCli(binPath, ["hello"]);
     const passed = result.exitCode === 0 && result.stdout === "hello legacy";
     return {

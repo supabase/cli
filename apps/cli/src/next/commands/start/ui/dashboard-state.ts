@@ -21,7 +21,7 @@ export class StartDashboardState extends ServiceMap.Service<
     readonly phaseRef: SubscriptionRef.SubscriptionRef<StartPhase>;
     readonly errorRef: SubscriptionRef.SubscriptionRef<string | null>;
   }
->()("@supabase/cli/start/StartDashboardState") {
+>()("supabase/start/StartDashboardState") {
   static readonly live = Layer.effect(
     this,
     Effect.gen(function* () {

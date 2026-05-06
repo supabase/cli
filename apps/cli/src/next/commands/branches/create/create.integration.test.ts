@@ -116,7 +116,7 @@ function mockCreateApi(
     makeApiClient({
       baseUrl: "https://api.supabase.com",
       accessToken: "test-token",
-      userAgent: "@supabase/cli",
+      userAgent: "supabase",
       headers: {
         "X-Supabase-Command": "branches create",
         "X-Supabase-Command-Run-ID": "run-123",

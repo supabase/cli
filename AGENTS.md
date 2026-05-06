@@ -8,7 +8,7 @@ Bun monorepo with workspaces under `apps/` and `packages/`.
 
 ## Workspace Layout
 
-- `apps/cli` — main `@supabase/cli` package
+- `apps/cli` — main `supabase` package
 - `apps/docs` — internal Next.js docs site
 - `packages/api` — typed Supabase Management API client
 - `packages/config` — config schema and generated types

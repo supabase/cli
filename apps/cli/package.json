@@ -1,5 +1,6 @@
 {
-  "name": "@supabase/cli",
+  "name": "supabase",
+  "version": "0.0.0-automated",
   "private": false,
   "bin": {
     "supabase": "dist/supabase.js"
@@ -62,6 +63,18 @@
     "@supabase/cli-linux-x64-musl": "workspace:*",
     "@supabase/cli-windows-arm64": "workspace:*",
     "@supabase/cli-windows-x64": "workspace:*"
+  },
+  "release": {
+    "branches": [
+      "main",
+      {
+        "name": "develop",
+        "prerelease": "beta"
+      }
+    ],
+    "plugins": [
+      "@semantic-release/commit-analyzer"
+    ]
   },
   "knip": {
     "entry": [

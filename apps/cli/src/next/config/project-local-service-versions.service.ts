@@ -40,4 +40,4 @@ interface ProjectLocalServiceVersionsShape {
 export class ProjectLocalServiceVersions extends ServiceMap.Service<
   ProjectLocalServiceVersions,
   ProjectLocalServiceVersionsShape
->()("@supabase/cli/config/ProjectLocalServiceVersions") {}
+>()("supabase/config/ProjectLocalServiceVersions") {}

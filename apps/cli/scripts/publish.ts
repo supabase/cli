@@ -16,6 +16,8 @@ const PLATFORM_PACKAGES = [
   "cli-windows-x64",
 ];
 
+const VALID_TAGS = new Set(["latest", "alpha", "beta"]);
+
 const { values } = parseArgs({
   options: {
     "dry-run": { type: "boolean", default: false },
@@ -25,13 +27,20 @@ const { values } = parseArgs({
 
 const dryRun = values["dry-run"];
 const tag = values.tag;
-if (tag !== "latest" && tag !== "alpha") {
-  console.error(`Invalid --tag value: ${String(tag)}. Expected "latest" or "alpha".`);
+if (!VALID_TAGS.has(tag)) {
+  console.error(
+    `Invalid --tag value: ${String(tag)}. Expected one of: ${[...VALID_TAGS].join(", ")}.`,
+  );
   process.exit(1);
 }
 
+const cliDir = path.join(root, "apps/cli");
+const cliPkgJson = await Bun.file(path.join(cliDir, "package.json")).json();
+const umbrellaName: string = cliPkgJson.name;
+
 const dryRunFlag = dryRun ? ["--dry-run"] : [];
 const tagFlag = ["--tag", tag];
+const provenanceFlag = ["--provenance"];
 
 console.log(
   dryRun
@@ -45,18 +54,17 @@ await Promise.all(
   PLATFORM_PACKAGES.map(async (pkg) => {
     const pkgDir = path.join(root, "packages", pkg);
     console.log(`  Publishing @supabase/${pkg}...`);
-    await $`bun publish --access public ${tagFlag} ${dryRunFlag}`.cwd(pkgDir);
+    await $`bun publish --access public ${provenanceFlag} ${tagFlag} ${dryRunFlag}`.cwd(pkgDir);
     console.log(`  @supabase/${pkg} published.`);
   }),
 );
 
 // Build the umbrella package bin shim, then publish
-const cliDir = path.join(root, "apps/cli");
 console.log("\nBuilding umbrella package shim...");
 await $`pnpm build:shim`.cwd(cliDir);
 
-console.log("Publishing umbrella package @supabase/cli...");
-await $`bun publish --access public ${tagFlag} ${dryRunFlag}`.cwd(cliDir);
-console.log("@supabase/cli published.");
+console.log(`Publishing umbrella package ${umbrellaName}...`);
+await $`bun publish ${provenanceFlag} ${tagFlag} ${dryRunFlag}`.cwd(cliDir);
+console.log(`${umbrellaName} published.`);
 
 console.log("\nAll packages published successfully.");

@@ -43,7 +43,7 @@ export const makeApi = Effect.gen(function* () {
         const api = yield* makeApiClient({
           baseUrl: apiUrl,
           accessToken,
-          userAgent: "@supabase/cli",
+          userAgent: "supabase",
         }).pipe(Effect.provide(httpClientLayer));
         return yield* api.v1.getProfile();
       },

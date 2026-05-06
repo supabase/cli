@@ -14,15 +14,15 @@ const { values } = parseArgs({
 
 const version = values.version!;
 const tag = values.tag;
-if (tag !== "latest" && tag !== "alpha") {
-  console.error(`Invalid --tag value: ${String(tag)}. Expected "latest" or "alpha".`);
+if (tag !== "latest" && tag !== "alpha" && tag !== "beta") {
+  console.error(`Invalid --tag value: ${String(tag)}. Expected "latest", "alpha", or "beta".`);
   process.exit(1);
 }
 const root = path.resolve(import.meta.dir, "../../..");
 const distDir = path.join(root, "dist");
 
-function shellSentinelCommand(tag: "latest" | "alpha") {
-  if (tag === "latest") {
+function shellSentinelCommand(tag: "latest" | "alpha" | "beta") {
+  if (tag === "latest" || tag === "beta") {
     return 'output=$(supabase hello) && echo "$output" && test "$output" = "hello legacy"';
   }
 
