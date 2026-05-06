@@ -16,7 +16,7 @@ export default {
     // Called by another service with a secret key
     // ctx.supabaseAdmin bypasses RLS — use for privileged operations
     /*
-    if (ctx.authType === "secret") {
+    if (ctx.authMode === "secret") {
       const { user_id } = await req.json();
       const { data } = await ctx.supabaseAdmin.auth.admin.getUserById(user_id);
 
