@@ -39,6 +39,8 @@ jobs:
       github.event.pull_request.base.ref == 'main' &&
       github.event.review.state == 'approved'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - id: app-token
         uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
@@ -157,6 +159,9 @@ jobs:
     name: Release
     needs: plan
     if: needs.plan.outputs.should_release == 'true'
+    permissions:
+      contents: write
+      id-token: write
     uses: ./.github/workflows/release-shared.yml
     with:
       version: ${{ needs.plan.outputs.version }}
