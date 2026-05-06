@@ -1,0 +1,18 @@
+{
+  "method": "POST",
+  "path": "/v1/projects/__PROJECT_REF__/config/auth/sso/providers",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "authorization": "Bearer __ACCESS_TOKEN__",
+    "content-length": "581",
+    "content-type": "application/json",
+    "host": "localhost:__PORT__",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": {
+    "domains": ["example.com"],
+    "metadata_xml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<md:EntityDescriptor xmlns:md=\"urn:oasis:names:tc:SAML:2.0:metadata\" entityID=\"https://example.com/saml\">\n  <md:IDPSSODescriptor WantAuthnRequestsSigned=\"false\" protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\">\n    <md:SingleSignOnService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Location=\"https://example.com/saml/sso\"/>\n  </md:IDPSSODescriptor>\n</md:EntityDescriptor>",
+    "type": "saml"
+  }
+}

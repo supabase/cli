@@ -1,0 +1,17 @@
+{
+  "method": "POST",
+  "path": "/v1/projects/__PROJECT_REF__/network-restrictions/apply",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "authorization": "Bearer __ACCESS_TOKEN__",
+    "content-length": "54",
+    "content-type": "application/json",
+    "host": "localhost:__PORT__",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": {
+    "dbAllowedCidrs": ["0.0.0.0/0"],
+    "dbAllowedCidrsV6": []
+  }
+}

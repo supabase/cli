@@ -4,8 +4,8 @@
   "query": {},
   "headers": {
     "accept-encoding": "gzip",
-    "authorization": "Bearer <ACCESS_TOKEN>",
-    "host": "localhost:<PORT>",
+    "authorization": "Bearer __ACCESS_TOKEN__",
+    "host": "localhost:__PORT__",
     "user-agent": "SupabaseCLI/"
   },
   "body": null

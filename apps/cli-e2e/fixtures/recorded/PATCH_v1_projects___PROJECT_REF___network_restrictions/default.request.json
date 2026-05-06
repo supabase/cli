@@ -1,0 +1,19 @@
+{
+  "method": "PATCH",
+  "path": "/v1/projects/__PROJECT_REF__/network-restrictions",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "authorization": "Bearer __ACCESS_TOKEN__",
+    "content-length": "63",
+    "content-type": "application/json",
+    "host": "localhost:__PORT__",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": {
+    "add": {
+      "dbAllowedCidrs": ["8.8.8.0/24"],
+      "dbAllowedCidrsV6": []
+    }
+  }
+}

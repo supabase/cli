@@ -1,0 +1,11 @@
+{
+  "method": "GET",
+  "path": "/__DOCKER_VERSION__/containers/supabase_db_test-project/json",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "host": "localhost:__PORT__",
+    "user-agent": "Docker-Client/unknown-version (darwin)"
+  },
+  "body": null
+}

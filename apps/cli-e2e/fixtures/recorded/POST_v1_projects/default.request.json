@@ -4,16 +4,16 @@
   "query": {},
   "headers": {
     "accept-encoding": "gzip",
-    "authorization": "Bearer <ACCESS_TOKEN>",
+    "authorization": "Bearer __ACCESS_TOKEN__",
     "content-length": "120",
     "content-type": "application/json",
-    "host": "localhost:<PORT>",
+    "host": "localhost:__PORT__",
     "user-agent": "SupabaseCLI/"
   },
   "body": {
     "db_pass": "cli-e2e-password-123",
     "name": "cli-e2e-test",
-    "organization_slug": "<PROJECT_REF>",
+    "organization_slug": "__PROJECT_REF__",
     "region": "us-east-1"
   }
 }

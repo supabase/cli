@@ -4,8 +4,8 @@
     "content-type": "application/json; charset=utf-8"
   },
   "body": {
-    "id": "<PROJECT_REF>",
-    "slug": "<PROJECT_REF>",
+    "id": "__PROJECT_REF__",
+    "slug": "__PROJECT_REF__",
     "name": "Test Org"
   }
 }

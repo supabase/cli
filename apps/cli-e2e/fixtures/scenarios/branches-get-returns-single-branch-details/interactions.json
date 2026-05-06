@@ -2,12 +2,12 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>/branches/my-branch",
+      "path": "/v1/projects/__PROJECT_REF__/branches/my-branch",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": null
@@ -16,7 +16,7 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "119",
         "x-ratelimit-reset": "60"
@@ -25,7 +25,7 @@
         "id": "00000000-0000-0000-0000-000000000000",
         "name": "my-branch",
         "project_ref": "bbbbbbbbbbbbbbbbbbbb",
-        "parent_project_ref": "<PROJECT_REF>",
+        "parent_project_ref": "__PROJECT_REF__",
         "is_default": false,
         "git_branch": "main",
         "persistent": false,
@@ -39,12 +39,12 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/branches/<PROJECT_REF>",
+      "path": "/v1/branches/__PROJECT_REF__",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": null
@@ -53,7 +53,7 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "119",
         "x-ratelimit-reset": "60"
