@@ -335,6 +335,57 @@ describe("makeSupabaseApiClient", () => {
     expect(result.database.host).toBe("db.supabase.internal");
   });
 
+  test("decodes nullable JWT templates in API key responses", async () => {
+    const result = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.execute<"v1GetProjectApiKeys">(operationDefinitions.v1GetProjectApiKeys, {
+            ref: "abcdefghijklmnopqrst",
+            reveal: true,
+          }),
+        ),
+        Effect.provide(
+          httpClientLayer((request) => {
+            const url = requestUrl(request);
+            expect(url.pathname).toBe("/v1/projects/abcdefghijklmnopqrst/api-keys");
+            expect(requestUrlParam(request, "reveal")).toBe("true");
+            return Effect.succeed(
+              jsonResponse(request, 200, [
+                {
+                  name: "anon",
+                  type: "legacy",
+                  api_key: "anon-key",
+                  secret_jwt_template: null,
+                },
+                {
+                  name: "service_role",
+                  type: "secret",
+                  api_key: "service-role-key",
+                  secret_jwt_template: { role: "service_role" },
+                },
+              ]),
+            );
+          }),
+        ),
+      ),
+    );
+
+    expect(result).toEqual([
+      {
+        name: "anon",
+        type: "legacy",
+        api_key: "anon-key",
+        secret_jwt_template: null,
+      },
+      {
+        name: "service_role",
+        type: "secret",
+        api_key: "service-role-key",
+        secret_jwt_template: { role: "service_role" },
+      },
+    ]);
+  });
+
   test("does not retry 5xx responses for POST requests", async () => {
     let attempts = 0;
 
