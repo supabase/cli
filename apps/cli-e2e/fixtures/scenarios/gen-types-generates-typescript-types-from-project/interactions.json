@@ -2,14 +2,14 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>/types/typescript",
+      "path": "/v1/projects/__PROJECT_REF__/types/typescript",
       "query": {
         "included_schemas": "public"
       },
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/<VERSION>"
       },
       "body": null

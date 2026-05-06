@@ -2,12 +2,12 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>/billing/addons",
+      "path": "/v1/projects/__PROJECT_REF__/billing/addons",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/2.90.0"
       },
       "body": null
@@ -16,7 +16,7 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "118",
         "x-ratelimit-reset": "41"
@@ -667,12 +667,12 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>/postgrest",
+      "path": "/v1/projects/__PROJECT_REF__/postgrest",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/2.90.0"
       },
       "body": null
@@ -681,7 +681,7 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "118",
         "x-ratelimit-reset": "41"
@@ -698,12 +698,12 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>/config/database/postgres",
+      "path": "/v1/projects/__PROJECT_REF__/config/database/postgres",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/2.90.0"
       },
       "body": null
@@ -712,7 +712,7 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "118",
         "x-ratelimit-reset": "42"
@@ -728,12 +728,12 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>/network-restrictions",
+      "path": "/v1/projects/__PROJECT_REF__/network-restrictions",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/2.90.0"
       },
       "body": null
@@ -742,7 +742,7 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "118",
         "x-ratelimit-reset": "42"
@@ -759,12 +759,12 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>/ssl-enforcement",
+      "path": "/v1/projects/__PROJECT_REF__/ssl-enforcement",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/2.90.0"
       },
       "body": null
@@ -773,7 +773,7 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "118",
         "x-ratelimit-reset": "42"
@@ -789,12 +789,12 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>/config/auth",
+      "path": "/v1/projects/__PROJECT_REF__/config/auth",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/2.90.0"
       },
       "body": null
@@ -803,7 +803,7 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "118",
         "x-ratelimit-reset": "42"
@@ -1055,12 +1055,12 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>/config/storage",
+      "path": "/v1/projects/__PROJECT_REF__/config/storage",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/2.90.0"
       },
       "body": null
@@ -1069,7 +1069,7 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "118",
         "x-ratelimit-reset": "51"
@@ -1110,13 +1110,13 @@
   {
     "request": {
       "method": "POST",
-      "path": "/v1/projects/<PROJECT_REF>/database/webhooks/enable",
+      "path": "/v1/projects/__PROJECT_REF__/database/webhooks/enable",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
         "content-length": "0",
-        "host": "localhost:<PORT>",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/2.90.0"
       },
       "body": null
@@ -1124,7 +1124,7 @@
     "response": {
       "status": 201,
       "headers": {
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "118",
         "x-ratelimit-reset": "50"

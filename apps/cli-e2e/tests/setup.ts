@@ -128,7 +128,7 @@ export async function setup({
 
   if (!isRecording) {
     // Replay mode — no real API calls; any valid 20-char string works as the
-    // project ref because fixture paths normalize it to <PROJECT_REF>.
+    // project ref because fixture paths normalize it to __PROJECT_REF__.
     provide("projectRef", PROJECT_REF);
     provide("orgId", ORG_ID);
     provide("storageBucket", "cli-e2e-bucket");

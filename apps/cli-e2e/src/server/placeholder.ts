@@ -22,7 +22,7 @@ const RATE_LIMIT_REMAINING_PATTERN = /"x-ratelimit-remaining": "\d+"/g;
 // API key hash — SHA-256 base64url, rotates when the test project keys are recreated.
 const API_KEY_HASH_PATTERN = /"hash": "[A-Za-z0-9_-]+"/g;
 // Legacy API key prefix — 5-char alphanumeric, rotates with the key.
-// Must run after SUPABASE_KEY_PATTERN so new-style key prefixes are already "<API_KEY>".
+// Must run after SUPABASE_KEY_PATTERN so new-style key prefixes are already "__API_KEY__".
 const LEGACY_KEY_PREFIX_PATTERN = /"prefix": "[A-Za-z0-9]{4,10}"/g;
 // Integer IDs from DB auto-increment (project internal ID, SSO provider ID, etc.).
 // Only targets 4+ digit integers to avoid touching small status codes or counts.
@@ -36,26 +36,26 @@ const FIXED_TIMESTAMP = "2000-01-01T00:00:00Z";
  *  Timestamps become a fixed valid ISO string so CLIs that parse them don't fail. */
 export function applyPlaceholders(input: string): { output: string } {
   let output = input;
-  output = output.replace(LOCAL_HOST_PORT_PATTERN, "localhost:<PORT>");
+  output = output.replace(LOCAL_HOST_PORT_PATTERN, "localhost:__PORT__");
   // Bearer tokens first (before JWT/ref patterns consume sub-parts)
-  output = output.replace(BEARER_TOKEN_PATTERN, "Bearer <ACCESS_TOKEN>");
-  output = output.replace(JWT_PATTERN, "<JWT>");
-  output = output.replace(SUPABASE_KEY_PATTERN, "<API_KEY>");
-  output = output.replace(UUID_PATTERN, "<UUID>");
+  output = output.replace(BEARER_TOKEN_PATTERN, "Bearer __ACCESS_TOKEN__");
+  output = output.replace(JWT_PATTERN, "__JWT__");
+  output = output.replace(SUPABASE_KEY_PATTERN, "__API_KEY__");
+  output = output.replace(UUID_PATTERN, "__UUID__");
   // Docker IDs — normalize before the 20-char project-ref pattern fires on sub-matches.
-  output = output.replace(DOCKER_SHA256_PATTERN, "sha256:<IMAGE_ID>");
-  output = output.replace(DOCKER_FULL_ID_PATTERN, "<CONTAINER_ID>");
+  output = output.replace(DOCKER_SHA256_PATTERN, "sha256:__IMAGE_ID__");
+  output = output.replace(DOCKER_FULL_ID_PATTERN, "__CONTAINER_ID__");
   // 20-char lowercase alpha strings — project refs
   output = output.replace(/\b[a-z]{20}\b/g, (match) =>
-    match.length !== 20 ? match : "<PROJECT_REF>",
+    match.length !== 20 ? match : "__PROJECT_REF__",
   );
   output = output.replace(ISO_TIMESTAMP_PATTERN, FIXED_TIMESTAMP);
   // Rate limit headers vary per recording session — normalise to fixed valid integers.
   output = output.replace(RATE_LIMIT_RESET_PATTERN, '"x-ratelimit-reset": "60"');
   output = output.replace(RATE_LIMIT_REMAINING_PATTERN, '"x-ratelimit-remaining": "119"');
   // API key hash and legacy prefix rotate when keys are recreated.
-  output = output.replace(API_KEY_HASH_PATTERN, '"hash": "<KEY_HASH>"');
-  output = output.replace(LEGACY_KEY_PREFIX_PATTERN, '"prefix": "<KEY_PREFIX>"');
+  output = output.replace(API_KEY_HASH_PATTERN, '"hash": "__KEY_HASH__"');
+  output = output.replace(LEGACY_KEY_PREFIX_PATTERN, '"prefix": "__KEY_PREFIX__"');
   // DB auto-increment IDs change every time a resource is created.
   output = output.replace(INTEGER_ID_PATTERN, '"id": 1');
   return { output };
@@ -67,14 +67,14 @@ export function applyPlaceholders(input: string): { output: string } {
 export function normalizeUrlPath(urlPath: string): string {
   return (
     urlPath
-      .replace(UUID_PATTERN, "<UUID>")
-      .replace(/\/[a-z]{20}(\/|$)/g, "/<PROJECT_REF>$1")
-      // Docker API version (/v1.47/ → /<DOCKER_VERSION>/) so fixture keys are
+      .replace(UUID_PATTERN, "__UUID__")
+      .replace(/\/[a-z]{20}(\/|$)/g, "/__PROJECT_REF__$1")
+      // Docker API version (/v1.47/ → /__DOCKER_VERSION__/) so fixture keys are
       // stable across minor Docker Engine upgrades that bump the negotiated API version.
-      .replace(/\/v1\.\d+(\/|$)/g, "/<DOCKER_VERSION>$1")
+      .replace(/\/v1\.\d+(\/|$)/g, "/__DOCKER_VERSION__$1")
       // Docker container/image IDs in URL paths (64-char lowercase hex) — collapse
       // to a single fixture key so each container does not produce its own dir.
-      .replace(/\/[0-9a-f]{64}(\/|$)/g, "/<CONTAINER_ID>$1")
+      .replace(/\/[0-9a-f]{64}(\/|$)/g, "/__CONTAINER_ID__$1")
   );
 }
 
@@ -83,7 +83,7 @@ function normalizePath(urlPath: string): string {
   return normalizeUrlPath(urlPath)
     .replace(/^\//, "")
     .replace(/[/-]/g, "_")
-    .replace(/[^a-zA-Z0-9_<>]/g, "_");
+    .replace(/[^a-zA-Z0-9_]/g, "_");
 }
 
 /** Build the fixture directory key from method and path. */

@@ -6,11 +6,11 @@
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "apikey": "<JWT>",
-        "authorization": "Bearer <ACCESS_TOKEN>",
+        "apikey": "__JWT__",
+        "authorization": "Bearer __ACCESS_TOKEN__",
         "cache-control": "max-age=3600",
         "content-type": "text/plain; charset=utf-8",
-        "host": "localhost:<PORT>",
+        "host": "localhost:__PORT__",
         "transfer-encoding": "chunked",
         "user-agent": "SupabaseCLI/"
       },
@@ -23,12 +23,12 @@
         "content-type": "application/json; charset=utf-8",
         "sb-gateway-mode": "direct",
         "sb-gateway-version": "1",
-        "sb-project-ref": "<PROJECT_REF>",
-        "sb-request-id": "<UUID>"
+        "sb-project-ref": "__PROJECT_REF__",
+        "sb-request-id": "__UUID__"
       },
       "body": {
         "Key": "cli-e2e-bucket/rm-a.txt",
-        "Id": "<UUID>"
+        "Id": "__UUID__"
       }
     }
   },
@@ -39,11 +39,11 @@
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "apikey": "<JWT>",
-        "authorization": "Bearer <ACCESS_TOKEN>",
+        "apikey": "__JWT__",
+        "authorization": "Bearer __ACCESS_TOKEN__",
         "cache-control": "max-age=3600",
         "content-type": "text/plain; charset=utf-8",
-        "host": "localhost:<PORT>",
+        "host": "localhost:__PORT__",
         "transfer-encoding": "chunked",
         "user-agent": "SupabaseCLI/"
       },
@@ -56,12 +56,12 @@
         "content-type": "application/json; charset=utf-8",
         "sb-gateway-mode": "direct",
         "sb-gateway-version": "1",
-        "sb-project-ref": "<PROJECT_REF>",
-        "sb-request-id": "<UUID>"
+        "sb-project-ref": "__PROJECT_REF__",
+        "sb-request-id": "__UUID__"
       },
       "body": {
         "Key": "cli-e2e-bucket/rm-b.txt",
-        "Id": "<UUID>"
+        "Id": "__UUID__"
       }
     }
   },
@@ -72,11 +72,11 @@
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "apikey": "<JWT>",
-        "authorization": "Bearer <ACCESS_TOKEN>",
+        "apikey": "__JWT__",
+        "authorization": "Bearer __ACCESS_TOKEN__",
         "content-length": "37",
         "content-type": "application/json",
-        "host": "localhost:<PORT>",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": {
@@ -90,8 +90,8 @@
         "content-type": "application/json; charset=utf-8",
         "sb-gateway-mode": "direct",
         "sb-gateway-version": "1",
-        "sb-project-ref": "<PROJECT_REF>",
-        "sb-request-id": "<UUID>",
+        "sb-project-ref": "__PROJECT_REF__",
+        "sb-request-id": "__UUID__",
         "x-content-type-options": "nosniff"
       },
       "body": [
@@ -100,8 +100,8 @@
           "bucket_id": "cli-e2e-bucket",
           "owner": "",
           "owner_id": "",
-          "version": "<UUID>",
-          "id": "<UUID>",
+          "version": "__UUID__",
+          "id": "__UUID__",
           "updated_at": "2000-01-01T00:00:00Z",
           "created_at": "2000-01-01T00:00:00Z",
           "last_accessed_at": "2000-01-01T00:00:00Z",
@@ -121,8 +121,8 @@
           "bucket_id": "cli-e2e-bucket",
           "owner": "",
           "owner_id": "",
-          "version": "<UUID>",
-          "id": "<UUID>",
+          "version": "__UUID__",
+          "id": "__UUID__",
           "updated_at": "2000-01-01T00:00:00Z",
           "created_at": "2000-01-01T00:00:00Z",
           "last_accessed_at": "2000-01-01T00:00:00Z",

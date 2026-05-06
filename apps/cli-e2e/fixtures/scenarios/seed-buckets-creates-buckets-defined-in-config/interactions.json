@@ -6,9 +6,9 @@
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "apikey": "<JWT>",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "apikey": "__JWT__",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": null
@@ -20,8 +20,8 @@
         "content-type": "application/json; charset=utf-8",
         "sb-gateway-mode": "direct",
         "sb-gateway-version": "1",
-        "sb-project-ref": "<PROJECT_REF>",
-        "sb-request-id": "<UUID>",
+        "sb-project-ref": "__PROJECT_REF__",
+        "sb-request-id": "__UUID__",
         "x-content-type-options": "nosniff"
       },
       "body": []
@@ -34,11 +34,11 @@
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "apikey": "<JWT>",
-        "authorization": "Bearer <ACCESS_TOKEN>",
+        "apikey": "__JWT__",
+        "authorization": "Bearer __ACCESS_TOKEN__",
         "content-length": "63",
         "content-type": "application/json",
-        "host": "localhost:<PORT>",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": {
@@ -54,8 +54,8 @@
         "content-type": "application/json; charset=utf-8",
         "sb-gateway-mode": "direct",
         "sb-gateway-version": "1",
-        "sb-project-ref": "<PROJECT_REF>",
-        "sb-request-id": "<UUID>",
+        "sb-project-ref": "__PROJECT_REF__",
+        "sb-request-id": "__UUID__",
         "x-content-type-options": "nosniff"
       },
       "body": {

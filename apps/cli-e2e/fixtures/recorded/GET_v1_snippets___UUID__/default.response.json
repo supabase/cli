@@ -1,0 +1,14 @@
+{
+  "status": 406,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "x-gotrue-id": "__UUID__",
+    "x-ratelimit-limit": "120",
+    "x-ratelimit-remaining": "119",
+    "x-ratelimit-reset": "60"
+  },
+  "body": {
+    "message": "Failed to retrieve SQL snippet",
+    "errorEventId": "49f454907aed4b07961bb30430dbd4d2"
+  }
+}
