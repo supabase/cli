@@ -25,7 +25,7 @@ We replace GoReleaser with a pipeline built on **Bun `--compile` single-file exe
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Binary packaging               | **Bun `--compile`** SFE per platform                                                                                                                                                      |
 | Platform coverage              | `darwin-{arm64,x64}`, `linux-{arm64,x64}`, `linux-{arm64,x64}-musl`, `windows-{x64,arm64}` — parity with the Go CLI's current GoReleaser targets                                          |
-| npm distribution               | `@supabase/cli` umbrella + eight `@supabase/cli-<platform>` packages as `optionalDependencies`                                                                                            |
+| npm distribution               | `supabase` umbrella + eight `@supabase/cli-<platform>` packages as `optionalDependencies`                                                                                            |
 | Platform resolution at runtime | Node shim ([`apps/cli/src/shared/cli/bin.ts`](../../apps/cli/src/shared/cli/bin.ts)) `execFileSync`s the right platform binary                                                            |
 | Linux packages                 | **`nfpm`** (binary only, installed from GoReleaser's apt repo) for `.deb` / `.rpm` / `.apk`                                                                                               |
 | Homebrew                       | Existing `supabase/homebrew-tap`, updated by [`apps/cli/scripts/update-homebrew.ts`](../../apps/cli/scripts/update-homebrew.ts)                                                           |
@@ -57,7 +57,7 @@ Bun is already the build toolchain and runtime for the TypeScript CLI (the CLI i
 Exactly the pattern used by `esbuild`, `@swc/core`, `turbo`, and `rollup`:
 
 ```text
-@supabase/cli               (umbrella, Node shim in bin)
+supabase               (umbrella, Node shim in bin)
 ├─ @supabase/cli-darwin-arm64
 ├─ @supabase/cli-darwin-x64
 ├─ @supabase/cli-linux-arm64
@@ -159,7 +159,7 @@ The top of the graph is implemented today. The dashed edges (Homebrew and Scoop 
 
 #### npm / npx
 
-Canonical path. `@supabase/cli` umbrella package has no native code; it ships a single Node shim at `dist/supabase.js` that resolves and `execFileSync`s the platform binary from the matching `@supabase/cli-<platform>` package pulled in by `optionalDependencies`:
+Canonical path. `supabase` umbrella package has no native code; it ships a single Node shim at `dist/supabase.js` that resolves and `execFileSync`s the platform binary from the matching `@supabase/cli-<platform>` package pulled in by `optionalDependencies`:
 
 ```ts
 // apps/cli/src/shared/cli/bin.ts (excerpt)

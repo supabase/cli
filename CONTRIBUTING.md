@@ -41,7 +41,7 @@ That pulls `.repos/effect/`, which is the local source of truth for Effect v4 AP
 
 | Workspace | Purpose |
 | --- | --- |
-| `apps/cli` | Main `@supabase/cli` package. Contains command handlers, runtime services, auth, output, telemetry, and docs generation scripts. |
+| `apps/cli` | Main `supabase` package. Contains command handlers, runtime services, auth, output, telemetry, and docs generation scripts. |
 | `apps/cli-e2e` | Compatibility e2e test suite. Record-and-replay harness for parity testing between the Go CLI and the TS Legacy port. |
 | `apps/docs` | Internal docs site built with Next.js and generated from the CLI docs sources. |
 
@@ -222,7 +222,7 @@ pnpm cli-release --next --version 0.0.0-local.1
 The script builds the CLI binary for the current platform only, compiles the Node.js shim, and publishes two packages to the local registry:
 
 - `@supabase/cli-<platform>@<version>` — the compiled binary
-- `@supabase/cli@<version>` — the shim that resolves and execs the binary
+- `supabase@<version>` — the shim that resolves and execs the binary
 
 No git-tracked files are modified. Build output goes to a system temp directory that is deleted after publish.
 
@@ -230,10 +230,10 @@ No git-tracked files are modified. Build output goes to a system temp directory 
 
 ```sh
 # Run directly with npx
-npx --registry http://localhost:4873 @supabase/cli@0.0.0-local.1 --version
+npx --registry http://localhost:4873 supabase@0.0.0-local.1 --version
 
 # Or install globally and run as `supabase`
-npm install -g --registry http://localhost:4873 @supabase/cli@0.0.0-local.1
+npm install -g --registry http://localhost:4873 supabase@0.0.0-local.1
 supabase --version
 ```
 
@@ -255,7 +255,7 @@ Nx is the task runner for this repo. It handles caching, parallelism, and cross-
 
 ```sh
 nx run @supabase/api:knip:check
-nx run @supabase/cli:test
+nx run supabase:test
 ```
 
 **Run a target across all projects:**

@@ -34,4 +34,4 @@ interface ProjectLinkRemoteShape {
 export class ProjectLinkRemote extends ServiceMap.Service<
   ProjectLinkRemote,
   ProjectLinkRemoteShape
->()("@supabase/cli/config/ProjectLinkRemote") {}
+>()("supabase/config/ProjectLinkRemote") {}

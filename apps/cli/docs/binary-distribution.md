@@ -13,7 +13,7 @@ The CLI is distributed as a set of platform-specific npm packages. Each platform
     └── supabase-go    ← Go CLI binary (for Phase 0 proxy commands)
 ```
 
-The base `@supabase/cli` package routes to the correct platform package via `src/shared/cli/bin.ts`, which resolves and `execFileSync`s the platform-specific `bin/supabase` binary.
+The base `supabase` package routes to the correct platform package via `src/shared/cli/bin.ts`, which resolves and `execFileSync`s the platform-specific `bin/supabase` binary.
 
 ## Why Two Binaries
 

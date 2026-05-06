@@ -13,7 +13,7 @@ export type AnalyticsContext = {
 };
 
 export const CurrentAnalyticsContext = ServiceMap.Reference<AnalyticsContext>(
-  "@supabase/cli/telemetry/CurrentAnalyticsContext",
+  "supabase/telemetry/CurrentAnalyticsContext",
   {
     defaultValue: () => ({}),
   },

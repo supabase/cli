@@ -79,6 +79,4 @@ interface OutputShape {
 /**
  * Output - Service tag for CLI output and prompt behavior.
  */
-export class Output extends ServiceMap.Service<Output, OutputShape>()(
-  "@supabase/cli/output/Output",
-) {}
+export class Output extends ServiceMap.Service<Output, OutputShape>()("supabase/output/Output") {}

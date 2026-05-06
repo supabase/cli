@@ -108,7 +108,9 @@ export const ApiKeyResponse = Schema.Struct({
   name: Schema.String,
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({})])),
+  secret_jwt_template: Schema.optionalKey(
+    Schema.Union([Schema.Record(Schema.String, Schema.Unknown), Schema.Null]),
+  ),
   inserted_at: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "date-time" })])),
   updated_at: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "date-time" })])),
 });
@@ -830,7 +832,9 @@ export const V1CreateProjectApiKeyInput = Schema.Struct({
     .check(Schema.isMaxLength(64))
     .check(Schema.isPattern(new RegExp("^[a-z_][a-z0-9_]+$"))),
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({})])),
+  secret_jwt_template: Schema.optionalKey(
+    Schema.Union([Schema.Record(Schema.String, Schema.Unknown), Schema.Null]),
+  ),
 });
 export const V1CreateProjectApiKeyOutput = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -845,7 +849,9 @@ export const V1CreateProjectApiKeyOutput = Schema.Struct({
   name: Schema.String,
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({})])),
+  secret_jwt_template: Schema.optionalKey(
+    Schema.Union([Schema.Record(Schema.String, Schema.Unknown), Schema.Null]),
+  ),
   inserted_at: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "date-time" })])),
   updated_at: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "date-time" })])),
 });
@@ -1114,7 +1120,9 @@ export const V1DeleteProjectApiKeyOutput = Schema.Struct({
   name: Schema.String,
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({})])),
+  secret_jwt_template: Schema.optionalKey(
+    Schema.Union([Schema.Record(Schema.String, Schema.Unknown), Schema.Null]),
+  ),
   inserted_at: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "date-time" })])),
   updated_at: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "date-time" })])),
 });
@@ -2547,6 +2555,7 @@ export const V1GetPostgresUpgradeStatusOutput = Schema.Struct({
       ),
       status: Schema.Number.check(Schema.isFinite()),
     }),
+    Schema.Null,
   ]),
 });
 export const V1GetPostgrestServiceConfigInput = Schema.Struct({
@@ -2633,7 +2642,9 @@ export const V1GetProjectApiKeyOutput = Schema.Struct({
   name: Schema.String,
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({})])),
+  secret_jwt_template: Schema.optionalKey(
+    Schema.Union([Schema.Record(Schema.String, Schema.Unknown), Schema.Null]),
+  ),
   inserted_at: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "date-time" })])),
   updated_at: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "date-time" })])),
 });
@@ -5111,7 +5122,9 @@ export const V1UpdateProjectApiKeyInput = Schema.Struct({
       .check(Schema.isPattern(new RegExp("^[a-z_][a-z0-9_]+$"))),
   ),
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({})])),
+  secret_jwt_template: Schema.optionalKey(
+    Schema.Union([Schema.Record(Schema.String, Schema.Unknown), Schema.Null]),
+  ),
 });
 export const V1UpdateProjectApiKeyOutput = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -5126,7 +5139,9 @@ export const V1UpdateProjectApiKeyOutput = Schema.Struct({
   name: Schema.String,
   description: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   hash: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-  secret_jwt_template: Schema.optionalKey(Schema.Union([Schema.Struct({})])),
+  secret_jwt_template: Schema.optionalKey(
+    Schema.Union([Schema.Record(Schema.String, Schema.Unknown), Schema.Null]),
+  ),
   inserted_at: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "date-time" })])),
   updated_at: Schema.optionalKey(Schema.Union([Schema.String.annotate({ format: "date-time" })])),
 });

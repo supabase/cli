@@ -74,7 +74,7 @@ async function savePackageJsons() {
 
 export async function runNpmTest(
   version: string,
-  tag: "latest" | "alpha" = "latest",
+  tag: "latest" | "alpha" | "beta" = "latest",
 ): Promise<boolean> {
   const publishEnv = { ...process.env, NPM_CONFIG_TOKEN: "dummy" };
 
@@ -128,9 +128,12 @@ listen: 0.0.0.0:${PORT}
   console.log("\nBuilding umbrella package shim...");
   await $`pnpm build:shim`.cwd(cliDir).quiet();
 
+  const cliPkgJson = await readFile(path.join(cliDir, "package.json"), "utf-8").then(JSON.parse);
+  const umbrellaName: string = cliPkgJson.name;
+
   console.log("Publishing umbrella package...");
   await $`bun publish --registry ${registry.url} --tag ${tag}`.cwd(cliDir).env(publishEnv).quiet();
-  console.log("  @supabase/cli\n");
+  console.log(`  ${umbrellaName}\n`);
 
   // Create test project
   const testDir = path.join(tmp.path, "test-project");
@@ -145,7 +148,7 @@ listen: 0.0.0.0:${PORT}
   );
 
   // Install
-  const installSpec = tag === "alpha" ? "@supabase/cli@alpha" : "@supabase/cli";
+  const installSpec = tag === "latest" ? umbrellaName : `${umbrellaName}@${tag}`;
   console.log(`Installing ${installSpec}...`);
   await $`npm install ${installSpec}`.cwd(testDir);
 

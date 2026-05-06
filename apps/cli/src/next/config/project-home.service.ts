@@ -16,5 +16,5 @@ interface ProjectHomeShape {
 }
 
 export class ProjectHome extends ServiceMap.Service<ProjectHome, ProjectHomeShape>()(
-  "@supabase/cli/config/ProjectHome",
+  "supabase/config/ProjectHome",
 ) {}

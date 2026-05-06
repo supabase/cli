@@ -17,5 +17,5 @@ interface CliConfigShape {
 }
 
 export class CliConfig extends ServiceMap.Service<CliConfig, CliConfigShape>()(
-  "@supabase/cli/config/CliConfig",
+  "supabase/config/CliConfig",
 ) {}
