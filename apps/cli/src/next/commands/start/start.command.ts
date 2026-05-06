@@ -68,7 +68,7 @@ interface StartVersionStateShape {
 export class StartVersionState extends ServiceMap.Service<
   StartVersionState,
   StartVersionStateShape
->()("@supabase/cli/commands/start/StartVersionState") {}
+>()("supabase/commands/start/StartVersionState") {}
 
 const flags = {
   stack: Flag.string("stack").pipe(

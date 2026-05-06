@@ -11,6 +11,4 @@ interface CryptoShape {
   readonly decryptToken: (ecdh: ECDH, payload: EncryptedPayload) => Effect.Effect<string>;
 }
 
-export class Crypto extends ServiceMap.Service<Crypto, CryptoShape>()(
-  "@supabase/cli/auth/Crypto",
-) {}
+export class Crypto extends ServiceMap.Service<Crypto, CryptoShape>()("supabase/auth/Crypto") {}

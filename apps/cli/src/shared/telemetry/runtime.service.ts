@@ -18,5 +18,5 @@ interface TelemetryRuntimeShape {
 }
 
 export class TelemetryRuntime extends ServiceMap.Service<TelemetryRuntime, TelemetryRuntimeShape>()(
-  "@supabase/cli/telemetry/TelemetryRuntime",
+  "supabase/telemetry/TelemetryRuntime",
 ) {}

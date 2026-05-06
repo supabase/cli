@@ -1,0 +1,170 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+  pull_request_review:
+    types: [submitted]
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Release channel
+        required: true
+        type: choice
+        options:
+          - alpha
+          - beta
+          - stable
+      version:
+        description: npm package version to publish
+        required: true
+        type: string
+      dry_run:
+        description: Dry run (skip actual publishing)
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  fast-forward:
+    name: Fast-forward develop to main
+    if: |
+      github.event_name == 'pull_request_review' &&
+      github.event.pull_request.head.ref == 'develop' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.review.state == 'approved'
+    runs-on: ubuntu-latest
+    steps:
+      - id: app-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Fast-forward main
+        run: |
+          git checkout main
+          git merge --ff-only "${{ github.event.pull_request.head.sha }}"
+          git push origin main
+
+  plan:
+    name: Plan release
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.compute.outputs.should_release }}
+      version: ${{ steps.compute.outputs.version }}
+      shell: ${{ steps.compute.outputs.shell }}
+      npm_tag: ${{ steps.compute.outputs.npm_tag }}
+      prerelease: ${{ steps.compute.outputs.prerelease }}
+      brew_name: ${{ steps.compute.outputs.brew_name }}
+      scoop_name: ${{ steps.compute.outputs.scoop_name }}
+      publish_brew_scoop: ${{ steps.compute.outputs.publish_brew_scoop }}
+      dry_run: ${{ steps.compute.outputs.dry_run }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - id: semantic-release
+        if: github.event_name == 'push'
+        uses: cycjimmy/semantic-release-action@b12c8f6015dc215fe37bc154d4ad456dd3833c90 # v6.0.0
+        with:
+          working_directory: apps/cli
+          dry_run: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - id: compute
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          DISPATCH_CHANNEL: ${{ inputs.channel }}
+          DISPATCH_VERSION: ${{ inputs.version }}
+          DISPATCH_DRY_RUN: ${{ inputs.dry_run }}
+          SR_PUBLISHED: ${{ steps.semantic-release.outputs.new_release_published }}
+          SR_VERSION: ${{ steps.semantic-release.outputs.new_release_version }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" == "workflow_dispatch" ]]; then
+            channel="$DISPATCH_CHANNEL"
+            version="$DISPATCH_VERSION"
+            dry_run="$DISPATCH_DRY_RUN"
+            should_release=true
+          else
+            dry_run=false
+            if [[ "$SR_PUBLISHED" != "true" ]]; then
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            version="$SR_VERSION"
+            should_release=true
+            if [[ "$REF_NAME" == "develop" ]]; then
+              channel="beta"
+            else
+              channel="stable"
+            fi
+          fi
+          case "$channel" in
+            alpha)
+              shell=next
+              npm_tag=alpha
+              prerelease=true
+              brew_name=""
+              scoop_name=""
+              publish_brew_scoop=false
+              ;;
+            beta)
+              shell=legacy
+              npm_tag=beta
+              prerelease=true
+              brew_name=supabase-beta
+              scoop_name=supabase-beta
+              publish_brew_scoop=true
+              ;;
+            stable)
+              shell=legacy
+              npm_tag=latest
+              prerelease=false
+              brew_name=supabase
+              scoop_name=supabase
+              publish_brew_scoop=true
+              ;;
+            *)
+              echo "Unknown channel: $channel" >&2
+              exit 1
+              ;;
+          esac
+          {
+            echo "should_release=$should_release"
+            echo "version=$version"
+            echo "shell=$shell"
+            echo "npm_tag=$npm_tag"
+            echo "prerelease=$prerelease"
+            echo "brew_name=$brew_name"
+            echo "scoop_name=$scoop_name"
+            echo "publish_brew_scoop=$publish_brew_scoop"
+            echo "dry_run=$dry_run"
+          } >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Release
+    needs: plan
+    if: needs.plan.outputs.should_release == 'true'
+    uses: ./.github/workflows/release-shared.yml
+    with:
+      version: ${{ needs.plan.outputs.version }}
+      shell: ${{ needs.plan.outputs.shell }}
+      npm_tag: ${{ needs.plan.outputs.npm_tag }}
+      prerelease: ${{ needs.plan.outputs.prerelease == 'true' }}
+      publish_brew_scoop: ${{ needs.plan.outputs.publish_brew_scoop == 'true' }}
+      brew_name: ${{ needs.plan.outputs.brew_name }}
+      scoop_name: ${{ needs.plan.outputs.scoop_name }}
+      dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
+    secrets: inherit

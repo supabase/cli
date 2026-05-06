@@ -7,4 +7,4 @@ interface StdinShape {
   readonly readPipedText: Effect.Effect<Option.Option<string>>;
 }
 
-export class Stdin extends ServiceMap.Service<Stdin, StdinShape>()("@supabase/cli/runtime/Stdin") {}
+export class Stdin extends ServiceMap.Service<Stdin, StdinShape>()("supabase/runtime/Stdin") {}

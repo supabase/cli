@@ -5,4 +5,4 @@ interface TtyShape {
   readonly stdoutIsTty: boolean;
 }
 
-export class Tty extends ServiceMap.Service<Tty, TtyShape>()("@supabase/cli/runtime/Tty") {}
+export class Tty extends ServiceMap.Service<Tty, TtyShape>()("supabase/runtime/Tty") {}

@@ -135,11 +135,12 @@ jobs:
         working-directory: apps/cli-go
 
       # The ts-legacy harness invokes `bun apps/cli/dist/main-legacy.js`; the
-      # `nx run @supabase/cli-e2e:test:e2e` target normally builds @supabase/cli
-      # via `dependsOn`, but we bypass nx for sharding so we build it explicitly.
+      # `nx run @supabase/cli-e2e:test:e2e` target normally builds the supabase
+      # umbrella via `dependsOn`, but we bypass nx for sharding so we build it
+      # explicitly.
       - name: Build CLI
         if: steps.detect.outputs.cli_e2e == 'true'
-        run: pnpm exec nx run @supabase/cli:build
+        run: pnpm exec nx run supabase:build
 
       # Sharding for cli-e2e (the heavy suite) per
       # https://vitest.dev/guide/improving-performance.html#sharding.  We invoke

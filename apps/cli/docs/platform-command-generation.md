@@ -2,7 +2,7 @@
 
 ## Overview
 
-The low-level Management API surface in `@supabase/cli` is now route-first and intentionally minimal:
+The low-level Management API surface in `supabase` is now route-first and intentionally minimal:
 
 - `supabase api routes`
 - `supabase api request /v1/projects`
@@ -14,7 +14,7 @@ The CLI no longer derives a separate public command vocabulary from the OpenAPI 
 This keeps ownership simple:
 
 - `@supabase/api` owns the typed versioned client and operation metadata
-- `@supabase/cli` owns route resolution, request UX, and output UX
+- `supabase` owns route resolution, request UX, and output UX
 - there is no CLI-side command tree generation, reflection, or operation-name rewriting
 
 ## Source Of Truth

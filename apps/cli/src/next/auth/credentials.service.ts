@@ -18,5 +18,5 @@ interface CredentialsShape {
  * Credentials - Service tag for access token persistence.
  */
 export class Credentials extends ServiceMap.Service<Credentials, CredentialsShape>()(
-  "@supabase/cli/auth/Credentials",
+  "supabase/auth/Credentials",
 ) {}

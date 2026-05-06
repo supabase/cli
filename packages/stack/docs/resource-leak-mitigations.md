@@ -33,7 +33,7 @@ crash recovery through `StateManager` metadata updates.
 ### 2. Foreground signal-aware disposal
 
 Foreground `start` paths install a local signal cleanup effect in
-`@supabase/cli/src/commands/start/signal.ts`.
+`supabase/src/commands/start/signal.ts`.
 
 That effect:
 

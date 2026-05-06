@@ -189,8 +189,14 @@ async function main() {
 	const tmpDir = await mkdtemp(path.join(tmpdir(), "supabase-local-release-"));
 
 	try {
+		// Read once up front so log lines and the published package.json agree.
+		const cliPkgJson = await Bun.file(
+			path.join(root, "apps", "cli", "package.json"),
+		).json();
+		const umbrellaName: string = cliPkgJson.name;
+
 		console.log(
-			`\nBuilding @supabase/cli@${version} (${shell}, ${platform.platformPkg})...\n`,
+			`\nBuilding ${umbrellaName}@${version} (${shell}, ${platform.platformPkg})...\n`,
 		);
 
 		// ── Build platform package ────────────────────────────────────────────
@@ -252,10 +258,6 @@ async function main() {
 		// The shim only uses Node built-ins — all @supabase/* and catalog: deps
 		// are bundled in the platform binary and must not appear in the published
 		// package.json (catalog: and workspace:* are invalid outside pnpm workspaces).
-		const cliPkgJson = await Bun.file(
-			path.join(root, "apps", "cli", "package.json"),
-		).json();
-
 		const resolvedOptionalDeps: Record<string, string> = {};
 		for (const pkg of PLATFORM_PACKAGES) {
 			resolvedOptionalDeps[`@supabase/${pkg}`] = version;
@@ -297,19 +299,19 @@ async function main() {
 			tmpPlatformDir,
 		);
 
-		console.log(`Publishing @supabase/cli@${version} to local registry...`);
+		console.log(`Publishing ${umbrellaName}@${version} to local registry...`);
 		await $`pnpm publish --access public --tag local --registry ${REGISTRY} --no-git-checks`.cwd(
 			tmpCliDir,
 		);
 
 		console.log(`
-✓ Published @supabase/cli@${version}
+✓ Published ${umbrellaName}@${version}
 
 Test with npx:
-  npx --registry ${REGISTRY} @supabase/cli@${version} --version
+  npx --registry ${REGISTRY} ${umbrellaName}@${version} --version
 
 Or install globally:
-  npm install -g --registry ${REGISTRY} @supabase/cli@${version}
+  npm install -g --registry ${REGISTRY} ${umbrellaName}@${version}
   supabase --version
 `);
 	} finally {

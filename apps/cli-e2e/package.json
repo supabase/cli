@@ -48,7 +48,7 @@
         "dependsOn": [
           {
             "projects": [
-              "@supabase/cli"
+              "supabase"
             ],
             "target": "build"
           },

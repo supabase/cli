@@ -33,5 +33,5 @@ interface ProcessControlShape {
  * ProcessControl - Service tag for process lifecycle operations.
  */
 export class ProcessControl extends ServiceMap.Service<ProcessControl, ProcessControlShape>()(
-  "@supabase/cli/runtime/ProcessControl",
+  "supabase/runtime/ProcessControl",
 ) {}
