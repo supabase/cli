@@ -92,15 +92,6 @@ importers:
       '@napi-rs/keyring':
         specifier: ^1.1.2
         version: 1.2.0
-      '@supabase/api':
-        specifier: workspace:*
-        version: link:../../packages/api
-      '@supabase/config':
-        specifier: workspace:*
-        version: link:../../packages/config
-      '@supabase/stack':
-        specifier: workspace:*
-        version: link:../../packages/stack
       '@vercel/detect-agent':
         specifier: ^1.2.3
         version: 1.2.3
@@ -123,6 +114,15 @@ importers:
       '@effect/vitest':
         specifier: 'catalog:'
         version: 4.0.0-beta.43(effect@4.0.0-beta.43)(vitest@4.1.5)
+      '@supabase/api':
+        specifier: workspace:*
+        version: link:../../packages/api
+      '@supabase/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@supabase/stack':
+        specifier: workspace:*
+        version: link:../../packages/stack
       '@tsconfig/bun':
         specifier: 'catalog:'
         version: 1.0.10
