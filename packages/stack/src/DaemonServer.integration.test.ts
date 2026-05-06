@@ -76,6 +76,10 @@ function mockStack() {
         : Effect.sync(() => {
             serviceCalls.push(`restart:${name}`);
           }),
+    reloadFunctions: () =>
+      Effect.sync(() => {
+        serviceCalls.push("reload-functions");
+      }),
     getState: (name: string) =>
       name === "unknown"
         ? Effect.fail(new ServiceNotFoundError({ name }))

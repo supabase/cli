@@ -1,11 +1,23 @@
 import { LogBuffer, Orchestrator } from "@supabase/process-compose";
 import { ServiceNotFoundError } from "@supabase/process-compose";
 import type { LogEntry, ServiceReadyError } from "@supabase/process-compose";
-import { Deferred, Effect, Layer, Ref, ServiceMap, Stream, SubscriptionRef } from "effect";
+import {
+  Deferred,
+  Effect,
+  FileSystem,
+  Layer,
+  Path,
+  Ref,
+  ServiceMap,
+  Stream,
+  SubscriptionRef,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { cleanupLocalStackResources } from "./cleanup.ts";
 import { StackBuildError } from "./errors.ts";
+import { configureFunctionsRuntime, type FunctionsConfig } from "./functions.ts";
+import { detectPlatform, dockerHostAddress } from "./Platform.ts";
 import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import type { PreparedStackArtifacts } from "./StackPreparation.ts";
@@ -133,6 +145,9 @@ export class StackLifecycleCoordinator extends ServiceMap.Service<
     readonly restartService: (
       name: string,
     ) => Effect.Effect<void, ServiceNotFoundError | StackBuildError>;
+    readonly reloadFunctions: (
+      opts?: FunctionsConfig,
+    ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
     readonly getState: (name: string) => Effect.Effect<StackServiceState, ServiceNotFoundError>;
     readonly getAllStates: () => Effect.Effect<ReadonlyArray<StackServiceState>>;
     readonly stateChanges: (
@@ -161,6 +176,8 @@ export class StackLifecycleCoordinator extends ServiceMap.Service<
     | StackPreparation
     | ChildProcessSpawner.ChildProcessSpawner
     | StackMetadataPersistence
+    | FileSystem.FileSystem
+    | Path.Path
   > =>
     Layer.effect(
       this,
@@ -169,6 +186,8 @@ export class StackLifecycleCoordinator extends ServiceMap.Service<
         const preparation = yield* StackPreparation;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const metadataPersistence = yield* StackMetadataPersistence;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const scope = yield* Effect.scope;
 
         const info = stackInfoFor(config);
@@ -389,6 +408,51 @@ export class StackLifecycleCoordinator extends ServiceMap.Service<
         });
 
         let disposed = false;
+        const runtimeHost = Effect.gen(function* () {
+          const prepared = yield* ensurePrepared;
+          const platform = yield* detectPlatform;
+          const edgeRuntimeResolution = prepared.resolutions["edge-runtime"];
+          return {
+            hostname:
+              edgeRuntimeResolution?.type === "docker"
+                ? dockerHostAddress(platform.os)
+                : "127.0.0.1",
+          };
+        });
+        const providePlatform = <A, E>(
+          effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
+        ): Effect.Effect<A, E> =>
+          effect.pipe(
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, path),
+          );
+        const configureFunctions = (
+          nextConfig: ResolvedStackConfig,
+        ): Effect.Effect<void, StackBuildError> =>
+          Effect.gen(function* () {
+            yield* providePlatform(configureFunctionsRuntime(nextConfig, yield* runtimeHost));
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new StackBuildError({
+                  detail: "Failed to configure Edge Functions",
+                  cause,
+                }),
+            ),
+          );
+        const configWithFunctionOptions = (opts?: FunctionsConfig): ResolvedStackConfig => {
+          if (opts === undefined) {
+            return config;
+          }
+          const base = config.functions === false ? { noVerifyJwt: false } : config.functions;
+          return {
+            ...config,
+            functions: {
+              envFile: opts.envFile ?? base.envFile,
+              noVerifyJwt: opts.noVerifyJwt ?? base.noVerifyJwt,
+            },
+          };
+        };
         const allStateChanges = () =>
           SubscriptionRef.changes(stateRef).pipe(
             Stream.mapAccum<
@@ -424,6 +488,7 @@ export class StackLifecycleCoordinator extends ServiceMap.Service<
             Effect.gen(function* () {
               yield* Ref.set(phaseRef, "starting");
               const runtime = yield* ensureRuntime;
+              yield* configureFunctions(config);
               yield* runtime.orchestrator.start();
               yield* runtime.orchestrator.waitAllReady();
               yield* Ref.set(phaseRef, "running");
@@ -457,6 +522,14 @@ export class StackLifecycleCoordinator extends ServiceMap.Service<
               yield* requireKnownService(name);
               const runtime = yield* ensureRuntime;
               yield* runtime.orchestrator.restartService(name);
+            }),
+          reloadFunctions: (opts) =>
+            Effect.gen(function* () {
+              yield* requireKnownService("edge-runtime");
+              const runtime = yield* ensureRuntime;
+              yield* configureFunctions(configWithFunctionOptions(opts));
+              yield* runtime.orchestrator.restartService("edge-runtime");
+              yield* runtime.orchestrator.waitReady("edge-runtime");
             }),
           getState: (name) =>
             Effect.gen(function* () {

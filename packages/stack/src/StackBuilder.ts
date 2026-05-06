@@ -3,6 +3,7 @@ import type { ResolvedGraph, ServiceDef } from "@supabase/process-compose";
 import { Effect, Layer, ServiceMap } from "effect";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { StackBuildError } from "./errors.ts";
+import type { FunctionsConfig, ResolvedFunctionsConfig } from "./functions.ts";
 import { generateJwks } from "./JwtGenerator.ts";
 import {
   detectPlatform,
@@ -133,11 +134,13 @@ export interface StackConfig {
   readonly cacheRoot?: string;
   readonly stackRoot?: string;
   readonly runtimeRoot?: string;
+  readonly projectDir?: string;
   readonly mode?: "native" | "auto" | "docker";
   readonly jwtSecret?: string;
   readonly port?: number;
   readonly publishableKey?: string;
   readonly secretKey?: string;
+  readonly functions?: FunctionsConfig | false;
   readonly postgres?: PostgresConfig;
   readonly postgrest?: PostgrestConfig | false;
   readonly auth?: AuthConfig | false;
@@ -254,6 +257,7 @@ export interface ResolvedStackConfig {
   readonly cacheRoot: string;
   readonly stackRoot: string;
   readonly runtimeRoot: string;
+  readonly projectDir: string;
   readonly mode: "native" | "auto" | "docker";
   readonly jwtSecret: string;
   readonly ports: AllocatedPorts;
@@ -261,6 +265,7 @@ export interface ResolvedStackConfig {
   readonly dbPort: number;
   readonly publishableKey: string;
   readonly secretKey: string;
+  readonly functions: ResolvedFunctionsConfig | false;
   readonly autoManagedPaths: ReadonlyArray<string>;
   readonly anonJwt: string;
   readonly serviceRoleJwt: string;
@@ -491,6 +496,7 @@ export class StackBuilder extends ServiceMap.Service<
 
         const platform = yield* detectPlatform;
         const serviceHost = dockerHostAddress(platform.os);
+        const projectDir = config.projectDir;
 
         const postgresResolution = yield* requirePreparedResolution(prepared, "postgres");
 
@@ -652,6 +658,7 @@ export class StackBuilder extends ServiceMap.Service<
                   image: edgeRuntimeResolution.image,
                   apiPort: config.apiPort,
                   runtimeRoot: config.runtimeRoot,
+                  projectDir,
                   port: config.edgeRuntime.port,
                   inspectorPort: config.edgeRuntime.inspectorPort,
                   policy: config.edgeRuntime.policy,

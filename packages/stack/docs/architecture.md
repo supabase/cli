@@ -76,7 +76,7 @@ graph TB
     CS --> SI
 ```
 
-The package has no CLI and no config-file parser. It is a library: callers supply a `StackConfig` object and get back a `Stack` with a rich interface including `dispose()`. Bun and Node.js consumers import from the package root, and the export conditions select the appropriate runtime implementation from `bun.ts` or `node.ts`.
+The package has no CLI. It is a library: callers supply a `StackConfig` object and get back a `Stack` with a rich interface including `dispose()`. When `projectDir` points at a Supabase project, the stack can use project config to serve local Edge Functions automatically. Bun and Node.js consumers import from the package root, and the export conditions select the appropriate runtime implementation from `bun.ts` or `node.ts`.
 
 ---
 

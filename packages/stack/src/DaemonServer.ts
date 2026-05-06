@@ -206,6 +206,31 @@ export class DaemonServer extends ServiceMap.Service<
             ),
           ),
         ),
+
+        HttpRouter.route(
+          "POST",
+          "/functions/reload",
+          Effect.gen(function* () {
+            const searchParams = yield* HttpServerRequest.ParsedSearchParams.asEffect();
+            yield* stack.reloadFunctions({
+              envFile: parseSingleParam(searchParams.envFile),
+              noVerifyJwt: parseBoolean(searchParams.noVerifyJwt),
+            });
+            return HttpServerResponse.jsonUnsafe({ ok: true });
+          }).pipe(
+            Effect.catchTag("ServiceNotFoundError", (e) =>
+              Effect.succeed(
+                HttpServerResponse.jsonUnsafe(
+                  { error: `Service not found: ${e.name}` },
+                  { status: 404 },
+                ),
+              ),
+            ),
+            Effect.catchTag("ServiceReadyError", (e) =>
+              Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.reason }, { status: 500 })),
+            ),
+          ),
+        ),
       ];
 
       const httpEffect = yield* HttpRouter.toHttpEffect(HttpRouter.addAll(routes));
@@ -236,4 +261,10 @@ function parseServices(
 function parseSingleParam(value: string | ReadonlyArray<string> | undefined): string | undefined {
   if (value === undefined) return undefined;
   return typeof value === "string" ? value : value[0];
+}
+
+function parseBoolean(value: string | ReadonlyArray<string> | undefined): boolean | undefined {
+  const raw = parseSingleParam(value);
+  if (raw === undefined) return undefined;
+  return raw === "true";
 }

@@ -152,6 +152,10 @@ function makeStackLayer(opts: {
       opts.states.some((state) => state.name === name)
         ? Effect.void
         : Effect.fail(new ServiceNotFoundError({ name })),
+    reloadFunctions: () =>
+      opts.states.some((state) => state.name === "edge-runtime")
+        ? Effect.void
+        : Effect.fail(new ServiceNotFoundError({ name: "edge-runtime" })),
     getState: (name: string) => {
       const state = opts.states.find((candidate) => candidate.name === name);
       return state === undefined

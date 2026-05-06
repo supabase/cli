@@ -2,6 +2,7 @@ import { ServiceNotFoundError } from "@supabase/process-compose";
 import type { LogEntry, ServiceReadyError } from "@supabase/process-compose";
 import { Effect, Layer, Schema, ServiceMap, Stream } from "effect";
 import { StackBuildError } from "./errors.ts";
+import type { FunctionsConfig } from "./functions.ts";
 import { StackLifecycleCoordinator } from "./StackLifecycleCoordinator.ts";
 import type { ResolvedStackConfig } from "./StackBuilder.ts";
 import { StackServiceState } from "./StackServiceState.ts";
@@ -44,6 +45,9 @@ export class Stack extends ServiceMap.Service<
     readonly restartService: (
       name: string,
     ) => Effect.Effect<void, ServiceNotFoundError | StackBuildError>;
+    readonly reloadFunctions: (
+      opts?: FunctionsConfig,
+    ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
     readonly getState: (name: string) => Effect.Effect<StackServiceState, ServiceNotFoundError>;
     readonly getAllStates: () => Effect.Effect<ReadonlyArray<StackServiceState>>;
     readonly stateChanges: (
@@ -78,6 +82,7 @@ export class Stack extends ServiceMap.Service<
           startService: coordinator.startService,
           stopService: coordinator.stopService,
           restartService: coordinator.restartService,
+          reloadFunctions: coordinator.reloadFunctions,
           getState: coordinator.getState,
           getAllStates: coordinator.getAllStates,
           stateChanges: coordinator.stateChanges,

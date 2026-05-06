@@ -278,7 +278,8 @@ describe("makeEdgeRuntimeServiceDocker", () => {
         dependencies: [{ service: "postgres", condition: "healthy" }],
       });
 
-      const bootstrapPath = path.join(tempDir, "edge-runtime", "index.ts");
+      const bootstrapDir = path.join(tempDir, "edge-runtime");
+      const bootstrapPath = path.join(bootstrapDir, "index.ts");
       expect(readFileSync(bootstrapPath, "utf8")).toContain("FUNCTIONS_NOT_CONFIGURED");
       expect(readFileSync(bootstrapPath, "utf8")).toContain("/_internal/health");
       expect(def.name).toBe("edge-runtime");
@@ -287,7 +288,9 @@ describe("makeEdgeRuntimeServiceDocker", () => {
       expect(def.args).toContain("--network=host");
       expect(def.args).toContain(`--port=54340`);
       expect(def.args).toContain(`--policy=per_worker`);
-      expect(def.args).toContain(`${bootstrapPath}:/workspace/index.ts:ro`);
+      expect(def.args).toContain(`${bootstrapDir}:/workspace:ro`);
+      expect(def.args).toContain("--ulimit");
+      expect(def.args).toContain("nofile=65536:65536");
       expect(def.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
       expect(def.healthCheck?.probe).toEqual({
         _tag: "Http",

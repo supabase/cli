@@ -86,6 +86,17 @@ export { StackBuilder } from "./StackBuilder.ts";
 
 export type { StackInfo } from "./Stack.ts";
 export { Stack } from "./Stack.ts";
+export type {
+  FunctionsConfig,
+  FunctionsRuntimeConfig,
+  ResolvedFunctionsConfig,
+} from "./functions.ts";
+export {
+  configureFunctionsRuntime,
+  functionsRuntimeConfigFileName,
+  functionsRuntimeConfigPath,
+  resolveFunctionsRuntimeConfig,
+} from "./functions.ts";
 
 export type { AvailableServiceVersionUpdate, ServiceName, VersionManifest } from "./versions.ts";
 export {
