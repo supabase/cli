@@ -75,6 +75,17 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
+      # semantic-release runs `git push --dry-run HEAD:<branch>` as part of
+      # verifyAuth even in `dry_run: true` mode, so the token must have push
+      # access to the protected `develop`/`main` branches. The default
+      # GITHUB_TOKEN doesn't, so we mint an App-installation token from the
+      # same App used for fast-forward + brew/scoop pushes.
+      - id: app-token
+        if: github.event_name == 'push'
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
       - id: semantic-release
         if: github.event_name == 'push'
         uses: cycjimmy/semantic-release-action@b12c8f6015dc215fe37bc154d4ad456dd3833c90 # v6.0.0
@@ -82,7 +93,7 @@ jobs:
           working_directory: apps/cli
           dry_run: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
       - id: compute
         env:
           EVENT: ${{ github.event_name }}
