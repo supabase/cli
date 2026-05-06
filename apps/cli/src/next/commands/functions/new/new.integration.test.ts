@@ -8,10 +8,13 @@ import { Cause, Effect, Exit, Layer, Option, Stdio } from "effect";
 import { Command } from "effect/unstable/cli";
 import {
   mockAnalytics,
+  mockCredentials,
   mockOutput,
   mockProcessControl,
+  mockProjectLinkState,
   mockRuntimeInfo,
 } from "../../../../../tests/helpers/mocks.ts";
+import { CliConfig } from "../../../config/cli-config.service.ts";
 import { functionsCommand } from "../functions.command.ts";
 import { functionsNew } from "./new.handler.ts";
 
@@ -26,6 +29,26 @@ function buildLayer(cwd: string) {
     out,
     layer: Layer.mergeAll(out.layer, mockRuntimeInfo({ cwd }), BunServices.layer),
   };
+}
+
+function cliConfigLayer() {
+  return Layer.succeed(
+    CliConfig,
+    CliConfig.of({
+      apiUrl: "https://api.supabase.com",
+      dashboardUrl: "https://supabase.com/dashboard",
+      projectHost: "supabase.co",
+      telemetryPosthogHost: "https://us.i.posthog.com",
+      telemetryPosthogKey: "phc_test_key",
+      accessToken: Option.none(),
+      noKeyring: Option.none(),
+      supabaseHome: "/tmp/supabase-cli-test-home",
+      debug: Option.none(),
+      telemetryDebug: Option.none(),
+      telemetryDisabled: Option.none(),
+      doNotTrack: Option.none(),
+    }),
+  );
 }
 
 function expectFailureTag(exit: Exit.Exit<unknown, unknown>, tag: string) {
@@ -225,6 +248,9 @@ describe("functions new", () => {
       processControl.layer,
       mockRuntimeInfo({ cwd: tempDir }),
       BunServices.layer,
+      cliConfigLayer(),
+      mockProjectLinkState(),
+      mockCredentials().layer,
       Stdio.layerTest({
         args: Effect.succeed(["functions", "new", "hello-world"]),
       }),
