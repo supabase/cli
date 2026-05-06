@@ -1,0 +1,12 @@
+{
+  "columns": [
+    "schemaname",
+    "table_name",
+    "blocks_read",
+    "write_tuples",
+    "blocks_write",
+    "activity_ratio"
+  ],
+  "typeOids": [25, 25, 20, 20, 701, 25],
+  "rows": [["public", "sessions", "1000", "50", "0.5", "Read-Only"]]
+}

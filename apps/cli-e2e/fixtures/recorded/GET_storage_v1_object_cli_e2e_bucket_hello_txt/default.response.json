@@ -1,0 +1,17 @@
+{
+  "status": 200,
+  "headers": {
+    "accept-ranges": "bytes",
+    "access-control-allow-origin": "*",
+    "cache-control": "no-cache",
+    "content-type": "text/plain",
+    "last-modified": "Mon, 27 Apr 2026 10:30:57 GMT",
+    "sb-gateway-mode": "direct",
+    "sb-gateway-version": "1",
+    "sb-project-ref": "<PROJECT_REF>",
+    "sb-request-id": "<UUID>",
+    "x-robots-tag": "none",
+    "x-smart-cdn": "true"
+  },
+  "body": null
+}

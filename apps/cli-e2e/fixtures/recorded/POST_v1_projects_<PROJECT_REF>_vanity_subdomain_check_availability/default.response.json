@@ -1,0 +1,13 @@
+{
+  "status": 201,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "x-gotrue-id": "<UUID>",
+    "x-ratelimit-limit": "10",
+    "x-ratelimit-remaining": "9",
+    "x-ratelimit-reset": "60"
+  },
+  "body": {
+    "available": true
+  }
+}

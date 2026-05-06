@@ -1,0 +1,44 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>/functions/hello-world/body",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "multipart/form-data; boundary=test-boundary-0001",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": {
+        "__type": "multipart",
+        "boundary": "test-boundary-0001",
+        "parts": [
+          {
+            "headers": {
+              "content-disposition": "form-data; name=\"metadata\""
+            },
+            "text": "{\"deno2_entrypoint_path\": \"index.ts\"}"
+          },
+          {
+            "headers": {
+              "content-disposition": "form-data; name=\"index.ts\"; filename=\"index.ts\"",
+              "content-type": "text/plain"
+            },
+            "text": "console.log('hello from hello-world');\n"
+          }
+        ]
+      }
+    }
+  }
+]

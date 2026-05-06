@@ -1,0 +1,19 @@
+{
+  "method": "POST",
+  "path": "/storage/v1/object/move",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "apikey": "<JWT>",
+    "authorization": "Bearer <ACCESS_TOKEN>",
+    "content-length": "89",
+    "content-type": "application/json",
+    "host": "localhost:<PORT>",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": {
+    "bucketId": "cli-e2e-bucket",
+    "sourceKey": "mv-source.txt",
+    "destinationKey": "mv-dest.txt"
+  }
+}

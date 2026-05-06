@@ -1,0 +1,14 @@
+{
+  "name": "@supabase/cli-linux-x64",
+  "version": "0.0.0",
+  "description": "Supabase CLI binary (linux-x64)",
+  "license": "MIT",
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "libc": ["glibc"],
+  "preferUnplugged": true,
+  "files": ["bin/"],
+  "publishConfig": {
+    "access": "public"
+  }
+}

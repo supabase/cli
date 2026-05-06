@@ -1,0 +1,182 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+    branches:
+      - develop
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    if: github.event.pull_request.draft == false || github.event_name == 'push'
+    name: Check code quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup
+        uses: ./.github/actions/setup
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/cli-go/go.mod
+          cache-dependency-path: apps/cli-go/go.sum
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest &&
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Unlock keyring (for cli-go keyring tests)
+        uses: t1m0thyj/unlock-keyring@cbcf205c879ebd86add70bab3a6abfcce59a5cae
+
+      - name: Check code quality
+        run: pnpm run check:all
+
+  test-core:
+    if: github.event.pull_request.draft == false || github.event_name == 'push'
+    name: Run unit and integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup
+        uses: ./.github/actions/setup
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/cli-go/go.mod
+          cache-dependency-path: apps/cli-go/go.sum
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest &&
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Unlock keyring (for cli-go keyring tests)
+        uses: t1m0thyj/unlock-keyring@cbcf205c879ebd86add70bab3a6abfcce59a5cae
+
+      - name: Run unit and integration tests
+        run: pnpm run test:core
+
+  test-e2e:
+    if: github.event.pull_request.draft == false || github.event_name == 'push'
+    name: Run end-to-end tests (shard ${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [ 1, 2, 3 ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+
+      - name: Set base and head SHAs for affected
+        if: github.event_name == 'pull_request'
+        uses: nrwl/nx-set-shas@v4
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      # Detect which e2e suites should run.  On PR we honour `nx affected`
+      # (using `NX_BASE`/`NX_HEAD` set by `nx-set-shas` above); on push we run
+      # everything that has a `test:e2e` target.
+      - name: Detect affected e2e projects
+        id: detect
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            affected=$(pnpm exec nx show projects --affected --withTarget test:e2e --json | jq -r '.[]')
+          else
+            affected=$(pnpm exec nx show projects --withTarget test:e2e --json | jq -r '.[]')
+          fi
+          echo "Affected e2e projects:"
+          echo "$affected"
+          cli=false
+          other=false
+          if echo "$affected" | grep -qx '@supabase/cli-e2e'; then cli=true; fi
+          if echo "$affected" | grep -vx '@supabase/cli-e2e' | grep -q .; then other=true; fi
+          echo "cli_e2e=$cli" >> "$GITHUB_OUTPUT"
+          echo "other=$other" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Go CLI binary
+        if: steps.detect.outputs.cli_e2e == 'true'
+        id: cache-go-binary
+        uses: actions/cache@v4
+        with:
+          path: apps/cli-go/supabase-go
+          key: go-cli-${{ runner.os }}-${{ hashFiles('apps/cli-go/**/*.go',
+            'apps/cli-go/go.mod', 'apps/cli-go/go.sum') }}
+
+      - name: Setup Go
+        if: steps.detect.outputs.cli_e2e == 'true' &&
+          steps.cache-go-binary.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/cli-go/go.mod
+          cache-dependency-path: apps/cli-go/go.sum
+
+      - name: Build Go CLI
+        if: steps.detect.outputs.cli_e2e == 'true' &&
+          steps.cache-go-binary.outputs.cache-hit != 'true'
+        run: go build -o supabase-go .
+        working-directory: apps/cli-go
+
+      # The ts-legacy harness invokes `bun apps/cli/dist/main-legacy.js`; the
+      # `nx run @supabase/cli-e2e:test:e2e` target normally builds @supabase/cli
+      # via `dependsOn`, but we bypass nx for sharding so we build it explicitly.
+      - name: Build CLI
+        if: steps.detect.outputs.cli_e2e == 'true'
+        run: pnpm exec nx run @supabase/cli:build
+
+      # Sharding for cli-e2e (the heavy suite) per
+      # https://vitest.dev/guide/improving-performance.html#sharding.  We invoke
+      # vitest directly because routing `--shard` through `pnpm run / nx run-many
+      # -- --shard=N/3` introduces a stray `--` that vitest treats as a
+      # positional-argument terminator, defeating the shard flag.  Other e2e
+      # suites (process-compose) run unsharded on shard 1.
+      - name: Run cli-e2e end-to-end tests
+        if: steps.detect.outputs.cli_e2e == 'true'
+        run: pnpm --filter @supabase/cli-e2e exec bun --bun vitest run --shard=${{
+          matrix.shard }}/3
+        env:
+          CLI_HARNESS_TARGET: ts-legacy
+          SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
+
+      - name: Run other e2e tests (shard 1 only)
+        if: matrix.shard == 1 && steps.detect.outputs.other == 'true'
+        run: pnpm exec nx run-many -t test:e2e --exclude=@supabase/cli-e2e
+        env:
+          SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
+
+  # Summary job that gates branch protection.  The matrix `test-e2e` job
+  # produces per-shard check names (`Run end-to-end tests (shard N/3)`), so
+  # this job preserves the original `Run end-to-end tests` check name that
+  # branch protection rules already require.  It succeeds iff every shard
+  # succeeded (or skipped — `success()` is true for skipped jobs).
+  test-e2e-summary:
+    if: always() && (github.event.pull_request.draft == false || github.event_name
+      == 'push')
+    name: Run end-to-end tests
+    needs: test-e2e
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all shards succeeded
+        run: |
+          if [ "${{ needs.test-e2e.result }}" = "failure" ] || [ "${{ needs.test-e2e.result }}" = "cancelled" ]; then
+            echo "::error ::One or more e2e shards failed: ${{ needs.test-e2e.result }}"
+            exit 1
+          fi
+          echo "All e2e shards reported: ${{ needs.test-e2e.result }}"

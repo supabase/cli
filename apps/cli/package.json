@@ -1,0 +1,109 @@
+{
+  "name": "@supabase/cli",
+  "private": false,
+  "bin": {
+    "supabase": "dist/supabase.js"
+  },
+  "files": [
+    "dist/"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "pnpm build:next && pnpm build:legacy && pnpm build:shim",
+    "build:next": "bun build src/next/main.ts --outfile dist/main-next.js --target bun --packages external",
+    "build:legacy": "bun build src/legacy/main.ts --outfile dist/main-legacy.js --target bun --packages external",
+    "build:shim": "bun build src/shared/cli/bin.ts --outfile dist/supabase.js --target node",
+    "dev:next": "pnpm exec bun src/next/main.ts",
+    "dev:legacy": "pnpm exec bun src/legacy/main.ts",
+    "test": "nx run-many -t test:core test:e2e --projects=$npm_package_name",
+    "test:core": "nx run-many -t test:unit test:integration --projects=$npm_package_name --coverage.enabled",
+    "test:smoke": "bun run tests/smoke-test.ts",
+    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name",
+    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.2.0",
+    "@effect/atom-react": "catalog:",
+    "@effect/platform-bun": "catalog:",
+    "@napi-rs/keyring": "^1.1.2",
+    "@supabase/api": "workspace:*",
+    "@supabase/config": "workspace:*",
+    "@supabase/stack": "workspace:*",
+    "@vercel/detect-agent": "^1.2.3",
+    "effect": "catalog:",
+    "ink": "^7.0.1",
+    "ink-spinner": "^5.0.0",
+    "posthog-node": "^5.29.4",
+    "react": "^19.2.5"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:",
+    "@types/react": "^19.2.14",
+    "@typescript/native-preview": "catalog:",
+    "@vitest/coverage-istanbul": "catalog:",
+    "knip": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "oxlint-tsgolint": "catalog:",
+    "react-devtools-core": "^7.0.1",
+    "vitest": "catalog:"
+  },
+  "optionalDependencies": {
+    "@supabase/cli-darwin-arm64": "workspace:*",
+    "@supabase/cli-darwin-x64": "workspace:*",
+    "@supabase/cli-linux-arm64": "workspace:*",
+    "@supabase/cli-linux-arm64-musl": "workspace:*",
+    "@supabase/cli-linux-x64": "workspace:*",
+    "@supabase/cli-linux-x64-musl": "workspace:*",
+    "@supabase/cli-windows-arm64": "workspace:*",
+    "@supabase/cli-windows-x64": "workspace:*"
+  },
+  "knip": {
+    "entry": [
+      "src/shared/cli/bin.ts",
+      "src/**/*.test.ts",
+      "src/**/*.e2e.test.ts"
+    ],
+    "ignore": [
+      "scripts/*.ts",
+      "tests/**/*.ts"
+    ],
+    "ignoreBinaries": [
+      "nx"
+    ],
+    "ignoreDependencies": [
+      "@typescript/native-preview",
+      "oxfmt",
+      "oxlint",
+      "oxlint-tsgolint"
+    ]
+  },
+  "nx": {
+    "targets": {
+      "build": {
+        "outputs": [
+          "{projectRoot}/dist"
+        ],
+        "dependsOn": [
+          {
+            "projects": [
+              "cli-go"
+            ],
+            "target": "build"
+          }
+        ]
+      },
+      "test:smoke": {
+        "cache": false
+      }
+    },
+    "implicitDependencies": [
+      "cli-go"
+    ]
+  }
+}

@@ -1,0 +1,66 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "path": "/storage/v1/bucket",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "apikey": "<JWT>",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-type": "application/json; charset=utf-8",
+        "sb-gateway-mode": "direct",
+        "sb-gateway-version": "1",
+        "sb-project-ref": "<PROJECT_REF>",
+        "sb-request-id": "<UUID>",
+        "x-content-type-options": "nosniff"
+      },
+      "body": []
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "path": "/storage/v1/bucket",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "apikey": "<JWT>",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "content-length": "63",
+        "content-type": "application/json",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": {
+        "name": "my-bucket",
+        "public": false,
+        "file_size_limit": 52428800
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-type": "application/json; charset=utf-8",
+        "sb-gateway-mode": "direct",
+        "sb-gateway-version": "1",
+        "sb-project-ref": "<PROJECT_REF>",
+        "sb-request-id": "<UUID>",
+        "x-content-type-options": "nosniff"
+      },
+      "body": {
+        "name": "my-bucket"
+      }
+    }
+  }
+]

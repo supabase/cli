@@ -1,0 +1,139 @@
+[
+  {
+    "request": {
+      "method": "HEAD",
+      "path": "/_ping",
+      "query": {},
+      "headers": {
+        "host": "localhost:<PORT>",
+        "user-agent": "Docker-Client/unknown-version (darwin)"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "cache-control": "no-cache, no-store, must-revalidate",
+        "content-type": "text/plain; charset=utf-8",
+        "pragma": "no-cache",
+        "api-version": "1.53",
+        "builder-version": "2",
+        "docker-experimental": "false",
+        "ostype": "linux",
+        "swarm": "inactive"
+      },
+      "body": null
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/<DOCKER_VERSION>/containers/json",
+      "query": {
+        "all": "1",
+        "filters": "{\"label\":{\"com.supabase.cli.project=test-project\":true}}"
+      },
+      "headers": {
+        "accept-encoding": "gzip",
+        "host": "localhost:<PORT>",
+        "user-agent": "Docker-Client/unknown-version (darwin)"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json",
+        "api-version": "1.53",
+        "docker-experimental": "false",
+        "ostype": "linux"
+      },
+      "body": []
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "path": "/<DOCKER_VERSION>/containers/prune",
+      "query": {
+        "filters": "{\"label\":{\"com.supabase.cli.project=test-project\":true}}"
+      },
+      "headers": {
+        "accept-encoding": "gzip",
+        "content-length": "0",
+        "host": "localhost:<PORT>",
+        "user-agent": "Docker-Client/unknown-version (darwin)"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json",
+        "api-version": "1.53",
+        "docker-experimental": "false",
+        "ostype": "linux"
+      },
+      "body": {
+        "ContainersDeleted": null,
+        "SpaceReclaimed": 0
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "path": "/<DOCKER_VERSION>/networks/prune",
+      "query": {
+        "filters": "{\"label\":{\"com.supabase.cli.project=test-project\":true}}"
+      },
+      "headers": {
+        "accept-encoding": "gzip",
+        "content-length": "0",
+        "host": "localhost:<PORT>",
+        "user-agent": "Docker-Client/unknown-version (darwin)"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json",
+        "api-version": "1.53",
+        "docker-experimental": "false",
+        "ostype": "linux"
+      },
+      "body": {
+        "NetworksDeleted": null
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/<DOCKER_VERSION>/volumes",
+      "query": {
+        "filters": "{\"label\":{\"com.supabase.cli.project=test-project\":true}}"
+      },
+      "headers": {
+        "accept-encoding": "gzip",
+        "host": "localhost:<PORT>",
+        "user-agent": "Docker-Client/unknown-version (darwin)"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json",
+        "api-version": "1.53",
+        "docker-experimental": "false",
+        "ostype": "linux"
+      },
+      "body": {
+        "Volumes": [],
+        "Warnings": null
+      }
+    }
+  }
+]
