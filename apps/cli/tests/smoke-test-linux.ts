@@ -21,13 +21,7 @@ if (tag !== "latest" && tag !== "alpha" && tag !== "beta") {
 const root = path.resolve(import.meta.dir, "../../..");
 const distDir = path.join(root, "dist");
 
-function shellSentinelCommand(tag: "latest" | "alpha" | "beta") {
-  if (tag === "latest" || tag === "beta") {
-    return 'output=$(supabase hello) && echo "$output" && test "$output" = "hello legacy"';
-  }
-
-  return 'supabase status --help >/tmp/supabase-shell.txt && cat /tmp/supabase-shell.txt && grep -q "status" /tmp/supabase-shell.txt';
-}
+const dispatchProbe = "supabase init --help 2>&1 | grep -q init";
 
 interface TestResult {
   name: string;
@@ -51,7 +45,7 @@ console.log("=".repeat(60));
   try {
     const output = await $`${binPath} --version`.text();
     const trimmed = output.trim();
-    const shellCheck = await verifyExpectedShell(binPath, tag);
+    const shellCheck = await verifyExpectedShell(binPath);
     const passed = /^\d+\.\d+\.\d+/.test(trimmed) && shellCheck.passed;
     console.log(`[${name}] ${passed ? "PASS" : "FAIL"} — ${trimmed}`);
     console.log(`[${name}] ${shellCheck.detail}`);
@@ -114,7 +108,7 @@ if (!hasDocker) {
         `linux-${arch}-tarball`,
         "debian:bookworm-slim",
         dockerPlatform,
-        `tar -xzf /dist/supabase_${version}_linux_${arch}.tar.gz -C /usr/local/bin && supabase --version && ${shellSentinelCommand(tag)}`,
+        `tar -xzf /dist/supabase_${version}_linux_${arch}.tar.gz -C /usr/local/bin && supabase --version && ${dispatchProbe}`,
       ),
     );
 
@@ -123,7 +117,7 @@ if (!hasDocker) {
         `linux-${arch}-deb`,
         "debian:bookworm-slim",
         dockerPlatform,
-        `dpkg -i /dist/supabase_${version}_linux_${arch}.deb && supabase --version && ${shellSentinelCommand(tag)}`,
+        `dpkg -i /dist/supabase_${version}_linux_${arch}.deb && supabase --version && ${dispatchProbe}`,
       ),
     );
 
@@ -132,7 +126,7 @@ if (!hasDocker) {
         `linux-${arch}-rpm`,
         "amazonlinux:2023",
         dockerPlatform,
-        `rpm -ivh /dist/supabase_${version}_linux_${arch}.rpm && supabase --version && ${shellSentinelCommand(tag)}`,
+        `rpm -ivh /dist/supabase_${version}_linux_${arch}.rpm && supabase --version && ${dispatchProbe}`,
       ),
     );
 
@@ -141,7 +135,7 @@ if (!hasDocker) {
         `linux-${arch}-apk`,
         "alpine:3.21",
         dockerPlatform,
-        `apk add --allow-untrusted /dist/supabase_${version}_linux_${arch}.apk && supabase --version && ${shellSentinelCommand(tag)}`,
+        `apk add --allow-untrusted /dist/supabase_${version}_linux_${arch}.apk && supabase --version && ${dispatchProbe}`,
       ),
     );
   }

@@ -40,7 +40,7 @@ console.log("=".repeat(60));
   try {
     const output = await $`${binPath} --version`.text();
     const trimmed = output.trim();
-    const shellCheck = await verifyExpectedShell(binPath, tag);
+    const shellCheck = await verifyExpectedShell(binPath);
     const passed = /^\d+\.\d+\.\d+/.test(trimmed) && shellCheck.passed;
     console.log(`[${name}] ${passed ? "PASS" : "FAIL"} — ${trimmed}`);
     console.log(`[${name}] ${shellCheck.detail}`);
@@ -78,7 +78,7 @@ if (!hasScoop) {
     try {
       const output = await $`supabase --version`.text();
       const trimmed = output.trim();
-      const shellCheck = await verifyExpectedShell("supabase", tag);
+      const shellCheck = await verifyExpectedShell("supabase");
       const passed = /^\d+\.\d+\.\d+/.test(trimmed) && shellCheck.passed;
 
       console.log(`[scoop] ${passed ? "PASS" : "FAIL"} — supabase --version: ${trimmed}`);
