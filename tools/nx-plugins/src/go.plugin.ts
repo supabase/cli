@@ -36,7 +36,7 @@ export const createNodesV2: CreateNodesV2<GoPluginOptions> = [
                   inputs: ["default", { runtime: "go version" }],
                 },
                 "lint:check": {
-                  command: "golangci-lint run --timeout 3m",
+                  command: "golangci-lint run --timeout 5m",
                   options: { cwd: "{projectRoot}", forwardAllArgs: false },
                   cache: true,
                   inputs: ["default", { runtime: "go version" }],
