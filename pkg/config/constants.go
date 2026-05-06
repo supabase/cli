@@ -12,6 +12,7 @@ const (
 	pg13  = "supabase/postgres:13.3.0"
 	pg14  = "supabase/postgres:14.1.0.89"
 	pg15  = "supabase/postgres:15.8.1.085"
+	pg17  = "supabase/postgres:17.6.1.106"
 	deno1 = "supabase/edge-runtime:v1.68.4"
 )
 
