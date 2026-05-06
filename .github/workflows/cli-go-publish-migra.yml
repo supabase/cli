@@ -1,0 +1,93 @@
+name: Publish migra
+
+on:
+  workflow_dispatch:
+    paths:
+      - apps/cli-go/**
+permissions:
+  contents: read
+
+jobs:
+  settings:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: supabase/migra:${{ steps.version.outputs.migra }}
+    steps:
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          load: true
+          context: https://github.com/djrobstep/migra.git
+          tags: supabase/migra:builder
+      - id: version
+        # Replace space with equal to get the raw version string, ie. migra=3.0.1663481299
+        run: |
+          docker run --rm -a STDOUT supabase/migra:builder pip show migra \
+          | grep 'Version' \
+          | sed -E 's/Version: (.*)/migra=\1/g' \
+          >> $GITHUB_OUTPUT
+        shell: bash
+
+  build_image:
+    needs:
+      - settings
+    strategy:
+      matrix:
+        include:
+          - runner: [ self-hosted, X64 ]
+            arch: amd64
+          - runner: arm-runner
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    outputs:
+      image_digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - run: docker context create builders
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        with:
+          endpoint: builders
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          push: true
+          context: https://github.com/djrobstep/migra.git
+          tags: ${{ needs.settings.outputs.image_tag }}_${{ matrix.arch }}
+          platforms: linux/${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ github.ref_name }}-migra-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ github.ref_name }}-migra-${{ matrix.arch
+            }}
+
+  merge_manifest:
+    needs:
+      - settings
+      - build_image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Merge multi-arch manifests
+        run: |
+          docker buildx imagetools create -t "${{ needs.settings.outputs.image_tag }}" \
+          "${{ needs.settings.outputs.image_tag }}_amd64" \
+          "${{ needs.settings.outputs.image_tag }}_arm64"
+
+  publish:
+    needs:
+      - settings
+      - merge_manifest
+    # Call workflow explicitly because events from actions cannot trigger more actions
+    uses: ./.github/workflows/mirror-image.yml
+    with:
+      image: ${{ needs.settings.outputs.image_tag }}
+    secrets: inherit
+defaults:
+  run:
+    working-directory: apps/cli-go

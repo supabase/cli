@@ -1,0 +1,25 @@
+{
+  "status": 200,
+  "headers": {
+    "access-control-allow-origin": "*",
+    "content-type": "application/json; charset=utf-8",
+    "sb-gateway-mode": "direct",
+    "sb-gateway-version": "1",
+    "sb-project-ref": "<PROJECT_REF>",
+    "sb-request-id": "<UUID>",
+    "x-content-type-options": "nosniff"
+  },
+  "body": [
+    {
+      "id": "cli-e2e-bucket",
+      "name": "cli-e2e-bucket",
+      "owner": "",
+      "public": false,
+      "type": "STANDARD",
+      "file_size_limit": null,
+      "allowed_mime_types": null,
+      "created_at": "2000-01-01T00:00:00Z",
+      "updated_at": "2000-01-01T00:00:00Z"
+    }
+  ]
+}

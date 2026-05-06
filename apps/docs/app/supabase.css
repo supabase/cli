@@ -1,0 +1,48 @@
+/*
+ * Supabase theme for Fumadocs
+ *
+ * Maps Supabase design tokens (Slate/Gray scales + brand green)
+ * to Fumadocs CSS custom properties.
+ *
+ * Source: https://github.com/supabase/design-tokens/blob/main/tokens.json
+ */
+
+@theme {
+  /* Light mode — Supabase Slate scale */
+  --color-fd-background: #f8f9fa;
+  --color-fd-foreground: #11181c;
+  --color-fd-muted: #f1f3f5;
+  --color-fd-muted-foreground: #889096;
+  --color-fd-popover: #fbfcfd;
+  --color-fd-popover-foreground: #11181c;
+  --color-fd-card: #fbfcfd;
+  --color-fd-card-foreground: #11181c;
+  --color-fd-border: #eceef0;
+  --color-fd-primary: #3ecf8e;
+  --color-fd-primary-foreground: #11181c;
+  --color-fd-secondary: #f1f3f5;
+  --color-fd-secondary-foreground: #11181c;
+  --color-fd-accent: #e6e8eb;
+  --color-fd-accent-foreground: #11181c;
+  --color-fd-ring: #34b97d;
+}
+
+.dark {
+  /* Dark mode — Supabase Gray scale */
+  --color-fd-background: #1c1c1c;
+  --color-fd-foreground: #ededed;
+  --color-fd-muted: #232323;
+  --color-fd-muted-foreground: #a0a0a0;
+  --color-fd-popover: #232323;
+  --color-fd-popover-foreground: #ededed;
+  --color-fd-card: #232323;
+  --color-fd-card-foreground: #ededed;
+  --color-fd-border: #282828;
+  --color-fd-primary: #3ecf8e;
+  --color-fd-primary-foreground: #11181c;
+  --color-fd-secondary: #232323;
+  --color-fd-secondary-foreground: #ededed;
+  --color-fd-accent: #2e2e2e;
+  --color-fd-accent-foreground: #ededed;
+  --color-fd-ring: #3ecf8e;
+}

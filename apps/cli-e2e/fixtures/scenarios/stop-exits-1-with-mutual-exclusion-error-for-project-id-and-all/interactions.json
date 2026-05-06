@@ -1,0 +1,28 @@
+[
+  {
+    "request": {
+      "method": "HEAD",
+      "path": "/_ping",
+      "query": {},
+      "headers": {
+        "host": "localhost:<PORT>",
+        "user-agent": "Docker-Client/unknown-version (darwin)"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "cache-control": "no-cache, no-store, must-revalidate",
+        "content-type": "text/plain; charset=utf-8",
+        "pragma": "no-cache",
+        "api-version": "1.53",
+        "builder-version": "2",
+        "docker-experimental": "false",
+        "ostype": "linux",
+        "swarm": "inactive"
+      },
+      "body": null
+    }
+  }
+]

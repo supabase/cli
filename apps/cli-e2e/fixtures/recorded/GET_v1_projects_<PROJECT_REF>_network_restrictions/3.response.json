@@ -1,0 +1,19 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "x-gotrue-id": "<UUID>",
+    "x-ratelimit-limit": "120",
+    "x-ratelimit-remaining": "117",
+    "x-ratelimit-reset": "20"
+  },
+  "body": {
+    "config": {
+      "dbAllowedCidrs": ["0.0.0.0/0"],
+      "dbAllowedCidrsV6": []
+    },
+    "status": "applied",
+    "applied_at": "2000-01-01T00:00:00Z",
+    "entitlement": "allowed"
+  }
+}

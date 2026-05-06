@@ -1,0 +1,19 @@
+{
+  "method": "POST",
+  "path": "/storage/v1/bucket",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "apikey": "<JWT>",
+    "authorization": "Bearer <ACCESS_TOKEN>",
+    "content-length": "63",
+    "content-type": "application/json",
+    "host": "localhost:<PORT>",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": {
+    "name": "my-bucket",
+    "public": false,
+    "file_size_limit": 52428800
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "method": "GET",
+  "path": "/storage/v1/object/cli-e2e-bucket/hello.txt",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "apikey": "<JWT>",
+    "authorization": "Bearer <ACCESS_TOKEN>",
+    "host": "localhost:<PORT>",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": null
+}

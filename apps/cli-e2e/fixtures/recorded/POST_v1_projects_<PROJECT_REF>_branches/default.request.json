@@ -1,0 +1,12 @@
+{
+  "method": "POST",
+  "path": "/v1/projects/<PROJECT_REF>/branches",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "authorization": "Bearer <ACCESS_TOKEN>",
+    "host": "localhost:<PORT>",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": null
+}

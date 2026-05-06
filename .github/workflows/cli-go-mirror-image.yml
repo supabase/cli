@@ -1,0 +1,55 @@
+name: Mirror Image
+
+on:
+  repository_dispatch:
+    types:
+      - mirror-image
+  workflow_call:
+    inputs:
+      image:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "org/image:tag"
+        required: true
+        type: string
+    paths:
+      - apps/cli-go/**
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - id: strip
+        run: |
+          TAG=${{ github.event.client_payload.image || inputs.image }}
+          echo "image=${TAG##*/}" >> $GITHUB_OUTPUT
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ secrets.PROD_AWS_ROLE }}
+          aws-region: us-east-1
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: public.ecr.aws
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: akhilerm/tag-push-action@f35ff2cb99d407368b5c727adbcc14a2ed81d509 # v2.2.0
+        with:
+          src: docker.io/${{ github.event.client_payload.image || inputs.image }}
+          dst: |
+            public.ecr.aws/supabase/${{ steps.strip.outputs.image }}
+            ghcr.io/supabase/${{ steps.strip.outputs.image }}
+defaults:
+  run:
+    working-directory: apps/cli-go

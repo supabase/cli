@@ -1,0 +1,34 @@
+import { Effect, Layer, ServiceMap } from "effect";
+import type { CleanupTargets } from "./CleanupTargets.ts";
+import { StateManager } from "./StateManager.ts";
+
+export class StackMetadataPersistence extends ServiceMap.Service<
+  StackMetadataPersistence,
+  {
+    readonly persistCleanupTargets: (cleanupTargets: CleanupTargets) => Effect.Effect<void>;
+  }
+>()("stack/StackMetadataPersistence") {
+  static noop: Layer.Layer<StackMetadataPersistence> = Layer.succeed(this, {
+    persistCleanupTargets: () => Effect.void,
+  });
+
+  static fromStateManager = (
+    name: string,
+  ): Layer.Layer<StackMetadataPersistence, never, StateManager> =>
+    Layer.effect(
+      this,
+      Effect.gen(function* () {
+        const stateManager = yield* StateManager;
+        return {
+          persistCleanupTargets: (cleanupTargets: CleanupTargets) =>
+            stateManager
+              .updateMetadata(name, (metadata) => ({
+                ...metadata,
+                cleanupTargets,
+                updatedAt: new Date().toISOString(),
+              }))
+              .pipe(Effect.catchTag("StackMetadataNotFoundError", () => Effect.void)),
+        };
+      }),
+    );
+}

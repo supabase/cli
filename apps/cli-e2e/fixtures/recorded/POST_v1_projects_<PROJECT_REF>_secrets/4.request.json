@@ -1,0 +1,23 @@
+{
+  "method": "POST",
+  "path": "/v1/projects/<PROJECT_REF>/secrets",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "authorization": "Bearer <ACCESS_TOKEN>",
+    "content-length": "59",
+    "content-type": "application/json",
+    "host": "localhost:<PORT>",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": [
+    {
+      "name": "FOO",
+      "value": "bar"
+    },
+    {
+      "name": "BAR",
+      "value": "baz"
+    }
+  ]
+}

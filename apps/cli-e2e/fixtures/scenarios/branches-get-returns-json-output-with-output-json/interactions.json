@@ -1,0 +1,142 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>/branches/my-branch",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": {
+        "id": "00000000-0000-0000-0000-000000000000",
+        "name": "my-branch",
+        "project_ref": "bbbbbbbbbbbbbbbbbbbb",
+        "parent_project_ref": "<PROJECT_REF>",
+        "is_default": false,
+        "git_branch": "main",
+        "persistent": false,
+        "status": "MIGRATIONS_PASSED",
+        "created_at": "2000-01-01T00:00:00Z",
+        "updated_at": "2000-01-01T00:00:00Z",
+        "with_data": false
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/branches/<PROJECT_REF>",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": {
+        "db_host": "my-branch.supabase.co",
+        "db_port": 5432,
+        "db_user": "postgres",
+        "db_pass": "password",
+        "jwt_secret": "super-secret-jwt",
+        "postgres_version": "15.1.1.78",
+        "postgres_engine": "supabase",
+        "ref": "bbbbbbbbbbbbbbbbbbbb",
+        "release_channel": "ga",
+        "status": "ACTIVE_HEALTHY"
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>/api-keys",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": [
+        { "name": "anon", "api_key": "test-anon-key" },
+        { "name": "service_role", "api_key": "test-service-role-key" }
+      ]
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>/config/database/pooler",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": [
+        {
+          "connection_string": "postgresql://postgres:password@my-branch.supabase.co:5432/postgres",
+          "database_type": "PRIMARY",
+          "db_host": "my-branch.supabase.co",
+          "db_name": "postgres",
+          "db_port": 5432,
+          "db_user": "postgres",
+          "default_pool_size": null,
+          "identifier": "my-branch",
+          "is_using_scram_auth": false,
+          "max_client_conn": null,
+          "pool_mode": "transaction"
+        }
+      ]
+    }
+  }
+]

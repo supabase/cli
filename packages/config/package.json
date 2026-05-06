@@ -1,0 +1,56 @@
+{
+  "name": "@supabase/config",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./bun": "./src/bun.ts",
+    "./node": "./src/node.ts",
+    "./schema.json": "./dist/schema.json"
+  },
+  "scripts": {
+    "build": "bun run ./scripts/build.ts",
+    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name",
+    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name",
+    "test": "nx run-many -t test:core test:e2e --projects=$npm_package_name",
+    "test:core": "nx run-many -t test:unit test:integration --projects=$npm_package_name"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "dedent": "^1.7.2",
+    "effect": "catalog:",
+    "smol-toml": "^1.6.1"
+  },
+  "devDependencies": {
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:",
+    "@typescript/native-preview": "catalog:",
+    "@vitest/coverage-istanbul": "catalog:",
+    "knip": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "oxlint-tsgolint": "catalog:",
+    "vitest": "catalog:"
+  },
+  "knip": {
+    "ignoreDependencies": [
+      "@typescript/native-preview",
+      "oxfmt",
+      "oxlint",
+      "oxlint-tsgolint"
+    ],
+    "ignoreBinaries": [
+      "nx"
+    ]
+  },
+  "nx": {
+    "targets": {
+      "build": {
+        "outputs": [
+          "{projectRoot}/dist"
+        ]
+      }
+    }
+  }
+}

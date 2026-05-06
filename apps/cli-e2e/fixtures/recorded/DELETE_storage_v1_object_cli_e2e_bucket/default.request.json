@@ -1,0 +1,17 @@
+{
+  "method": "DELETE",
+  "path": "/storage/v1/object/cli-e2e-bucket",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "apikey": "<JWT>",
+    "authorization": "Bearer <ACCESS_TOKEN>",
+    "content-length": "31",
+    "content-type": "application/json",
+    "host": "localhost:<PORT>",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": {
+    "prefixes": ["rm-target.txt"]
+  }
+}

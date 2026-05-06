@@ -1,0 +1,491 @@
+# Detach Mode
+
+## Context
+
+The local stack currently runs in the foreground, blocking the terminal. Users (both humans and AI agents) need a way to start the stack in the background and manage it via CLI commands. This design combines insights from process-compose (Go) and Prisma CLI (Node.js) detach implementations, adapted for our Effect-based Bun monorepo.
+
+---
+
+## Design Decisions
+
+- **Approach**: Fork daemon process with Unix socket management API (Prisma-style fork + process-compose-style HTTP API)
+- **Stack identity**: Project-scoped stacks keyed by the discovered project root, with implicit stack name `default` and explicit selection via `--stack`
+- **Log access**: On-demand streaming via SSE from daemon process (LogBuffer already exists in process-compose)
+- **Current commands**: `stack start --detach`, `stack stop`, `stack status`, `stack list`, `stack update`, plus top-level aliases for `start`, `stop`, and `status`, and the top-level `logs` command
+- **Future commands**: `restart`, `attach` (reconnect interactive TUI), per-service control
+- **Package boundaries**: Daemon and stack state live in `@supabase/stack`, CLI commands in `@supabase/cli`, `@supabase/process-compose` untouched
+- **Cross-platform**: Works on macOS, Linux, and Windows 10+ (Unix sockets supported since Build 17063)
+
+---
+
+## Architecture
+
+```
+User runs: supabase start --detach
+                │
+                ▼
+        ┌──────────────┐
+        │   CLI (cli/)  │  Forks daemon, waits for IPC "started" msg,
+        │  start -d     │  writes state file, prints connection info, exits
+        └───────┬───────┘
+                │ fork (detached, stdio: ignore)
+                ▼
+        ┌──────────────────┐
+        │  Daemon Process   │  Lives in @supabase/stack
+        │  (daemon.ts)      │
+        │                   │
+        │  ┌──────────────────────────────┐  │
+        │  │ StackLifecycleCoordinator    │  │  Prepares assets, publishes
+        │  │ + StackBuilder + ApiProxy    │  │  Downloading states, starts runtime
+        │  └─────────────┬────────────────┘  │
+        │         │          │
+        │  ┌──────▼──────┐  │
+        │  │ Mgmt HTTP    │  │  Unix socket: /tmp/supabase/s-<hash>/daemon.sock
+        │  │ Server       │  │  Endpoints: /health, /status, /stop, /logs
+        │  └─────────────┘  │
+        └──────────────────┘
+```
+
+### State Directory
+
+```
+<project-root>/
+  ├── supabase/
+  │   └── config.json
+  └── .supabase/
+      ├── project.json
+      ├── local-versions.json
+      └── stacks/
+          └── default/
+              ├── stack.json
+              ├── state.json
+              └── data/
+```
+
+The durable managed-stack record lives under
+`<project-root>/.supabase/stacks/<stack-name>/`.
+
+The live daemon socket is runtime state and lives under the OS temp directory, not under `~/.supabase`:
+
+```text
+/tmp/supabase/s-<hash>/daemon.sock
+```
+
+Project-scoped service version state such as `.supabase/project.json` and
+`.supabase/local-versions.json` is documented separately in
+[`service-versioning.md`](/Users/jgoux/Code/supabase/dx-labs/packages/stack/docs/service-versioning.md).
+
+### State File Formats
+
+`stack.json` is the durable per-stack metadata record:
+
+```json
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-03-25T10:00:00Z",
+  "ports": {
+    "apiPort": 54321,
+    "dbPort": 54322
+  },
+  "services": {
+    "postgres": "17.6.1.084",
+    "postgrest": "14.4",
+    "auth": "2.188.1",
+    "realtime": "2.34.47",
+    "storage": "1.43.3",
+    "imgproxy": "v3.8.0",
+    "mailpit": "v1.22.3",
+    "pgmeta": "0.95.2",
+    "studio": "2026.02.16-sha-26c615c",
+    "analytics": "1.33.3",
+    "vector": "0.28.1-alpine",
+    "pooler": "2.7.4"
+  }
+}
+```
+
+`state.json` is the live runtime record:
+
+```json
+{
+  "pid": 12345,
+  "name": "default",
+  "projectDir": "/Users/jgoux/Code/myapp",
+  "apiPort": 54321,
+  "dbPort": 54322,
+  "socketPath": "/tmp/supabase/s-123456789abc/daemon.sock",
+  "startedAt": "2026-03-03T10:00:00Z",
+  "url": "http://127.0.0.1:54321",
+  "dbUrl": "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+  "publishableKey": "eyJ...",
+  "secretKey": "eyJ...",
+  "anonJwt": "eyJ...",
+  "serviceRoleJwt": "eyJ...",
+  "services": {
+    "postgres": "17.6.1.084",
+    "postgrest": "14.4",
+    "auth": "2.188.1"
+  }
+}
+```
+
+The `publishableKey`, `secretKey`, `anonJwt`, and `serviceRoleJwt` fields are needed so CLI
+commands like `status` can display connection info without querying the daemon. The
+exact Docker cleanup targets are now persisted in stack metadata after runtime preparation. That
+keeps `/status` focused on user-facing connection info while still allowing crash recovery and
+orphan cleanup when the daemon is gone.
+
+---
+
+## Package Changes
+
+### `@supabase/process-compose` — No changes
+
+### `@supabase/stack` — New additions
+
+| File                               | Purpose                                                                                                       |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `src/daemon.ts`                    | Shared daemon logic: `runDaemon(platformFactory)`. IPC handling, lifecycle, signal management                 |
+| `src/daemon-bun.ts`                | Bun daemon entry point. Imports Bun platform factory, calls `runDaemon()`. Forked by CLI (Bun)                |
+| `src/daemon-node.ts`               | Node daemon entry point. Imports Node platform factory, calls `runDaemon()`. For Node consumers               |
+| `src/DaemonServer.ts`              | Management HTTP server (Effect-based, Unix socket). Exposes the in-process `Stack` over HTTP                  |
+| `src/RemoteStack.ts`               | Implements the `Stack` Effect Service interface over HTTP/SSE, connecting to a daemon's Unix socket           |
+| `src/StackPreparation.ts`          | Resolves native-vs-Docker assets, downloads binaries, and pulls Docker images                                 |
+| `src/StackLifecycleCoordinator.ts` | Owns preparation, unified state publication, runtime creation, and cleanup metadata                           |
+| `src/StackMetadataPersistence.ts`  | Persists exact cleanup targets for daemon crash recovery                                                      |
+| `src/StateManager.ts`              | Read/write/scan `stack.json` and `state.json` under `<project-root>/.supabase/stacks/`. Stale state detection |
+| `src/internals.ts`                 | Export new modules for CLI consumption                                                                        |
+
+### Transparent Effect Service interface
+
+The CLI uses Effect V4 and consumes `Stack` as an Effect Service (via `internals.ts`). Rather than
+using the Promise-based `createStack()` handle, the CLI and `RemoteStack` both operate at the
+Effect level.
+
+There are two layers of API:
+
+- **`Stack`** (Effect Service) — used by CLI and other Effect consumers.
+  Returns `Effect`s and `Stream`s. This is the internal API.
+- **`createStack()` handle** (Promise-based) — used by non-Effect library consumers.
+  Returns `Promise`s and `AsyncIterable`s. This public API is unchanged.
+
+`RemoteStack` implements the same `Stack` Effect Service interface, but backed
+by HTTP/SSE over a Unix socket instead of in-process orchestration. The CLI switches
+between them via **Layers** — no branching in CLI code:
+
+```
+// Foreground: provide the in-process layer
+const layer = Stack.layer(config).pipe(Layer.provide(...));
+
+// Detached: provide the remote layer
+const layer = RemoteStack.layer(socketPath);
+
+// CLI code is identical — just consumes the Stack tag
+Effect.gen(function* () {
+  const stack = yield* Stack;
+  yield* stack.start();
+  yield* stack.subscribeAllLogs().pipe(Stream.runForEach(renderLog));
+});
+```
+
+`stack.start()` now means `prepare assets -> publish Downloading when needed -> start services ->
+wait healthy`, so detached mode exposes the same pre-runtime status behavior as foreground mode.
+`RemoteStack` translates each Effect/Stream method to the corresponding HTTP call:
+
+| Stack method               | RemoteStack transport                                          |
+| -------------------------- | -------------------------------------------------------------- |
+| `start()`                  | `POST /start` → `Effect`                                       |
+| `stop()`                   | `POST /stop` → `Effect`                                        |
+| `getInfo()`                | `GET /status` → `Effect` (extract connection info)             |
+| `getAllStates()`           | `GET /status` → `Effect` (extract service states)              |
+| `getState(name)`           | `GET /status` → `Effect` (filter by name)                      |
+| `allStateChanges()`        | `GET /status/stream` (SSE → `Stream`, including `Downloading`) |
+| `stateChanges(name)`       | `GET /status/stream` (SSE → `Stream`, filter by name)          |
+| `waitReady(name)`          | `GET /status/stream` (SSE → `Stream`, take until ready)        |
+| `waitAllReady()`           | `GET /status/stream` (SSE → `Stream`, take until all ready)    |
+| `subscribeAllLogs()`       | `GET /logs` (SSE → `Stream`)                                   |
+| `subscribeLogs(name)`      | `GET /logs/:name` (SSE → `Stream`)                             |
+| `logHistory(name, limit?)` | `GET /logs/:name/history?limit=N` → `Effect`                   |
+| `startService(name)`       | `POST /services/:name/start` → `Effect`                        |
+| `stopService(name)`        | `POST /services/:name/stop` → `Effect`                         |
+| `restartService(name)`     | `POST /services/:name/restart` → `Effect`                      |
+
+Note: `start()`, per-service control, and `logHistory` are included for completeness.
+In the MVP, the CLI only uses a subset (status, logs, stop). The full mapping ensures
+`RemoteStack` is a drop-in replacement for `Stack` in any Effect consumer.
+
+Benefits of using Effect throughout:
+
+- **`Stream`** instead of `AsyncIterable` — composable with `Stream.runForEach`, `Stream.take`, timeouts, etc.
+- **`Effect`** instead of `Promise` — typed errors, cancellation, retries
+- **Layer system** handles the wiring — the CLI never checks "am I foreground or detached?"
+- SSE response body maps naturally to `Stream` (via `Stream.fromReadableStream` or `Stream.async`)
+
+**Daemon entry points** follow the same split as `bun.ts`/`node.ts`:
+
+- `daemon.ts` exports `runDaemon(platformFactory)` — shared logic, not executable
+- `daemon-bun.ts` — Bun entry point, forked by CLI
+- `daemon-node.ts` — Node entry point, for Node consumers
+
+**Daemon lifecycle (`runDaemon`):**
+
+1. Receive serializable `StackConfig` via IPC message from parent
+2. Build the foreground daemon layer (`StackPreparation` + `StackBuilder` + `StackLifecycleCoordinator` + `ApiProxy`)
+3. Call `stack.start()` which prepares assets first, then starts services
+4. Start management HTTP server on Unix socket
+5. Send IPC `{ type: "started", info: { url, dbUrl, ... } }` to parent
+6. Parent disconnects — daemon keeps running
+7. On SIGTERM/SIGINT or POST `/stop`: call `stack.dispose()`, clean up state files, exit
+
+**IPC startup handshake:**
+
+IPC (Inter-Process Communication) is how the CLI and daemon exchange data during startup.
+When `child_process.fork()` creates the daemon, it establishes a built-in IPC channel
+between parent and child. They send JSON messages via `process.send()` / `process.on("message")`.
+
+This channel is only used for the initial startup handshake — once the daemon confirms
+it's ready (or reports an error), the CLI disconnects the channel. All subsequent
+communication (stop, status, logs) happens over the Unix socket HTTP API instead.
+
+```
+CLI (parent)                          Daemon (child)
+     │                                      │
+     │── fork(daemon.ts, {                  │
+     │     detached: true,                  │
+     │     stdio: "ignore"                  │
+     │   }) ───────────────────────────────▶│
+     │                                      │── build foreground daemon layer
+     │                                      │── stack.start()
+     │                                      │── start mgmt HTTP server
+     │                                      │
+     │◀── { type: "started", info: ... } ───│  (IPC message: "I'm ready")
+     │                                      │
+     │── child.disconnect()  ──────────────▶│  (close IPC channel)
+     │── child.unref()  ───────────────────▶│  (allow parent to exit)
+     │                                      │
+     │  CLI prints connection info & exits  │  Daemon keeps running independently
+     │                                      │  Managed via Unix socket from now on
+```
+
+If the daemon fails to start, it sends `{ type: "error", error: ... }` instead,
+and the CLI displays the error and exits with a non-zero code.
+
+**Management HTTP endpoints:**
+
+| Endpoint                 | Method | Description                                                                         |
+| ------------------------ | ------ | ----------------------------------------------------------------------------------- |
+| `/health`                | GET    | Liveness check (200 OK)                                                             |
+| `/status`                | GET    | All service states + connection info (JSON)                                         |
+| `/status/stream`         | GET    | SSE stream of all service state changes, including `Downloading` during preparation |
+| `/stop`                  | POST   | Graceful shutdown → dispose + exit                                                  |
+| `/logs`                  | GET    | SSE stream of all logs                                                              |
+| `/logs/:service`         | GET    | SSE stream for one service                                                          |
+| `/logs/:service/history` | GET    | Recent log entries for one service (JSON, `?limit=N`)                               |
+
+### `@supabase/cli` — New/modified commands
+
+**Modified: `src/commands/start/`**
+
+- New flags: `--detach`, `--stack`
+- When `--detach`: fork daemon, wait for IPC "started", write state file, print connection info, exit
+- When foreground (default): unchanged behavior
+
+**New: `src/commands/stop/`**
+
+- Flags: `--stack`
+- Reads state file, sends POST `/stop` to daemon socket, waits for process exit
+- `--no-backup` deletes only the selected stack directory under
+  `<project-root>/.supabase/stacks/<stack-name>/`
+
+**New: `src/commands/status/`**
+
+- Resolves the current project from `cwd`, then resolves the selected stack within that project
+- Shows a detailed running view when `state.json` exists
+- Shows a detailed stopped view when only `stack.json` exists
+
+**New: `src/commands/list/`**
+
+- Lists all known stacks for the current project from `.supabase/stacks/*/stack.json`
+- Overlays live runtime state when a daemon is running
+
+**New: `src/commands/update/`**
+
+- Refreshes linked remote service versions when the project is linked
+- Rewrites the pinned baseline in `.supabase/stacks/<stack-name>/stack.json`
+- Does not start or restart the stack automatically
+
+**New: `src/commands/logs/`**
+
+- Flags: `--stack`, `--service <name>`
+- Flags: `--service <name>` (optional, filter to one service)
+- Connects to daemon SSE endpoint, streams to stdout
+
+### Stack resolution
+
+When a command like `supabase stop`, `supabase status`, or `supabase logs` is run,
+the CLI first resolves the canonical local project from `cwd`, then resolves the selected stack
+within that project. This works from any nested directory inside the project.
+
+**Algorithm:**
+
+1. Discover the nearest local Supabase project root from `cwd`
+2. Prefer a config-discovered root from `supabase/config.json` or `supabase/config.toml`
+3. Otherwise prefer the nearest ancestor containing `.supabase/project.json`
+4. Otherwise treat `cwd` as the project root
+5. Select the named stack from `.supabase/stacks/<stack-name>/`
+6. If `--stack` is omitted, use `default`
+
+**Examples:**
+
+- cwd = `/Users/jgoux/Code/myapp/src/components/`
+- discovered project root = `/Users/jgoux/Code/myapp`
+- resolved stack = `.supabase/stacks/default`
+
+**Edge cases:**
+
+- No config or `.supabase/project.json` discovered from `cwd` → treat the current working
+  directory as the project root
+- No persisted stack directory for the selected stack → no known local stack for this project
+- Explicit `--stack` always takes precedence over the implicit `default`
+
+---
+
+## Error Handling
+
+| Scenario                                | Behavior                                                                                                                                                                                                               |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Port already in use                     | Daemon sends IPC error before parent exits; CLI shows error                                                                                                                                                            |
+| Name collision (already running)        | State file exists + daemon alive → error with connection info                                                                                                                                                          |
+| Daemon crashes                          | State becomes stale. `status` detects dead PID, shows "crashed". `stop` cleans up state + Docker containers                                                                                                            |
+| Orphaned Docker containers              | `stack.dispose()` calls `dockerForceRemove()`. On crash, `stop` reads persisted cleanup metadata, then force-removes the exact known containers                                                                        |
+| Ctrl+C during `start --detach`          | If daemon hasn't started: kill child. If started: daemon keeps running                                                                                                                                                 |
+| Foreground start while detached running | `supabase start` (foreground) checks StateManager first. If a daemon is running for the same project, error with "Stack already running in detached mode. Use `supabase stop` first or `supabase logs` to see output." |
+| Detached start while foreground running | Port allocation will fail (ports already bound), daemon sends IPC error. No special detection needed — the existing port conflict handling covers this.                                                                |
+
+---
+
+## Testing Strategy
+
+1. **Unit tests** on `StateManager` — pure file operations, mock filesystem
+2. **Integration tests** on `RemoteStack`/`DaemonServer` — test HTTP API with real Unix socket, verify Effect/Stream round-trip
+3. **Integration tests** on CLI handlers — mock `Stack` via `Layer.succeed`, assert on output/state (same pattern as existing CLI tests)
+4. **E2e tests** — spawn real `supabase start --detach`, verify startup, `supabase status` shows it, `supabase stack list` finds it, `supabase stop` stops it
+
+---
+
+## Verification
+
+1. `supabase start --detach` — daemon starts, connection info printed, terminal returns
+2. `supabase status` — shows running stack with name, ports, uptime
+3. `supabase logs` — streams real-time logs from daemon
+4. `supabase stop` — graceful shutdown, Docker containers removed, state cleaned up
+5. `supabase start --detach && supabase start --detach` — second invocation shows "already running"
+6. Kill daemon with `kill <pid>`, then `supabase status` — shows "crashed", `supabase stop` cleans up
+
+---
+
+## Future Improvements
+
+### Reattach (`supabase attach [--stack <name>]`)
+
+Reconnects an interactive TUI to a running detached daemon. The HTTP daemon design
+makes this straightforward — the attach command is just an HTTP client rendering a TUI,
+connecting to the same endpoints that `supabase status` and `supabase logs` use.
+
+```
+supabase attach [name]
+     │
+     ▼
+  1. Read state file → find daemon socket
+  2. GET /status → render current service states
+  3. GET /logs → open SSE stream → render logs in real-time
+  4. Same interactive TUI as foreground mode, but fed by HTTP
+     instead of in-process Effect streams
+     │
+     ▼
+  On Ctrl+C → just disconnect (daemon keeps running)
+```
+
+Key difference from foreground mode:
+
+- **Foreground**: TUI consumes in-process `Stack` Effect Service (Effect `Stream`s)
+- **Attached**: TUI consumes `RemoteStack` Effect Service (same `Stream` interface, backed by SSE over Unix socket)
+
+Ctrl+C when attached means **detach** (daemon keeps running), not stop. The user ran
+detached intentionally — if they want to stop, they use `supabase stop`. This matches
+`tmux`/`screen` behavior.
+
+No additional daemon-side work is required — the management API already exposes
+everything the TUI needs.
+
+### Restart (`supabase restart [name]`)
+
+Restart all services in a running detached stack without tearing down the daemon.
+Requires a new `POST /restart` endpoint on the management API that calls
+`stack.stop()` followed by `stack.start()`.
+
+### Per-service control
+
+Expose per-service start/stop/restart for detached stacks:
+
+- `supabase service start <service> [--stack <name>]`
+- `supabase service stop <service> [--stack <name>]`
+- `supabase service restart <service> [--stack <name>]`
+
+Requires new management API endpoints: `POST /services/:name/start`, `/stop`, `/restart`.
+The underlying `stack.startService()`, `stack.stopService()`, `stack.restartService()`
+methods already exist.
+
+### File-based log persistence
+
+Optionally write logs to disk in addition to in-memory buffering, for post-crash analysis.
+Could be enabled via a `--persist-logs` flag on `supabase start --detach`. Logs would go to
+`<project-root>/.supabase/stacks/<stack-name>/logs/`.
+
+---
+
+## Research: Prior Art
+
+### Process-Compose (Go)
+
+Source: `.repos/process-compose/`
+
+**Detach mechanism**: Self re-exec with `Setsid: true` (`src/cmd/project_runner_unix.go:13-44`). Strips `--detached` flag, adds `-t=false`, redirects stdio to `/dev/null`.
+
+**Management**: Full HTTP API (28 REST endpoints) over Unix domain sockets (`/tmp/process-compose-<PID>.sock`). WebSocket log streaming. CLI acts as HTTP client (`src/client/client.go`).
+
+**Key commands**: `attach` (reconnect TUI), `down` (stop), `process start/stop/restart`, `logs`, `list`.
+
+**Key patterns**:
+
+- Self-re-exec with session detach (not fork)
+- PID-based socket naming for unique identification
+- Full HTTP API enables rich remote management
+- No PID file — uses socket existence for discovery
+
+### Prisma CLI (Node.js)
+
+Source: `@prisma/cli-dev` npm package (v0.15.0), `@prisma/dev/internal/daemon`
+
+**Detach mechanism**: `child_process.fork()` with `{detached: true, stdio: "ignore"}`. IPC for startup coordination (`"started"`/`"error"` messages), then `disconnect()`/`unref()`.
+
+**State management**: Filesystem-based `ServerState` (`@prisma/dev/internal/state`). Named instances with glob matching. `ServerState.scan()`, `isServerRunning()`, `killServer()`, `deleteServer()`.
+
+**Key commands**: `ls` (list), `start <glob>`, `stop <glob>`, `rm <glob>`.
+
+**Key patterns**:
+
+- `fork()` + IPC for startup coordination, then disconnect/unref to release
+- Persistent state store for tracking instances across CLI invocations
+- Named instances with glob-based matching for multi-project support
+- No HTTP API — management through state files + process signals
+
+### Comparison
+
+| Aspect          | process-compose    | Prisma                | Our approach               |
+| --------------- | ------------------ | --------------------- | -------------------------- |
+| Detach method   | Re-exec + Setsid   | fork + detached       | fork + detached            |
+| Management IPC  | HTTP + Unix socket | State files + signals | HTTP + Unix socket         |
+| Log streaming   | WebSocket          | None                  | SSE                        |
+| Named instances | Socket path        | `--stack` flag        | Project-scoped + `--stack` |
+| Windows support | No                 | Yes                   | Yes                        |

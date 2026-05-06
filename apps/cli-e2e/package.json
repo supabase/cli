@@ -1,0 +1,72 @@
+{
+  "name": "@supabase/cli-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun --bun vitest run",
+    "test:e2e": "bun --bun vitest run",
+    "test:go": "CLI_HARNESS_TARGET=go bun --bun vitest run",
+    "test:legacy": "CLI_HARNESS_TARGET=ts-legacy bun --bun vitest run",
+    "test:next": "CLI_HARNESS_TARGET=ts-next bun --bun vitest run",
+    "record": "RECORD=true CLI_HARNESS_TARGET=go bun --bun vitest run",
+    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name",
+    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name"
+  },
+  "dependencies": {
+    "@supabase/cli-test-helpers": "workspace:*"
+  },
+  "devDependencies": {
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:",
+    "@typescript/native-preview": "catalog:",
+    "@vitest/coverage-istanbul": "catalog:",
+    "knip": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "oxlint-tsgolint": "catalog:",
+    "vitest": "catalog:"
+  },
+  "knip": {
+    "entry": [
+      "src/**/*.e2e.test.ts",
+      "tests/**/*.ts"
+    ],
+    "ignoreDependencies": [
+      "@typescript/native-preview",
+      "oxfmt",
+      "oxlint",
+      "oxlint-tsgolint"
+    ],
+    "ignoreBinaries": [
+      "nx"
+    ]
+  },
+  "nx": {
+    "targets": {
+      "test:e2e": {
+        "dependsOn": [
+          {
+            "projects": [
+              "@supabase/cli"
+            ],
+            "target": "build"
+          },
+          {
+            "projects": [
+              "cli-go"
+            ],
+            "target": "build"
+          }
+        ],
+        "inputs": [
+          "default",
+          "{workspaceRoot}/apps/cli/dist/**/*"
+        ]
+      }
+    },
+    "implicitDependencies": [
+      "cli-go"
+    ]
+  }
+}

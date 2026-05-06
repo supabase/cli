@@ -1,0 +1,13 @@
+{
+  "status": 404,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "x-gotrue-id": "<UUID>",
+    "x-ratelimit-limit": "120",
+    "x-ratelimit-remaining": "119",
+    "x-ratelimit-reset": "60"
+  },
+  "body": {
+    "message": "SSO Identity Provider not found"
+  }
+}

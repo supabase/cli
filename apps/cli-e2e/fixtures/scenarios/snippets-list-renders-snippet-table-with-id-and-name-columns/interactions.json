@@ -1,0 +1,71 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/snippets",
+      "query": {
+        "project_ref": "<PROJECT_REF>"
+      },
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": {
+        "data": []
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "96",
+        "x-ratelimit-reset": "5"
+      },
+      "body": {
+        "id": "<PROJECT_REF>",
+        "ref": "<PROJECT_REF>",
+        "organization_id": "<PROJECT_REF>",
+        "organization_slug": "<PROJECT_REF>",
+        "name": "cli-e2e-test",
+        "region": "us-east-1",
+        "status": "ACTIVE_HEALTHY",
+        "database": {
+          "host": "db.<PROJECT_REF>.supabase.red",
+          "version": "17.6.1.111",
+          "postgres_engine": "17",
+          "release_channel": "ga"
+        },
+        "created_at": "2000-01-01T00:00:00Z"
+      }
+    }
+  }
+]

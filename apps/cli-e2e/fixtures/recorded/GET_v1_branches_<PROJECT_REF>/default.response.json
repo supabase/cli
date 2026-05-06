@@ -1,0 +1,22 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "x-gotrue-id": "<UUID>",
+    "x-ratelimit-limit": "120",
+    "x-ratelimit-remaining": "119",
+    "x-ratelimit-reset": "60"
+  },
+  "body": {
+    "db_host": "my-branch.supabase.co",
+    "db_port": 5432,
+    "db_user": "postgres",
+    "db_pass": "password",
+    "jwt_secret": "super-secret-jwt",
+    "postgres_version": "15.1.1.78",
+    "postgres_engine": "supabase",
+    "ref": "bbbbbbbbbbbbbbbbbbbb",
+    "release_channel": "ga",
+    "status": "ACTIVE_HEALTHY"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "columns": ["total_exec_time", "prop_exec_time", "ncalls", "sync_io_time", "query"],
+  "rows": [
+    ["00:00:01.234567", "50%", "1,000", "00:00:00.1", "SELECT id FROM users WHERE active = true"]
+  ]
+}

@@ -1,0 +1,27 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>/types/typescript",
+      "query": {
+        "included_schemas": "public"
+      },
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/<VERSION>"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8"
+      },
+      "body": {
+        "types": "export type Json =\n  | string\n  | number\n  | boolean\n  | null\n  | { [key: string]: Json | undefined }\n  | Json[]\n\nexport type Database = {\n  public: {\n    Tables: {\n      [_ in never]: never\n    }\n    Views: {\n      [_ in never]: never\n    }\n    Functions: {\n      [_ in never]: never\n    }\n    Enums: {\n      [_ in never]: never\n    }\n    CompositeTypes: {\n      [_ in never]: never\n    }\n  }\n}\n"
+      }
+    }
+  }
+]

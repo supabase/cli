@@ -1,0 +1,1446 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>/billing/addons",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/2.90.0"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": {
+        "selected_addons": [
+          {
+            "type": "compute_instance",
+            "variant": {
+              "id": "ci_micro",
+              "name": "Micro",
+              "meta": {
+                "cpu_cores": 2,
+                "cpu_dedicated": false,
+                "memory_gb": 1,
+                "baseline_disk_io_mbs": 87,
+                "max_disk_io_mbs": 2085,
+                "connections_direct": 60,
+                "connections_pooler": 200,
+                "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS", "FLY"]
+              },
+              "price": {
+                "description": "$0.01344/hour (~$10/month)",
+                "amount": 0.01344,
+                "interval": "hourly",
+                "type": "usage"
+              }
+            }
+          }
+        ],
+        "available_addons": [
+          {
+            "name": "Custom Domain",
+            "type": "custom_domain",
+            "variants": [
+              {
+                "id": "cd_default",
+                "name": "Custom Domain",
+                "price": {
+                  "description": "$10/month",
+                  "amount": 10,
+                  "interval": "monthly",
+                  "type": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "name": "Compute Instance",
+            "type": "compute_instance",
+            "variants": [
+              {
+                "id": "ci_micro",
+                "name": "Micro",
+                "meta": {
+                  "cpu_cores": 2,
+                  "cpu_dedicated": false,
+                  "memory_gb": 1,
+                  "baseline_disk_io_mbs": 87,
+                  "max_disk_io_mbs": 2085,
+                  "connections_direct": 60,
+                  "connections_pooler": 200,
+                  "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS", "FLY"]
+                },
+                "price": {
+                  "description": "$0.01344/hour (~$10/month)",
+                  "amount": 0.01344,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              },
+              {
+                "id": "ci_small",
+                "name": "Small",
+                "meta": {
+                  "cpu_cores": 2,
+                  "cpu_dedicated": false,
+                  "memory_gb": 2,
+                  "baseline_disk_io_mbs": 174,
+                  "max_disk_io_mbs": 2085,
+                  "connections_direct": 90,
+                  "connections_pooler": 400,
+                  "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS", "FLY"]
+                },
+                "price": {
+                  "description": "$0.0206/hour (~$15/month)",
+                  "amount": 0.0206,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              },
+              {
+                "id": "ci_medium",
+                "name": "Medium",
+                "meta": {
+                  "cpu_cores": 2,
+                  "cpu_dedicated": false,
+                  "memory_gb": 4,
+                  "baseline_disk_io_mbs": 347,
+                  "max_disk_io_mbs": 2085,
+                  "connections_direct": 120,
+                  "connections_pooler": 600,
+                  "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS", "FLY"]
+                },
+                "price": {
+                  "description": "$0.0822/hour (~$60/month)",
+                  "amount": 0.0822,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              },
+              {
+                "id": "ci_large",
+                "name": "Large",
+                "meta": {
+                  "cpu_cores": 2,
+                  "cpu_dedicated": true,
+                  "memory_gb": 8,
+                  "baseline_disk_io_mbs": 630,
+                  "max_disk_io_mbs": 4750,
+                  "connections_direct": 160,
+                  "connections_pooler": 800,
+                  "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS", "FLY"]
+                },
+                "price": {
+                  "description": "$0.1517/hour (~$111/month)",
+                  "amount": 0.1517,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              },
+              {
+                "id": "ci_xlarge",
+                "name": "XL",
+                "meta": {
+                  "cpu_cores": 4,
+                  "cpu_dedicated": true,
+                  "memory_gb": 16,
+                  "baseline_disk_io_mbs": 1048,
+                  "max_disk_io_mbs": 4750,
+                  "connections_direct": 240,
+                  "connections_pooler": 1000,
+                  "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS", "FLY"]
+                },
+                "price": {
+                  "description": "$0.2877/hour (~$210/month)",
+                  "amount": 0.2877,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              },
+              {
+                "id": "ci_2xlarge",
+                "name": "2XL",
+                "meta": {
+                  "cpu_cores": 8,
+                  "cpu_dedicated": true,
+                  "memory_gb": 32,
+                  "baseline_disk_io_mbs": 1048,
+                  "max_disk_io_mbs": 4750,
+                  "connections_direct": 380,
+                  "connections_pooler": 1500,
+                  "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS", "FLY"]
+                },
+                "price": {
+                  "description": "$0.562/hour (~$410/month)",
+                  "amount": 0.562,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              },
+              {
+                "id": "ci_4xlarge",
+                "name": "4XL",
+                "meta": {
+                  "cpu_cores": 16,
+                  "cpu_dedicated": true,
+                  "memory_gb": 64,
+                  "baseline_disk_io_mbs": 1048,
+                  "max_disk_io_mbs": 4750,
+                  "connections_direct": 480,
+                  "connections_pooler": 3000,
+                  "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS", "FLY"]
+                },
+                "price": {
+                  "description": "$1.32/hour (~$964/month)",
+                  "amount": 1.32,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              },
+              {
+                "id": "ci_8xlarge",
+                "name": "8XL",
+                "meta": {
+                  "cpu_cores": 32,
+                  "cpu_dedicated": true,
+                  "memory_gb": 128,
+                  "baseline_disk_io_mbs": 1048,
+                  "max_disk_io_mbs": 9500,
+                  "connections_direct": 490,
+                  "connections_pooler": 6000,
+                  "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS"]
+                },
+                "price": {
+                  "description": "$2.562/hour (~$1870/month)",
+                  "amount": 2.562,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              },
+              {
+                "id": "ci_12xlarge",
+                "name": "12XL",
+                "meta": {
+                  "cpu_cores": 48,
+                  "cpu_dedicated": true,
+                  "memory_gb": 192,
+                  "baseline_disk_io_mbs": 1048,
+                  "max_disk_io_mbs": 14250,
+                  "connections_direct": 500,
+                  "connections_pooler": 9000,
+                  "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS"]
+                },
+                "price": {
+                  "description": "$3.836/hour (~$2800/month)",
+                  "amount": 3.836,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              },
+              {
+                "id": "ci_16xlarge",
+                "name": "16XL",
+                "meta": {
+                  "cpu_cores": 64,
+                  "cpu_dedicated": true,
+                  "memory_gb": 256,
+                  "baseline_disk_io_mbs": 1048,
+                  "max_disk_io_mbs": 19000,
+                  "connections_direct": 500,
+                  "connections_pooler": 12000,
+                  "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS"]
+                },
+                "price": {
+                  "description": "$5.12/hour (~$3738/month)",
+                  "amount": 5.12,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              },
+              {
+                "id": "ci_24xlarge",
+                "name": "24XL",
+                "meta": {
+                  "cpu_cores": 96,
+                  "cpu_dedicated": true,
+                  "memory_gb": 384,
+                  "baseline_disk_io_mbs": 30000,
+                  "max_disk_io_mbs": 30000,
+                  "connections_direct": 750,
+                  "connections_pooler": 18000,
+                  "supported_cloud_providers": ["AWS"],
+                  "supported_regions": {
+                    "AWS": [
+                      "us-east-1",
+                      "us-east-2",
+                      "us-west-1",
+                      "us-west-2",
+                      "ap-northeast-1",
+                      "ap-northeast-2",
+                      "eu-west-1",
+                      "eu-west-2",
+                      "eu-north-1",
+                      "eu-central-1",
+                      "ap-south-1"
+                    ],
+                    "FLY": [],
+                    "AWS_K8S": [],
+                    "AWS_NIMBUS": []
+                  }
+                },
+                "price": {
+                  "description": "$9.73/hour (~$7103/month)",
+                  "amount": 9.73,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              },
+              {
+                "id": "ci_24xlarge_optimized_cpu",
+                "name": "24XL_OPTIMIZED_CPU",
+                "meta": {
+                  "cpu_cores": 96,
+                  "cpu_dedicated": true,
+                  "memory_gb": 192,
+                  "baseline_disk_io_mbs": 30000,
+                  "max_disk_io_mbs": 30000,
+                  "connections_direct": 750,
+                  "connections_pooler": 18000,
+                  "supported_cloud_providers": ["AWS"],
+                  "supported_regions": {
+                    "AWS": [
+                      "us-east-1",
+                      "us-east-2",
+                      "us-west-1",
+                      "us-west-2",
+                      "ap-northeast-1",
+                      "ap-northeast-2",
+                      "eu-west-1",
+                      "eu-west-2",
+                      "eu-north-1",
+                      "eu-central-1",
+                      "ap-south-1",
+                      "sa-east-1"
+                    ],
+                    "FLY": [],
+                    "AWS_K8S": [],
+                    "AWS_NIMBUS": []
+                  }
+                },
+                "price": {
+                  "description": "$8.9/hour (~$6497/month)",
+                  "amount": 8.9,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              },
+              {
+                "id": "ci_24xlarge_optimized_memory",
+                "name": "24XL_OPTIMIZED_MEMORY",
+                "meta": {
+                  "cpu_cores": 96,
+                  "cpu_dedicated": true,
+                  "memory_gb": 768,
+                  "baseline_disk_io_mbs": 30000,
+                  "max_disk_io_mbs": 30000,
+                  "connections_direct": 750,
+                  "connections_pooler": 18000,
+                  "supported_cloud_providers": ["AWS"],
+                  "supported_regions": {
+                    "AWS": [
+                      "us-east-1",
+                      "us-east-2",
+                      "us-west-1",
+                      "us-west-2",
+                      "ap-northeast-1",
+                      "ap-southeast-1",
+                      "ap-southeast-2",
+                      "eu-west-1",
+                      "eu-north-1",
+                      "eu-central-1",
+                      "ap-south-1"
+                    ],
+                    "FLY": [],
+                    "AWS_K8S": [],
+                    "AWS_NIMBUS": []
+                  }
+                },
+                "price": {
+                  "description": "$13.84/hour (~$10103/month)",
+                  "amount": 13.84,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              },
+              {
+                "id": "ci_24xlarge_high_memory",
+                "name": "24XL_HIGH_MEMORY",
+                "meta": {
+                  "cpu_cores": 96,
+                  "cpu_dedicated": true,
+                  "memory_gb": 1536,
+                  "baseline_disk_io_mbs": 30000,
+                  "max_disk_io_mbs": 30000,
+                  "connections_direct": 750,
+                  "connections_pooler": 18000,
+                  "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS"],
+                  "supported_regions": {
+                    "AWS": ["us-east-1", "us-west-2", "eu-central-1"],
+                    "FLY": [],
+                    "AWS_K8S": [],
+                    "AWS_NIMBUS": []
+                  }
+                },
+                "price": {
+                  "description": "$21.92/hour (~$16002/month)",
+                  "amount": 21.92,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              },
+              {
+                "id": "ci_48xlarge",
+                "name": "48XL",
+                "meta": {
+                  "cpu_cores": 192,
+                  "cpu_dedicated": true,
+                  "memory_gb": 768,
+                  "baseline_disk_io_mbs": 40000,
+                  "max_disk_io_mbs": 40000,
+                  "connections_direct": 1500,
+                  "connections_pooler": 36000,
+                  "supported_cloud_providers": ["AWS"],
+                  "supported_regions": {
+                    "AWS": [
+                      "us-east-1",
+                      "us-east-2",
+                      "us-west-1",
+                      "us-west-2",
+                      "ap-northeast-1",
+                      "ap-southeast-2",
+                      "eu-west-1",
+                      "eu-west-2",
+                      "eu-north-1",
+                      "eu-central-1",
+                      "ap-south-1"
+                    ],
+                    "FLY": [],
+                    "AWS_K8S": [],
+                    "AWS_NIMBUS": []
+                  }
+                },
+                "price": {
+                  "description": "$19.47/hour (~$14213/month)",
+                  "amount": 19.47,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              },
+              {
+                "id": "ci_48xlarge_optimized_cpu",
+                "name": "48XL_OPTIMIZED_CPU",
+                "meta": {
+                  "cpu_cores": 192,
+                  "cpu_dedicated": true,
+                  "memory_gb": 384,
+                  "baseline_disk_io_mbs": 40000,
+                  "max_disk_io_mbs": 40000,
+                  "connections_direct": 1500,
+                  "connections_pooler": 36000,
+                  "supported_cloud_providers": ["AWS"],
+                  "supported_regions": {
+                    "AWS": [
+                      "us-east-1",
+                      "us-east-2",
+                      "us-west-1",
+                      "us-west-2",
+                      "ap-northeast-1",
+                      "ap-southeast-2",
+                      "eu-west-1",
+                      "eu-west-2",
+                      "eu-north-1",
+                      "eu-central-1",
+                      "ap-south-1",
+                      "sa-east-1"
+                    ],
+                    "FLY": [],
+                    "AWS_K8S": [],
+                    "AWS_NIMBUS": []
+                  }
+                },
+                "price": {
+                  "description": "$17.8/hour (~$12994/month)",
+                  "amount": 17.8,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              },
+              {
+                "id": "ci_48xlarge_optimized_memory",
+                "name": "48XL_OPTIMIZED_MEMORY",
+                "meta": {
+                  "cpu_cores": 192,
+                  "cpu_dedicated": true,
+                  "memory_gb": 1536,
+                  "baseline_disk_io_mbs": 40000,
+                  "max_disk_io_mbs": 40000,
+                  "connections_direct": 1500,
+                  "connections_pooler": 36000,
+                  "supported_cloud_providers": ["AWS"],
+                  "supported_regions": {
+                    "AWS": [
+                      "us-east-1",
+                      "us-east-2",
+                      "us-west-1",
+                      "us-west-2",
+                      "ap-northeast-1",
+                      "ap-southeast-2",
+                      "eu-west-1",
+                      "eu-north-1",
+                      "eu-central-1",
+                      "ap-south-1"
+                    ],
+                    "FLY": [],
+                    "AWS_K8S": [],
+                    "AWS_NIMBUS": []
+                  }
+                },
+                "price": {
+                  "description": "$27.68/hour (~$20206/month)",
+                  "amount": 27.68,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              },
+              {
+                "id": "ci_48xlarge_high_memory",
+                "name": "48XL_HIGH_MEMORY",
+                "meta": {
+                  "cpu_cores": 96,
+                  "cpu_dedicated": true,
+                  "memory_gb": 3072,
+                  "baseline_disk_io_mbs": 40000,
+                  "max_disk_io_mbs": 40000,
+                  "connections_direct": 1500,
+                  "connections_pooler": 36000,
+                  "supported_cloud_providers": ["AWS"],
+                  "supported_regions": {
+                    "AWS": ["us-east-1", "us-west-2", "eu-central-1"],
+                    "FLY": [],
+                    "AWS_K8S": [],
+                    "AWS_NIMBUS": []
+                  }
+                },
+                "price": {
+                  "description": "$43.84/hour (~$32003/month)",
+                  "amount": 43.84,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              }
+            ]
+          },
+          {
+            "name": "Point-In-Time-Recovery",
+            "type": "pitr",
+            "variants": [
+              {
+                "id": "pitr_7",
+                "name": "7 days",
+                "meta": {
+                  "backup_duration_days": 7
+                },
+                "price": {
+                  "description": "$100/month",
+                  "amount": 100,
+                  "interval": "monthly",
+                  "type": "fixed"
+                }
+              },
+              {
+                "id": "pitr_14",
+                "name": "14 days",
+                "meta": {
+                  "backup_duration_days": 14
+                },
+                "price": {
+                  "description": "$200/month",
+                  "amount": 200,
+                  "interval": "monthly",
+                  "type": "fixed"
+                }
+              },
+              {
+                "id": "pitr_28",
+                "name": "28 days",
+                "meta": {
+                  "backup_duration_days": 28
+                },
+                "price": {
+                  "description": "$400/month",
+                  "amount": 400,
+                  "interval": "monthly",
+                  "type": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "name": "IPv4",
+            "type": "ipv4",
+            "variants": [
+              {
+                "id": "ipv4_default",
+                "name": "IPv4",
+                "price": {
+                  "description": "$4/month",
+                  "amount": 4,
+                  "interval": "monthly",
+                  "type": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "name": "Advanced MFA - Phone",
+            "type": "auth_mfa_phone",
+            "variants": [
+              {
+                "id": "auth_mfa_phone_default",
+                "name": "Advanced MFA - Phone",
+                "price": {
+                  "description": "$75/month, then $10/month",
+                  "amount": 0.1027,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              }
+            ]
+          },
+          {
+            "name": "Advanced MFA - WebAuthn",
+            "type": "auth_mfa_web_authn",
+            "variants": [
+              {
+                "id": "auth_mfa_web_authn_default",
+                "name": "Advanced MFA - WebAuthn",
+                "price": {
+                  "description": "$75/month, then $10/month",
+                  "amount": 0.1027,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              }
+            ]
+          },
+          {
+            "name": "Log Drain",
+            "type": "log_drain",
+            "variants": [
+              {
+                "id": "log_drain_default",
+                "name": "Log Drain",
+                "price": {
+                  "description": "$60/month",
+                  "amount": 0.0822,
+                  "interval": "hourly",
+                  "type": "usage"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>/postgrest",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/2.90.0"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": {
+        "db_schema": "public,graphql_public",
+        "max_rows": 1000,
+        "db_extra_search_path": "public, extensions",
+        "db_pool": null,
+        "jwt_secret": "EH9SYrAOLy4wUwRSts5kU5oZfiqFLy3+v+a1EAwFpKRbqxzPldJ5wMoiySHJiDmyWrMZXL5yK/9V7XkCtRdU0Q=="
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>/config/database/postgres",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/2.90.0"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": {
+        "shared_buffers": "256MB",
+        "max_connections": 100,
+        "statement_timeout": "8s",
+        "effective_cache_size": "768MB"
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>/network-restrictions",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/2.90.0"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": {
+        "entitlement": "allowed",
+        "config": {
+          "dbAllowedCidrs": ["0.0.0.0/0"],
+          "dbAllowedCidrsV6": ["::/0"]
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>/ssl-enforcement",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/2.90.0"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": {
+        "currentConfig": {
+          "database": true
+        },
+        "appliedSuccessfully": true
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>/config/auth",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/2.90.0"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": {
+        "uri_allow_list": "http://localhost:<PORT>/callback",
+        "jwt_exp": 3600,
+        "api_max_request_duration": 10,
+        "db_max_pool_size": 10,
+        "db_max_pool_size_unit": "connections",
+        "disable_signup": false,
+        "security_manual_linking_enabled": false,
+        "security_update_password_require_reauthentication": false,
+        "security_update_password_require_current_password": false,
+        "refresh_token_rotation_enabled": true,
+        "security_refresh_token_reuse_interval": 10,
+        "site_url": "http://localhost:<PORT>",
+        "mfa_max_enrolled_factors": 10,
+        "mfa_allow_low_aal": false,
+        "rate_limit_anonymous_users": 30,
+        "rate_limit_sms_sent": 30,
+        "rate_limit_verify": 30,
+        "rate_limit_token_refresh": 150,
+        "rate_limit_otp": 30,
+        "audit_log_disable_postgres": true,
+        "sessions_timebox": 0,
+        "sessions_inactivity_timeout": 0,
+        "sessions_single_per_user": false,
+        "sessions_tags": null,
+        "hook_custom_access_token_enabled": false,
+        "hook_custom_access_token_uri": null,
+        "hook_custom_access_token_secrets": null,
+        "hook_before_user_created_enabled": false,
+        "hook_before_user_created_uri": null,
+        "hook_before_user_created_secrets": null,
+        "nimbus_oauth_client_id": null,
+        "nimbus_oauth_client_secret": null,
+        "external_anonymous_users_enabled": false,
+        "external_apple_additional_client_ids": null,
+        "external_apple_client_id": null,
+        "external_apple_email_optional": false,
+        "external_apple_enabled": false,
+        "external_apple_secret": null,
+        "external_azure_client_id": null,
+        "external_azure_email_optional": false,
+        "external_azure_enabled": false,
+        "external_azure_secret": null,
+        "external_azure_url": null,
+        "external_bitbucket_client_id": null,
+        "external_bitbucket_email_optional": false,
+        "external_bitbucket_enabled": false,
+        "external_bitbucket_secret": null,
+        "external_discord_client_id": null,
+        "external_discord_email_optional": false,
+        "external_discord_enabled": false,
+        "external_discord_secret": null,
+        "external_email_enabled": true,
+        "external_facebook_client_id": null,
+        "external_facebook_email_optional": false,
+        "external_facebook_enabled": false,
+        "external_facebook_secret": null,
+        "external_figma_client_id": null,
+        "external_figma_email_optional": false,
+        "external_figma_enabled": false,
+        "external_figma_secret": null,
+        "external_github_client_id": null,
+        "external_github_email_optional": false,
+        "external_github_enabled": false,
+        "external_github_secret": null,
+        "external_gitlab_client_id": null,
+        "external_gitlab_email_optional": false,
+        "external_gitlab_enabled": false,
+        "external_gitlab_secret": null,
+        "external_gitlab_url": null,
+        "external_google_additional_client_ids": null,
+        "external_google_client_id": null,
+        "external_google_email_optional": false,
+        "external_google_enabled": false,
+        "external_google_secret": null,
+        "external_google_skip_nonce_check": null,
+        "external_kakao_client_id": null,
+        "external_kakao_email_optional": false,
+        "external_kakao_enabled": false,
+        "external_kakao_secret": null,
+        "external_keycloak_client_id": null,
+        "external_keycloak_email_optional": false,
+        "external_keycloak_enabled": false,
+        "external_keycloak_secret": null,
+        "external_keycloak_url": null,
+        "external_linkedin_oidc_client_id": null,
+        "external_linkedin_oidc_email_optional": false,
+        "external_linkedin_oidc_enabled": false,
+        "external_linkedin_oidc_secret": null,
+        "external_slack_oidc_client_id": null,
+        "external_slack_oidc_email_optional": false,
+        "external_slack_oidc_enabled": false,
+        "external_slack_oidc_secret": null,
+        "external_notion_client_id": null,
+        "external_notion_email_optional": false,
+        "external_notion_enabled": false,
+        "external_notion_secret": null,
+        "external_phone_enabled": false,
+        "external_slack_client_id": null,
+        "external_slack_email_optional": false,
+        "external_slack_enabled": false,
+        "external_slack_secret": null,
+        "external_spotify_client_id": null,
+        "external_spotify_email_optional": false,
+        "external_spotify_enabled": false,
+        "external_spotify_secret": null,
+        "external_twitch_client_id": null,
+        "external_twitch_email_optional": false,
+        "external_twitch_enabled": false,
+        "external_twitch_secret": null,
+        "external_twitter_client_id": null,
+        "external_twitter_email_optional": false,
+        "external_twitter_enabled": false,
+        "external_twitter_secret": null,
+        "external_x_client_id": null,
+        "external_x_email_optional": false,
+        "external_x_enabled": false,
+        "external_x_secret": null,
+        "external_web3_solana_enabled": false,
+        "external_web3_ethereum_enabled": false,
+        "external_workos_client_id": null,
+        "external_workos_enabled": false,
+        "external_workos_secret": null,
+        "external_workos_url": null,
+        "external_zoom_client_id": null,
+        "external_zoom_email_optional": false,
+        "external_zoom_enabled": false,
+        "external_zoom_secret": null,
+        "hook_after_user_created_enabled": false,
+        "hook_after_user_created_uri": null,
+        "hook_after_user_created_secrets": null,
+        "hook_mfa_verification_attempt_enabled": false,
+        "hook_mfa_verification_attempt_uri": null,
+        "hook_mfa_verification_attempt_secrets": null,
+        "hook_password_verification_attempt_enabled": false,
+        "hook_password_verification_attempt_uri": null,
+        "hook_password_verification_attempt_secrets": null,
+        "hook_send_sms_enabled": false,
+        "hook_send_sms_uri": null,
+        "hook_send_sms_secrets": null,
+        "hook_send_email_enabled": false,
+        "hook_send_email_uri": null,
+        "hook_send_email_secrets": null,
+        "mailer_allow_unverified_email_sign_ins": false,
+        "mailer_autoconfirm": true,
+        "mailer_otp_exp": 3600,
+        "mailer_otp_length": 6,
+        "mailer_secure_email_change_enabled": true,
+        "mailer_subjects_confirmation": "Confirm Your Signup",
+        "mailer_subjects_email_change": "Confirm Email Change",
+        "mailer_subjects_invite": "You have been invited",
+        "mailer_subjects_magic_link": "Your Magic Link",
+        "mailer_subjects_reauthentication": "Confirm Reauthentication",
+        "mailer_subjects_recovery": "Reset Your Password",
+        "mailer_subjects_password_changed_notification": "Your password has been changed",
+        "mailer_subjects_email_changed_notification": "Your email address has been changed",
+        "mailer_subjects_phone_changed_notification": "Your phone number has been changed",
+        "mailer_subjects_mfa_factor_enrolled_notification": "A new MFA factor has been enrolled",
+        "mailer_subjects_mfa_factor_unenrolled_notification": "An MFA factor has been unenrolled",
+        "mailer_subjects_identity_linked_notification": "A new identity has been linked",
+        "mailer_subjects_identity_unlinked_notification": "An identity has been unlinked",
+        "mailer_templates_confirmation_content": "<h2>Confirm your signup</h2>\n\n<p>Follow this link to confirm your user:</p>\n<p><a href=\"{{ .ConfirmationURL }}\">Confirm your mail</a></p>",
+        "mailer_templates_email_change_content": "<h2>Confirm Change of Email</h2>\n\n<p>Follow this link to confirm the update of your email from {{ .Email }} to {{ .NewEmail }}:</p>\n<p><a href=\"{{ .ConfirmationURL }}\">Change Email</a></p>",
+        "mailer_templates_invite_content": "<h2>You have been invited</h2>\n\n<p>You have been invited to create a user on {{ .SiteURL }}. Follow this link to accept the invite:</p>\n<p><a href=\"{{ .ConfirmationURL }}\">Accept the invite</a></p>",
+        "mailer_templates_magic_link_content": "<h2>Magic Link</h2>\n\n<p>Follow this link to login:</p>\n<p><a href=\"{{ .ConfirmationURL }}\">Log In</a></p>",
+        "mailer_templates_reauthentication_content": "<h2>Confirm reauthentication</h2>\n\n<p>Enter the code: {{ .Token }}</p>",
+        "mailer_templates_recovery_content": "<h2>Reset Password</h2>\n\n<p>Follow this link to reset the password for your user:</p>\n<p><a href=\"{{ .ConfirmationURL }}\">Reset Password</a></p>",
+        "mailer_templates_password_changed_notification_content": "<h2>Your password has been changed</h2>\n\n<p>This is a confirmation that the password for your account {{ .Email }} has just been changed.</p>\n<p>If you did not make this change, please contact support.</p>",
+        "mailer_templates_email_changed_notification_content": "<h2>Your email address has been changed</h2>\n\n<p>The email address for your account has been changed from {{ .OldEmail }} to {{ .Email }}.</p>\n<p>If you did not make this change, please contact support.</p>",
+        "mailer_templates_phone_changed_notification_content": "<h2>Your phone number has been changed</h2>\n\n<p>The phone number for your account {{ .Email }} has been changed from {{ .OldPhone }} to {{ .Phone }}.</p>\n<p>If you did not make this change, please contact support immediately.</p>",
+        "mailer_templates_mfa_factor_enrolled_notification_content": "<h2>A new MFA factor has been enrolled</h2>\n\n<p>A new factor ({{ .FactorType }}) has been enrolled for your account {{ .Email }}.</p>\n<p>If you did not make this change, please contact support immediately.</p>",
+        "mailer_templates_mfa_factor_unenrolled_notification_content": "<h2>An MFA factor has been unenrolled</h2>\n\n<p>A factor ({{ .FactorType }}) has been unenrolled for your account {{ .Email }}.</p>\n<p>If you did not make this change, please contact support immediately.</p>",
+        "mailer_templates_identity_linked_notification_content": "<h2>A new identity has been linked</h2>\n\n<p>A new identity ({{ .Provider }}) has been linked to your account {{ .Email }}.</p>\n<p>If you did not make this change, please contact support immediately.</p>",
+        "mailer_templates_identity_unlinked_notification_content": "<h2>An identity has been unlinked</h2>\n\n<p>An identity ({{ .Provider }}) has been unlinked from your account {{ .Email }}.</p>\n<p>If you did not make this change, please contact support immediately.</p>",
+        "mailer_notifications_password_changed_enabled": false,
+        "mailer_notifications_email_changed_enabled": false,
+        "mailer_notifications_phone_changed_enabled": false,
+        "mailer_notifications_mfa_factor_enrolled_enabled": false,
+        "mailer_notifications_mfa_factor_unenrolled_enabled": false,
+        "mailer_notifications_identity_linked_enabled": false,
+        "mailer_notifications_identity_unlinked_enabled": false,
+        "mfa_totp_enroll_enabled": false,
+        "mfa_totp_verify_enabled": false,
+        "mfa_phone_enroll_enabled": false,
+        "mfa_phone_verify_enabled": false,
+        "mfa_phone_template": "Your code is {{ .Code }}",
+        "mfa_phone_otp_length": 6,
+        "mfa_phone_max_frequency": 5,
+        "mfa_web_authn_enroll_enabled": false,
+        "mfa_web_authn_verify_enabled": false,
+        "passkey_enabled": false,
+        "webauthn_rp_display_name": null,
+        "webauthn_rp_id": null,
+        "webauthn_rp_origins": null,
+        "password_hibp_enabled": false,
+        "password_min_length": 8,
+        "password_required_characters": "",
+        "rate_limit_email_sent": 2,
+        "rate_limit_web3": 30,
+        "saml_allow_encrypted_assertions": false,
+        "saml_enabled": false,
+        "saml_external_url": null,
+        "security_sb_forwarded_for_enabled": false,
+        "security_captcha_enabled": false,
+        "security_captcha_provider": "hcaptcha",
+        "security_captcha_secret": null,
+        "sms_autoconfirm": false,
+        "sms_max_frequency": 5,
+        "sms_messagebird_access_key": null,
+        "sms_messagebird_originator": null,
+        "sms_otp_exp": 60,
+        "sms_otp_length": 6,
+        "sms_provider": "twilio",
+        "sms_template": "Your code is {{ .Code }}",
+        "sms_test_otp": null,
+        "sms_test_otp_valid_until": null,
+        "sms_textlocal_api_key": null,
+        "sms_textlocal_sender": null,
+        "sms_twilio_account_sid": null,
+        "sms_twilio_auth_token": null,
+        "sms_twilio_content_sid": null,
+        "sms_twilio_message_service_sid": null,
+        "sms_twilio_verify_account_sid": null,
+        "sms_twilio_verify_auth_token": null,
+        "sms_twilio_verify_message_service_sid": null,
+        "sms_vonage_api_key": null,
+        "sms_vonage_api_secret": null,
+        "sms_vonage_from": null,
+        "smtp_admin_email": null,
+        "smtp_host": null,
+        "smtp_max_frequency": 1,
+        "smtp_pass": null,
+        "smtp_port": null,
+        "smtp_sender_name": null,
+        "smtp_user": null,
+        "oauth_server_enabled": false,
+        "oauth_server_allow_dynamic_registration": false,
+        "oauth_server_authorization_path": null,
+        "index_worker_ensure_user_search_indexes_exist": true,
+        "custom_oauth_enabled": false,
+        "custom_oauth_max_providers": 3
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "PATCH",
+      "path": "/v1/projects/<PROJECT_REF>/config/auth",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "content-length": "1329",
+        "content-type": "application/json",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/2.90.0"
+      },
+      "body": {
+        "disable_signup": false,
+        "external_anonymous_users_enabled": false,
+        "external_apple_enabled": false,
+        "external_email_enabled": true,
+        "external_phone_enabled": false,
+        "external_web3_ethereum_enabled": false,
+        "external_web3_solana_enabled": false,
+        "jwt_exp": 3600,
+        "mailer_autoconfirm": true,
+        "mailer_otp_exp": 3600,
+        "mailer_otp_length": 6,
+        "mailer_secure_email_change_enabled": true,
+        "mfa_max_enrolled_factors": 10,
+        "mfa_phone_enroll_enabled": false,
+        "mfa_phone_max_frequency": 5,
+        "mfa_phone_otp_length": 6,
+        "mfa_phone_template": "Your code is {{ .Code }}",
+        "mfa_phone_verify_enabled": false,
+        "mfa_totp_enroll_enabled": false,
+        "mfa_totp_verify_enabled": false,
+        "mfa_web_authn_enroll_enabled": false,
+        "mfa_web_authn_verify_enabled": false,
+        "password_min_length": 8,
+        "password_required_characters": "",
+        "rate_limit_anonymous_users": 30,
+        "rate_limit_otp": 30,
+        "rate_limit_sms_sent": 30,
+        "rate_limit_token_refresh": 150,
+        "rate_limit_verify": 30,
+        "rate_limit_web3": 30,
+        "refresh_token_rotation_enabled": true,
+        "security_manual_linking_enabled": false,
+        "security_refresh_token_reuse_interval": 10,
+        "security_update_password_require_reauthentication": false,
+        "sessions_inactivity_timeout": 0,
+        "sessions_timebox": 0,
+        "site_url": "https://example.com",
+        "sms_autoconfirm": false,
+        "sms_max_frequency": 5,
+        "sms_template": "Your code is {{ .Code }}",
+        "smtp_max_frequency": 1,
+        "uri_allow_list": "https://example.com/callback"
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": {
+        "uri_allow_list": "https://example.com/callback",
+        "jwt_exp": 3600,
+        "api_max_request_duration": 10,
+        "db_max_pool_size": 10,
+        "db_max_pool_size_unit": "connections",
+        "disable_signup": false,
+        "security_manual_linking_enabled": false,
+        "security_update_password_require_reauthentication": false,
+        "security_update_password_require_current_password": false,
+        "refresh_token_rotation_enabled": true,
+        "security_refresh_token_reuse_interval": 10,
+        "site_url": "https://example.com",
+        "mfa_max_enrolled_factors": 10,
+        "mfa_allow_low_aal": false,
+        "rate_limit_anonymous_users": 30,
+        "rate_limit_sms_sent": 30,
+        "rate_limit_verify": 30,
+        "rate_limit_token_refresh": 150,
+        "rate_limit_otp": 30,
+        "audit_log_disable_postgres": true,
+        "sessions_timebox": 0,
+        "sessions_inactivity_timeout": 0,
+        "sessions_single_per_user": false,
+        "sessions_tags": null,
+        "hook_custom_access_token_enabled": false,
+        "hook_custom_access_token_uri": null,
+        "hook_custom_access_token_secrets": null,
+        "hook_before_user_created_enabled": false,
+        "hook_before_user_created_uri": null,
+        "hook_before_user_created_secrets": null,
+        "nimbus_oauth_client_id": null,
+        "nimbus_oauth_client_secret": null,
+        "external_anonymous_users_enabled": false,
+        "external_apple_additional_client_ids": null,
+        "external_apple_client_id": null,
+        "external_apple_email_optional": false,
+        "external_apple_enabled": false,
+        "external_apple_secret": null,
+        "external_azure_client_id": null,
+        "external_azure_email_optional": false,
+        "external_azure_enabled": false,
+        "external_azure_secret": null,
+        "external_azure_url": null,
+        "external_bitbucket_client_id": null,
+        "external_bitbucket_email_optional": false,
+        "external_bitbucket_enabled": false,
+        "external_bitbucket_secret": null,
+        "external_discord_client_id": null,
+        "external_discord_email_optional": false,
+        "external_discord_enabled": false,
+        "external_discord_secret": null,
+        "external_email_enabled": true,
+        "external_facebook_client_id": null,
+        "external_facebook_email_optional": false,
+        "external_facebook_enabled": false,
+        "external_facebook_secret": null,
+        "external_figma_client_id": null,
+        "external_figma_email_optional": false,
+        "external_figma_enabled": false,
+        "external_figma_secret": null,
+        "external_github_client_id": null,
+        "external_github_email_optional": false,
+        "external_github_enabled": false,
+        "external_github_secret": null,
+        "external_gitlab_client_id": null,
+        "external_gitlab_email_optional": false,
+        "external_gitlab_enabled": false,
+        "external_gitlab_secret": null,
+        "external_gitlab_url": null,
+        "external_google_additional_client_ids": null,
+        "external_google_client_id": null,
+        "external_google_email_optional": false,
+        "external_google_enabled": false,
+        "external_google_secret": null,
+        "external_google_skip_nonce_check": null,
+        "external_kakao_client_id": null,
+        "external_kakao_email_optional": false,
+        "external_kakao_enabled": false,
+        "external_kakao_secret": null,
+        "external_keycloak_client_id": null,
+        "external_keycloak_email_optional": false,
+        "external_keycloak_enabled": false,
+        "external_keycloak_secret": null,
+        "external_keycloak_url": null,
+        "external_linkedin_oidc_client_id": null,
+        "external_linkedin_oidc_email_optional": false,
+        "external_linkedin_oidc_enabled": false,
+        "external_linkedin_oidc_secret": null,
+        "external_slack_oidc_client_id": null,
+        "external_slack_oidc_email_optional": false,
+        "external_slack_oidc_enabled": false,
+        "external_slack_oidc_secret": null,
+        "external_notion_client_id": null,
+        "external_notion_email_optional": false,
+        "external_notion_enabled": false,
+        "external_notion_secret": null,
+        "external_phone_enabled": false,
+        "external_slack_client_id": null,
+        "external_slack_email_optional": false,
+        "external_slack_enabled": false,
+        "external_slack_secret": null,
+        "external_spotify_client_id": null,
+        "external_spotify_email_optional": false,
+        "external_spotify_enabled": false,
+        "external_spotify_secret": null,
+        "external_twitch_client_id": null,
+        "external_twitch_email_optional": false,
+        "external_twitch_enabled": false,
+        "external_twitch_secret": null,
+        "external_twitter_client_id": null,
+        "external_twitter_email_optional": false,
+        "external_twitter_enabled": false,
+        "external_twitter_secret": null,
+        "external_x_client_id": null,
+        "external_x_email_optional": false,
+        "external_x_enabled": false,
+        "external_x_secret": null,
+        "external_web3_solana_enabled": false,
+        "external_web3_ethereum_enabled": false,
+        "external_workos_client_id": null,
+        "external_workos_enabled": false,
+        "external_workos_secret": null,
+        "external_workos_url": null,
+        "external_zoom_client_id": null,
+        "external_zoom_email_optional": false,
+        "external_zoom_enabled": false,
+        "external_zoom_secret": null,
+        "hook_after_user_created_enabled": false,
+        "hook_after_user_created_uri": null,
+        "hook_after_user_created_secrets": null,
+        "hook_mfa_verification_attempt_enabled": false,
+        "hook_mfa_verification_attempt_uri": null,
+        "hook_mfa_verification_attempt_secrets": null,
+        "hook_password_verification_attempt_enabled": false,
+        "hook_password_verification_attempt_uri": null,
+        "hook_password_verification_attempt_secrets": null,
+        "hook_send_sms_enabled": false,
+        "hook_send_sms_uri": null,
+        "hook_send_sms_secrets": null,
+        "hook_send_email_enabled": false,
+        "hook_send_email_uri": null,
+        "hook_send_email_secrets": null,
+        "mailer_allow_unverified_email_sign_ins": false,
+        "mailer_autoconfirm": true,
+        "mailer_otp_exp": 3600,
+        "mailer_otp_length": 6,
+        "mailer_secure_email_change_enabled": true,
+        "mailer_subjects_confirmation": "Confirm Your Signup",
+        "mailer_subjects_email_change": "Confirm Email Change",
+        "mailer_subjects_invite": "You have been invited",
+        "mailer_subjects_magic_link": "Your Magic Link",
+        "mailer_subjects_reauthentication": "Confirm Reauthentication",
+        "mailer_subjects_recovery": "Reset Your Password",
+        "mailer_subjects_password_changed_notification": "Your password has been changed",
+        "mailer_subjects_email_changed_notification": "Your email address has been changed",
+        "mailer_subjects_phone_changed_notification": "Your phone number has been changed",
+        "mailer_subjects_mfa_factor_enrolled_notification": "A new MFA factor has been enrolled",
+        "mailer_subjects_mfa_factor_unenrolled_notification": "An MFA factor has been unenrolled",
+        "mailer_subjects_identity_linked_notification": "A new identity has been linked",
+        "mailer_subjects_identity_unlinked_notification": "An identity has been unlinked",
+        "mailer_templates_confirmation_content": "<h2>Confirm your signup</h2>\n\n<p>Follow this link to confirm your user:</p>\n<p><a href=\"{{ .ConfirmationURL }}\">Confirm your mail</a></p>",
+        "mailer_templates_email_change_content": "<h2>Confirm Change of Email</h2>\n\n<p>Follow this link to confirm the update of your email from {{ .Email }} to {{ .NewEmail }}:</p>\n<p><a href=\"{{ .ConfirmationURL }}\">Change Email</a></p>",
+        "mailer_templates_invite_content": "<h2>You have been invited</h2>\n\n<p>You have been invited to create a user on {{ .SiteURL }}. Follow this link to accept the invite:</p>\n<p><a href=\"{{ .ConfirmationURL }}\">Accept the invite</a></p>",
+        "mailer_templates_magic_link_content": "<h2>Magic Link</h2>\n\n<p>Follow this link to login:</p>\n<p><a href=\"{{ .ConfirmationURL }}\">Log In</a></p>",
+        "mailer_templates_reauthentication_content": "<h2>Confirm reauthentication</h2>\n\n<p>Enter the code: {{ .Token }}</p>",
+        "mailer_templates_recovery_content": "<h2>Reset Password</h2>\n\n<p>Follow this link to reset the password for your user:</p>\n<p><a href=\"{{ .ConfirmationURL }}\">Reset Password</a></p>",
+        "mailer_templates_password_changed_notification_content": "<h2>Your password has been changed</h2>\n\n<p>This is a confirmation that the password for your account {{ .Email }} has just been changed.</p>\n<p>If you did not make this change, please contact support.</p>",
+        "mailer_templates_email_changed_notification_content": "<h2>Your email address has been changed</h2>\n\n<p>The email address for your account has been changed from {{ .OldEmail }} to {{ .Email }}.</p>\n<p>If you did not make this change, please contact support.</p>",
+        "mailer_templates_phone_changed_notification_content": "<h2>Your phone number has been changed</h2>\n\n<p>The phone number for your account {{ .Email }} has been changed from {{ .OldPhone }} to {{ .Phone }}.</p>\n<p>If you did not make this change, please contact support immediately.</p>",
+        "mailer_templates_mfa_factor_enrolled_notification_content": "<h2>A new MFA factor has been enrolled</h2>\n\n<p>A new factor ({{ .FactorType }}) has been enrolled for your account {{ .Email }}.</p>\n<p>If you did not make this change, please contact support immediately.</p>",
+        "mailer_templates_mfa_factor_unenrolled_notification_content": "<h2>An MFA factor has been unenrolled</h2>\n\n<p>A factor ({{ .FactorType }}) has been unenrolled for your account {{ .Email }}.</p>\n<p>If you did not make this change, please contact support immediately.</p>",
+        "mailer_templates_identity_linked_notification_content": "<h2>A new identity has been linked</h2>\n\n<p>A new identity ({{ .Provider }}) has been linked to your account {{ .Email }}.</p>\n<p>If you did not make this change, please contact support immediately.</p>",
+        "mailer_templates_identity_unlinked_notification_content": "<h2>An identity has been unlinked</h2>\n\n<p>An identity ({{ .Provider }}) has been unlinked from your account {{ .Email }}.</p>\n<p>If you did not make this change, please contact support immediately.</p>",
+        "mailer_notifications_password_changed_enabled": false,
+        "mailer_notifications_email_changed_enabled": false,
+        "mailer_notifications_phone_changed_enabled": false,
+        "mailer_notifications_mfa_factor_enrolled_enabled": false,
+        "mailer_notifications_mfa_factor_unenrolled_enabled": false,
+        "mailer_notifications_identity_linked_enabled": false,
+        "mailer_notifications_identity_unlinked_enabled": false,
+        "mfa_totp_enroll_enabled": false,
+        "mfa_totp_verify_enabled": false,
+        "mfa_phone_enroll_enabled": false,
+        "mfa_phone_verify_enabled": false,
+        "mfa_phone_template": "Your code is {{ .Code }}",
+        "mfa_phone_otp_length": 6,
+        "mfa_phone_max_frequency": 5,
+        "mfa_web_authn_enroll_enabled": false,
+        "mfa_web_authn_verify_enabled": false,
+        "passkey_enabled": false,
+        "webauthn_rp_display_name": null,
+        "webauthn_rp_id": null,
+        "webauthn_rp_origins": null,
+        "password_hibp_enabled": false,
+        "password_min_length": 8,
+        "password_required_characters": "",
+        "rate_limit_email_sent": null,
+        "rate_limit_web3": 30,
+        "saml_allow_encrypted_assertions": false,
+        "saml_enabled": false,
+        "saml_external_url": null,
+        "security_sb_forwarded_for_enabled": false,
+        "security_captcha_enabled": false,
+        "security_captcha_provider": null,
+        "security_captcha_secret": null,
+        "sms_autoconfirm": false,
+        "sms_max_frequency": 5,
+        "sms_messagebird_access_key": null,
+        "sms_messagebird_originator": null,
+        "sms_otp_exp": 60,
+        "sms_otp_length": 6,
+        "sms_provider": null,
+        "sms_template": "Your code is {{ .Code }}",
+        "sms_test_otp": null,
+        "sms_test_otp_valid_until": null,
+        "sms_textlocal_api_key": null,
+        "sms_textlocal_sender": null,
+        "sms_twilio_account_sid": null,
+        "sms_twilio_auth_token": null,
+        "sms_twilio_content_sid": null,
+        "sms_twilio_message_service_sid": null,
+        "sms_twilio_verify_account_sid": null,
+        "sms_twilio_verify_auth_token": null,
+        "sms_twilio_verify_message_service_sid": null,
+        "sms_vonage_api_key": null,
+        "sms_vonage_api_secret": null,
+        "sms_vonage_from": null,
+        "smtp_admin_email": null,
+        "smtp_host": null,
+        "smtp_max_frequency": 1,
+        "smtp_pass": null,
+        "smtp_port": null,
+        "smtp_sender_name": null,
+        "smtp_user": null,
+        "oauth_server_enabled": false,
+        "oauth_server_allow_dynamic_registration": false,
+        "oauth_server_authorization_path": null,
+        "index_worker_ensure_user_search_indexes_exist": true,
+        "custom_oauth_enabled": false,
+        "custom_oauth_max_providers": 3
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v1/projects/<PROJECT_REF>/config/storage",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/2.90.0"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": {
+        "fileSizeLimit": 52428800,
+        "features": {
+          "imageTransformation": {
+            "enabled": true
+          },
+          "s3Protocol": {
+            "enabled": true
+          },
+          "icebergCatalog": {
+            "enabled": true,
+            "maxNamespaces": 10,
+            "maxTables": 10,
+            "maxCatalogs": 2
+          },
+          "vectorBuckets": {
+            "enabled": true,
+            "maxBuckets": 10,
+            "maxIndexes": 5
+          }
+        },
+        "capabilities": {
+          "list_v2": true,
+          "iceberg_catalog": true
+        },
+        "external": {
+          "upstreamTarget": "canary"
+        },
+        "migrationVersion": "operation-ergonomics",
+        "databasePoolMode": "recycled"
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/projects/<PROJECT_REF>/database/webhooks/enable",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer <ACCESS_TOKEN>",
+        "content-length": "0",
+        "host": "localhost:<PORT>",
+        "user-agent": "SupabaseCLI/2.90.0"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 201,
+      "headers": {
+        "x-gotrue-id": "<UUID>",
+        "x-ratelimit-limit": "120",
+        "x-ratelimit-remaining": "119",
+        "x-ratelimit-reset": "60"
+      },
+      "body": null
+    }
+  }
+]

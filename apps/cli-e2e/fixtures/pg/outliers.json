@@ -1,0 +1,12 @@
+{
+  "columns": ["total_exec_time", "prop_exec_time", "ncalls", "sync_io_time", "query"],
+  "rows": [
+    [
+      "00:00:05.678901",
+      "75%",
+      "500",
+      "00:00:00.5",
+      "SELECT * FROM orders WHERE created_at > now() - interval '1 day'"
+    ]
+  ]
+}
