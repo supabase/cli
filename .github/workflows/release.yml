@@ -1,10 +1,17 @@
-name: Release Alpha
+name: Release
 
 on:
   workflow_dispatch:
     inputs:
+      channel:
+        description: Release channel
+        required: true
+        type: choice
+        options:
+          - alpha
+          - stable
       version:
-        description: Alpha npm package version to publish
+        description: npm package version to publish
         required: true
         type: string
       dry_run:
@@ -18,8 +25,8 @@ jobs:
     uses: ./.github/workflows/release-shared.yml
     with:
       version: ${{ inputs.version }}
-      shell: next
-      npm_tag: alpha
-      prerelease: true
+      shell: ${{ inputs.channel == 'alpha' && 'next' || 'legacy' }}
+      npm_tag: ${{ inputs.channel == 'alpha' && 'alpha' || 'latest' }}
+      prerelease: ${{ inputs.channel == 'alpha' }}
       dry_run: ${{ inputs.dry_run }}
     secrets: inherit
