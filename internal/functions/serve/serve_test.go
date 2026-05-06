@@ -128,6 +128,22 @@ func TestServeCommand(t *testing.T) {
 	})
 }
 
+func TestMainTemplateNoRemoteImports(t *testing.T) {
+	// Regression pin for supabase/supabase#45570: the embedded edge-runtime
+	// entrypoint must not re-introduce remote imports, otherwise `supabase
+	// start` cannot bootstrap the worker container offline.
+	for _, scheme := range []string{
+		"https://deno.land/",
+		"http://deno.land/",
+		"https://esm.sh/",
+		"https://cdn.jsdelivr.net/",
+		"https://unpkg.com/",
+	} {
+		assert.NotContains(t, mainFuncEmbed, scheme,
+			"templates/main.ts must not import from %s (offline boot regression)", scheme)
+	}
+}
+
 func TestServeFunctions(t *testing.T) {
 	require.NoError(t, utils.Config.Load("testdata/config.toml", testdata))
 	utils.UpdateDockerIds()
