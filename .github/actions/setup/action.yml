@@ -18,7 +18,7 @@ runs:
 
     - name: Enable Corepack
       shell: bash
-      run: npm install --global corepack && corepack enable
+      run: npm install --global --force corepack && corepack enable
 
     - name: Configure dependency cache
       uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
