@@ -1392,6 +1392,7 @@ const (
 	V1ListEntitlementsResponseEntitlementsFeatureKeyAssistantAdvanceModel                 V1ListEntitlementsResponseEntitlementsFeatureKey = "assistant.advance_model"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthAdvancedAuthSettings              V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.advanced_auth_settings"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthCustomJwtTemplate                 V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.custom_jwt_template"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthCustomOauthMaxProviders           V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.custom_oauth.max_providers"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthHooks                             V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.hooks"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthLeakedPasswordProtection          V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.leaked_password_protection"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthMfaEnhancedSecurity               V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.mfa_enhanced_security"
