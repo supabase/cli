@@ -1,10 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Duration, Effect, Exit, Fiber, Layer, Sink, Stream } from "effect";
+import { Deferred, Duration, Effect, Exit, Fiber, Layer, Option, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { buildGraph } from "./DependencyGraph.ts";
 import { LogBuffer } from "./LogBuffer.ts";
 import { Orchestrator } from "./Orchestrator.ts";
 import type { OrchestratorConfig, ServiceDef } from "./ServiceDef.ts";
+import type { ServiceState } from "./ServiceState.ts";
 
 // --- Mock factories ---
 
@@ -12,11 +13,13 @@ const encoder = new TextEncoder();
 
 function mockLogBuffer() {
   const entries: Array<{ service: string; stream: string; line: string }> = [];
+  const entryEvents = createWaitList();
   return {
     layer: Layer.succeed(LogBuffer, {
       append: (service: string, stream: "stdout" | "stderr", line: string) =>
         Effect.sync(() => {
           entries.push({ service, stream, line });
+          entryEvents.notify();
         }),
       subscribe: (_service: string) => Stream.empty,
       subscribeAll: () => Stream.empty,
@@ -50,12 +53,23 @@ function mockLogBuffer() {
     get entries() {
       return entries;
     },
+    waitForEntry(
+      predicate: (entry: { service: string; stream: string; line: string }) => boolean,
+      description: string,
+    ) {
+      return entryEvents.waitUntil(() => entries.some(predicate), description);
+    },
   };
 }
 
 interface SpawnRecord {
   command: string;
   args: ReadonlyArray<string>;
+}
+
+interface KillRecord {
+  command: string;
+  signal: string;
 }
 
 interface SpawnOpts {
@@ -65,6 +79,80 @@ interface SpawnOpts {
   exitDelay?: Duration.Input;
 }
 
+function createWaitList() {
+  interface Waiter {
+    readonly ready: () => boolean;
+    readonly resolve: () => void;
+    readonly timeout: ReturnType<typeof setTimeout>;
+  }
+
+  const waiters = new Set<Waiter>();
+
+  const notify = () => {
+    for (const waiter of waiters) {
+      if (waiter.ready()) {
+        clearTimeout(waiter.timeout);
+        waiters.delete(waiter);
+        waiter.resolve();
+      }
+    }
+  };
+
+  const waitUntil = (ready: () => boolean, description: string, timeoutMs = 2_000) =>
+    Effect.promise(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          if (ready()) {
+            resolve();
+            return;
+          }
+
+          const waiter: Waiter = {
+            ready,
+            resolve,
+            timeout: setTimeout(() => {
+              waiters.delete(waiter);
+              reject(new Error(`Timed out waiting for ${description}`));
+            }, timeoutMs),
+          };
+          waiters.add(waiter);
+        }),
+    );
+
+  return { notify, waitUntil };
+}
+
+const waitForState = (
+  orc: Orchestrator["Service"],
+  name: string,
+  predicate: (state: ServiceState) => boolean,
+  description: string,
+) =>
+  Effect.gen(function* () {
+    const current = yield* orc.getState(name);
+    if (predicate(current)) return current;
+
+    const stream = yield* orc.stateChanges(name);
+    const result = yield* stream.pipe(
+      Stream.filter(predicate),
+      Stream.runHead,
+      Effect.timeout(Duration.seconds(3)),
+    );
+    return Option.getOrThrowWith(
+      result,
+      () => new Error(`Timed out waiting for ${name} to become ${description}`),
+    );
+  });
+
+const waitForHealthy = (orc: Orchestrator["Service"], name: string) =>
+  waitForState(orc, name, (state) => state.status === "Healthy", "Healthy");
+
+const waitForFailed = (orc: Orchestrator["Service"], name: string) =>
+  waitForState(orc, name, (state) => state.status === "Failed", "Failed");
+
+const waitForStopped = (orc: Orchestrator["Service"], name: string) =>
+  waitForState(orc, name, (state) => state.status === "Stopped", "Stopped");
+
 function mockChildProcessSpawner(
   opts: SpawnOpts & {
     perService?: Record<string, SpawnOpts>;
@@ -72,7 +160,9 @@ function mockChildProcessSpawner(
   } = {},
 ) {
   const spawned: SpawnRecord[] = [];
-  const killed: string[] = [];
+  const killed: KillRecord[] = [];
+  const spawnEvents = createWaitList();
+  const killEvents = createWaitList();
 
   return {
     layer: Layer.succeed(
@@ -84,6 +174,7 @@ function mockChildProcessSpawner(
           const record: SpawnRecord = { command: cmd, args };
           spawned.push(record);
           opts.onSpawn?.(record);
+          spawnEvents.notify();
 
           // Per-service overrides
           const svcOpts = opts.perService?.[cmd] ?? opts;
@@ -109,7 +200,8 @@ function mockChildProcessSpawner(
             stdin: Sink.drain,
             kill: (killOpts) =>
               Effect.gen(function* () {
-                killed.push(killOpts?.killSignal ?? "SIGTERM");
+                killed.push({ command: cmd, signal: killOpts?.killSignal ?? "SIGTERM" });
+                killEvents.notify();
                 yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(143));
               }),
             getInputFd: () => Sink.drain,
@@ -123,6 +215,24 @@ function mockChildProcessSpawner(
     },
     get killed() {
       return killed;
+    },
+    waitForSpawnCount(count: number) {
+      return spawnEvents.waitUntil(
+        () => spawned.length >= count,
+        `${count} spawned processes; saw ${spawned.length}`,
+      );
+    },
+    waitForSpawn(command: string, count = 1) {
+      return spawnEvents.waitUntil(
+        () => spawned.filter((record) => record.command === command).length >= count,
+        `${count} spawned ${command} processes`,
+      );
+    },
+    waitForKillCount(count: number) {
+      return killEvents.waitUntil(
+        () => killed.length >= count,
+        `${count} killed processes; saw ${killed.length}`,
+      );
     },
   };
 }
@@ -220,8 +330,7 @@ describe("Orchestrator", () => {
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
       yield* orc.start();
-      // Give time for all fibers to spawn
-      yield* Effect.sleep(Duration.millis(50));
+      yield* proc.waitForSpawnCount(3);
       expect(proc.spawned.length).toBe(3);
       const names = proc.spawned.map((s) => s.command).sort();
       expect(names).toEqual(["a", "b", "c"]);
@@ -245,8 +354,7 @@ describe("Orchestrator", () => {
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
       yield* orc.start();
-      // Wait for both to have spawned
-      yield* Effect.sleep(Duration.millis(100));
+      yield* waitForHealthy(orc, "api");
       expect(spawnOrder[0]).toBe("db");
       expect(spawnOrder[1]).toBe("api");
     }).pipe(Effect.provide(layer), Effect.scoped);
@@ -259,7 +367,7 @@ describe("Orchestrator", () => {
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
       yield* orc.start();
-      yield* Effect.sleep(Duration.millis(50));
+      yield* waitForHealthy(orc, "a");
       const state = yield* orc.getState("a");
       // Should be Running or Healthy (no health check = immediate Healthy)
       expect(["Running", "Healthy"]).toContain(state.status);
@@ -293,7 +401,7 @@ describe("Orchestrator", () => {
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
       yield* orc.start();
-      yield* Effect.sleep(Duration.millis(50));
+      yield* waitForHealthy(orc, "a");
       yield* orc.stopService("a");
       const state = yield* orc.getState("a");
       expect(state.status).toBe("Stopped");
@@ -307,10 +415,10 @@ describe("Orchestrator", () => {
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
       yield* orc.start();
-      yield* Effect.sleep(Duration.millis(50));
-      // Both services should be running
+      yield* proc.waitForSpawnCount(2);
       expect(proc.spawned.length).toBe(2);
       yield* orc.stop();
+      yield* proc.waitForKillCount(2);
       // Kill should have been called for each service (via finalizer)
       expect(proc.killed.length).toBeGreaterThanOrEqual(2);
     }).pipe(Effect.provide(layer), Effect.scoped);
@@ -329,7 +437,7 @@ describe("Orchestrator", () => {
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
       yield* orc.start();
-      yield* Effect.sleep(Duration.millis(50));
+      yield* proc.waitForSpawnCount(1);
       expect(proc.spawned).toHaveLength(1);
       expect(proc.spawned[0]?.command).toMatch(/(^node$|node(\.exe)?$|\/node$|\\node\.exe$)/);
       expect(proc.spawned[0]?.args[0]).toContain("supervisor-runtime.mjs");
@@ -354,7 +462,7 @@ describe("Orchestrator", () => {
 
   it.live("stop() waits for service cleanup finalizers", () => {
     let cleanedUp = false;
-    const { layer } = setupOrchestrator(
+    const { layer, proc } = setupOrchestrator(
       [
         svc("postgres", {
           cleanup: Effect.sleep(Duration.millis(150)).pipe(
@@ -371,7 +479,7 @@ describe("Orchestrator", () => {
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
       yield* orc.start();
-      yield* Effect.sleep(Duration.millis(50));
+      yield* proc.waitForSpawnCount(1);
       yield* orc.stop();
       expect(cleanedUp).toBe(true);
     }).pipe(Effect.provide(layer), Effect.scoped);
@@ -394,7 +502,7 @@ describe("Orchestrator", () => {
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
       yield* orc.startService("web");
-      yield* Effect.sleep(Duration.millis(100));
+      yield* proc.waitForSpawnCount(3);
       const names = proc.spawned.map((s) => s.command).sort();
       // Should start db, api, web — but NOT unrelated
       expect(names).toEqual(["api", "db", "web"]);
@@ -408,10 +516,10 @@ describe("Orchestrator", () => {
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
       yield* orc.start();
-      yield* Effect.sleep(Duration.millis(50));
+      yield* proc.waitForSpawnCount(1);
       expect(proc.spawned.length).toBe(1);
       yield* orc.restartService("a");
-      yield* Effect.sleep(Duration.millis(50));
+      yield* proc.waitForSpawnCount(2);
       // Should have spawned twice
       expect(proc.spawned.length).toBe(2);
     }).pipe(Effect.provide(layer), Effect.scoped);
@@ -444,7 +552,7 @@ describe("Orchestrator", () => {
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
       yield* orc.start();
-      yield* Effect.sleep(Duration.millis(50));
+      yield* proc.waitForSpawnCount(1);
       const names = proc.spawned.map((s) => s.command);
       expect(names).toEqual(["a"]);
     }).pipe(Effect.provide(layer), Effect.scoped);
@@ -457,7 +565,7 @@ describe("Orchestrator", () => {
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
       yield* orc.start();
-      yield* Effect.sleep(Duration.millis(50));
+      yield* waitForHealthy(orc, "a");
       const state = yield* orc.getState("a");
       expect(state.status).toBe("Healthy");
     }).pipe(Effect.provide(layer), Effect.scoped);
@@ -471,7 +579,10 @@ describe("Orchestrator", () => {
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
       yield* orc.start();
-      yield* Effect.sleep(Duration.millis(100));
+      yield* log.waitForEntry(
+        (entry) => entry.service === "a" && entry.line === "hello world",
+        "service stdout log",
+      );
       const matching = log.entries.filter((e) => e.service === "a" && e.line === "hello world");
       expect(matching.length).toBe(1);
     }).pipe(Effect.provide(layer), Effect.scoped);
@@ -485,7 +596,7 @@ describe("Orchestrator", () => {
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
       yield* orc.start();
-      yield* Effect.sleep(Duration.millis(200));
+      yield* waitForStopped(orc, "a");
       const state = yield* orc.getState("a");
       expect(state.status).toBe("Stopped");
       expect(state.exitCode).toBe(0);
@@ -500,7 +611,7 @@ describe("Orchestrator", () => {
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
       yield* orc.start();
-      yield* Effect.sleep(Duration.millis(200));
+      yield* waitForFailed(orc, "a");
       const state = yield* orc.getState("a");
       expect(state.status).toBe("Failed");
       expect(state.exitCode).toBe(1);
@@ -529,7 +640,7 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(500));
+        yield* waitForFailed(orc, "api");
         const state = yield* orc.getState("api");
         expect(state.status).toBe("Failed");
         expect(state.error).toContain("Timed out");
@@ -550,7 +661,12 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(100));
+        yield* waitForState(
+          orc,
+          "api",
+          (state) => state.status === "Running" || state.status === "Healthy",
+          "Running or Healthy",
+        );
         const state = yield* orc.getState("api");
         expect(["Running", "Healthy"]).toContain(state.status);
       }).pipe(Effect.provide(layer), Effect.scoped);
@@ -573,7 +689,7 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(500));
+        yield* waitForFailed(orc, "app");
         const state = yield* orc.getState("app");
         expect(state.status).toBe("Failed");
         expect(state.error).toContain("Timed out");
@@ -613,7 +729,10 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(1000));
+        yield* log.waitForEntry(
+          (entry) => entry.service === "a" && entry.line.includes("[health-check-failed]"),
+          "health-check failure diagnostic",
+        );
         const diagnosticEntries = log.entries.filter(
           (e) => e.service === "a" && e.line.includes("[health-check-failed]"),
         );
@@ -644,7 +763,7 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(100));
+        yield* waitForHealthy(orc, "a");
         expect(hookRan).toBe(true);
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
@@ -670,7 +789,7 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(100));
+        yield* waitForHealthy(orc, "a");
         expect(hookRan).toBe(true);
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
@@ -705,7 +824,7 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(300));
+        yield* waitForHealthy(orc, "api");
         expect(order).toEqual(["db-hook-done", "api-spawned"]);
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
@@ -728,7 +847,7 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(200));
+        yield* waitForFailed(orc, "a");
         const state = yield* orc.getState("a");
         expect(state.status).toBe("Failed");
         expect(state.error).toContain("migration failed");
@@ -753,7 +872,7 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(100));
+        yield* waitForHealthy(orc, "a");
         const state = yield* orc.getState("a");
         expect(state.status).toBe("Healthy");
       }).pipe(Effect.provide(layer), Effect.scoped);
@@ -778,7 +897,7 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(500));
+        yield* waitForFailed(orc, "a");
         const state = yield* orc.getState("a");
         expect(state.status).toBe("Failed");
       }).pipe(Effect.provide(layer), Effect.scoped);
@@ -805,10 +924,10 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(50));
+        yield* waitForHealthy(orc, "a");
         expect(hookCount).toBe(1);
         yield* orc.restartService("a");
-        yield* Effect.sleep(Duration.millis(50));
+        yield* waitForHealthy(orc, "a");
         expect(hookCount).toBe(2);
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
@@ -830,7 +949,7 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(100));
+        yield* waitForHealthy(orc, "a");
         expect(order).toEqual([1, 2, 3]);
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
@@ -856,7 +975,10 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(100));
+        yield* log.waitForEntry(
+          (entry) => entry.service === "a" && entry.line === "migration complete",
+          "hook completion log",
+        );
         const hookLogs = log.entries.filter(
           (e) => e.service === "a" && e.line === "migration complete",
         );
@@ -881,7 +1003,7 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(200));
+        yield* waitForHealthy(orc, "api");
         const dbLogs = log.entries.filter((e) => e.service === "db" && e.line === "db-hook-log");
         const apiLogs = log.entries.filter((e) => e.service === "api" && e.line === "api-hook-log");
         expect(dbLogs.length).toBe(1);
@@ -914,7 +1036,7 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(100));
+        yield* waitForHealthy(orc, "a");
         const state = yield* orc.getState("a");
         expect(state.status).toBe("Healthy");
         const hookLogs = log.entries.filter(
@@ -927,13 +1049,13 @@ describe("Orchestrator", () => {
 
   describe("parallel shutdown", () => {
     it.live("stop() stops all independent services", () => {
-      const { layer } = setupOrchestrator([svc("a"), svc("b"), svc("c")], {
+      const { layer, proc } = setupOrchestrator([svc("a"), svc("b"), svc("c")], {
         exitDelay: "5 seconds",
       });
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(50));
+        yield* proc.waitForSpawnCount(3);
         yield* orc.stop();
         const states = yield* orc.getAllStates();
         for (const s of states) {
@@ -943,8 +1065,7 @@ describe("Orchestrator", () => {
     });
 
     it.live("stop() respects dependency order: dependent stops before dependency", () => {
-      const stopOrder: string[] = [];
-      const { layer } = setupOrchestrator(
+      const { layer, proc } = setupOrchestrator(
         [
           svc("db"),
           svc("api", {
@@ -955,30 +1076,18 @@ describe("Orchestrator", () => {
       );
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
-
-        // Subscribe to all state changes to track stop order
-        const fiber = yield* orc.allStateChanges().pipe(
-          Stream.runForEach((s) =>
-            Effect.sync(() => {
-              if (s.status === "Stopped") stopOrder.push(s.name);
-            }),
-          ),
-          Effect.forkChild,
-        );
-
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(100));
+        yield* proc.waitForSpawn("api");
         yield* orc.stop();
-        yield* Effect.sleep(Duration.millis(50));
-        yield* Fiber.interrupt(fiber);
 
         // api must stop before db (dependent before dependency)
-        expect(stopOrder.indexOf("api")).toBeLessThan(stopOrder.indexOf("db"));
+        const killOrder = proc.killed.map((record) => record.command);
+        expect(killOrder.indexOf("api")).toBeLessThan(killOrder.indexOf("db"));
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
 
     it.live("stop() handles diamond dependencies", () => {
-      const { layer } = setupOrchestrator(
+      const { layer, proc } = setupOrchestrator(
         [
           svc("a"),
           svc("b", { dependencies: [{ service: "a", condition: "started" }] }),
@@ -995,7 +1104,7 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(200));
+        yield* proc.waitForSpawnCount(4);
         yield* orc.stop();
         const states = yield* orc.getAllStates();
         for (const s of states) {
@@ -1015,7 +1124,7 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(50));
+        yield* waitForHealthy(orc, "a");
         yield* orc.stop();
         const states = yield* orc.getAllStates();
         for (const s of states) {
@@ -1032,7 +1141,7 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(50));
+        yield* waitForState(orc, "stuck", (state) => state.status === "Healthy", "Healthy");
         const before = Date.now();
         yield* orc.stop();
         const elapsed = Date.now() - before;
@@ -1048,7 +1157,7 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(50));
+        yield* waitForState(orc, "stuck", (state) => state.status === "Healthy", "Healthy");
         yield* orc.stop();
         const timeoutEntries = log.entries.filter((e) => e.line.includes("[shutdown-timeout]"));
         expect(timeoutEntries.length).toBeGreaterThanOrEqual(1);
@@ -1089,8 +1198,7 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        // Wait for: spawn → healthy → unhealthy → restart → spawn again
-        yield* Effect.sleep(Duration.millis(2000));
+        yield* proc.waitForSpawn("a", 2);
         // Should have spawned the main service twice (original + 1 restart)
         const mainSpawns = proc.spawned.filter((s) => s.command === "a");
         expect(mainSpawns.length).toBe(2);
@@ -1127,7 +1235,7 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* Effect.sleep(Duration.millis(1000));
+        yield* waitForState(orc, "a", (state) => state.status === "Unhealthy", "Unhealthy");
         const state = yield* orc.getState("a");
         expect(state.status).toBe("Unhealthy");
         const mainSpawns = proc.spawned.filter((s) => s.command === "a");
@@ -1164,8 +1272,8 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        // Wait long enough for multiple restart attempts
-        yield* Effect.sleep(Duration.millis(3000));
+        yield* proc.waitForSpawn("a", 2);
+        yield* waitForState(orc, "a", (state) => state.status === "Unhealthy", "Unhealthy");
         // maxRestarts=1 means original spawn + 1 restart = 2 total
         const mainSpawns = proc.spawned.filter((s) => s.command === "a");
         expect(mainSpawns.length).toBe(2);

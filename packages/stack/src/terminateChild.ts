@@ -17,19 +17,21 @@ export const terminateChildProcess = async (
 
   const timeoutMs = opts.timeoutMs ?? 1_000;
 
+  const termExit = waitForChildExit(child, timeoutMs);
   try {
     child.kill("SIGTERM");
   } catch {}
 
-  if (await waitForChildExit(child, timeoutMs)) {
+  if (await termExit) {
     return;
   }
 
+  const killExit = waitForChildExit(child, timeoutMs);
   try {
     child.kill("SIGKILL");
   } catch {}
 
-  await waitForChildExit(child, timeoutMs);
+  await killExit;
 };
 
 function waitForChildExit(child: ChildLike, timeoutMs: number): Promise<boolean> {
