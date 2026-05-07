@@ -514,6 +514,7 @@ describe("docker-backed auxiliary services", () => {
     });
     expect(def.healthCheck?.initialDelaySeconds).toBe(10);
     expect(args).toContain("PORT=4000");
+    expect(args).toContain("PHX_HTTP_PORT=4000");
     expect(args).toContain("54328:4000");
     expect(args).toContain("LOGFLARE_NODE_HOST=0.0.0.0");
     expect(args.join("\n")).toContain(
@@ -537,6 +538,7 @@ describe("docker-backed auxiliary services", () => {
     });
 
     expect(def.args).toContain("PORT=54328");
+    expect(def.args).toContain("PHX_HTTP_PORT=54328");
     expect(def.args).toContain("LOGFLARE_NODE_HOST=127.0.0.1");
   });
 

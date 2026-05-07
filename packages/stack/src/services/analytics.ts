@@ -43,6 +43,7 @@ const analyticsHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
 export const makeAnalyticsServiceDocker = (opts: DockerAnalyticsOptions): ServiceDef => {
   const env: Record<string, string> = {
     PORT: String(opts.listenPort),
+    PHX_HTTP_PORT: String(opts.listenPort),
     DB_DATABASE: "_supabase",
     DB_HOSTNAME: opts.dbHost,
     DB_PORT: String(opts.dbPort),
