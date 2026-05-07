@@ -7,6 +7,11 @@ on:
       - main
   pull_request_review:
     types: [submitted]
+  # workflow_dispatch is the manual re-cut path. Use it when:
+  #   - a previous release published stale bytes under a version that
+  #     semantic-release keeps re-computing (cut a fresh version forward), or
+  #   - a downstream step (GH release, brew, scoop) failed after npm published
+  #     and you need to rerun the whole pipeline against an explicit version.
   workflow_dispatch:
     inputs:
       channel:
@@ -18,9 +23,12 @@ on:
           - beta
           - stable
       version:
-        description: npm package version to publish
+        description: npm package version to publish (must be unique on npm; pick the next unused version)
         required: true
         type: string
+      # Defaults to `true` so a stray "Run workflow" click can't accidentally
+      # publish — operators recovering from a stale-bytes run must consciously
+      # untick this when dispatching.
       dry_run:
         description: Dry run (skip actual publishing)
         required: false

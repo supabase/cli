@@ -152,6 +152,26 @@ jobs:
       - name: Publish to npm
         run: pnpm exec bun apps/cli/scripts/publish.ts --tag ${{ inputs.npm_tag }}
 
+      # Push the version tag to origin as soon as npm has the bytes, before any
+      # downstream step that can fail. Without this, a failure in the GH-release
+      # step (or anything after) leaves origin with no tag for the version that
+      # is now live on npm — and `semantic-release --dry-run` on the next push
+      # will keep recomputing the same version, causing the publish job to no-op
+      # against stale bytes. Idempotent: skips push if the tag is already on
+      # origin (e.g. a re-run of a job that previously got past this step).
+      - name: Push version tag
+        run: |
+          set -euo pipefail
+          tag="v${{ inputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --tags origin "refs/tags/${tag}" | grep -q .; then
+            echo "Tag ${tag} already on origin; skipping push."
+          else
+            git tag -a "${tag}" -m "Release ${tag}"
+            git push origin "${tag}"
+          fi
+
       - name: Create draft GitHub Release
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
         with:
