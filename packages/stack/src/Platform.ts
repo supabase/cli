@@ -39,19 +39,16 @@ export const edgeRuntimeAssetName = (p: PlatformInfo): string | null => {
   return null;
 };
 
-/**
- * Host address that Docker containers should use to reach services on the host machine.
- * On Linux, --network=host makes 127.0.0.1 work. On macOS/Windows, Docker runs in a VM
- * so containers must use host.docker.internal.
- */
-export const dockerHostAddress = (os: string): string =>
-  os === "linux" ? "127.0.0.1" : "host.docker.internal";
+/** Host address that Docker containers should use to reach services on the host machine. */
+export const dockerHostAddress = (_os: string): string => "host.docker.internal";
 
-export const dockerUsesHostNetwork = (os: string): boolean => os === "linux";
+const dockerHostGatewayArgs = (os: string): readonly string[] =>
+  os === "linux" ? ["--add-host", "host.docker.internal:host-gateway"] : [];
 
 /**
- * Docker networking args. On Linux, --network=host shares the host's network namespace.
- * On macOS/Windows, we use explicit port mapping since --network=host doesn't work.
+ * Docker networking args. We publish ports on every platform so container ports stay fixed
+ * and host ports can be randomized consistently. Linux needs an explicit host-gateway alias
+ * for host.docker.internal; Docker Desktop provides that name on macOS/Windows.
  */
 export const dockerNetworkArgs = (os: string, ports: readonly number[]): readonly string[] =>
   dockerPortMapArgs(
@@ -65,7 +62,7 @@ export const dockerPortMapArgs = (
     readonly host: number;
     readonly container: number;
   }>,
-): readonly string[] =>
-  dockerUsesHostNetwork(os)
-    ? ["--network=host"]
-    : mappings.flatMap(({ host, container }) => ["-p", `${host}:${container}`]);
+): readonly string[] => [
+  ...dockerHostGatewayArgs(os),
+  ...mappings.flatMap(({ host, container }) => ["-p", `${host}:${container}`]),
+];

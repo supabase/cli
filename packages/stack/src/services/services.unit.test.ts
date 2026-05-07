@@ -21,6 +21,7 @@ const POSTGRES_BIN_PATH = `/cache/postgres/${DEFAULT_VERSIONS.postgres}/darwin-a
 const POSTGREST_BIN_PATH = `/cache/postgrest/${DEFAULT_VERSIONS.postgrest}/macos-aarch64`;
 const AUTH_BIN_PATH = `/cache/auth/${DEFAULT_VERSIONS.auth}/arm64`;
 const EDGE_RUNTIME_BIN_PATH = `/cache/edge-runtime/${DEFAULT_VERSIONS["edge-runtime"]}/aarch64-darwin`;
+const LINUX_HOST_GATEWAY_ARGS = ["--add-host", "host.docker.internal:host-gateway"];
 
 describe("makePostgresService", () => {
   it("creates a postgres ServiceDef with correct defaults", () => {
@@ -62,10 +63,10 @@ describe("makePostgresService", () => {
 });
 
 describe("analyticsDockerRuntimeNetwork", () => {
-  it("uses the configured host port directly on Linux host networking", () => {
-    expect(analyticsDockerRuntimeNetwork("linux", 54328, "127.0.0.1")).toEqual({
-      listenPort: 54328,
-      nodeHost: "127.0.0.1",
+  it("uses the container port behind Docker port mapping on Linux", () => {
+    expect(analyticsDockerRuntimeNetwork("linux", 54328, "host.docker.internal")).toEqual({
+      listenPort: 4000,
+      nodeHost: "0.0.0.0",
     });
   });
 
@@ -127,7 +128,7 @@ describe("makePostgresServiceDocker", () => {
       image: dockerImageForService("postgres", DEFAULT_VERSIONS.postgres),
       dataDir: "/tmp/supabase/data",
       port: DB_PORT,
-      networkArgs: ["--network=host"],
+      networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", `${DB_PORT}:${DB_PORT}`],
       jwtSecret: "test-jwt-secret-with-at-least-32-characters",
       jwtExpiry: 3600,
       apiPort: API_PORT,
@@ -138,7 +139,8 @@ describe("makePostgresServiceDocker", () => {
     expect(def.args).toContain("run");
     expect(def.args).toContain("--rm");
     expect(def.args).toContain(`supabase-postgres-${API_PORT}`);
-    expect(def.args).toContain("--network=host");
+    expect(def.args).toContain("host.docker.internal:host-gateway");
+    expect(def.args).toContain(`${DB_PORT}:${DB_PORT}`);
     expect(def.args).toContain(dockerImageForService("postgres", DEFAULT_VERSIONS.postgres));
     expect(def.args).toContain("/tmp/supabase/data:/var/lib/postgresql/data");
     // Verify port is passed to postgres inside the container
@@ -169,7 +171,7 @@ describe("makePostgresServiceDocker", () => {
       image: dockerImageForService("postgres", DEFAULT_VERSIONS.postgres),
       dataDir: "/tmp/supabase/data",
       port: DB_PORT,
-      networkArgs: ["--network=host"],
+      networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", `${DB_PORT}:${DB_PORT}`],
       jwtSecret: "test-jwt-secret-with-at-least-32-characters",
       jwtExpiry: 3600,
       apiPort: API_PORT,
@@ -259,7 +261,7 @@ describe("makeAuthServiceDocker", () => {
       jwtExpiry: 3600,
       externalUrl: `http://127.0.0.1:${API_PORT}`,
       dbHost: "127.0.0.1",
-      networkArgs: ["--network=host"],
+      networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", "9999:9999"],
       apiPort: API_PORT,
       dependencies: [{ service: "postgres", condition: "healthy" }],
     });
@@ -269,7 +271,8 @@ describe("makeAuthServiceDocker", () => {
     expect(def.args).toContain("run");
     expect(def.args).toContain("--rm");
     expect(def.args).toContain(`supabase-auth-${API_PORT}`);
-    expect(def.args).toContain("--network=host");
+    expect(def.args).toContain("host.docker.internal:host-gateway");
+    expect(def.args).toContain("9999:9999");
     expect(def.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
     expect(def.supervision).toEqual({
       orphanCleanup: [{ _tag: "DockerRemove", containerName: `supabase-auth-${API_PORT}` }],
@@ -290,7 +293,7 @@ describe("makeEdgeRuntimeServiceDocker", () => {
         inspectorPort: 54341,
         policy: "per_worker",
         env: { SUPABASE_INTERNAL_DEBUG: "true" },
-        networkArgs: ["--network=host"],
+        networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", "54340:54340", "-p", "54341:54341"],
         dependencies: [{ service: "postgres", condition: "healthy" }],
       });
 
@@ -301,7 +304,8 @@ describe("makeEdgeRuntimeServiceDocker", () => {
       expect(def.name).toBe("edge-runtime");
       expect(def.command).toBe("docker");
       expect(def.args).toContain(`supabase-edge-runtime-${API_PORT}`);
-      expect(def.args).toContain("--network=host");
+      expect(def.args).toContain("host.docker.internal:host-gateway");
+      expect(def.args).toContain("54340:54340");
       expect(def.args).toContain(`--port=54340`);
       expect(def.args).toContain(`--policy=per_worker`);
       expect(def.args).toContain(`${bootstrapDir}:/workspace:ro`);
@@ -433,7 +437,15 @@ describe("docker-backed auxiliary services", () => {
       webPort: 54323,
       smtpPort: 54324,
       pop3Port: 54325,
-      networkArgs: ["--network=host"],
+      networkArgs: [
+        ...LINUX_HOST_GATEWAY_ARGS,
+        "-p",
+        "54323:54323",
+        "-p",
+        "54324:54324",
+        "-p",
+        "54325:54325",
+      ],
     });
 
     expect(def.healthCheck?.probe).toEqual({
@@ -451,7 +463,7 @@ describe("docker-backed auxiliary services", () => {
       apiPort: API_PORT,
       port: 54326,
       dataDir: "/tmp/supabase/storage",
-      networkArgs: ["--network=host"],
+      networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", "54326:54326"],
       dependencies: [{ service: "storage", condition: "healthy" }],
     });
 
@@ -522,24 +534,26 @@ describe("docker-backed auxiliary services", () => {
     );
   });
 
-  it("can listen directly on the configured host port for Linux host networking", () => {
+  it("keeps analytics on its container port when Linux uses bridge networking", () => {
     const def = makeAnalyticsServiceDocker({
       image: dockerImageForService("analytics", DEFAULT_VERSIONS.analytics),
       apiPort: API_PORT,
       hostPort: 54328,
-      listenPort: 54328,
-      nodeHost: "127.0.0.1",
-      dbHost: "127.0.0.1",
+      listenPort: 4000,
+      nodeHost: "0.0.0.0",
+      dbHost: "host.docker.internal",
       dbPort: DB_PORT,
       apiKey: "test-api-key",
       backend: "postgres",
-      networkArgs: ["--network=host"],
+      networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", "54328:4000"],
       dependencies: [{ service: "postgres", condition: "healthy" }],
     });
 
-    expect(def.args).toContain("PORT=54328");
-    expect(def.args).toContain("PHX_HTTP_PORT=54328");
-    expect(def.args).toContain("LOGFLARE_NODE_HOST=127.0.0.1");
+    expect(def.args).toContain("PORT=4000");
+    expect(def.args).toContain("PHX_HTTP_PORT=4000");
+    expect(def.args).toContain("LOGFLARE_NODE_HOST=0.0.0.0");
+    expect(def.args).toContain("host.docker.internal:host-gateway");
+    expect(def.args).toContain("54328:4000");
   });
 
   it("keeps pooler container ports fixed and maps only the selected proxy port outward", () => {

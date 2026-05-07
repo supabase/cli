@@ -1,5 +1,4 @@
 import type { ServiceDef } from "@supabase/process-compose";
-import { dockerUsesHostNetwork } from "../Platform.ts";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
 
 interface DockerAnalyticsOptions {
@@ -19,13 +18,13 @@ interface DockerAnalyticsOptions {
 const ANALYTICS_CONTAINER_PORT = 4000;
 
 export const analyticsDockerRuntimeNetwork = (
-  os: string,
-  hostPort: number,
-  serviceHost: string,
-): { readonly listenPort: number; readonly nodeHost: string } =>
-  dockerUsesHostNetwork(os)
-    ? { listenPort: hostPort, nodeHost: serviceHost }
-    : { listenPort: ANALYTICS_CONTAINER_PORT, nodeHost: "0.0.0.0" };
+  _os: string,
+  _hostPort: number,
+  _serviceHost: string,
+): { readonly listenPort: number; readonly nodeHost: string } => ({
+  listenPort: ANALYTICS_CONTAINER_PORT,
+  nodeHost: "0.0.0.0",
+});
 
 const analyticsHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
   probe: {
