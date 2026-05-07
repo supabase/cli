@@ -657,9 +657,10 @@ describe("Orchestrator", () => {
   });
 
   it.live("process exit with non-zero code sets Failed", () => {
-    const { layer } = setupOrchestrator([svc("a", { restart: "no" })], {
+    const { layer, log } = setupOrchestrator([svc("a", { restart: "no" })], {
       exitCode: 1,
       exitDelay: "50 millis",
+      stdout: ["about to fail"],
     });
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
@@ -668,6 +669,8 @@ describe("Orchestrator", () => {
       const state = yield* orc.getState("a");
       expect(state.status).toBe("Failed");
       expect(state.exitCode).toBe(1);
+      expect(log.entries.some((e) => e.line.includes("[process-exited]"))).toBe(true);
+      expect(log.entries.some((e) => e.line.includes("about to fail"))).toBe(true);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 

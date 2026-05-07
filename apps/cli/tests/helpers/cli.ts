@@ -158,12 +158,22 @@ function outputTail(label: string, output: string): string {
   return `${label}:\n${tail}`;
 }
 
-function runDiagnosticCommand(command: string, args: ReadonlyArray<string>): string | undefined {
+function runDiagnosticCommand(
+  command: string,
+  args: ReadonlyArray<string>,
+  opts: {
+    readonly cwd?: string;
+    readonly env?: NodeJS.ProcessEnv;
+    readonly timeoutMs?: number;
+  } = {},
+): string | undefined {
   try {
     return execFileSync(command, args, {
       encoding: "utf8",
+      cwd: opts.cwd,
+      env: opts.env,
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: 10_000,
+      timeout: opts.timeoutMs ?? 10_000,
     }).trimEnd();
   } catch (error) {
     if (error != null && typeof error === "object" && "stdout" in error && "stderr" in error) {
@@ -201,6 +211,10 @@ function readStackPorts(projectDir: string): { readonly apiPort: number } | unde
   }
 
   return undefined;
+}
+
+function sourceCliEntrypoint(): string {
+  return fileURLToPath(new URL("../../src/next/main.ts", import.meta.url));
 }
 
 function dockerContainerNames(apiPort: number): ReadonlyArray<string> {
@@ -241,6 +255,36 @@ async function functionsDevTimeoutDiagnostics(opts: {
   }
 
   sections.push(`stack apiPort=${ports.apiPort}`);
+  const stackLogs = runDiagnosticCommand(
+    "bun",
+    [
+      sourceCliEntrypoint(),
+      "logs",
+      "--no-follow",
+      "--tail",
+      String(DIAGNOSTIC_LOG_TAIL_LINES),
+      "--service",
+      "analytics",
+      "--service",
+      "vector",
+      "--service",
+      "edge-runtime",
+    ],
+    {
+      cwd: opts.cwd,
+      env: {
+        ...process.env,
+        SUPABASE_HOME: opts.homeDir,
+        SUPABASE_NO_KEYRING: "1",
+        SUPABASE_TELEMETRY_DISABLED: "1",
+      },
+      timeoutMs: 15_000,
+    },
+  );
+  sections.push(
+    `stack buffered logs:\n${stackLogs && stackLogs.length > 0 ? stackLogs : "<empty>"}`,
+  );
+
   const names = dockerContainerNames(ports.apiPort);
   const inspect = runDiagnosticCommand("docker", [
     "inspect",

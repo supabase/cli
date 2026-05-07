@@ -504,6 +504,7 @@ describe("docker-backed auxiliary services", () => {
       dependencies: [{ service: "postgres", condition: "healthy" }],
     });
 
+    const args = def.args ?? [];
     expect(def.healthCheck?.probe).toEqual({
       _tag: "Http",
       host: "127.0.0.1",
@@ -512,9 +513,12 @@ describe("docker-backed auxiliary services", () => {
       scheme: "http",
     });
     expect(def.healthCheck?.initialDelaySeconds).toBe(10);
-    expect(def.args).toContain("PORT=4000");
-    expect(def.args).toContain("54328:4000");
-    expect(def.args).toContain("LOGFLARE_NODE_HOST=0.0.0.0");
+    expect(args).toContain("PORT=4000");
+    expect(args).toContain("54328:4000");
+    expect(args).toContain("LOGFLARE_NODE_HOST=0.0.0.0");
+    expect(args.join("\n")).toContain(
+      "[analytics-startup] backend=postgres port=4000 node_host=0.0.0.0 db=127.0.0.1",
+    );
   });
 
   it("can listen directly on the configured host port for Linux host networking", () => {

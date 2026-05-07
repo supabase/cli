@@ -74,6 +74,26 @@ export class Orchestrator extends ServiceMap.Service<
         const logBuffer = yield* LogBuffer;
         let graph = initialGraph;
 
+        const appendRecentServiceLogs = (
+          name: string,
+          header: string,
+          emptyMessage: string,
+        ): Effect.Effect<void> =>
+          Effect.gen(function* () {
+            const recentLogs = yield* logBuffer.history(name, DIAGNOSTIC_LOG_LINES);
+            yield* logBuffer.append(name, "stderr", header);
+
+            if (recentLogs.length === 0) {
+              yield* logBuffer.append(name, "stderr", emptyMessage);
+              return;
+            }
+
+            for (const entry of recentLogs) {
+              const ts = new Date(entry.timestamp).toISOString();
+              yield* logBuffer.append(name, "stderr", `  | ${ts} ${entry.stream}: ${entry.line}`);
+            }
+          });
+
         interface ServiceSignals {
           readonly state: SubscriptionRef.SubscriptionRef<ServiceState>;
           started: Deferred.Deferred<void>;
@@ -337,32 +357,11 @@ export class Orchestrator extends ServiceMap.Service<
                       onUnhealthy: () =>
                         Effect.gen(function* () {
                           yield* sendEvent(def.name, { _tag: "HealthCheckFailed" });
-                          // Emit failure diagnostics
-                          const recentLogs = yield* logBuffer.history(
+                          yield* appendRecentServiceLogs(
                             def.name,
-                            DIAGNOSTIC_LOG_LINES,
+                            `[health-check-failed] Service "${def.name}" became unhealthy. Recent output:`,
+                            `[health-check-failed] Service "${def.name}" became unhealthy (no recent log output).`,
                           );
-                          if (recentLogs.length > 0) {
-                            yield* logBuffer.append(
-                              def.name,
-                              "stderr",
-                              `[health-check-failed] Service "${def.name}" became unhealthy. Recent output:`,
-                            );
-                            for (const entry of recentLogs) {
-                              const ts = new Date(entry.timestamp).toISOString();
-                              yield* logBuffer.append(
-                                def.name,
-                                "stderr",
-                                `  | ${ts} ${entry.stream}: ${entry.line}`,
-                              );
-                            }
-                          } else {
-                            yield* logBuffer.append(
-                              def.name,
-                              "stderr",
-                              `[health-check-failed] Service "${def.name}" became unhealthy (no recent log output).`,
-                            );
-                          }
                           if (shouldRestartOnUnhealthy(restartPolicy)) {
                             yield* Deferred.succeed(unhealthyRestart, void 0);
                           }
@@ -444,6 +443,13 @@ export class Orchestrator extends ServiceMap.Service<
                 if (r._tag === "Exited") {
                   const completeSig = services.get(def.name)?.completed;
                   if (completeSig) yield* Deferred.succeed(completeSig, r.exitCode);
+                  if (r.exitCode !== 0 && r.exitCode !== 143) {
+                    yield* appendRecentServiceLogs(
+                      def.name,
+                      `[process-exited] Service "${def.name}" exited with code ${r.exitCode}. Recent output:`,
+                      `[process-exited] Service "${def.name}" exited with code ${r.exitCode} (no recent log output).`,
+                    );
+                  }
                   yield* sendEvent(def.name, { _tag: "ProcessExited", exitCode: r.exitCode });
                 }
                 // UnhealthyRestart: process killed by scope closure, skip ProcessExited
@@ -465,6 +471,14 @@ export class Orchestrator extends ServiceMap.Service<
 
             while (shouldRestart(result) && (maxRestarts === 0 || restartCount < maxRestarts)) {
               restartCount++;
+
+              if (result._tag === "UnhealthyRestart") {
+                yield* appendRecentServiceLogs(
+                  def.name,
+                  `[restart] Service "${def.name}" is restarting after an unhealthy health check. Recent output:`,
+                  `[restart] Service "${def.name}" is restarting after an unhealthy health check (no recent log output).`,
+                );
+              }
 
               yield* sendEvent(def.name, { _tag: "RestartTriggered", restartCount });
 
