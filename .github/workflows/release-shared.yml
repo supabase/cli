@@ -24,7 +24,7 @@ on:
         required: true
         type: boolean
       build_only:
-        description: Stop after the build matrix (used by PR build validation)
+        description: Stop after the build matrix (skip smoke-test and downstream jobs)
         required: false
         type: boolean
         default: false

@@ -9,8 +9,21 @@ on:
       - ready_for_review
     branches:
       - develop
+    # Trigger on any change that could affect the build phase or how the
+    # built artifacts behave at runtime. Anything in this list is something
+    # `release-shared.yml`'s build/smoke matrix needs to re-validate.
     paths:
-      - "apps/cli/**"
+      - "apps/cli/scripts/build.ts"
+      - "apps/cli/scripts/checksums.ts"
+      - "apps/cli/scripts/sync-versions.ts"
+      - "apps/cli/src/**"
+      - "apps/cli/package.json"
+      - "apps/cli-go/**"
+      - "packages/cli-*/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/actions/setup/**"
       - ".github/workflows/release-shared.yml"
       - ".github/workflows/smoke-test-pr.yml"
 
