@@ -76,6 +76,32 @@ if (!hasDocker) {
     output: string;
   }
 
+  // Docker daemon exit code (125) and connection-reset-style failures (1) during
+  // image pulls are flaky on shared CI runners under parallel load. Retry once
+  // before giving up.
+  const TRANSIENT_DOCKER_EXIT_CODES = new Set([1, 125]);
+
+  function getExitCode(e: unknown): number | undefined {
+    if (e !== null && typeof e === "object" && "exitCode" in e && typeof e.exitCode === "number") {
+      return e.exitCode;
+    }
+    return undefined;
+  }
+
+  async function runDockerOnce(
+    image: string,
+    platform: string,
+    commands: string,
+  ): Promise<{ ok: true; output: string } | { ok: false; exitCode: number; detail: string }> {
+    try {
+      const output =
+        await $`docker run --rm --platform ${platform} -v ${distDir}:/dist:ro ${image} sh -c ${commands}`.text();
+      return { ok: true, output: output.trim() };
+    } catch (e) {
+      return { ok: false, exitCode: getExitCode(e) ?? -1, detail: describeError(e) };
+    }
+  }
+
   async function runDockerTest(
     name: string,
     image: string,
@@ -83,19 +109,26 @@ if (!hasDocker) {
     commands: string,
   ): Promise<DockerResult> {
     console.log(`[${name}] Running...`);
-    try {
-      const output =
-        await $`docker run --rm --platform ${platform} -v ${distDir}:/dist:ro ${image} sh -c ${commands}`.text();
-      const trimmed = output.trim();
-      const lastLine = trimmed.split("\n").pop()!;
-      const passed = /^\d+\.\d+\.\d+/.test(lastLine);
-      console.log(`[${name}] ${passed ? "PASS" : "FAIL"} — ${lastLine}`);
-      return { name, passed, output: trimmed };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.log(`[${name}] FAIL — ${msg}`);
-      return { name, passed: false, output: msg };
+    let attempt = 0;
+    let lastDetail = "";
+    while (attempt < 2) {
+      attempt += 1;
+      const result = await runDockerOnce(image, platform, commands);
+      if (result.ok) {
+        const lastLine = result.output.split("\n").pop()!;
+        const passed = /^\d+\.\d+\.\d+/.test(lastLine);
+        console.log(`[${name}] ${passed ? "PASS" : "FAIL"} — ${lastLine}`);
+        return { name, passed, output: result.output };
+      }
+      lastDetail = result.detail;
+      if (!TRANSIENT_DOCKER_EXIT_CODES.has(result.exitCode) || attempt >= 2) {
+        console.log(`[${name}] FAIL —\n${lastDetail}`);
+        return { name, passed: false, output: lastDetail };
+      }
+      console.log(`[${name}] transient docker failure (exit ${result.exitCode}), retrying once...`);
     }
+    console.log(`[${name}] FAIL —\n${lastDetail}`);
+    return { name, passed: false, output: lastDetail };
   }
 
   const jobs: Promise<DockerResult>[] = [];
