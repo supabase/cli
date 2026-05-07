@@ -15,6 +15,7 @@ on:
       - main
 
 permissions:
+  contents: read
   pull-requests: read
 
 concurrency:
@@ -31,3 +32,65 @@ jobs:
         uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - if: github.event_name == 'merge_group'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node <<'EOF'
+          const response = await fetch(
+            `https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/commits/${process.env.GITHUB_SHA}/pulls`,
+            {
+              headers: {
+                Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+                Accept: "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+              },
+            },
+          );
+
+          if (!response.ok) {
+            throw new Error(
+              `Failed to list pull requests for ${process.env.GITHUB_SHA}: ${response.status} ${response.statusText}`,
+            );
+          }
+
+          const pullRequests = await response.json();
+          if (!Array.isArray(pullRequests) || pullRequests.length === 0) {
+            throw new Error(
+              `No pull requests were associated with merge group SHA ${process.env.GITHUB_SHA}.`,
+            );
+          }
+
+          const allowedTypes = new Set([
+            "build",
+            "chore",
+            "ci",
+            "docs",
+            "feat",
+            "fix",
+            "perf",
+            "refactor",
+            "revert",
+            "style",
+            "test",
+          ]);
+          const titlePattern =
+            /^(?<type>[a-z]+)(\([^)]+\))?(!)?: (?<subject>.+)$/;
+
+          const invalidPullRequests = pullRequests.filter(({ title }) => {
+            const match = titlePattern.exec(title);
+            return !match || !allowedTypes.has(match.groups.type);
+          });
+
+          if (invalidPullRequests.length > 0) {
+            console.error("Invalid pull request titles in merge group:");
+            for (const { number, title } of invalidPullRequests) {
+              console.error(`- #${number}: ${title}`);
+            }
+            process.exit(1);
+          }
+
+          console.log(
+            `Validated ${pullRequests.length} pull request title(s) in merge group.`,
+          );
+          EOF
