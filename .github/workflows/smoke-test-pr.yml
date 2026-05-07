@@ -11,7 +11,7 @@ on:
       - develop
     # Trigger on any change that could affect the build phase or how the
     # built artifacts behave at runtime. Anything in this list is something
-    # `release-shared.yml`'s build/smoke matrix needs to re-validate.
+    # `release-shared.yml`'s build/smoke jobs need to re-validate.
     paths:
       - "apps/cli/scripts/build.ts"
       - "apps/cli/scripts/checksums.ts"
@@ -50,8 +50,7 @@ jobs:
     uses: ./.github/workflows/release-shared.yml
     with:
       # PR-scoped version so concurrent PRs don't collide on the build artifact
-      # names (release-shared.yml uploads one
-      # `cli-build-shard-${shell}-${version}-${target}` artifact per matrix shard).
+      # name (release-shared.yml uploads `cli-build-${shell}-${version}`).
       version: 0.0.0-pr-${{ github.event.pull_request.number }}
       shell: legacy
       npm_tag: latest
