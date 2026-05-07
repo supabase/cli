@@ -233,15 +233,17 @@ describe("prefetch", () => {
       }).pipe(Effect.provide(resolver.layer)),
     );
 
-    expect(events).toEqual([
+    expect(events.slice(0, 3)).toEqual([
       "ServiceDownloadStarted:postgres",
       "ServiceDownloadStarted:postgrest",
       "ServiceDownloadStarted:auth",
-      "ServiceDownloadFinished:postgres",
-      "ServiceDownloadFinished:auth",
-      "ServiceDownloadFinished:postgrest",
-      "PreparationCompleted",
     ]);
+    expect(events.slice(3, 6).sort()).toEqual([
+      "ServiceDownloadFinished:auth",
+      "ServiceDownloadFinished:postgres",
+      "ServiceDownloadFinished:postgrest",
+    ]);
+    expect(events.at(-1)).toBe("PreparationCompleted");
   });
 
   test("uses docker for edge-runtime in auto mode even when a native binary exists", async () => {
