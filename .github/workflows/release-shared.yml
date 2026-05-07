@@ -24,7 +24,7 @@ on:
         required: true
         type: boolean
       build_only:
-        description: Stop after the build job (skip smoke-test and downstream jobs)
+        description: Stop after the build matrix (skip smoke-test and downstream jobs)
         required: false
         type: boolean
         default: false
@@ -45,13 +45,16 @@ on:
         default: supabase
 
 jobs:
-  build:
-    # Single high-vCPU runner instead of a per-target matrix. Sharding across
-    # smaller runners sounds faster on paper, but in practice GitHub's runner
-    # pickup latency and per-shard setup cost (checkout + pnpm install + Go
-    # toolchain warmup + nfpm install) wiped out the parallelism win. Cross-
-    # compiling all 8 targets in one job on a beefy host is faster end-to-end.
-    runs-on: blacksmith-32vcpu-ubuntu-2404-arm
+  build-x86:
+    runs-on: large-linux-x86
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - cli-darwin-x64
+          - cli-linux-x64
+          - cli-linux-x64-musl
+          - cli-windows-x64
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -73,6 +76,7 @@ jobs:
         run: go mod download -x
 
       - name: Install nfpm
+        if: startsWith(matrix.target, 'cli-linux-')
         run: |
           echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
           sudo apt-get update
@@ -81,30 +85,88 @@ jobs:
       - name: Sync versions
         run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
 
-      - name: Build all targets
-        run: pnpm exec bun apps/cli/scripts/build.ts --version ${{ inputs.version }} --shell ${{ inputs.shell }}
+      - name: Build target
+        run: pnpm exec bun apps/cli/scripts/build.ts --version ${{ inputs.version }} --shell ${{ inputs.shell }} --target ${{ matrix.target }}
 
       - name: Verify build artifacts
         run: |
-          for pkg in cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-arm64-musl cli-linux-x64 cli-linux-x64-musl cli-windows-arm64 cli-windows-x64; do
-            echo "Checking packages/$pkg/bin/..."
-            ls -la "packages/$pkg/bin/"
-          done
+          echo "Checking packages/${{ matrix.target }}/bin/..."
+          ls -la "packages/${{ matrix.target }}/bin/"
           echo "Checking dist/..."
           ls -la dist/
 
-      - name: Upload build artifacts
+      - name: Upload shard artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+          name: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-${{ matrix.target }}
           path: |
-            packages/cli-*/bin/
+            packages/${{ matrix.target }}/bin/
+            dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  build-arm:
+    runs-on: large-linux-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - cli-darwin-arm64
+          - cli-linux-arm64
+          - cli-linux-arm64-musl
+          - cli-windows-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Setup Go
+        if: inputs.shell == 'legacy'
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: apps/cli-go/go.mod
+          cache: true
+          cache-dependency-path: apps/cli-go/go.sum
+
+      - name: Pre-download Go modules
+        if: inputs.shell == 'legacy'
+        working-directory: apps/cli-go
+        run: go mod download -x
+
+      - name: Install nfpm
+        if: startsWith(matrix.target, 'cli-linux-')
+        run: |
+          echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
+          sudo apt-get update
+          sudo apt-get install -y nfpm
+
+      - name: Sync versions
+        run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
+
+      - name: Build target
+        run: pnpm exec bun apps/cli/scripts/build.ts --version ${{ inputs.version }} --shell ${{ inputs.shell }} --target ${{ matrix.target }}
+
+      - name: Verify build artifacts
+        run: |
+          echo "Checking packages/${{ matrix.target }}/bin/..."
+          ls -la "packages/${{ matrix.target }}/bin/"
+          echo "Checking dist/..."
+          ls -la dist/
+
+      - name: Upload shard artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-${{ matrix.target }}
+          path: |
+            packages/${{ matrix.target }}/bin/
             dist/
           if-no-files-found: error
           retention-days: 1
 
   smoke-test:
-    needs: build
+    needs: [build-x86, build-arm]
     if: ${{ !inputs.build_only }}
     strategy:
       fail-fast: false
@@ -121,7 +183,11 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+          pattern: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: pnpm exec bun apps/cli/scripts/checksums.ts --version ${{ inputs.version }}
 
       - name: Setup QEMU for cross-platform Docker
         if: runner.os == 'Linux'
@@ -159,13 +225,17 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+          pattern: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-*
+          merge-multiple: true
 
       - name: Sync versions
         run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
 
       - name: Publish to npm
         run: pnpm exec bun apps/cli/scripts/publish.ts --tag ${{ inputs.npm_tag }}
+
+      - name: Generate checksums
+        run: pnpm exec bun apps/cli/scripts/checksums.ts --version ${{ inputs.version }}
 
       - name: Create draft GitHub Release
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
@@ -208,7 +278,11 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+          pattern: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: pnpm exec bun apps/cli/scripts/checksums.ts --version ${{ inputs.version }}
 
       - name: Generate Homebrew tap token
         id: app-token
@@ -247,7 +321,11 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+          pattern: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: pnpm exec bun apps/cli/scripts/checksums.ts --version ${{ inputs.version }}
 
       - name: Generate Scoop bucket token
         id: app-token
