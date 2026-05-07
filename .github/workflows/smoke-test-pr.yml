@@ -1,0 +1,36 @@
+name: Smoke Test (PR)
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+    branches:
+      - develop
+    paths:
+      - "apps/cli/**"
+      - ".github/workflows/release-shared.yml"
+      - ".github/workflows/smoke-test-pr.yml"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    if: github.event.pull_request.draft == false
+    uses: ./.github/workflows/release-shared.yml
+    with:
+      # PR-scoped version so concurrent PRs don't collide on the build artifact
+      # name (release-shared.yml uploads `cli-build-${shell}-${version}`).
+      version: 0.0.0-pr-${{ github.event.pull_request.number }}
+      shell: legacy
+      npm_tag: latest
+      prerelease: true
+      dry_run: true
