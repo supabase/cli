@@ -47,14 +47,6 @@ on:
 jobs:
   build-x86:
     runs-on: large-linux-x86
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - cli-darwin-x64
-          - cli-linux-x64
-          - cli-linux-x64-musl
-          - cli-windows-x64
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -76,7 +68,6 @@ jobs:
         run: go mod download -x
 
       - name: Install nfpm
-        if: startsWith(matrix.target, 'cli-linux-')
         run: |
           echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
           sudo apt-get update
@@ -85,36 +76,40 @@ jobs:
       - name: Sync versions
         run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
 
-      - name: Build target
-        run: pnpm exec bun apps/cli/scripts/build.ts --version ${{ inputs.version }} --shell ${{ inputs.shell }} --target ${{ matrix.target }}
+      - name: Build x86 targets
+        run: |
+          pnpm exec bun apps/cli/scripts/build.ts \
+            --version "${{ inputs.version }}" \
+            --shell "${{ inputs.shell }}" \
+            --target cli-darwin-x64 \
+            --target cli-linux-x64 \
+            --target cli-linux-x64-musl \
+            --target cli-windows-x64
 
       - name: Verify build artifacts
         run: |
-          echo "Checking packages/${{ matrix.target }}/bin/..."
-          ls -la "packages/${{ matrix.target }}/bin/"
+          for target in cli-darwin-x64 cli-linux-x64 cli-linux-x64-musl cli-windows-x64; do
+            echo "Checking packages/$target/bin/..."
+            ls -la "packages/$target/bin/"
+          done
           echo "Checking dist/..."
           ls -la dist/
 
       - name: Upload shard artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-${{ matrix.target }}
+          name: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-x86
           path: |
-            packages/${{ matrix.target }}/bin/
+            packages/cli-darwin-x64/bin/
+            packages/cli-linux-x64/bin/
+            packages/cli-linux-x64-musl/bin/
+            packages/cli-windows-x64/bin/
             dist/
           if-no-files-found: error
           retention-days: 1
 
   build-arm:
     runs-on: large-linux-arm
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - cli-darwin-arm64
-          - cli-linux-arm64
-          - cli-linux-arm64-musl
-          - cli-windows-arm64
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -136,7 +131,6 @@ jobs:
         run: go mod download -x
 
       - name: Install nfpm
-        if: startsWith(matrix.target, 'cli-linux-')
         run: |
           echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
           sudo apt-get update
@@ -145,22 +139,34 @@ jobs:
       - name: Sync versions
         run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
 
-      - name: Build target
-        run: pnpm exec bun apps/cli/scripts/build.ts --version ${{ inputs.version }} --shell ${{ inputs.shell }} --target ${{ matrix.target }}
+      - name: Build arm targets
+        run: |
+          pnpm exec bun apps/cli/scripts/build.ts \
+            --version "${{ inputs.version }}" \
+            --shell "${{ inputs.shell }}" \
+            --target cli-darwin-arm64 \
+            --target cli-linux-arm64 \
+            --target cli-linux-arm64-musl \
+            --target cli-windows-arm64
 
       - name: Verify build artifacts
         run: |
-          echo "Checking packages/${{ matrix.target }}/bin/..."
-          ls -la "packages/${{ matrix.target }}/bin/"
+          for target in cli-darwin-arm64 cli-linux-arm64 cli-linux-arm64-musl cli-windows-arm64; do
+            echo "Checking packages/$target/bin/..."
+            ls -la "packages/$target/bin/"
+          done
           echo "Checking dist/..."
           ls -la dist/
 
       - name: Upload shard artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-${{ matrix.target }}
+          name: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-arm
           path: |
-            packages/${{ matrix.target }}/bin/
+            packages/cli-darwin-arm64/bin/
+            packages/cli-linux-arm64/bin/
+            packages/cli-linux-arm64-musl/bin/
+            packages/cli-windows-arm64/bin/
             dist/
           if-no-files-found: error
           retention-days: 1

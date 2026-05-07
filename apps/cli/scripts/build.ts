@@ -25,14 +25,14 @@ const { values } = parseArgs({
   options: {
     version: { type: "string" },
     shell: { type: "string", default: "next" },
-    target: { type: "string" },
+    target: { type: "string", multiple: true },
   },
 });
 
 const version = values.version;
 if (!version) {
   console.error(
-    "Usage: pnpm exec bun apps/cli/scripts/build.ts --version <npm-version> --shell <legacy|next> [--target <pkg-name>]",
+    "Usage: pnpm exec bun apps/cli/scripts/build.ts --version <npm-version> --shell <legacy|next> [--target <pkg-name> ...]",
   );
   process.exit(1);
 }
@@ -216,64 +216,45 @@ async function buildLinuxPackagesForTarget(target: LinuxPackageTarget, variant: 
 
 await mkdir(distDir, { recursive: true });
 
-const requestedTarget = values.target;
+const requestedTargets = values.target;
 
-if (requestedTarget) {
-  const standard = TARGETS.find((t) => t.pkg === requestedTarget);
-  const musl = MUSL_TARGETS.find((t) => t.pkg === requestedTarget);
+let standardTargets: readonly StandardTarget[] = TARGETS;
+let muslTargets: readonly (typeof MUSL_TARGETS)[number][] = MUSL_TARGETS;
 
-  if (!standard && !musl) {
-    const allowed = [...TARGETS, ...MUSL_TARGETS].map((t) => t.pkg).join(", ");
-    console.error(`Invalid --target value: ${requestedTarget}. Expected one of: ${allowed}.`);
+if (requestedTargets && requestedTargets.length > 0) {
+  const allowedPkgs: ReadonlySet<string> = new Set([...TARGETS, ...MUSL_TARGETS].map((t) => t.pkg));
+  const invalid = requestedTargets.filter((t) => !allowedPkgs.has(t));
+  if (invalid.length > 0) {
+    const allowedList = [...allowedPkgs].join(", ");
+    console.error(
+      `Invalid --target value(s): ${invalid.join(", ")}. Expected one of: ${allowedList}.`,
+    );
     process.exit(1);
   }
 
-  const target: CompileTarget = standard ?? musl!;
-  console.log(`Building ${shell} CLI for single target ${target.pkg}...\n`);
-
-  await buildBunBinary(target);
-  if (shell === "legacy") {
-    await buildGoBinary(target);
-  }
-
-  if (standard) {
-    await archiveStandardTarget(standard);
-    if (isLinuxGlibcTarget(standard)) {
-      await buildLinuxPackagesForTarget(standard, "glibc");
-    }
-  } else if (musl) {
-    await buildLinuxPackagesForTarget(musl, "musl");
-  }
-
-  console.log(`\n[${target.pkg}] Build complete.`);
-} else {
-  console.log(`Building ${shell} CLI for ${TARGETS.length + MUSL_TARGETS.length} targets...\n`);
-
-  await Promise.all(TARGETS.map(buildBunBinary));
-
-  if (shell === "legacy") {
-    console.log("\nCompiling Go CLI for all targets...");
-    await Promise.all(TARGETS.map(buildGoBinary));
-  }
-
-  await Promise.all(TARGETS.map(archiveStandardTarget));
-
-  await Promise.all(
-    MUSL_TARGETS.map(async (t) => {
-      await buildBunBinary(t);
-      if (shell === "legacy") {
-        await buildGoBinary(t);
-      }
-    }),
-  );
-
-  const linuxGlibcTargets = TARGETS.filter(isLinuxGlibcTarget);
-  await Promise.all([
-    ...linuxGlibcTargets.map((t) => buildLinuxPackagesForTarget(t, "glibc")),
-    ...MUSL_TARGETS.map((t) => buildLinuxPackagesForTarget(t, "musl")),
-  ]);
-
-  await generateChecksums({ version, distDir });
-
-  console.log(`\nAll ${shell} targets built successfully.`);
+  const requested: ReadonlySet<string> = new Set(requestedTargets);
+  standardTargets = TARGETS.filter((t) => requested.has(t.pkg));
+  muslTargets = MUSL_TARGETS.filter((t) => requested.has(t.pkg));
 }
+
+const totalTargets = standardTargets.length + muslTargets.length;
+console.log(`Building ${shell} CLI for ${totalTargets} target(s)...\n`);
+
+await Promise.all([...standardTargets.map(buildBunBinary), ...muslTargets.map(buildBunBinary)]);
+
+if (shell === "legacy") {
+  console.log("\nCompiling Go CLI for all selected targets...");
+  await Promise.all([...standardTargets.map(buildGoBinary), ...muslTargets.map(buildGoBinary)]);
+}
+
+await Promise.all(standardTargets.map(archiveStandardTarget));
+
+const linuxGlibcTargets = standardTargets.filter(isLinuxGlibcTarget);
+await Promise.all([
+  ...linuxGlibcTargets.map((t) => buildLinuxPackagesForTarget(t, "glibc")),
+  ...muslTargets.map((t) => buildLinuxPackagesForTarget(t, "musl")),
+]);
+
+await generateChecksums({ version, distDir });
+
+console.log(`\nAll ${shell} targets built successfully.`);
