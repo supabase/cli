@@ -77,9 +77,7 @@ export const makeAnalyticsServiceDocker = (opts: DockerAnalyticsOptions): Servic
     cmd: [
       "-c",
       `cat <<'EOF' > /tmp/run.sh && sh /tmp/run.sh
-echo "[analytics-startup] backend=${opts.backend} port=${opts.listenPort} node_host=${opts.nodeHost} db=${opts.dbHost}:${opts.dbPort}"
 ./logflare eval Logflare.Release.migrate
-echo "[analytics-startup] migrate_exit=$?"
 ./logflare start --sname logflare
 EOF
 `,

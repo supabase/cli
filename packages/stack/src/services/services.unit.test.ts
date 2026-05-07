@@ -529,9 +529,6 @@ describe("docker-backed auxiliary services", () => {
     expect(args).toContain("PHX_HTTP_PORT=4000");
     expect(args).toContain("54328:4000");
     expect(args).toContain("LOGFLARE_NODE_HOST=0.0.0.0");
-    expect(args.join("\n")).toContain(
-      "[analytics-startup] backend=postgres port=4000 node_host=0.0.0.0 db=127.0.0.1",
-    );
   });
 
   it("keeps analytics on its container port when Linux uses bridge networking", () => {

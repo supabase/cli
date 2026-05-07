@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { runSupabase } from "./cli.ts";
 
@@ -121,47 +121,10 @@ function readStatePid(stateFile: string): number | undefined {
   }
 }
 
-function ownerSummary(targetPath: string): string {
-  try {
-    const stat = statSync(targetPath);
-    return `${targetPath} uid=${stat.uid} gid=${stat.gid} mode=${(stat.mode & 0o777).toString(8)}`;
-  } catch (error) {
-    return `${targetPath} <stat failed: ${error instanceof Error ? error.message : String(error)}>`;
-  }
-}
-
 function cleanupErrorDetail(projectDir: string, error: unknown): string {
-  const code =
-    error != null && typeof error === "object" && "code" in error ? String(error.code) : undefined;
-  const errorPath =
-    error != null && typeof error === "object" && "path" in error ? String(error.path) : projectDir;
-  const lines = [
-    `Failed to remove temp stack project ${projectDir}: ${
-      error instanceof Error ? error.message : String(error)
-    }`,
-  ];
-
-  if (code === "EACCES" || code === "EPERM") {
-    lines.push("Ownership diagnostics:");
-    lines.push(ownerSummary(projectDir));
-    if (errorPath !== projectDir) {
-      lines.push(ownerSummary(errorPath));
-    }
-
-    try {
-      for (const entry of readdirSync(projectDir, { withFileTypes: true }).slice(0, 20)) {
-        lines.push(ownerSummary(path.join(projectDir, entry.name)));
-      }
-    } catch (listError) {
-      lines.push(
-        `Failed to list ${projectDir}: ${
-          listError instanceof Error ? listError.message : String(listError)
-        }`,
-      );
-    }
-  }
-
-  return lines.join("\n");
+  return `Failed to remove temp stack project ${projectDir}: ${
+    error instanceof Error ? error.message : String(error)
+  }`;
 }
 
 function isPermissionError(error: unknown): boolean {

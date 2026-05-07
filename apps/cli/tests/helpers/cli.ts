@@ -1,13 +1,5 @@
-import { execFileSync, spawn } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-} from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
@@ -29,7 +21,6 @@ type RunResult = {
 
 const DEFAULT_EXIT_TIMEOUT_MS = 60_000;
 const OUTPUT_TAIL_LENGTH = 4_000;
-const DIAGNOSTIC_LOG_TAIL_LINES = 80;
 
 interface SpawnedSupabase {
   readonly pid: number;
@@ -158,216 +149,6 @@ function outputTail(label: string, output: string): string {
   return `${label}:\n${tail}`;
 }
 
-function runDiagnosticCommand(
-  command: string,
-  args: ReadonlyArray<string>,
-  opts: {
-    readonly cwd?: string;
-    readonly env?: NodeJS.ProcessEnv;
-    readonly timeoutMs?: number;
-  } = {},
-): string | undefined {
-  try {
-    return execFileSync(command, args, {
-      encoding: "utf8",
-      cwd: opts.cwd,
-      env: opts.env,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: opts.timeoutMs ?? 10_000,
-    }).trimEnd();
-  } catch (error) {
-    if (error != null && typeof error === "object" && "stdout" in error && "stderr" in error) {
-      const stdout = String(error.stdout ?? "").trimEnd();
-      const stderr = String(error.stderr ?? "").trimEnd();
-      return [stdout, stderr].filter((value) => value.length > 0).join("\n");
-    }
-    return undefined;
-  }
-}
-
-type StackPorts = Record<string, number> & { readonly apiPort: number };
-
-function readStackPorts(projectDir: string): StackPorts | undefined {
-  const stacksRoot = path.join(projectDir, ".supabase", "stacks");
-  if (!existsSync(stacksRoot)) {
-    return undefined;
-  }
-
-  for (const entry of readdirSync(stacksRoot, { withFileTypes: true })) {
-    if (!entry.isDirectory()) {
-      continue;
-    }
-    const stackJson = path.join(stacksRoot, entry.name, "stack.json");
-    if (!existsSync(stackJson)) {
-      continue;
-    }
-    try {
-      const parsed = JSON.parse(readFileSync(stackJson, "utf8")) as {
-        readonly ports?: Record<string, unknown>;
-      };
-      const apiPort = parsed.ports?.apiPort;
-      if (typeof apiPort === "number") {
-        const ports = Object.fromEntries(
-          Object.entries(parsed.ports ?? {}).filter(
-            (entry): entry is [string, number] => typeof entry[1] === "number",
-          ),
-        );
-        return { ...ports, apiPort };
-      }
-    } catch {}
-  }
-
-  return undefined;
-}
-
-function sourceCliEntrypoint(): string {
-  return fileURLToPath(new URL("../../src/next/main.ts", import.meta.url));
-}
-
-function dockerContainerNames(apiPort: number): ReadonlyArray<string> {
-  return [
-    "postgres",
-    "postgrest",
-    "auth",
-    "edge-runtime",
-    "realtime",
-    "storage",
-    "imgproxy",
-    "mailpit",
-    "pgmeta",
-    "studio",
-    "analytics",
-    "vector",
-    "pooler",
-  ].map((service) => `supabase-${service}-${apiPort}`);
-}
-
-async function functionsDevTimeoutDiagnostics(opts: {
-  readonly args: ReadonlyArray<string>;
-  readonly cwd: string | undefined;
-  readonly homeDir: string;
-}): Promise<string> {
-  if (opts.args[0] !== "functions" || opts.args[1] !== "dev" || opts.cwd === undefined) {
-    return "";
-  }
-
-  const sections: string[] = ["functions dev diagnostics:"];
-  sections.push(`SUPABASE_HOME=${opts.homeDir}`);
-  sections.push(`projectDir=${opts.cwd}`);
-
-  const ports = readStackPorts(opts.cwd);
-  if (ports === undefined) {
-    sections.push("stack metadata: <missing>");
-    return sections.join("\n\n");
-  }
-
-  sections.push(`stack apiPort=${ports.apiPort}`);
-  sections.push(`stack ports=${JSON.stringify(ports)}`);
-  const stackStatus = runDiagnosticCommand("bun", [sourceCliEntrypoint(), "status"], {
-    cwd: opts.cwd,
-    env: {
-      ...process.env,
-      SUPABASE_HOME: opts.homeDir,
-      SUPABASE_NO_KEYRING: "1",
-      SUPABASE_TELEMETRY_DISABLED: "1",
-    },
-    timeoutMs: 15_000,
-  });
-  sections.push(
-    `stack status:\n${stackStatus && stackStatus.length > 0 ? stackStatus : "<empty>"}`,
-  );
-
-  const stackLogs = runDiagnosticCommand(
-    "bun",
-    [
-      sourceCliEntrypoint(),
-      "logs",
-      "--no-follow",
-      "--tail",
-      String(DIAGNOSTIC_LOG_TAIL_LINES),
-      "--service",
-      "analytics",
-      "--service",
-      "vector",
-      "--service",
-      "edge-runtime",
-    ],
-    {
-      cwd: opts.cwd,
-      env: {
-        ...process.env,
-        SUPABASE_HOME: opts.homeDir,
-        SUPABASE_NO_KEYRING: "1",
-        SUPABASE_TELEMETRY_DISABLED: "1",
-      },
-      timeoutMs: 15_000,
-    },
-  );
-  sections.push(
-    `stack buffered logs:\n${stackLogs && stackLogs.length > 0 ? stackLogs : "<empty>"}`,
-  );
-
-  const names = dockerContainerNames(ports.apiPort);
-  const inspect = runDiagnosticCommand("docker", [
-    "inspect",
-    "--format",
-    "{{.Name}} status={{.State.Status}} exitCode={{.State.ExitCode}} error={{.State.Error}}",
-    ...names,
-  ]);
-  sections.push(`docker inspect:\n${inspect && inspect.length > 0 ? inspect : "<empty>"}`);
-
-  const edgeRuntimePort = ports.edgeRuntimePort;
-  if (typeof edgeRuntimePort === "number") {
-    const hostHealth = runDiagnosticCommand("bun", [
-      "-e",
-      `try {
-  const response = await fetch("http://127.0.0.1:${edgeRuntimePort}/_internal/health");
-  console.log(response.status, await response.text());
-} catch (error) {
-  console.error(error);
-  process.exit(1);
-}`,
-    ]);
-    sections.push(
-      `edge-runtime host health:\n${hostHealth && hostHealth.length > 0 ? hostHealth : "<empty>"}`,
-    );
-
-    const edgeRuntimeContainer = `supabase-edge-runtime-${ports.apiPort}`;
-    const containerHealth = runDiagnosticCommand("docker", [
-      "exec",
-      edgeRuntimeContainer,
-      "sh",
-      "-lc",
-      `echo "EDGE_RUNTIME_PORT=$EDGE_RUNTIME_PORT";
-echo "FUNCTIONS_RUNTIME_CONFIG_PATH=$FUNCTIONS_RUNTIME_CONFIG_PATH";
-(wget -S -O - http://127.0.0.1:${edgeRuntimePort}/_internal/health || true) 2>&1;
-ls -la /workspace || true`,
-    ]);
-    sections.push(
-      `edge-runtime container health:\n${
-        containerHealth && containerHealth.length > 0 ? containerHealth : "<empty>"
-      }`,
-    );
-  }
-
-  for (const name of names.filter(
-    (container) =>
-      container.includes("-analytics-") ||
-      container.includes("-vector-") ||
-      container.includes("-edge-runtime-"),
-  )) {
-    const logs = runDiagnosticCommand("docker", [
-      "logs",
-      "--tail",
-      String(DIAGNOSTIC_LOG_TAIL_LINES),
-      name,
-    ]);
-    sections.push(`docker logs ${name}:\n${logs && logs.length > 0 ? logs : "<empty>"}`);
-  }
-
-  return sections.join("\n\n");
-}
-
 export function spawnSupabase(
   args: string[],
   options?: {
@@ -486,28 +267,18 @@ export function spawnSupabase(
 
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
-          void (async () => {
-            cleanup();
-            const diagnostics = await functionsDevTimeoutDiagnostics({
-              args,
-              cwd: options?.cwd,
-              homeDir,
-            });
-            reject(
-              new Error(
-                [
-                  `Timed out waiting for output matching ${pattern}`,
-                  `Command: supabase ${args.join(" ")}`,
-                  `PID: ${proc.pid ?? "<unknown>"}`,
-                  outputTail("stdout tail", stdout),
-                  outputTail("stderr tail", stderr),
-                  diagnostics,
-                ]
-                  .filter((section) => section.length > 0)
-                  .join("\n\n"),
-              ),
-            );
-          })();
+          cleanup();
+          reject(
+            new Error(
+              [
+                `Timed out waiting for output matching ${pattern}`,
+                `Command: supabase ${args.join(" ")}`,
+                `PID: ${proc.pid ?? "<unknown>"}`,
+                outputTail("stdout tail", stdout),
+                outputTail("stderr tail", stderr),
+              ].join("\n\n"),
+            ),
+          );
         }, timeoutMs);
 
         const onStdout = (_data: Buffer) => {
