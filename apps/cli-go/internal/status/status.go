@@ -12,6 +12,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/Netflix/go-env"
 	"github.com/docker/docker/api/types"
@@ -161,10 +162,10 @@ func IsServiceReady(ctx context.Context, container string) error {
 }
 
 // NewKongClient returns an HTTP client configured for the local Kong gateway.
-// It deliberately omits http.Client.Timeout because the same client is reused
-// for streaming storage uploads where a full-request deadline would truncate
-// large transfers under load; callers should pass per-call deadlines via the
-// request context instead.
+// It deliberately omits http.Client.Timeout: this client is shared with
+// streaming storage uploads, where a full-request deadline would truncate
+// large transfers under load. Short-lived callers (e.g. health probes) should
+// bound themselves with a per-call context deadline instead.
 //
 // To regenerate local certificate pair:
 //
@@ -197,6 +198,10 @@ var (
 	healthOnce   sync.Once
 )
 
+// healthProbeTimeout caps a single readiness probe so a hung response cannot
+// stall the surrounding retry loop in WaitForHealthyService.
+const healthProbeTimeout = 10 * time.Second
+
 func checkHTTPHead(ctx context.Context, path string) error {
 	healthOnce.Do(func() {
 		healthClient = fetcher.NewServiceGateway(
@@ -206,6 +211,8 @@ func checkHTTPHead(ctx context.Context, path string) error {
 			fetcher.WithUserAgent("SupabaseCLI/"+utils.Version),
 		)
 	})
+	ctx, cancel := context.WithTimeout(ctx, healthProbeTimeout)
+	defer cancel()
 	// HEAD method does not return response body
 	resp, err := healthClient.Send(ctx, http.MethodHead, path, nil)
 	if err != nil {
