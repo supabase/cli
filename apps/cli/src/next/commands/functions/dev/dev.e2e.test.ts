@@ -8,14 +8,15 @@ import {
   spawnSupabase,
 } from "../../../../../tests/helpers/cli.ts";
 
-const FUNCTIONS_DEV_TIMEOUT_MS = 120_000;
+const FUNCTIONS_DEV_STEP_TIMEOUT_MS = 120_000;
+const FUNCTIONS_DEV_TEST_TIMEOUT_MS = 300_000;
 
 async function waitForFunctionResponse(
   url: string,
   init: RequestInit,
   assertResponse: (response: Response, body: string) => void,
 ) {
-  const deadline = Date.now() + FUNCTIONS_DEV_TIMEOUT_MS;
+  const deadline = Date.now() + FUNCTIONS_DEV_STEP_TIMEOUT_MS;
   let lastError: unknown;
 
   while (Date.now() < deadline) {
@@ -43,7 +44,7 @@ async function waitForFunctionResponse(
 describe("supabase functions dev", () => {
   test(
     "serves a function created while running and applies live config and source changes",
-    { timeout: FUNCTIONS_DEV_TIMEOUT_MS },
+    { timeout: FUNCTIONS_DEV_TEST_TIMEOUT_MS },
     async () => {
       const home = makeTempHome();
       const project = await makeTempStackProject("supabase-functions-dev-e2e-");
@@ -56,24 +57,24 @@ describe("supabase functions dev", () => {
           cwd: project.dir,
           home: home.dir,
           cleanupProcessGroupOnClose: false,
-          exitTimeoutMs: FUNCTIONS_DEV_TIMEOUT_MS,
+          exitTimeoutMs: FUNCTIONS_DEV_STEP_TIMEOUT_MS,
         });
 
         await devProc.waitForOutput(
           /Edge Functions dev server is running\./,
-          FUNCTIONS_DEV_TIMEOUT_MS,
+          FUNCTIONS_DEV_STEP_TIMEOUT_MS,
         );
 
         const newResult = await runSupabase(["functions", "new", "hello-world"], {
           cwd: project.dir,
           home: home.dir,
-          exitTimeoutMs: FUNCTIONS_DEV_TIMEOUT_MS,
+          exitTimeoutMs: FUNCTIONS_DEV_STEP_TIMEOUT_MS,
         });
         expect(newResult.exitCode).toBe(0);
 
         await devProc.waitForOutput(
           /Function files changed\. Restarting edge-runtime\./,
-          FUNCTIONS_DEV_TIMEOUT_MS,
+          FUNCTIONS_DEV_STEP_TIMEOUT_MS,
         );
 
         await waitForFunctionResponse(functionUrl, {}, (response, body) => {
@@ -92,7 +93,7 @@ verify_jwt = false
 
         await devProc.waitForOutput(
           /Edge runtime config changed\. Restarting edge-runtime\./,
-          FUNCTIONS_DEV_TIMEOUT_MS,
+          FUNCTIONS_DEV_STEP_TIMEOUT_MS,
         );
 
         await waitForFunctionResponse(
