@@ -37,7 +37,8 @@ jobs:
     uses: ./.github/workflows/release-shared.yml
     with:
       # PR-scoped version so concurrent PRs don't collide on the build artifact
-      # name (release-shared.yml uploads `cli-build-${shell}-${version}`).
+      # names (release-shared.yml uploads one
+      # `cli-build-shard-${shell}-${version}-${target}` artifact per matrix shard).
       version: 0.0.0-pr-${{ github.event.pull_request.number }}
       shell: legacy
       npm_tag: latest

@@ -23,6 +23,11 @@ on:
         description: Dry run (skip actual publishing)
         required: true
         type: boolean
+      build_only:
+        description: Stop after the build matrix (used by PR build validation)
+        required: false
+        type: boolean
+        default: false
       publish_brew_scoop:
         description: Whether to update the Homebrew tap and Scoop bucket
         required: false
@@ -42,6 +47,18 @@ on:
 jobs:
   build:
     runs-on: large-linux-x86
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - cli-darwin-arm64
+          - cli-darwin-x64
+          - cli-linux-arm64
+          - cli-linux-arm64-musl
+          - cli-linux-x64
+          - cli-linux-x64-musl
+          - cli-windows-arm64
+          - cli-windows-x64
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -50,6 +67,7 @@ jobs:
         uses: ./.github/actions/setup
 
       - name: Setup Go
+        if: inputs.shell == 'legacy'
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version-file: apps/cli-go/go.mod
@@ -57,10 +75,12 @@ jobs:
           cache-dependency-path: apps/cli-go/go.sum
 
       - name: Pre-download Go modules
+        if: inputs.shell == 'legacy'
         working-directory: apps/cli-go
         run: go mod download -x
 
       - name: Install nfpm
+        if: startsWith(matrix.target, 'cli-linux-')
         run: |
           echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
           sudo apt-get update
@@ -69,28 +89,29 @@ jobs:
       - name: Sync versions
         run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
 
-      - name: Build selected shell
-        run: pnpm exec bun apps/cli/scripts/build.ts --version ${{ inputs.version }} --shell ${{ inputs.shell }}
+      - name: Build target
+        run: pnpm exec bun apps/cli/scripts/build.ts --version ${{ inputs.version }} --shell ${{ inputs.shell }} --target ${{ matrix.target }}
 
       - name: Verify build artifacts
         run: |
-          for pkg in cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-arm64-musl cli-linux-x64 cli-linux-x64-musl cli-windows-arm64 cli-windows-x64; do
-            echo "Checking packages/$pkg/bin/..."
-            ls -la "packages/$pkg/bin/"
-          done
+          echo "Checking packages/${{ matrix.target }}/bin/..."
+          ls -la "packages/${{ matrix.target }}/bin/"
           echo "Checking dist/..."
           ls -la dist/
 
-      - name: Upload build artifacts
+      - name: Upload shard artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+          name: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-${{ matrix.target }}
           path: |
-            packages/cli-*/bin/
+            packages/${{ matrix.target }}/bin/
             dist/
+          if-no-files-found: error
+          retention-days: 1
 
   smoke-test:
     needs: build
+    if: ${{ !inputs.build_only }}
     strategy:
       fail-fast: false
       matrix:
@@ -106,7 +127,8 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+          pattern: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-*
+          merge-multiple: true
 
       - name: Setup QEMU for cross-platform Docker
         if: runner.os == 'Linux'
@@ -144,13 +166,17 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+          pattern: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-*
+          merge-multiple: true
 
       - name: Sync versions
         run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
 
       - name: Publish to npm
         run: pnpm exec bun apps/cli/scripts/publish.ts --tag ${{ inputs.npm_tag }}
+
+      - name: Generate checksums
+        run: pnpm exec bun apps/cli/scripts/checksums.ts --version ${{ inputs.version }}
 
       - name: Create draft GitHub Release
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
@@ -193,7 +219,11 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+          pattern: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: pnpm exec bun apps/cli/scripts/checksums.ts --version ${{ inputs.version }}
 
       - name: Generate Homebrew tap token
         id: app-token
@@ -232,7 +262,11 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+          pattern: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: pnpm exec bun apps/cli/scripts/checksums.ts --version ${{ inputs.version }}
 
       - name: Generate Scoop bucket token
         id: app-token

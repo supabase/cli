@@ -1,36 +1,38 @@
 import { $ } from "bun";
-import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+
+import { generateChecksums } from "./checksums.ts";
 
 const MUSL_TARGETS = [
   {
     bunTarget: "bun-linux-arm64-musl",
     pkg: "cli-linux-arm64-musl",
     nfpmArch: "arm64",
+    ext: "",
   },
   {
     bunTarget: "bun-linux-x64-musl",
     pkg: "cli-linux-x64-musl",
     nfpmArch: "amd64",
+    ext: "",
   },
 ] as const;
-
-const LINUX_PKG_FORMATS = ["deb", "rpm", "apk"] as const;
 
 const { values } = parseArgs({
   options: {
     version: { type: "string" },
     shell: { type: "string", default: "next" },
+    target: { type: "string" },
   },
 });
 
 const version = values.version;
 if (!version) {
   console.error(
-    "Usage: pnpm exec bun apps/cli/scripts/build.ts --version <npm-version> --shell <legacy|next>",
+    "Usage: pnpm exec bun apps/cli/scripts/build.ts --version <npm-version> --shell <legacy|next> [--target <pkg-name>]",
   );
   process.exit(1);
 }
@@ -87,18 +89,32 @@ const entrypoint = path.join(root, "apps/cli/src", shell, "main.ts");
 const distDir = path.join(root, "dist");
 const goSource = path.resolve(root, "apps/cli-go");
 
-type BunTarget = (typeof TARGETS)[number]["bunTarget"];
-
-const GO_TARGETS: Record<BunTarget, { goos: string; goarch: string }> = {
+const GO_TARGETS: Record<string, { goos: string; goarch: string }> = {
   "bun-darwin-arm64": { goos: "darwin", goarch: "arm64" },
   "bun-darwin-x64": { goos: "darwin", goarch: "amd64" },
   "bun-linux-arm64": { goos: "linux", goarch: "arm64" },
   "bun-linux-x64": { goos: "linux", goarch: "amd64" },
+  "bun-linux-arm64-musl": { goos: "linux", goarch: "arm64" },
+  "bun-linux-x64-musl": { goos: "linux", goarch: "amd64" },
   "bun-windows-x64": { goos: "windows", goarch: "amd64" },
   "bun-windows-arm64": { goos: "windows", goarch: "arm64" },
 };
 
-async function buildTarget(target: (typeof TARGETS)[number]) {
+type CompileTarget = {
+  readonly bunTarget: string;
+  readonly pkg: string;
+  readonly ext: string;
+};
+
+type StandardTarget = (typeof TARGETS)[number];
+
+type LinuxGlibcTarget = StandardTarget & { readonly nfpmArch: "arm64" | "amd64" };
+
+function isLinuxGlibcTarget(target: StandardTarget): target is LinuxGlibcTarget {
+  return "nfpmArch" in target;
+}
+
+async function buildBunBinary(target: CompileTarget) {
   const binDir = path.join(root, "packages", target.pkg, "bin");
   await mkdir(binDir, { recursive: true });
 
@@ -109,11 +125,16 @@ async function buildTarget(target: (typeof TARGETS)[number]) {
   console.log(`[${target.pkg}] Done.`);
 }
 
-async function buildGoTarget(target: (typeof TARGETS)[number]) {
+async function buildGoBinary(target: CompileTarget) {
   const binDir = path.join(root, "packages", target.pkg, "bin");
   await mkdir(binDir, { recursive: true });
 
-  const { goos, goarch } = GO_TARGETS[target.bunTarget];
+  const goSpec = GO_TARGETS[target.bunTarget];
+  if (!goSpec) {
+    throw new Error(`No Go target mapping for ${target.bunTarget}`);
+  }
+
+  const { goos, goarch } = goSpec;
   const outfile = path.join(binDir, `supabase-go${target.ext}`);
 
   console.log(`[${target.pkg}] Compiling Go CLI (${goos}/${goarch})...`);
@@ -126,7 +147,7 @@ async function buildGoTarget(target: (typeof TARGETS)[number]) {
   console.log(`[${target.pkg}] Go binary done.`);
 }
 
-async function archiveTarget(target: (typeof TARGETS)[number]) {
+async function archiveStandardTarget(target: StandardTarget) {
   const binDir = path.join(root, "packages", target.pkg, "bin");
   const archivePath = path.join(distDir, target.archive);
 
@@ -143,60 +164,26 @@ async function archiveTarget(target: (typeof TARGETS)[number]) {
   }
 }
 
-async function buildMuslBinaries() {
+type LinuxPackageTarget = {
+  readonly pkg: string;
+  readonly nfpmArch: "arm64" | "amd64";
+};
+
+async function buildLinuxPackagesForTarget(target: LinuxPackageTarget, variant: "glibc" | "musl") {
+  const binDir = path.join(root, "packages", target.pkg, "bin");
+  const formats = variant === "glibc" ? (["deb", "rpm"] as const) : (["apk"] as const);
+
   await Promise.all(
-    MUSL_TARGETS.map(async (target) => {
-      const binDir = path.join(root, "packages", target.pkg, "bin");
-      await mkdir(binDir, { recursive: true });
-
-      const outfile = path.join(binDir, "supabase");
-      console.log(`[${target.pkg}] Compiling Bun CLI (musl)...`);
-      await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --outfile=${outfile}`;
-
-      if (shell === "legacy") {
-        // Go binary is CGO_ENABLED=0 (fully static), so the glibc Linux build works on
-        // musl too. Copy it from the matching glibc package so the published musl npm
-        // package contains the supabase-go binary that LegacyGoProxy resolves to.
-        const glibcTarget = TARGETS.find(
-          (candidate) => "nfpmArch" in candidate && candidate.nfpmArch === target.nfpmArch,
-        );
-        if (!glibcTarget) {
-          throw new Error(`No glibc Linux target found for musl arch ${target.nfpmArch}`);
-        }
-        const src = path.join(root, "packages", glibcTarget.pkg, "bin", "supabase-go");
-        const dst = path.join(binDir, "supabase-go");
-        console.log(`[${target.pkg}] Copying Go binary from ${glibcTarget.pkg}...`);
-        await copyFile(src, dst);
-      }
-
-      console.log(`[${target.pkg}] Done.`);
-    }),
-  );
-}
-
-async function buildLinuxPackages(version: string) {
-  const linuxTargets = TARGETS.filter((target) => "nfpmArch" in target);
-  const jobs: Promise<void>[] = [];
-
-  for (const target of linuxTargets) {
-    const glibcBinDir = path.join(root, "packages", target.pkg, "bin");
-    const muslTarget = MUSL_TARGETS.find((candidate) => candidate.nfpmArch === target.nfpmArch)!;
-    const muslBinDir = path.join(root, "packages", muslTarget.pkg, "bin");
-
-    for (const fmt of LINUX_PKG_FORMATS) {
+    formats.map(async (fmt) => {
       const outFile = `supabase_${version}_linux_${target.nfpmArch}.${fmt}`;
       const outPath = path.join(distDir, outFile);
-      const binDir = fmt === "apk" ? muslBinDir : glibcBinDir;
 
-      // Go binary is CGO_ENABLED=0 (fully static), so the glibc Linux build works on
-      // musl too. For apk (musl), binDir is muslBinDir for the TS binary but we still
-      // reference supabase-go from the glibc dir where it was built.
       const contents: Array<{ src: string; dst: string }> = [
         { src: path.join(binDir, "supabase"), dst: "/usr/bin/supabase" },
       ];
       if (shell === "legacy") {
         contents.push({
-          src: path.join(glibcBinDir, "supabase-go"),
+          src: path.join(binDir, "supabase-go"),
           dst: "/usr/bin/supabase-go",
         });
       }
@@ -220,58 +207,73 @@ async function buildLinuxPackages(version: string) {
       const configPath = path.join(distDir, `nfpm-${target.nfpmArch}-${fmt}.yaml`);
       await writeFile(configPath, JSON.stringify(nfpmConfig));
 
-      jobs.push(
-        (async () => {
-          console.log(`[${target.pkg}] Creating ${outFile}...`);
-          await $`nfpm package --config ${configPath} --packager ${fmt} --target ${outPath}`;
-          await rm(configPath);
-        })(),
-      );
-    }
-  }
-
-  await Promise.all(jobs);
-}
-
-async function generateChecksums() {
-  const lines: string[] = [];
-
-  for (const target of TARGETS) {
-    const archivePath = path.join(distDir, target.archive);
-    const data = await readFile(archivePath);
-    const hash = createHash("sha256").update(data).digest("hex");
-    lines.push(`${hash}  ${target.archive}`);
-  }
-
-  const linuxTargets = TARGETS.filter((target) => "nfpmArch" in target);
-  for (const target of linuxTargets) {
-    for (const fmt of LINUX_PKG_FORMATS) {
-      const filename = `supabase_${version}_linux_${target.nfpmArch}.${fmt}`;
-      const data = await readFile(path.join(distDir, filename));
-      const hash = createHash("sha256").update(data).digest("hex");
-      lines.push(`${hash}  ${filename}`);
-    }
-  }
-
-  const checksumsPath = path.join(distDir, "checksums.txt");
-  await writeFile(checksumsPath, `${lines.join("\n")}\n`);
-  console.log("Checksums written to dist/checksums.txt");
-}
-
-console.log(`Building ${shell} CLI for ${TARGETS.length} targets...\n`);
-
-await Promise.all(TARGETS.map(buildTarget));
-
-if (shell === "legacy") {
-  console.log("\nCompiling Go CLI for all targets...");
-  await Promise.all(TARGETS.map(buildGoTarget));
+      console.log(`[${target.pkg}] Creating ${outFile}...`);
+      await $`nfpm package --config ${configPath} --packager ${fmt} --target ${outPath}`;
+      await rm(configPath);
+    }),
+  );
 }
 
 await mkdir(distDir, { recursive: true });
-await Promise.all(TARGETS.map(archiveTarget));
 
-await buildMuslBinaries();
-await buildLinuxPackages(version);
-await generateChecksums();
+const requestedTarget = values.target;
 
-console.log(`\nAll ${shell} targets built successfully.`);
+if (requestedTarget) {
+  const standard = TARGETS.find((t) => t.pkg === requestedTarget);
+  const musl = MUSL_TARGETS.find((t) => t.pkg === requestedTarget);
+
+  if (!standard && !musl) {
+    const allowed = [...TARGETS, ...MUSL_TARGETS].map((t) => t.pkg).join(", ");
+    console.error(`Invalid --target value: ${requestedTarget}. Expected one of: ${allowed}.`);
+    process.exit(1);
+  }
+
+  const target: CompileTarget = standard ?? musl!;
+  console.log(`Building ${shell} CLI for single target ${target.pkg}...\n`);
+
+  await buildBunBinary(target);
+  if (shell === "legacy") {
+    await buildGoBinary(target);
+  }
+
+  if (standard) {
+    await archiveStandardTarget(standard);
+    if (isLinuxGlibcTarget(standard)) {
+      await buildLinuxPackagesForTarget(standard, "glibc");
+    }
+  } else if (musl) {
+    await buildLinuxPackagesForTarget(musl, "musl");
+  }
+
+  console.log(`\n[${target.pkg}] Build complete.`);
+} else {
+  console.log(`Building ${shell} CLI for ${TARGETS.length + MUSL_TARGETS.length} targets...\n`);
+
+  await Promise.all(TARGETS.map(buildBunBinary));
+
+  if (shell === "legacy") {
+    console.log("\nCompiling Go CLI for all targets...");
+    await Promise.all(TARGETS.map(buildGoBinary));
+  }
+
+  await Promise.all(TARGETS.map(archiveStandardTarget));
+
+  await Promise.all(
+    MUSL_TARGETS.map(async (t) => {
+      await buildBunBinary(t);
+      if (shell === "legacy") {
+        await buildGoBinary(t);
+      }
+    }),
+  );
+
+  const linuxGlibcTargets = TARGETS.filter(isLinuxGlibcTarget);
+  await Promise.all([
+    ...linuxGlibcTargets.map((t) => buildLinuxPackagesForTarget(t, "glibc")),
+    ...MUSL_TARGETS.map((t) => buildLinuxPackagesForTarget(t, "musl")),
+  ]);
+
+  await generateChecksums({ version, distDir });
+
+  console.log(`\nAll ${shell} targets built successfully.`);
+}

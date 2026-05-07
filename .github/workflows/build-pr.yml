@@ -1,0 +1,66 @@
+name: Build (PR)
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+    paths:
+      # Anything that affects how `release-shared.yml`'s `build` matrix
+      # produces the per-target artifacts. If you change one of these and the
+      # build phase breaks, this workflow will catch it before merge.
+      - "apps/cli/scripts/build.ts"
+      - "apps/cli/scripts/checksums.ts"
+      - "apps/cli/scripts/sync-versions.ts"
+      - "apps/cli/src/**"
+      - "apps/cli/package.json"
+      - "apps/cli-go/**"
+      - "packages/cli-*/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/actions/setup/**"
+      - ".github/workflows/release-shared.yml"
+      - ".github/workflows/build-pr.yml"
+
+permissions:
+  # release-shared.yml's `publish` job declares `contents: write` and
+  # `id-token: write`. Even though that job is gated by `!inputs.dry_run`
+  # and `!inputs.build_only` (both true here), GitHub validates nested-workflow
+  # permissions at startup and rejects the run if the caller grants less than
+  # any nested job requests. Granting the superset here is safe because the
+  # privileged jobs are short-circuited at runtime.
+  contents: write
+  id-token: write
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.event.pull_request.draft == false
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [legacy, next]
+    uses: ./.github/workflows/release-shared.yml
+    with:
+      # PR-scoped version with the shell suffix so concurrent legacy/next
+      # matrix legs don't collide on per-shard artifact names.
+      version: 0.0.0-pr-${{ github.event.pull_request.number }}-${{ matrix.shell }}
+      shell: ${{ matrix.shell }}
+      npm_tag: latest
+      prerelease: true
+      dry_run: true
+      build_only: true
+    # release-shared.yml's publish/homebrew/scoop jobs reference
+    # `secrets.APP_ID` and `secrets.GH_APP_PRIVATE_KEY`. They are gated by
+    # `!inputs.dry_run` and `!inputs.build_only` and never execute here, but
+    # GitHub validates secret references at startup, so the called workflow
+    # needs the secrets bag propagated even when the jobs that use them are
+    # skipped.
+    secrets: inherit
