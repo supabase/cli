@@ -45,70 +45,7 @@ on:
         default: supabase
 
 jobs:
-  build-x86:
-    runs-on: large-linux-x86
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      - name: Setup
-        uses: ./.github/actions/setup
-
-      - name: Setup Go
-        if: inputs.shell == 'legacy'
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
-        with:
-          go-version-file: apps/cli-go/go.mod
-          cache: true
-          cache-dependency-path: apps/cli-go/go.sum
-
-      - name: Pre-download Go modules
-        if: inputs.shell == 'legacy'
-        working-directory: apps/cli-go
-        run: go mod download -x
-
-      - name: Install nfpm
-        run: |
-          echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
-          sudo apt-get update
-          sudo apt-get install -y nfpm
-
-      - name: Sync versions
-        run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
-
-      - name: Build x86 targets
-        run: |
-          pnpm exec bun apps/cli/scripts/build.ts \
-            --version "${{ inputs.version }}" \
-            --shell "${{ inputs.shell }}" \
-            --target cli-darwin-x64 \
-            --target cli-linux-x64 \
-            --target cli-linux-x64-musl \
-            --target cli-windows-x64
-
-      - name: Verify build artifacts
-        run: |
-          for target in cli-darwin-x64 cli-linux-x64 cli-linux-x64-musl cli-windows-x64; do
-            echo "Checking packages/$target/bin/..."
-            ls -la "packages/$target/bin/"
-          done
-          echo "Checking dist/..."
-          ls -la dist/
-
-      - name: Upload shard artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-x86
-          path: |
-            packages/cli-darwin-x64/bin/
-            packages/cli-linux-x64/bin/
-            packages/cli-linux-x64-musl/bin/
-            packages/cli-windows-x64/bin/
-            dist/
-          if-no-files-found: error
-          retention-days: 1
-
-  build-arm:
+  build:
     runs-on: large-linux-arm
     steps:
       - name: Checkout
@@ -139,40 +76,30 @@ jobs:
       - name: Sync versions
         run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
 
-      - name: Build arm targets
-        run: |
-          pnpm exec bun apps/cli/scripts/build.ts \
-            --version "${{ inputs.version }}" \
-            --shell "${{ inputs.shell }}" \
-            --target cli-darwin-arm64 \
-            --target cli-linux-arm64 \
-            --target cli-linux-arm64-musl \
-            --target cli-windows-arm64
+      - name: Build all targets
+        run: pnpm exec bun apps/cli/scripts/build.ts --version "${{ inputs.version }}" --shell "${{ inputs.shell }}"
 
       - name: Verify build artifacts
         run: |
-          for target in cli-darwin-arm64 cli-linux-arm64 cli-linux-arm64-musl cli-windows-arm64; do
+          for target in cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-arm64-musl cli-linux-x64 cli-linux-x64-musl cli-windows-arm64 cli-windows-x64; do
             echo "Checking packages/$target/bin/..."
             ls -la "packages/$target/bin/"
           done
           echo "Checking dist/..."
           ls -la dist/
 
-      - name: Upload shard artifact
+      - name: Upload build artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-arm
+          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
           path: |
-            packages/cli-darwin-arm64/bin/
-            packages/cli-linux-arm64/bin/
-            packages/cli-linux-arm64-musl/bin/
-            packages/cli-windows-arm64/bin/
+            packages/cli-*/bin/
             dist/
           if-no-files-found: error
           retention-days: 1
 
   smoke-test:
-    needs: [build-x86, build-arm]
+    needs: build
     if: ${{ !inputs.build_only }}
     strategy:
       fail-fast: false
@@ -189,8 +116,7 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-*
-          merge-multiple: true
+          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
 
       - name: Generate checksums
         run: pnpm exec bun apps/cli/scripts/checksums.ts --version ${{ inputs.version }}
@@ -231,8 +157,7 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-*
-          merge-multiple: true
+          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
 
       - name: Sync versions
         run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
@@ -284,8 +209,7 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-*
-          merge-multiple: true
+          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
 
       - name: Generate checksums
         run: pnpm exec bun apps/cli/scripts/checksums.ts --version ${{ inputs.version }}
@@ -327,8 +251,7 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-*
-          merge-multiple: true
+          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
 
       - name: Generate checksums
         run: pnpm exec bun apps/cli/scripts/checksums.ts --version ${{ inputs.version }}
