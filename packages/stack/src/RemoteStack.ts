@@ -308,6 +308,30 @@ export const RemoteStack = {
               }),
             ),
 
+          reloadEdgeRuntime: (opts) =>
+            withUnixHttpClient(
+              Effect.gen(function* () {
+                const response = yield* unixResponse(socketPath, "/edge-runtime/reload", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify(opts),
+                });
+                if (response.status === 404) {
+                  return yield* new ServiceNotFoundError({ name: "edge-runtime" });
+                }
+                if (response.status === 500) {
+                  const body = yield* HttpClientResponse.schemaBodyJson(ServiceErrorResponseSchema)(
+                    response,
+                  ).pipe(Effect.orDie);
+                  return yield* new ServiceReadyError({
+                    name: "edge-runtime",
+                    reason: body.error,
+                  });
+                }
+                yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
+              }),
+            ),
+
           getState: (name: string) =>
             withUnixHttpClient(
               Effect.gen(function* () {

@@ -6,6 +6,7 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { provideProjectCommandRuntime } from "../../../config/project-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { parcelFileWatcherLayer } from "../../../../shared/runtime/parcel-file-watcher.layer.ts";
 import { withCommandInstrumentation } from "../../../../shared/telemetry/command-instrumentation.ts";
 import { functionsDev } from "./dev.handler.ts";
 import { functionsDevRuntimeLayer } from "./functions-dev-runtime.ts";
@@ -47,7 +48,11 @@ export const functionsDevCommand = Command.make("dev", flags).pipe(
   ),
   Command.provide(
     provideProjectCommandRuntime(
-      Layer.mergeAll(functionsDevRuntimeLayer, commandRuntimeLayer(["functions", "dev"])),
+      Layer.mergeAll(
+        functionsDevRuntimeLayer,
+        commandRuntimeLayer(["functions", "dev"]),
+        parcelFileWatcherLayer,
+      ),
     ).pipe(Layer.provide(unixHttpClientLayer)),
   ),
 );

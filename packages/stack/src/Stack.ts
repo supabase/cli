@@ -4,7 +4,7 @@ import { Effect, Layer, Schema, ServiceMap, Stream } from "effect";
 import { StackBuildError } from "./errors.ts";
 import type { FunctionsConfig } from "./functions.ts";
 import { StackLifecycleCoordinator } from "./StackLifecycleCoordinator.ts";
-import type { ResolvedStackConfig } from "./StackBuilder.ts";
+import type { EdgeRuntimeConfig, ResolvedStackConfig } from "./StackBuilder.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 
 export interface StackInfo {
@@ -27,6 +27,28 @@ export const StackInfoSchema = Schema.Struct({
   serviceEndpoints: Schema.Record(Schema.String, Schema.String),
 });
 
+const EdgeRuntimeConfigSchema = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  inspectorPort: Schema.optionalKey(Schema.Number),
+  policy: Schema.optionalKey(Schema.Literals(["oneshot", "per_worker"])),
+  env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+});
+
+const FunctionsConfigSchema = Schema.Struct({
+  envFile: Schema.optionalKey(Schema.String),
+  noVerifyJwt: Schema.optionalKey(Schema.Boolean),
+});
+
+export const EdgeRuntimeReloadConfigSchema = Schema.Struct({
+  edgeRuntime: EdgeRuntimeConfigSchema,
+  functions: Schema.optionalKey(FunctionsConfigSchema),
+});
+
+export interface EdgeRuntimeReloadConfig {
+  readonly edgeRuntime: EdgeRuntimeConfig;
+  readonly functions?: FunctionsConfig;
+}
+
 type StackService = ServiceMap.Service.Shape<typeof Stack>;
 
 export class Stack extends ServiceMap.Service<
@@ -47,6 +69,9 @@ export class Stack extends ServiceMap.Service<
     ) => Effect.Effect<void, ServiceNotFoundError | StackBuildError>;
     readonly reloadFunctions: (
       opts?: FunctionsConfig,
+    ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
+    readonly reloadEdgeRuntime: (
+      opts: EdgeRuntimeReloadConfig,
     ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
     readonly getState: (name: string) => Effect.Effect<StackServiceState, ServiceNotFoundError>;
     readonly getAllStates: () => Effect.Effect<ReadonlyArray<StackServiceState>>;
@@ -83,6 +108,7 @@ export class Stack extends ServiceMap.Service<
           stopService: coordinator.stopService,
           restartService: coordinator.restartService,
           reloadFunctions: coordinator.reloadFunctions,
+          reloadEdgeRuntime: coordinator.reloadEdgeRuntime,
           getState: coordinator.getState,
           getAllStates: coordinator.getAllStates,
           stateChanges: coordinator.stateChanges,

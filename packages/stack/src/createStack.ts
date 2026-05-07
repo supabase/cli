@@ -34,6 +34,7 @@ import { allocatePorts, DEFAULT_PORTS, PORT_FIELDS, type AllocatedPorts } from "
 import { StackMetadataSchema } from "./StackMetadata.ts";
 import { InvalidStackStateError, StackAlreadyRunningError } from "./StateManager.ts";
 import { Stack } from "./Stack.ts";
+import type { EdgeRuntimeReloadConfig } from "./Stack.ts";
 import type { StackServiceState } from "./StackServiceState.ts";
 import { UnixHttpClient } from "./UnixHttpClient.ts";
 import type {
@@ -98,6 +99,7 @@ export interface StackHandle extends AsyncDisposable {
   stopService(name: string): Promise<void>;
   restartService(name: string): Promise<void>;
   reloadFunctions(opts?: FunctionsConfig): Promise<void>;
+  reloadEdgeRuntime(opts: EdgeRuntimeReloadConfig): Promise<void>;
   ready(opts?: ReadyOptions): Promise<void>;
   serviceReady(name: string, opts?: ReadyOptions): Promise<void>;
   getStatus(): Promise<ReadonlyArray<StackServiceState>>;
@@ -726,6 +728,7 @@ export async function createStack(
       stopService: (name) => run(localStack.stopService(name)),
       restartService: (name) => run(localStack.restartService(name)),
       reloadFunctions: (opts) => run(localStack.reloadFunctions(opts)),
+      reloadEdgeRuntime: (opts) => run(localStack.reloadEdgeRuntime(opts)),
       ready: (opts) => {
         const effect =
           opts?.timeout != null

@@ -1,4 +1,3 @@
-import { watch, type FSWatcher } from "node:fs";
 import { daemonEntryPoint } from "@supabase/stack";
 import {
   connectLayer,
@@ -7,8 +6,10 @@ import {
   stackMetadata,
   Stack,
   StateManager,
+  type EdgeRuntimeConfig,
 } from "@supabase/stack/effect";
-import { Effect, Layer, Option, Queue, ServiceMap, Stream } from "effect";
+import { Duration, Effect, FileSystem, Layer, Option, ServiceMap, Stream } from "effect";
+import { join } from "node:path";
 import { CliConfig } from "../../../config/cli-config.service.ts";
 import { ProjectHome } from "../../../config/project-home.service.ts";
 import { projectLocalServiceVersionsLayer } from "../../../config/project-local-service-versions.layer.ts";
@@ -21,6 +22,10 @@ import {
 import { toStartStackConfig, withServiceVersions } from "../../../config/stack-config.ts";
 import { ensureProjectStateIgnored } from "../../../config/project-gitignore.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import {
+  FileWatcher,
+  type FileWatchEvent,
+} from "../../../../shared/runtime/file-watcher.service.ts";
 import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { startStackWithProgress } from "../../../stack/stack.shared.ts";
@@ -28,10 +33,23 @@ import {
   functionsDevWatchPaths,
   toStackFunctionsConfig,
   type FunctionsDevConfigOptions,
+  type FunctionsDevWatchPath,
 } from "./functions-dev-config.ts";
+import {
+  resolveFunctionsDevEdgeRuntimeConfig,
+  type ResolvedFunctionsDevEdgeRuntimeConfig,
+} from "./functions-dev-edge-runtime-config.ts";
 
 interface FunctionsDevRuntimeOptions extends FunctionsDevConfigOptions {
   readonly stack: string;
+}
+
+interface FunctionsDevStackOptions extends FunctionsDevRuntimeOptions {
+  readonly edgeRuntime: EdgeRuntimeConfig;
+}
+
+interface FunctionsDevWatchChange {
+  readonly touchesProjectConfig: boolean;
 }
 
 type StackService = ServiceMap.Service.Shape<typeof Stack>;
@@ -40,7 +58,7 @@ function versionsFromContext(context: ResolvedServiceVersionContext) {
   return withServiceVersions(toStartStackConfig([], "auto"), context.runtimeVersions);
 }
 
-const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevRuntimeOptions) {
+const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptions) {
   const cliConfig = yield* CliConfig;
   const projectHome = yield* ProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
@@ -58,6 +76,7 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevRuntimeOpt
       projectDir: projectHome.projectRoot,
       projectStateRoot: projectHome.projectHomeDir,
       name: opts.stack,
+      edgeRuntime: opts.edgeRuntime,
       functions: toStackFunctionsConfig(opts),
       ...versionsFromContext(serviceVersionContext),
     }),
@@ -80,7 +99,7 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevRuntimeOpt
 });
 
 export const connectOrStartFunctionsDevStack = Effect.fnUntraced(function* (
-  opts: FunctionsDevRuntimeOptions,
+  opts: FunctionsDevStackOptions,
 ) {
   const cliConfig = yield* CliConfig;
   const projectHome = yield* ProjectHome;
@@ -118,40 +137,79 @@ function logEntryStream(stack: StackService) {
   );
 }
 
-function watchPaths(paths: ReadonlyArray<string>) {
-  return Stream.callback<void>((queue) => {
-    const watchers: FSWatcher[] = [];
-    let timeout: ReturnType<typeof setTimeout> | undefined;
+const ensureFunctionsDirectory = Effect.fnUntraced(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const projectHome = yield* ProjectHome;
+  yield* fs.makeDirectory(join(projectHome.supabaseDir, "functions"), { recursive: true });
+});
 
-    const notify = () => {
-      if (timeout !== undefined) {
-        clearTimeout(timeout);
-      }
-      timeout = setTimeout(() => {
-        Effect.runFork(Queue.offer(queue, void 0));
-      }, 100);
-    };
+function watchEventMatches(spec: FunctionsDevWatchPath, event: FileWatchEvent): boolean {
+  if (spec.names === undefined) {
+    return true;
+  }
+  const segments = event.path.replaceAll("\\", "/").split("/");
+  return spec.names.some((name) => segments.includes(name));
+}
 
-    for (const path of paths) {
-      try {
-        watchers.push(watch(path, { recursive: true }, notify));
-      } catch {
-        try {
-          watchers.push(watch(path, notify));
-        } catch {
-          // Missing paths are allowed; a parent directory watcher will pick them up later.
-        }
-      }
+function isProjectConfigEvent(event: FileWatchEvent): boolean {
+  const segments = event.path.replaceAll("\\", "/").split("/");
+  return segments.includes("config.toml") || segments.includes("config.json");
+}
+
+export function watchPaths(paths: ReadonlyArray<FunctionsDevWatchPath>) {
+  return Stream.unwrap(
+    Effect.gen(function* () {
+      const fileWatcher = yield* FileWatcher;
+      const streams = paths.map((spec) =>
+        fileWatcher.watch(spec.path).pipe(
+          Stream.filter((events) => events.some((event) => watchEventMatches(spec, event))),
+          Stream.map((events) => ({
+            touchesProjectConfig: events.some(isProjectConfigEvent),
+          })),
+        ),
+      );
+      return Stream.mergeAll(streams, { concurrency: "unbounded" }).pipe(
+        Stream.debounce(Duration.millis(100)),
+      );
+    }),
+  );
+}
+
+function reloadEdgeRuntime(
+  stack: StackService,
+  opts: FunctionsDevRuntimeOptions,
+  edgeRuntime: EdgeRuntimeConfig,
+) {
+  return stack.reloadEdgeRuntime({
+    edgeRuntime,
+    functions: toStackFunctionsConfig(opts),
+  });
+}
+
+function applyWatchedChange(
+  currentEdgeRuntimeState: ResolvedFunctionsDevEdgeRuntimeConfig,
+  change: FunctionsDevWatchChange,
+) {
+  return Effect.gen(function* () {
+    if (!change.touchesProjectConfig) {
+      return {
+        state: currentEdgeRuntimeState,
+        action: "functions" as const,
+      };
     }
 
-    return Effect.sync(() => {
-      if (timeout !== undefined) {
-        clearTimeout(timeout);
-      }
-      for (const watcher of watchers) {
-        watcher.close();
-      }
-    });
+    const nextEdgeRuntimeState = yield* resolveFunctionsDevEdgeRuntimeConfig();
+    if (nextEdgeRuntimeState.fingerprint === currentEdgeRuntimeState.fingerprint) {
+      return {
+        state: currentEdgeRuntimeState,
+        action: "functions" as const,
+      };
+    }
+
+    return {
+      state: nextEdgeRuntimeState,
+      action: "edge-runtime" as const,
+    };
   });
 }
 
@@ -163,8 +221,13 @@ export const runFunctionsDevRuntime = Effect.fnUntraced(function* (
 
   yield* output.intro("Develop Edge Functions");
 
-  const { stack, startedByCommand } = yield* connectOrStartFunctionsDevStack(opts);
-  yield* stack.reloadFunctions(toStackFunctionsConfig(opts));
+  let edgeRuntimeState = yield* resolveFunctionsDevEdgeRuntimeConfig();
+  const { stack, startedByCommand } = yield* connectOrStartFunctionsDevStack({
+    ...opts,
+    edgeRuntime: edgeRuntimeState.config,
+  });
+  yield* ensureFunctionsDirectory();
+  yield* reloadEdgeRuntime(stack, opts, edgeRuntimeState.config);
   const info = yield* stack.getInfo();
   const watchPathList = yield* functionsDevWatchPaths(opts.envFile);
 
@@ -174,8 +237,16 @@ export const runFunctionsDevRuntime = Effect.fnUntraced(function* (
   yield* output.info(`Functions URL: ${info.url}/functions/v1/<function-name>`);
 
   const restartOnChange = watchPaths(watchPathList).pipe(
-    Stream.runForEach(() =>
+    Stream.runForEach((change) =>
       Effect.gen(function* () {
+        const result = yield* applyWatchedChange(edgeRuntimeState, change);
+        if (result.action === "edge-runtime") {
+          yield* output.info("Edge runtime config changed. Restarting edge-runtime...");
+          yield* reloadEdgeRuntime(stack, opts, result.state.config);
+          edgeRuntimeState = result.state;
+          return;
+        }
+        edgeRuntimeState = result.state;
         yield* output.info("Function files changed. Restarting edge-runtime...");
         yield* stack.reloadFunctions(toStackFunctionsConfig(opts));
       }).pipe(

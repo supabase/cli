@@ -11,7 +11,7 @@ import {
   SubscriptionRef,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import type { ResolvedGraph } from "./DependencyGraph.ts";
+import { buildGraph, type ResolvedGraph } from "./DependencyGraph.ts";
 import { type HealthProbeCallbacks, runHealthProbe } from "./HealthProbe.ts";
 import { LogBuffer } from "./LogBuffer.ts";
 import type { HookTrigger, OrchestratorConfig, RestartPolicy, ServiceDef } from "./ServiceDef.ts";
@@ -19,7 +19,13 @@ import { defaults } from "./ServiceDef.ts";
 import { initial } from "./ServiceState.ts";
 import { makeSupervisedCommand, usesSupervisor } from "./Supervisor.ts";
 import type { ServiceState } from "./ServiceState.ts";
-import { ServiceNotFoundError, ServiceReadyError, SpawnError } from "./errors.ts";
+import {
+  CyclicDependencyError,
+  MissingDependencyError,
+  ServiceNotFoundError,
+  ServiceReadyError,
+  SpawnError,
+} from "./errors.ts";
 import { type ServiceEvent, transition } from "./ServiceTransition.ts";
 
 const DIAGNOSTIC_LOG_LINES = 20;
@@ -41,6 +47,10 @@ export class Orchestrator extends ServiceMap.Service<
     readonly stop: () => Effect.Effect<void>;
     readonly stopService: (name: string) => Effect.Effect<void, ServiceNotFoundError>;
     readonly restartService: (name: string) => Effect.Effect<void, ServiceNotFoundError>;
+    readonly updateServiceDefinition: (
+      name: string,
+      def: ServiceDef,
+    ) => Effect.Effect<void, ServiceNotFoundError | CyclicDependencyError | MissingDependencyError>;
     readonly getState: (name: string) => Effect.Effect<ServiceState, ServiceNotFoundError>;
     readonly getAllStates: () => Effect.Effect<ReadonlyArray<ServiceState>>;
     readonly stateChanges: (
@@ -54,7 +64,7 @@ export class Orchestrator extends ServiceMap.Service<
   }
 >()("process-compose/Orchestrator") {
   static layer = (
-    graph: ResolvedGraph,
+    initialGraph: ResolvedGraph,
     config?: OrchestratorConfig,
   ): Layer.Layer<Orchestrator, never, ChildProcessSpawner.ChildProcessSpawner | LogBuffer> =>
     Layer.effect(
@@ -62,6 +72,7 @@ export class Orchestrator extends ServiceMap.Service<
       Effect.gen(function* () {
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const logBuffer = yield* LogBuffer;
+        let graph = initialGraph;
 
         interface ServiceSignals {
           readonly state: SubscriptionRef.SubscriptionRef<ServiceState>;
@@ -483,6 +494,39 @@ export class Orchestrator extends ServiceMap.Service<
         const lookupDef = (name: string): ServiceDef | undefined =>
           graph.startOrder.find((d) => d.name === name);
 
+        const resetService = (name: string): Effect.Effect<void> =>
+          Effect.gen(function* () {
+            const svc = services.get(name);
+            if (svc) {
+              yield* SubscriptionRef.set(svc.state, initial(name));
+              svc.started = Deferred.makeUnsafe<void>();
+              svc.healthy = Deferred.makeUnsafe<void>();
+              svc.completed = Deferred.makeUnsafe<number>();
+              svc.stopped = Deferred.makeUnsafe<void>();
+              svc.stoppedByUser = false;
+            }
+          });
+
+        const stopForRestart = (name: string): Effect.Effect<void> =>
+          Effect.gen(function* () {
+            yield* sendEvent(name, { _tag: "StopRequested" });
+            yield* FiberMap.remove(fibers, name);
+            yield* sendEvent(name, { _tag: "ProcessExited", exitCode: 143 });
+          });
+
+        const restartClosureFor = (name: string): ReadonlyArray<ServiceDef> => {
+          const names = new Set<string>([name]);
+          const collectDependents = (current: string): void => {
+            for (const dependent of graph.dependentsOf(current)) {
+              if (names.has(dependent.name)) continue;
+              names.add(dependent.name);
+              collectDependents(dependent.name);
+            }
+          };
+          collectDependents(name);
+          return graph.startOrder.filter((def) => names.has(def.name));
+        };
+
         const waitReadySingle = (def: ServiceDef): Effect.Effect<void, ServiceReadyError> =>
           Effect.suspend(() => {
             const svc = services.get(def.name);
@@ -631,19 +675,31 @@ export class Orchestrator extends ServiceMap.Service<
               if (def === undefined) {
                 return yield* Effect.fail(new ServiceNotFoundError({ name }));
               }
-              yield* sendEvent(name, { _tag: "StopRequested" });
-              yield* FiberMap.remove(fibers, name);
-              // Hard reset to initial state for clean restart
-              const svc = services.get(name);
-              if (svc) {
-                yield* SubscriptionRef.set(svc.state, initial(name));
-                svc.started = Deferred.makeUnsafe<void>();
-                svc.healthy = Deferred.makeUnsafe<void>();
-                svc.completed = Deferred.makeUnsafe<number>();
-                svc.stopped = Deferred.makeUnsafe<void>();
-                svc.stoppedByUser = false;
+              const affected = restartClosureFor(name);
+
+              for (const affectedDef of [...affected].reverse()) {
+                yield* stopForRestart(affectedDef.name);
               }
-              yield* FiberMap.run(fibers, name, runServiceSafe(def));
+              for (const affectedDef of affected) {
+                yield* resetService(affectedDef.name);
+              }
+              for (const affectedDef of affected) {
+                yield* FiberMap.run(fibers, affectedDef.name, runServiceSafe(affectedDef));
+              }
+            }),
+
+          updateServiceDefinition: (name: string, def: ServiceDef) =>
+            Effect.gen(function* () {
+              const existing = lookupDef(name);
+              if (existing === undefined) {
+                return yield* Effect.fail(new ServiceNotFoundError({ name }));
+              }
+
+              const replacement = def.name === name ? def : { ...def, name };
+              const nextGraph = yield* buildGraph(
+                graph.startOrder.map((current) => (current.name === name ? replacement : current)),
+              );
+              graph = nextGraph;
             }),
 
           getState: (name: string) =>

@@ -30,6 +30,7 @@
     "@effect/atom-react": "catalog:",
     "@effect/platform-bun": "catalog:",
     "@napi-rs/keyring": "^1.1.2",
+    "@parcel/watcher": "^2.5.6",
     "@supabase/api": "workspace:*",
     "@supabase/config": "workspace:*",
     "@supabase/stack": "workspace:*",

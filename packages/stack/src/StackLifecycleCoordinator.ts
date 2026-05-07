@@ -30,7 +30,7 @@ import {
 } from "./StackBuilder.ts";
 import { changedProjectedStates, projectStackStates } from "./StackStateProjection.ts";
 import { StackServiceState } from "./StackServiceState.ts";
-import type { StackInfo } from "./Stack.ts";
+import type { EdgeRuntimeReloadConfig, StackInfo } from "./Stack.ts";
 
 type LifecyclePhase =
   | "idle"
@@ -147,6 +147,9 @@ export class StackLifecycleCoordinator extends ServiceMap.Service<
     ) => Effect.Effect<void, ServiceNotFoundError | StackBuildError>;
     readonly reloadFunctions: (
       opts?: FunctionsConfig,
+    ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
+    readonly reloadEdgeRuntime: (
+      opts: EdgeRuntimeReloadConfig,
     ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
     readonly getState: (name: string) => Effect.Effect<StackServiceState, ServiceNotFoundError>;
     readonly getAllStates: () => Effect.Effect<ReadonlyArray<StackServiceState>>;
@@ -453,6 +456,26 @@ export class StackLifecycleCoordinator extends ServiceMap.Service<
             },
           };
         };
+        const configWithEdgeRuntimeOptions = (
+          opts: EdgeRuntimeReloadConfig,
+        ): Effect.Effect<ResolvedStackConfig, ServiceNotFoundError> =>
+          Effect.gen(function* () {
+            if (config.edgeRuntime === false || opts.edgeRuntime.enabled === false) {
+              return yield* Effect.fail(new ServiceNotFoundError({ name: "edge-runtime" }));
+            }
+
+            const base = configWithFunctionOptions(opts.functions);
+            return {
+              ...base,
+              edgeRuntime: {
+                ...config.edgeRuntime,
+                enabled: opts.edgeRuntime.enabled ?? config.edgeRuntime.enabled,
+                inspectorPort: opts.edgeRuntime.inspectorPort ?? config.edgeRuntime.inspectorPort,
+                policy: opts.edgeRuntime.policy ?? config.edgeRuntime.policy,
+                env: opts.edgeRuntime.env ?? config.edgeRuntime.env,
+              },
+            };
+          });
         const allStateChanges = () =>
           SubscriptionRef.changes(stateRef).pipe(
             Stream.mapAccum<
@@ -528,6 +551,36 @@ export class StackLifecycleCoordinator extends ServiceMap.Service<
               yield* requireKnownService("edge-runtime");
               const runtime = yield* ensureRuntime;
               yield* configureFunctions(configWithFunctionOptions(opts));
+              yield* runtime.orchestrator.restartService("edge-runtime");
+              yield* runtime.orchestrator.waitReady("edge-runtime");
+            }),
+          reloadEdgeRuntime: (opts) =>
+            Effect.gen(function* () {
+              yield* requireKnownService("edge-runtime");
+              const nextConfig = yield* configWithEdgeRuntimeOptions(opts);
+              const prepared = yield* ensurePrepared;
+              const runtime = yield* ensureRuntime;
+              const buildResult = yield* builder.build(nextConfig, prepared);
+              const edgeRuntimeDef = buildResult.graph.startOrder.find(
+                (def) => def.name === "edge-runtime",
+              );
+
+              if (edgeRuntimeDef === undefined) {
+                return yield* Effect.fail(new ServiceNotFoundError({ name: "edge-runtime" }));
+              }
+
+              yield* configureFunctions(nextConfig);
+              yield* runtime.orchestrator
+                .updateServiceDefinition("edge-runtime", edgeRuntimeDef)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new StackBuildError({
+                        detail: "Failed to update edge-runtime service definition",
+                        cause,
+                      }),
+                  ),
+                );
               yield* runtime.orchestrator.restartService("edge-runtime");
               yield* runtime.orchestrator.waitReady("edge-runtime");
             }),

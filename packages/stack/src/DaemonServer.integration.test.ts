@@ -80,6 +80,10 @@ function mockStack() {
       Effect.sync(() => {
         serviceCalls.push("reload-functions");
       }),
+    reloadEdgeRuntime: () =>
+      Effect.sync(() => {
+        serviceCalls.push("reload-edge-runtime");
+      }),
     getState: (name: string) =>
       name === "unknown"
         ? Effect.fail(new ServiceNotFoundError({ name }))
@@ -297,6 +301,18 @@ describe("DaemonServer", () => {
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
     expect(mock.serviceCalls).toContain("restart:postgres");
+  });
+
+  test("POST /edge-runtime/reload returns 200", async () => {
+    const res = await fetch(`${url}/edge-runtime/reload`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ edgeRuntime: { policy: "oneshot" } }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+    expect(mock.serviceCalls).toContain("reload-edge-runtime");
   });
 
   // -------------------------------------------------------------------------

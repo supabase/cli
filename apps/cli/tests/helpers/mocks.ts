@@ -601,6 +601,7 @@ export function mockStack(
       stopService: () => Effect.void,
       restartService: () => Effect.void,
       reloadFunctions: () => Effect.void,
+      reloadEdgeRuntime: () => Effect.void,
       getState: () =>
         Effect.succeed(
           new StackServiceState({

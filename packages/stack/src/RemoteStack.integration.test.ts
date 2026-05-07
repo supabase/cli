@@ -90,6 +90,10 @@ function mockStack() {
       Effect.sync(() => {
         serviceCalls.push("reload-functions");
       }),
+    reloadEdgeRuntime: () =>
+      Effect.sync(() => {
+        serviceCalls.push("reload-edge-runtime");
+      }),
     getState: (name: string) => {
       const match = MOCK_STATES.find((s) => s.name === name);
       return match ? Effect.succeed(match) : Effect.fail(new ServiceNotFoundError({ name }));
@@ -228,6 +232,16 @@ describe("RemoteStack integration", () => {
           Effect.gen(function* () {
             yield* Effect.promise(() => fetch(`${url}/functions/reload`, { method: "POST" }));
           }),
+        reloadEdgeRuntime: () =>
+          Effect.gen(function* () {
+            yield* Effect.promise(() =>
+              fetch(`${url}/edge-runtime/reload`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ edgeRuntime: {} }),
+              }),
+            );
+          }),
         getState: (name: string) =>
           Effect.gen(function* () {
             const res = yield* Effect.promise(() => fetch(`${url}/status`));
@@ -333,6 +347,15 @@ describe("RemoteStack integration", () => {
       Effect.flatMap(Stack.asEffect(), (stack) => stack.restartService("postgres")),
     );
     expect(mock.serviceCalls).toContain("restart:postgres");
+  });
+
+  test("reloadEdgeRuntime records the call", async () => {
+    await clientRuntime.runPromise(
+      Effect.flatMap(Stack.asEffect(), (stack) =>
+        stack.reloadEdgeRuntime({ edgeRuntime: { policy: "oneshot" } }),
+      ),
+    );
+    expect(mock.serviceCalls).toContain("reload-edge-runtime");
   });
 
   test("logHistory returns entries", async () => {

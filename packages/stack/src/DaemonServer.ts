@@ -7,7 +7,7 @@ import {
   HttpServerResponse,
 } from "effect/unstable/http";
 import * as Sse from "effect/unstable/encoding/Sse";
-import { Stack } from "./Stack.ts";
+import { EdgeRuntimeReloadConfigSchema, Stack } from "./Stack.ts";
 
 // ---------------------------------------------------------------------------
 // Service
@@ -228,6 +228,31 @@ export class DaemonServer extends ServiceMap.Service<
             ),
             Effect.catchTag("ServiceReadyError", (e) =>
               Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.reason }, { status: 500 })),
+            ),
+          ),
+        ),
+
+        HttpRouter.route(
+          "POST",
+          "/edge-runtime/reload",
+          Effect.gen(function* () {
+            const body = yield* HttpServerRequest.schemaBodyJson(EdgeRuntimeReloadConfigSchema);
+            yield* stack.reloadEdgeRuntime(body);
+            return HttpServerResponse.jsonUnsafe({ ok: true });
+          }).pipe(
+            Effect.catchTag("ServiceNotFoundError", (e) =>
+              Effect.succeed(
+                HttpServerResponse.jsonUnsafe(
+                  { error: `Service not found: ${e.name}` },
+                  { status: 404 },
+                ),
+              ),
+            ),
+            Effect.catchTag("ServiceReadyError", (e) =>
+              Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.reason }, { status: 500 })),
+            ),
+            Effect.catchTag("StackBuildError", (e) =>
+              Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.message }, { status: 500 })),
             ),
           ),
         ),
