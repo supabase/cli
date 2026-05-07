@@ -6,6 +6,7 @@ import { CliOutput, Command } from "effect/unstable/cli";
 import { CLI_VERSION } from "./version.ts";
 import { Credentials } from "../../next/auth/credentials.service.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
+import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { outputLayerFor } from "../output/output.layer.ts";
 import { normalizeCause } from "../output/normalize-error.ts";
 import type { OutputFormat } from "../output/types.ts";
@@ -41,7 +42,7 @@ function formatterLayerFor(args: ReadonlyArray<string>) {
   const format = outputFormatFor(args);
   return format === "json" || format === "stream-json"
     ? CliOutput.layer(jsonCliOutputFormatter())
-    : Layer.empty;
+    : CliOutput.layer(textCliOutputFormatter());
 }
 
 function projectContextLayerFor(runtimeLayer: Layer.Layer<never>) {
