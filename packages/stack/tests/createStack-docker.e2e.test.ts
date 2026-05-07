@@ -96,7 +96,7 @@ dockerDescribe("createStack e2e (docker mode)", () => {
         fetch(`${stack.url}/functions/v1/test`),
       ]);
 
-      expect(runningImages).toContain("public.ecr.aws/supabase/edge-runtime");
+      expect(runningImages).toContain("supabase/edge-runtime");
       expect(states).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ name: "edge-runtime", status: "Healthy" }),
