@@ -130,6 +130,9 @@ jobs:
           pattern: cli-build-shard-${{ inputs.shell }}-${{ inputs.version }}-*
           merge-multiple: true
 
+      - name: Generate checksums
+        run: pnpm exec bun apps/cli/scripts/checksums.ts --version ${{ inputs.version }}
+
       - name: Setup QEMU for cross-platform Docker
         if: runner.os == 'Linux'
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
