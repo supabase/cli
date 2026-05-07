@@ -37,11 +37,64 @@ if (!VALID_TAGS.has(tag)) {
 const cliDir = path.join(root, "apps/cli");
 const cliPkgJson = await Bun.file(path.join(cliDir, "package.json")).json();
 const umbrellaName: string = cliPkgJson.name;
+const umbrellaVersion: string = cliPkgJson.version;
 
 const dryRunFlag = dryRun ? ["--dry-run"] : [];
 const tagFlag = ["--tag", tag];
 const provenanceFlag = ["--provenance"];
 const noGitChecksFlag = ["--no-git-checks"];
+
+// Reads the active npm registry once. We honour `npm config get registry`
+// rather than hard-coding registry.npmjs.org so the existence probe and the
+// publish target stay aligned — important for the local Verdaccio harness
+// (`pnpm local-registry`), which rewrites the global npm/pnpm registry config.
+const registryUrl = (await $`npm config get registry`.quiet().text()).trim().replace(/\/$/, "");
+
+// Probes the registry for `<name>@<version>`:
+//   200 → already published, 404 → not, anything else throws.
+// Used both as a pre-flight skip check and as a post-failure reconciliation
+// when the actual publish errors with E403 (registry CDN cache may lag).
+async function isAlreadyPublished(name: string, version: string): Promise<boolean> {
+  const encodedName = name.replace("/", "%2F");
+  const res = await fetch(`${registryUrl}/${encodedName}/${version}`, { method: "GET" });
+  if (res.status === 200) return true;
+  if (res.status === 404) return false;
+  throw new Error(`npm registry probe for ${name}@${version} returned HTTP ${res.status}`);
+}
+
+// Publishes one workspace package idempotently. If the version is already
+// on the registry — either before we start or after a publish-time conflict
+// — we skip and return. Any other failure propagates.
+async function publishPackage(opts: {
+  name: string;
+  version: string;
+  cwd: string;
+  extraFlags?: string[];
+}): Promise<void> {
+  const { name, version, cwd, extraFlags = [] } = opts;
+  const label = `${name}@${version}`;
+
+  if (await isAlreadyPublished(name, version)) {
+    console.log(`  [skip] ${label} already published.`);
+    return;
+  }
+
+  console.log(`  Publishing ${label}...`);
+  try {
+    await $`pnpm publish ${extraFlags} ${provenanceFlag} ${tagFlag} ${noGitChecksFlag} ${dryRunFlag}`.cwd(
+      cwd,
+    );
+    console.log(`  ${label} published.`);
+  } catch (error) {
+    if (await isAlreadyPublished(name, version)) {
+      console.log(
+        `  [skip] ${label} reported a conflict but is now present on the registry; treating as success.`,
+      );
+      return;
+    }
+    throw error;
+  }
+}
 
 console.log(
   dryRun
@@ -49,17 +102,31 @@ console.log(
     : `Publishing to npm with tag "${tag}"...\n`,
 );
 
+// Defensive: every platform package must already be at the umbrella version.
+// `sync-versions.ts` runs in the workflow before publish (`release-shared.yml`),
+// so a mismatch here means the script was invoked out of order — fail loud
+// rather than publishing an inconsistent set of packages.
+for (const pkg of PLATFORM_PACKAGES) {
+  const pkgJson = await Bun.file(path.join(root, "packages", pkg, "package.json")).json();
+  if (pkgJson.version !== umbrellaVersion) {
+    console.error(
+      `Version mismatch: @supabase/${pkg} is ${pkgJson.version}, expected ${umbrellaVersion}. Run sync-versions.ts first.`,
+    );
+    process.exit(1);
+  }
+}
+
 // Publish all platform packages in parallel
 console.log("Publishing platform packages...");
 await Promise.all(
-  PLATFORM_PACKAGES.map(async (pkg) => {
-    const pkgDir = path.join(root, "packages", pkg);
-    console.log(`  Publishing @supabase/${pkg}...`);
-    await $`pnpm publish --access public ${provenanceFlag} ${tagFlag} ${noGitChecksFlag} ${dryRunFlag}`.cwd(
-      pkgDir,
-    );
-    console.log(`  @supabase/${pkg} published.`);
-  }),
+  PLATFORM_PACKAGES.map((pkg) =>
+    publishPackage({
+      name: `@supabase/${pkg}`,
+      version: umbrellaVersion,
+      cwd: path.join(root, "packages", pkg),
+      extraFlags: ["--access", "public"],
+    }),
+  ),
 );
 
 // Build the umbrella package bin shim, then publish
@@ -67,7 +134,10 @@ console.log("\nBuilding umbrella package shim...");
 await $`pnpm build:shim`.cwd(cliDir);
 
 console.log(`Publishing umbrella package ${umbrellaName}...`);
-await $`pnpm publish ${provenanceFlag} ${tagFlag} ${noGitChecksFlag} ${dryRunFlag}`.cwd(cliDir);
-console.log(`${umbrellaName} published.`);
+await publishPackage({
+  name: umbrellaName,
+  version: umbrellaVersion,
+  cwd: cliDir,
+});
 
 console.log("\nAll packages published successfully.");
