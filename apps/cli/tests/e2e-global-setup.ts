@@ -1,7 +1,21 @@
+import { execSync } from "node:child_process";
 import { prefetch } from "@supabase/stack";
 
-const CLI_E2E_WARMUP_SERVICES = ["postgres", "postgrest", "auth"] as const;
+function hasDockerDaemon(): boolean {
+  try {
+    execSync("docker info", { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export default async function globalSetup() {
-  await prefetch({ services: CLI_E2E_WARMUP_SERVICES });
+  const warmups = [prefetch()];
+
+  if (hasDockerDaemon()) {
+    warmups.push(prefetch({ mode: "docker" }));
+  }
+
+  await Promise.all(warmups);
 }

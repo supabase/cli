@@ -498,7 +498,8 @@ All services are resolved and pulled concurrently (`concurrency: "unbounded"`). 
 import { prefetch } from "@supabase/stack";
 
 export async function setup() {
-  await prefetch(); // downloads postgres + postgrest + auth before any test runs
+  await prefetch(); // downloads auto-mode assets for all services before any test runs
+  await prefetch({ mode: "docker" }); // pulls Docker images for all services
 }
 ```
 

@@ -10,7 +10,7 @@ import {
   StackPreparation,
 } from "./StackPreparation.ts";
 import { prepareAssetsWithDependencies } from "./StackPreparation.ts";
-import { DEFAULT_VERSIONS } from "./versions.ts";
+import { DEFAULT_VERSIONS, SERVICE_NAMES } from "./versions.ts";
 
 const encoder = new TextEncoder();
 
@@ -67,6 +67,24 @@ function mockSequenceSpawner(results: ReadonlyArray<SpawnResult>) {
 }
 
 describe("prefetch", () => {
+  test("prefetches all services by default", async () => {
+    const resolver = mockBinaryResolver();
+    const spawner = mockSequenceSpawner(
+      Array.from({ length: SERVICE_NAMES.length }, () => ({
+        exitCode: 0,
+      })),
+    );
+
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const result = await Effect.runPromise(prefetch().pipe(Effect.provide(layer)));
+
+    expect(Object.keys(result).sort()).toEqual([...SERVICE_NAMES].sort());
+  });
+
   test("falls back to Docker Hub after ECR rate limiting", async () => {
     const resolver = mockBinaryResolver({ failServices: ["auth"] });
     const spawner = mockSequenceSpawner([

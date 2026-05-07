@@ -8,8 +8,9 @@ import {
   spawnSupabase,
 } from "../../../../../tests/helpers/cli.ts";
 
+const FUNCTIONS_DEV_STARTUP_TIMEOUT_MS = 240_000;
 const FUNCTIONS_DEV_STEP_TIMEOUT_MS = 120_000;
-const FUNCTIONS_DEV_TEST_TIMEOUT_MS = 300_000;
+const FUNCTIONS_DEV_TEST_TIMEOUT_MS = 420_000;
 
 async function waitForFunctionResponse(
   url: string,
@@ -62,7 +63,7 @@ describe("supabase functions dev", () => {
 
         await devProc.waitForOutput(
           /Edge Functions dev server is running\./,
-          FUNCTIONS_DEV_STEP_TIMEOUT_MS,
+          FUNCTIONS_DEV_STARTUP_TIMEOUT_MS,
         );
 
         const newResult = await runSupabase(["functions", "new", "hello-world"], {
