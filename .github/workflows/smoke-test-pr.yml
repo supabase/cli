@@ -14,7 +14,6 @@ on:
     # `release-shared.yml`'s build/smoke jobs need to re-validate.
     paths:
       - "apps/cli/scripts/build.ts"
-      - "apps/cli/scripts/checksums.ts"
       - "apps/cli/scripts/sync-versions.ts"
       - "apps/cli/src/**"
       - "apps/cli/package.json"
