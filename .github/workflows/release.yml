@@ -26,11 +26,14 @@ on:
         description: npm package version to publish (must be unique on npm; pick the next unused version)
         required: true
         type: string
+      # Defaults to `true` so a stray "Run workflow" click can't accidentally
+      # publish — operators recovering from a stale-bytes run must consciously
+      # untick this when dispatching.
       dry_run:
         description: Dry run (skip actual publishing)
         required: false
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
