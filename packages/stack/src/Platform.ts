@@ -47,6 +47,8 @@ export const edgeRuntimeAssetName = (p: PlatformInfo): string | null => {
 export const dockerHostAddress = (os: string): string =>
   os === "linux" ? "127.0.0.1" : "host.docker.internal";
 
+export const dockerUsesHostNetwork = (os: string): boolean => os === "linux";
+
 /**
  * Docker networking args. On Linux, --network=host shares the host's network namespace.
  * On macOS/Windows, we use explicit port mapping since --network=host doesn't work.
@@ -64,6 +66,6 @@ export const dockerPortMapArgs = (
     readonly container: number;
   }>,
 ): readonly string[] =>
-  os === "linux"
+  dockerUsesHostNetwork(os)
     ? ["--network=host"]
     : mappings.flatMap(({ host, container }) => ["-p", `${host}:${container}`]);

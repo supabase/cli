@@ -12,7 +12,7 @@ import {
   dockerPortMapArgs,
 } from "./Platform.ts";
 import type { ServiceResolution } from "./resolve.ts";
-import { makeAnalyticsServiceDocker } from "./services/analytics.ts";
+import { analyticsDockerRuntimeNetwork, makeAnalyticsServiceDocker } from "./services/analytics.ts";
 import { makeAuthServiceDocker, makeAuthServiceNative } from "./services/auth.ts";
 import {
   makeEdgeRuntimeServiceDocker,
@@ -772,11 +772,18 @@ export class StackBuilder extends ServiceMap.Service<
 
         if (config.analytics !== false) {
           const analyticsImage = yield* requirePreparedDockerImage(prepared, "analytics");
+          const analyticsRuntimeNetwork = analyticsDockerRuntimeNetwork(
+            platform.os,
+            config.analytics.port,
+            serviceHost,
+          );
           defs.push({
             ...makeAnalyticsServiceDocker({
               image: analyticsImage,
               apiPort: config.apiPort,
               hostPort: config.analytics.port,
+              listenPort: analyticsRuntimeNetwork.listenPort,
+              nodeHost: analyticsRuntimeNetwork.nodeHost,
               dbHost: serviceHost,
               dbPort: config.dbPort,
               apiKey: config.analytics.apiKey,

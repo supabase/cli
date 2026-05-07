@@ -8,6 +8,7 @@ import {
   postgrestAssetName,
   authAssetName,
   edgeRuntimeAssetName,
+  dockerUsesHostNetwork,
 } from "./Platform.ts";
 
 describe("detectPlatform", () => {
@@ -128,5 +129,16 @@ describe("dockerNetworkArgs", () => {
       "-p",
       "9999:9999",
     ]);
+  });
+});
+
+describe("dockerUsesHostNetwork", () => {
+  it("returns true on linux", () => {
+    expect(dockerUsesHostNetwork("linux")).toBe(true);
+  });
+
+  it("returns false on non-linux platforms", () => {
+    expect(dockerUsesHostNetwork("darwin")).toBe(false);
+    expect(dockerUsesHostNetwork("win32")).toBe(false);
   });
 });

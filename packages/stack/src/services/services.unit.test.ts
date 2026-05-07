@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { makeAnalyticsServiceDocker } from "./analytics.ts";
+import { analyticsDockerRuntimeNetwork, makeAnalyticsServiceDocker } from "./analytics.ts";
 import { makeAuthServiceNative, makeAuthServiceDocker } from "./auth.ts";
 import { makeEdgeRuntimeServiceDocker, makeEdgeRuntimeServiceNative } from "./edge-runtime.ts";
 import { makeImgproxyServiceDocker } from "./imgproxy.ts";
@@ -58,6 +58,22 @@ describe("makePostgresService", () => {
     expect(def.dependencies).toBeUndefined();
     expect(def.restart).toBe("unless-stopped");
     expect(def.supervision).toBeDefined();
+  });
+});
+
+describe("analyticsDockerRuntimeNetwork", () => {
+  it("uses the configured host port directly on Linux host networking", () => {
+    expect(analyticsDockerRuntimeNetwork("linux", 54328, "127.0.0.1")).toEqual({
+      listenPort: 54328,
+      nodeHost: "127.0.0.1",
+    });
+  });
+
+  it("uses the container port behind Docker port mapping on non-Linux hosts", () => {
+    expect(analyticsDockerRuntimeNetwork("darwin", 54328, "host.docker.internal")).toEqual({
+      listenPort: 4000,
+      nodeHost: "0.0.0.0",
+    });
   });
 });
 
@@ -478,6 +494,8 @@ describe("docker-backed auxiliary services", () => {
       image: dockerImageForService("analytics", DEFAULT_VERSIONS.analytics),
       apiPort: API_PORT,
       hostPort: 54328,
+      listenPort: 4000,
+      nodeHost: "0.0.0.0",
       dbHost: "127.0.0.1",
       dbPort: DB_PORT,
       apiKey: "test-api-key",
@@ -497,6 +515,25 @@ describe("docker-backed auxiliary services", () => {
     expect(def.args).toContain("PORT=4000");
     expect(def.args).toContain("54328:4000");
     expect(def.args).toContain("LOGFLARE_NODE_HOST=0.0.0.0");
+  });
+
+  it("can listen directly on the configured host port for Linux host networking", () => {
+    const def = makeAnalyticsServiceDocker({
+      image: dockerImageForService("analytics", DEFAULT_VERSIONS.analytics),
+      apiPort: API_PORT,
+      hostPort: 54328,
+      listenPort: 54328,
+      nodeHost: "127.0.0.1",
+      dbHost: "127.0.0.1",
+      dbPort: DB_PORT,
+      apiKey: "test-api-key",
+      backend: "postgres",
+      networkArgs: ["--network=host"],
+      dependencies: [{ service: "postgres", condition: "healthy" }],
+    });
+
+    expect(def.args).toContain("PORT=54328");
+    expect(def.args).toContain("LOGFLARE_NODE_HOST=127.0.0.1");
   });
 
   it("keeps pooler container ports fixed and maps only the selected proxy port outward", () => {
