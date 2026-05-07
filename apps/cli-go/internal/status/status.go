@@ -12,7 +12,6 @@ import (
 	"os"
 	"slices"
 	"sync"
-	"time"
 
 	"github.com/Netflix/go-env"
 	"github.com/docker/docker/api/types"
@@ -161,15 +160,19 @@ func IsServiceReady(ctx context.Context, container string) error {
 	return assertContainerHealthy(ctx, container)
 }
 
+// NewKongClient returns an HTTP client configured for the local Kong gateway.
+// It deliberately omits http.Client.Timeout because the same client is reused
+// for streaming storage uploads where a full-request deadline would truncate
+// large transfers under load; callers should pass per-call deadlines via the
+// request context instead.
+//
 // To regenerate local certificate pair:
 //
 //	openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 \
 //	  -nodes -keyout kong.local.key -out kong.local.crt -subj "/CN=localhost" \
 //	  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
 func NewKongClient() *http.Client {
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
+	client := &http.Client{}
 	if t, ok := http.DefaultTransport.(*http.Transport); ok {
 		pool, err := x509.SystemCertPool()
 		if err != nil {

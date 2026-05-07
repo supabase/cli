@@ -3,14 +3,16 @@ package fetcher
 import (
 	"net/http"
 	"strings"
-	"time"
 )
 
+// NewServiceGateway returns a Fetcher for Supabase service-gateway calls (Kong,
+// Storage, Auth, etc.). It deliberately omits http.Client.Timeout so streaming
+// operations such as storage uploads are not capped under load. Connection
+// setup is still bounded by the default transport's dial and TLS-handshake
+// timeouts, and per-call deadlines should flow through the request context.
 func NewServiceGateway(server, token string, overrides ...FetcherOption) *Fetcher {
 	opts := append([]FetcherOption{
-		WithHTTPClient(&http.Client{
-			Timeout: 10 * time.Second,
-		}),
+		WithHTTPClient(&http.Client{}),
 		withAuthToken(token),
 		WithExpectedStatus(http.StatusOK),
 	}, overrides...)
