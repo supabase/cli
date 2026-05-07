@@ -1,0 +1,51 @@
+name: Smoke Test (PR)
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+    branches:
+      - develop
+    paths:
+      - "apps/cli/**"
+      - ".github/workflows/release-shared.yml"
+      - ".github/workflows/smoke-test-pr.yml"
+
+permissions:
+  # release-shared.yml's `publish` job declares `contents: write` and
+  # `id-token: write`. Even though that job is gated by `!inputs.dry_run`
+  # and never runs here, GitHub validates nested-workflow permissions at
+  # startup and rejects the run if the caller grants less than any
+  # nested job requests. Granting the superset here is safe because (a)
+  # `dry_run: true` short-circuits the privileged jobs at runtime and
+  # (b) for fork PRs GitHub still issues a read-only GITHUB_TOKEN
+  # regardless of the declared scope.
+  contents: write
+  id-token: write
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    if: github.event.pull_request.draft == false
+    uses: ./.github/workflows/release-shared.yml
+    with:
+      # PR-scoped version so concurrent PRs don't collide on the build artifact
+      # name (release-shared.yml uploads `cli-build-${shell}-${version}`).
+      version: 0.0.0-pr-${{ github.event.pull_request.number }}
+      shell: legacy
+      npm_tag: latest
+      prerelease: true
+      dry_run: true
+    # release-shared.yml's publish/homebrew/scoop jobs reference
+    # `secrets.APP_ID` and `secrets.GH_APP_PRIVATE_KEY`. They are gated by
+    # `!inputs.dry_run` and never execute here, but GitHub validates secret
+    # references at startup, so the called workflow needs the secrets bag
+    # propagated even when the jobs that use them are skipped.
+    secrets: inherit
