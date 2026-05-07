@@ -49,6 +49,17 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
 
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: apps/cli-go/go.mod
+          cache: true
+          cache-dependency-path: apps/cli-go/go.sum
+
+      - name: Pre-download Go modules
+        working-directory: apps/cli-go
+        run: go mod download -x
+
       - name: Install nfpm
         run: |
           echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
