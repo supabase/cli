@@ -3,7 +3,13 @@ type ShellCheckResult = {
   readonly detail: string;
 };
 
-async function runCli(binPath: string, args: Array<string>) {
+export interface CliRunResult {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly exitCode: number;
+}
+
+export async function runCli(binPath: string, args: Array<string>): Promise<CliRunResult> {
   const proc = Bun.spawn([binPath, ...args], {
     stdout: "pipe",
     stderr: "pipe",
@@ -30,6 +36,6 @@ export async function verifyExpectedShell(binPath: string): Promise<ShellCheckRe
     passed,
     detail: passed
       ? 'dispatch ok: "init --help" succeeded'
-      : `expected dispatch via "init --help", got exit=${result.exitCode}, stdout="${result.stdout}", stderr="${result.stderr}"`,
+      : `expected dispatch via "init --help", got exit=${result.exitCode}, stdout=${JSON.stringify(result.stdout)}, stderr=${JSON.stringify(result.stderr)}`,
   };
 }

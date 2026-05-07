@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
@@ -152,6 +152,23 @@ async function buildMuslBinaries() {
       const outfile = path.join(binDir, "supabase");
       console.log(`[${target.pkg}] Compiling Bun CLI (musl)...`);
       await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --outfile=${outfile}`;
+
+      if (shell === "legacy") {
+        // Go binary is CGO_ENABLED=0 (fully static), so the glibc Linux build works on
+        // musl too. Copy it from the matching glibc package so the published musl npm
+        // package contains the supabase-go binary that LegacyGoProxy resolves to.
+        const glibcTarget = TARGETS.find(
+          (candidate) => "nfpmArch" in candidate && candidate.nfpmArch === target.nfpmArch,
+        );
+        if (!glibcTarget) {
+          throw new Error(`No glibc Linux target found for musl arch ${target.nfpmArch}`);
+        }
+        const src = path.join(root, "packages", glibcTarget.pkg, "bin", "supabase-go");
+        const dst = path.join(binDir, "supabase-go");
+        console.log(`[${target.pkg}] Copying Go binary from ${glibcTarget.pkg}...`);
+        await copyFile(src, dst);
+      }
+
       console.log(`[${target.pkg}] Done.`);
     }),
   );
