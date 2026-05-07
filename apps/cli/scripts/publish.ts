@@ -41,6 +41,7 @@ const umbrellaName: string = cliPkgJson.name;
 const dryRunFlag = dryRun ? ["--dry-run"] : [];
 const tagFlag = ["--tag", tag];
 const provenanceFlag = ["--provenance"];
+const noGitChecksFlag = ["--no-git-checks"];
 
 console.log(
   dryRun
@@ -54,7 +55,9 @@ await Promise.all(
   PLATFORM_PACKAGES.map(async (pkg) => {
     const pkgDir = path.join(root, "packages", pkg);
     console.log(`  Publishing @supabase/${pkg}...`);
-    await $`bun publish --access public ${provenanceFlag} ${tagFlag} ${dryRunFlag}`.cwd(pkgDir);
+    await $`pnpm publish --access public ${provenanceFlag} ${tagFlag} ${noGitChecksFlag} ${dryRunFlag}`.cwd(
+      pkgDir,
+    );
     console.log(`  @supabase/${pkg} published.`);
   }),
 );
@@ -64,7 +67,7 @@ console.log("\nBuilding umbrella package shim...");
 await $`pnpm build:shim`.cwd(cliDir);
 
 console.log(`Publishing umbrella package ${umbrellaName}...`);
-await $`bun publish ${provenanceFlag} ${tagFlag} ${dryRunFlag}`.cwd(cliDir);
+await $`pnpm publish ${provenanceFlag} ${tagFlag} ${noGitChecksFlag} ${dryRunFlag}`.cwd(cliDir);
 console.log(`${umbrellaName} published.`);
 
 console.log("\nAll packages published successfully.");

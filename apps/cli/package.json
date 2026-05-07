@@ -6,7 +6,7 @@
     "supabase": "dist/supabase.js"
   },
   "files": [
-    "dist/"
+    "dist/supabase.js"
   ],
   "type": "module",
   "publishConfig": {

@@ -76,8 +76,6 @@ export async function runNpmTest(
   version: string,
   tag: "latest" | "alpha" | "beta" = "latest",
 ): Promise<boolean> {
-  const publishEnv = { ...process.env, NPM_CONFIG_TOKEN: "dummy" };
-
   await using _pkgJsons = await savePackageJsons();
   await using tmp = await createTmpDir("npm-smoke-");
 
@@ -101,6 +99,14 @@ listen: 0.0.0.0:${PORT}
 `,
   );
 
+  // pnpm publish delegates to npm internals, which only honor per-registry auth
+  // configured in an .npmrc — `NPM_CONFIG_TOKEN` is not consulted. Write a temp
+  // .npmrc with `_authToken` for the verdaccio host and point npm at it via
+  // `npm_config_userconfig` so every publish call sees credentials.
+  const publishNpmrc = path.join(tmp.path, "publish.npmrc");
+  await writeFile(publishNpmrc, `//localhost:${PORT}/:_authToken=dummy\n`);
+  const publishEnv = { ...process.env, npm_config_userconfig: publishNpmrc };
+
   // Sync versions across all packages
   console.log(`Syncing versions to ${version}...`);
   await $`pnpm exec bun apps/cli/scripts/sync-versions.ts --version ${version}`.cwd(root).quiet();
@@ -115,7 +121,9 @@ listen: 0.0.0.0:${PORT}
   await Promise.all(
     platformPackages.map(async (pkg) => {
       const pkgDir = path.join(root, "packages", pkg);
-      await $`bun publish --registry ${registry.url} --tag ${tag}`.cwd(pkgDir).env(publishEnv);
+      await $`pnpm publish --registry ${registry.url} --tag ${tag} --no-git-checks`
+        .cwd(pkgDir)
+        .env(publishEnv);
       console.log(`  @supabase/${pkg}`);
     }),
   );
@@ -129,7 +137,9 @@ listen: 0.0.0.0:${PORT}
   const umbrellaName: string = cliPkgJson.name;
 
   console.log("Publishing umbrella package...");
-  await $`bun publish --registry ${registry.url} --tag ${tag}`.cwd(cliDir).env(publishEnv);
+  await $`pnpm publish --registry ${registry.url} --tag ${tag} --no-git-checks`
+    .cwd(cliDir)
+    .env(publishEnv);
   console.log(`  ${umbrellaName}\n`);
 
   // Create test project
