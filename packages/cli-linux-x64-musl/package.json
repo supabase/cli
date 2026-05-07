@@ -3,6 +3,15 @@
   "version": "0.0.0",
   "description": "Supabase CLI binary (linux-x64-musl)",
   "license": "MIT",
+  "homepage": "https://github.com/supabase/cli#readme",
+  "bugs": {
+    "url": "https://github.com/supabase/cli/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/supabase/cli.git",
+    "directory": "packages/cli-linux-x64-musl"
+  },
   "os": ["linux"],
   "cpu": ["x64"],
   "libc": ["musl"],
