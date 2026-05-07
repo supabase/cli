@@ -46,7 +46,7 @@ on:
 
 jobs:
   build:
-    runs-on: larger-runner-4cpu
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
