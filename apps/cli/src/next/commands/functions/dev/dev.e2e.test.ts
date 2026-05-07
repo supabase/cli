@@ -42,11 +42,12 @@ async function waitForFunctionResponse(
 
 describe("supabase functions dev", () => {
   test(
-    "serves a function created while running and applies verify_jwt config changes",
+    "serves a function created while running and applies live config and source changes",
     { timeout: FUNCTIONS_DEV_TIMEOUT_MS },
     async () => {
       const home = makeTempHome();
       const project = await makeTempStackProject("supabase-functions-dev-e2e-");
+      const functionPath = join(project.dir, "supabase", "functions", "hello-world", "index.ts");
       const functionUrl = `http://127.0.0.1:${project.ports.apiPort}/functions/v1/hello-world`;
       let devProc: ReturnType<typeof spawnSupabase> | undefined;
 
@@ -104,6 +105,29 @@ verify_jwt = false
           (response, body) => {
             expect(response.status).toBe(200);
             expect(JSON.parse(body)).toEqual({ message: "Hello Functions Dev!" });
+          },
+        );
+
+        await writeFile(
+          functionPath,
+          `Deno.serve(() => {
+  return new Response(JSON.stringify({ message: "Updated from source edit" }), {
+    headers: { "content-type": "application/json" },
+  });
+});
+`,
+        );
+
+        await waitForFunctionResponse(
+          functionUrl,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ name: "Functions Dev" }),
+          },
+          (response, body) => {
+            expect(response.status).toBe(200);
+            expect(JSON.parse(body)).toEqual({ message: "Updated from source edit" });
           },
         );
       } finally {
