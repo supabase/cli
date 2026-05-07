@@ -480,6 +480,11 @@ const requirePreparedDockerImage = (
     ),
   );
 
+export const nativePostgresNeedsDockerAccess = (
+  postgresResolution: ServiceResolution,
+  dockerServicesEnabled: boolean,
+): boolean => postgresResolution.type === "binary" && dockerServicesEnabled;
+
 export class StackBuilder extends ServiceMap.Service<
   StackBuilder,
   {
@@ -527,8 +532,10 @@ export class StackBuilder extends ServiceMap.Service<
           (authResolution !== false && authResolution.type === "docker") ||
           (postgrestResolution !== false && postgrestResolution.type === "docker");
 
-        const needsDockerAccess =
-          postgresResolution.type === "binary" && platform.os !== "linux" && dockerServicesEnabled;
+        const needsDockerAccess = nativePostgresNeedsDockerAccess(
+          postgresResolution,
+          dockerServicesEnabled,
+        );
         const hasPostgresInit = postgresResolution.type === "binary";
         const postgresDeps = dependsOnPostgres(hasPostgresInit);
         const jwtJwks = generateJwks(config.jwtSecret);
