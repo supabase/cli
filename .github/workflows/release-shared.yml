@@ -46,19 +46,31 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - cli-darwin-arm64
-          - cli-darwin-x64
-          - cli-linux-arm64
-          - cli-linux-arm64-musl
-          - cli-linux-x64
-          - cli-linux-x64-musl
-          - cli-windows-arm64
-          - cli-windows-x64
+        # Split shards across two runner pools (large-linux-arm and large-linux-x86)
+        # so that all 8 targets can run in parallel right after dispatch instead of
+        # queuing behind each other on a single pool. Each target is pinned to the
+        # runner whose architecture matches the build target to minimize overhead.
+        include:
+          - target: cli-darwin-arm64
+            runner: large-linux-arm
+          - target: cli-darwin-x64
+            runner: large-linux-x86
+          - target: cli-linux-arm64
+            runner: large-linux-arm
+          - target: cli-linux-arm64-musl
+            runner: large-linux-arm
+          - target: cli-linux-x64
+            runner: large-linux-x86
+          - target: cli-linux-x64-musl
+            runner: large-linux-x86
+          - target: cli-windows-arm64
+            runner: large-linux-arm
+          - target: cli-windows-x64
+            runner: large-linux-x86
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
