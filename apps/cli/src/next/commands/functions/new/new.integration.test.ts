@@ -11,8 +11,10 @@ import { CliConfig } from "../../../config/cli-config.service.ts";
 import { ProjectHome } from "../../../config/project-home.service.ts";
 import {
   mockAnalytics,
+  mockCredentials,
   mockOutput,
   mockProcessControl,
+  mockProjectLinkState,
   mockRuntimeInfo,
 } from "../../../../../tests/helpers/mocks.ts";
 import { functionsCommand } from "../functions.command.ts";
@@ -269,6 +271,8 @@ describe("functions new", () => {
       mockRuntimeInfo({ cwd: tempDir }),
       BunServices.layer,
       commandTreeSupportLayer(tempDir),
+      mockProjectLinkState(),
+      mockCredentials().layer,
       Stdio.layerTest({
         args: Effect.succeed(["functions", "new", "hello-world"]),
       }),

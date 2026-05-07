@@ -44,7 +44,7 @@ describe("domains", () => {
       const result = await run(["domains", "get", "--project-ref", PROJECT_REF]);
 
       expect(result.exitCode).toBe(0);
-      expect(result.stderr).toContain("www.urgsimurksi.xyz CNAME -> <PROJECT_REF>.supabase.red");
+      expect(result.stderr).toContain("www.urgsimurksi.xyz CNAME -> __PROJECT_REF__.supabase.red");
     });
 
     testBehaviour.skipIf(isRecording)("domain activated", async ({ run }) => {
@@ -65,7 +65,7 @@ describe("domains", () => {
           errors: [],
           messages: [],
           result: {
-            custom_origin_server: "<PROJECT_REF>.supabase.red",
+            custom_origin_server: "__PROJECT_REF__.supabase.red",
             hostname: "www.urgsimurksi.xyz",
             id: "00000000-0000-0000-0000-000000000000",
             ownership_verification: {

@@ -5,7 +5,7 @@
       "path": "/_ping",
       "query": {},
       "headers": {
-        "host": "localhost:<PORT>",
+        "host": "localhost:__PORT__",
         "user-agent": "Docker-Client/unknown-version (darwin)"
       },
       "body": null

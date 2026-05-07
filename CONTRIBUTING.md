@@ -146,7 +146,7 @@ cd apps/cli-e2e
 SUPABASE_ACCESS_TOKEN=<your-staging-token> SUPABASE_TEST_PROJECT_REF=<your-project-ref> SUPABASE_STAGING_URL=<stagingUrl> pnpm record
 ```
 
-Review the generated files in `apps/cli-e2e/fixtures/recorded/` before committing — verify that no real tokens, UUIDs, or project refs appear (they should be replaced with `<ACCESS_TOKEN>`, `<UUID_N>`, `<PROJECT_REF_N>` placeholders).
+Review the generated files in `apps/cli-e2e/fixtures/recorded/` before committing — verify that no real tokens, UUIDs, or project refs appear (they should be replaced with `__ACCESS_TOKEN__`, `__UUID__`, `__PROJECT_REF__` placeholders).
 
 ### Verifying parity
 

@@ -5,7 +5,7 @@
       "path": "/_ping",
       "query": {},
       "headers": {
-        "host": "localhost:<PORT>",
+        "host": "localhost:__PORT__",
         "user-agent": "Docker-Client/unknown-version (darwin)"
       },
       "body": null
@@ -28,14 +28,14 @@
   {
     "request": {
       "method": "GET",
-      "path": "/<DOCKER_VERSION>/containers/json",
+      "path": "/__DOCKER_VERSION__/containers/json",
       "query": {
         "all": "1",
         "filters": "{\"label\":{\"com.supabase.cli.project=test-project\":true}}"
       },
       "headers": {
         "accept-encoding": "gzip",
-        "host": "localhost:<PORT>",
+        "host": "localhost:__PORT__",
         "user-agent": "Docker-Client/unknown-version (darwin)"
       },
       "body": null
@@ -54,14 +54,14 @@
   {
     "request": {
       "method": "POST",
-      "path": "/<DOCKER_VERSION>/containers/prune",
+      "path": "/__DOCKER_VERSION__/containers/prune",
       "query": {
         "filters": "{\"label\":{\"com.supabase.cli.project=test-project\":true}}"
       },
       "headers": {
         "accept-encoding": "gzip",
         "content-length": "0",
-        "host": "localhost:<PORT>",
+        "host": "localhost:__PORT__",
         "user-agent": "Docker-Client/unknown-version (darwin)"
       },
       "body": null
@@ -83,14 +83,14 @@
   {
     "request": {
       "method": "POST",
-      "path": "/<DOCKER_VERSION>/networks/prune",
+      "path": "/__DOCKER_VERSION__/networks/prune",
       "query": {
         "filters": "{\"label\":{\"com.supabase.cli.project=test-project\":true}}"
       },
       "headers": {
         "accept-encoding": "gzip",
         "content-length": "0",
-        "host": "localhost:<PORT>",
+        "host": "localhost:__PORT__",
         "user-agent": "Docker-Client/unknown-version (darwin)"
       },
       "body": null
@@ -111,13 +111,13 @@
   {
     "request": {
       "method": "GET",
-      "path": "/<DOCKER_VERSION>/volumes",
+      "path": "/__DOCKER_VERSION__/volumes",
       "query": {
         "filters": "{\"label\":{\"com.supabase.cli.project=test-project\":true}}"
       },
       "headers": {
         "accept-encoding": "gzip",
-        "host": "localhost:<PORT>",
+        "host": "localhost:__PORT__",
         "user-agent": "Docker-Client/unknown-version (darwin)"
       },
       "body": null

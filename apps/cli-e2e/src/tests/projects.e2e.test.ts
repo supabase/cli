@@ -7,7 +7,7 @@ describe("projects", () => {
     testBehaviour("renders project list", async ({ run }) => {
       const result = await run(["projects", "list"]);
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toMatch(/[a-z]{20}|<PROJECT_REF>/);
+      expect(result.stdout).toMatch(/[a-z]{20}|__PROJECT_REF__/);
       expect(result.stdout).toContain("REFERENCE ID");
     });
 

@@ -47,7 +47,7 @@ the running tests exercise. The implications:
   skip tests when recording — anything not run loses its fixtures.
 - `test.todo` tests have no scenario file. Either turn the test into a real
   `testBehaviour` before recording, or accept that no fixture is produced.
-- Container/image SHAs in URL paths are normalized to `<CONTAINER_ID>` so each
+- Container/image SHAs in URL paths are normalized to `__CONTAINER_ID__` so each
   Docker container does not produce its own fixture directory. If you see
   recording produce many sha-named directories, the normalization rule in
   `placeholder.ts:normalizeUrlPath` is probably stale.
@@ -130,16 +130,16 @@ The fixture for this test is hand-authored in `fixtures/scenarios/<slug>/interac
 
 ## Writing assertions that work in both modes
 
-In **replay mode**, fixture data contains the literal placeholder string `<PROJECT_REF>` — the CLI renders it as-is. In **record mode**, the CLI renders the real 20-char ref.
+In **replay mode**, fixture data contains the literal placeholder string `__PROJECT_REF__` — the CLI renders it as-is. In **record mode**, the CLI renders the real 20-char ref.
 
 Never assert on the literal placeholder in a way that breaks in record mode:
 
 ```typescript
 // WRONG — fails in record mode
-expect(result.stdout).toContain("<PROJECT_REF>");
+expect(result.stdout).toContain("__PROJECT_REF__");
 
 // CORRECT — matches real ref in record mode, placeholder in replay
-expect(result.stdout).toMatch(/[a-z]{20}|<PROJECT_REF>/);
+expect(result.stdout).toMatch(/[a-z]{20}|__PROJECT_REF__/);
 ```
 
 For JSON output assertions, use `toMatchObject` with `expect.any(String)` for ref fields so they pass regardless of whether the value is a real ref or the placeholder.

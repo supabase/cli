@@ -115,10 +115,7 @@ listen: 0.0.0.0:${PORT}
   await Promise.all(
     platformPackages.map(async (pkg) => {
       const pkgDir = path.join(root, "packages", pkg);
-      await $`bun publish --registry ${registry.url} --tag ${tag}`
-        .cwd(pkgDir)
-        .env(publishEnv)
-        .quiet();
+      await $`bun publish --registry ${registry.url} --tag ${tag}`.cwd(pkgDir).env(publishEnv);
       console.log(`  @supabase/${pkg}`);
     }),
   );
@@ -132,7 +129,7 @@ listen: 0.0.0.0:${PORT}
   const umbrellaName: string = cliPkgJson.name;
 
   console.log("Publishing umbrella package...");
-  await $`bun publish --registry ${registry.url} --tag ${tag}`.cwd(cliDir).env(publishEnv).quiet();
+  await $`bun publish --registry ${registry.url} --tag ${tag}`.cwd(cliDir).env(publishEnv);
   console.log(`  ${umbrellaName}\n`);
 
   // Create test project
@@ -158,7 +155,7 @@ listen: 0.0.0.0:${PORT}
   const binPath = path.join(testDir, "node_modules", ".bin", `supabase${ext}`);
   const versionOutput = (await $`${binPath} --version`.text()).trim();
   const hasValidVersion = /^\d+\.\d+\.\d+/.test(versionOutput);
-  const shellCheck = await verifyExpectedShell(binPath, tag);
+  const shellCheck = await verifyExpectedShell(binPath);
   const passed = hasValidVersion && shellCheck.passed;
 
   console.log(`\n${passed ? "PASS" : "FAIL"} — supabase --version: ${versionOutput}`);

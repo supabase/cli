@@ -1,0 +1,26 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "x-gotrue-id": "__UUID__",
+    "x-ratelimit-limit": "120",
+    "x-ratelimit-remaining": "119",
+    "x-ratelimit-reset": "60"
+  },
+  "body": [
+    {
+      "identifier": "__PROJECT_REF__",
+      "database_type": "PRIMARY",
+      "db_user": "postgres.__PROJECT_REF__",
+      "db_host": "aws-0-us-east-1.pooler.supabase.green",
+      "db_port": 6543,
+      "db_name": "postgres",
+      "connection_string": "postgresql://postgres.__PROJECT_REF__:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.green:6543/postgres",
+      "pool_mode": "transaction",
+      "default_pool_size": null,
+      "max_client_conn": null,
+      "is_using_scram_auth": true,
+      "connectionString": "postgresql://postgres.__PROJECT_REF__:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.green:6543/postgres"
+    }
+  ]
+}

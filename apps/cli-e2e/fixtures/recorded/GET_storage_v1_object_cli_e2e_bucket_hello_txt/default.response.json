@@ -8,8 +8,8 @@
     "last-modified": "Mon, 27 Apr 2026 10:30:57 GMT",
     "sb-gateway-mode": "direct",
     "sb-gateway-version": "1",
-    "sb-project-ref": "<PROJECT_REF>",
-    "sb-request-id": "<UUID>",
+    "sb-project-ref": "__PROJECT_REF__",
+    "sb-request-id": "__UUID__",
     "x-robots-tag": "none",
     "x-smart-cdn": "true"
   },

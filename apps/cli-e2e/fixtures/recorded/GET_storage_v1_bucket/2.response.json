@@ -5,8 +5,8 @@
     "content-type": "application/json; charset=utf-8",
     "sb-gateway-mode": "direct",
     "sb-gateway-version": "1",
-    "sb-project-ref": "<PROJECT_REF>",
-    "sb-request-id": "<UUID>",
+    "sb-project-ref": "__PROJECT_REF__",
+    "sb-request-id": "__UUID__",
     "x-content-type-options": "nosniff"
   },
   "body": [
