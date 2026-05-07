@@ -164,6 +164,51 @@ function cleanupErrorDetail(projectDir: string, error: unknown): string {
   return lines.join("\n");
 }
 
+function isPermissionError(error: unknown): boolean {
+  const code =
+    error != null && typeof error === "object" && "code" in error ? String(error.code) : undefined;
+  return code === "EACCES" || code === "EPERM";
+}
+
+function repairProjectTreePermissions(projectDir: string): void {
+  try {
+    execFileSync("chmod", ["-R", "u+rwX", projectDir], {
+      stdio: "ignore",
+      timeout: 5_000,
+    });
+  } catch {}
+
+  try {
+    execFileSync(
+      "docker",
+      [
+        "run",
+        "--rm",
+        "-v",
+        `${projectDir}:/target`,
+        "--entrypoint",
+        "sh",
+        "public.ecr.aws/docker/library/busybox:1.36",
+        "-c",
+        "chmod -R a+rwx /target || true",
+      ],
+      { stdio: "ignore", timeout: 30_000 },
+    );
+  } catch {}
+}
+
+async function cleanupProject(project: StackProject): Promise<void> {
+  try {
+    await project.cleanup();
+  } catch (error) {
+    if (!isPermissionError(error)) {
+      throw error;
+    }
+    repairProjectTreePermissions(project.dir);
+    await project.cleanup();
+  }
+}
+
 function captureSnapshot(projectDir: string): StackRuntimeSnapshot {
   const normalized = normalizeDir(projectDir);
   const stacksRoot = path.join(normalized, ".supabase", "stacks");
@@ -321,7 +366,7 @@ export function createStackE2eCleanupManager(
         }
 
         try {
-          await project.cleanup();
+          await cleanupProject(project);
         } catch (error) {
           failures.push(cleanupErrorDetail(project.dir, error));
         } finally {
