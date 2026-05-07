@@ -34,3 +34,9 @@ jobs:
       npm_tag: latest
       prerelease: true
       dry_run: true
+    # release-shared.yml's publish/homebrew/scoop jobs reference
+    # `secrets.APP_ID` and `secrets.GH_APP_PRIVATE_KEY`. They are gated by
+    # `!inputs.dry_run` and never execute here, but GitHub validates secret
+    # references at startup, so the called workflow needs the secrets bag
+    # propagated even when the jobs that use them are skipped.
+    secrets: inherit
