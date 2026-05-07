@@ -1,10 +1,79 @@
 import { Stack } from "@supabase/stack/effect";
-import { Effect, Fiber, Stream } from "effect";
+import { Effect, Fiber, Option, Stream } from "effect";
+import { CliConfig } from "../config/cli-config.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
+
+const DIAGNOSTIC_SERVICES = ["analytics", "vector"] as const;
+const DIAGNOSTIC_LOG_LINES = 80;
+
+function shouldInspectState(state: { readonly status: string }): boolean {
+  return state.status !== "Healthy" && state.status !== "Stopped";
+}
+
+function formatState(state: {
+  readonly name: string;
+  readonly status: string;
+  readonly pid: number | null;
+  readonly exitCode: number | null;
+  readonly restartCount: number;
+  readonly error: string | null;
+}): string {
+  const details = [
+    `status=${state.status}`,
+    state.pid == null ? undefined : `pid=${state.pid}`,
+    state.exitCode == null ? undefined : `exitCode=${state.exitCode}`,
+    state.restartCount === 0 ? undefined : `restarts=${state.restartCount}`,
+    state.error == null ? undefined : `error=${state.error}`,
+  ].filter((entry): entry is string => entry !== undefined);
+  return `${state.name}: ${details.join(" ")}`;
+}
+
+const emitStartupDiagnostics = Effect.fnUntraced(function* (reason: string) {
+  const output = yield* Output;
+  const stack = yield* Stack;
+  const states = yield* stack.getAllStates().pipe(Effect.catch(() => Effect.succeed([])));
+  const stateNames = new Set(states.filter(shouldInspectState).map((state) => state.name));
+  for (const service of DIAGNOSTIC_SERVICES) {
+    stateNames.add(service);
+  }
+
+  if (stateNames.size === 0) {
+    return;
+  }
+
+  yield* output.warn(`[debug] Stack startup diagnostics (${reason})`);
+  for (const state of states.filter((entry) => stateNames.has(entry.name))) {
+    yield* output.warn(`[debug] ${formatState(state)}`);
+  }
+
+  for (const service of [...stateNames].sort((a, b) => a.localeCompare(b))) {
+    const history = yield* stack
+      .logHistory(service, DIAGNOSTIC_LOG_LINES)
+      .pipe(Effect.catch(() => Effect.succeed([])));
+    if (history.length === 0) {
+      yield* output.warn(`[debug] ${service}: no recent logs`);
+      continue;
+    }
+
+    yield* output.warn(`[debug] ${service}: recent logs`);
+    for (const entry of history) {
+      yield* output.event({
+        type: "log-entry",
+        timestamp: new Date(entry.timestamp).toISOString(),
+        service: entry.service,
+        stream: entry.stream,
+        line: entry.line,
+        source: "history",
+      });
+    }
+  }
+});
 
 export const startStackWithProgress = Effect.fnUntraced(function* () {
   const output = yield* Output;
   const stack = yield* Stack;
+  const cliConfig = yield* CliConfig;
+  const debugEnabled = Option.isSome(cliConfig.debug) && cliConfig.debug.value === "1";
 
   const initialStates = yield* stack.getAllStates();
   const stateNames = new Set(initialStates.map((state) => state.name));
@@ -48,9 +117,36 @@ export const startStackWithProgress = Effect.fnUntraced(function* () {
     Effect.forkChild({ startImmediately: true }),
   );
 
-  yield* stack.start();
+  const debugLogFiber = debugEnabled
+    ? yield* stack.subscribeAllLogs().pipe(
+        Stream.filter((entry) => entry.service !== "edge-runtime"),
+        Stream.runForEach((entry) =>
+          output.event({
+            type: "log-entry",
+            timestamp: new Date(entry.timestamp).toISOString(),
+            service: entry.service,
+            stream: entry.stream,
+            line: entry.line,
+            source: "live",
+          }),
+        ),
+        Effect.catch(() => Effect.void),
+        Effect.forkChild({ startImmediately: true }),
+      )
+    : undefined;
+
+  yield* stack.start().pipe(
+    Effect.tapError(() => emitStartupDiagnostics("startup failed")),
+    Effect.ensuring(
+      Effect.gen(function* () {
+        yield* Fiber.interrupt(fiber);
+        if (debugLogFiber !== undefined) {
+          yield* Fiber.interrupt(debugLogFiber);
+        }
+      }),
+    ),
+  );
   yield* prog.stop("All services started");
-  yield* Fiber.interrupt(fiber);
 });
 
 export const printStackConnectionInfo = Effect.fnUntraced(function* () {
