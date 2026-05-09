@@ -33,7 +33,7 @@ class PreparationCompleted extends Data.TaggedClass("PreparationCompleted")<{
   readonly artifacts: PreparedStackArtifacts;
 }> {}
 
-type StackPreparationEvent =
+export type StackPreparationEvent =
   | ServiceDownloadStarted
   | ServiceDownloadFinished
   | PreparationCompleted;

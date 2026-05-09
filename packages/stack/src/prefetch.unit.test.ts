@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { Deferred, Effect, Layer, Sink, Stream } from "effect";
+import { Deferred, Effect, Fiber, Layer, Queue, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { BinaryResolver } from "./BinaryResolver.ts";
@@ -8,6 +8,7 @@ import {
   ServiceDownloadFinished,
   ServiceDownloadStarted,
   StackPreparation,
+  type StackPreparationEvent,
 } from "./StackPreparation.ts";
 import { prepareAssetsWithDependencies } from "./StackPreparation.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
@@ -178,52 +179,74 @@ describe("prefetch", () => {
   });
 
   test("reports per-service download finished events as each service completes", async () => {
-    const resolver = mockBinaryResolver({
-      downloadedServices: ["postgres", "postgrest", "auth"],
-      downloadDelaysMs: {
-        postgres: 10,
-        auth: 30,
-        postgrest: 50,
-      },
-    });
-    const events: string[] = [];
-
     await Effect.runPromise(
       Effect.gen(function* () {
-        const resolverService = yield* BinaryResolver;
-        const artifacts = yield* prepareAssetsWithDependencies(
-          resolverService,
-          {} as ChildProcessSpawner.ChildProcessSpawner["Service"],
-          {
-            mode: "native",
-            services: ["postgres", "postgrest", "auth"],
-          },
-          (event) =>
-            Effect.sync(() => {
-              switch (event._tag) {
-                case "ServiceDownloadStarted":
-                case "ServiceDownloadFinished":
-                  events.push(`${event._tag}:${event.service}`);
-                  break;
-                case "PreparationCompleted":
-                  events.push("PreparationCompleted");
-                  break;
-              }
-            }),
-        );
-        expect(Object.keys(artifacts.resolutions)).toEqual(["postgres", "postgrest", "auth"]);
-      }).pipe(Effect.provide(resolver.layer)),
-    );
+        // Gate each download on a Deferred so we control completion order
+        // deterministically, instead of relying on Effect.sleep races between
+        // concurrent fibers.
+        const postgresGate = yield* Deferred.make<void>();
+        const authGate = yield* Deferred.make<void>();
+        const postgrestGate = yield* Deferred.make<void>();
 
-    expect(events).toEqual([
-      "ServiceDownloadStarted:postgres",
-      "ServiceDownloadStarted:postgrest",
-      "ServiceDownloadStarted:auth",
-      "ServiceDownloadFinished:postgres",
-      "ServiceDownloadFinished:auth",
-      "ServiceDownloadFinished:postgrest",
-      "PreparationCompleted",
-    ]);
+        const resolver = mockBinaryResolver({
+          downloadedServices: ["postgres", "postgrest", "auth"],
+          downloadGates: {
+            postgres: Deferred.await(postgresGate),
+            auth: Deferred.await(authGate),
+            postgrest: Deferred.await(postgrestGate),
+          },
+        });
+
+        const events = yield* Queue.unbounded<StackPreparationEvent>();
+
+        const fiber = yield* Effect.forkChild(
+          Effect.gen(function* () {
+            const resolverService = yield* BinaryResolver;
+            return yield* prepareAssetsWithDependencies(
+              resolverService,
+              {} as ChildProcessSpawner.ChildProcessSpawner["Service"],
+              { mode: "native", services: ["postgres", "postgrest", "auth"] },
+              (event) => Queue.offer(events, event),
+            );
+          }).pipe(Effect.provide(resolver.layer)),
+        );
+
+        const eventLabel = (e: StackPreparationEvent): string =>
+          e._tag === "ServiceDownloadStarted" || e._tag === "ServiceDownloadFinished"
+            ? `${e._tag}:${e.service}`
+            : e._tag;
+        const takeNext = Effect.map(Queue.take(events), eventLabel);
+
+        // All three services must emit ServiceDownloadStarted before any can
+        // finish, since every gate is still closed. The relative order between
+        // the three starts is scheduler-dependent, so compare as a set.
+        const startLabels = yield* Effect.all([takeNext, takeNext, takeNext]);
+        expect(new Set(startLabels)).toEqual(
+          new Set([
+            "ServiceDownloadStarted:postgres",
+            "ServiceDownloadStarted:auth",
+            "ServiceDownloadStarted:postgrest",
+          ]),
+        );
+
+        // Releasing each gate in turn must produce that service's finished
+        // event before any other service can finish — proving events are
+        // emitted incrementally per completion, not batched at the end.
+        yield* Deferred.succeed(postgresGate, undefined);
+        expect(yield* takeNext).toBe("ServiceDownloadFinished:postgres");
+
+        yield* Deferred.succeed(authGate, undefined);
+        expect(yield* takeNext).toBe("ServiceDownloadFinished:auth");
+
+        yield* Deferred.succeed(postgrestGate, undefined);
+        expect(yield* takeNext).toBe("ServiceDownloadFinished:postgrest");
+
+        expect(yield* takeNext).toBe("PreparationCompleted");
+
+        const artifacts = yield* Fiber.join(fiber);
+        expect(Object.keys(artifacts.resolutions)).toEqual(["postgres", "postgrest", "auth"]);
+      }),
+    );
   });
 
   test("uses docker for edge-runtime in auto mode even when a native binary exists", async () => {
