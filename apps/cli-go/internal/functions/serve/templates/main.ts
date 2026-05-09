@@ -60,6 +60,34 @@ interface FunctionConfig {
   verifyJWT: boolean;
 }
 
+async function fetchWithTimeout(
+  worker: Awaited<ReturnType<typeof EdgeRuntime.userWorkers.create>>,
+  req: Request,
+  timeoutMs: number,
+): Promise<Response> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<Response>((resolve) => {
+    timeoutHandle = setTimeout(() => {
+      resolve(
+        getResponse(
+          {
+            code: STATUS_TEXT[STATUS_CODE.GatewayTimeout],
+            message: "Function timed out while waiting for a response",
+          },
+          STATUS_CODE.GatewayTimeout,
+        ),
+      );
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([worker.fetch(req), timeoutPromise]);
+  } finally {
+    if (timeoutHandle !== undefined) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+}
+
 function getResponse(payload: any, status: number, customHeaders = {}) {
   const headers = { ...customHeaders };
   let body: string | null = null;
@@ -279,7 +307,7 @@ Deno.serve({
         staticPatterns,
       });
 
-      return await worker.fetch(req);
+      return await fetchWithTimeout(worker, req, workerTimeoutMs);
     } catch (e) {
       console.error(e);
 
