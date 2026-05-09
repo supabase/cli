@@ -12,7 +12,7 @@ export function mockBinaryResolver(
     binaries?: Record<string, string>;
     downloadedServices?: string[];
     downloadDelayMs?: number;
-    downloadGates?: Partial<Record<string, Effect.Effect<void>>>;
+    downloadDelaysMs?: Partial<Record<string, number>>;
     failServices?: string[];
   } = {},
 ) {
@@ -42,11 +42,9 @@ export function mockBinaryResolver(
       const downloaded = opts.downloadedServices?.includes(spec.service) ?? false;
       if (downloaded) {
         yield* options?.onDownloadStart ?? Effect.void;
-        const gate = opts.downloadGates?.[spec.service];
-        if (gate) {
-          yield* gate;
-        } else if (opts.downloadDelayMs && opts.downloadDelayMs > 0) {
-          yield* Effect.sleep(`${opts.downloadDelayMs} millis`);
+        const delayMs = opts.downloadDelaysMs?.[spec.service] ?? opts.downloadDelayMs ?? 0;
+        if (delayMs > 0) {
+          yield* Effect.sleep(`${delayMs} millis`);
         }
       }
       return { path, downloaded };
