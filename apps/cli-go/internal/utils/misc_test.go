@@ -215,3 +215,21 @@ func TestGetDeclarativeDir(t *testing.T) {
 		assert.Equal(t, DeclarativeDir, GetDeclarativeDir())
 	})
 }
+
+func TestSuggestClaudePlugin(t *testing.T) {
+	t.Run("returns empty when not running inside Claude Code", func(t *testing.T) {
+		t.Setenv("CLAUDECODE", "")
+		t.Setenv("CLAUDE_CODE", "")
+
+		assert.Empty(t, SuggestClaudePlugin())
+	})
+
+	t.Run("returns empty when stderr is not a terminal", func(t *testing.T) {
+		// Tests run with a piped stderr, so this exercises the suppression
+		// path that prevents the trailer from contaminating redirected
+		// output (see #5212).
+		t.Setenv("CLAUDECODE", "1")
+
+		assert.Empty(t, SuggestClaudePlugin())
+	})
+}

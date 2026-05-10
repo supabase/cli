@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils/agent"
 	"github.com/supabase/cli/pkg/migration"
+	"golang.org/x/term"
 )
 
 // Assigned using `-ldflags` https://stackoverflow.com/q/11354518
@@ -42,10 +43,16 @@ const SuggestDebugFlag = "Try rerunning the command with --debug to troubleshoot
 const claudeCodeHint = `<claude-code-hint v="1" type="plugin" value="supabase@claude-plugins-official" />`
 
 func SuggestClaudePlugin() string {
-	if agent.IsClaudeCode() {
-		return claudeCodeHint
+	if !agent.IsClaudeCode() {
+		return ""
 	}
-	return ""
+	// Suppress the hint when stderr is not a terminal. This avoids contaminating
+	// captured or redirected output (for example `supabase gen types > out.ts 2>&1`,
+	// or any tool runner that pipes both streams to a file). See #5212.
+	if !term.IsTerminal(int(os.Stderr.Fd())) {
+		return ""
+	}
+	return claudeCodeHint
 }
 
 var (
