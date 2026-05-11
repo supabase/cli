@@ -63,6 +63,10 @@ const (
 
 // TrackUpgradeSuggested fires an EventUpgradeSuggested telemetry event.
 // Safe to call with any context; no-ops when telemetry is not configured.
+//
+// Multi-call gated handlers (e.g. internal/sso/update) call this helper on
+// each failure path; callers' early-return behavior guarantees at most one
+// fire per command invocation. See the comment in those call sites.
 func TrackUpgradeSuggested(ctx context.Context, featureKey, orgSlug string) {
 	if svc := FromContext(ctx); svc != nil {
 		_ = svc.Capture(ctx, EventUpgradeSuggested, map[string]any{

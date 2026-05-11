@@ -126,6 +126,10 @@ func Run(ctx context.Context, params RunParams) error {
 	}
 
 	if putResp.JSON200 == nil {
+		// GET branch above early-returns on any failure, so this PUT-failure path
+		// and the GET-failure path are mutually exclusive: at most one
+		// cli_upgrade_suggested fires per invocation. Do not delete one site
+		// without removing the other; doing so undercounts gated users.
 		if orgSlug, isGated := utils.SuggestUpgradeOnError(ctx, params.ProjectRef, "auth.saml_2", putResp.StatusCode()); isGated {
 			telemetry.TrackUpgradeSuggested(ctx, "auth.saml_2", orgSlug)
 		}
