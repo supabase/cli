@@ -26,7 +26,7 @@ const (
 	//   - EventLoginCompleted: sent after a login flow completes successfully. This
 	//     helps measure successful login completion and supports identity stitching
 	//     between anonymous and authenticated usage. Event-specific properties:
-	//     PropStitched. Related groups: none added directly by this event.
+	//     none. Related groups: none added directly by this event.
 	EventLoginCompleted = "cli_login_completed"
 	//   - EventStackStarted: sent after the local development stack starts
 	//     successfully. This helps measure local development usage and successful
@@ -49,12 +49,6 @@ const (
 	PropFeatureKey = "feature_key"
 	// PropOrgSlug is the organization slug associated with the project.
 	PropOrgSlug = "org_slug"
-)
-
-// Properties specific to EventLoginCompleted.
-const (
-	// PropStitched is true when the gotrue identity was aliased onto the device ID.
-	PropStitched = "stitched"
 )
 
 // TrackUpgradeSuggested fires an EventUpgradeSuggested telemetry event.
