@@ -80,7 +80,8 @@
       "main",
       {
         "name": "develop",
-        "prerelease": "beta"
+        "prerelease": "beta",
+        "channel": "beta"
       }
     ],
     "plugins": [
