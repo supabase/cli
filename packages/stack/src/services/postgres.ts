@@ -116,10 +116,10 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => 
   const initScript = `${opts.binPath}/share/supabase-cli/bin/supabase-postgres-init.sh`;
 
   if (opts.dockerAccessible) {
-    // On macOS/Windows, Docker containers connect via host.docker.internal which
-    // resolves to a gateway IP (not 127.0.0.1). We create a per-run pg_hba.conf
-    // that allows connections from any IP, and use postgres -c flags to override
-    // listen_addresses and hba_file. This avoids mutating the shared binary cache.
+    // Docker containers connect via host.docker.internal, which resolves to a gateway IP
+    // rather than 127.0.0.1. We create a per-run pg_hba.conf that allows those
+    // connections, and use postgres -c flags to override listen_addresses and hba_file.
+    // This avoids mutating the shared binary cache.
     const customHbaPath = `${opts.dataDir}_pg_hba_docker.conf`;
     mkdirSync(opts.dataDir, { recursive: true });
     writeFileSync(
