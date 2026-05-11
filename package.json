@@ -17,6 +17,6 @@
     "@swc-node/register": "catalog:",
     "@swc/core": "catalog:",
     "nx": "catalog:",
-    "verdaccio": "^6.5.2"
+    "verdaccio": "^6.6.0"
   }
 }
