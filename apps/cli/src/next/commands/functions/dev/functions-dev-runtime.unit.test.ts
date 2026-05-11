@@ -13,61 +13,75 @@ function makeTempProject(): string {
 }
 
 describe("functions dev runtime", () => {
-  it.live("emits when the supabase functions directory appears after dev starts", () => {
-    const cwd = makeTempProject();
+  // Parcel's native watcher takes a variable amount of time to initialize
+  // its inotify/FSEvents subscription before any event is delivered. The
+  // 5s default was tight enough that these tests flaked on busy CI runners.
+  const watcherTimeout = Duration.seconds(30);
+  const vitestTimeoutMs = 60_000;
 
-    return Effect.gen(function* () {
-      let emitted = false;
+  it.live(
+    "emits when the supabase functions directory appears after dev starts",
+    () => {
+      const cwd = makeTempProject();
 
-      yield* Effect.forkChild(
-        Effect.gen(function* () {
-          yield* Effect.sleep(Duration.millis(50));
-          yield* Effect.tryPromise(() =>
-            mkdir(join(cwd, "supabase", "functions"), { recursive: true }),
-          );
-        }),
-      );
+      return Effect.gen(function* () {
+        let emitted = false;
 
-      yield* watchPaths([{ path: cwd, names: ["supabase"] }]).pipe(
-        Stream.take(1),
-        Stream.runForEach(() =>
-          Effect.sync(() => {
-            emitted = true;
+        yield* Effect.forkChild(
+          Effect.gen(function* () {
+            yield* Effect.sleep(Duration.millis(50));
+            yield* Effect.tryPromise(() =>
+              mkdir(join(cwd, "supabase", "functions"), { recursive: true }),
+            );
           }),
-        ),
-        Effect.timeout(Duration.seconds(5)),
+        );
+
+        yield* watchPaths([{ path: cwd, names: ["supabase"] }]).pipe(
+          Stream.take(1),
+          Stream.runForEach(() =>
+            Effect.sync(() => {
+              emitted = true;
+            }),
+          ),
+          Effect.timeout(watcherTimeout),
+        );
+
+        expect(emitted).toBe(true);
+      }).pipe(
+        Effect.ensuring(Effect.tryPromise(() => rm(cwd, { recursive: true, force: true }))),
+        Effect.provide(Layer.mergeAll(BunServices.layer, parcelFileWatcherLayer)),
       );
+    },
+    vitestTimeoutMs,
+  );
 
-      expect(emitted).toBe(true);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(cwd, { recursive: true, force: true }))),
-      Effect.provide(Layer.mergeAll(BunServices.layer, parcelFileWatcherLayer)),
-    );
-  });
+  it.live(
+    "marks config json changes as project config changes",
+    () => {
+      const cwd = makeTempProject();
 
-  it.live("marks config json changes as project config changes", () => {
-    const cwd = makeTempProject();
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => mkdir(join(cwd, "supabase"), { recursive: true }));
 
-    return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(cwd, "supabase"), { recursive: true }));
+        yield* Effect.forkChild(
+          Effect.gen(function* () {
+            yield* Effect.sleep(Duration.millis(50));
+            yield* Effect.tryPromise(() =>
+              writeFile(join(cwd, "supabase", "config.json"), JSON.stringify({ functions: {} })),
+            );
+          }),
+        );
 
-      yield* Effect.forkChild(
-        Effect.gen(function* () {
-          yield* Effect.sleep(Duration.millis(50));
-          yield* Effect.tryPromise(() =>
-            writeFile(join(cwd, "supabase", "config.json"), JSON.stringify({ functions: {} })),
-          );
-        }),
+        const changes = yield* watchPaths([
+          { path: join(cwd, "supabase"), names: ["functions", "config.toml", "config.json"] },
+        ]).pipe(Stream.take(1), Stream.runCollect, Effect.timeout(watcherTimeout));
+
+        expect(changes.at(0)?.touchesProjectConfig).toBe(true);
+      }).pipe(
+        Effect.ensuring(Effect.tryPromise(() => rm(cwd, { recursive: true, force: true }))),
+        Effect.provide(Layer.mergeAll(BunServices.layer, parcelFileWatcherLayer)),
       );
-
-      const changes = yield* watchPaths([
-        { path: join(cwd, "supabase"), names: ["functions", "config.toml", "config.json"] },
-      ]).pipe(Stream.take(1), Stream.runCollect, Effect.timeout(Duration.seconds(5)));
-
-      expect(changes.at(0)?.touchesProjectConfig).toBe(true);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(cwd, { recursive: true, force: true }))),
-      Effect.provide(Layer.mergeAll(BunServices.layer, parcelFileWatcherLayer)),
-    );
-  });
+    },
+    vitestTimeoutMs,
+  );
 });
