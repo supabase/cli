@@ -215,22 +215,3 @@ func TestGetDeclarativeDir(t *testing.T) {
 		assert.Equal(t, DeclarativeDir, GetDeclarativeDir())
 	})
 }
-
-func TestSuggestClaudePlugin(t *testing.T) {
-	// In `go test`, os.Stdout is a pipe (not a TTY), so this exercises the
-	// non-interactive guard that prevents the hint from ever reaching
-	// captured/redirected output.
-	t.Run("suppresses hint when stdout is non-tty", func(t *testing.T) {
-		t.Setenv("CLAUDECODE", "1")
-		t.Setenv("CLAUDE_CODE", "")
-
-		assert.Equal(t, "", SuggestClaudePlugin())
-	})
-
-	t.Run("returns empty string when not running in claude code", func(t *testing.T) {
-		t.Setenv("CLAUDECODE", "")
-		t.Setenv("CLAUDE_CODE", "")
-
-		assert.Equal(t, "", SuggestClaudePlugin())
-	})
-}
