@@ -15,6 +15,10 @@ on:
         description: npm dist-tag to publish under
         required: true
         type: string
+      channel:
+        description: semantic-release channel name (alpha | beta | stable)
+        required: true
+        type: string
       prerelease:
         description: Whether the GitHub release should be marked as a prerelease
         required: true
@@ -48,6 +52,17 @@ jobs:
 
       - name: Setup
         uses: ./.github/actions/setup
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: apps/cli-go/go.mod
+          cache: true
+          cache-dependency-path: apps/cli-go/go.sum
+
+      - name: Pre-download Go modules
+        working-directory: apps/cli-go
+        run: go mod download -x
 
       - name: Install nfpm
         run: |
@@ -140,6 +155,53 @@ jobs:
 
       - name: Publish to npm
         run: pnpm exec bun apps/cli/scripts/publish.ts --tag ${{ inputs.npm_tag }}
+
+      # Push the version tag to origin as soon as npm has the bytes, before any
+      # downstream step that can fail. Without this, a failure in the GH-release
+      # step (or anything after) leaves origin with no tag for the version that
+      # is now live on npm — and `semantic-release --dry-run` on the next push
+      # will keep recomputing the same version, causing the publish job to no-op
+      # against stale bytes. Idempotent: skips push if the tag is already on
+      # origin (e.g. a re-run of a job that previously got past this step).
+      - name: Push version tag
+        run: |
+          set -euo pipefail
+          tag="v${{ inputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --tags origin "refs/tags/${tag}" | grep -q .; then
+            echo "Tag ${tag} already on origin; skipping push."
+          else
+            git tag -a "${tag}" -m "Release ${tag}"
+            git push origin "${tag}"
+          fi
+
+      # semantic-release matches tags against branch.channel using git-notes
+      # under refs/notes/semantic-release-<tag>. Without this note, the develop
+      # plan job recomputes the same prerelease version every push (see
+      # docs/ci-beta-tags-investigation.md). Stable releases on main don't
+      # need this — main's branch config has no explicit channel.
+      #
+      # The note must be attached to the underlying commit, not the annotated
+      # tag object created by "Push version tag" above. semantic-release reads
+      # notes via `git log --no-walk --tags=* --notes=...`, which looks for
+      # notes on commits; a note on the tag object is invisible to it and
+      # leaves the tag with channels:[null], so the prerelease arm of
+      # getLastRelease's filter rejects it and the plan falls back to the
+      # last stable. Hence the `${tag}^{commit}` deref.
+      - name: Push channel note for prerelease tags
+        if: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          tag="v${{ inputs.version }}"
+          channel="${{ inputs.channel }}"
+          note_ref="refs/notes/semantic-release-${tag}"
+          if git ls-remote origin "${note_ref}" | grep -q .; then
+            echo "Channel note ${note_ref} already on origin; skipping push."
+          else
+            git notes --ref="${note_ref}" add -f -m "{\"channels\":[\"${channel}\"]}" "${tag}^{commit}"
+            git push origin "${note_ref}"
+          fi
 
       - name: Create draft GitHub Release
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2

@@ -1,10 +1,11 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerRunService, hostHttpHealthCheck, type ServiceDependency } from "./service-utils.ts";
 
 interface EdgeRuntimeOptions {
   readonly runtimeRoot: string;
+  readonly projectDir?: string;
   readonly port: number;
   readonly inspectorPort: number;
   readonly policy: "oneshot" | "per_worker";
@@ -24,35 +25,25 @@ interface DockerEdgeRuntimeOptions extends EdgeRuntimeOptions {
 
 const bootstrapFileName = "index.ts";
 const bootstrapMountDir = "/workspace";
-const bootstrapContainerPath = `${bootstrapMountDir}/${bootstrapFileName}`;
-
-const bootstrapSource = `const placeholder = {
-  code: "FUNCTIONS_NOT_CONFIGURED",
-  message: "Edge Functions are not configured for this local stack yet.",
-};
-
-Deno.serve((req) => {
-  const url = new URL(req.url);
-
-  if (url.pathname === "/_internal/health") {
-    return Response.json({ message: "ok" });
-  }
-
-  return Response.json(placeholder, { status: 501 });
-});
-`;
+const bootstrapSourcePath = new URL("./edge-runtime-main.ts", import.meta.url);
 
 function ensureBootstrapScript(runtimeRoot: string): string {
   const bootstrapDir = join(runtimeRoot, "edge-runtime");
   mkdirSync(bootstrapDir, { recursive: true });
   const filePath = join(bootstrapDir, bootstrapFileName);
-  writeFileSync(filePath, bootstrapSource);
-  return filePath;
+  writeFileSync(filePath, readFileSync(bootstrapSourcePath, "utf8"));
+  return bootstrapDir;
 }
 
 const edgeRuntimeEnv = (opts: EdgeRuntimeOptions): Record<string, string> => ({
   ...opts.env,
+  EDGE_RUNTIME_PORT: String(opts.port),
   EDGE_RUNTIME_INSPECTOR_PORT: String(opts.inspectorPort),
+  FUNCTIONS_RUNTIME_CONFIG_PATH: join(
+    opts.runtimeRoot,
+    "edge-runtime",
+    "functions-runtime-config.json",
+  ),
 });
 
 const edgeRuntimeArgs = (
@@ -73,8 +64,7 @@ const edgeRuntimeHealthCheck = (port: number): ServiceDef["healthCheck"] =>
   });
 
 export const makeEdgeRuntimeServiceNative = (opts: NativeEdgeRuntimeOptions): ServiceDef => {
-  ensureBootstrapScript(opts.runtimeRoot);
-  const bootstrapDir = join(opts.runtimeRoot, "edge-runtime");
+  const bootstrapDir = ensureBootstrapScript(opts.runtimeRoot);
 
   return {
     name: "edge-runtime",
@@ -89,15 +79,22 @@ export const makeEdgeRuntimeServiceNative = (opts: NativeEdgeRuntimeOptions): Se
 };
 
 export const makeEdgeRuntimeServiceDocker = (opts: DockerEdgeRuntimeOptions): ServiceDef => {
-  const bootstrapHostPath = ensureBootstrapScript(opts.runtimeRoot);
+  const bootstrapDir = ensureBootstrapScript(opts.runtimeRoot);
 
   return dockerRunService({
     name: "edge-runtime",
     containerName: `supabase-edge-runtime-${opts.apiPort}`,
     image: opts.image,
     networkArgs: opts.networkArgs,
-    volumes: [`${bootstrapHostPath}:${bootstrapContainerPath}:ro`],
-    env: edgeRuntimeEnv(opts),
+    volumes: [
+      `${bootstrapDir}:${bootstrapMountDir}:ro`,
+      ...(opts.projectDir === undefined ? [] : [`${opts.projectDir}:${opts.projectDir}:ro`]),
+    ],
+    args: ["--ulimit", "nofile=65536:65536"],
+    env: {
+      ...edgeRuntimeEnv(opts),
+      FUNCTIONS_RUNTIME_CONFIG_PATH: `${bootstrapMountDir}/functions-runtime-config.json`,
+    },
     cmd: [...edgeRuntimeArgs(opts, bootstrapMountDir)],
     dependsOn: opts.dependencies,
     healthCheck: edgeRuntimeHealthCheck(opts.port),

@@ -7,6 +7,7 @@ import { StackBuilder } from "./StackBuilder.ts";
 import type { BuildResult } from "./StackBuilder.ts";
 import type { ResolvedStackConfig } from "./StackBuilder.ts";
 import { enabledServicesForConfig, versionsForConfig } from "./StackBuilder.ts";
+import { nativePostgresNeedsDockerAccess } from "./StackBuilder.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import type { StackPreparationInput } from "./StackPreparation.ts";
@@ -39,6 +40,7 @@ const baseConfig: ResolvedStackConfig = {
   cacheRoot: "/tmp/supabase-cache",
   stackRoot: "/tmp/supabase-stack",
   runtimeRoot: "/tmp/supabase-runtime",
+  projectDir: "/tmp/supabase-project",
   mode: "auto",
   jwtSecret: testJwtSecret,
   ports: basePorts,
@@ -46,6 +48,7 @@ const baseConfig: ResolvedStackConfig = {
   dbPort: 5432,
   publishableKey: defaultPublishableKey,
   secretKey: defaultSecretKey,
+  functions: false,
   autoManagedPaths: [],
   anonJwt: generateJwt(testJwtSecret, "anon"),
   serviceRoleJwt: generateJwt(testJwtSecret, "service_role"),
@@ -159,6 +162,18 @@ const prepareAndBuild = (
   });
 
 describe("StackBuilder", () => {
+  it("makes native postgres reachable by docker services on every platform", () => {
+    expect(nativePostgresNeedsDockerAccess({ type: "binary", path: "/cache/postgres" }, true)).toBe(
+      true,
+    );
+    expect(
+      nativePostgresNeedsDockerAccess({ type: "binary", path: "/cache/postgres" }, false),
+    ).toBe(false);
+    expect(
+      nativePostgresNeedsDockerAccess({ type: "docker", image: "supabase/postgres" }, true),
+    ).toBe(false);
+  });
+
   it.effect("builds graph with all native binaries", () => {
     const resolver = mockBinaryResolver();
     const layer = builderLayer(resolver);

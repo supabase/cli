@@ -63,7 +63,7 @@ It is **not** a valid test for Homebrew or Scoop — those paths are covered in 
 
 This is how you validate the Homebrew formula, Scoop manifest, and GitHub-Release-host resolution on real infrastructure without touching `supabase/`\* repos or risking a clash with an already-installed `supabase` CLI on the reviewer's machine.
 
-Both updater scripts support a `--name <custom>` flag that pushes the formula / manifest under a different name (e.g., `supabase-shim-poc`) and, when the name differs from `supabase`, renames the installed binary (`bin.install "supabase" => "supabase-shim-poc"` on Homebrew, `["supabase.exe", "supabase-shim-poc"]` alias-tuple on Scoop). This keeps the reviewer's real `supabase` CLI intact and makes it obvious which binary is being exercised.
+Both updater scripts support a `--name <custom>` flag that pushes the formula / manifest under a different name (e.g., `supabase-shim-poc`) — that is, a different filename and Ruby class / scoop manifest. The installed binary is always `supabase` (matching the Go CLI), so PoC reviewers should `brew uninstall supabase` / `scoop uninstall supabase` first if they already have the official CLI installed.
 
 ### One-time setup (per reviewer)
 
@@ -158,9 +158,10 @@ These are what a fresh reviewer would run — no repo clone required.
 **macOS / Linux (Homebrew):**
 
 ```sh
+brew uninstall supabase || true       # PoC formula installs a `supabase` binary too
 brew tap avallete/supabase-shim-poc   # note: "avallete/<tap-suffix>", not the full repo name
 brew install supabase-shim-poc
-supabase-shim-poc --version           # expect: supabase v0.0.1
+supabase --version                    # expect: supabase v0.0.1
 brew test supabase-shim-poc           # expect: pass
 ```
 
@@ -169,9 +170,10 @@ The `brew tap <owner>/<suffix>` command looks up `https://github.com/<owner>/hom
 **Windows (Scoop):**
 
 ```powershell
+scoop uninstall supabase  # PoC manifest also shims `supabase.exe`
 scoop bucket add avallete-poc https://github.com/avallete/scoop-bucket
 scoop install supabase-shim-poc
-supabase-shim-poc --version           # expect: supabase v0.0.1
+supabase --version        # expect: supabase v0.0.1
 ```
 
 Validated on Windows x64 (`v0.0.1`, 2026-04-21): installed with no SmartScreen block on the unsigned Bun SFE, `--version` output matched. Windows arm64 (Surface / Copilot+ / ARM VM) still pending — needs hardware or a Windows-on-ARM VM to exercise the `windows_arm64.zip` archive added by this branch.
@@ -181,7 +183,7 @@ Validated on Windows x64 (`v0.0.1`, 2026-04-21): installed with no SmartScreen b
 Beyond `--version` and `brew test`, exercise a Phase-0 proxied subcommand that requires the `supabase-go` sidecar (`--shell legacy` only):
 
 ```sh
-supabase-shim-poc projects list --help
+supabase projects list --help
 ```
 
 This must spawn the colocated `supabase-go` and print help text — not return `NotFound: ChildProcess.spawn (supabase ...)`. If it fails, the Homebrew install step is wrong: check that `[apps/cli/scripts/update-homebrew.ts](../scripts/update-homebrew.ts)`'s install-lines block ran `bin.install "supabase-go" if File.exist?("supabase-go")`, and that the built archive actually contains `supabase-go` (it should, for any `--shell legacy` build).

@@ -7,7 +7,7 @@ import {
   HttpServerResponse,
 } from "effect/unstable/http";
 import * as Sse from "effect/unstable/encoding/Sse";
-import { Stack } from "./Stack.ts";
+import { EdgeRuntimeReloadConfigSchema, Stack } from "./Stack.ts";
 
 // ---------------------------------------------------------------------------
 // Service
@@ -206,6 +206,56 @@ export class DaemonServer extends ServiceMap.Service<
             ),
           ),
         ),
+
+        HttpRouter.route(
+          "POST",
+          "/functions/reload",
+          Effect.gen(function* () {
+            const searchParams = yield* HttpServerRequest.ParsedSearchParams.asEffect();
+            yield* stack.reloadFunctions({
+              envFile: parseSingleParam(searchParams.envFile),
+              noVerifyJwt: parseBoolean(searchParams.noVerifyJwt),
+            });
+            return HttpServerResponse.jsonUnsafe({ ok: true });
+          }).pipe(
+            Effect.catchTag("ServiceNotFoundError", (e) =>
+              Effect.succeed(
+                HttpServerResponse.jsonUnsafe(
+                  { error: `Service not found: ${e.name}` },
+                  { status: 404 },
+                ),
+              ),
+            ),
+            Effect.catchTag("ServiceReadyError", (e) =>
+              Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.reason }, { status: 500 })),
+            ),
+          ),
+        ),
+
+        HttpRouter.route(
+          "POST",
+          "/edge-runtime/reload",
+          Effect.gen(function* () {
+            const body = yield* HttpServerRequest.schemaBodyJson(EdgeRuntimeReloadConfigSchema);
+            yield* stack.reloadEdgeRuntime(body);
+            return HttpServerResponse.jsonUnsafe({ ok: true });
+          }).pipe(
+            Effect.catchTag("ServiceNotFoundError", (e) =>
+              Effect.succeed(
+                HttpServerResponse.jsonUnsafe(
+                  { error: `Service not found: ${e.name}` },
+                  { status: 404 },
+                ),
+              ),
+            ),
+            Effect.catchTag("ServiceReadyError", (e) =>
+              Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.reason }, { status: 500 })),
+            ),
+            Effect.catchTag("StackBuildError", (e) =>
+              Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.message }, { status: 500 })),
+            ),
+          ),
+        ),
       ];
 
       const httpEffect = yield* HttpRouter.toHttpEffect(HttpRouter.addAll(routes));
@@ -236,4 +286,10 @@ function parseServices(
 function parseSingleParam(value: string | ReadonlyArray<string> | undefined): string | undefined {
   if (value === undefined) return undefined;
   return typeof value === "string" ? value : value[0];
+}
+
+function parseBoolean(value: string | ReadonlyArray<string> | undefined): boolean | undefined {
+  const raw = parseSingleParam(value);
+  if (raw === undefined) return undefined;
+  return raw === "true";
 }

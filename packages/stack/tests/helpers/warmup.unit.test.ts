@@ -1,6 +1,6 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type { PrefetchOptions, PrefetchResult } from "../../src/node.ts";
-import { STACK_E2E_WARMUP_SERVICES, warmStackE2eDependencies } from "./warmup.ts";
+import { warmStackE2eDependencies } from "./warmup.ts";
 
 function makeLogger() {
   const warn: string[] = [];
@@ -32,20 +32,29 @@ describe("stack e2e warmup", () => {
   test("runs auto prefetch and docker image warmup when Docker is available", async () => {
     const calls: Array<PrefetchOptions | undefined> = [];
     const { logger } = makeLogger();
+    let finishAutoPrefetch: (() => void) | undefined;
 
-    await warmStackE2eDependencies({
+    const warmup = warmStackE2eDependencies({
       logger,
       hasDockerDaemon: () => true,
       prefetch: async (options?: PrefetchOptions) => {
         calls.push(options);
+        if (options === undefined) {
+          await new Promise<void>((resolve) => {
+            finishAutoPrefetch = resolve;
+          });
+        }
         return options?.mode === "docker" ? makeResult("docker") : makeResult("binary");
       },
     });
 
-    expect(calls).toEqual([
-      { services: STACK_E2E_WARMUP_SERVICES },
-      { mode: "docker", services: STACK_E2E_WARMUP_SERVICES },
-    ]);
+    await vi.waitFor(() => {
+      expect(calls).toEqual([undefined, { mode: "docker" }]);
+    });
+    finishAutoPrefetch?.();
+    await warmup;
+
+    expect(calls).toEqual([undefined, { mode: "docker" }]);
   });
 
   test("skips docker image warmup when Docker is unavailable", async () => {
@@ -61,7 +70,7 @@ describe("stack e2e warmup", () => {
       },
     });
 
-    expect(calls).toEqual([{ services: STACK_E2E_WARMUP_SERVICES }]);
+    expect(calls).toEqual([undefined]);
   });
 
   test("can fail fast when warmup is required", async () => {

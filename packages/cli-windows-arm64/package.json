@@ -3,11 +3,21 @@
   "version": "0.0.0",
   "description": "Supabase CLI binary (windows-arm64)",
   "license": "MIT",
+  "homepage": "https://github.com/supabase/cli#readme",
+  "bugs": {
+    "url": "https://github.com/supabase/cli/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/supabase/cli.git",
+    "directory": "packages/cli-windows-arm64"
+  },
   "os": ["win32"],
   "cpu": ["arm64"],
   "preferUnplugged": true,
   "files": ["bin/"],
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "executableFiles": ["bin/supabase.exe", "bin/supabase-go.exe"]
   }
 }

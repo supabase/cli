@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { FunctionResponse } from "@supabase/api/effect";
 import { BunServices } from "@effect/platform-bun";
+import { unixHttpClientLayer } from "@supabase/stack";
 import { mkdtempSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,6 +12,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import { CliConfig } from "../../../config/cli-config.service.ts";
+import { ProjectHome } from "../../../config/project-home.service.ts";
 import {
   InvalidProjectLinkStateError,
   ProjectLinkState,
@@ -86,6 +88,30 @@ function cliConfigLayer() {
       telemetryDisabled: Option.none(),
       doNotTrack: Option.none(),
     }),
+  );
+}
+
+function commandTreeSupportLayer(cwd: string) {
+  const projectHomeDir = join(cwd, ".supabase");
+  return Layer.mergeAll(
+    unixHttpClientLayer,
+    cliConfigLayer(),
+    Layer.succeed(
+      ProjectHome,
+      ProjectHome.of({
+        projectRoot: cwd,
+        supabaseDir: join(cwd, "supabase"),
+        projectHomeDir,
+        projectLinkPath: join(projectHomeDir, "project.json"),
+        projectLocalVersionsPath: join(projectHomeDir, "local-versions.json"),
+        ensureProjectHomeDir: Effect.void,
+        stackDir: (name) => join(projectHomeDir, "stacks", name),
+        stackStatePath: (name) => join(projectHomeDir, "stacks", name, "state.json"),
+        stackMetadataPath: (name) => join(projectHomeDir, "stacks", name, "stack.json"),
+        stackDataDir: (name) => join(projectHomeDir, "stacks", name, "data"),
+        stackLogsDir: (name) => join(projectHomeDir, "stacks", name, "logs"),
+      }),
+    ),
   );
 }
 
@@ -421,7 +447,7 @@ describe("functions list", () => {
       analytics.layer,
       processControl.layer,
       mockRuntimeInfo({ cwd: tempDir }),
-      cliConfigLayer(),
+      commandTreeSupportLayer(tempDir),
       mockProjectLinkState(),
       mockCredentials().layer,
       api.layer,

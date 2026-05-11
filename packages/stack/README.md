@@ -243,7 +243,7 @@ The runtime selects the Bun or Node.js implementation automatically. Both expose
 
 ## Prefetching
 
-Pre-download binaries and Docker images before they're needed — useful in test `globalSetup` to avoid download delays during test execution:
+Pre-download binaries and Docker images for all services before they're needed — useful in test `globalSetup` to avoid download delays during test execution:
 
 ```typescript
 // vitest.config.ts globalSetup
@@ -257,6 +257,7 @@ export async function setup() {
 Prefetch specific services or versions:
 
 ```typescript
+await prefetch({ mode: "docker" });
 await prefetch({ services: ["postgres", "postgrest"] });
 await prefetch({ versions: { postgres: "17.4.1.045" } });
 ```
