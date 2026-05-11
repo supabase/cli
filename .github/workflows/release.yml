@@ -79,6 +79,7 @@ jobs:
       scoop_name: ${{ steps.compute.outputs.scoop_name }}
       publish_brew_scoop: ${{ steps.compute.outputs.publish_brew_scoop }}
       dry_run: ${{ steps.compute.outputs.dry_run }}
+      channel: ${{ steps.compute.outputs.channel }}
     steps:
       # semantic-release runs `git push --dry-run HEAD:<branch>` as part of
       # verifyAuth even in `dry_run: true` mode, so the token must have push
@@ -178,6 +179,7 @@ jobs:
             echo "scoop_name=$scoop_name"
             echo "publish_brew_scoop=$publish_brew_scoop"
             echo "dry_run=$dry_run"
+            echo "channel=$channel"
           } >> "$GITHUB_OUTPUT"
 
   release:
@@ -197,4 +199,5 @@ jobs:
       brew_name: ${{ needs.plan.outputs.brew_name }}
       scoop_name: ${{ needs.plan.outputs.scoop_name }}
       dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
+      channel: ${{ needs.plan.outputs.channel }}
     secrets: inherit
