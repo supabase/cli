@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils/agent"
 	"github.com/supabase/cli/pkg/migration"
+	"golang.org/x/term"
 )
 
 // Assigned using `-ldflags` https://stackoverflow.com/q/11354518
@@ -42,10 +43,17 @@ const SuggestDebugFlag = "Try rerunning the command with --debug to troubleshoot
 const claudeCodeHint = `<claude-code-hint v="1" type="plugin" value="supabase@claude-plugins-official" />`
 
 func SuggestClaudePlugin() string {
-	if agent.IsClaudeCode() {
-		return claudeCodeHint
+	if !agent.IsClaudeCode() {
+		return ""
 	}
-	return ""
+	// Suppress the hint when stdout is non-interactive (redirected to a file
+	// or piped). Without this guard, captured output could be contaminated by
+	// the trailer if anything ever leaks the tag onto stdout, and the
+	// install-prompt UX is only meaningful in an interactive shell anyway.
+	if !term.IsTerminal(int(os.Stdout.Fd())) { //nolint:gosec // G115: stdout fd is a small int on supported platforms
+		return ""
+	}
+	return claudeCodeHint
 }
 
 var (
