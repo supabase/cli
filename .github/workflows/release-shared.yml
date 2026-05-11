@@ -181,6 +181,14 @@ jobs:
       # plan job recomputes the same prerelease version every push (see
       # docs/ci-beta-tags-investigation.md). Stable releases on main don't
       # need this — main's branch config has no explicit channel.
+      #
+      # The note must be attached to the underlying commit, not the annotated
+      # tag object created by "Push version tag" above. semantic-release reads
+      # notes via `git log --no-walk --tags=* --notes=...`, which looks for
+      # notes on commits; a note on the tag object is invisible to it and
+      # leaves the tag with channels:[null], so the prerelease arm of
+      # getLastRelease's filter rejects it and the plan falls back to the
+      # last stable. Hence the `${tag}^{commit}` deref.
       - name: Push channel note for prerelease tags
         if: ${{ inputs.prerelease }}
         run: |
@@ -191,7 +199,7 @@ jobs:
           if git ls-remote origin "${note_ref}" | grep -q .; then
             echo "Channel note ${note_ref} already on origin; skipping push."
           else
-            git notes --ref="${note_ref}" add -f -m "{\"channels\":[\"${channel}\"]}" "${tag}"
+            git notes --ref="${note_ref}" add -f -m "{\"channels\":[\"${channel}\"]}" "${tag}^{commit}"
             git push origin "${note_ref}"
           fi
 
