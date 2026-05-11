@@ -1,11 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
+import { unixHttpClientLayer } from "@supabase/stack";
 import { existsSync, mkdtempSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Cause, Effect, Exit, Layer, Option, Stdio } from "effect";
 import { Command } from "effect/unstable/cli";
+import { CliConfig } from "../../../config/cli-config.service.ts";
+import { ProjectHome } from "../../../config/project-home.service.ts";
 import {
   mockAnalytics,
   mockCredentials,
@@ -14,7 +17,6 @@ import {
   mockProjectLinkState,
   mockRuntimeInfo,
 } from "../../../../../tests/helpers/mocks.ts";
-import { CliConfig } from "../../../config/cli-config.service.ts";
 import { functionsCommand } from "../functions.command.ts";
 import { functionsNew } from "./new.handler.ts";
 
@@ -31,23 +33,43 @@ function buildLayer(cwd: string) {
   };
 }
 
-function cliConfigLayer() {
-  return Layer.succeed(
-    CliConfig,
-    CliConfig.of({
-      apiUrl: "https://api.supabase.com",
-      dashboardUrl: "https://supabase.com/dashboard",
-      projectHost: "supabase.co",
-      telemetryPosthogHost: "https://us.i.posthog.com",
-      telemetryPosthogKey: "phc_test_key",
-      accessToken: Option.none(),
-      noKeyring: Option.none(),
-      supabaseHome: "/tmp/supabase-cli-test-home",
-      debug: Option.none(),
-      telemetryDebug: Option.none(),
-      telemetryDisabled: Option.none(),
-      doNotTrack: Option.none(),
-    }),
+function commandTreeSupportLayer(cwd: string) {
+  const projectHomeDir = join(cwd, ".supabase");
+  return Layer.mergeAll(
+    unixHttpClientLayer,
+    Layer.succeed(
+      CliConfig,
+      CliConfig.of({
+        apiUrl: "https://api.supabase.com",
+        dashboardUrl: "https://supabase.com/dashboard",
+        projectHost: "supabase.co",
+        telemetryPosthogHost: "https://us.i.posthog.com",
+        telemetryPosthogKey: "phc_test_key",
+        accessToken: Option.none(),
+        noKeyring: Option.none(),
+        supabaseHome: join(cwd, ".cache", "supabase"),
+        debug: Option.none(),
+        telemetryDebug: Option.none(),
+        telemetryDisabled: Option.none(),
+        doNotTrack: Option.none(),
+      }),
+    ),
+    Layer.succeed(
+      ProjectHome,
+      ProjectHome.of({
+        projectRoot: cwd,
+        supabaseDir: join(cwd, "supabase"),
+        projectHomeDir,
+        projectLinkPath: join(projectHomeDir, "project.json"),
+        projectLocalVersionsPath: join(projectHomeDir, "local-versions.json"),
+        ensureProjectHomeDir: Effect.void,
+        stackDir: (name) => join(projectHomeDir, "stacks", name),
+        stackStatePath: (name) => join(projectHomeDir, "stacks", name, "state.json"),
+        stackMetadataPath: (name) => join(projectHomeDir, "stacks", name, "stack.json"),
+        stackDataDir: (name) => join(projectHomeDir, "stacks", name, "data"),
+        stackLogsDir: (name) => join(projectHomeDir, "stacks", name, "logs"),
+      }),
+    ),
   );
 }
 
@@ -248,7 +270,7 @@ describe("functions new", () => {
       processControl.layer,
       mockRuntimeInfo({ cwd: tempDir }),
       BunServices.layer,
-      cliConfigLayer(),
+      commandTreeSupportLayer(tempDir),
       mockProjectLinkState(),
       mockCredentials().layer,
       Stdio.layerTest({

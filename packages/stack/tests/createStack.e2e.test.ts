@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -11,12 +11,17 @@ const STACK_E2E_TEST_TIMEOUT_MS = 5_000;
 describe("createStack e2e", () => {
   let stack: StackHandle;
   let dataDir: string;
+  let projectDir: string;
   let supabase: SupabaseClient;
 
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), "supabase-e2e-"));
+    projectDir = mkdtempSync(join(tmpdir(), "supabase-e2e-project-"));
+    writeFunction(projectDir, "hello", "hello");
 
     stack = await createStack({
+      projectDir,
+      functions: { noVerifyJwt: true },
       jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
       postgres: { dataDir },
     });
@@ -38,6 +43,7 @@ describe("createStack e2e", () => {
     await stack?.dispose();
     try {
       rmSync(dataDir, { recursive: true, force: true });
+      rmSync(projectDir, { recursive: true, force: true });
     } catch {}
   }, 30_000);
 
@@ -60,12 +66,12 @@ describe("createStack e2e", () => {
   );
 
   test(
-    "exposes edge runtime status and serves the functions placeholder through the local gateway",
+    "serves detected Edge Functions through the local gateway",
     { timeout: STACK_E2E_TEST_TIMEOUT_MS },
     async () => {
       const [states, functionsRes] = await Promise.all([
         stack.getStatus(),
-        fetch(`${stack.url}/functions/v1/test`),
+        fetch(`${stack.url}/functions/v1/hello`),
       ]);
 
       expect(states).toEqual(
@@ -73,13 +79,20 @@ describe("createStack e2e", () => {
           expect.objectContaining({ name: "edge-runtime", status: "Healthy" }),
         ]),
       );
-      expect(functionsRes.status).toBe(501);
-      expect(await functionsRes.json()).toEqual({
-        code: "FUNCTIONS_NOT_CONFIGURED",
-        message: "Edge Functions are not configured for this local stack yet.",
-      });
+      expect(functionsRes.status).toBe(200);
+      expect(await functionsRes.text()).toBe("hello");
     },
   );
+
+  test("reloadFunctions picks up newly added Edge Functions", { timeout: 15_000 }, async () => {
+    writeFunction(projectDir, "later", "later");
+    await stack.reloadFunctions({ noVerifyJwt: true });
+
+    const res = await fetch(`${stack.url}/functions/v1/later`);
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("later");
+  });
 
   test(
     "supports the auth signup and session golden path",
@@ -143,3 +156,12 @@ describe("createStack e2e", () => {
     },
   );
 });
+
+function writeFunction(projectDir: string, slug: string, body: string) {
+  const dir = join(projectDir, "supabase", "functions", slug);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "index.ts"),
+    `Deno.serve(() => new Response(${JSON.stringify(body)}));\n`,
+  );
+}

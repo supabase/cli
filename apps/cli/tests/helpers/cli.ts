@@ -20,6 +20,7 @@ type RunResult = {
 };
 
 const DEFAULT_EXIT_TIMEOUT_MS = 60_000;
+const OUTPUT_TAIL_LENGTH = 4_000;
 
 interface SpawnedSupabase {
   readonly pid: number;
@@ -136,6 +137,16 @@ function killProcessGroup(pid: number, signal: NodeJS.Signals): void {
   try {
     process.kill(-pid, signal);
   } catch {}
+}
+
+function outputTail(label: string, output: string): string {
+  if (output.length === 0) {
+    return `${label}: <empty>`;
+  }
+
+  const tail =
+    output.length > OUTPUT_TAIL_LENGTH ? output.slice(output.length - OUTPUT_TAIL_LENGTH) : output;
+  return `${label}:\n${tail}`;
 }
 
 export function spawnSupabase(
@@ -257,7 +268,17 @@ export function spawnSupabase(
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
           cleanup();
-          reject(new Error(`Timed out waiting for output matching ${pattern}`));
+          reject(
+            new Error(
+              [
+                `Timed out waiting for output matching ${pattern}`,
+                `Command: supabase ${args.join(" ")}`,
+                `PID: ${proc.pid ?? "<unknown>"}`,
+                outputTail("stdout tail", stdout),
+                outputTail("stderr tail", stderr),
+              ].join("\n\n"),
+            ),
+          );
         }, timeoutMs);
 
         const onStdout = (_data: Buffer) => {
@@ -269,7 +290,17 @@ export function spawnSupabase(
 
         const onClose = () => {
           cleanup();
-          reject(new Error(`Process exited before output matched ${pattern}`));
+          reject(
+            new Error(
+              [
+                `Process exited before output matched ${pattern}`,
+                `Command: supabase ${args.join(" ")}`,
+                `PID: ${proc.pid ?? "<unknown>"}`,
+                outputTail("stdout tail", stdout),
+                outputTail("stderr tail", stderr),
+              ].join("\n\n"),
+            ),
+          );
         };
 
         const cleanup = () => {
