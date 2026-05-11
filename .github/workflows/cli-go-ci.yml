@@ -38,7 +38,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: code-coverage-report
-          path: coverage.out
+          path: apps/cli-go/coverage.out
 
   coverage:
     name: Coverage
@@ -71,6 +71,7 @@ jobs:
           args: --timeout 5m --verbose
           version: latest
           only-new-issues: true
+          working-directory: apps/cli-go
 
   start:
     name: Start
