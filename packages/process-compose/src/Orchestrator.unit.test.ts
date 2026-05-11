@@ -525,6 +525,59 @@ describe("Orchestrator", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
+  it.live("restartService restarts transitive dependents and preserves unrelated services", () => {
+    const { layer, proc } = setupOrchestrator(
+      [
+        svc("db"),
+        svc("api", {
+          dependencies: [{ service: "db", condition: "started" }],
+        }),
+        svc("web", {
+          dependencies: [{ service: "api", condition: "started" }],
+        }),
+        svc("unrelated"),
+      ],
+      { exitDelay: "5 seconds" },
+    );
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.start();
+      yield* Effect.sleep(Duration.millis(100));
+
+      yield* orc.restartService("db");
+      yield* Effect.sleep(Duration.millis(100));
+
+      const spawnCounts = proc.spawned.reduce<Record<string, number>>((counts, record) => {
+        counts[record.command] = (counts[record.command] ?? 0) + 1;
+        return counts;
+      }, {});
+
+      expect(spawnCounts).toEqual({
+        api: 2,
+        db: 2,
+        unrelated: 1,
+        web: 2,
+      });
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.live("updateServiceDefinition restarts with the updated definition", () => {
+    const { layer, proc } = setupOrchestrator([svc("a")], {
+      exitDelay: "5 seconds",
+    });
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.start();
+      yield* Effect.sleep(Duration.millis(50));
+      yield* orc.updateServiceDefinition("a", svc("a", { command: "a-next", args: ["--next"] }));
+      yield* orc.restartService("a");
+      yield* Effect.sleep(Duration.millis(50));
+
+      expect(proc.spawned.map((record) => record.command)).toEqual(["a", "a-next"]);
+      expect(proc.spawned.at(-1)?.args).toEqual(["--next"]);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   it.live("stateChanges returns a stream of state transitions", () => {
     const { layer } = setupOrchestrator([svc("a")], {
       exitDelay: "200 millis",
@@ -604,9 +657,10 @@ describe("Orchestrator", () => {
   });
 
   it.live("process exit with non-zero code sets Failed", () => {
-    const { layer } = setupOrchestrator([svc("a", { restart: "no" })], {
+    const { layer, log } = setupOrchestrator([svc("a", { restart: "no" })], {
       exitCode: 1,
       exitDelay: "50 millis",
+      stdout: ["about to fail"],
     });
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
@@ -615,6 +669,8 @@ describe("Orchestrator", () => {
       const state = yield* orc.getState("a");
       expect(state.status).toBe("Failed");
       expect(state.exitCode).toBe(1);
+      expect(log.entries.some((e) => e.line.includes("[process-exited]"))).toBe(true);
+      expect(log.entries.some((e) => e.line.includes("about to fail"))).toBe(true);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 

@@ -76,7 +76,7 @@ graph TB
     CS --> SI
 ```
 
-The package has no CLI and no config-file parser. It is a library: callers supply a `StackConfig` object and get back a `Stack` with a rich interface including `dispose()`. Bun and Node.js consumers import from the package root, and the export conditions select the appropriate runtime implementation from `bun.ts` or `node.ts`.
+The package has no CLI. It is a library: callers supply a `StackConfig` object and get back a `Stack` with a rich interface including `dispose()`. When `projectDir` points at a Supabase project, the stack can use project config to serve local Edge Functions automatically. Bun and Node.js consumers import from the package root, and the export conditions select the appropriate runtime implementation from `bun.ts` or `node.ts`.
 
 ---
 
@@ -498,7 +498,8 @@ All services are resolved and pulled concurrently (`concurrency: "unbounded"`). 
 import { prefetch } from "@supabase/stack";
 
 export async function setup() {
-  await prefetch(); // downloads postgres + postgrest + auth before any test runs
+  await prefetch(); // downloads auto-mode assets for all services before any test runs
+  await prefetch({ mode: "docker" }); // pulls Docker images for all services
 }
 ```
 
@@ -617,7 +618,7 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef
 export const makePostgresServiceDocker = (opts: DockerPostgresOptions): ServiceDef
 ```
 
-Both share `postgresEnv()` and `postgresHealthCheck()` helpers. The Docker variant mounts the data directory as a volume (`-v dataDir:/var/lib/postgresql/data`) and uses `--network=host` so postgres is reachable on `127.0.0.1`.
+Both share `postgresEnv()` and `postgresHealthCheck()` helpers. The Docker variant mounts the data directory as a volume (`-v dataDir:/var/lib/postgresql/data`) and publishes the configured host port to the container port.
 
 #### postgrest
 
@@ -649,9 +650,9 @@ export const makeAuthServiceNative = (opts: NativeAuthOptions): ServiceDef
 export const makeAuthServiceDocker = (opts: DockerAuthOptions): ServiceDef
 ```
 
-Both factories share the `authEnv()` helper which builds the `GOTRUE_*` environment variables from the same `AuthBaseOptions`. The native factory sets `command` to the binary path; the Docker factory sets `command: "docker"` and builds `args: ["run", "--rm", "--network=host", ...envArgs, image]`.
+Both factories share the `authEnv()` helper which builds the `GOTRUE_*` environment variables from the same `AuthBaseOptions`. The native factory sets `command` to the binary path; the Docker factory sets `command: "docker"` and builds `args: ["run", "--rm", ...networkArgs, ...envArgs, image]`.
 
-The `--network=host` flag is essential for the Docker variant: GoTrue needs to reach postgres on `127.0.0.1`, which is the host's loopback interface, not the container's. Without `--network=host`, `127.0.0.1` would resolve to the container itself and the connection would fail.
+Docker services reach host-native services through `host.docker.internal`. On Linux the stack adds Docker's `host-gateway` alias explicitly; Docker Desktop provides that host name on macOS and Windows. This keeps published-port behavior consistent across all supported operating systems.
 
 Both variants use an HTTP health check on `GET /health` (the GoTrue health endpoint). Both depend on postgres being `healthy` before starting.
 

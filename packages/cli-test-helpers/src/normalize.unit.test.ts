@@ -129,6 +129,11 @@ describe("normalize", () => {
     expect(normalized).toContain('"qi":"<KEY_BYTES>"');
   });
 
+  it("normalizes JWK key material before duration-like byte sequences", () => {
+    const jwk = `{"kty":"RSA","alg":"RS256","q":"-8hRBwM-qtJopC-4mlEaF7Ly-DEZC7Fevzgp7gR8f8G8TQE-Qq-okgx9XJ0kaOHzcTslaSTZt3QzXU-Maf7r1RWpAWtsIAAIu4YpmryGaY1PPvz4KsZFXY5HqkhXQjKjuMJYwU3tjj1j5fI6Kg-r8M3ji-sx1bKAPPrv046C-100s"}`;
+    expect(normalize(jwk)).toContain('"q":"<KEY_BYTES>"');
+  });
+
   it("is a no-op on clean CLI table output", () => {
     const table =
       "\n  \n   ID                   | NAME\n  ----------------------|----------\n   <PROJECT_REF_1>      | My Org\n\n";
