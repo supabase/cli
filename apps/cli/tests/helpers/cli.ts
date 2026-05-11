@@ -15,23 +15,17 @@ import {
 
 const BINARY_EXT = process.platform === "win32" ? ".exe" : "";
 const SHIM_PATH = fileURLToPath(new URL("../../dist/supabase.js", import.meta.url));
-const NEXT_BINARY_PATH = fileURLToPath(
-  new URL(`../../dist/supabase-next${BINARY_EXT}`, import.meta.url),
-);
 const LEGACY_BINARY_PATH = fileURLToPath(
   new URL(`../../dist/supabase-legacy${BINARY_EXT}`, import.meta.url),
 );
+const NEXT_SOURCE_ENTRYPOINT = fileURLToPath(new URL("../../src/next/main.ts", import.meta.url));
 
-function resolveBinaryPath(entrypoint: "next" | "legacy"): string {
-  return entrypoint === "legacy" ? LEGACY_BINARY_PATH : NEXT_BINARY_PATH;
-}
-
-function assertBuildArtifactsExist(binaryPath: string): void {
-  if (!existsSync(SHIM_PATH) || !existsSync(binaryPath)) {
+function assertLegacyBuildArtifactsExist(): void {
+  if (!existsSync(SHIM_PATH) || !existsSync(LEGACY_BINARY_PATH)) {
     throw new Error(
-      `Missing CLI build artifacts. Run \`pnpm --filter supabase build\` before invoking e2e tests.\n` +
+      `Missing legacy CLI build artifacts. Run \`pnpm --filter supabase build\` before invoking legacy e2e tests.\n` +
         `  expected shim:   ${SHIM_PATH}\n` +
-        `  expected binary: ${binaryPath}`,
+        `  expected binary: ${LEGACY_BINARY_PATH}`,
     );
   }
 }
@@ -192,35 +186,51 @@ export function spawnSupabase(
   const ownHome = options?.home ? null : makeTempHome();
   const homeDir = options?.home ?? ownHome!.dir;
   noteStackProjectHome(options?.cwd, homeDir);
-  const binaryPath = resolveBinaryPath(options?.entrypoint ?? "next");
-  assertBuildArtifactsExist(binaryPath);
-  const cliLauncher = fileURLToPath(new URL("./cli-launcher.mjs", import.meta.url));
+  const entrypoint = options?.entrypoint ?? "next";
   const usesStartWrapper = args[0] === "start";
-  // Both branches go through `node dist/supabase.js`, the same Node shim users
-  // get installed via npm. `SUPABASE_CLI_BINARY_OVERRIDE` points the shim at
-  // the per-shell compiled binary in `dist/`.
-  const proc = spawn(
-    "node",
-    usesStartWrapper ? [cliLauncher, SHIM_PATH, ...args] : [SHIM_PATH, ...args],
-    {
-      cwd: options?.cwd,
-      env: {
-        ...process.env,
-        SUPABASE_HOME: homeDir,
-        SUPABASE_NO_KEYRING: "1",
-        // Keep e2e subprocesses quiet by default while still allowing per-test overrides.
-        SUPABASE_TELEMETRY_DISABLED: "1",
-        SUPABASE_CLI_BINARY_OVERRIDE: binaryPath,
-        ...options?.env,
-      },
-      stdio:
-        usesStartWrapper || options?.stdin !== undefined
-          ? ["pipe", "pipe", "pipe"]
-          : ["ignore", "pipe", "pipe"],
-      // Own process group so tests can distinguish product cleanup from helper cleanup.
-      detached: true,
-    },
-  );
+  // The `next` shell drives the local stack daemon (`start --detach`,
+  // `functions dev`, ...) and depends on `@parcel/watcher`'s native binding
+  // — neither path works end-to-end through a `bun --compile` self-contained
+  // binary yet, so the next-shell e2e suite continues to run against the
+  // source tree via `bun src/...`. The `legacy` shell has no daemon and no
+  // native deps, so its e2e suite exercises the real shipped artifact:
+  // `node dist/supabase.js` (the Node shim) with `SUPABASE_CLI_BINARY_OVERRIDE`
+  // pointing at the per-shell `bun build --compile` standalone executable.
+  let execCmd: string;
+  let execArgs: string[];
+  const env: Record<string, string> = {
+    ...process.env,
+    SUPABASE_HOME: homeDir,
+    SUPABASE_NO_KEYRING: "1",
+    SUPABASE_TELEMETRY_DISABLED: "1",
+    ...options?.env,
+  };
+  if (entrypoint === "legacy") {
+    assertLegacyBuildArtifactsExist();
+    env["SUPABASE_CLI_BINARY_OVERRIDE"] = LEGACY_BINARY_PATH;
+    const cliLauncher = fileURLToPath(new URL("./cli-launcher.mjs", import.meta.url));
+    execCmd = "node";
+    execArgs = usesStartWrapper ? [cliLauncher, SHIM_PATH, ...args] : [SHIM_PATH, ...args];
+  } else {
+    const sourceLauncher = fileURLToPath(new URL("./source-cli-launcher.mjs", import.meta.url));
+    if (usesStartWrapper) {
+      execCmd = "node";
+      execArgs = [sourceLauncher, NEXT_SOURCE_ENTRYPOINT, ...args];
+    } else {
+      execCmd = "bun";
+      execArgs = [NEXT_SOURCE_ENTRYPOINT, ...args];
+    }
+  }
+  const proc = spawn(execCmd, execArgs, {
+    cwd: options?.cwd,
+    env,
+    stdio:
+      usesStartWrapper || options?.stdin !== undefined
+        ? ["pipe", "pipe", "pipe"]
+        : ["ignore", "pipe", "pipe"],
+    // Own process group so tests can distinguish product cleanup from helper cleanup.
+    detached: true,
+  });
   const stdoutStream = proc.stdout;
   const stderrStream = proc.stderr;
 

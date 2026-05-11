@@ -83,9 +83,11 @@ function buildCommand(target: CLITarget): BuiltCommand {
       return { cmd: ["node", TS_CLI_SHIM], binaryOverride: binaryPath };
     }
     case "ts-next": {
-      const binaryPath = tsCliBinary("next");
-      assertTsCliBuilt(binaryPath);
-      return { cmd: ["node", TS_CLI_SHIM], binaryOverride: binaryPath };
+      // The `ts-next` shell is not yet runnable end-to-end through the
+      // `bun --compile` standalone binary (daemon-fork dispatch and the
+      // `@parcel/watcher` native binding still need work in compiled mode).
+      // Run it directly from source via `bun` until those are resolved.
+      return { cmd: ["bun", join(WORKSPACE_ROOT, "apps/cli/src/next/main.ts")] };
     }
   }
 }
