@@ -36,6 +36,7 @@ func (enc *MockEncryption) decryptAccessToken(accessToken string, publicKey stri
 
 type fakeAnalytics struct {
 	enabled    bool
+	aliasErr   error
 	captures   []captureCall
 	identifies []identifyCall
 	aliases    []aliasCall
@@ -71,7 +72,7 @@ func (f *fakeAnalytics) Identify(distinctID string, properties map[string]any) e
 
 func (f *fakeAnalytics) Alias(distinctID string, alias string) error {
 	f.aliases = append(f.aliases, aliasCall{distinctID: distinctID, alias: alias})
-	return nil
+	return f.aliasErr
 }
 
 func (f *fakeAnalytics) GroupIdentify(groupType string, groupKey string, properties map[string]any) error {
@@ -175,6 +176,7 @@ func TestLoginTelemetryStitching(t *testing.T) {
 		require.Len(t, analytics.captures, 1)
 		assert.Equal(t, phtelemetry.EventLoginCompleted, analytics.captures[0].event)
 		assert.Equal(t, "user-123", analytics.captures[0].distinctID)
+		assert.Equal(t, true, analytics.captures[0].properties[phtelemetry.PropStitched])
 		state, err := phtelemetry.LoadState(fsys)
 		require.NoError(t, err)
 		assert.Equal(t, "user-123", state.DistinctID)
@@ -213,6 +215,7 @@ func TestLoginTelemetryStitching(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, analytics.captures, 1)
 		assert.Equal(t, "user-456", analytics.captures[0].distinctID)
+		assert.Equal(t, true, analytics.captures[0].properties[phtelemetry.PropStitched])
 	})
 
 	t.Run("stale distinct_id is replaced on successful profile lookup", func(t *testing.T) {
@@ -263,7 +266,29 @@ func TestLoginTelemetryStitching(t *testing.T) {
 		assert.Empty(t, analytics.identifies)
 		require.Len(t, analytics.captures, 1)
 		assert.Equal(t, deviceID, analytics.captures[0].distinctID)
+		assert.Equal(t, false, analytics.captures[0].properties[phtelemetry.PropStitched])
 		state, err = phtelemetry.LoadState(fsys)
+		require.NoError(t, err)
+		assert.Empty(t, state.DistinctID)
+	})
+
+	t.Run("profile success but alias failure marks stitched=false", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		analytics := &fakeAnalytics{enabled: true, aliasErr: errors.New("alias boom")}
+		ctx := phtelemetry.WithService(context.Background(), newService(t, fsys, analytics))
+
+		err := Run(ctx, os.Stdout, RunParams{
+			Token: token,
+			Fsys:  fsys,
+			GetProfile: func(context.Context) (string, error) {
+				return "user-789", nil
+			},
+		})
+
+		require.NoError(t, err)
+		require.Len(t, analytics.captures, 1)
+		assert.Equal(t, false, analytics.captures[0].properties[phtelemetry.PropStitched])
+		state, err := phtelemetry.LoadState(fsys)
 		require.NoError(t, err)
 		assert.Empty(t, state.DistinctID)
 	})

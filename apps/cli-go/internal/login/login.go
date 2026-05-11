@@ -280,20 +280,25 @@ func handleTelemetryAfterLogin(ctx context.Context, params RunParams) {
 		getProfile = getProfileGotrueID
 	}
 	logger := utils.GetDebugLogger()
+	stitched := false
 	if distinctID, err := getProfile(ctx); err == nil {
-		if err := service.StitchLogin(distinctID); err != nil {
-			fmt.Fprintln(logger, err)
-			if err := service.ClearDistinctID(); err != nil {
-				fmt.Fprintln(logger, err)
+		if stitchErr := service.StitchLogin(distinctID); stitchErr != nil {
+			fmt.Fprintln(logger, stitchErr)
+			if clearErr := service.ClearDistinctID(); clearErr != nil {
+				fmt.Fprintln(logger, clearErr)
 			}
+		} else {
+			stitched = true
 		}
 	} else {
 		fmt.Fprintln(logger, err)
-		if err := service.ClearDistinctID(); err != nil {
-			fmt.Fprintln(logger, err)
+		if clearErr := service.ClearDistinctID(); clearErr != nil {
+			fmt.Fprintln(logger, clearErr)
 		}
 	}
-	if err := service.Capture(ctx, phtelemetry.EventLoginCompleted, nil, nil); err != nil {
+	if err := service.Capture(ctx, phtelemetry.EventLoginCompleted, map[string]any{
+		phtelemetry.PropStitched: stitched,
+	}, nil); err != nil {
 		fmt.Fprintln(logger, err)
 	}
 }
