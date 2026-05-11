@@ -208,9 +208,8 @@ export function spawnSupabase(
   if (entrypoint === "legacy") {
     assertLegacyBuildArtifactsExist();
     env["SUPABASE_CLI_BINARY_OVERRIDE"] = LEGACY_BINARY_PATH;
-    const cliLauncher = fileURLToPath(new URL("./cli-launcher.mjs", import.meta.url));
     execCmd = "node";
-    execArgs = usesStartWrapper ? [cliLauncher, SHIM_PATH, ...args] : [SHIM_PATH, ...args];
+    execArgs = [SHIM_PATH, ...args];
   } else {
     const sourceLauncher = fileURLToPath(new URL("./source-cli-launcher.mjs", import.meta.url));
     if (usesStartWrapper) {
