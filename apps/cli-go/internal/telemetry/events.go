@@ -26,9 +26,7 @@ const (
 	//   - EventLoginCompleted: sent after a login flow completes successfully. This
 	//     helps measure successful login completion and supports identity stitching
 	//     between anonymous and authenticated usage. Event-specific properties:
-	//     PropStitched (true when the gotrue identity was fetched and aliased,
-	//     false when profile lookup or stitching failed and the event lands under
-	//     the device ID). Related groups: none added directly by this event.
+	//     PropStitched. Related groups: none added directly by this event.
 	EventLoginCompleted = "cli_login_completed"
 	//   - EventStackStarted: sent after the local development stack starts
 	//     successfully. This helps measure local development usage and successful
@@ -55,18 +53,12 @@ const (
 
 // Properties specific to EventLoginCompleted.
 const (
-	// PropStitched is true when the CLI successfully fetched the gotrue user ID
-	// and aliased it onto the device ID. False means the event was captured under
-	// the anonymous device ID.
+	// PropStitched is true when the gotrue identity was aliased onto the device ID.
 	PropStitched = "stitched"
 )
 
 // TrackUpgradeSuggested fires an EventUpgradeSuggested telemetry event.
 // Safe to call with any context; no-ops when telemetry is not configured.
-//
-// Multi-call gated handlers (e.g. internal/sso/update) call this helper on
-// each failure path; callers' early-return behavior guarantees at most one
-// fire per command invocation. See the comment in those call sites.
 func TrackUpgradeSuggested(ctx context.Context, featureKey, orgSlug string) {
 	if svc := FromContext(ctx); svc != nil {
 		_ = svc.Capture(ctx, EventUpgradeSuggested, map[string]any{
