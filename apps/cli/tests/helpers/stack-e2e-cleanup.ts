@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { runSupabase } from "./cli.ts";
 
@@ -15,6 +15,7 @@ type StackProject = {
 };
 
 interface StackRuntimeSnapshot {
+  readonly stacksRootExists: boolean;
   readonly stateFiles: ReadonlyArray<string>;
   readonly socketPaths: ReadonlyArray<string>;
   readonly stackDirs: ReadonlyArray<string>;
@@ -26,6 +27,9 @@ interface CleanupEnvironment {
   readonly captureSnapshot: (projectDir: string) => StackRuntimeSnapshot;
   readonly waitForCleanup: (projectDir: string, snapshot: StackRuntimeSnapshot) => Promise<boolean>;
   readonly forceCleanup: (projectDir: string, snapshot: StackRuntimeSnapshot) => Promise<void>;
+  readonly removeProjectWithDocker: (projectDir: string) => Promise<boolean>;
+  readonly repairProjectPermissions: (projectDir: string) => void;
+  readonly describeProjectPermissions: (projectDir: string) => string;
 }
 
 interface StackE2eCleanupManager {
@@ -133,13 +137,52 @@ function isPermissionError(error: unknown): boolean {
   return code === "EACCES" || code === "EPERM";
 }
 
-function repairProjectTreePermissions(projectDir: string): void {
+function formatMode(mode: number): string {
+  return `0${(mode & 0o777).toString(8)}`;
+}
+
+function describePath(pathname: string): string {
+  try {
+    const stats = statSync(pathname);
+    return `${pathname} uid=${stats.uid} gid=${stats.gid} mode=${formatMode(stats.mode)}`;
+  } catch (error) {
+    return `${pathname} ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+function describeProjectPermissions(projectDir: string): string {
+  const stacksRoot = path.join(projectDir, ".supabase", "stacks");
+  const details = [
+    "Permission diagnostics:",
+    describePath(projectDir),
+    describePath(path.join(projectDir, ".supabase")),
+    describePath(stacksRoot),
+  ];
+
+  try {
+    const entries = readdirSync(stacksRoot).slice(0, 20);
+    details.push(
+      entries.length === 0
+        ? `${stacksRoot} entries=<empty>`
+        : `${stacksRoot} entries=${entries.join(",")}`,
+    );
+  } catch {}
+
+  return details.join("\n");
+}
+
+function repairProjectPermissions(projectDir: string): void {
   try {
     execFileSync("chmod", ["-R", "u+rwX", projectDir], {
       stdio: "ignore",
       timeout: 5_000,
     });
   } catch {}
+}
+
+async function removeProjectWithDocker(projectDir: string): Promise<boolean> {
+  const parentDir = path.dirname(projectDir);
+  const projectName = path.basename(projectDir);
 
   try {
     execFileSync(
@@ -147,28 +190,54 @@ function repairProjectTreePermissions(projectDir: string): void {
       [
         "run",
         "--rm",
+        "--user",
+        "0:0",
         "-v",
-        `${projectDir}:/target`,
+        `${parentDir}:/parent`,
+        "-e",
+        `TARGET_NAME=${projectName}`,
         "--entrypoint",
         "sh",
         "public.ecr.aws/docker/library/busybox:1.36",
         "-c",
-        "chmod -R a+rwx /target || true",
+        'cd /parent && rm -rf -- "$TARGET_NAME"',
       ],
       { stdio: "ignore", timeout: 30_000 },
     );
   } catch {}
+
+  return !existsSync(projectDir);
 }
 
-async function cleanupProject(project: StackProject): Promise<void> {
+async function cleanupProject(
+  project: StackProject,
+  environment: Pick<
+    CleanupEnvironment,
+    "removeProjectWithDocker" | "repairProjectPermissions" | "describeProjectPermissions"
+  >,
+): Promise<void> {
   try {
     await project.cleanup();
   } catch (error) {
     if (!isPermissionError(error)) {
       throw error;
     }
-    repairProjectTreePermissions(project.dir);
-    await project.cleanup();
+
+    const removedByDocker = await environment.removeProjectWithDocker(project.dir);
+    if (removedByDocker) {
+      return;
+    }
+
+    environment.repairProjectPermissions(project.dir);
+    try {
+      await project.cleanup();
+    } catch (retryError) {
+      throw new Error(
+        `${retryError instanceof Error ? retryError.message : String(retryError)}\n${environment.describeProjectPermissions(
+          project.dir,
+        )}`,
+      );
+    }
   }
 }
 
@@ -177,6 +246,7 @@ function captureSnapshot(projectDir: string): StackRuntimeSnapshot {
   const stacksRoot = path.join(normalized, ".supabase", "stacks");
   if (!existsSync(stacksRoot)) {
     return {
+      stacksRootExists: false,
       stateFiles: [],
       socketPaths: [],
       stackDirs: [],
@@ -212,6 +282,7 @@ function captureSnapshot(projectDir: string): StackRuntimeSnapshot {
   const commandPids = table.filter((row) => row.command.includes(normalized)).map((row) => row.pid);
 
   return {
+    stacksRootExists: true,
     stateFiles,
     socketPaths,
     stackDirs,
@@ -269,6 +340,9 @@ function createRealEnvironment(): CleanupEnvironment {
     captureSnapshot,
     waitForCleanup,
     forceCleanup,
+    removeProjectWithDocker,
+    repairProjectPermissions,
+    describeProjectPermissions,
   };
 }
 
@@ -309,11 +383,16 @@ export function createStackE2eCleanupManager(
           snapshot.stateFiles.length > 0 ||
           snapshot.socketPaths.length > 0 ||
           snapshot.trackedPids.some((pid) => isProcessAlive(pid));
+        const hasStackPersistence = snapshot.stacksRootExists || snapshot.stackDirs.length > 0;
         let stopExitCode: number | undefined;
 
-        if (hasRuntimeArtifacts && project.homeDir !== undefined) {
-          const stopResult = await environment.stopStack(project.dir, project.homeDir);
-          stopExitCode = stopResult.exitCode;
+        if (hasStackPersistence && project.homeDir !== undefined) {
+          try {
+            const stopResult = await environment.stopStack(project.dir, project.homeDir);
+            stopExitCode = stopResult.exitCode;
+          } catch {
+            stopExitCode = 1;
+          }
         }
 
         if (hasRuntimeArtifacts) {
@@ -329,7 +408,7 @@ export function createStackE2eCleanupManager(
         }
 
         try {
-          await cleanupProject(project);
+          await cleanupProject(project, environment);
         } catch (error) {
           failures.push(cleanupErrorDetail(project.dir, error));
         } finally {
