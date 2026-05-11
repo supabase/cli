@@ -33,12 +33,12 @@
 
 ## Exit Codes
 
-| Code | Condition                                       |
-| ---- | ----------------------------------------------- |
-| `0`  | success (migration created or no changes found) |
-| `1`  | no declarative schema files found               |
-| `1`  | shadow database error                           |
-| `1`  | migration apply error (when `--apply` is set)   |
+| Code | Condition                                            |
+| ---- | ---------------------------------------------------- |
+| `0`  | success (migration created or no changes found)      |
+| `1`  | no declarative schema files found                    |
+| `1`  | shadow database error                                |
+| `1`  | migration apply error (when `--apply` is set)        |
 | `1`  | both `--apply` and `--no-apply` (mutual exclusivity) |
 
 ## Output

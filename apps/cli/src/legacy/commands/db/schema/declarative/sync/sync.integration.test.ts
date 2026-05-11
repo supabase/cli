@@ -33,9 +33,7 @@ describe("legacyDbSchemaDeclarativeSync", () => {
     const go = mockLegacyGoProxy();
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeSync({ ...baseFlags, noApply: true });
-      expect(go.calls).toEqual([
-        ["db", "schema", "declarative", "sync", "--no-apply"],
-      ]);
+      expect(go.calls).toEqual([["db", "schema", "declarative", "sync", "--no-apply"]]);
     }).pipe(Effect.provide(go.layer));
   });
 
@@ -51,9 +49,7 @@ describe("legacyDbSchemaDeclarativeSync", () => {
     const go = mockLegacyGoProxy();
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeSync({ ...baseFlags, apply: true });
-      expect(go.calls).toEqual([
-        ["db", "schema", "declarative", "sync", "--apply"],
-      ]);
+      expect(go.calls).toEqual([["db", "schema", "declarative", "sync", "--apply"]]);
     }).pipe(Effect.provide(go.layer));
   });
 
@@ -67,7 +63,17 @@ describe("legacyDbSchemaDeclarativeSync", () => {
         noApply: true,
       });
       expect(go.calls).toEqual([
-        ["db", "schema", "declarative", "sync", "--schema", "public", "--name", "foo", "--no-apply"],
+        [
+          "db",
+          "schema",
+          "declarative",
+          "sync",
+          "--schema",
+          "public",
+          "--name",
+          "foo",
+          "--no-apply",
+        ],
       ]);
     }).pipe(Effect.provide(go.layer));
   });
