@@ -139,6 +139,7 @@ func TestRepairAll(t *testing.T) {
 	})
 
 	t.Run("throws error on cancel", func(t *testing.T) {
+		t.Cleanup(fstest.MockStdin(t, "n"))
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test

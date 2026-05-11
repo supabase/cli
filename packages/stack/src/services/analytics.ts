@@ -5,6 +5,8 @@ interface DockerAnalyticsOptions {
   readonly image: string;
   readonly apiPort: number;
   readonly hostPort: number;
+  readonly listenPort: number;
+  readonly nodeHost: string;
   readonly dbHost: string;
   readonly dbPort: number;
   readonly apiKey: string;
@@ -14,6 +16,15 @@ interface DockerAnalyticsOptions {
 }
 
 const ANALYTICS_CONTAINER_PORT = 4000;
+
+export const analyticsDockerRuntimeNetwork = (
+  _os: string,
+  _hostPort: number,
+  _serviceHost: string,
+): { readonly listenPort: number; readonly nodeHost: string } => ({
+  listenPort: ANALYTICS_CONTAINER_PORT,
+  nodeHost: "0.0.0.0",
+});
 
 const analyticsHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
   probe: {
@@ -30,7 +41,8 @@ const analyticsHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
 
 export const makeAnalyticsServiceDocker = (opts: DockerAnalyticsOptions): ServiceDef => {
   const env: Record<string, string> = {
-    PORT: String(ANALYTICS_CONTAINER_PORT),
+    PORT: String(opts.listenPort),
+    PHX_HTTP_PORT: String(opts.listenPort),
     DB_DATABASE: "_supabase",
     DB_HOSTNAME: opts.dbHost,
     DB_PORT: String(opts.dbPort),
@@ -42,7 +54,7 @@ export const makeAnalyticsServiceDocker = (opts: DockerAnalyticsOptions): Servic
     LOGFLARE_SUPABASE_MODE: "true",
     LOGFLARE_PRIVATE_ACCESS_TOKEN: opts.apiKey,
     LOGFLARE_LOG_LEVEL: "warn",
-    LOGFLARE_NODE_HOST: "0.0.0.0",
+    LOGFLARE_NODE_HOST: opts.nodeHost,
     LOGFLARE_FEATURE_FLAG_OVERRIDE: "'multibackend=true'",
     RELEASE_COOKIE: "cookie",
   };
@@ -64,7 +76,11 @@ export const makeAnalyticsServiceDocker = (opts: DockerAnalyticsOptions): Servic
     entrypoint: "sh",
     cmd: [
       "-c",
-      "cat <<'EOF' > /tmp/run.sh && sh /tmp/run.sh\n./logflare eval Logflare.Release.migrate\n./logflare start --sname logflare\nEOF\n",
+      `cat <<'EOF' > /tmp/run.sh && sh /tmp/run.sh
+./logflare eval Logflare.Release.migrate
+./logflare start --sname logflare
+EOF
+`,
     ],
     env,
     dependsOn: opts.dependencies,

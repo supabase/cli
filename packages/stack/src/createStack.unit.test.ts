@@ -83,6 +83,8 @@ describe("createStack types", () => {
   it("StackConfig interface has expected shape", () => {
     const check = (_config: StackConfig) => {
       const _jwtSecret: string | undefined = _config.jwtSecret;
+      const _projectDir: string | undefined = _config.projectDir;
+      const _functions = _config.functions;
       const _postgres: PostgresConfig | undefined = _config.postgres;
       const _postgrest: PostgrestConfig | false | undefined = _config.postgrest;
       const _auth: AuthConfig | false | undefined = _config.auth;
@@ -90,6 +92,8 @@ describe("createStack types", () => {
       const _publishableKey: string | undefined = _config.publishableKey;
       const _secretKey: string | undefined = _config.secretKey;
       void _jwtSecret;
+      void _projectDir;
+      void _functions;
       void _postgres;
       void _postgrest;
       void _auth;
