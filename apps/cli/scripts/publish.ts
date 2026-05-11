@@ -62,21 +62,23 @@ async function isAlreadyPublished(name: string, version: string): Promise<boolea
   throw new Error(`npm registry probe for ${name}@${version} returned HTTP ${res.status}`);
 }
 
+type PublishResult = "published" | "skipped";
+
 // Publishes one workspace package idempotently. If the version is already
 // on the registry — either before we start or after a publish-time conflict
-// — we skip and return. Any other failure propagates.
+// — we skip and return "skipped". Any other failure propagates.
 async function publishPackage(opts: {
   name: string;
   version: string;
   cwd: string;
   extraFlags?: string[];
-}): Promise<void> {
+}): Promise<PublishResult> {
   const { name, version, cwd, extraFlags = [] } = opts;
   const label = `${name}@${version}`;
 
   if (await isAlreadyPublished(name, version)) {
     console.log(`  [skip] ${label} already published.`);
-    return;
+    return "skipped";
   }
 
   console.log(`  Publishing ${label}...`);
@@ -85,12 +87,13 @@ async function publishPackage(opts: {
       cwd,
     );
     console.log(`  ${label} published.`);
+    return "published";
   } catch (error) {
     if (await isAlreadyPublished(name, version)) {
       console.log(
         `  [skip] ${label} reported a conflict but is now present on the registry; treating as success.`,
       );
-      return;
+      return "skipped";
     }
     throw error;
   }
@@ -118,7 +121,7 @@ for (const pkg of PLATFORM_PACKAGES) {
 
 // Publish all platform packages in parallel
 console.log("Publishing platform packages...");
-await Promise.all(
+const platformResults = await Promise.all(
   PLATFORM_PACKAGES.map((pkg) =>
     publishPackage({
       name: `@supabase/${pkg}`,
@@ -134,10 +137,30 @@ console.log("\nBuilding umbrella package shim...");
 await $`pnpm build:shim`.cwd(cliDir);
 
 console.log(`Publishing umbrella package ${umbrellaName}...`);
-await publishPackage({
+const umbrellaResult = await publishPackage({
   name: umbrellaName,
   version: umbrellaVersion,
   cwd: cliDir,
 });
+
+const results = [...platformResults, umbrellaResult];
+const publishedCount = results.filter((r) => r === "published").length;
+const skippedCount = results.filter((r) => r === "skipped").length;
+
+console.log(`\nPublished: ${publishedCount}, Skipped: ${skippedCount}.`);
+
+// All-skipped is ambiguous: it can mean "recovering from a downstream-only
+// failure (GH release / brew / scoop) — bytes already on npm, just continue"
+// OR "semantic-release re-computed a version whose bytes are already live, so
+// today's commits silently did not ship". Since we cannot tell those apart
+// here, log a loud warning so the human reviewing the workflow run can decide
+// whether to re-cut as a fresh version via `workflow_dispatch`.
+if (publishedCount === 0) {
+  console.warn(
+    `\n[warn] No packages were published — every package was already on the registry at ${umbrellaVersion}.\n` +
+      `       If today's commits were expected to ship, the version did not advance.\n` +
+      `       Re-cut as a fresh version via the Release workflow (workflow_dispatch).`,
+  );
+}
 
 console.log("\nAll packages published successfully.");
