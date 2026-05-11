@@ -12,10 +12,16 @@ describe("gen", () => {
     testBehaviour.skipIf(isRecording)(
       "generates typescript types from project",
       async ({ run, projectRef }) => {
-        const result = await run(["gen", "types", "--project-id", projectRef]);
+        // #5212 — with CLAUDECODE=1, piped/redirected output must not include the
+        // plugin hint (would break `gen types > file.ts` and similar captures).
+        const result = await run(["gen", "types", "--project-id", projectRef], {
+          env: { CLAUDECODE: "1" },
+        });
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain("export type Json");
         expect(result.stdout).toContain("export type Database");
+        expect(result.stdout).not.toMatch(/claude-code-hint/);
+        expect(result.stderr).not.toMatch(/claude-code-hint/);
       },
     );
 
