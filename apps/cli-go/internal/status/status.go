@@ -161,15 +161,19 @@ func IsServiceReady(ctx context.Context, container string) error {
 	return assertContainerHealthy(ctx, container)
 }
 
+// NewKongClient returns an HTTP client configured for the local Kong gateway.
+// It deliberately omits http.Client.Timeout: this client is shared with
+// streaming storage uploads, where a full-request deadline would truncate
+// large transfers under load. Short-lived callers (e.g. health probes) should
+// bound themselves with a per-call context deadline instead.
+//
 // To regenerate local certificate pair:
 //
 //	openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 \
 //	  -nodes -keyout kong.local.key -out kong.local.crt -subj "/CN=localhost" \
 //	  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
 func NewKongClient() *http.Client {
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
+	client := &http.Client{}
 	if t, ok := http.DefaultTransport.(*http.Transport); ok {
 		pool, err := x509.SystemCertPool()
 		if err != nil {
@@ -194,6 +198,10 @@ var (
 	healthOnce   sync.Once
 )
 
+// healthProbeTimeout caps a single readiness probe so a hung response cannot
+// stall the surrounding retry loop in WaitForHealthyService.
+const healthProbeTimeout = 10 * time.Second
+
 func checkHTTPHead(ctx context.Context, path string) error {
 	healthOnce.Do(func() {
 		healthClient = fetcher.NewServiceGateway(
@@ -203,6 +211,8 @@ func checkHTTPHead(ctx context.Context, path string) error {
 			fetcher.WithUserAgent("SupabaseCLI/"+utils.Version),
 		)
 	})
+	ctx, cancel := context.WithTimeout(ctx, healthProbeTimeout)
+	defer cancel()
 	// HEAD method does not return response body
 	resp, err := healthClient.Send(ctx, http.MethodHead, path, nil)
 	if err != nil {
