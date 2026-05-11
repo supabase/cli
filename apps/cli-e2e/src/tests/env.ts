@@ -11,22 +11,22 @@ export const ACCESS_TOKEN =
 // Which target to run. Defaults to "ts-legacy"; set to "go" for recording.
 export const TARGET = (process.env["CLI_HARNESS_TARGET"] ?? "ts-legacy") as CLITarget;
 
-// In replay mode any 20-char lowercase alpha string normalises to <PROJECT_REF>
+// In replay mode any 20-char lowercase alpha string normalises to __PROJECT_REF__
 // in the fixture key. In record mode supply a real project ref via env.
 export const PROJECT_REF = process.env["SUPABASE_TEST_PROJECT_REF"] ?? "aaaaaaaaaaaaaaaaaaaa";
 
-// In replay mode any 20-char lowercase alpha string normalises to <PROJECT_REF>.
+// In replay mode any 20-char lowercase alpha string normalises to __PROJECT_REF__.
 // In record mode supply a real org slug via env, or let the resolver derive it.
 export const ORG_ID = process.env["SUPABASE_TEST_ORG_ID"] ?? "bbbbbbbbbbbbbbbbbbbb";
 
 // UUID of an existing SAML provider on the staging project.
-// In replay mode any UUID normalises to <UUID> in fixture paths.
+// In replay mode any UUID normalises to __UUID__ in fixture paths.
 // In record mode supply a real provider ID via env.
 export const PROVIDER_ID =
   process.env["SUPABASE_TEST_PROVIDER_ID"] ?? "00000000-0000-0000-0000-000000000000";
 
 // UUID of an existing SQL snippet on the staging project.
-// In replay mode any UUID normalises to <UUID> in fixture paths.
+// In replay mode any UUID normalises to __UUID__ in fixture paths.
 // In record mode supply a real snippet UUID via env.
 export const SNIPPET_ID =
   process.env["SUPABASE_TEST_SNIPPET_ID"] ?? "00000000-0000-0000-0000-000000000001";

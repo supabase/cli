@@ -13,8 +13,8 @@ const { values } = parseArgs({
 
 const version = values.version!;
 const tag = values.tag;
-if (tag !== "latest" && tag !== "alpha") {
-  console.error(`Invalid --tag value: ${String(tag)}. Expected "latest" or "alpha".`);
+if (tag !== "latest" && tag !== "alpha" && tag !== "beta") {
+  console.error(`Invalid --tag value: ${String(tag)}. Expected "latest", "alpha", or "beta".`);
   process.exit(1);
 }
 const root = path.resolve(import.meta.dir, "../../..");
@@ -40,7 +40,7 @@ console.log("=".repeat(60));
   try {
     const output = await $`${binPath} --version`.text();
     const trimmed = output.trim();
-    const shellCheck = await verifyExpectedShell(binPath, tag);
+    const shellCheck = await verifyExpectedShell(binPath);
     const passed = /^\d+\.\d+\.\d+/.test(trimmed) && shellCheck.passed;
     console.log(`[${name}] ${passed ? "PASS" : "FAIL"} — ${trimmed}`);
     console.log(`[${name}] ${shellCheck.detail}`);
@@ -78,7 +78,7 @@ if (!hasScoop) {
     try {
       const output = await $`supabase --version`.text();
       const trimmed = output.trim();
-      const shellCheck = await verifyExpectedShell("supabase", tag);
+      const shellCheck = await verifyExpectedShell("supabase");
       const passed = /^\d+\.\d+\.\d+/.test(trimmed) && shellCheck.passed;
 
       console.log(`[scoop] ${passed ? "PASS" : "FAIL"} — supabase --version: ${trimmed}`);

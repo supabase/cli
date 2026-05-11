@@ -58,7 +58,7 @@ The generated SDK models those routes as:
 
 ## CLI Relationship
 
-`@supabase/cli` should treat the SDK contract as the source of truth.
+`supabase` should treat the SDK contract as the source of truth.
 
 The CLI's job is to map user input onto these SDK types:
 

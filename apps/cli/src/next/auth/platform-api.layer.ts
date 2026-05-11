@@ -33,7 +33,7 @@ export const makePlatformApiServices = Effect.gen(function* () {
   const config = {
     baseUrl: cliConfig.apiUrl,
     accessToken: token.value,
-    userAgent: "@supabase/cli",
+    userAgent: "supabase",
     headers: {
       "X-Supabase-Command": getCommandRuntimeCommand(commandRuntime),
       "X-Supabase-Command-Run-ID": commandRuntime.commandRunId,

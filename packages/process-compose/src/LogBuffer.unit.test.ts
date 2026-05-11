@@ -129,9 +129,7 @@ describe("LogBuffer", () => {
     Effect.gen(function* () {
       const log = yield* LogBuffer;
       yield* log.append("a", "stdout", "line-a1");
-      yield* Effect.sleep("1 millis");
       yield* log.append("b", "stderr", "line-b1");
-      yield* Effect.sleep("1 millis");
       yield* log.append("a", "stdout", "line-a2");
 
       const merged = yield* log.historyAll(10);

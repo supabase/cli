@@ -262,6 +262,49 @@ function replaceBinarySchemaCode(code: string): string {
   return code.replace(/Schema\.String\.annotate\(\{\s*"format":\s*"binary"\s*\}\)/g, "BinaryInput");
 }
 
+function normalizeJsonSchemaValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(normalizeJsonSchemaValue);
+  }
+  return isRecord(value) ? normalizeNullableJsonSchema(value) : value;
+}
+
+function normalizeNullableJsonSchema(schema: JsonSchema.JsonSchema): JsonSchema.JsonSchema {
+  const normalized: JsonSchema.JsonSchema = {};
+  for (const [key, value] of Object.entries(schema)) {
+    normalized[key] = normalizeJsonSchemaValue(value);
+  }
+
+  const type = normalized.type;
+  if (!Array.isArray(type) || !type.includes("null")) {
+    return normalized;
+  }
+
+  if (Array.isArray(normalized.enum) && normalized.enum.includes(null)) {
+    return normalized;
+  }
+
+  const nonNullTypes = type.filter((entry) => entry !== "null");
+  if (nonNullTypes.length === 0) {
+    return { type: "null" };
+  }
+  if (!nonNullTypes.includes("object") && !nonNullTypes.includes("array")) {
+    return normalized;
+  }
+
+  const nonNullSchema = { ...normalized };
+  delete nonNullSchema.type;
+  return {
+    anyOf: [
+      {
+        ...nonNullSchema,
+        type: nonNullTypes.length === 1 ? nonNullTypes[0] : nonNullTypes,
+      },
+      { type: "null" },
+    ],
+  };
+}
+
 function resolveSchema(document: OpenApiDocument, schema: OpenApiSchema): OpenApiSchema {
   if (schema.$ref) {
     const prefix = "#/components/schemas/";
@@ -531,13 +574,15 @@ function renderSchemaSource(
   const definitions = Object.fromEntries(
     Object.entries(document.components?.schemas ?? {}).map(([name, schema]) => [
       name,
-      JsonSchema.fromSchemaOpenApi3_0(sanitizeOpenApiSchema(schema)).schema,
+      normalizeNullableJsonSchema(
+        JsonSchema.fromSchemaOpenApi3_0(sanitizeOpenApiSchema(schema)).schema,
+      ),
     ]),
   );
 
   const nameMap = schemaEntries.map((entry) => entry.name);
-  const schemas = schemaEntries.map(
-    (entry) => JsonSchema.fromSchemaOpenApi3_0(entry.schema).schema,
+  const schemas = schemaEntries.map((entry) =>
+    normalizeNullableJsonSchema(JsonSchema.fromSchemaOpenApi3_0(entry.schema).schema),
   );
 
   if (!Arr.isArrayNonEmpty(schemas)) {

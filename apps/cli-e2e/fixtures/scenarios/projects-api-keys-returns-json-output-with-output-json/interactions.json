@@ -2,12 +2,12 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>/api-keys",
+      "path": "/v1/projects/__PROJECT_REF__/api-keys",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": null
@@ -16,7 +16,7 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "117",
         "x-ratelimit-reset": "50"
@@ -24,7 +24,7 @@
       "body": [
         {
           "name": "anon",
-          "api_key": "<JWT>",
+          "api_key": "__JWT__",
           "id": "anon",
           "type": "legacy",
           "hash": "siXHwep1ApnLzvWXuo9Z9T8gGEi_5wsAy961FvvL7tA",
@@ -33,7 +33,7 @@
         },
         {
           "name": "service_role",
-          "api_key": "<JWT>",
+          "api_key": "__JWT__",
           "id": "service_role",
           "type": "legacy",
           "hash": "NhRBjpTWK-RLWwdqHIg-s57vOf7jkIEWjuUe0N0cEbo",
@@ -41,28 +41,28 @@
           "description": "Legacy service_role API key"
         },
         {
-          "id": "<UUID>",
+          "id": "__UUID__",
           "name": "default",
           "type": "publishable",
-          "api_key": "<API_KEY>",
+          "api_key": "__API_KEY__",
           "description": null,
           "secret_jwt_template": null,
           "hash": "WeAFS20kmJFGweFuqH67uz_how1IsOEN9zV5frxlxdQ",
-          "prefix": "<API_KEY>",
+          "prefix": "__API_KEY__",
           "inserted_at": "2000-01-01T00:00:00Z",
           "updated_at": "2000-01-01T00:00:00Z"
         },
         {
-          "id": "<UUID>",
+          "id": "__UUID__",
           "name": "default",
           "type": "secret",
-          "api_key": "<API_KEY>··························",
+          "api_key": "__API_KEY__··························",
           "description": null,
           "secret_jwt_template": {
             "role": "service_role"
           },
           "hash": "FvtYm3yeZhdzPqOOwrGv685cJXzUJINIUxptXTRI05E",
-          "prefix": "<API_KEY>",
+          "prefix": "__API_KEY__",
           "inserted_at": "2000-01-01T00:00:00Z",
           "updated_at": "2000-01-01T00:00:00Z"
         }
@@ -72,12 +72,12 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>",
+      "path": "/v1/projects/__PROJECT_REF__",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": null
@@ -86,21 +86,21 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "105",
         "x-ratelimit-reset": "11"
       },
       "body": {
-        "id": "<PROJECT_REF>",
-        "ref": "<PROJECT_REF>",
-        "organization_id": "<PROJECT_REF>",
-        "organization_slug": "<PROJECT_REF>",
+        "id": "__PROJECT_REF__",
+        "ref": "__PROJECT_REF__",
+        "organization_id": "__PROJECT_REF__",
+        "organization_slug": "__PROJECT_REF__",
         "name": "cli-e2e-test",
         "region": "us-east-1",
         "status": "ACTIVE_HEALTHY",
         "database": {
-          "host": "db.<PROJECT_REF>.supabase.red",
+          "host": "db.__PROJECT_REF__.supabase.red",
           "version": "17.6.1.111",
           "postgres_engine": "17",
           "release_channel": "ga"

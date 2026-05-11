@@ -26,5 +26,5 @@ export function getCommandRuntimeSpanName(runtime: {
 }
 
 export class CommandRuntime extends ServiceMap.Service<CommandRuntime, CommandRuntimeShape>()(
-  "@supabase/cli/runtime/CommandRuntime",
+  "supabase/runtime/CommandRuntime",
 ) {}

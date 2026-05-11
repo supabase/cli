@@ -24,7 +24,7 @@
   },
   "nx": {
     "implicitDependencies": [
-      "@supabase/cli"
+      "supabase"
     ],
     "targets": {
       "generate": {

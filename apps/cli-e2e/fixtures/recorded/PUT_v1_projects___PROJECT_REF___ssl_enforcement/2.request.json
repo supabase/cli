@@ -1,0 +1,18 @@
+{
+  "method": "PUT",
+  "path": "/v1/projects/__PROJECT_REF__/ssl-enforcement",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "authorization": "Bearer __ACCESS_TOKEN__",
+    "content-length": "38",
+    "content-type": "application/json",
+    "host": "localhost:__PORT__",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": {
+    "requestedConfig": {
+      "database": false
+    }
+  }
+}

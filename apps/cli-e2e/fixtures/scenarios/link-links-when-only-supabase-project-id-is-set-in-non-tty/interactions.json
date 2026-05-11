@@ -2,12 +2,12 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>",
+      "path": "/v1/projects/__PROJECT_REF__",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": null
@@ -16,21 +16,21 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "110",
         "x-ratelimit-reset": "24"
       },
       "body": {
-        "id": "<PROJECT_REF>",
-        "ref": "<PROJECT_REF>",
-        "organization_id": "<PROJECT_REF>",
-        "organization_slug": "<PROJECT_REF>",
+        "id": "__PROJECT_REF__",
+        "ref": "__PROJECT_REF__",
+        "organization_id": "__PROJECT_REF__",
+        "organization_slug": "__PROJECT_REF__",
         "name": "cli-e2e-test",
         "region": "us-east-1",
         "status": "ACTIVE_HEALTHY",
         "database": {
-          "host": "db.<PROJECT_REF>.supabase.red",
+          "host": "db.__PROJECT_REF__.supabase.red",
           "version": "17.6.1.111",
           "postgres_engine": "17",
           "release_channel": "ga"
@@ -42,14 +42,14 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>/api-keys",
+      "path": "/v1/projects/__PROJECT_REF__/api-keys",
       "query": {
         "reveal": "true"
       },
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": null
@@ -58,7 +58,7 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "119",
         "x-ratelimit-reset": "60"
@@ -66,7 +66,7 @@
       "body": [
         {
           "name": "anon",
-          "api_key": "<JWT>",
+          "api_key": "__JWT__",
           "id": "anon",
           "type": "legacy",
           "hash": "siXHwep1ApnLzvWXuo9Z9T8gGEi_5wsAy961FvvL7tA",
@@ -75,7 +75,7 @@
         },
         {
           "name": "service_role",
-          "api_key": "<JWT>",
+          "api_key": "__JWT__",
           "id": "service_role",
           "type": "legacy",
           "hash": "NhRBjpTWK-RLWwdqHIg-s57vOf7jkIEWjuUe0N0cEbo",
@@ -83,28 +83,28 @@
           "description": "Legacy service_role API key"
         },
         {
-          "id": "<UUID>",
+          "id": "__UUID__",
           "name": "default",
           "type": "publishable",
-          "api_key": "<API_KEY>",
+          "api_key": "__API_KEY__",
           "description": null,
           "secret_jwt_template": null,
           "hash": "WeAFS20kmJFGweFuqH67uz_how1IsOEN9zV5frxlxdQ",
-          "prefix": "<API_KEY>",
+          "prefix": "__API_KEY__",
           "inserted_at": "2000-01-01T00:00:00Z",
           "updated_at": "2000-01-01T00:00:00Z"
         },
         {
-          "id": "<UUID>",
+          "id": "__UUID__",
           "name": "default",
           "type": "secret",
-          "api_key": "<API_KEY>",
+          "api_key": "__API_KEY__",
           "description": null,
           "secret_jwt_template": {
             "role": "service_role"
           },
           "hash": "FvtYm3yeZhdzPqOOwrGv685cJXzUJINIUxptXTRI05E",
-          "prefix": "<API_KEY>",
+          "prefix": "__API_KEY__",
           "inserted_at": "2000-01-01T00:00:00Z",
           "updated_at": "2000-01-01T00:00:00Z"
         }
@@ -114,12 +114,12 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>/config/database/postgres",
+      "path": "/v1/projects/__PROJECT_REF__/config/database/postgres",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": null
@@ -128,7 +128,7 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "119",
         "x-ratelimit-reset": "60"
@@ -139,12 +139,12 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>/network-restrictions",
+      "path": "/v1/projects/__PROJECT_REF__/network-restrictions",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": null
@@ -153,7 +153,7 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "117",
         "x-ratelimit-reset": "20"
@@ -172,12 +172,12 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>/config/database/pooler",
+      "path": "/v1/projects/__PROJECT_REF__/config/database/pooler",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": null
@@ -186,25 +186,25 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "119",
         "x-ratelimit-reset": "60"
       },
       "body": [
         {
-          "identifier": "<PROJECT_REF>",
+          "identifier": "__PROJECT_REF__",
           "database_type": "PRIMARY",
-          "db_user": "postgres.<PROJECT_REF>",
+          "db_user": "postgres.__PROJECT_REF__",
           "db_host": "aws-0-us-east-1.pooler.supabase.green",
           "db_port": 6543,
           "db_name": "postgres",
-          "connection_string": "postgresql://postgres.<PROJECT_REF>:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.green:6543/postgres",
+          "connection_string": "postgresql://postgres.__PROJECT_REF__:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.green:6543/postgres",
           "pool_mode": "transaction",
           "default_pool_size": null,
           "max_client_conn": null,
           "is_using_scram_auth": true,
-          "connectionString": "postgresql://postgres.<PROJECT_REF>:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.green:6543/postgres"
+          "connectionString": "postgresql://postgres.__PROJECT_REF__:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.green:6543/postgres"
         }
       ]
     }
@@ -212,12 +212,12 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>/postgrest",
+      "path": "/v1/projects/__PROJECT_REF__/postgrest",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": null
@@ -226,7 +226,7 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "119",
         "x-ratelimit-reset": "60"
@@ -243,12 +243,12 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>/config/storage",
+      "path": "/v1/projects/__PROJECT_REF__/config/storage",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": null
@@ -257,7 +257,7 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "119",
         "x-ratelimit-reset": "60"
@@ -298,12 +298,12 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>/config/auth",
+      "path": "/v1/projects/__PROJECT_REF__/config/auth",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": null
@@ -312,7 +312,7 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "119",
         "x-ratelimit-reset": "60"
@@ -329,7 +329,7 @@
         "security_update_password_require_current_password": false,
         "refresh_token_rotation_enabled": true,
         "security_refresh_token_reuse_interval": 10,
-        "site_url": "http://localhost:<PORT>",
+        "site_url": "http://localhost:__PORT__",
         "mfa_max_enrolled_factors": 10,
         "mfa_allow_low_aal": false,
         "rate_limit_anonymous_users": 30,

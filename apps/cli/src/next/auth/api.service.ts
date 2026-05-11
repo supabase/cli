@@ -27,4 +27,4 @@ interface ApiShape {
   ) => Effect.Effect<ProfileResponse, ApiError>;
 }
 
-export class Api extends ServiceMap.Service<Api, ApiShape>()("@supabase/cli/auth/Api") {}
+export class Api extends ServiceMap.Service<Api, ApiShape>()("supabase/auth/Api") {}

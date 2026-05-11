@@ -6,11 +6,11 @@
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "apikey": "<JWT>",
-        "authorization": "Bearer <ACCESS_TOKEN>",
+        "apikey": "__JWT__",
+        "authorization": "Bearer __ACCESS_TOKEN__",
         "cache-control": "no-cache",
         "content-type": "text/plain; charset=utf-8",
-        "host": "localhost:<PORT>",
+        "host": "localhost:__PORT__",
         "transfer-encoding": "chunked",
         "user-agent": "SupabaseCLI/"
       },
@@ -23,12 +23,12 @@
         "content-type": "application/json; charset=utf-8",
         "sb-gateway-mode": "direct",
         "sb-gateway-version": "1",
-        "sb-project-ref": "<PROJECT_REF>",
-        "sb-request-id": "<UUID>"
+        "sb-project-ref": "__PROJECT_REF__",
+        "sb-request-id": "__UUID__"
       },
       "body": {
         "Key": "cli-e2e-bucket/cached.txt",
-        "Id": "<UUID>"
+        "Id": "__UUID__"
       }
     }
   }

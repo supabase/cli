@@ -4,24 +4,49 @@ import type { Server } from "node:net";
 import { Effect } from "effect";
 import { allocatePorts, DEFAULT_PORTS } from "./PortAllocator.ts";
 
-/** Occupy a port for the duration of a scoped effect. */
-const occupyPort = (port: number) =>
-  Effect.acquireRelease(
-    Effect.callback<Server>((resume) => {
-      const server = createServer();
-      server.listen(port, "127.0.0.1", () => {
-        resume(Effect.succeed(server));
-      });
-      server.on("error", () => {
-        resume(Effect.succeed(server));
-      });
-      return Effect.void;
-    }),
+const listen = (port: number) =>
+  Effect.callback<Server, Error>((resume) => {
+    const server = createServer();
+    server.once("error", (error) => {
+      resume(Effect.fail(error));
+    });
+    server.listen(port, "127.0.0.1", () => {
+      resume(Effect.succeed(server));
+    });
+    return Effect.void;
+  });
+
+const close = (server: Server) =>
+  Effect.callback<void>((resume) => {
+    server.close(() => resume(Effect.void));
+    return Effect.void;
+  });
+
+const getFreePort = () =>
+  Effect.acquireUseRelease(
+    listen(0),
     (server) =>
-      Effect.callback<void>((resume) => {
-        server.close(() => resume(Effect.void));
-        return Effect.void;
+      Effect.sync(() => {
+        const addr = server.address();
+        if (addr == null || typeof addr === "string") {
+          throw new Error("Expected TCP server address");
+        }
+        return addr.port;
       }),
+    close,
+  );
+
+/** Occupy an OS-assigned port for the duration of a scoped effect. */
+const occupyFreePort = () =>
+  Effect.acquireRelease(
+    Effect.map(listen(0), (server) => {
+      const addr = server.address();
+      if (addr == null || typeof addr === "string") {
+        throw new Error("Expected TCP server address");
+      }
+      return { port: addr.port, server };
+    }),
+    ({ server }) => close(server),
   );
 
 describe("allocatePorts", () => {
@@ -47,59 +72,67 @@ describe("allocatePorts", () => {
   });
 
   it("explicit port is respected when available", async () => {
-    const ports = await Effect.runPromise(allocatePorts({ apiPort: 19876, dbPort: 19877 }));
-    expect(ports.apiPort).toBe(19876);
-    expect(ports.dbPort).toBe(19877);
+    const requestedApiPort = await Effect.runPromise(getFreePort());
+    const requestedDbPort = await Effect.runPromise(getFreePort());
+    const ports = await Effect.runPromise(
+      allocatePorts({ apiPort: requestedApiPort, dbPort: requestedDbPort }),
+    );
+    expect(ports.apiPort).toBe(requestedApiPort);
+    expect(ports.dbPort).toBe(requestedDbPort);
   });
 
   it("explicit port that is occupied fails with PortAllocationError", async () => {
     const exit = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* occupyPort(19888);
+          const occupied = yield* occupyFreePort();
 
-          return yield* allocatePorts({ apiPort: 19888 }).pipe(Effect.exit);
+          return yield* allocatePorts({ apiPort: occupied.port }).pipe(Effect.exit);
         }),
       ),
     );
 
     expect(exit._tag).toBe("Failure");
     if (exit._tag === "Failure") {
-      expect(JSON.stringify(exit.cause)).toContain("Port 19888 is not available");
+      expect(JSON.stringify(exit.cause)).toContain("is not available");
     }
   });
 
   it("preferred ports are reused when available", async () => {
+    const apiPort = await Effect.runPromise(getFreePort());
+    const dbPort = await Effect.runPromise(getFreePort());
+    const studioPort = await Effect.runPromise(getFreePort());
     const ports = await Effect.runPromise(
       allocatePorts(
         {},
         {
           preferred: {
-            apiPort: 21001,
-            dbPort: 21002,
-            studioPort: 21003,
+            apiPort,
+            dbPort,
+            studioPort,
           },
         },
       ),
     );
 
-    expect(ports.apiPort).toBe(21001);
-    expect(ports.dbPort).toBe(21002);
-    expect(ports.studioPort).toBe(21003);
+    expect(ports.apiPort).toBe(apiPort);
+    expect(ports.dbPort).toBe(dbPort);
+    expect(ports.studioPort).toBe(studioPort);
   });
 
   it("preferred ports fall back to random ports when unavailable", async () => {
+    const dbPort = await Effect.runPromise(getFreePort());
     const exit = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* occupyPort(21011);
+          const occupied = yield* occupyFreePort();
 
           return yield* allocatePorts(
             {},
             {
               preferred: {
-                apiPort: 21011,
-                dbPort: 21012,
+                apiPort: occupied.port,
+                dbPort,
               },
             },
           );
@@ -107,8 +140,8 @@ describe("allocatePorts", () => {
       ),
     );
 
-    expect(exit.apiPort).not.toBe(21011);
-    expect(exit.dbPort).toBe(21012);
+    expect(exit.apiPort).not.toBe(exit.dbPort);
+    expect(exit.dbPort).toBe(dbPort);
   });
 
   it("explicit ports cannot override reserved ownership", async () => {

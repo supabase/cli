@@ -16,5 +16,5 @@ interface AnalyticsShape {
 }
 
 export class Analytics extends ServiceMap.Service<Analytics, AnalyticsShape>()(
-  "@supabase/cli/telemetry/Analytics",
+  "supabase/telemetry/Analytics",
 ) {}

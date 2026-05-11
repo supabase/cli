@@ -2,7 +2,7 @@ import { $ } from "bun";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
-import { runNpmTest } from "./helpers/npm-registry.ts";
+import { describeError, runNpmTest } from "./helpers/npm-registry.ts";
 import { verifyExpectedShell } from "./helpers/release-shell.ts";
 
 const { values } = parseArgs({
@@ -14,20 +14,14 @@ const { values } = parseArgs({
 
 const version = values.version!;
 const tag = values.tag;
-if (tag !== "latest" && tag !== "alpha") {
-  console.error(`Invalid --tag value: ${String(tag)}. Expected "latest" or "alpha".`);
+if (tag !== "latest" && tag !== "alpha" && tag !== "beta") {
+  console.error(`Invalid --tag value: ${String(tag)}. Expected "latest", "alpha", or "beta".`);
   process.exit(1);
 }
 const root = path.resolve(import.meta.dir, "../../..");
 const distDir = path.join(root, "dist");
 
-function shellSentinelCommand(tag: "latest" | "alpha") {
-  if (tag === "latest") {
-    return 'output=$(supabase hello) && echo "$output" && test "$output" = "hello legacy"';
-  }
-
-  return 'supabase status --help >/tmp/supabase-shell.txt && cat /tmp/supabase-shell.txt && grep -q "status" /tmp/supabase-shell.txt';
-}
+const dispatchProbe = "supabase init --help 2>&1 | grep -q init";
 
 interface TestResult {
   name: string;
@@ -51,13 +45,13 @@ console.log("=".repeat(60));
   try {
     const output = await $`${binPath} --version`.text();
     const trimmed = output.trim();
-    const shellCheck = await verifyExpectedShell(binPath, tag);
+    const shellCheck = await verifyExpectedShell(binPath);
     const passed = /^\d+\.\d+\.\d+/.test(trimmed) && shellCheck.passed;
     console.log(`[${name}] ${passed ? "PASS" : "FAIL"} — ${trimmed}`);
     console.log(`[${name}] ${shellCheck.detail}`);
     results.push({ name, status: passed ? "pass" : "fail" });
   } catch (e) {
-    console.log(`[${name}] FAIL — ${e}`);
+    console.log(`[${name}] FAIL —\n${describeError(e)}`);
     results.push({ name, status: "fail" });
   }
 }
@@ -114,7 +108,7 @@ if (!hasDocker) {
         `linux-${arch}-tarball`,
         "debian:bookworm-slim",
         dockerPlatform,
-        `tar -xzf /dist/supabase_${version}_linux_${arch}.tar.gz -C /usr/local/bin && supabase --version && ${shellSentinelCommand(tag)}`,
+        `tar -xzf /dist/supabase_${version}_linux_${arch}.tar.gz -C /usr/local/bin && supabase --version && ${dispatchProbe}`,
       ),
     );
 
@@ -123,7 +117,7 @@ if (!hasDocker) {
         `linux-${arch}-deb`,
         "debian:bookworm-slim",
         dockerPlatform,
-        `dpkg -i /dist/supabase_${version}_linux_${arch}.deb && supabase --version && ${shellSentinelCommand(tag)}`,
+        `dpkg -i /dist/supabase_${version}_linux_${arch}.deb && supabase --version && ${dispatchProbe}`,
       ),
     );
 
@@ -132,7 +126,7 @@ if (!hasDocker) {
         `linux-${arch}-rpm`,
         "amazonlinux:2023",
         dockerPlatform,
-        `rpm -ivh /dist/supabase_${version}_linux_${arch}.rpm && supabase --version && ${shellSentinelCommand(tag)}`,
+        `rpm -ivh /dist/supabase_${version}_linux_${arch}.rpm && supabase --version && ${dispatchProbe}`,
       ),
     );
 
@@ -141,7 +135,7 @@ if (!hasDocker) {
         `linux-${arch}-apk`,
         "alpine:3.21",
         dockerPlatform,
-        `apk add --allow-untrusted /dist/supabase_${version}_linux_${arch}.apk && supabase --version && ${shellSentinelCommand(tag)}`,
+        `apk add --allow-untrusted /dist/supabase_${version}_linux_${arch}.apk && supabase --version && ${dispatchProbe}`,
       ),
     );
   }
@@ -162,7 +156,7 @@ try {
   const npmPassed = await runNpmTest(version, tag);
   results.push({ name: "npm", status: npmPassed ? "pass" : "fail" });
 } catch (e) {
-  console.error(`[npm] Error: ${e}`);
+  console.error(`[npm] Error:\n${describeError(e)}`);
   results.push({ name: "npm", status: "fail" });
 }
 

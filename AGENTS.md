@@ -8,7 +8,7 @@ Bun monorepo with workspaces under `apps/` and `packages/`.
 
 ## Workspace Layout
 
-- `apps/cli` — main `@supabase/cli` package
+- `apps/cli` — main `supabase` package
 - `apps/docs` — internal Next.js docs site
 - `packages/api` — typed Supabase Management API client
 - `packages/config` — config schema and generated types
@@ -110,6 +110,10 @@ nx run-many -t build test
 ```
 
 Use `nx show project <name> --json` to discover available targets before running them — do not guess target names.
+
+## Pull Requests
+
+PR titles must follow conventional-commits format because the `Lint Pull Request` workflow runs `amannn/action-semantic-pull-request` against the title. Use `<type>(<scope>): <subject>` (e.g. `fix(cli): …`, `test(cli): …`, `feat(api): …`). A bare descriptive title like "Build TypeScript CLI as compiled Bun binaries" will fail the lint. When a PR is created (including by the Claude Code UI or someone else), check the title against this rule and update it if needed.
 
 ## Refactoring Policy
 

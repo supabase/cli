@@ -32,30 +32,29 @@ const dryRun = values["dry-run"]!;
 const root = path.resolve(import.meta.dir, "../../..");
 const distDir = path.join(root, "dist");
 
-// Convert name (e.g. "supabase-shim-poc") to the Ruby class name
-// Homebrew expects (e.g. "SupabaseShimPoc").
+// Convert name (e.g. "supabase-beta") to the Ruby class name Homebrew
+// expects (e.g. "SupabaseBeta"). The class + filename differ by channel so
+// `supabase` and `supabase-beta` can coexist as separate formulas in the
+// same tap, but the installed binary is always `supabase` (matching the
+// Go CLI's historical behaviour).
 const className = name
   .split(/[-_]/)
   .filter(Boolean)
   .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
   .join("");
 
-// When name != "supabase", rename the main binary on install so it doesn't
-// clash with the official `supabase` CLI a user may already have installed.
-//
 // `supabase-go` is the Go sidecar the legacy shell spawns via
 // apps/cli/src/shared/legacy/go-proxy.layer.ts. It is looked up by exact
 // filename colocated with process.execPath, so we MUST install it with its
-// original name (not renamed) right next to the SFE. The `if File.exist?`
-// guard makes the formula work for both the `legacy` shell (ships both
-// binaries) and the future `next` shell (SFE only).
-const installLines = [
-  name === "supabase" ? `    bin.install "supabase"` : `    bin.install "supabase" => "${name}"`,
+// original name right next to the SFE. The `if File.exist?` guard makes the
+// formula work for both the `legacy` shell (ships both binaries) and the
+// future `next` shell (SFE only).
+const installBlock = [
+  `    bin.install "supabase"`,
   `    bin.install "supabase-go" if File.exist?("supabase-go")`,
-];
-const installBlock = installLines.join("\n");
+].join("\n");
 
-const testInvocation = `#{bin}/${name}`;
+const testInvocation = `#{bin}/supabase`;
 
 // Parse checksums
 const checksums = new Map<string, string>();

@@ -189,13 +189,13 @@ describe("platformApiLayer", () => {
       expect(seenRequests).toEqual([
         {
           authorization: "Bearer stored-token",
-          userAgent: "@supabase/cli",
+          userAgent: "supabase",
           command: "branches list",
           commandRunId: "run-headers",
         },
         {
           authorization: "Bearer stored-token",
-          userAgent: "@supabase/cli",
+          userAgent: "supabase",
           command: "branches list",
           commandRunId: "run-headers",
         },

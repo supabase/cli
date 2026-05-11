@@ -2,14 +2,14 @@
   {
     "request": {
       "method": "POST",
-      "path": "/v1/projects/<PROJECT_REF>/custom-hostname/initialize",
+      "path": "/v1/projects/__PROJECT_REF__/custom-hostname/initialize",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
         "content-length": "41",
         "content-type": "application/json",
-        "host": "localhost:<PORT>",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/2.84.2"
       },
       "body": {
@@ -20,7 +20,7 @@
       "status": 400,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "10",
         "x-ratelimit-remaining": "9",
         "x-ratelimit-reset": "60"

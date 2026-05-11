@@ -2,12 +2,12 @@
   {
     "request": {
       "method": "DELETE",
-      "path": "/v1/projects/<PROJECT_REF>/functions/hello-world",
+      "path": "/v1/projects/__PROJECT_REF__/functions/hello-world",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": null
@@ -16,7 +16,7 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "119",
         "x-ratelimit-reset": "60"

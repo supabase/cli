@@ -10,5 +10,5 @@ interface RuntimeInfoShape {
 }
 
 export class RuntimeInfo extends ServiceMap.Service<RuntimeInfo, RuntimeInfoShape>()(
-  "@supabase/cli/runtime/RuntimeInfo",
+  "supabase/runtime/RuntimeInfo",
 ) {}

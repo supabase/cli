@@ -13,7 +13,7 @@ The local stack currently runs in the foreground, blocking the terminal. Users (
 - **Log access**: On-demand streaming via SSE from daemon process (LogBuffer already exists in process-compose)
 - **Current commands**: `stack start --detach`, `stack stop`, `stack status`, `stack list`, `stack update`, plus top-level aliases for `start`, `stop`, and `status`, and the top-level `logs` command
 - **Future commands**: `restart`, `attach` (reconnect interactive TUI), per-service control
-- **Package boundaries**: Daemon and stack state live in `@supabase/stack`, CLI commands in `@supabase/cli`, `@supabase/process-compose` untouched
+- **Package boundaries**: Daemon and stack state live in `@supabase/stack`, CLI commands in `supabase`, `@supabase/process-compose` untouched
 - **Cross-platform**: Works on macOS, Linux, and Windows 10+ (Unix sockets supported since Build 17063)
 
 ---
@@ -282,7 +282,7 @@ and the CLI displays the error and exits with a non-zero code.
 | `/logs/:service`         | GET    | SSE stream for one service                                                          |
 | `/logs/:service/history` | GET    | Recent log entries for one service (JSON, `?limit=N`)                               |
 
-### `@supabase/cli` — New/modified commands
+### `supabase` — New/modified commands
 
 **Modified: `src/commands/start/`**
 

@@ -33,6 +33,7 @@ export class LogBuffer extends ServiceMap.Service<
       const servicePubSubs = new Map<string, PubSub.PubSub<LogEntry>>();
       const serviceBuffers = new Map<string, Ref.Ref<Array<LogEntry>>>();
       const globalPubSub = yield* PubSub.bounded<LogEntry>(4096);
+      const globalBuffer = yield* Ref.make<Array<LogEntry>>([]);
 
       const getOrCreate = (service: string) =>
         Effect.gen(function* () {
@@ -59,6 +60,10 @@ export class LogBuffer extends ServiceMap.Service<
             const { pubsub, buffer } = yield* getOrCreate(service);
             yield* PubSub.publish(pubsub, entry);
             yield* PubSub.publish(globalPubSub, entry);
+            yield* Ref.update(globalBuffer, (buf) => {
+              const next = buf.concat(entry);
+              return next.length > MAX_BUFFER_SIZE ? next.slice(-MAX_BUFFER_SIZE) : next;
+            });
             yield* Ref.update(buffer, (buf) => {
               const next = buf.concat(entry);
               return next.length > MAX_BUFFER_SIZE ? next.slice(-MAX_BUFFER_SIZE) : next;
@@ -83,25 +88,23 @@ export class LogBuffer extends ServiceMap.Service<
           }),
 
         historyAll: (limit = 100, services) =>
-          Effect.gen(function* () {
-            const selectedServices =
+          Effect.sync(() => {
+            const all = Ref.getUnsafe(globalBuffer);
+            const filtered =
               services === undefined || services.length === 0
-                ? [...serviceBuffers.keys()]
-                : services;
+                ? all
+                : all.filter((entry) => services.includes(entry.service));
 
-            const entries: Array<LogEntry> = [];
-            for (const service of selectedServices) {
-              const { buffer } = yield* getOrCreate(service);
-              entries.push(...Ref.getUnsafe(buffer));
-            }
-
-            return entries.sort((a, b) => a.timestamp - b.timestamp).slice(-limit);
+            return filtered.slice(-limit);
           }),
 
         truncate: (service) =>
           Effect.gen(function* () {
             const { buffer } = yield* getOrCreate(service);
             yield* Ref.set(buffer, []);
+            yield* Ref.update(globalBuffer, (entries) =>
+              entries.filter((entry) => entry.service !== service),
+            );
           }),
       };
     }),

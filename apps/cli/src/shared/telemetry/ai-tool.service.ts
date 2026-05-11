@@ -6,5 +6,5 @@ interface AiToolShape {
 }
 
 export class AiTool extends ServiceMap.Service<AiTool, AiToolShape>()(
-  "@supabase/cli/telemetry/AiTool",
+  "supabase/telemetry/AiTool",
 ) {}

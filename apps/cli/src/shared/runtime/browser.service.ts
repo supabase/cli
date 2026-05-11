@@ -6,5 +6,5 @@ interface BrowserShape {
 }
 
 export class Browser extends ServiceMap.Service<Browser, BrowserShape>()(
-  "@supabase/cli/runtime/Browser",
+  "supabase/runtime/Browser",
 ) {}

@@ -1,11 +1,23 @@
 {
-  "name": "@supabase/cli",
+  "name": "supabase",
+  "version": "0.0.0-automated",
   "private": false,
+  "description": "Supabase CLI",
+  "homepage": "https://github.com/supabase/cli#readme",
+  "bugs": {
+    "url": "https://github.com/supabase/cli/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/supabase/cli.git",
+    "directory": "apps/cli"
+  },
   "bin": {
     "supabase": "dist/supabase.js"
   },
   "files": [
-    "dist/"
+    "dist/supabase.js"
   ],
   "type": "module",
   "publishConfig": {
@@ -13,8 +25,8 @@
   },
   "scripts": {
     "build": "pnpm build:next && pnpm build:legacy && pnpm build:shim",
-    "build:next": "bun build src/next/main.ts --outfile dist/main-next.js --target bun --packages external",
-    "build:legacy": "bun build src/legacy/main.ts --outfile dist/main-legacy.js --target bun --packages external",
+    "build:next": "bun build src/next/main.ts --compile --outfile dist/supabase-next",
+    "build:legacy": "bun build src/legacy/main.ts --compile --outfile dist/supabase-legacy",
     "build:shim": "bun build src/shared/cli/bin.ts --outfile dist/supabase.js --target node",
     "dev:next": "pnpm exec bun src/next/main.ts",
     "dev:legacy": "pnpm exec bun src/legacy/main.ts",
@@ -29,9 +41,7 @@
     "@effect/atom-react": "catalog:",
     "@effect/platform-bun": "catalog:",
     "@napi-rs/keyring": "^1.1.2",
-    "@supabase/api": "workspace:*",
-    "@supabase/config": "workspace:*",
-    "@supabase/stack": "workspace:*",
+    "@parcel/watcher": "^2.5.6",
     "@vercel/detect-agent": "^1.2.3",
     "effect": "catalog:",
     "ink": "^7.0.1",
@@ -41,6 +51,9 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@supabase/api": "workspace:*",
+    "@supabase/config": "workspace:*",
+    "@supabase/stack": "workspace:*",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@types/react": "^19.2.14",
@@ -62,6 +75,19 @@
     "@supabase/cli-linux-x64-musl": "workspace:*",
     "@supabase/cli-windows-arm64": "workspace:*",
     "@supabase/cli-windows-x64": "workspace:*"
+  },
+  "release": {
+    "branches": [
+      "main",
+      {
+        "name": "develop",
+        "prerelease": "beta",
+        "channel": "beta"
+      }
+    ],
+    "plugins": [
+      "@semantic-release/commit-analyzer"
+    ]
   },
   "knip": {
     "entry": [

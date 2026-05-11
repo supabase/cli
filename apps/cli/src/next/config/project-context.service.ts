@@ -9,5 +9,5 @@ interface ProjectContextShape {
 }
 
 export class ProjectContext extends ServiceMap.Service<ProjectContext, ProjectContextShape>()(
-  "@supabase/cli/config/ProjectContext",
+  "supabase/config/ProjectContext",
 ) {}

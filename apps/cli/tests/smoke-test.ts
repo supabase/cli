@@ -11,8 +11,8 @@ const { values } = parseArgs({
 
 const version = values.version!;
 const tag = values.tag;
-if (tag !== "latest" && tag !== "alpha") {
-  console.error(`Invalid --tag value: ${String(tag)}. Expected "latest" or "alpha".`);
+if (tag !== "latest" && tag !== "alpha" && tag !== "beta") {
+  console.error(`Invalid --tag value: ${String(tag)}. Expected "latest", "alpha", or "beta".`);
   process.exit(1);
 }
 const testsDir = import.meta.dir;

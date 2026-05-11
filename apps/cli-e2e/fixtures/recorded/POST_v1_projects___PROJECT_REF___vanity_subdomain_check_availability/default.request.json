@@ -1,0 +1,16 @@
+{
+  "method": "POST",
+  "path": "/v1/projects/__PROJECT_REF__/vanity-subdomain/check-availability",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "authorization": "Bearer __ACCESS_TOKEN__",
+    "content-length": "28",
+    "content-type": "application/json",
+    "host": "localhost:__PORT__",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": {
+    "vanity_subdomain": "myapp"
+  }
+}
