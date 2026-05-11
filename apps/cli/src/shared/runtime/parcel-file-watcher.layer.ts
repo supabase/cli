@@ -1,4 +1,4 @@
-import type * as ParcelWatcher from "@parcel/watcher";
+import * as ParcelWatcher from "@parcel/watcher";
 import { Cause, Effect, Layer, Queue, Stream } from "effect";
 
 import {
@@ -17,21 +17,14 @@ function toParcelOptions(options?: FileWatchOptions): ParcelWatcher.Options | un
   };
 }
 
-// `@parcel/watcher` loads a native `.node` binding at module-import time. Keep
-// the import dynamic so merely registering this layer in the command tree does
-// not pull the native binding into every CLI invocation — only commands that
-// actually subscribe (e.g. `functions dev`) hit the native binding path.
-const loadParcelWatcher = (): Promise<typeof ParcelWatcher> => import("@parcel/watcher");
-
 export const parcelFileWatcherLayer = Layer.sync(FileWatcher, () =>
   FileWatcher.of({
     watch: (path, options) =>
       Stream.callback<ReadonlyArray<FileWatchEvent>, FileWatcherError>((queue) =>
         Effect.acquireRelease(
           Effect.tryPromise({
-            try: async () => {
-              const parcel = await loadParcelWatcher();
-              return parcel.subscribe(
+            try: () =>
+              ParcelWatcher.subscribe(
                 path,
                 (error, events) => {
                   if (error !== null) {
@@ -44,8 +37,7 @@ export const parcelFileWatcherLayer = Layer.sync(FileWatcher, () =>
                   Queue.offerUnsafe(queue, events);
                 },
                 toParcelOptions(options),
-              );
-            },
+              ),
             catch: (cause) => new FileWatcherError({ path, cause }),
           }),
           (subscription) =>
