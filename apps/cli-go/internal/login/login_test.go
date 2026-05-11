@@ -275,9 +275,12 @@ func TestLoginTelemetryStitching(t *testing.T) {
 	t.Run("profile success but alias failure marks stitched=false", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		analytics := &fakeAnalytics{enabled: true, aliasErr: errors.New("alias boom")}
-		ctx := phtelemetry.WithService(context.Background(), newService(t, fsys, analytics))
+		service := newService(t, fsys, analytics)
+		initial, err := phtelemetry.LoadState(fsys)
+		require.NoError(t, err)
+		ctx := phtelemetry.WithService(context.Background(), service)
 
-		err := Run(ctx, os.Stdout, RunParams{
+		err = Run(ctx, os.Stdout, RunParams{
 			Token: token,
 			Fsys:  fsys,
 			GetProfile: func(context.Context) (string, error) {
@@ -286,7 +289,10 @@ func TestLoginTelemetryStitching(t *testing.T) {
 		})
 
 		require.NoError(t, err)
+		require.Len(t, analytics.aliases, 1)
+		assert.Empty(t, analytics.identifies)
 		require.Len(t, analytics.captures, 1)
+		assert.Equal(t, initial.DeviceID, analytics.captures[0].distinctID)
 		assert.Equal(t, false, analytics.captures[0].properties[phtelemetry.PropStitched])
 		state, err := phtelemetry.LoadState(fsys)
 		require.NoError(t, err)
