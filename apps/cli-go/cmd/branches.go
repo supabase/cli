@@ -80,7 +80,7 @@ var (
 		Short: "Retrieve details of a preview branch",
 		Long: "Retrieve details of the specified preview branch.\n\n" +
 			"Note: For the main branch, password-dependent fields (POSTGRES_URL, POSTGRES_URL_NON_POOLING) are not populated because production database credentials are not retrievable via API.",
-		Args:  cobra.MaximumNArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			fsys := afero.NewOsFs()
