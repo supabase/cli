@@ -13,6 +13,29 @@ import {
   registerTempStackProject,
 } from "./stack-e2e-cleanup.ts";
 
+const BINARY_EXT = process.platform === "win32" ? ".exe" : "";
+const SHIM_PATH = fileURLToPath(new URL("../../dist/supabase.js", import.meta.url));
+const NEXT_BINARY_PATH = fileURLToPath(
+  new URL(`../../dist/supabase-next${BINARY_EXT}`, import.meta.url),
+);
+const LEGACY_BINARY_PATH = fileURLToPath(
+  new URL(`../../dist/supabase-legacy${BINARY_EXT}`, import.meta.url),
+);
+
+function resolveBinaryPath(entrypoint: "next" | "legacy"): string {
+  return entrypoint === "legacy" ? LEGACY_BINARY_PATH : NEXT_BINARY_PATH;
+}
+
+function assertBuildArtifactsExist(binaryPath: string): void {
+  if (!existsSync(SHIM_PATH) || !existsSync(binaryPath)) {
+    throw new Error(
+      `Missing CLI build artifacts. Run \`pnpm --filter supabase build\` before invoking e2e tests.\n` +
+        `  expected shim:   ${SHIM_PATH}\n` +
+        `  expected binary: ${binaryPath}`,
+    );
+  }
+}
+
 type RunResult = {
   stdout: string;
   stderr: string;
@@ -158,19 +181,16 @@ export function spawnSupabase(
   const ownHome = options?.home ? null : makeTempHome();
   const homeDir = options?.home ?? ownHome!.dir;
   noteStackProjectHome(options?.cwd, homeDir);
-  const sourceCliLauncher = fileURLToPath(new URL("./source-cli-launcher.mjs", import.meta.url));
-  const sourceCliEntrypoint = fileURLToPath(
-    new URL(
-      options?.entrypoint === "legacy" ? "../../src/legacy/main.ts" : "../../src/next/main.ts",
-      import.meta.url,
-    ),
-  );
+  const binaryPath = resolveBinaryPath(options?.entrypoint ?? "next");
+  assertBuildArtifactsExist(binaryPath);
+  const cliLauncher = fileURLToPath(new URL("./cli-launcher.mjs", import.meta.url));
   const usesStartWrapper = args[0] === "start";
+  // Both branches go through `node dist/supabase.js`, the same Node shim users
+  // get installed via npm. `SUPABASE_CLI_BINARY_OVERRIDE` points the shim at
+  // the per-shell compiled binary in `dist/`.
   const proc = spawn(
-    usesStartWrapper ? "node" : "bun",
-    usesStartWrapper
-      ? [sourceCliLauncher, sourceCliEntrypoint, ...args]
-      : [sourceCliEntrypoint, ...args],
+    "node",
+    usesStartWrapper ? [cliLauncher, SHIM_PATH, ...args] : [SHIM_PATH, ...args],
     {
       cwd: options?.cwd,
       env: {
@@ -179,6 +199,7 @@ export function spawnSupabase(
         SUPABASE_NO_KEYRING: "1",
         // Keep e2e subprocesses quiet by default while still allowing per-test overrides.
         SUPABASE_TELEMETRY_DISABLED: "1",
+        SUPABASE_CLI_BINARY_OVERRIDE: binaryPath,
         ...options?.env,
       },
       stdio:

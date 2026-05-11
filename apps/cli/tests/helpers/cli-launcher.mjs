@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import process from "node:process";
-const [, , entrypoint, ...args] = process.argv;
 
-if (entrypoint == null) {
-  throw new Error("Missing CLI entrypoint");
+const [, , shim, ...args] = process.argv;
+
+if (shim == null) {
+  throw new Error("Missing CLI shim entrypoint");
 }
 
-const child = spawn("bun", [entrypoint, ...args], {
+const child = spawn("node", [shim, ...args], {
   cwd: process.cwd(),
   env: process.env,
   stdio: ["pipe", "pipe", "pipe"],
@@ -42,19 +43,18 @@ const stopChildGracefully = () => {
 
   forwardedShutdown = true;
 
-  // Bun currently exits too abruptly under direct source execution to
-  // allow async cleanup. Route outer termination through a non-terminating
-  // signal that the source CLI translates into its normal `stack.dispose()`
-  // path, then wait for it to exit on its own.
+  // The compiled Bun binary exits too abruptly under direct SIGTERM to allow
+  // async cleanup. Closing stdin lets the CLI's `awaitShutdown` finalizer run
+  // through the normal `stack.dispose()` path before exit. SIGWINCH is sent as
+  // a non-terminating wake-up in case the CLI is blocked elsewhere.
   if (process.platform !== "win32") {
     try {
       child.kill("SIGWINCH");
-    } catch {
-      child.stdin?.end();
-    }
-  } else {
-    child.stdin?.end();
+    } catch {}
   }
+  try {
+    child.stdin?.end();
+  } catch {}
 
   forceKillTimer = setTimeout(() => {
     try {

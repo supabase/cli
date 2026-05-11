@@ -25,8 +25,8 @@
   },
   "scripts": {
     "build": "pnpm build:next && pnpm build:legacy && pnpm build:shim",
-    "build:next": "bun build src/next/main.ts --outfile dist/main-next.js --target bun --packages external",
-    "build:legacy": "bun build src/legacy/main.ts --outfile dist/main-legacy.js --target bun --packages external",
+    "build:next": "bun build src/next/main.ts --compile --outfile dist/supabase-next",
+    "build:legacy": "bun build src/legacy/main.ts --compile --outfile dist/supabase-legacy",
     "build:shim": "bun build src/shared/cli/bin.ts --outfile dist/supabase.js --target node",
     "dev:next": "pnpm exec bun src/next/main.ts",
     "dev:legacy": "pnpm exec bun src/legacy/main.ts",

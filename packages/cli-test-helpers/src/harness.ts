@@ -1,6 +1,6 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { tmpdir, platform as osPlatform } from "node:os";
 import { randomUUID } from "node:crypto";
 
 export type CLITarget = "go" | "ts-legacy" | "ts-next";
@@ -51,14 +51,42 @@ export function makeTempDir(prefix = "cli-e2e-"): TempDir {
 // packages/cli-test-helpers/src/harness.ts -> ../../../ = repo root
 const WORKSPACE_ROOT = new URL("../../../", import.meta.url).pathname.replace(/\/$/, "");
 
-function buildCommand(target: CLITarget): string[] {
+const BINARY_EXT = osPlatform() === "win32" ? ".exe" : "";
+const TS_CLI_SHIM = join(WORKSPACE_ROOT, "apps/cli/dist/supabase.js");
+
+function tsCliBinary(shell: "next" | "legacy"): string {
+  return join(WORKSPACE_ROOT, `apps/cli/dist/supabase-${shell}${BINARY_EXT}`);
+}
+
+function assertTsCliBuilt(binaryPath: string): void {
+  if (!existsSync(TS_CLI_SHIM) || !existsSync(binaryPath)) {
+    throw new Error(
+      `Missing CLI build artifacts. Run \`pnpm --filter supabase build\` before running e2e tests.\n` +
+        `  expected shim:   ${TS_CLI_SHIM}\n` +
+        `  expected binary: ${binaryPath}`,
+    );
+  }
+}
+
+interface BuiltCommand {
+  cmd: string[];
+  binaryOverride?: string;
+}
+
+function buildCommand(target: CLITarget): BuiltCommand {
   switch (target) {
     case "go":
-      return [process.env["SUPABASE_GO_BINARY"] ?? "supabase"];
-    case "ts-legacy":
-      return ["bun", join(WORKSPACE_ROOT, "apps/cli/dist/main-legacy.js")];
-    case "ts-next":
-      return ["bun", join(WORKSPACE_ROOT, "apps/cli/dist/main-next.js")];
+      return { cmd: [process.env["SUPABASE_GO_BINARY"] ?? "supabase"] };
+    case "ts-legacy": {
+      const binaryPath = tsCliBinary("legacy");
+      assertTsCliBuilt(binaryPath);
+      return { cmd: ["node", TS_CLI_SHIM], binaryOverride: binaryPath };
+    }
+    case "ts-next": {
+      const binaryPath = tsCliBinary("next");
+      assertTsCliBuilt(binaryPath);
+      return { cmd: ["node", TS_CLI_SHIM], binaryOverride: binaryPath };
+    }
   }
 }
 
@@ -72,7 +100,7 @@ export async function exec(
   opts?: { env?: Record<string, string> },
 ): Promise<CLIResult> {
   const start = performance.now();
-  const cmd = buildCommand(harness.target);
+  const built = buildCommand(harness.target);
 
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
@@ -89,6 +117,7 @@ export async function exec(
     // API call so the only network traffic is the actual Management API call
     // under test. Safe to set globally: it is only used when pooler-url exists.
     SUPABASE_DB_PASSWORD: "test-placeholder-password",
+    ...(built.binaryOverride ? { SUPABASE_CLI_BINARY_OVERRIDE: built.binaryOverride } : {}),
     ...opts?.env,
   };
 
@@ -116,7 +145,7 @@ export async function exec(
     env["SUPABASE_API_URL"] = harness.options.apiUrl;
   }
 
-  const proc = Bun.spawn([...cmd, ...args], {
+  const proc = Bun.spawn([...built.cmd, ...args], {
     env,
     // Default to os.tmpdir() so subprocess file writes never land in the repo
     cwd: harness.options.cwd ?? tmpdir(),

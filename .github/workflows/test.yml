@@ -134,10 +134,11 @@ jobs:
         run: go build -o supabase-go .
         working-directory: apps/cli-go
 
-      # The ts-legacy harness invokes `bun apps/cli/dist/main-legacy.js`; the
-      # `nx run @supabase/cli-e2e:test:e2e` target normally builds the supabase
-      # umbrella via `dependsOn`, but we bypass nx for sharding so we build it
-      # explicitly.
+      # The ts-legacy/ts-next harnesses invoke `node apps/cli/dist/supabase.js`
+      # with `SUPABASE_CLI_BINARY_OVERRIDE` pointing at the compiled per-shell
+      # binary in `apps/cli/dist/`. The `nx run @supabase/cli-e2e:test:e2e`
+      # target normally builds the supabase umbrella via `dependsOn`, but we
+      # bypass nx for sharding so we build it explicitly.
       - name: Build CLI
         if: steps.detect.outputs.cli_e2e == 'true'
         run: pnpm exec nx run supabase:build
