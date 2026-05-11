@@ -12,7 +12,6 @@ import {
   type PlatformFactory,
   type StackHandle,
 } from "./createStack.ts";
-import { runDaemon } from "./daemon.ts";
 import {
   prefetch as prefetchEffect,
   type PrefetchOptions,
@@ -127,28 +126,6 @@ export const platformFactory: PlatformFactory = (apiPort) =>
 
 /** Path to the Node daemon entry point for use with daemonLayer. */
 export const daemonEntryPoint: string = fileURLToPath(new URL("./daemon-node.ts", import.meta.url));
-
-/**
- * If the process was spawned by `forkDaemon` (i.e. `SUPABASE_DAEMON_ENTRYPOINT`
- * is set), run the daemon and resolve when it exits. Otherwise resolve `false`
- * immediately. Used by a compiled CLI entry: when `child_process.fork()`
- * targets a self-contained executable, the script-path argv is ignored, so we
- * dispatch through an env var instead and run the daemon in-process from the
- * same binary.
- */
-export async function runDaemonIfRequested(): Promise<boolean> {
-  if (!process.env["SUPABASE_DAEMON_ENTRYPOINT"]) return false;
-  await runDaemon(
-    (apiPort) =>
-      Layer.mergeAll(
-        NodeServices.layer,
-        NodeHttpServer.layer(() => createServer(), { port: apiPort }).pipe(Layer.orDie),
-      ),
-    (socketPath) =>
-      NodeHttpServer.layer(() => createServer(), { path: socketPath }).pipe(Layer.orDie),
-  );
-  return true;
-}
 
 // ---------------------------------------------------------------------------
 // Promise API — convenience wrappers for non-Effect consumers

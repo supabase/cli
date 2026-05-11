@@ -229,20 +229,13 @@ export const daemonLayer = (
     );
   });
 
-/** Fork a child process with IPC channel.
- *
- * The `entryPoint` argv works for JIT-mode parents (bun runs the script
- * directly). Compiled `bun --compile` binaries ignore script-path argv and
- * always run their hardcoded entry, so we also set `SUPABASE_DAEMON_ENTRYPOINT`
- * — a compiled CLI's main entry calls `runDaemonIfRequested()` to dispatch on
- * that env var and run the daemon in-process from the same binary. */
+/** Fork a child process with IPC channel. */
 const forkDaemon = (entryPoint: string): Effect.Effect<ChildProcess, DaemonStartError> =>
   Effect.try({
     try: () =>
       fork(entryPoint, [], {
         stdio: ["ignore", "ignore", "ignore", "ipc"],
         detached: true,
-        env: { ...process.env, SUPABASE_DAEMON_ENTRYPOINT: entryPoint },
       }),
     catch: (e) =>
       new DaemonStartError({

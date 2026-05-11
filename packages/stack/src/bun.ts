@@ -9,7 +9,6 @@ import {
   type PlatformFactory,
   type StackHandle,
 } from "./createStack.ts";
-import { runDaemon } from "./daemon.ts";
 import {
   prefetch as prefetchEffect,
   type PrefetchOptions,
@@ -48,23 +47,6 @@ export const platformFactory: PlatformFactory = (apiPort) =>
 
 /** Path to the Bun daemon entry point for use with daemonLayer. */
 export const daemonEntryPoint: string = fileURLToPath(new URL("./daemon-bun.ts", import.meta.url));
-
-/**
- * If the process was spawned by `forkDaemon` (i.e. `SUPABASE_DAEMON_ENTRYPOINT`
- * is set), run the daemon and resolve when it exits. Otherwise resolve `false`
- * immediately. Used by a compiled `bun --compile` CLI entry: standalone
- * executables ignore the script-path argv that `child_process.fork()` passes,
- * so we dispatch through an env var instead and run the daemon in-process from
- * the same binary.
- */
-export async function runDaemonIfRequested(): Promise<boolean> {
-  if (!process.env["SUPABASE_DAEMON_ENTRYPOINT"]) return false;
-  await runDaemon(
-    (apiPort) => Layer.mergeAll(BunServices.layer, BunHttpServer.layer({ port: apiPort })),
-    (socketPath) => BunHttpServer.layer({ idleTimeout: 0, unix: socketPath }),
-  );
-  return true;
-}
 
 // ---------------------------------------------------------------------------
 // Promise API — convenience wrappers for non-Effect consumers
