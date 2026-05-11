@@ -49,6 +49,7 @@
     "react": "^19.2.5"
   },
   "devDependencies": {
+    "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@supabase/api": "workspace:*",
     "@supabase/config": "workspace:*",
@@ -58,10 +59,12 @@
     "@types/react": "^19.2.14",
     "@typescript/native-preview": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",
+    "esbuild": "^0.28.0",
     "knip": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:",
+    "postject": "1.0.0-alpha.6",
     "react-devtools-core": "^7.0.1",
     "vitest": "catalog:"
   },
