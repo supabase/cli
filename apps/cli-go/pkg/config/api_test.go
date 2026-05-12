@@ -134,3 +134,10 @@ func TestApiDiff(t *testing.T) {
 		assertSnapshotEqual(t, diff)
 	})
 }
+
+func TestApiAutoExposeNewTablesDefault(t *testing.T) {
+	t.Run("defaults to true via NewConfig", func(t *testing.T) {
+		cfg := NewConfig()
+		assert.True(t, cfg.Api.AutoExposeNewTables)
+	})
+}

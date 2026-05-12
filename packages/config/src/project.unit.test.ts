@@ -107,6 +107,32 @@ describe("project discovery and lazy env resolution", () => {
     }
   });
 
+  test("defaults [api].auto_expose_new_tables to true and round-trips an explicit false", async () => {
+    const cwd = makeTempProject();
+    const projectRoot = join(cwd, "repo");
+
+    try {
+      await mkdir(join(projectRoot, "supabase"), { recursive: true });
+      await writeFile(
+        join(projectRoot, "supabase", "config.toml"),
+        `project_id = "ref_123"\n`,
+      );
+
+      const defaultLoaded = await runConfigEffect(loadProjectConfig(projectRoot));
+      expect(defaultLoaded!.config.api.auto_expose_new_tables).toBe(true);
+
+      await writeFile(
+        join(projectRoot, "supabase", "config.toml"),
+        `project_id = "ref_123"\n\n[api]\nauto_expose_new_tables = false\n`,
+      );
+
+      const explicitLoaded = await runConfigEffect(loadProjectConfig(projectRoot));
+      expect(explicitLoaded!.config.api.auto_expose_new_tables).toBe(false);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("loads raw config without resolving explicit env() references", async () => {
     const cwd = makeTempProject();
     const projectRoot = join(cwd, "repo");

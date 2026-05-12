@@ -14,6 +14,7 @@ const defaultPort = 54321;
 const defaultSchemas = ["public", "graphql_public"];
 const defaultExtraSearchPath = ["public", "extensions"];
 const defaultMaxRows = 1000;
+const defaultAutoExposeNewTables = true;
 const defaultTls = {};
 const defaultTlsEnabled = false;
 
@@ -56,6 +57,13 @@ export const api = Schema.Struct({
     tags,
     links,
   }).pipe(Schema.withDecodingDefaultKey(() => defaultMaxRows)),
+  auto_expose_new_tables: Schema.Boolean.annotate({
+    default: defaultAutoExposeNewTables,
+    description:
+      "When true (default), new tables, views, sequences and functions created in the `public` schema by `postgres` are automatically reachable through the Data API roles `anon`, `authenticated` and `service_role`. Set to false to match the new cloud default and require explicit GRANTs to expose entities through the Data API.",
+    tags,
+    links,
+  }).pipe(Schema.withDecodingDefaultKey(() => defaultAutoExposeNewTables)),
   tls: Schema.Struct({
     enabled: Schema.Boolean.annotate({
       default: defaultTlsEnabled,

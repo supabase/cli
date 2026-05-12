@@ -354,8 +354,9 @@ func NewConfig(editors ...ConfigEditor) config {
 	initial := config{baseConfig: baseConfig{
 		Hostname: "127.0.0.1",
 		Api: api{
-			Image:     Images.Postgrest,
-			KongImage: Images.Kong,
+			Image:               Images.Postgrest,
+			KongImage:           Images.Kong,
+			AutoExposeNewTables: true,
 			Tls: tlsKong{
 				CertContent: kongCert,
 				KeyContent:  kongKey,

@@ -16,6 +16,11 @@ extra_search_path = ["public", "extensions"]
 # The maximum number of rows returns from a view, table, or stored procedure. Limits payload size
 # for accidental or malicious requests.
 max_rows = 1000
+# When true (default), new tables, views, sequences and functions created in the `public` schema by
+# `postgres` are automatically reachable through the Data API roles `anon`, `authenticated`, and
+# `service_role`. Set to false to match the new cloud default and require explicit GRANTs to expose
+# entities through the Data API.
+auto_expose_new_tables = true
 
 [api.tls]
 # Enable HTTPS endpoints locally using a self-signed certificate.

@@ -14,6 +14,11 @@ type (
 		Schemas         []string `toml:"schemas" json:"schemas"`
 		ExtraSearchPath []string `toml:"extra_search_path" json:"extra_search_path"`
 		MaxRows         uint     `toml:"max_rows" json:"max_rows"`
+		// When true (default) new tables, views, sequences and functions created in the
+		// `public` schema by `postgres` are automatically reachable through the Data API roles
+		// `anon`, `authenticated`, and `service_role`. Set to false to match the new cloud
+		// default and require explicit GRANTs to expose entities through the Data API.
+		AutoExposeNewTables bool `toml:"auto_expose_new_tables" json:"auto_expose_new_tables"`
 		// Local only config
 		Image     string  `toml:"-" json:"-"`
 		KongImage string  `toml:"-" json:"-"`

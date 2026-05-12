@@ -13,6 +13,7 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { projectLocalServiceVersionsLayer } from "../../config/project-local-service-versions.layer.ts";
 import { ensureProjectStateIgnored } from "../../config/project-gitignore.ts";
 import { CliConfig } from "../../config/cli-config.service.ts";
+import { ProjectContext } from "../../config/project-context.service.ts";
 import { ProjectHome } from "../../config/project-home.service.ts";
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
 import { provideProjectCommandRuntime } from "../../config/project-runtime.layer.ts";
@@ -137,6 +138,7 @@ export const startCommand = Command.make("start", flags).pipe(
     const runtimeStateEffect = Effect.gen(function* () {
       const output = yield* Output;
       const cliConfig = yield* CliConfig;
+      const projectContext = yield* ProjectContext;
       const projectHome = yield* ProjectHome;
       const runtimeInfo = yield* RuntimeInfo;
       const stateManager = yield* StateManager;
@@ -151,10 +153,18 @@ export const startCommand = Command.make("start", flags).pipe(
           onSome: (metadata) => metadata.services,
         }),
       );
-      const stackConfig = withServiceVersions(
+      const autoExposeNewTables = Option.match(projectContext.rawProjectConfig, {
+        onNone: () => true,
+        onSome: (config) => config.api.auto_expose_new_tables,
+      });
+      const baseStackConfig = withServiceVersions(
         toStartStackConfig(flags.exclude, flags.mode),
         serviceVersionContext.runtimeVersions,
       );
+      const stackConfig = {
+        ...baseStackConfig,
+        postgres: { ...baseStackConfig.postgres, autoExposeNewTables },
+      };
       const resolvedConfig = yield* Effect.promise(() =>
         resolveDaemonConfig({
           cacheRoot: cliConfig.supabaseHome,
