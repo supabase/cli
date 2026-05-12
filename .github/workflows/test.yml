@@ -33,7 +33,7 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: apps/cli-go/go.mod
           cache-dependency-path: apps/cli-go/go.sum
@@ -57,7 +57,7 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: apps/cli-go/go.mod
           cache-dependency-path: apps/cli-go/go.sum
@@ -86,7 +86,7 @@ jobs:
 
       - name: Set base and head SHAs for affected
         if: github.event_name == 'pull_request'
-        uses: nrwl/nx-set-shas@v4
+        uses: nrwl/nx-set-shas@v5
 
       - name: Setup
         uses: ./.github/actions/setup
@@ -114,7 +114,7 @@ jobs:
       - name: Cache Go CLI binary
         if: steps.detect.outputs.cli_e2e == 'true'
         id: cache-go-binary
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: apps/cli-go/supabase-go
           key: go-cli-${{ runner.os }}-${{ hashFiles('apps/cli-go/**/*.go',
@@ -123,7 +123,7 @@ jobs:
       - name: Setup Go
         if: steps.detect.outputs.cli_e2e == 'true' &&
           steps.cache-go-binary.outputs.cache-hit != 'true'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: apps/cli-go/go.mod
           cache-dependency-path: apps/cli-go/go.sum
