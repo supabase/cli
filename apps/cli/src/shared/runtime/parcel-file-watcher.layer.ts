@@ -1,5 +1,6 @@
-import * as ParcelWatcher from "@parcel/watcher";
 import { Cause, Effect, Layer, Queue, Stream } from "effect";
+import { createWrapper } from "@parcel/watcher/wrapper";
+import type ParcelWatcher from "@parcel/watcher";
 
 import {
   FileWatcher,
@@ -7,6 +8,40 @@ import {
   type FileWatchEvent,
   type FileWatchOptions,
 } from "./file-watcher.service.ts";
+
+declare const SUPABASE_LIBC: string | undefined;
+
+function wrapBinding(binding: unknown): typeof import("@parcel/watcher") {
+  return createWrapper(binding);
+}
+
+function loadParcelWatcher(): typeof import("@parcel/watcher") {
+  if (process.platform === "darwin" && process.arch === "arm64") {
+    return wrapBinding(require("@parcel/watcher-darwin-arm64"));
+  }
+  if (process.platform === "darwin" && process.arch === "x64") {
+    return wrapBinding(require("@parcel/watcher-darwin-x64"));
+  }
+  if (process.platform === "linux" && process.arch === "arm64") {
+    if (typeof SUPABASE_LIBC !== "undefined" && SUPABASE_LIBC === "musl") {
+      return wrapBinding(require("@parcel/watcher-linux-arm64-musl"));
+    }
+    return wrapBinding(require("@parcel/watcher-linux-arm64-glibc"));
+  }
+  if (process.platform === "linux" && process.arch === "x64") {
+    if (typeof SUPABASE_LIBC !== "undefined" && SUPABASE_LIBC === "musl") {
+      return wrapBinding(require("@parcel/watcher-linux-x64-musl"));
+    }
+    return wrapBinding(require("@parcel/watcher-linux-x64-glibc"));
+  }
+  if (process.platform === "win32" && process.arch === "arm64") {
+    return wrapBinding(require("@parcel/watcher-win32-arm64"));
+  }
+  if (process.platform === "win32" && process.arch === "x64") {
+    return wrapBinding(require("@parcel/watcher-win32-x64"));
+  }
+  throw new Error(`Unsupported @parcel/watcher platform: ${process.platform}-${process.arch}`);
+}
 
 function toParcelOptions(options?: FileWatchOptions): ParcelWatcher.Options | undefined {
   if (options?.ignore === undefined) {
@@ -20,11 +55,12 @@ function toParcelOptions(options?: FileWatchOptions): ParcelWatcher.Options | un
 export const parcelFileWatcherLayer = Layer.sync(FileWatcher, () =>
   FileWatcher.of({
     watch: (path, options) =>
-      Stream.callback<ReadonlyArray<FileWatchEvent>, FileWatcherError>((queue) =>
-        Effect.acquireRelease(
+      Stream.callback<ReadonlyArray<FileWatchEvent>, FileWatcherError>((queue) => {
+        const watcher = loadParcelWatcher();
+        return Effect.acquireRelease(
           Effect.tryPromise({
             try: () =>
-              ParcelWatcher.subscribe(
+              watcher.subscribe(
                 path,
                 (error, events) => {
                   if (error !== null) {
@@ -44,7 +80,7 @@ export const parcelFileWatcherLayer = Layer.sync(FileWatcher, () =>
             Effect.promise(() => subscription.unsubscribe()).pipe(
               Effect.ignore({ log: true, message: "Failed to unsubscribe file watcher" }),
             ),
-        ),
-      ),
+        );
+      }),
   }),
 );
