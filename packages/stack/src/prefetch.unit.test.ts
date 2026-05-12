@@ -10,7 +10,7 @@ import {
   StackPreparation,
 } from "./StackPreparation.ts";
 import { prepareAssetsWithDependencies } from "./StackPreparation.ts";
-import { DEFAULT_VERSIONS } from "./versions.ts";
+import { DEFAULT_VERSIONS, SERVICE_NAMES } from "./versions.ts";
 
 const encoder = new TextEncoder();
 
@@ -67,6 +67,24 @@ function mockSequenceSpawner(results: ReadonlyArray<SpawnResult>) {
 }
 
 describe("prefetch", () => {
+  test("prefetches all services by default", async () => {
+    const resolver = mockBinaryResolver();
+    const spawner = mockSequenceSpawner(
+      Array.from({ length: SERVICE_NAMES.length }, () => ({
+        exitCode: 0,
+      })),
+    );
+
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const result = await Effect.runPromise(prefetch().pipe(Effect.provide(layer)));
+
+    expect(Object.keys(result).sort()).toEqual([...SERVICE_NAMES].sort());
+  });
+
   test("falls back to Docker Hub after ECR rate limiting", async () => {
     const resolver = mockBinaryResolver({ failServices: ["auth"] });
     const spawner = mockSequenceSpawner([
@@ -215,15 +233,17 @@ describe("prefetch", () => {
       }).pipe(Effect.provide(resolver.layer)),
     );
 
-    expect(events).toEqual([
+    expect(events.slice(0, 3)).toEqual([
       "ServiceDownloadStarted:postgres",
       "ServiceDownloadStarted:postgrest",
       "ServiceDownloadStarted:auth",
-      "ServiceDownloadFinished:postgres",
-      "ServiceDownloadFinished:auth",
-      "ServiceDownloadFinished:postgrest",
-      "PreparationCompleted",
     ]);
+    expect(events.slice(3, 6).sort()).toEqual([
+      "ServiceDownloadFinished:auth",
+      "ServiceDownloadFinished:postgres",
+      "ServiceDownloadFinished:postgrest",
+    ]);
+    expect(events.at(-1)).toBe("PreparationCompleted");
   });
 
   test("uses docker for edge-runtime in auto mode even when a native binary exists", async () => {

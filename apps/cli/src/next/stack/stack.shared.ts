@@ -48,9 +48,8 @@ export const startStackWithProgress = Effect.fnUntraced(function* () {
     Effect.forkChild({ startImmediately: true }),
   );
 
-  yield* stack.start();
+  yield* stack.start().pipe(Effect.ensuring(Fiber.interrupt(fiber)));
   yield* prog.stop("All services started");
-  yield* Fiber.interrupt(fiber);
 });
 
 export const printStackConnectionInfo = Effect.fnUntraced(function* () {
