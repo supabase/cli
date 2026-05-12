@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "vitest";
 
-const supervisorRuntimePath = fileURLToPath(new URL("./supervisor-runtime.mjs", import.meta.url));
+const supervisorRuntimePath = fileURLToPath(new URL("./supervisor-runtime.ts", import.meta.url));
 
 const waitFor = async (
   predicate: () => boolean,

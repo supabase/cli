@@ -1,10 +1,15 @@
 #!/usr/bin/env bun
-const forkedDaemonEntryPoint = process.argv[2];
+import {
+  enableSupervisorSelfDispatchForCompiledBun,
+  isSupervisorRuntimeRequested,
+  runSupervisorRuntimeFromEnv,
+} from "@supabase/process-compose";
 
-if (
-  forkedDaemonEntryPoint?.endsWith("/daemon-bun.ts") ||
-  forkedDaemonEntryPoint?.endsWith("\\daemon-bun.ts")
-) {
+enableSupervisorSelfDispatchForCompiledBun(import.meta.url);
+
+if (isSupervisorRuntimeRequested()) {
+  runSupervisorRuntimeFromEnv();
+} else if (process.env.SUPABASE_STACK_RUN_DAEMON === "1") {
   const { runBunDaemon } = await import("@supabase/stack/daemon-bun");
   runBunDaemon();
 } else {

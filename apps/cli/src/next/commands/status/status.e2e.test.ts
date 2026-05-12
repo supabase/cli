@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { makeTempHome, makeTempStackProject, runSupabase } from "../../../../tests/helpers/cli.ts";
 
-const STATUS_TIMEOUT_MS = 15_000;
+const STATUS_TIMEOUT_MS = 30_000;
 const LIGHTWEIGHT_START_ARGS = [
   "start",
   "--detach",

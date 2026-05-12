@@ -123,6 +123,9 @@ importers:
       '@supabase/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@supabase/process-compose':
+        specifier: workspace:*
+        version: link:../../packages/process-compose
       '@supabase/stack':
         specifier: workspace:*
         version: link:../../packages/stack
