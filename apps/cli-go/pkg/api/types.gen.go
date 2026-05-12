@@ -5164,6 +5164,12 @@ type V1RemoveProjectAddonParamsAddonVariant2 string
 // V1RemoveProjectAddonParamsAddonVariant3 defines parameters for V1RemoveProjectAddon.
 type V1RemoveProjectAddonParamsAddonVariant3 string
 
+// V1DeleteHostnameConfigParams defines parameters for V1DeleteHostnameConfig.
+type V1DeleteHostnameConfigParams struct {
+	// RemoveAddon If true, also removes the custom domain add-on from the project subscription.
+	RemoveAddon *bool `form:"remove_addon,omitempty" json:"remove_addon,omitempty"`
+}
+
 // V1GetRestorePointParams defines parameters for V1GetRestorePoint.
 type V1GetRestorePointParams struct {
 	Name *string `form:"name,omitempty" json:"name,omitempty"`

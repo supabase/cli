@@ -412,7 +412,7 @@ type ClientInterface interface {
 	V1UpdateStorageConfig(ctx context.Context, ref string, body V1UpdateStorageConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1DeleteHostnameConfig request
-	V1DeleteHostnameConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1DeleteHostnameConfig(ctx context.Context, ref string, params *V1DeleteHostnameConfigParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1GetHostnameConfig request
 	V1GetHostnameConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2073,8 +2073,8 @@ func (c *Client) V1UpdateStorageConfig(ctx context.Context, ref string, body V1U
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1DeleteHostnameConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1DeleteHostnameConfigRequest(c.Server, ref)
+func (c *Client) V1DeleteHostnameConfig(ctx context.Context, ref string, params *V1DeleteHostnameConfigParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1DeleteHostnameConfigRequest(c.Server, ref, params)
 	if err != nil {
 		return nil, err
 	}
@@ -7526,7 +7526,7 @@ func NewV1UpdateStorageConfigRequestWithBody(server string, ref string, contentT
 }
 
 // NewV1DeleteHostnameConfigRequest generates requests for V1DeleteHostnameConfig
-func NewV1DeleteHostnameConfigRequest(server string, ref string) (*http.Request, error) {
+func NewV1DeleteHostnameConfigRequest(server string, ref string, params *V1DeleteHostnameConfigParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -7549,6 +7549,28 @@ func NewV1DeleteHostnameConfigRequest(server string, ref string) (*http.Request,
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.RemoveAddon != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "remove_addon", runtime.ParamLocationQuery, *params.RemoveAddon); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
@@ -11336,7 +11358,7 @@ type ClientWithResponsesInterface interface {
 	V1UpdateStorageConfigWithResponse(ctx context.Context, ref string, body V1UpdateStorageConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateStorageConfigResponse, error)
 
 	// V1DeleteHostnameConfigWithResponse request
-	V1DeleteHostnameConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteHostnameConfigResponse, error)
+	V1DeleteHostnameConfigWithResponse(ctx context.Context, ref string, params *V1DeleteHostnameConfigParams, reqEditors ...RequestEditorFn) (*V1DeleteHostnameConfigResponse, error)
 
 	// V1GetHostnameConfigWithResponse request
 	V1GetHostnameConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetHostnameConfigResponse, error)
@@ -16153,8 +16175,8 @@ func (c *ClientWithResponses) V1UpdateStorageConfigWithResponse(ctx context.Cont
 }
 
 // V1DeleteHostnameConfigWithResponse request returning *V1DeleteHostnameConfigResponse
-func (c *ClientWithResponses) V1DeleteHostnameConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteHostnameConfigResponse, error) {
-	rsp, err := c.V1DeleteHostnameConfig(ctx, ref, reqEditors...)
+func (c *ClientWithResponses) V1DeleteHostnameConfigWithResponse(ctx context.Context, ref string, params *V1DeleteHostnameConfigParams, reqEditors ...RequestEditorFn) (*V1DeleteHostnameConfigResponse, error) {
+	rsp, err := c.V1DeleteHostnameConfig(ctx, ref, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
