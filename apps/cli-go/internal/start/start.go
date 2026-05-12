@@ -965,7 +965,7 @@ EOF
 			"SIGNED_UPLOAD_URL_EXPIRATION_TIME=7200",
 		}
 		if isVectorBucketsEnabled {
-			storageEnv = appendStorageVectorEnv(storageEnv)
+			storageEnv = appendStorageVectorEnv(storageEnv, dbConfig)
 		}
 		if _, err := utils.DockerStart(
 			ctx,
@@ -1378,33 +1378,39 @@ func appendGotrueExternalProviderEnv(env []string) []string {
 	return env
 }
 
-// appendStorageVectorEnv wires the storage container with vector-bucket env
-// vars. Two CLI-owned defaults (VECTOR_BUCKET_PROVIDER, VECTOR_BUCKET_PG_VECTOR_INSTALL)
-// are always set when vector buckets are enabled, but each can be overridden
-// from the operator's shell environment so self-hosted users can target a
-// different provider or skip the install. Additional vector-related vars in
-// the passthrough list are forwarded only when explicitly set in the shell,
-// so the storage container can keep its own defaults for anything still in
-// flux upstream.
-func appendStorageVectorEnv(env []string) []string {
+// appendStorageVectorEnv wires the storage container with the vector-bucket
+// env contract from supabase/storage#1094. The CLI provides three CLI-owned
+// defaults that the operator can override from their shell environment:
+//
+//   - VECTOR_BUCKET_PROVIDER selects the local provider; pgvector is the only
+//     locally-available implementation.
+//   - VECTOR_STORE_MIGRATIONS_ENABLED tells storage to run its vector-store
+//     migrations on boot. Defaults on so a fresh stack is usable, but operators
+//     who run those migrations out of band can disable it.
+//   - VECTOR_DATABASE_URL hands storage a connection string with createdb
+//     permission so it can manage its own vectors database. We default to the
+//     postgres superuser on the local stack, mirroring the existing DATABASE_URL
+//     credentials, but operators are expected to override this to reach an
+//     external postgres in self-hosted setups.
+func appendStorageVectorEnv(env []string, dbConfig pgconn.Config) []string {
 	envOrDefault := func(key, def string) string {
 		if v, ok := os.LookupEnv(key); ok {
 			return key + "=" + v
 		}
 		return key + "=" + def
 	}
-	env = append(env,
-		envOrDefault("VECTOR_BUCKET_PROVIDER", "pgvector"),
-		envOrDefault("VECTOR_BUCKET_PG_VECTOR_INSTALL", "true"),
+	defaultVectorURL := fmt.Sprintf(
+		"postgresql://postgres:%s@%s:%d/%s",
+		dbConfig.Password,
+		dbConfig.Host,
+		dbConfig.Port,
+		dbConfig.Database,
 	)
-	for _, key := range []string{
-		"VECTOR_BUCKET_PG_VECTOR_DATABASE",
-	} {
-		if v, ok := os.LookupEnv(key); ok {
-			env = append(env, key+"="+v)
-		}
-	}
-	return env
+	return append(env,
+		envOrDefault("VECTOR_BUCKET_PROVIDER", "pgvector"),
+		envOrDefault("VECTOR_STORE_MIGRATIONS_ENABLED", "true"),
+		envOrDefault("VECTOR_DATABASE_URL", defaultVectorURL),
+	)
 }
 
 func printSecurityNotice() {
