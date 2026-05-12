@@ -99,8 +99,8 @@ describe("edgeRuntimeAssetName", () => {
 });
 
 describe("dockerHostAddress", () => {
-  it("returns 127.0.0.1 on linux", () => {
-    expect(dockerHostAddress("linux")).toBe("127.0.0.1");
+  it("returns host.docker.internal on linux", () => {
+    expect(dockerHostAddress("linux")).toBe("host.docker.internal");
   });
 
   it("returns host.docker.internal on darwin", () => {
@@ -113,8 +113,13 @@ describe("dockerHostAddress", () => {
 });
 
 describe("dockerNetworkArgs", () => {
-  it("returns --network=host on linux", () => {
-    expect(dockerNetworkArgs("linux", [5432])).toEqual(["--network=host"]);
+  it("returns host gateway and port mapping on linux", () => {
+    expect(dockerNetworkArgs("linux", [5432])).toEqual([
+      "--add-host",
+      "host.docker.internal:host-gateway",
+      "-p",
+      "5432:5432",
+    ]);
   });
 
   it("returns port mapping on darwin", () => {

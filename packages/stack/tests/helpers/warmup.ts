@@ -1,8 +1,6 @@
 import { execSync } from "node:child_process";
 import { prefetch, type PrefetchOptions, type PrefetchResult } from "../../src/node.ts";
 
-export const STACK_E2E_WARMUP_SERVICES = ["postgres", "postgrest", "auth", "edge-runtime"] as const;
-
 interface WarmupLogger {
   warn(message: string): void;
 }
@@ -32,16 +30,11 @@ export async function warmStackE2eDependencies(
   const dockerAvailable = (options.hasDockerDaemon ?? hasDockerDaemon)();
 
   try {
-    await prefetchDeps({ services: STACK_E2E_WARMUP_SERVICES });
-
-    if (!dockerAvailable) {
-      return;
+    const warmups = [prefetchDeps()];
+    if (dockerAvailable) {
+      warmups.push(prefetchDeps({ mode: "docker" }));
     }
-
-    await prefetchDeps({
-      mode: "docker",
-      services: STACK_E2E_WARMUP_SERVICES,
-    });
+    await Promise.all(warmups);
   } catch (error) {
     logger.warn(
       `[stack-e2e] Warmup failed: ${error instanceof Error ? error.message : String(error)}`,

@@ -13,6 +13,23 @@ import {
   registerTempStackProject,
 } from "./stack-e2e-cleanup.ts";
 
+const BINARY_EXT = process.platform === "win32" ? ".exe" : "";
+const SHIM_PATH = fileURLToPath(new URL("../../dist/supabase.js", import.meta.url));
+const LEGACY_BINARY_PATH = fileURLToPath(
+  new URL(`../../dist/supabase-legacy${BINARY_EXT}`, import.meta.url),
+);
+const NEXT_SOURCE_ENTRYPOINT = fileURLToPath(new URL("../../src/next/main.ts", import.meta.url));
+
+function assertLegacyBuildArtifactsExist(): void {
+  if (!existsSync(SHIM_PATH) || !existsSync(LEGACY_BINARY_PATH)) {
+    throw new Error(
+      `Missing legacy CLI build artifacts. Run \`pnpm --filter supabase build\` before invoking legacy e2e tests.\n` +
+        `  expected shim:   ${SHIM_PATH}\n` +
+        `  expected binary: ${LEGACY_BINARY_PATH}`,
+    );
+  }
+}
+
 type RunResult = {
   stdout: string;
   stderr: string;
@@ -20,6 +37,7 @@ type RunResult = {
 };
 
 const DEFAULT_EXIT_TIMEOUT_MS = 60_000;
+const OUTPUT_TAIL_LENGTH = 4_000;
 
 interface SpawnedSupabase {
   readonly pid: number;
@@ -138,6 +156,16 @@ function killProcessGroup(pid: number, signal: NodeJS.Signals): void {
   } catch {}
 }
 
+function outputTail(label: string, output: string): string {
+  if (output.length === 0) {
+    return `${label}: <empty>`;
+  }
+
+  const tail =
+    output.length > OUTPUT_TAIL_LENGTH ? output.slice(output.length - OUTPUT_TAIL_LENGTH) : output;
+  return `${label}:\n${tail}`;
+}
+
 export function spawnSupabase(
   args: string[],
   options?: {
@@ -158,37 +186,50 @@ export function spawnSupabase(
   const ownHome = options?.home ? null : makeTempHome();
   const homeDir = options?.home ?? ownHome!.dir;
   noteStackProjectHome(options?.cwd, homeDir);
-  const sourceCliLauncher = fileURLToPath(new URL("./source-cli-launcher.mjs", import.meta.url));
-  const sourceCliEntrypoint = fileURLToPath(
-    new URL(
-      options?.entrypoint === "legacy" ? "../../src/legacy/main.ts" : "../../src/next/main.ts",
-      import.meta.url,
-    ),
-  );
+  const entrypoint = options?.entrypoint ?? "next";
   const usesStartWrapper = args[0] === "start";
-  const proc = spawn(
-    usesStartWrapper ? "node" : "bun",
-    usesStartWrapper
-      ? [sourceCliLauncher, sourceCliEntrypoint, ...args]
-      : [sourceCliEntrypoint, ...args],
-    {
-      cwd: options?.cwd,
-      env: {
-        ...process.env,
-        SUPABASE_HOME: homeDir,
-        SUPABASE_NO_KEYRING: "1",
-        // Keep e2e subprocesses quiet by default while still allowing per-test overrides.
-        SUPABASE_TELEMETRY_DISABLED: "1",
-        ...options?.env,
-      },
-      stdio:
-        usesStartWrapper || options?.stdin !== undefined
-          ? ["pipe", "pipe", "pipe"]
-          : ["ignore", "pipe", "pipe"],
-      // Own process group so tests can distinguish product cleanup from helper cleanup.
-      detached: true,
-    },
-  );
+  // The `next` shell drives the local stack daemon (`start --detach`,
+  // `functions dev`, ...) and depends on `@parcel/watcher`'s native binding
+  // — neither path works end-to-end through a `bun --compile` self-contained
+  // binary yet, so the next-shell e2e suite continues to run against the
+  // source tree via `bun src/...`. The `legacy` shell has no daemon and no
+  // native deps, so its e2e suite exercises the real shipped artifact:
+  // `node dist/supabase.js` (the Node shim) with `SUPABASE_CLI_BINARY_OVERRIDE`
+  // pointing at the per-shell `bun build --compile` standalone executable.
+  let execCmd: string;
+  let execArgs: string[];
+  const env: Record<string, string> = {
+    ...process.env,
+    SUPABASE_HOME: homeDir,
+    SUPABASE_NO_KEYRING: "1",
+    SUPABASE_TELEMETRY_DISABLED: "1",
+    ...options?.env,
+  };
+  if (entrypoint === "legacy") {
+    assertLegacyBuildArtifactsExist();
+    env["SUPABASE_CLI_BINARY_OVERRIDE"] = LEGACY_BINARY_PATH;
+    execCmd = "node";
+    execArgs = [SHIM_PATH, ...args];
+  } else {
+    const sourceLauncher = fileURLToPath(new URL("./source-cli-launcher.mjs", import.meta.url));
+    if (usesStartWrapper) {
+      execCmd = "node";
+      execArgs = [sourceLauncher, NEXT_SOURCE_ENTRYPOINT, ...args];
+    } else {
+      execCmd = "bun";
+      execArgs = [NEXT_SOURCE_ENTRYPOINT, ...args];
+    }
+  }
+  const proc = spawn(execCmd, execArgs, {
+    cwd: options?.cwd,
+    env,
+    stdio:
+      usesStartWrapper || options?.stdin !== undefined
+        ? ["pipe", "pipe", "pipe"]
+        : ["ignore", "pipe", "pipe"],
+    // Own process group so tests can distinguish product cleanup from helper cleanup.
+    detached: true,
+  });
   const stdoutStream = proc.stdout;
   const stderrStream = proc.stderr;
 
@@ -257,7 +298,17 @@ export function spawnSupabase(
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
           cleanup();
-          reject(new Error(`Timed out waiting for output matching ${pattern}`));
+          reject(
+            new Error(
+              [
+                `Timed out waiting for output matching ${pattern}`,
+                `Command: supabase ${args.join(" ")}`,
+                `PID: ${proc.pid ?? "<unknown>"}`,
+                outputTail("stdout tail", stdout),
+                outputTail("stderr tail", stderr),
+              ].join("\n\n"),
+            ),
+          );
         }, timeoutMs);
 
         const onStdout = (_data: Buffer) => {
@@ -269,7 +320,17 @@ export function spawnSupabase(
 
         const onClose = () => {
           cleanup();
-          reject(new Error(`Process exited before output matched ${pattern}`));
+          reject(
+            new Error(
+              [
+                `Process exited before output matched ${pattern}`,
+                `Command: supabase ${args.join(" ")}`,
+                `PID: ${proc.pid ?? "<unknown>"}`,
+                outputTail("stdout tail", stdout),
+                outputTail("stderr tail", stderr),
+              ].join("\n\n"),
+            ),
+          );
         };
 
         const cleanup = () => {

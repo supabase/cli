@@ -23,6 +23,12 @@ Available via [NPM](https://www.npmjs.com) as dev dependency. To install:
 npm i supabase --save-dev
 ```
 
+To install the beta release channel:
+
+```bash
+npm i supabase@beta --save-dev
+```
+
 When installing with yarn 4, you need to disable experimental fetch with the following nodejs config.
 
 ```
@@ -53,6 +59,12 @@ For Bun versions below v1.0.17, you must add `supabase` as a [trusted dependency
   ```sh
   brew upgrade supabase
   ```
+
+  Beta channel:
+
+  ```sh
+  brew upgrade supabase-beta
+  ```
 </details>
 
 <details>
@@ -65,10 +77,22 @@ For Bun versions below v1.0.17, you must add `supabase` as a [trusted dependency
   scoop install supabase
   ```
 
+  To install the beta release channel:
+
+  ```powershell
+  scoop install supabase-beta
+  ```
+
   To upgrade:
 
   ```powershell
   scoop update supabase
+  ```
+
+  Beta channel:
+
+  ```powershell
+  scoop update supabase-beta
   ```
 </details>
 
@@ -85,10 +109,23 @@ For Bun versions below v1.0.17, you must add `supabase` as a [trusted dependency
   brew install supabase/tap/supabase
   ```
 
+  To install the beta release channel:
+
+  ```sh
+  brew install supabase/tap/supabase-beta
+  brew link --overwrite supabase-beta
+  ```
+
   To upgrade:
 
   ```sh
   brew upgrade supabase
+  ```
+
+  Beta channel:
+
+  ```sh
+  brew upgrade supabase-beta
   ```
 
   #### via Linux packages

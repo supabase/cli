@@ -31,8 +31,8 @@ We replace GoReleaser with a pipeline built on **Bun `--compile` single-file exe
 | Homebrew                       | Existing `supabase/homebrew-tap`, updated by [`apps/cli/scripts/update-homebrew.ts`](../../apps/cli/scripts/update-homebrew.ts)                                                           |
 | Scoop                          | Existing `supabase/scoop-bucket`, updated by [`apps/cli/scripts/update-scoop.ts`](../../apps/cli/scripts/update-scoop.ts)                                                                 |
 | apt / rpm repo hosting         | **None** — stay GitHub-Release-downloads-only                                                                                                                                             |
-| Dist-tags                      | `latest` = legacy shell (Phase 0 Go wrapper), `alpha` = next shell (TS-native). No `beta`, `next`, `canary`                                                                               |
-| CI                             | Two trigger workflows (`release-stable.yml` / `release-alpha.yml`) calling one shared workflow (`release-shared.yml`) with build → smoke-test matrix → publish → draft Release → finalize |
+| Dist-tags                      | `latest` = stable legacy shell, `beta` = prerelease legacy shell from `develop` (`X.Y.Z-beta.N`), `alpha` = next shell (TS-native). No separate `next` or `canary` tags                                                                                    |
+| CI                             | `[release.yml](../../.github/workflows/release.yml)` (pushes to `develop` / `main` plus manual dispatch) invokes `[release-shared.yml](../../.github/workflows/release-shared.yml)` — build → smoke-test matrix → publish → draft Release → finalize    |
 | Artifact signing               | **Ship unsigned**, matching the current Go CLI's GoReleaser behavior exactly. Fall back to signing only if validation shows Bun SFEs behave differently than Go binaries (see below)      |
 | SLSA provenance                | **Deferred**. Go CLI has none today; add it only after signing decisions settle                                                                                                           |
 
@@ -84,12 +84,13 @@ For the `.apk` (musl) packages, the Bun binary is the musl SFE; the Go binary (P
 
 Hosting a signed apt/rpm repo (via Cloudsmith, packagecloud, or a self-hosted mirror) adds per-release friction (key management, repo metadata regeneration) and ongoing cost. The existing `supabase/cli` install docs already direct Linux users to the `.deb` / `.rpm` downloads on the GitHub Release page — this is the same UX we maintain. Revisit once install-channel telemetry (see [ADR 0002](0002-cli-product-metrics.md)) shows non-trivial Linux package-manager usage that would benefit from `apt update` / `dnf upgrade` workflows.
 
-### Why only `latest` and `alpha` dist-tags
+### Why `latest`, `beta`, and `alpha` npm dist-tags
 
-- `**latest`** — the Phase 0 Go-wrapper (`shell: legacy`) that ships to all existing users without behavioural change. Triggered by `[.github/workflows/release-stable.yml](../../.github/workflows/release-stable.yml)`.
-- `**alpha**` — the TS-native rewrite (`shell: next`) for opt-in users. Triggered by `[.github/workflows/release-alpha.yml](../../.github/workflows/release-alpha.yml)`.
+- **`latest`** — stable legacy shell (`shell: legacy`) promoted from `main`. Default install for production workflows.
+- **`beta`** — prerelease legacy shell built from `develop`. Uses semantic-release prerelease versions (`X.Y.Z-beta.N`), npm dist-tag `beta`, and separate Homebrew / Scoop packages (`supabase-beta`). See [`apps/cli/docs/release-process.md`](../../apps/cli/docs/release-process.md).
+- **`alpha`** — TS-native next shell (`shell: next`) for opt-in testers; published on demand via manual workflow dispatch. npm-only today (Homebrew / Scoop skipped for alpha).
 
-Adding `beta`, `next`, or `canary` tags now would fragment installs before the `next` shell is mature. When `alpha` stabilises, `latest` flips over and `alpha` either goes away or becomes the next development line — one decision at a time.
+We intentionally avoid extra tags such as `next` or `canary` so install surfaces stay predictable: stable (`latest`), integration prerelease (`beta`), and experimental shell (`alpha`). When `alpha` stabilises, `latest` may flip to the next shell and the tag story can be simplified — one decision at a time.
 
 ### Why unsigned artifacts (matching the Go CLI)
 
@@ -132,28 +133,29 @@ All four fallbacks remain concrete follow-ups, but they are now **triggered by v
 
 ```mermaid
 flowchart TD
-    trigger["workflow_dispatch<br/>version, dry_run"]
-    stable["release-stable.yml<br/>shell=legacy, tag=latest"]
-    alpha["release-alpha.yml<br/>shell=next, tag=alpha"]
+    dispatch["workflow_dispatch<br/>channel alpha|beta|stable"]
+    pushDev["push: develop<br/>channel=beta"]
+    pushMain["push: main<br/>channel=stable"]
+    releaseYml["release.yml"]
     shared["release-shared.yml"]
     build["build job<br/>sync-versions then build.ts then nfpm<br/>upload artifact"]
     smoke["smoke-test matrix<br/>ubuntu / macos-latest / macos-15-intel / windows-latest"]
     publish["publish job<br/>bun publish × 8 platform pkgs<br/>then bun publish umbrella"]
-    release["draft GitHub Release<br/>tar/zip/deb/rpm/apk/checksums"]
+    ghRelease["draft GitHub Release<br/>tar/zip/deb/rpm/apk/checksums"]
     finalize["gh release edit --draft=false"]
-    hbUpdate["update-homebrew.ts<br/>push Formula/supabase.rb"]
-    scoopUpdate["update-scoop.ts<br/>push supabase.json"]
+    hbUpdate["update-homebrew.ts<br/>Formula push"]
+    scoopUpdate["update-scoop.ts<br/>manifest push"]
 
-    trigger --> stable
-    trigger --> alpha
-    stable --> shared
-    alpha --> shared
-    shared --> build --> smoke --> publish --> release --> finalize
+    dispatch --> releaseYml
+    pushDev --> releaseYml
+    pushMain --> releaseYml
+    releaseYml --> shared
+    shared --> build --> smoke --> publish --> ghRelease --> finalize
     finalize -.follow-up.-> hbUpdate
     finalize -.follow-up.-> scoopUpdate
 ```
 
-The top of the graph is implemented today. The dashed edges (Homebrew and Scoop updates) are existing scripts not yet wired into `release-shared.yml` — see [Open Questions](#open-questions--blockers).
+`release.yml` selects the channel (stable / beta / alpha); `release-shared.yml` performs build → smoke-test → publish → GitHub Release. Homebrew and Scoop updates follow stable and beta publishes (alpha stays npm-only). Operational detail: [`apps/cli/docs/release-process.md`](../../apps/cli/docs/release-process.md).
 
 ### Per-channel publish mechanisms
 
@@ -313,13 +315,13 @@ This section tracks the work that has landed against the pre-cutover gates. Deta
 ## Related Decisions
 
 - [ADR 0001](0001-cli-dx-architecture-pillars.md): CLI DX Architecture Pillars — performance budgets the Bun SFE startup cost is measured against.
-- [ADR 0004](0004-cli-design-goals-and-workflows.md): CLI Design Goals — legacy vs next shell split that drives the `latest` / `alpha` dist-tag decision.
+- [ADR 0004](0004-cli-design-goals-and-workflows.md): CLI Design Goals — legacy vs next shell split that drives the `latest` / `beta` / `alpha` dist-tag layout.
 
 ## See Also
 
 - [`apps/cli/docs/release-process.md`](../../apps/cli/docs/release-process.md) — the operational playbook: local Verdaccio → user-owned PoC repos → production pipeline.
 - [`apps/cli/docs/binary-distribution.md`](../../apps/cli/docs/binary-distribution.md) — runtime resolution details for the two-binary legacy model (TS SFE + Go binary).
-- [`.github/workflows/release-shared.yml`](../../.github/workflows/release-shared.yml), [`release-stable.yml`](../../.github/workflows/release-stable.yml), [`release-alpha.yml`](../../.github/workflows/release-alpha.yml) — the pipeline implementation.
+- [`.github/workflows/release-shared.yml`](../../.github/workflows/release-shared.yml), [`release.yml`](../../.github/workflows/release.yml) — the pipeline implementation (`release.yml` selects stable / beta / alpha channel per trigger).
 - [`apps/cli/scripts/build.ts`](../../apps/cli/scripts/build.ts), [`publish.ts`](../../apps/cli/scripts/publish.ts), [`sync-versions.ts`](../../apps/cli/scripts/sync-versions.ts), [`update-homebrew.ts`](../../apps/cli/scripts/update-homebrew.ts), [`update-scoop.ts`](../../apps/cli/scripts/update-scoop.ts) — release scripts.
 - [`apps/cli-go/.goreleaser.yml`](../../apps/cli-go/.goreleaser.yml), [`release.yml`](../../apps/cli-go/.github/workflows/release.yml), [`release-beta.yml`](../../apps/cli-go/.github/workflows/release-beta.yml) — the Go CLI release config we mirror (no signing, `windows_arm64` target, GitHub-App-scoped publish tokens).
 - [CLI-1330](https://linear.app/supabase/issue/CLI-1330) — origin ticket.

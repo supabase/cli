@@ -67,9 +67,6 @@ end`;
 
 export const makePoolerServiceDocker = (opts: DockerPoolerOptions): ServiceDef =>
   (() => {
-    const sessionPort = poolerContainerPorts.session;
-    const transactionPort = poolerContainerPorts.transaction;
-
     return dockerRunService({
       name: "pooler",
       containerName: `supabase-pooler-${opts.apiPort}`,
@@ -77,8 +74,8 @@ export const makePoolerServiceDocker = (opts: DockerPoolerOptions): ServiceDef =
       networkArgs: opts.networkArgs,
       env: {
         PORT: String(poolerContainerPorts.admin),
-        PROXY_PORT_SESSION: String(sessionPort),
-        PROXY_PORT_TRANSACTION: String(transactionPort),
+        PROXY_PORT_SESSION: String(poolerContainerPorts.session),
+        PROXY_PORT_TRANSACTION: String(poolerContainerPorts.transaction),
         DATABASE_URL: `ecto://postgres:postgres@${opts.dbHost}:${opts.dbPort}/_supabase`,
         CLUSTER_POSTGRES: "true",
         SECRET_KEY_BASE: opts.secretKeyBase,
