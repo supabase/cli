@@ -2834,8 +2834,9 @@ type JitAccessResponse struct {
 				Cidr string `json:"cidr"`
 			} `json:"allowed_cidrs_v6,omitempty"`
 		} `json:"allowed_networks,omitempty"`
-		ExpiresAt *float32 `json:"expires_at,omitempty"`
-		Role      string   `json:"role"`
+		BranchesOnly *bool    `json:"branches_only,omitempty"`
+		ExpiresAt    *float32 `json:"expires_at,omitempty"`
+		Role         string   `json:"role"`
 	} `json:"user_roles"`
 }
 
@@ -2851,8 +2852,9 @@ type JitAuthorizeAccessResponse struct {
 				Cidr string `json:"cidr"`
 			} `json:"allowed_cidrs_v6,omitempty"`
 		} `json:"allowed_networks,omitempty"`
-		ExpiresAt *float32 `json:"expires_at,omitempty"`
-		Role      string   `json:"role"`
+		BranchesOnly *bool    `json:"branches_only,omitempty"`
+		ExpiresAt    *float32 `json:"expires_at,omitempty"`
+		Role         string   `json:"role"`
 	} `json:"user_role"`
 }
 
@@ -2869,8 +2871,9 @@ type JitListAccessResponse struct {
 					Cidr string `json:"cidr"`
 				} `json:"allowed_cidrs_v6,omitempty"`
 			} `json:"allowed_networks,omitempty"`
-			ExpiresAt *float32 `json:"expires_at,omitempty"`
-			Role      string   `json:"role"`
+			BranchesOnly *bool    `json:"branches_only,omitempty"`
+			ExpiresAt    *float32 `json:"expires_at,omitempty"`
+			Role         string   `json:"role"`
 		} `json:"user_roles"`
 	} `json:"items"`
 }
@@ -4160,8 +4163,9 @@ type UpdateJitAccessBody struct {
 				Cidr string `json:"cidr"`
 			} `json:"allowed_cidrs_v6,omitempty"`
 		} `json:"allowed_networks,omitempty"`
-		ExpiresAt *float32 `json:"expires_at,omitempty"`
-		Role      string   `json:"role"`
+		BranchesOnly *bool    `json:"branches_only,omitempty"`
+		ExpiresAt    *float32 `json:"expires_at,omitempty"`
+		Role         string   `json:"role"`
 	} `json:"roles"`
 	UserId openapi_types.UUID `json:"user_id"`
 }
@@ -5159,6 +5163,12 @@ type V1RemoveProjectAddonParamsAddonVariant2 string
 
 // V1RemoveProjectAddonParamsAddonVariant3 defines parameters for V1RemoveProjectAddon.
 type V1RemoveProjectAddonParamsAddonVariant3 string
+
+// V1DeleteHostnameConfigParams defines parameters for V1DeleteHostnameConfig.
+type V1DeleteHostnameConfigParams struct {
+	// RemoveAddon If true, also removes the custom domain add-on from the project subscription.
+	RemoveAddon *bool `form:"remove_addon,omitempty" json:"remove_addon,omitempty"`
+}
 
 // V1GetRestorePointParams defines parameters for V1GetRestorePoint.
 type V1GetRestorePointParams struct {
