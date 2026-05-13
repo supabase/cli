@@ -261,10 +261,11 @@ func TestSetupDatabase(t *testing.T) {
 
 	t.Run("revokes default data api privileges when auto_expose_new_tables is false", func(t *testing.T) {
 		utils.Config.Db.MajorVersion = 14
-		utils.Config.Api.AutoExposeNewTables = false
+		flag := false
+		utils.Config.Api.AutoExposeNewTables = &flag
 		defer func() {
 			utils.Config.Db.MajorVersion = 15
-			utils.Config.Api.AutoExposeNewTables = true
+			utils.Config.Api.AutoExposeNewTables = nil
 		}()
 		utils.Config.Db.Port = 5432
 		utils.GlobalsSql = "create schema public"

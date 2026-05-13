@@ -136,8 +136,8 @@ func TestApiDiff(t *testing.T) {
 }
 
 func TestApiAutoExposeNewTablesDefault(t *testing.T) {
-	t.Run("defaults to true via NewConfig", func(t *testing.T) {
+	t.Run("is unset on a fresh config so today's implicit-true behaviour applies", func(t *testing.T) {
 		cfg := NewConfig()
-		assert.True(t, cfg.Api.AutoExposeNewTables)
+		assert.Nil(t, cfg.Api.AutoExposeNewTables)
 	})
 }

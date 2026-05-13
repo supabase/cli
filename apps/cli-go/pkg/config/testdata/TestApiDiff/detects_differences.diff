@@ -9,6 +9,6 @@ diff remote[api] local[api]
 +schemas = ["public", "private"]
 +extra_search_path = ["extensions", "public"]
 +max_rows = 1000
- auto_expose_new_tables = false
  port = 0
  external_url = ""
+ 

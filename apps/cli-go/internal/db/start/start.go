@@ -412,13 +412,18 @@ alter default privileges for role postgres in schema public
 `
 
 // ApplyApiPrivileges adjusts the default privileges on the `public` schema to match the
-// `[api].auto_expose_new_tables` flag in config.toml. When the flag is true (the default), the
-// initial schema GRANTs are kept as-is to preserve backwards-compatible local behaviour. When the
-// flag is false, the GRANTs to anon/authenticated/service_role are revoked so new tables, views,
-// sequences, and functions created by `postgres` in `public` require explicit GRANTs to surface
-// through the Data API.
+// `[api].auto_expose_new_tables` flag in config.toml. The flag is tri-state to give users a
+// safe migration window:
+//
+//   - unset (default today): keep the bundled initial-schema GRANTs in place, so local matches
+//     long-standing behaviour. This implicit default flips to false on May 30, 2026, and the
+//     flag is removed entirely in October 2026 (always-revoked behaviour).
+//   - true: explicit opt-in to today's behaviour. Treated identically to unset for now; from
+//     May 30 the CLI will warn that the flag is being deprecated.
+//   - false: revoke the default Data API GRANTs so newly-created entities in `public` require
+//     explicit GRANTs to surface through the Data API, matching the new cloud default.
 func ApplyApiPrivileges(ctx context.Context, conn *pgx.Conn) error {
-	if utils.Config.Api.AutoExposeNewTables {
+	if utils.Config.Api.AutoExposeNewTables == nil || *utils.Config.Api.AutoExposeNewTables {
 		return nil
 	}
 	file, err := migration.NewMigrationFromReader(strings.NewReader(RevokeDefaultDataApiPrivilegesSql))

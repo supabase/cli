@@ -155,7 +155,11 @@ export const startCommand = Command.make("start", flags).pipe(
       );
       const autoExposeNewTables = Option.match(projectContext.rawProjectConfig, {
         onNone: () => true,
-        onSome: (config) => config.api.auto_expose_new_tables,
+        // The flag is tri-state in config.toml: unset / true / false. Today, unset and true both
+        // preserve the long-standing local behaviour of auto-exposing new entities in `public`.
+        // The implicit default flips to false on 2026-05-30 to match the new cloud default, and
+        // the field is removed in 2026-10-30.
+        onSome: (config) => config.api.auto_expose_new_tables ?? true,
       });
       const baseStackConfig = withServiceVersions(
         toStartStackConfig(flags.exclude, flags.mode),
