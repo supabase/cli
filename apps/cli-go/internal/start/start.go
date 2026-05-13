@@ -1242,11 +1242,7 @@ EOF
 	if err := start.WaitForHealthyService(ctx, serviceTimeout, started...); err != nil {
 		return err
 	}
-	if service := phtelemetry.FromContext(ctx); service != nil {
-		if err := service.Capture(ctx, phtelemetry.EventStackStarted, nil, nil); err != nil {
-			fmt.Fprintln(utils.GetDebugLogger(), err)
-		}
-	}
+	_ = phtelemetry.FromContext(ctx).Capture(ctx, phtelemetry.EventStackStarted, nil, nil)
 	return nil
 }
 
