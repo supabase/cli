@@ -16,30 +16,39 @@ function wrapBinding(binding: unknown): typeof import("@parcel/watcher") {
 }
 
 function loadParcelWatcher(): typeof import("@parcel/watcher") {
-  if (process.platform === "darwin" && process.arch === "arm64") {
-    return wrapBinding(require("@parcel/watcher-darwin-arm64"));
-  }
-  if (process.platform === "darwin" && process.arch === "x64") {
-    return wrapBinding(require("@parcel/watcher-darwin-x64"));
-  }
-  if (process.platform === "linux" && process.arch === "arm64") {
-    if (typeof SUPABASE_LIBC !== "undefined" && SUPABASE_LIBC === "musl") {
-      return wrapBinding(require("@parcel/watcher-linux-arm64-musl"));
+  if (process.platform === "darwin") {
+    if (process.arch === "arm64") {
+      return wrapBinding(require("@parcel/watcher-darwin-arm64"));
     }
-    return wrapBinding(require("@parcel/watcher-linux-arm64-glibc"));
-  }
-  if (process.platform === "linux" && process.arch === "x64") {
-    if (typeof SUPABASE_LIBC !== "undefined" && SUPABASE_LIBC === "musl") {
-      return wrapBinding(require("@parcel/watcher-linux-x64-musl"));
+    if (process.arch === "x64") {
+      return wrapBinding(require("@parcel/watcher-darwin-x64"));
     }
-    return wrapBinding(require("@parcel/watcher-linux-x64-glibc"));
   }
-  if (process.platform === "win32" && process.arch === "arm64") {
-    return wrapBinding(require("@parcel/watcher-win32-arm64"));
+
+  if (process.platform === "linux") {
+    if (process.arch === "arm64") {
+      if (typeof SUPABASE_LIBC !== "undefined" && SUPABASE_LIBC === "musl") {
+        return wrapBinding(require("@parcel/watcher-linux-arm64-musl"));
+      }
+      return wrapBinding(require("@parcel/watcher-linux-arm64-glibc"));
+    }
+    if (process.arch === "x64") {
+      if (typeof SUPABASE_LIBC !== "undefined" && SUPABASE_LIBC === "musl") {
+        return wrapBinding(require("@parcel/watcher-linux-x64-musl"));
+      }
+      return wrapBinding(require("@parcel/watcher-linux-x64-glibc"));
+    }
   }
-  if (process.platform === "win32" && process.arch === "x64") {
-    return wrapBinding(require("@parcel/watcher-win32-x64"));
+
+  if (process.platform === "win32") {
+    if (process.arch === "arm64") {
+      return wrapBinding(require("@parcel/watcher-win32-arm64"));
+    }
+    if (process.arch === "x64") {
+      return wrapBinding(require("@parcel/watcher-win32-x64"));
+    }
   }
+
   throw new Error(`Unsupported @parcel/watcher platform: ${process.platform}-${process.arch}`);
 }
 
