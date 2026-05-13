@@ -22,14 +22,21 @@ if (!candidates) throw new Error(`Unsupported architecture: ${os.arch()} on ${pr
 const ext = process.platform === "win32" ? ".exe" : "";
 const require = createRequire(import.meta.url);
 
-let binPath: string | undefined;
-for (const suffix of candidates) {
-  try {
-    const pkgPath = path.dirname(require.resolve(`@supabase/cli-${suffix}/package.json`));
-    binPath = path.join(pkgPath, "bin", `supabase${ext}`);
-    break;
-  } catch {
-    // package not installed — try next candidate
+// `SUPABASE_CLI_BINARY_OVERRIDE` lets tests and local dev point the shim at a
+// specific compiled binary on disk, bypassing the optional-dependency lookup.
+// This is the entrypoint the e2e harness uses to exercise the real shim +
+// compiled binary handoff without publishing platform packages.
+let binPath = process.env["SUPABASE_CLI_BINARY_OVERRIDE"];
+
+if (!binPath) {
+  for (const suffix of candidates) {
+    try {
+      const pkgPath = path.dirname(require.resolve(`@supabase/cli-${suffix}/package.json`));
+      binPath = path.join(pkgPath, "bin", `supabase${ext}`);
+      break;
+    } catch {
+      // package not installed — try next candidate
+    }
   }
 }
 

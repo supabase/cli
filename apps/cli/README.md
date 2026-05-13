@@ -87,8 +87,10 @@ pnpm build:shim
 Output in `dist/`:
 
 - `dist/supabase.js` — base shim that routes to the correct platform binary
-- `dist/main-next.js` — next shell bundle
-- `dist/main-legacy.js` — legacy shell bundle
+- `dist/supabase-next` — next shell compiled binary (Bun single-file executable for the host platform)
+- `dist/supabase-legacy` — legacy shell compiled binary (Bun single-file executable for the host platform)
+
+The shim resolves `SUPABASE_CLI_BINARY_OVERRIDE` (an absolute binary path) before falling back to the `@supabase/cli-<platform>` optional-dependency lookup. The e2e test harness uses this override to invoke the real shim + compiled binary handoff against the per-shell builds in `dist/`.
 
 ### Platform releases (Bun single-file executables)
 
