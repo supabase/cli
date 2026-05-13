@@ -113,10 +113,7 @@ describe("project discovery and lazy env resolution", () => {
 
     try {
       await mkdir(join(projectRoot, "supabase"), { recursive: true });
-      await writeFile(
-        join(projectRoot, "supabase", "config.toml"),
-        `project_id = "ref_123"\n`,
-      );
+      await writeFile(join(projectRoot, "supabase", "config.toml"), `project_id = "ref_123"\n`);
 
       const defaultLoaded = await runConfigEffect(loadProjectConfig(projectRoot));
       expect(defaultLoaded!.config.api.auto_expose_new_tables).toBe(true);
