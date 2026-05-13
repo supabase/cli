@@ -3,6 +3,21 @@ packages:
   - "apps/*"
   - "tools/*"
 
+supportedArchitectures:
+  os:
+    - current
+    - darwin
+    - linux
+    - win32
+  cpu:
+    - current
+    - arm64
+    - x64
+  libc:
+    - current
+    - glibc
+    - musl
+
 allowBuilds:
   "@swc/core": true
   esbuild: true

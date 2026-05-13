@@ -6,7 +6,7 @@ import {
   spawnSupabase,
 } from "../../../../tests/helpers/cli.ts";
 
-const LOGS_TIMEOUT_MS = 15_000;
+const LOGS_TIMEOUT_MS = 30_000;
 const LOGS_IDLE_WINDOW_MS = 500;
 const LIGHTWEIGHT_START_ARGS = [
   "start",

@@ -236,6 +236,10 @@ const forkDaemon = (entryPoint: string): Effect.Effect<ChildProcess, DaemonStart
       fork(entryPoint, [], {
         stdio: ["ignore", "ignore", "ignore", "ipc"],
         detached: true,
+        env: {
+          ...process.env,
+          SUPABASE_STACK_RUN_DAEMON: "1",
+        },
       }),
     catch: (e) =>
       new DaemonStartError({
