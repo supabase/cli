@@ -19,3 +19,6 @@
 [submodule ".repos/t3code"]
 	path = .repos/t3code
 	url = https://github.com/pingdotgg/t3code.git
+[submodule ".repos/opencode"]
+	path = .repos/opencode
+	url = https://github.com/anomalyco/opencode.git

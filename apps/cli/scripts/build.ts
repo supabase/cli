@@ -98,14 +98,22 @@ const GO_TARGETS: Record<BunTarget, { goos: string; goarch: string }> = {
   "bun-windows-arm64": { goos: "windows", goarch: "arm64" },
 };
 
+function libcForBunTarget(target: string): "glibc" | "musl" | "" {
+  if (!target.startsWith("bun-linux-")) {
+    return "";
+  }
+  return target.endsWith("-musl") ? "musl" : "glibc";
+}
+
 async function buildTarget(target: (typeof TARGETS)[number]) {
   const binDir = path.join(root, "packages", target.pkg, "bin");
   await mkdir(binDir, { recursive: true });
 
   const outfile = path.join(binDir, `supabase${target.ext}`);
+  const libc = libcForBunTarget(target.bunTarget);
 
   console.log(`[${target.pkg}] Compiling Bun CLI...`);
-  await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --outfile=${outfile}`;
+  await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --define=SUPABASE_LIBC=${JSON.stringify(libc)} --outfile=${outfile}`;
   console.log(`[${target.pkg}] Done.`);
 }
 
@@ -150,8 +158,9 @@ async function buildMuslBinaries() {
       await mkdir(binDir, { recursive: true });
 
       const outfile = path.join(binDir, "supabase");
+      const libc = libcForBunTarget(target.bunTarget);
       console.log(`[${target.pkg}] Compiling Bun CLI (musl)...`);
-      await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --outfile=${outfile}`;
+      await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --define=SUPABASE_LIBC=${JSON.stringify(libc)} --outfile=${outfile}`;
 
       if (shell === "legacy") {
         // Go binary is CGO_ENABLED=0 (fully static), so the glibc Linux build works on

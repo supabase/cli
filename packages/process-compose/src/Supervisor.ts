@@ -2,6 +2,10 @@ import { fileURLToPath } from "node:url";
 import { ChildProcess } from "effect/unstable/process";
 import type { ExternalCleanupAction, ServiceDef } from "./ServiceDef.ts";
 import { defaults } from "./ServiceDef.ts";
+import {
+  isSupervisorSelfDispatchEnabled,
+  makeSupervisorRuntimeEnv,
+} from "./supervisor-protocol.ts";
 
 interface SupervisorRuntimeConfig {
   readonly command: string;
@@ -13,15 +17,10 @@ interface SupervisorRuntimeConfig {
 }
 
 export const supervisorRuntimePath = fileURLToPath(
-  new URL("./supervisor-runtime.mjs", import.meta.url),
+  new URL("./supervisor-runtime.ts", import.meta.url),
 );
 
 export const usesSupervisor = (def: ServiceDef): boolean => def.supervision != null;
-
-const supervisorCommand =
-  process.execPath.includes("/node") || process.execPath.endsWith("\\node.exe")
-    ? process.execPath
-    : "node";
 
 export const makeSupervisedCommand = (def: ServiceDef) => {
   const runtimeConfig: SupervisorRuntimeConfig = {
@@ -33,10 +32,11 @@ export const makeSupervisedCommand = (def: ServiceDef) => {
     cleanup: def.supervision?.orphanCleanup ?? [],
   };
   const encoded = Buffer.from(JSON.stringify(runtimeConfig)).toString("base64url");
+  const selfDispatch = isSupervisorSelfDispatchEnabled(import.meta.url);
 
-  return ChildProcess.make(supervisorCommand, [supervisorRuntimePath, encoded], {
+  return ChildProcess.make(process.execPath, selfDispatch ? [] : [supervisorRuntimePath, encoded], {
     cwd: def.cwd,
-    env: def.env,
+    env: selfDispatch ? makeSupervisorRuntimeEnv(encoded, def.env) : def.env,
     extendEnv: true,
     stdin: "pipe",
     // Detach the supervisor from the Bun parent so it can survive abrupt owner

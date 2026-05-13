@@ -7,8 +7,10 @@ const placeholder = {
 };
 
 const configPath =
-  Deno.env.get("FUNCTIONS_RUNTIME_CONFIG_PATH") ??
-  new URL("./functions-runtime-config.json", import.meta.url);
+  typeof Deno === "undefined"
+    ? new URL("./functions-runtime-config.json", import.meta.url)
+    : (Deno.env.get("FUNCTIONS_RUNTIME_CONFIG_PATH") ??
+      new URL("./functions-runtime-config.json", import.meta.url));
 
 async function loadConfig() {
   try {
@@ -124,37 +126,41 @@ async function serveFunction(req: Request, config: any, functionName: string, fu
   }
 }
 
-Deno.serve({
-  handler: async (req: Request) => {
-    const url = new URL(req.url);
+if (typeof Deno !== "undefined") {
+  Deno.serve({
+    handler: async (req: Request) => {
+      const url = new URL(req.url);
 
-    if (url.pathname === "/_internal/health") {
-      return Response.json({ message: "ok" });
-    }
+      if (url.pathname === "/_internal/health") {
+        return Response.json({ message: "ok" });
+      }
 
-    const config = await loadConfig();
-    if (!config) return Response.json(placeholder, { status: 501 });
+      const config = await loadConfig();
+      if (!config) return Response.json(placeholder, { status: 501 });
 
-    const functionName = url.pathname.split("/").filter(Boolean)[0];
-    const functionConfig = functionName ? config.functions[functionName] : undefined;
-    if (!functionName || !functionConfig) {
-      return new Response("Function not found", { status: 404 });
-    }
+      const functionName = url.pathname.split("/").filter(Boolean)[0];
+      const functionConfig = functionName ? config.functions[functionName] : undefined;
+      if (!functionName || !functionConfig) {
+        return new Response("Function not found", { status: 404 });
+      }
 
-    return serveFunction(req, config, functionName, functionConfig);
-  },
-  onListen: async () => {
-    const config = await loadConfig();
-    if (!config) return;
-    const names = Object.keys(config.functions);
-    const examples = names
-      .slice(0, 5)
-      .map((name) => ` - ${config.functionsUrl}/${name}`)
-      .join("\n");
-    console.log(
-      `Serving functions on ${config.functionsUrl}/<function-name>${
-        examples.length > 0 ? `\n${examples}` : ""
-      }`,
-    );
-  },
-});
+      return serveFunction(req, config, functionName, functionConfig);
+    },
+    onListen: async () => {
+      const config = await loadConfig();
+      if (!config) return;
+      const names = Object.keys(config.functions);
+      const examples = names
+        .slice(0, 5)
+        .map((name) => ` - ${config.functionsUrl}/${name}`)
+        .join("\n");
+      console.log(
+        `Serving functions on ${config.functionsUrl}/<function-name>${
+          examples.length > 0 ? `\n${examples}` : ""
+        }`,
+      );
+    },
+  });
+}
+
+export default "";
