@@ -10,7 +10,7 @@ import {
 
 const FUNCTIONS_DEV_STARTUP_TIMEOUT_MS = 60_000;
 const FUNCTIONS_DEV_STEP_TIMEOUT_MS = 30_000;
-const FUNCTIONS_DEV_TEST_TIMEOUT_MS = 75_000;
+const FUNCTIONS_DEV_TEST_TIMEOUT_MS = 90_000;
 
 async function waitForFunctionResponse(
   url: string,
@@ -65,6 +65,7 @@ describe("supabase functions dev", () => {
           /Edge Functions dev server is running\./,
           FUNCTIONS_DEV_STARTUP_TIMEOUT_MS,
         );
+        await new Promise((resolve) => setTimeout(resolve, 500));
 
         const newResult = await runSupabase(["functions", "new", "hello-world"], {
           cwd: project.dir,

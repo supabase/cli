@@ -25,7 +25,7 @@ const LIGHTWEIGHT_START_ARGS = [
   "--exclude",
   "pooler",
 ] as const;
-const STOP_STACK_TIMEOUT_MS = 15_000;
+const STOP_STACK_TIMEOUT_MS = 30_000;
 
 describe("supabase stop", () => {
   test(

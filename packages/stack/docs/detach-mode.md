@@ -240,8 +240,15 @@ Benefits of using Effect throughout:
 **IPC startup handshake:**
 
 IPC (Inter-Process Communication) is how the CLI and daemon exchange data during startup.
-When `child_process.fork()` creates the daemon, it establishes a built-in IPC channel
-between parent and child. They send JSON messages via `process.send()` / `process.on("message")`.
+`forkDaemon` uses `child_process.fork()` so Node/Bun establish a built-in IPC channel
+between parent and child. In Bun JIT mode, `fork()` starts the daemon entrypoint by
+running Bun with the daemon script path. In a compiled Bun binary, the child process
+re-enters the compiled CLI binary instead; the parent marks the child with
+`SUPABASE_STACK_RUN_DAEMON=1`, and the CLI entrypoint routes that process to the daemon
+runner. See [ADR 0012](../../../docs/adr/0012-compiled-bun-runtime-dispatch.md) for the
+runtime-dispatch rationale.
+
+Parent and child send JSON messages via `process.send()` / `process.on("message")`.
 
 This channel is only used for the initial startup handshake — once the daemon confirms
 it's ready (or reports an error), the CLI disconnects the channel. All subsequent
@@ -250,7 +257,10 @@ communication (stop, status, logs) happens over the Unix socket HTTP API instead
 ```
 CLI (parent)                          Daemon (child)
      │                                      │
-     │── fork(daemon.ts, {                  │
+     │── fork(daemon-bun.ts, {              │
+     │     env: {                           │
+     │       SUPABASE_STACK_RUN_DAEMON: "1" │
+     │     },                               │
      │     detached: true,                  │
      │     stdio: "ignore"                  │
      │   }) ───────────────────────────────▶│

@@ -101,6 +101,13 @@ function getPlatformInfo(): PlatformInfo {
 	return info;
 }
 
+function libcForBunTarget(target: string): "glibc" | "musl" | "" {
+	if (!target.startsWith("bun-linux-")) {
+		return "";
+	}
+	return target.endsWith("-musl") ? "musl" : "glibc";
+}
+
 async function checkRegistry(): Promise<void> {
 	try {
 		const res = await fetch(`${REGISTRY}/-/ping`, {
@@ -207,9 +214,10 @@ async function main() {
 
 		const entrypoint = path.join(root, "apps", "cli", "src", shell, "main.ts");
 		const bunBinary = path.join(tmpPlatformBinDir, `supabase${platform.ext}`);
+		const libc = libcForBunTarget(platform.bunTarget);
 
 		console.log(`[1/${shell === "legacy" ? 3 : 2}] Compiling ${shell} CLI binary...`);
-		await $`bun build ${entrypoint} --compile --target=${platform.bunTarget} --outfile=${bunBinary}`;
+		await $`bun build ${entrypoint} --compile --target=${platform.bunTarget} --define=SUPABASE_LIBC=${JSON.stringify(libc)} --outfile=${bunBinary}`;
 
 		if (shell === "legacy" && goSource) {
 			const goBinary = path.join(tmpPlatformBinDir, `supabase-go${platform.ext}`);
