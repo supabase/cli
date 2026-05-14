@@ -908,6 +908,11 @@ const (
 	ActiveReplicationSlot ProjectUpgradeEligibilityResponseValidationErrors7Type = "active_replication_slot"
 )
 
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors8Type.
+const (
+	X86Architecture ProjectUpgradeEligibilityResponseValidationErrors8Type = "x86_architecture"
+)
+
 // Defines values for RegionsInfoAllSmartGroupCode.
 const (
 	RegionsInfoAllSmartGroupCodeAmericas RegionsInfoAllSmartGroupCode = "americas"
@@ -3479,6 +3484,14 @@ type ProjectUpgradeEligibilityResponseValidationErrors7 struct {
 
 // ProjectUpgradeEligibilityResponseValidationErrors7Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.7.Type.
 type ProjectUpgradeEligibilityResponseValidationErrors7Type string
+
+// ProjectUpgradeEligibilityResponseValidationErrors8 defines model for .
+type ProjectUpgradeEligibilityResponseValidationErrors8 struct {
+	Type ProjectUpgradeEligibilityResponseValidationErrors8Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseValidationErrors8Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.8.Type.
+type ProjectUpgradeEligibilityResponseValidationErrors8Type string
 
 // ProjectUpgradeEligibilityResponse_ValidationErrors_Item defines model for ProjectUpgradeEligibilityResponse.validation_errors.Item.
 type ProjectUpgradeEligibilityResponse_ValidationErrors_Item struct {
@@ -6646,6 +6659,32 @@ func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpg
 
 // MergeProjectUpgradeEligibilityResponseValidationErrors7 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors7
 func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors7(v ProjectUpgradeEligibilityResponseValidationErrors7) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseValidationErrors8 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors8
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors8() (ProjectUpgradeEligibilityResponseValidationErrors8, error) {
+	var body ProjectUpgradeEligibilityResponseValidationErrors8
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseValidationErrors8 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors8
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors8(v ProjectUpgradeEligibilityResponseValidationErrors8) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseValidationErrors8 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors8
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors8(v ProjectUpgradeEligibilityResponseValidationErrors8) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
