@@ -59,6 +59,9 @@ var (
 			if cmdFlags.Changed("notify-url") {
 				body.NotifyUrl = &notifyURL
 			}
+			if cmdFlags.Changed("git-branch") {
+				body.GitBranch = &gitBranch
+			}
 			return create.Run(cmd.Context(), body, afero.NewOsFs())
 		},
 	}
@@ -208,6 +211,7 @@ func init() {
 	createFlags.BoolVar(&persistent, "persistent", false, "Whether to create a persistent branch.")
 	createFlags.BoolVar(&withData, "with-data", false, "Whether to clone production data to the branch database.")
 	createFlags.StringVar(&notifyURL, "notify-url", "", "URL to notify when branch is active healthy.")
+	createFlags.StringVar(&gitBranch, "git-branch", "", "Associate a git branch with the new preview branch.")
 	branchesCmd.AddCommand(branchCreateCmd)
 	branchesCmd.AddCommand(branchListCmd)
 	branchesCmd.AddCommand(branchGetCmd)

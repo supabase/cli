@@ -15,9 +15,9 @@
 
 ## API Routes
 
-| Method | Path                          | Auth         | Request body                                                                            | Response (used fields) |
-| ------ | ----------------------------- | ------------ | --------------------------------------------------------------------------------------- | ---------------------- |
-| `POST` | `/v1/projects/{ref}/branches` | Bearer token | `{branch_name?, region?, desired_instance_size?, persistent?, with_data?, notify_url?}` | `{id}`                 |
+| Method | Path                          | Auth         | Request body                                                                                         | Response (used fields) |
+| ------ | ----------------------------- | ------------ | ---------------------------------------------------------------------------------------------------- | ---------------------- |
+| `POST` | `/v1/projects/{ref}/branches` | Bearer token | `{branch_name?, region?, desired_instance_size?, persistent?, with_data?, notify_url?, git_branch?}` | `{id}`                 |
 
 ## Environment Variables
 
@@ -55,5 +55,5 @@ One `result` event on success.
 
 ## Notes
 
-- Flags: `[name]` (positional), `--region`, `--size`, `--persistent`, `--with-data`, `--notify-url`, `--project-ref`.
+- Flags: `[name]` (positional), `--region`, `--size`, `--persistent`, `--with-data`, `--notify-url`, `--git-branch`, `--project-ref`.
 - Requires a linked project (reads `--project-ref` or `.supabase/config.json`).

@@ -14,5 +14,6 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
   if (flags.persistent) args.push("--persistent");
   if (flags.withData) args.push("--with-data");
   if (Option.isSome(flags.notifyUrl)) args.push("--notify-url", flags.notifyUrl.value);
+  if (Option.isSome(flags.gitBranch)) args.push("--git-branch", flags.gitBranch.value);
   yield* proxy.exec(args);
 });
