@@ -85,6 +85,12 @@ const config = {
     Flag.withDescription("HTTP endpoint to notify when the branch becomes active and healthy."),
     Flag.optional,
   ),
+  gitBranch: Flag.string("git-branch").pipe(
+    Flag.withDescription(
+      "Git branch to associate with the new branch. Defaults to the current local git branch when the branch name is auto-detected.",
+    ),
+    Flag.optional,
+  ),
   switchAfter: Flag.boolean("switch").pipe(
     Flag.withDescription("Switch to the new branch after creation. Pass --no-switch to skip."),
     Flag.withDefault(true),
@@ -117,6 +123,10 @@ export const createBranchesCommand = Command.make("create", config).pipe(
     {
       command: "supabase branches create my-feature --with-data",
       description: "Create a branch and clone production data into it",
+    },
+    {
+      command: "supabase branches create my-feature --git-branch feature/login-page",
+      description: "Associate a specific git branch with the new branch",
     },
   ]),
   Command.withHandler((flags) =>
