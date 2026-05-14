@@ -3,7 +3,13 @@ import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
 import { Layer } from "effect";
 import { runDaemon } from "./daemon.ts";
 
-runDaemon(
-  (apiPort) => Layer.mergeAll(BunServices.layer, BunHttpServer.layer({ port: apiPort })),
-  (socketPath) => BunHttpServer.layer({ idleTimeout: 0, unix: socketPath }),
-);
+export function runBunDaemon(): void {
+  runDaemon(
+    (apiPort) => Layer.mergeAll(BunServices.layer, BunHttpServer.layer({ port: apiPort })),
+    (socketPath) => BunHttpServer.layer({ idleTimeout: 0, unix: socketPath }),
+  );
+}
+
+if (import.meta.main) {
+  runBunDaemon();
+}

@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerRunService, hostHttpHealthCheck, type ServiceDependency } from "./service-utils.ts";
+import bootstrapSource from "./edge-runtime-main.ts" with { type: "text" };
 
 interface EdgeRuntimeOptions {
   readonly runtimeRoot: string;
@@ -26,12 +27,14 @@ interface DockerEdgeRuntimeOptions extends EdgeRuntimeOptions {
 const bootstrapFileName = "index.ts";
 const bootstrapMountDir = "/workspace";
 const bootstrapSourcePath = new URL("./edge-runtime-main.ts", import.meta.url);
+const resolvedBootstrapSource =
+  bootstrapSource === "" ? readFileSync(bootstrapSourcePath, "utf8") : bootstrapSource;
 
 function ensureBootstrapScript(runtimeRoot: string): string {
   const bootstrapDir = join(runtimeRoot, "edge-runtime");
   mkdirSync(bootstrapDir, { recursive: true });
   const filePath = join(bootstrapDir, bootstrapFileName);
-  writeFileSync(filePath, readFileSync(bootstrapSourcePath, "utf8"));
+  writeFileSync(filePath, resolvedBootstrapSource);
   return bootstrapDir;
 }
 

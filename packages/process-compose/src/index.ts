@@ -35,6 +35,11 @@ export { buildGraph } from "./DependencyGraph.ts";
 
 export type { HealthProbeCallbacks } from "./HealthProbe.ts";
 export { makeSupervisedCommand, supervisorRuntimePath, usesSupervisor } from "./Supervisor.ts";
+export {
+  enableSupervisorSelfDispatchForCompiledBun,
+  isSupervisorRuntimeRequested,
+} from "./supervisor-protocol.ts";
+export { runSupervisorRuntime, runSupervisorRuntimeFromEnv } from "./supervisor-runtime.ts";
 
 export type { ServiceEvent } from "./ServiceTransition.ts";
 export { applyEvent, transition } from "./ServiceTransition.ts";
