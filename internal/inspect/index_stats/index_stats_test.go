@@ -30,6 +30,8 @@ func TestIndexStatsCommand(t *testing.T) {
 		conn.Query(IndexStatsQuery, reset.LikeEscapeSchema(utils.InternalSchemas)).
 			Reply("SELECT 1", Result{
 				Name:         "public.test_idx",
+				Table:        "public.test",
+				Columns:      "id",
 				Size:         "1GB",
 				Percent_used: "50%",
 				Index_scans:  5,

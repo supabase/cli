@@ -19,6 +19,8 @@ var IndexStatsQuery string
 
 type Result struct {
 	Name         string
+	Table        string
+	Columns      string
 	Size         string
 	Percent_used string
 	Index_scans  int64
@@ -41,9 +43,9 @@ func Run(ctx context.Context, config pgconn.Config, fsys afero.Fs, options ...fu
 		return err
 	}
 
-	table := "|Name|Size|Percent used|Index scans|Seq scans|Unused|\n|-|-|-|-|-|-|\n"
+	table := "|Name|Table|Columns|Size|Percent used|Index scans|Seq scans|Unused|\n|-|-|-|-|-|-|-|-|\n"
 	for _, r := range result {
-		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%d`|`%d`|`%t`|\n", r.Name, r.Size, r.Percent_used, r.Index_scans, r.Seq_scans, r.Unused)
+		table += fmt.Sprintf("|`%s`|`%s`|`%s`|`%s`|`%s`|`%d`|`%d`|`%t`|\n", r.Name, r.Table, r.Columns, r.Size, r.Percent_used, r.Index_scans, r.Seq_scans, r.Unused)
 	}
 	return utils.RenderTable(table)
 }

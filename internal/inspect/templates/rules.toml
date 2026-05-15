@@ -19,7 +19,13 @@ pass = "✔"
 fail = "There is at least one unused index"
 
 [[rules]]
-query = "SELECT LISTAGG(name, ',') AS match FROM `db_stats.csv` WHERE index_hit_rate < 0.94 OR table_hit_rate < 0.94"
+query = "SELECT LISTAGG(i.name, ',') AS match FROM `index_stats.csv` AS i JOIN (SELECT `table`, columns FROM `index_stats.csv` GROUP BY `table`, columns HAVING COUNT(*) > 1) AS d ON i.`table` = d.`table` AND i.columns = d.columns"
+name = "No duplicate indexes"
+pass = "✔"
+fail = "There is at least one duplicate index (same columns on the same table)"
+
+[[rules]]
+query = "SELECT 'index: ' || index_hit_rate || ', table: ' || table_hit_rate AS match FROM `db_stats.csv` WHERE index_hit_rate < 0.94 OR table_hit_rate < 0.94"
 name = "Check cache hit is within acceptable bounds"
 pass = "✔"
 fail = "There is a cache hit ratio (table or index) below 94%"
@@ -31,7 +37,7 @@ pass = "✔"
 fail = "At least one table is showing sequential scans more than 10% of total row count"
 
 [[rules]]
-query = "SELECT LISTAGG(s.tbl, ',') AS match FROM `vacuum_stats.csv` s WHERE s.expect_autovacuum = 'yes' and s.rowcount > 1000;"
+query = "SELECT LISTAGG(s.name, ',') AS match FROM `vacuum_stats.csv` s WHERE s.expect_autovacuum = 'yes' and s.rowcount > 1000;"
 name = "No large tables waiting on autovacuum"
 pass = "✔"
 fail = "At least one table is waiting on autovacuum"
@@ -41,3 +47,33 @@ query = "SELECT LISTAGG(s.name, ',') AS match FROM `vacuum_stats.csv` s WHERE s.
 name = "No tables yet to be vacuumed"
 pass = "✔"
 fail = "At least one table has never had autovacuum or vacuum run on it"
+
+[[rules]]
+query = "SELECT LISTAGG(s.name, ',') AS match FROM `vacuum_stats.csv` s WHERE FLOAT(REPLACE(s.rowcount, ',', '')) > 1000 AND FLOAT(REPLACE(s.dead_rowcount, ',', '')) > 0.2 * FLOAT(REPLACE(s.rowcount, ',', ''))"
+name = "No tables with more than 20% dead rows"
+pass = "✔"
+fail = "At least one table has more than 20% dead rows"
+
+[[rules]]
+query = "SELECT LISTAGG(slot_name, ',') AS match FROM `replication_slots.csv` WHERE active = 'f'"
+name = "No inactive replication slots"
+pass = "✔"
+fail = "There is at least one inactive replication slot"
+
+[[rules]]
+query = "SELECT LISTAGG(blocked_pid, ',') AS match FROM `blocking.csv`"
+name = "No blocked queries"
+pass = "✔"
+fail = "There is at least one query blocked on another"
+
+[[rules]]
+query = "SELECT LISTAGG(pid, ',') AS match FROM `long_running_queries.csv`"
+name = "No queries running longer than 5 minutes"
+pass = "✔"
+fail = "At least one query has been running for more than 5 minutes"
+
+[[rules]]
+query = "SELECT LISTAGG(name, ',') AS match FROM `bloat.csv` WHERE bloat > 4"
+name = "No tables or indexes with bloat ratio above 4x"
+pass = "✔"
+fail = "At least one table or index is more than 4x its expected size"
