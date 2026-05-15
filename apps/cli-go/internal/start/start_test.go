@@ -332,7 +332,7 @@ func TestBuildGotrueEnv(t *testing.T) {
 		assert.Equal(t, "http://127.0.0.1:54321/auth/v1/verify", env["GOTRUE_MAILER_URLPATHS_CONFIRMATION"])
 		assert.Equal(t, "http://127.0.0.1:54321/auth/v1/verify", env["GOTRUE_MAILER_URLPATHS_RECOVERY"])
 		assert.Equal(t, "http://127.0.0.1:54321/auth/v1/verify", env["GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE"])
-		assert.NotContains(t, env, "GOTRUE_EXTERNAL_GITHUB_REDIRECT_URI")
+		assert.Equal(t, "http://127.0.0.1:54321/auth/v1/callback", env["GOTRUE_EXTERNAL_GITHUB_REDIRECT_URI"])
 	})
 
 	t.Run("preserves explicit provider redirect override", func(t *testing.T) {
