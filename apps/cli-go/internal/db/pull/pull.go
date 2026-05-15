@@ -114,11 +114,20 @@ func run(ctx context.Context, schema []string, path string, conn *pgx.Conn, useP
 	config := conn.Config().Config
 	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
 	if err := assertRemoteInSync(ctx, conn, fsys); errors.Is(err, errMissing) {
-		// Ignore schemas flag when working on the initial pull
-		if err = dumpRemoteSchema(ctx, path, config, fsys); err != nil {
-			return err
+		// pg_dump strips ownership when restored as a non-superuser, so platform
+		// objects (FDWs, wasm wrappers, system-owned ACLs) leak into the migration
+		// and later break `supabase db reset`. pg-delta speaks pg_catalog directly
+		// and the supabase integration filter drops these by owner, so the diff
+		// against an empty shadow yields a clean initial migration on its own.
+		if !usePgDeltaDiff {
+			// Ignore schemas flag when working on the initial pull
+			if err = dumpRemoteSchema(ctx, path, config, fsys); err != nil {
+				return err
+			}
 		}
-		// Run a second pass to pull in changes from default privileges and managed schemas
+		// For the legacy path this is a second pass that captures changes
+		// pg_dump cannot emit (default privileges, managed schemas). For the
+		// pg-delta path this is the only pass and produces the full schema.
 		if err = diffRemoteSchema(ctx, nil, path, config, usePgDeltaDiff, differ, fsys); errors.Is(err, errInSync) {
 			err = nil
 		}
@@ -153,7 +162,11 @@ func diffRemoteSchema(ctx context.Context, schema []string, path string, config 
 	if trimmed := strings.TrimSpace(output); len(trimmed) == 0 {
 		return errors.New(errInSync)
 	}
-	// Append to existing migration file since we run this after dump
+	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(path)); err != nil {
+		return err
+	}
+	// Append to existing migration file when we run this after dumpRemoteSchema;
+	// for the pg-delta path this is the only writer and creates the file fresh.
 	f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
 		return errors.Errorf("failed to open migration file: %w", err)
