@@ -146,7 +146,7 @@ Current TS only exposes low-level Management API routes under [`api`](../src/nex
 | `functions deploy`   | `missing` | `missing`             | Remote Management API routes exist under `supabase api request ...`, but there is no dedicated TS `functions deploy` command surface. Wrapped in legacy shell.   |
 | `functions download` | `missing` | `missing`             | Remote Management API routes exist under `supabase api request ...`, but there is no dedicated TS `functions download` command surface. Wrapped in legacy shell. |
 | `functions list`     | `missing` | `missing`             | Remote Management API routes exist under `supabase api request ...`, but there is no dedicated TS `functions list` command surface. Wrapped in legacy shell.     |
-| `functions new`      | `missing` | `missing`             | No TS local scaffold command yet. Wrapped in legacy shell.                                                                                                       |
+| `functions new`      | `missing` | `missing`             | No TS local scaffold command yet. Wrapped in legacy shell with `--auth` flag parity.                                                                             |
 | `functions serve`    | `missing` | `missing`             | No TS local Functions serving command yet. Wrapped in legacy shell.                                                                                              |
 
 ## Storage

@@ -1,10 +1,14 @@
-import { Argument, Command } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { legacyFunctionsNew } from "./new.handler.ts";
 
 const config = {
   functionName: Argument.string("Function name").pipe(
     Argument.withDescription("Name of the Function to create."),
+  ),
+  auth: Flag.choice("auth", ["none", "apikey", "user"] as const).pipe(
+    Flag.withDescription("Use a specific auth mode."),
+    Flag.withDefault("apikey" as const),
   ),
 } as const;
 

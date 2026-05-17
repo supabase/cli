@@ -6,6 +6,6 @@ export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
   flags: LegacyFunctionsNewFlags,
 ) {
   const proxy = yield* LegacyGoProxy;
-  const args: string[] = ["functions", "new", flags.functionName];
+  const args: string[] = ["functions", "new", "--auth", flags.auth, flags.functionName];
   yield* proxy.exec(args);
 });
