@@ -1,5 +1,5 @@
 import dedent from "dedent";
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { stringEnum } from "./lib/schema.ts";
 
 const links = [
@@ -21,13 +21,13 @@ export const analytics = Schema.Struct({
     description: "Enable the local Logflare service.",
     tags,
     links,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultEnabled)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnabled))),
   port: Schema.Number.annotate({
     default: defaultPort,
     description: "Port to the local Logflare service.",
     tags,
     links,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultPort)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPort))),
   backend: stringEnum(["postgres", "bigquery"], {
     default: defaultBackend,
     description: dedent`
@@ -38,7 +38,7 @@ export const analytics = Schema.Struct({
     `,
     tags,
     links,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultBackend)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultBackend))),
   vector_port: Schema.optionalKey(
     Schema.Number.annotate({
       description: "Port to the local syslog ingest service.",
@@ -63,4 +63,4 @@ export const analytics = Schema.Struct({
       tags,
     }),
   ),
-}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultAnalytics })));
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultAnalytics })));

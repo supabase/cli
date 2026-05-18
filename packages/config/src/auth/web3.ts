@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 
 const tags = ["auth"];
 
@@ -11,10 +11,10 @@ const provider = Schema.Struct({
     default: defaultEnabled,
     description: "Enable this Web3 provider.",
     tags,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultEnabled)),
-}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultProvider })));
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnabled))),
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultProvider })));
 
 export const web3 = Schema.Struct({
   solana: provider,
   ethereum: provider,
-}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultWeb3 })));
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultWeb3 })));

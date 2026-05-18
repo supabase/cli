@@ -1,6 +1,6 @@
 import type { ProjectConfig, ProjectEnvironment, ProjectPaths } from "@supabase/config";
 import type { Option } from "effect";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 
 interface ProjectContextShape {
   readonly paths: Option.Option<ProjectPaths>;
@@ -8,6 +8,6 @@ interface ProjectContextShape {
   readonly rawProjectConfig: Option.Option<ProjectConfig>;
 }
 
-export class ProjectContext extends ServiceMap.Service<ProjectContext, ProjectContextShape>()(
+export class ProjectContext extends Context.Service<ProjectContext, ProjectContextShape>()(
   "supabase/config/ProjectContext",
 ) {}

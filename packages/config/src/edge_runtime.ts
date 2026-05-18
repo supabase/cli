@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { secret } from "./lib/env.ts";
 import { stringEnum } from "./lib/schema.ts";
 
@@ -14,22 +14,22 @@ export const edge_runtime = Schema.Struct({
     default: defaultEnabled,
     description: "Enable the local Edge Runtime service.",
     tags,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultEnabled)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnabled))),
   policy: stringEnum(["oneshot", "per_worker"], {
     default: defaultPolicy,
     description: "Configure the supported request policy.",
     tags,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultPolicy)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPolicy))),
   inspector_port: Schema.Number.annotate({
     default: defaultInspectorPort,
     description: "Port to run the Edge Functions inspector on.",
     tags,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultInspectorPort)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultInspectorPort))),
   deno_version: Schema.Number.annotate({
     default: defaultDenoVersion,
     description: "The Deno major version to use.",
     tags,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultDenoVersion)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultDenoVersion))),
   secrets: Schema.optionalKey(
     Schema.Record(
       Schema.String,
@@ -42,4 +42,4 @@ export const edge_runtime = Schema.Struct({
       tags,
     }),
   ),
-}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultEdgeRuntime })));
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultEdgeRuntime })));

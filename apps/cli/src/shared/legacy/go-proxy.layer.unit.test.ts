@@ -136,6 +136,7 @@ function mockSpawner(exit: ExitBehavior, spawnedBeforeExit?: Deferred.Deferred<v
           exitCode,
           isRunning: Effect.succeed(false),
           kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
           stdin: Sink.drain as any,
           stdout: Stream.empty,
           stderr: Stream.empty,

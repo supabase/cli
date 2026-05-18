@@ -8,7 +8,7 @@ import {
   Layer,
   Path,
   Ref,
-  ServiceMap,
+  Context,
   Stream,
   SubscriptionRef,
 } from "effect";
@@ -128,7 +128,7 @@ const changedStatesBetween = (
   return current.filter((state) => !sameState(previousByName.get(state.name), state));
 };
 
-export class StackLifecycleCoordinator extends ServiceMap.Service<
+export class StackLifecycleCoordinator extends Context.Service<
   StackLifecycleCoordinator,
   {
     readonly getInfo: () => Effect.Effect<StackInfo>;
@@ -198,7 +198,7 @@ export class StackLifecycleCoordinator extends ServiceMap.Service<
         const phaseRef = yield* Ref.make<LifecyclePhase>("idle");
 
         const logBufferServices = yield* Layer.buildWithScope(LogBuffer.layer, scope);
-        const logBuffer = ServiceMap.get(logBufferServices, LogBuffer);
+        const logBuffer = Context.get(logBufferServices, LogBuffer);
 
         const updateState = (nextState: StackServiceState) =>
           SubscriptionRef.update(stateRef, (current) => {
@@ -347,7 +347,7 @@ export class StackLifecycleCoordinator extends ServiceMap.Service<
               Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
             );
             const orchServices = yield* Layer.buildWithScope(orchLayer, scope);
-            const orchestrator = ServiceMap.get(orchServices, Orchestrator);
+            const orchestrator = Context.get(orchServices, Orchestrator);
 
             const projectedStates = Stream.unwrap(
               Effect.gen(function* () {

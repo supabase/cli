@@ -1,5 +1,5 @@
 import type { Effect, Scope } from "effect";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 
 export type CliProcessSignal = "SIGINT" | "SIGTERM" | "SIGHUP";
 
@@ -32,6 +32,6 @@ interface ProcessControlShape {
 /**
  * ProcessControl - Service tag for process lifecycle operations.
  */
-export class ProcessControl extends ServiceMap.Service<ProcessControl, ProcessControlShape>()(
+export class ProcessControl extends Context.Service<ProcessControl, ProcessControlShape>()(
   "supabase/runtime/ProcessControl",
 ) {}
