@@ -1,5 +1,5 @@
 import type { Effect } from "effect";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 
 import type { NonInteractiveError } from "./errors.ts";
 import type { OutputFormat, StreamEvent } from "./types.ts";
@@ -79,4 +79,4 @@ interface OutputShape {
 /**
  * Output - Service tag for CLI output and prompt behavior.
  */
-export class Output extends ServiceMap.Service<Output, OutputShape>()("supabase/output/Output") {}
+export class Output extends Context.Service<Output, OutputShape>()("supabase/output/Output") {}

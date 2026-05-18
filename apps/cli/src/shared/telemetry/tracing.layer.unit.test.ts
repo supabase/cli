@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { Effect, Exit, Layer, Option, ServiceMap, Tracer } from "effect";
+import { Effect, Exit, Layer, Option, Context, Tracer } from "effect";
 import { cliConfigLayer } from "../../next/config/cli-config.layer.ts";
 import type { TelemetryConfig } from "./types.ts";
 import {
@@ -89,7 +89,7 @@ function makeSpanOptions(
   return {
     name: overrides.name ?? "test-span",
     parent: overrides.parent ?? Option.none(),
-    annotations: ServiceMap.empty(),
+    annotations: Context.empty(),
     links: [] as Tracer.SpanLink[],
     startTime: BigInt(Date.now()) * 1_000_000n,
     kind: "internal" as Tracer.SpanKind,

@@ -1,4 +1,4 @@
-import { Effect, ServiceMap } from "effect";
+import { Effect, Context } from "effect";
 
 export type AnalyticsContext = {
   readonly command_run_id?: string;
@@ -12,7 +12,7 @@ export type AnalyticsContext = {
   };
 };
 
-export const CurrentAnalyticsContext = ServiceMap.Reference<AnalyticsContext>(
+export const CurrentAnalyticsContext = Context.Reference<AnalyticsContext>(
   "supabase/telemetry/CurrentAnalyticsContext",
   {
     defaultValue: () => ({}),

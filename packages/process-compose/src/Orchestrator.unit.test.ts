@@ -204,6 +204,7 @@ function mockChildProcessSpawner(
                 killEvents.notify();
                 yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(143));
               }),
+            unref: Effect.succeed(Effect.void),
             getInputFd: () => Sink.drain,
             getOutputFd: () => Stream.empty,
           });
@@ -286,6 +287,7 @@ function mockStuckChildProcessSpawner() {
                 // Await exit like the real spawner — blocks until process exits
                 yield* Deferred.await(exitDeferred);
               }).pipe(Effect.asVoid),
+            unref: Effect.succeed(Effect.void),
             getInputFd: () => Sink.drain,
             getOutputFd: () => Stream.empty,
           });

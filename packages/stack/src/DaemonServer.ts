@@ -1,4 +1,4 @@
-import { Deferred, Effect, Layer, ServiceMap, Stream } from "effect";
+import { Deferred, Effect, Layer, Context, Stream } from "effect";
 import {
   Headers,
   HttpRouter,
@@ -13,7 +13,7 @@ import { EdgeRuntimeReloadConfigSchema, Stack } from "./Stack.ts";
 // Service
 // ---------------------------------------------------------------------------
 
-export class DaemonServer extends ServiceMap.Service<
+export class DaemonServer extends Context.Service<
   DaemonServer,
   {
     readonly address: HttpServer.Address;
@@ -102,7 +102,7 @@ export class DaemonServer extends ServiceMap.Service<
           "GET",
           "/logs",
           Effect.gen(function* () {
-            const searchParams = yield* HttpServerRequest.ParsedSearchParams.asEffect();
+            const searchParams = yield* HttpServerRequest.ParsedSearchParams;
             const services = parseServices(searchParams.service);
             return sseResponse(stack.subscribeAllLogs(services), "log", (e) => JSON.stringify(e));
           }),
@@ -113,7 +113,7 @@ export class DaemonServer extends ServiceMap.Service<
           "GET",
           "/logs/history",
           Effect.gen(function* () {
-            const searchParams = yield* HttpServerRequest.ParsedSearchParams.asEffect();
+            const searchParams = yield* HttpServerRequest.ParsedSearchParams;
             const limit = parseLimit(searchParams.limit);
             const services = parseServices(searchParams.service);
             const entries = yield* stack.logHistoryAll(limit, services);
@@ -127,7 +127,7 @@ export class DaemonServer extends ServiceMap.Service<
           "/logs/:service/history",
           Effect.gen(function* () {
             const routeParams = yield* HttpRouter.params;
-            const searchParams = yield* HttpServerRequest.ParsedSearchParams.asEffect();
+            const searchParams = yield* HttpServerRequest.ParsedSearchParams;
             const service = parseSingleParam(routeParams.service)!;
             const limit = parseLimit(searchParams.limit);
             const entries = yield* stack.logHistory(service, limit);
@@ -211,7 +211,7 @@ export class DaemonServer extends ServiceMap.Service<
           "POST",
           "/functions/reload",
           Effect.gen(function* () {
-            const searchParams = yield* HttpServerRequest.ParsedSearchParams.asEffect();
+            const searchParams = yield* HttpServerRequest.ParsedSearchParams;
             yield* stack.reloadFunctions({
               envFile: parseSingleParam(searchParams.envFile),
               noVerifyJwt: parseBoolean(searchParams.noVerifyJwt),
