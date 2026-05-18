@@ -14,7 +14,7 @@ catalog:
   "@effect/atom-react": "4.0.0-beta.67"
   "@effect/platform-bun": "4.0.0-beta.67"
   "@effect/platform-node": "4.0.0-beta.67"
-  "@effect/vitest": "^4.0.0-beta.43"
+  "@effect/vitest": "^4.0.0-beta.67"
   "@nx/devkit": "^22.7.2"
   "@swc-node/register": "^1.10.9"
   "@swc/core": "^1.15.33"
