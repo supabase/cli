@@ -1,5 +1,5 @@
 import type { Effect, Redacted } from "effect";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 
 import type { ApiError } from "./errors.ts";
 
@@ -27,4 +27,4 @@ interface ApiShape {
   ) => Effect.Effect<ProfileResponse, ApiError>;
 }
 
-export class Api extends ServiceMap.Service<Api, ApiShape>()("supabase/auth/Api") {}
+export class Api extends Context.Service<Api, ApiShape>()("supabase/auth/Api") {}

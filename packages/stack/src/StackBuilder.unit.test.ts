@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Layer, ServiceMap, Sink, Stream } from "effect";
+import { Deferred, Effect, Layer, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
@@ -128,6 +128,7 @@ function mockSequenceSpawner(
           isRunning: Effect.succeed(true),
           stdin: Sink.drain,
           kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
           getInputFd: () => Sink.drain,
           getOutputFd: () => Stream.empty,
         });
@@ -147,8 +148,8 @@ function builderLayer(
 }
 
 const prepareAndBuild = (
-  builder: ServiceMap.Service.Shape<typeof StackBuilder>,
-  preparation: ServiceMap.Service.Shape<typeof StackPreparation>,
+  builder: typeof StackBuilder.Service,
+  preparation: typeof StackPreparation.Service,
   config: ResolvedStackConfig,
 ): Effect.Effect<BuildResult, unknown> =>
   Effect.gen(function* () {

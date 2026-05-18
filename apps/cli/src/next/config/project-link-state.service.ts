@@ -1,7 +1,7 @@
 import type { Effect, Option } from "effect";
-import { Data, Schema, ServiceMap } from "effect";
+import { Data, Schema, Context } from "effect";
 
-export const LinkedServiceVersionsSchema = Schema.Struct({
+const LinkedServiceVersionsSchema = Schema.Struct({
   postgres: Schema.optionalKey(Schema.String),
   postgrest: Schema.optionalKey(Schema.String),
   auth: Schema.optionalKey(Schema.String),
@@ -10,7 +10,7 @@ export const LinkedServiceVersionsSchema = Schema.Struct({
 
 export type LinkedServiceVersions = Schema.Schema.Type<typeof LinkedServiceVersionsSchema>;
 
-export const ActiveBranchSchema = Schema.Struct({
+const ActiveBranchSchema = Schema.Struct({
   ref: Schema.String,
   name: Schema.String,
   is_default: Schema.Boolean,
@@ -57,6 +57,6 @@ interface ProjectLinkStateShape {
   ) => Effect.Effect<void, InvalidProjectLinkStateError | ProjectNotLinkedError>;
 }
 
-export class ProjectLinkState extends ServiceMap.Service<ProjectLinkState, ProjectLinkStateShape>()(
+export class ProjectLinkState extends Context.Service<ProjectLinkState, ProjectLinkStateShape>()(
   "supabase/config/ProjectLinkState",
 ) {}
