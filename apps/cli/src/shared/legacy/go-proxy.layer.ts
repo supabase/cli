@@ -70,17 +70,20 @@ function resolveBinary(): BinaryResolution {
 
 /**
  * Build a concrete `curl | tar` install snippet for the host platform, using
- * the version baked into this shim at build time (`CLI_VERSION`). Returns
- * null on Windows (different asset format) or when the version is the dev
- * sentinel — in those cases the diagnostic falls back to the generic
- * prose-only remediation steps.
+ * the version baked into this shim at build time (`CLI_VERSION`). The release
+ * pipeline ships a `.tar.gz` for every (platform, arch) pair we support —
+ * including Windows — so the snippet is uniform across hosts. Returns null
+ * only when CLI_VERSION is the dev sentinel (we have no concrete URL) or the
+ * host arch isn't one the release pipeline targets.
  */
 function reinstallTarballSnippet(): ReadonlyArray<string> | null {
   if (CLI_VERSION === "0.0.0-dev") return null;
-  if (process.platform !== "linux" && process.platform !== "darwin") return null;
-  const archSuffix = os.arch() === "x64" ? "amd64" : os.arch() === "arm64" ? "arm64" : null;
+  const archSuffix = process.arch === "x64" ? "amd64" : process.arch === "arm64" ? "arm64" : null;
   if (archSuffix === null) return null;
-  const asset = `supabase_${CLI_VERSION}_${process.platform}_${archSuffix}.tar.gz`;
+  // Map Node's `process.platform` to the release asset's OS slug. `win32` is
+  // historical (Win16 vs Win32); GitHub assets use the modern `windows` slug.
+  const osSlug = process.platform === "win32" ? "windows" : process.platform;
+  const asset = `supabase_${CLI_VERSION}_${osSlug}_${archSuffix}.tar.gz`;
   return [
     `      mkdir -p "$HOME/.local/share/supabase"`,
     `      curl -sL https://github.com/supabase/cli/releases/download/v${CLI_VERSION}/${asset} \\`,

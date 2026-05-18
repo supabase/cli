@@ -193,41 +193,68 @@ describe("formatGoBinaryNotFoundError - pinned snippet", () => {
   const TRIED = ["$SUPABASE_GO_BINARY (unset)"];
   const PINNED_VERSION = "2.100.0";
 
-  it("renders a copy-pasteable install snippet for linux x64", async () => {
+  async function withMockedHost(
+    opts: { platform: NodeJS.Platform; arch: NodeJS.Architecture },
+    fn: (mod: typeof import("./go-proxy.layer.ts")) => void | Promise<void>,
+  ): Promise<void> {
     vi.resetModules();
     vi.doMock("../cli/version.ts", () => ({ CLI_VERSION: PINNED_VERSION }));
-    Object.defineProperty(process, "platform", { value: "linux", configurable: true });
-    Object.defineProperty(process, "arch", { value: "x64", configurable: true });
+    const originalPlatform = process.platform;
+    const originalArch = process.arch;
+    Object.defineProperty(process, "platform", { value: opts.platform, configurable: true });
+    Object.defineProperty(process, "arch", { value: opts.arch, configurable: true });
     try {
       const mod = await import("./go-proxy.layer.ts");
+      await fn(mod);
+    } finally {
+      Object.defineProperty(process, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+      Object.defineProperty(process, "arch", { value: originalArch, configurable: true });
+      vi.doUnmock("../cli/version.ts");
+      vi.resetModules();
+    }
+  }
+
+  it("renders a copy-pasteable install snippet for linux x64", async () => {
+    await withMockedHost({ platform: "linux", arch: "x64" }, (mod) => {
       const message = mod.formatGoBinaryNotFoundError(TRIED);
       expect(message).toContain(
         `https://github.com/supabase/cli/releases/download/v${PINNED_VERSION}/supabase_${PINNED_VERSION}_linux_amd64.tar.gz`,
       );
       expect(message).toContain(`mkdir -p "$HOME/.local/share/supabase"`);
       expect(message).toContain(`export PATH="$HOME/.local/share/supabase:$PATH"`);
-    } finally {
-      vi.doUnmock("../cli/version.ts");
-      vi.resetModules();
-    }
+    });
   });
 
-  it("omits the snippet on Windows (different asset format than tar.gz)", async () => {
-    vi.resetModules();
-    vi.doMock("../cli/version.ts", () => ({ CLI_VERSION: PINNED_VERSION }));
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
-    try {
-      const mod = await import("./go-proxy.layer.ts");
+  it("maps Node's win32 platform to the release asset's `windows` slug", async () => {
+    // Release pipeline publishes `.tar.gz` for every (platform, arch) pair,
+    // Windows included, so the snippet renders on win32 too — just with the
+    // modern `windows` slug instead of Node's historical `win32`.
+    await withMockedHost({ platform: "win32", arch: "x64" }, (mod) => {
+      const message = mod.formatGoBinaryNotFoundError(TRIED);
+      expect(message).toContain(
+        `https://github.com/supabase/cli/releases/download/v${PINNED_VERSION}/supabase_${PINNED_VERSION}_windows_amd64.tar.gz`,
+      );
+      // Never emit Node's internal `win32` token in the user-facing URL.
+      expect(message).not.toContain("win32");
+    });
+  });
+
+  it("maps darwin arm64 to the matching release asset", async () => {
+    await withMockedHost({ platform: "darwin", arch: "arm64" }, (mod) => {
+      expect(mod.formatGoBinaryNotFoundError(TRIED)).toContain(
+        `supabase_${PINNED_VERSION}_darwin_arm64.tar.gz`,
+      );
+    });
+  });
+
+  it("omits the snippet on unsupported architectures (no release asset)", async () => {
+    // ia32 has never been a release target — the snippet should not invent a URL.
+    await withMockedHost({ platform: "linux", arch: "ia32" }, (mod) => {
       expect(mod.formatGoBinaryNotFoundError(TRIED)).not.toContain("curl -sL");
-    } finally {
-      Object.defineProperty(process, "platform", {
-        value: originalPlatform,
-        configurable: true,
-      });
-      vi.doUnmock("../cli/version.ts");
-      vi.resetModules();
-    }
+    });
   });
 });
 
