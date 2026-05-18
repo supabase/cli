@@ -73,7 +73,7 @@ The live daemon socket is runtime state and lives under the OS temp directory, n
 
 Project-scoped service version state such as `.supabase/project.json` and
 `.supabase/local-versions.json` is documented separately in
-[`service-versioning.md`](/Users/jgoux/Code/supabase/dx-labs/packages/stack/docs/service-versioning.md).
+[`service-versioning.md`](./service-versioning.md).
 
 ### State File Formats
 
@@ -110,7 +110,7 @@ Project-scoped service version state such as `.supabase/project.json` and
 {
   "pid": 12345,
   "name": "default",
-  "projectDir": "/Users/jgoux/Code/myapp",
+  "projectDir": "<project-root>",
   "apiPort": 54321,
   "dbPort": 54322,
   "socketPath": "/tmp/supabase/s-123456789abc/daemon.sock",
@@ -347,8 +347,8 @@ within that project. This works from any nested directory inside the project.
 
 **Examples:**
 
-- cwd = `/Users/jgoux/Code/myapp/src/components/`
-- discovered project root = `/Users/jgoux/Code/myapp`
+- cwd = `<project-root>/src/components/`
+- discovered project root = `<project-root>`
 - resolved stack = `.supabase/stacks/default`
 
 **Edge cases:**
