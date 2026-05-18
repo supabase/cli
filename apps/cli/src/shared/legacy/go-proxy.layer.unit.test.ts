@@ -158,21 +158,76 @@ function mockSpawner(exit: ExitBehavior, spawnedBeforeExit?: Deferred.Deferred<v
 const TEST_BINARY = "/test/fake-supabase-go";
 
 describe("formatGoBinaryNotFoundError", () => {
+  const TRIED = [
+    "$SUPABASE_GO_BINARY (unset)",
+    "/usr/local/bin/supabase-go (not found alongside the shim)",
+    "@supabase/cli-linux-x64 (npm package not installed)",
+  ];
+
   it("renders each tried location as a bullet and includes remediation hints", () => {
-    const message = formatGoBinaryNotFoundError([
-      "$SUPABASE_GO_BINARY (unset)",
-      "/usr/local/bin/supabase-go (not found alongside the shim)",
-      "@supabase/cli-linux-x64 (npm package not installed)",
-    ]);
+    const message = formatGoBinaryNotFoundError(TRIED);
     expect(message).toContain("Could not find the `supabase-go` binary");
     expect(message).toContain("  • $SUPABASE_GO_BINARY (unset)");
     expect(message).toContain("  • /usr/local/bin/supabase-go (not found alongside the shim)");
     expect(message).toContain("  • @supabase/cli-linux-x64 (npm package not installed)");
     expect(message).toContain("npm i -g supabase");
     expect(message).toContain("SUPABASE_GO_BINARY");
-    expect(message).toContain(
-      "https://supabase.com/docs/guides/local-development/cli/getting-started",
-    );
+  });
+
+  it("omits the curl|tar snippet on dev builds (no CLI_VERSION baked in)", () => {
+    // The vitest run does not go through the production bundler, so
+    // CLI_VERSION resolves to the "0.0.0-dev" sentinel from version.ts and
+    // the snippet is suppressed — we have nothing concrete to point at.
+    const message = formatGoBinaryNotFoundError(TRIED);
+    expect(message).not.toContain("curl -sL");
+    // The prose remediation steps still appear so users have actionable hints.
+    expect(message).toContain("Extract the release tarball");
+  });
+});
+
+// The version- and platform-pinned curl|tar snippet exercised below
+// instantiates a fresh module instance with a stubbed CLI_VERSION so we can
+// assert against a known release version + asset filename. The fixture lives
+// in a child `describe` so it doesn't bleed module mocks into other suites.
+describe("formatGoBinaryNotFoundError - pinned snippet", () => {
+  const TRIED = ["$SUPABASE_GO_BINARY (unset)"];
+  const PINNED_VERSION = "2.100.0";
+
+  it("renders a copy-pasteable install snippet for linux x64", async () => {
+    vi.resetModules();
+    vi.doMock("../cli/version.ts", () => ({ CLI_VERSION: PINNED_VERSION }));
+    Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+    Object.defineProperty(process, "arch", { value: "x64", configurable: true });
+    try {
+      const mod = await import("./go-proxy.layer.ts");
+      const message = mod.formatGoBinaryNotFoundError(TRIED);
+      expect(message).toContain(
+        `https://github.com/supabase/cli/releases/download/v${PINNED_VERSION}/supabase_${PINNED_VERSION}_linux_amd64.tar.gz`,
+      );
+      expect(message).toContain(`mkdir -p "$HOME/.local/share/supabase"`);
+      expect(message).toContain(`export PATH="$HOME/.local/share/supabase:$PATH"`);
+    } finally {
+      vi.doUnmock("../cli/version.ts");
+      vi.resetModules();
+    }
+  });
+
+  it("omits the snippet on Windows (different asset format than tar.gz)", async () => {
+    vi.resetModules();
+    vi.doMock("../cli/version.ts", () => ({ CLI_VERSION: PINNED_VERSION }));
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    try {
+      const mod = await import("./go-proxy.layer.ts");
+      expect(mod.formatGoBinaryNotFoundError(TRIED)).not.toContain("curl -sL");
+    } finally {
+      Object.defineProperty(process, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+      vi.doUnmock("../cli/version.ts");
+      vi.resetModules();
+    }
   });
 });
 

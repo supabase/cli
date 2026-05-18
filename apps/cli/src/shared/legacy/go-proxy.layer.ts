@@ -6,6 +6,7 @@ import process from "node:process";
 import { Effect, Layer } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import { CLI_VERSION } from "../cli/version.ts";
 import { ProcessControl } from "../runtime/process-control.service.ts";
 import { LegacyGoProxy } from "./go-proxy.service.ts";
 
@@ -67,7 +68,29 @@ function resolveBinary(): BinaryResolution {
   return { notFound: tried };
 }
 
+/**
+ * Build a concrete `curl | tar` install snippet for the host platform, using
+ * the version baked into this shim at build time (`CLI_VERSION`). Returns
+ * null on Windows (different asset format) or when the version is the dev
+ * sentinel — in those cases the diagnostic falls back to the generic
+ * prose-only remediation steps.
+ */
+function reinstallTarballSnippet(): ReadonlyArray<string> | null {
+  if (CLI_VERSION === "0.0.0-dev") return null;
+  if (process.platform !== "linux" && process.platform !== "darwin") return null;
+  const archSuffix = os.arch() === "x64" ? "amd64" : os.arch() === "arm64" ? "arm64" : null;
+  if (archSuffix === null) return null;
+  const asset = `supabase_${CLI_VERSION}_${process.platform}_${archSuffix}.tar.gz`;
+  return [
+    `      mkdir -p "$HOME/.local/share/supabase"`,
+    `      curl -sL https://github.com/supabase/cli/releases/download/v${CLI_VERSION}/${asset} \\`,
+    `        | tar -xzf - -C "$HOME/.local/share/supabase"`,
+    `      export PATH="$HOME/.local/share/supabase:$PATH"`,
+  ];
+}
+
 export function formatGoBinaryNotFoundError(tried: ReadonlyArray<string>): string {
+  const snippet = reinstallTarballSnippet();
   return [
     "Could not find the `supabase-go` binary.",
     "",
@@ -80,10 +103,9 @@ export function formatGoBinaryNotFoundError(tried: ReadonlyArray<string>): strin
     "To fix, do one of:",
     "  • Extract the release tarball into a directory and add the directory to",
     "    PATH (do not move `supabase` somewhere `supabase-go` doesn't follow).",
+    ...(snippet === null ? [] : ["    For example, on this host:", "", ...snippet, ""]),
     "  • Install via npm: `npm i -g supabase`.",
     "  • Set SUPABASE_GO_BINARY to the absolute path of `supabase-go`.",
-    "",
-    "Docs: https://supabase.com/docs/guides/local-development/cli/getting-started",
   ].join("\n");
 }
 
