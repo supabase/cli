@@ -1,5 +1,6 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { withHidden } from "../../../../shared/cli/hidden-flag.ts";
 import { legacyFunctionsDownload } from "./download.handler.ts";
 
 const config = {
@@ -13,6 +14,14 @@ const config = {
   ),
   useApi: Flag.boolean("use-api").pipe(
     Flag.withDescription("Unbundle functions server-side without using Docker."),
+  ),
+  useDocker: withHidden(
+    Flag.boolean("use-docker").pipe(
+      Flag.withDescription("Use Docker to unbundle functions locally."),
+    ),
+  ),
+  legacyBundle: withHidden(
+    Flag.boolean("legacy-bundle").pipe(Flag.withDescription("Use legacy bundling.")),
   ),
 } as const;
 
