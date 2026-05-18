@@ -307,3 +307,96 @@ jobs:
         run: pnpm exec bun apps/cli/scripts/update-scoop.ts --version ${{ inputs.version }} --name ${{ inputs.scoop_name }}
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+  # Symmetric e2e against supabase/setup-cli. We hit this on every beta
+  # release (push to develop) so any CLI packaging/build change that
+  # breaks the action is caught here, before the same bytes flow to the
+  # stable channel on main. CLI-1478 / CLI-1475 (the v2.99 archive
+  # layout change) is the canonical regression this job guards against.
+  notify-setup-cli-e2e:
+    needs: publish
+    if: ${{ !inputs.dry_run && inputs.channel == 'beta' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      # The app must be installed on supabase/setup-cli with
+      # `contents: write` (for repository_dispatch) and `actions: read`
+      # (so we can watch the resulting run). Same App ID / private key
+      # already used for homebrew-tap and scoop-bucket.
+      - name: Generate setup-cli dispatch token
+        id: app-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            setup-cli
+
+      - name: Dispatch cli-released event to setup-cli
+        id: dispatch
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          OWNER: ${{ github.repository_owner }}
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+          SOURCE_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # Stamp the dispatch with the source run URL so the resulting
+          # setup-cli run is traceable back to the cli release that
+          # produced it. `dispatched_at` is the lookup key we use below
+          # to find the run we just triggered (gh api `dispatches` is
+          # fire-and-forget and returns no run id).
+          dispatched_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          gh api "repos/${OWNER}/setup-cli/dispatches" \
+            --method POST \
+            --field event_type=cli-released \
+            --raw-field "client_payload[version]=${VERSION}" \
+            --raw-field "client_payload[channel]=${CHANNEL}" \
+            --raw-field "client_payload[source_run]=${SOURCE_RUN}" \
+            --raw-field "client_payload[dispatched_at]=${dispatched_at}"
+          echo "dispatched_at=${dispatched_at}" >> "$GITHUB_OUTPUT"
+          echo "Dispatched cli-released event for v${VERSION} (channel=${CHANNEL}) to ${OWNER}/setup-cli"
+
+      - name: Locate triggered setup-cli e2e run
+        id: locate
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          OWNER: ${{ github.repository_owner }}
+          DISPATCHED_AT: ${{ steps.dispatch.outputs.dispatched_at }}
+        run: |
+          set -euo pipefail
+          run_id=""
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            run_id=$(gh run list \
+              --repo "${OWNER}/setup-cli" \
+              --workflow=e2e.yml \
+              --event=repository_dispatch \
+              --limit=10 \
+              --json databaseId,createdAt \
+              --jq "[.[] | select(.createdAt >= \"${DISPATCHED_AT}\")] | first | .databaseId" || true)
+            if [[ -n "$run_id" && "$run_id" != "null" ]]; then
+              break
+            fi
+            sleep 10
+          done
+          if [[ -z "$run_id" || "$run_id" == "null" ]]; then
+            echo "::error::Could not locate setup-cli e2e run dispatched at ${DISPATCHED_AT}"
+            exit 1
+          fi
+          echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
+          echo "setup-cli e2e run: ${{ github.server_url }}/${OWNER}/setup-cli/actions/runs/${run_id}"
+
+      - name: Watch setup-cli e2e run
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          OWNER: ${{ github.repository_owner }}
+          RUN_ID: ${{ steps.locate.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          gh run watch \
+            --repo "${OWNER}/setup-cli" \
+            --exit-status \
+            --interval 30 \
+            "${RUN_ID}"
