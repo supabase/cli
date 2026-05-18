@@ -76,36 +76,6 @@ if (!hasDocker) {
     output: string;
   }
 
-  // Pull images serially before the parallel fan-out below. Eight concurrent
-  // `docker run` calls otherwise race on first-time image pulls (especially for
-  // arm64 variants going through QEMU), which surfaces as docker exit 125
-  // ("daemon could not start the container") on a subset of jobs.
-  const images: ReadonlyArray<{ image: string; platform: string }> = [
-    { image: "debian:bookworm-slim", platform: "linux/amd64" },
-    { image: "debian:bookworm-slim", platform: "linux/arm64" },
-    { image: "amazonlinux:2023", platform: "linux/amd64" },
-    { image: "amazonlinux:2023", platform: "linux/arm64" },
-    { image: "alpine:3.21", platform: "linux/amd64" },
-    { image: "alpine:3.21", platform: "linux/arm64" },
-  ];
-  for (const { image, platform } of images) {
-    console.log(`[pull] ${platform} ${image}`);
-    let lastErr: unknown;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      const result = await $`docker pull --platform ${platform} ${image}`.nothrow().quiet();
-      if (result.exitCode === 0) {
-        lastErr = undefined;
-        break;
-      }
-      lastErr = result.stderr.toString().trim() || `exit ${result.exitCode}`;
-      console.log(`[pull] attempt ${attempt} failed: ${lastErr}`);
-    }
-    if (lastErr !== undefined) {
-      console.error(`[pull] FAIL — ${platform} ${image}: ${lastErr}`);
-      process.exit(1);
-    }
-  }
-
   async function runDockerTest(
     name: string,
     image: string,
