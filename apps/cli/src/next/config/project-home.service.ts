@@ -1,5 +1,5 @@
 import type { Effect } from "effect";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 
 interface ProjectHomeShape {
   readonly projectRoot: string;
@@ -15,6 +15,6 @@ interface ProjectHomeShape {
   readonly stackLogsDir: (name: string) => string;
 }
 
-export class ProjectHome extends ServiceMap.Service<ProjectHome, ProjectHomeShape>()(
+export class ProjectHome extends Context.Service<ProjectHome, ProjectHomeShape>()(
   "supabase/config/ProjectHome",
 ) {}

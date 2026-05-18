@@ -1,4 +1,4 @@
-import { Data, Effect, ServiceMap } from "effect";
+import { Data, Effect, Context } from "effect";
 
 export class UnixHttpClientError extends Data.TaggedError("UnixHttpClientError")<{
   readonly socketPath: string;
@@ -6,7 +6,7 @@ export class UnixHttpClientError extends Data.TaggedError("UnixHttpClientError")
   readonly cause: unknown;
 }> {}
 
-export class UnixHttpClient extends ServiceMap.Service<
+export class UnixHttpClient extends Context.Service<
   UnixHttpClient,
   {
     readonly request: (

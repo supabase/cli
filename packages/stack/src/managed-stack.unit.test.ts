@@ -129,7 +129,7 @@ function setup() {
   return { layer, files: fsm.files };
 }
 
-const makeStateManager = StateManager.asEffect().pipe(
+const makeStateManager = StateManager.pipe(
   Effect.provide(
     StateManager.make(projectStateManagerPaths("/test-home", "/Users/test/Code/myapp")),
   ),
