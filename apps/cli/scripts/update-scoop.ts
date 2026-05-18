@@ -1,9 +1,11 @@
 import { $ } from "bun";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+
+import { buildScoopManifest, readChecksums } from "./lib/scoop-manifest.ts";
 
 const { values } = parseArgs({
   options: {
@@ -35,63 +37,19 @@ const dryRun = values["dry-run"]!;
 // beta can coexist in the same bucket. Matches the Go CLI's historical
 // scoop-bucket layout (`supabase.json` and `supabase-beta.json` both shim
 // `supabase.exe`).
-const binEntry = "supabase.exe";
 const root = path.resolve(import.meta.dir, "../../..");
 const distDir = path.join(root, "dist");
 
-// Parse checksums
-const checksums = new Map<string, string>();
-const checksumsText = await readFile(path.join(distDir, "checksums.txt"), "utf-8");
-for (const line of checksumsText.trim().split("\n")) {
-  const [hash, file] = line.split(/\s+/) as [string, string];
-  checksums.set(file, hash);
-}
-
-function sha(file: string): string {
-  const hash = checksums.get(file);
-  if (!hash) throw new Error(`Checksum not found for ${file}`);
-  return hash;
-}
-
-// Scoop supports file:// URLs for local testing
-const baseUrl = local
-  ? `file:///${distDir.replace(/\\/g, "/")}`
-  : `https://github.com/${repo}/releases/download/v${version}`;
-
-const manifest = {
+const checksums = await readChecksums(path.join(distDir, "checksums.txt"));
+const { json: manifestJson } = buildScoopManifest({
   version,
-  description: "Supabase CLI",
-  homepage: "https://supabase.com",
-  license: "MIT",
-  architecture: {
-    "64bit": {
-      url: `${baseUrl}/supabase_${version}_windows_amd64.zip`,
-      hash: sha(`supabase_${version}_windows_amd64.zip`),
-      bin: [binEntry],
-    },
-    arm64: {
-      url: `${baseUrl}/supabase_${version}_windows_arm64.zip`,
-      hash: sha(`supabase_${version}_windows_arm64.zip`),
-      bin: [binEntry],
-    },
-  },
-  checkver: {
-    github: `https://github.com/${repo}`,
-  },
-  autoupdate: {
-    architecture: {
-      "64bit": {
-        url: `https://github.com/${repo}/releases/download/v$version/supabase_$version_windows_amd64.zip`,
-      },
-      arm64: {
-        url: `https://github.com/${repo}/releases/download/v$version/supabase_$version_windows_arm64.zip`,
-      },
-    },
-  },
-};
+  repo,
+  checksums,
+  local,
+  distDir,
+});
 
 const manifestFileName = `${name}.json`;
-const manifestJson = `${JSON.stringify(manifest, null, 4)}\n`;
 const manifestOut = path.join(distDir, manifestFileName);
 await writeFile(manifestOut, manifestJson);
 console.log(`Manifest written to ${manifestOut}`);
