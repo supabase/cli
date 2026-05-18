@@ -15,9 +15,7 @@ const config = {
     Flag.withDescription("Overwrite existing supabase/config.toml."),
   ),
   withVscodeWorkspace: withHidden(
-    Flag.boolean("with-vscode-workspace").pipe(
-      Flag.withDescription("Generate VS Code workspace."),
-    ),
+    Flag.boolean("with-vscode-workspace").pipe(Flag.withDescription("Generate VS Code workspace.")),
   ),
   withVscodeSettings: withHidden(
     Flag.boolean("with-vscode-settings").pipe(
