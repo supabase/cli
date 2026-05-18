@@ -22,6 +22,6 @@ jobs:
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-      - run: gh pr create -B main -H develop --title 'Prod deploy' --label 'do not merge' --fill
+      - run: "gh pr create -B main -H develop --title 'chore: production deploy' --label 'do not merge' --fill"
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
