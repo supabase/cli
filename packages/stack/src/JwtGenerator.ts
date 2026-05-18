@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { Effect, Layer, ServiceMap } from "effect";
+import { Effect, Layer, Context } from "effect";
 
 // Hardcoded opaque key defaults matching Go CLI (pkg/config/apikeys.go:19-20).
 // These are client-facing keys for local dev — SDKs use these, not JWTs directly.
@@ -39,7 +39,7 @@ export function generateJwks(secret: string): string {
   });
 }
 
-export class JwtGenerator extends ServiceMap.Service<
+export class JwtGenerator extends Context.Service<
   JwtGenerator,
   {
     readonly generate: (secret: string, role: string) => Effect.Effect<string>;

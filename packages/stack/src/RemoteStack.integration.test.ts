@@ -164,7 +164,7 @@ describe("RemoteStack integration", () => {
   beforeAll(async () => {
     mock = mockStack();
     serverRuntime = ManagedRuntime.make(buildServerLayer(mock));
-    const daemon = await serverRuntime.runPromise(DaemonServer.asEffect());
+    const daemon = await serverRuntime.runPromise(DaemonServer);
 
     // Build RemoteStack layer targeting the server's TCP address.
     // RemoteStack uses Bun's `fetch({ unix })` but we test with TCP here
@@ -291,15 +291,13 @@ describe("RemoteStack integration", () => {
   });
 
   test("getInfo returns stack info", async () => {
-    const info = await clientRuntime.runPromise(
-      Effect.flatMap(Stack.asEffect(), (stack) => stack.getInfo()),
-    );
+    const info = await clientRuntime.runPromise(Effect.flatMap(Stack, (stack) => stack.getInfo()));
     expect(info).toEqual(MOCK_INFO);
   });
 
   test("getAllStates returns service states", async () => {
     const states = await clientRuntime.runPromise(
-      Effect.flatMap(Stack.asEffect(), (stack) => stack.getAllStates()),
+      Effect.flatMap(Stack, (stack) => stack.getAllStates()),
     );
     expect(states).toHaveLength(2);
     expect(states.at(0)?.name).toBe("postgres");
@@ -308,7 +306,7 @@ describe("RemoteStack integration", () => {
 
   test("getState returns a single service state", async () => {
     const state = await clientRuntime.runPromise(
-      Effect.flatMap(Stack.asEffect(), (stack) => stack.getState("postgres")),
+      Effect.flatMap(Stack, (stack) => stack.getState("postgres")),
     );
     expect(state.name).toBe("postgres");
     expect(state.status).toBe("Running");
@@ -316,42 +314,40 @@ describe("RemoteStack integration", () => {
 
   test("getState fails for unknown service", async () => {
     const exit = await clientRuntime.runPromiseExit(
-      Effect.flatMap(Stack.asEffect(), (stack) => stack.getState("unknown")),
+      Effect.flatMap(Stack, (stack) => stack.getState("unknown")),
     );
     expect(exit._tag).toBe("Failure");
   });
 
   test("startService records the call", async () => {
     await clientRuntime.runPromise(
-      Effect.flatMap(Stack.asEffect(), (stack) => stack.startService("postgres")),
+      Effect.flatMap(Stack, (stack) => stack.startService("postgres")),
     );
     expect(mock.serviceCalls).toContain("start:postgres");
   });
 
   test("startService fails for unknown service", async () => {
     const exit = await clientRuntime.runPromiseExit(
-      Effect.flatMap(Stack.asEffect(), (stack) => stack.startService("unknown")),
+      Effect.flatMap(Stack, (stack) => stack.startService("unknown")),
     );
     expect(exit._tag).toBe("Failure");
   });
 
   test("stopService records the call", async () => {
-    await clientRuntime.runPromise(
-      Effect.flatMap(Stack.asEffect(), (stack) => stack.stopService("auth")),
-    );
+    await clientRuntime.runPromise(Effect.flatMap(Stack, (stack) => stack.stopService("auth")));
     expect(mock.serviceCalls).toContain("stop:auth");
   });
 
   test("restartService records the call", async () => {
     await clientRuntime.runPromise(
-      Effect.flatMap(Stack.asEffect(), (stack) => stack.restartService("postgres")),
+      Effect.flatMap(Stack, (stack) => stack.restartService("postgres")),
     );
     expect(mock.serviceCalls).toContain("restart:postgres");
   });
 
   test("reloadEdgeRuntime records the call", async () => {
     await clientRuntime.runPromise(
-      Effect.flatMap(Stack.asEffect(), (stack) =>
+      Effect.flatMap(Stack, (stack) =>
         stack.reloadEdgeRuntime({ edgeRuntime: { policy: "oneshot" } }),
       ),
     );
@@ -360,7 +356,7 @@ describe("RemoteStack integration", () => {
 
   test("logHistory returns entries", async () => {
     const entries = await clientRuntime.runPromise(
-      Effect.flatMap(Stack.asEffect(), (stack) => stack.logHistory("postgres")),
+      Effect.flatMap(Stack, (stack) => stack.logHistory("postgres")),
     );
     expect(entries).toHaveLength(2);
     expect(entries.at(0)?.line).toBe("starting");
@@ -368,7 +364,7 @@ describe("RemoteStack integration", () => {
 
   test("logHistory respects limit", async () => {
     const entries = await clientRuntime.runPromise(
-      Effect.flatMap(Stack.asEffect(), (stack) => stack.logHistory("postgres", 1)),
+      Effect.flatMap(Stack, (stack) => stack.logHistory("postgres", 1)),
     );
     expect(entries).toHaveLength(1);
     expect(entries.at(0)?.line).toBe("ready");
@@ -376,14 +372,14 @@ describe("RemoteStack integration", () => {
 
   test("logHistoryAll returns merged entries", async () => {
     const entries = await clientRuntime.runPromise(
-      Effect.flatMap(Stack.asEffect(), (stack) => stack.logHistoryAll(3)),
+      Effect.flatMap(Stack, (stack) => stack.logHistoryAll(3)),
     );
     expect(entries.map((entry) => entry.line)).toEqual(["starting", "ready", "auth started"]);
   });
 
   test("logHistoryAll respects service filters", async () => {
     const entries = await clientRuntime.runPromise(
-      Effect.flatMap(Stack.asEffect(), (stack) => stack.logHistoryAll(10, ["auth"])),
+      Effect.flatMap(Stack, (stack) => stack.logHistoryAll(10, ["auth"])),
     );
     expect(entries).toHaveLength(1);
     expect(entries.at(0)?.service).toBe("auth");
@@ -394,7 +390,7 @@ describe("RemoteStack integration", () => {
     const freshMock = mockStack();
     const freshServer = ManagedRuntime.make(buildServerLayer(freshMock));
     try {
-      const daemon = await freshServer.runPromise(DaemonServer.asEffect());
+      const daemon = await freshServer.runPromise(DaemonServer);
       const addr = daemon.address;
       if (addr._tag !== "TcpAddress") throw new Error("Expected TcpAddress");
       const host = addr.hostname === "0.0.0.0" ? "127.0.0.1" : addr.hostname;
