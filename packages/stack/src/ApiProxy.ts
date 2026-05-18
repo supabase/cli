@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, ServiceMap } from "effect";
+import { Effect, Layer, Option, Context } from "effect";
 import {
   Headers,
   HttpBody,
@@ -163,7 +163,7 @@ function makeProxyHandler(
     );
 }
 
-export class ApiProxy extends ServiceMap.Service<
+export class ApiProxy extends Context.Service<
   ApiProxy,
   {
     readonly address: HttpServer.Address;

@@ -1,5 +1,5 @@
 import type { Effect } from "effect";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 
 interface AnalyticsShape {
   readonly capture: (event: string, properties?: Record<string, unknown>) => Effect.Effect<void>;
@@ -15,6 +15,6 @@ interface AnalyticsShape {
   ) => Effect.Effect<void>;
 }
 
-export class Analytics extends ServiceMap.Service<Analytics, AnalyticsShape>()(
+export class Analytics extends Context.Service<Analytics, AnalyticsShape>()(
   "supabase/telemetry/Analytics",
 ) {}

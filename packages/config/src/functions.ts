@@ -1,5 +1,5 @@
 import dedent from "dedent";
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { env } from "./lib/env.ts";
 
 const tags = ["functions"];
@@ -30,7 +30,7 @@ const func = Schema.Struct({
     `,
     tags,
     links,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultEnabled)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnabled))),
   verify_jwt: Schema.Boolean.annotate({
     default: defaultVerifyJwt,
     description: dedent`
@@ -38,19 +38,19 @@ const func = Schema.Struct({
     `,
     tags,
     links,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultVerifyJwt)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultVerifyJwt))),
   import_map: Schema.String.annotate({
     default: defaultImportMap,
     description: "Import map file to use for the Function.",
     tags,
     links,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultImportMap)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultImportMap))),
   entrypoint: Schema.String.annotate({
     default: defaultEntrypoint,
     description: 'Entrypoint path to the Function. Defaults to "functions/slug/index.ts".',
     tags,
     links,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultEntrypoint)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEntrypoint))),
   static_files: Schema.Array(
     Schema.String.annotate({
       description: "Static file glob for the function.",
@@ -64,7 +64,7 @@ const func = Schema.Struct({
       tags,
       links,
     })
-    .pipe(Schema.withDecodingDefaultKey(() => [...defaultStaticFiles])),
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed([...defaultStaticFiles]))),
   env: Schema.Record(
     envName.annotate({
       description: "Environment variable name exposed to the Function.",
@@ -82,8 +82,8 @@ const func = Schema.Struct({
       tags,
       links,
     })
-    .pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultEnv }))),
-}).pipe(Schema.withDecodingDefault(() => ({ ...defaultFunction })));
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultEnv }))),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({ ...defaultFunction })));
 
 export const functions = Schema.Record(functionName, func)
   .annotate({
@@ -91,4 +91,4 @@ export const functions = Schema.Record(functionName, func)
     description: "Function-specific configuration keyed by function slug.",
     tags,
   })
-  .pipe(Schema.withDecodingDefault(() => ({ ...defaultFunctions })));
+  .pipe(Schema.withDecodingDefault(Effect.succeed({ ...defaultFunctions })));

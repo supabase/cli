@@ -699,7 +699,7 @@ export async function createStack(
   const runtime = ManagedRuntime.make(fullLayer);
 
   try {
-    const services = await runtime.services();
+    const services = await runtime.context();
     const localStack = await runtime.runPromise(
       Effect.gen(function* () {
         return yield* Stack;

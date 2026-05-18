@@ -1,5 +1,5 @@
 import type { Effect } from "effect";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 import type { LoadedProjectConfig, SaveProjectConfigOptions } from "./io.ts";
 
 interface ProjectConfigStoreShape {
@@ -8,7 +8,7 @@ interface ProjectConfigStoreShape {
   readonly save: (options: SaveProjectConfigOptions) => Effect.Effect<LoadedProjectConfig, unknown>;
 }
 
-export class ProjectConfigStore extends ServiceMap.Service<
+export class ProjectConfigStore extends Context.Service<
   ProjectConfigStore,
   ProjectConfigStoreShape
 >()("@supabase/config/ProjectConfigStore") {}

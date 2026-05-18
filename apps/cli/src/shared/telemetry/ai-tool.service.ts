@@ -1,10 +1,8 @@
 import type { Option } from "effect";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 
 interface AiToolShape {
   readonly name: Option.Option<string>;
 }
 
-export class AiTool extends ServiceMap.Service<AiTool, AiToolShape>()(
-  "supabase/telemetry/AiTool",
-) {}
+export class AiTool extends Context.Service<AiTool, AiToolShape>()("supabase/telemetry/AiTool") {}
