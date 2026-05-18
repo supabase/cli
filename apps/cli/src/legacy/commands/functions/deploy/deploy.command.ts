@@ -16,6 +16,11 @@ const config = {
   useApi: Flag.boolean("use-api").pipe(
     Flag.withDescription("Bundle functions server-side without using Docker."),
   ),
+  jobs: Flag.integer("jobs").pipe(
+    Flag.withAlias("j"),
+    Flag.withDescription("Maximum number of parallel jobs."),
+    Flag.optional,
+  ),
   importMap: Flag.string("import-map").pipe(
     Flag.withDescription("Path to import map file."),
     Flag.optional,
@@ -34,6 +39,7 @@ export const legacyFunctionsDeployCommand = Command.make("deploy", config).pipe(
       projectRef: flags.projectRef,
       noVerifyJwt: flags.noVerifyJwt,
       useApi: flags.useApi,
+      jobs: flags.jobs,
       importMap: flags.importMap,
       prune: flags.prune,
     }),
