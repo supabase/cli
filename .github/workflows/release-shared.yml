@@ -313,6 +313,9 @@ jobs:
     # Stable channel only — beta lives in our own bucket, never PR'd upstream.
     if: ${{ !inputs.dry_run && inputs.scoop_name == 'supabase' }}
     runs-on: ubuntu-latest
+    # Best-effort: the upstream excavator bot will catch us up within a few
+    # hours regardless, so a failure here should not fail the release.
+    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
