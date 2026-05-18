@@ -203,6 +203,17 @@ jobs:
             git push origin "${note_ref}"
           fi
 
+      # goreleaser used to publish both supabase_<version>_<os>_<arch>.tar.gz and
+      # supabase_<os>_<arch>.tar.gz; setup-cli, install scripts, docs and various
+      # third-party tools point at releases/latest/download/<unversioned>.tar.gz.
+      # Re-publish the alias so those callers keep working. See supabase/cli#5257.
+      - name: Create unversioned tarball aliases
+        run: |
+          set -euo pipefail
+          for triple in darwin_arm64 darwin_amd64 linux_arm64 linux_amd64; do
+            cp "dist/supabase_${{ inputs.version }}_${triple}.tar.gz" "dist/supabase_${triple}.tar.gz"
+          done
+
       - name: Create draft GitHub Release
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
         with:
@@ -224,6 +235,10 @@ jobs:
             dist/supabase_${{ inputs.version }}_windows_amd64.zip
             dist/supabase_${{ inputs.version }}_windows_arm64.zip
             dist/checksums.txt
+            dist/supabase_darwin_arm64.tar.gz
+            dist/supabase_darwin_amd64.tar.gz
+            dist/supabase_linux_arm64.tar.gz
+            dist/supabase_linux_amd64.tar.gz
 
       - name: Publish GitHub Release (immutable)
         env:
