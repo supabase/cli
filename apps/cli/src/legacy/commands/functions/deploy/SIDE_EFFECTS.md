@@ -59,4 +59,5 @@ Not applicable (proxied to Go binary).
 - Uses Docker by default to bundle functions; `--use-api` switches to server-side bundling.
 - `--prune` deletes functions that exist in the Supabase project but not locally.
 - `--jobs` (`-j`) sets the maximum number of parallel deploys; must be combined with `--use-api`.
+- `--use-docker` and `--legacy-bundle` are hidden flags forwarded to the Go binary for backward compatibility; they are mutually exclusive with `--use-api`.
 - Phase 0 proxy: all invocations are forwarded to the bundled Go binary.

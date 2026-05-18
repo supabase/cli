@@ -1,5 +1,6 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { withHidden } from "../../../../shared/cli/hidden-flag.ts";
 import { legacyProjectsCreate } from "./create.handler.ts";
 
 const AWS_REGIONS = [
@@ -65,6 +66,19 @@ const config = {
   size: Flag.choice("size", INSTANCE_SIZES).pipe(
     Flag.withDescription("Select a desired instance size for your project."),
     Flag.optional,
+  ),
+  interactive: withHidden(
+    Flag.boolean("interactive").pipe(
+      Flag.withDescription("Enables interactive mode."),
+      Flag.withAlias("i"),
+      Flag.optional,
+    ),
+  ),
+  plan: withHidden(
+    Flag.string("plan").pipe(
+      Flag.withDescription("Select a plan that suits your needs."),
+      Flag.optional,
+    ),
   ),
 };
 export type LegacyProjectsCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
