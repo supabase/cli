@@ -1,9 +1,9 @@
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Layer, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { type CliProcessSignal, ProcessControl } from "../runtime/process-control.service.ts";
 import { LegacyGoProxy } from "./go-proxy.service.ts";
-import { makeGoProxyLayer } from "./go-proxy.layer.ts";
+import { formatGoBinaryNotFoundError, makeGoProxyLayer } from "./go-proxy.layer.ts";
 
 /**
  * Regression tests for the SIGINT propagation fix in go-proxy.layer.ts.
@@ -157,6 +157,25 @@ function mockSpawner(exit: ExitBehavior, spawnedBeforeExit?: Deferred.Deferred<v
  */
 const TEST_BINARY = "/test/fake-supabase-go";
 
+describe("formatGoBinaryNotFoundError", () => {
+  it("renders each tried location as a bullet and includes remediation hints", () => {
+    const message = formatGoBinaryNotFoundError([
+      "$SUPABASE_GO_BINARY (unset)",
+      "/usr/local/bin/supabase-go (not found alongside the shim)",
+      "@supabase/cli-linux-x64 (npm package not installed)",
+    ]);
+    expect(message).toContain("Could not find the `supabase-go` binary");
+    expect(message).toContain("  • $SUPABASE_GO_BINARY (unset)");
+    expect(message).toContain("  • /usr/local/bin/supabase-go (not found alongside the shim)");
+    expect(message).toContain("  • @supabase/cli-linux-x64 (npm package not installed)");
+    expect(message).toContain("npm i -g supabase");
+    expect(message).toContain("SUPABASE_GO_BINARY");
+    expect(message).toContain(
+      "https://supabase.com/docs/guides/local-development/cli/getting-started",
+    );
+  });
+});
+
 describe("makeGoProxyLayer", () => {
   it.effect("passes detached:false and inherited stdio to the spawner", () => {
     const spawner = mockSpawner({ kind: "success", code: 0 });
@@ -293,6 +312,41 @@ describe("makeGoProxyLayer", () => {
         { kind: "acquire", id: 0, signals: ["SIGINT", "SIGTERM", "SIGHUP"] },
         { kind: "release", id: 0 },
       ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  // Regression guard for CLI-1488 — the previous `resolveBinary()` returned the
+  // literal string "supabase" when no Go binary was found, which when run from
+  // a PATH that contained the shim would fork-bomb the shim against itself
+  // (silent multi-minute hang in CI followed by SIGTERM). The layer must now
+  // refuse to spawn anything and surface a specific diagnostic + non-zero exit.
+  it.effect("prints a diagnostic and exits 1 when supabase-go cannot be resolved", () => {
+    const spawner = mockSpawner({ kind: "success", code: 0 });
+    const pc = mockProcessControl({ exitBehavior: "terminateDie" });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const tried = [
+      "$SUPABASE_GO_BINARY (unset)",
+      "/usr/local/bin/supabase-go (not found alongside the shim)",
+    ];
+    const layer = makeGoProxyLayer({ binary: { notFound: tried } }).pipe(
+      Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+    );
+    return Effect.gen(function* () {
+      const proxy = yield* LegacyGoProxy;
+      yield* proxy.exec(["db", "start"]).pipe(Effect.exit);
+
+      // Did NOT spawn anything — the whole point is to refuse the fork-bomb.
+      expect(spawner.spawned).toHaveLength(0);
+      // Exited with code 1 via ProcessControl.exit.
+      expect(pc.exitCalls).toEqual([1]);
+      // Wrote the diagnostic to stderr, including each tried location.
+      expect(stderr).toHaveBeenCalledTimes(1);
+      const written = String(stderr.mock.calls[0]![0]);
+      expect(written).toContain("Could not find the `supabase-go` binary");
+      expect(written).toContain("$SUPABASE_GO_BINARY (unset)");
+      expect(written).toContain("/usr/local/bin/supabase-go");
+      expect(written).toContain("SUPABASE_GO_BINARY");
+      stderr.mockRestore();
     }).pipe(Effect.provide(layer));
   });
 

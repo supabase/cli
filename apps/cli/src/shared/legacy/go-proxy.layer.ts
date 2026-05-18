@@ -25,16 +25,30 @@ const PLATFORM_CANDIDATES: Partial<Record<string, Partial<Record<string, Readonl
 
 const require = createRequire(import.meta.url);
 
-function resolveBinary(): string {
+/**
+ * Outcome of looking up `supabase-go`. The `notFound` variant carries the
+ * list of locations the resolver checked so the user-facing error can be
+ * specific about what was tried — no silent fallback that fork-bombs the
+ * shim against itself via PATH (CLI-1488).
+ */
+export type BinaryResolution =
+  | { readonly found: string }
+  | { readonly notFound: ReadonlyArray<string> };
+
+function resolveBinary(): BinaryResolution {
+  const tried: string[] = [];
+
   const envBin = process.env["SUPABASE_GO_BINARY"];
-  if (envBin) return envBin;
+  if (envBin) return { found: envBin };
+  tried.push("$SUPABASE_GO_BINARY (unset)");
 
   const ext = process.platform === "win32" ? ".exe" : "";
 
   // When running as a compiled standalone SFE (exec'd by the base shim via execFileSync),
   // process.execPath is the SFE binary path. Look for supabase-go co-located next to it.
   const colocated = path.join(path.dirname(process.execPath), `supabase-go${ext}`);
-  if (existsSync(colocated)) return colocated;
+  if (existsSync(colocated)) return { found: colocated };
+  tried.push(`${colocated} (not found alongside the shim)`);
 
   // When running from source, resolve via installed npm packages.
   // Guard with existsSync — in dev the workspace stub packages exist but their bin/ is empty.
@@ -43,14 +57,34 @@ function resolveBinary(): string {
     try {
       const pkgPath = path.dirname(require.resolve(`@supabase/cli-${suffix}/package.json`));
       const bin = path.join(pkgPath, "bin", `supabase-go${ext}`);
-      if (existsSync(bin)) return bin;
+      if (existsSync(bin)) return { found: bin };
+      tried.push(`${bin} (npm package present, binary missing)`);
     } catch {
-      // Package not installed — try next candidate.
+      tried.push(`@supabase/cli-${suffix} (npm package not installed)`);
     }
   }
 
-  // Fall back to `supabase` on PATH (useful in CI and development).
-  return "supabase";
+  return { notFound: tried };
+}
+
+export function formatGoBinaryNotFoundError(tried: ReadonlyArray<string>): string {
+  return [
+    "Could not find the `supabase-go` binary.",
+    "",
+    "The Supabase CLI ships as two co-located binaries: `supabase` (this shim)",
+    "and `supabase-go` (the Go CLI that the shim forwards to). The shim looked",
+    "for `supabase-go` in:",
+    "",
+    ...tried.map((line) => `  • ${line}`),
+    "",
+    "To fix, do one of:",
+    "  • Extract the release tarball into a directory and add the directory to",
+    "    PATH (do not move `supabase` somewhere `supabase-go` doesn't follow).",
+    "  • Install via npm: `npm i -g supabase`.",
+    "  • Set SUPABASE_GO_BINARY to the absolute path of `supabase-go`.",
+    "",
+    "Docs: https://supabase.com/docs/guides/local-development/cli/getting-started",
+  ].join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -77,24 +111,45 @@ export function makeGoProxyLayer(opts?: {
   env?: Record<string, string>;
   globalArgs?: ReadonlyArray<string>;
   /**
-   * Override the binary path. Primarily a test seam so specs don't have to
-   * mutate `process.env.SUPABASE_GO_BINARY`. In production, leave unset and
-   * let `resolveBinary()` pick the right artifact for the host platform.
+   * Override binary resolution. Primarily a test seam so specs don't have to
+   * mutate `process.env.SUPABASE_GO_BINARY` or stub the filesystem:
+   *  - `string`              — treat as the resolved Go binary path.
+   *  - `{ notFound: [...] }` — simulate the not-found path; `.exec` will
+   *                            print the diagnostic and exit non-zero.
+   *
+   * In production, leave unset and let `resolveBinary()` pick the right
+   * artifact for the host platform.
    */
-  binary?: string;
+  binary?: string | BinaryResolution;
 }): Layer.Layer<LegacyGoProxy, never, ProcessControl | ChildProcessSpawner> {
   return Layer.effect(
     LegacyGoProxy,
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
       const spawner = yield* ChildProcessSpawner;
-      const binary = opts?.binary ?? resolveBinary();
+      const resolved: BinaryResolution =
+        typeof opts?.binary === "string"
+          ? { found: opts.binary }
+          : (opts?.binary ?? resolveBinary());
       const globalArgs = opts?.globalArgs ?? [];
 
       return LegacyGoProxy.of({
         exec: (args) =>
           Effect.scoped(
             Effect.gen(function* () {
+              if (!("found" in resolved)) {
+                // CLI-1488: never silently fall back to `supabase` on PATH —
+                // when the shim is on PATH and `supabase-go` is not co-located,
+                // that fallback resolves to the shim itself and fork-bombs.
+                // Print a specific diagnostic and exit non-zero instead.
+                yield* Effect.sync(() => {
+                  process.stderr.write(`${formatGoBinaryNotFoundError(resolved.notFound)}\n`);
+                });
+                yield* processControl.exit(1);
+                return;
+              }
+              const binary = resolved.found;
+
               // Hold the terminal-signals on the parent for the duration of
               // the child's lifetime. Rationale:
               //
