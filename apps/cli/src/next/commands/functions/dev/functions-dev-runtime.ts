@@ -8,7 +8,7 @@ import {
   StateManager,
   type EdgeRuntimeConfig,
 } from "@supabase/stack/effect";
-import { Duration, Effect, FileSystem, Layer, Option, ServiceMap, Stream } from "effect";
+import { Duration, Effect, FileSystem, Layer, Option, Stream } from "effect";
 import { join } from "node:path";
 import { CliConfig } from "../../../config/cli-config.service.ts";
 import { ProjectHome } from "../../../config/project-home.service.ts";
@@ -52,7 +52,7 @@ interface FunctionsDevWatchChange {
   readonly touchesProjectConfig: boolean;
 }
 
-type StackService = ServiceMap.Service.Shape<typeof Stack>;
+type StackService = typeof Stack.Service;
 
 function versionsFromContext(context: ResolvedServiceVersionContext) {
   return withServiceVersions(toStartStackConfig([], "auto"), context.runtimeVersions);
@@ -93,7 +93,7 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
 
   const stackLayer = yield* daemonLayer(config, daemonEntryPoint);
   yield* startStackWithProgress().pipe(Effect.provide(stackLayer));
-  const stack = yield* Stack.asEffect().pipe(Effect.provide(stackLayer));
+  const stack = yield* Stack.pipe(Effect.provide(stackLayer));
 
   return { stack, startedByCommand: true };
 });
@@ -117,7 +117,7 @@ export const connectOrStartFunctionsDevStack = Effect.fnUntraced(function* (
   );
 
   if (Option.isSome(existingLayer)) {
-    const stack = yield* Stack.asEffect().pipe(Effect.provide(existingLayer.value));
+    const stack = yield* Stack.pipe(Effect.provide(existingLayer.value));
     return { stack, startedByCommand: false };
   }
 

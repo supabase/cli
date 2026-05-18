@@ -76,9 +76,7 @@ function makeRequest(path: string, init?: RequestInit) {
 
 /** Make a fetch request to the daemon Unix socket. */
 function unixFetch(socketPath: string, path: string, init?: RequestInit) {
-  return Effect.flatMap(UnixHttpClient.asEffect(), (client) =>
-    client.request(socketPath, path, init),
-  );
+  return Effect.flatMap(UnixHttpClient, (client) => client.request(socketPath, path, init));
 }
 
 function unixResponse(socketPath: string, path: string, init?: RequestInit) {

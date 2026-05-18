@@ -10,5 +10,7 @@ export const legacyFunctionsDownload = Effect.fn("legacy.functions.download")(fu
   if (Option.isSome(flags.functionName)) args.push(flags.functionName.value);
   if (Option.isSome(flags.projectRef)) args.push("--project-ref", flags.projectRef.value);
   if (flags.useApi) args.push("--use-api");
+  if (flags.useDocker) args.push("--use-docker");
+  if (flags.legacyBundle) args.push("--legacy-bundle");
   yield* proxy.exec(args);
 });

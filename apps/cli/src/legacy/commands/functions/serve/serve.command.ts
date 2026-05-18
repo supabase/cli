@@ -1,5 +1,6 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { withHidden } from "../../../../shared/cli/hidden-flag.ts";
 import { legacyFunctionsServe } from "./serve.handler.ts";
 
 const INSPECT_MODES = ["run", "brk", "wait"] as const;
@@ -23,6 +24,9 @@ const config = {
   ),
   inspectMain: Flag.boolean("inspect-main").pipe(
     Flag.withDescription("Allow inspecting the main worker."),
+  ),
+  all: withHidden(
+    Flag.boolean("all").pipe(Flag.withDescription("Serve all Functions."), Flag.optional),
   ),
 } as const;
 
