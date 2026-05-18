@@ -23,6 +23,11 @@ const config = {
   prune: Flag.boolean("prune").pipe(
     Flag.withDescription("Delete Functions that exist in Supabase project but not locally."),
   ),
+  jobs: Flag.integer("jobs").pipe(
+    Flag.withAlias("j"),
+    Flag.withDescription("Maximum number of parallel jobs."),
+    Flag.optional,
+  ),
 } as const;
 
 export const legacyFunctionsDeployCommand = Command.make("deploy", config).pipe(
@@ -36,6 +41,7 @@ export const legacyFunctionsDeployCommand = Command.make("deploy", config).pipe(
       useApi: flags.useApi,
       importMap: flags.importMap,
       prune: flags.prune,
+      jobs: flags.jobs,
     }),
   ),
 );
