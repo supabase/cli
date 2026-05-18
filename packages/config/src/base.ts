@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { analytics } from "./analytics.ts";
 import { api } from "./api.ts";
 import { auth } from "./auth/index.ts";
@@ -23,7 +23,7 @@ const remoteProjectId = Schema.String.annotate({
   default: "",
   description: "Remote project reference.",
   tags: ["general"],
-}).pipe(Schema.withDecodingDefaultKey(() => ""));
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed("")));
 
 const baseProjectConfigFields = {
   project_id: projectId,
@@ -53,7 +53,7 @@ const remoteProjectConfig = Schema.Struct({
   storage,
   studio,
   experimental,
-}).pipe(Schema.withDecodingDefault(() => ({})));
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 
 export const ProjectConfigSchema = Schema.Struct({
   ...baseProjectConfigFields,
@@ -63,7 +63,7 @@ export const ProjectConfigSchema = Schema.Struct({
       description: "Remote branch-specific project configuration.",
       tags: ["general"],
     })
-    .pipe(Schema.withDecodingDefault(() => ({}))),
+    .pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 
 export type ProjectConfig = typeof ProjectConfigSchema.Type;

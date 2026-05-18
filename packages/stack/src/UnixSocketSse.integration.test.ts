@@ -121,7 +121,7 @@ describe("Unix socket SSE integration", () => {
       );
 
       try {
-        await runtime.runPromise(DaemonServer.asEffect());
+        await runtime.runPromise(DaemonServer);
 
         const res = await fetch("http://localhost/logs", { unix: socketPath } as RequestInit);
 
@@ -161,10 +161,10 @@ describe("Unix socket SSE integration", () => {
       );
 
       try {
-        await serverRuntime.runPromise(DaemonServer.asEffect());
+        await serverRuntime.runPromise(DaemonServer);
 
         const entries = await clientRuntime.runPromise(
-          Effect.flatMap(Stack.asEffect(), (stack) =>
+          Effect.flatMap(Stack, (stack) =>
             stack.subscribeAllLogs().pipe(Stream.take(1), Stream.runCollect),
           ),
         );

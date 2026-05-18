@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { secret } from "../lib/env.ts";
 
 const tags = ["auth"];
@@ -46,7 +46,7 @@ function requiredWhenEnabled<
 
     return {
       path: [path],
-      message,
+      issue: message,
     };
   });
 }
@@ -55,27 +55,27 @@ const template = Schema.Struct({
   subject: Schema.String.annotate({
     default: defaultSubject,
     description: "Subject line for the email template.",
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultSubject)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultSubject))),
   content_path: Schema.String.annotate({
     default: defaultContentPath,
     description: "Path to the HTML template.",
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultContentPath)),
-}).pipe(Schema.withDecodingDefault(() => ({})));
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultContentPath))),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 
 const notification = Schema.Struct({
   enabled: Schema.Boolean.annotate({
     default: defaultNotificationEnabled,
     description: "Enable the notification email.",
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultNotificationEnabled)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultNotificationEnabled))),
   subject: Schema.String.annotate({
     default: defaultSubject,
     description: "Subject line for the notification email.",
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultSubject)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultSubject))),
   content_path: Schema.String.annotate({
     default: defaultContentPath,
     description: "Path to the HTML notification template.",
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultContentPath)),
-}).pipe(Schema.withDecodingDefault(() => ({})));
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultContentPath))),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 
 export const email = Schema.Struct({
   enable_signup: Schema.Boolean.annotate({
@@ -83,52 +83,52 @@ export const email = Schema.Struct({
     description: "Allow/disallow new user signups via email to your project.",
     tags,
     links: [links.auth],
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultEnableSignup)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnableSignup))),
   double_confirm_changes: Schema.Boolean.annotate({
     default: defaultDoubleConfirmChanges,
     description:
       "If enabled, a user will be required to confirm any email change on both the old and new email addresses.",
     tags,
     links: [links.auth],
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultDoubleConfirmChanges)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultDoubleConfirmChanges))),
   enable_confirmations: Schema.Boolean.annotate({
     default: defaultEnableConfirmations,
     description: "If enabled, users need to confirm their email address before signing in.",
     tags,
     links: [links.auth],
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultEnableConfirmations)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnableConfirmations))),
   secure_password_change: Schema.Boolean.annotate({
     default: defaultSecurePasswordChange,
     description:
       "If enabled, users will need to reauthenticate or have logged in recently to change their password.",
     tags,
     links: [links.auth],
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultSecurePasswordChange)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultSecurePasswordChange))),
   max_frequency: Schema.String.annotate({
     default: defaultMaxFrequency,
     description:
       "Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.",
     tags,
     links: [links.auth],
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultMaxFrequency)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxFrequency))),
   otp_length: Schema.Number.annotate({
     default: defaultOtpLength,
     description: "Number of characters used in the email OTP.",
     tags,
     links: [links.auth],
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultOtpLength)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultOtpLength))),
   otp_expiry: Schema.Number.annotate({
     default: defaultOtpExpiry,
     description: "Number of seconds before the email OTP expires.",
     tags,
     links: [links.auth],
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultOtpExpiry)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultOtpExpiry))),
   smtp: Schema.optionalKey(
     Schema.Struct({
       enabled: Schema.Boolean.annotate({
         default: defaultSmtpEnabled,
         description: "Enable SMTP for email delivery.",
-      }).pipe(Schema.withDecodingDefaultKey(() => defaultSmtpEnabled)),
+      }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultSmtpEnabled))),
       host: Schema.optionalKey(
         Schema.String.annotate({
           description: "Hostname or IP address of the SMTP server.",
@@ -187,7 +187,7 @@ export const email = Schema.Struct({
           "Missing required field in config: auth.email.smtp.admin_email",
         ),
       )
-      .pipe(Schema.withDecodingDefaultKey(() => ({}))),
+      .pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   ),
   template: Schema.Record(templateName, template)
     .annotate({
@@ -196,7 +196,7 @@ export const email = Schema.Struct({
       tags,
       links: [links.auth],
     })
-    .pipe(Schema.withDecodingDefault(() => ({ ...defaultTemplate }))),
+    .pipe(Schema.withDecodingDefault(Effect.succeed({ ...defaultTemplate }))),
   notification: Schema.Record(notificationName, notification)
     .annotate({
       default: defaultNotification,
@@ -204,5 +204,5 @@ export const email = Schema.Struct({
       tags,
       links: [links.auth],
     })
-    .pipe(Schema.withDecodingDefault(() => ({ ...defaultNotification }))),
-}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultEmail })));
+    .pipe(Schema.withDecodingDefault(Effect.succeed({ ...defaultNotification }))),
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultEmail })));

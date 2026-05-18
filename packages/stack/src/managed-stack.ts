@@ -32,7 +32,7 @@ export const resolveManagedStack = (opts: {
     const allStates =
       opts.projectStateRoot === undefined
         ? yield* scanAllManagedStates(opts.cacheRoot)
-        : yield* StateManager.asEffect().pipe(
+        : yield* StateManager.pipe(
             Effect.provide(
               StateManager.make(projectStateManagerPathsFromRoot(opts.projectStateRoot)),
             ),
@@ -75,7 +75,7 @@ export const resolveManagedStack = (opts: {
       return yield* new NoRunningStackError({ cwd });
     }
 
-    const stateManager = yield* StateManager.asEffect().pipe(
+    const stateManager = yield* StateManager.pipe(
       Effect.provide(
         StateManager.make(
           opts.projectStateRoot === undefined

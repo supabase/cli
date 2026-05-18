@@ -1,5 +1,5 @@
 import dedent from "dedent";
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { secret } from "../lib/env.ts";
 
 const tags = ["auth"];
@@ -14,7 +14,7 @@ function requiredWhenEnabled<
 
     return {
       path: [path],
-      message,
+      issue: message,
     };
   });
 }
@@ -48,13 +48,13 @@ const provider = (providerConfig: {
       description: `Use the ${providerConfig.name} OAuth provider.`,
       tags,
       links,
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultEnabled)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnabled))),
     client_id: Schema.String.annotate({
       default: defaultClientId,
       description: `Client ID for the ${providerConfig.name} OAuth provider.`,
       tags,
       links,
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultClientId)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultClientId))),
     secret: Schema.optionalKey(
       secret({
         examples: [`env(SUPABASE_AUTH_EXTERNAL_${providerConfig.id.toUpperCase()}_SECRET)`],
@@ -74,26 +74,26 @@ const provider = (providerConfig: {
       ...providerConfig.url,
       tags,
       links,
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultUrl)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultUrl))),
     redirect_uri: Schema.String.annotate({
       default: defaultRedirectUri,
       description: `The URI the ${providerConfig.name} OAuth2 provider will redirect to with the code and state values.`,
       tags,
       links,
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultRedirectUri)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultRedirectUri))),
     skip_nonce_check: Schema.Boolean.annotate({
       default: defaultSkipNonceCheck,
       description: "If true, the nonce check will be skipped.",
       tags,
       links,
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultSkipNonceCheck)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultSkipNonceCheck))),
     email_optional: Schema.Boolean.annotate({
       default: defaultEmailOptional,
       description:
         "If true, authentication succeeds when the provider does not return an email address.",
       tags,
       links,
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultEmailOptional)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEmailOptional))),
   });
 
   return schema
@@ -113,7 +113,7 @@ const provider = (providerConfig: {
             ),
           ]),
     )
-    .pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultProvider })));
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultProvider })));
 };
 
 const defaultExternal = {};
@@ -201,4 +201,4 @@ export const external = Schema.Struct({
     id: "zoom",
     name: "Zoom",
   }),
-}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultExternal })));
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultExternal })));

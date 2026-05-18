@@ -218,13 +218,10 @@ export async function runNpmTest(
   const configPath = path.join(tmp.path, "config.yaml");
   const storageDir = path.join(tmp.path, "storage");
 
-  // Verdaccio config: store our published tarballs locally, but proxy *anything
-  // else* to the public npm registry. The umbrella's package.json declares
-  // bundled-in runtime deps (effect, ink, react, …) — those are inlined in
-  // dist/supabase.js but still resolved at install time by npm, so without
-  // an uplink the install 404s on the first transitive dep. Our own packages
-  // are pinned to Verdaccio (no proxy) so we cannot accidentally fall through
-  // to the public registry's `supabase` or `@supabase/cli-*`.
+  // Verdaccio config: store our published tarballs locally. The umbrella
+  // package is shim-only at runtime and should resolve only our own
+  // `@supabase/cli-*` optional dependencies from this registry; the public npm
+  // uplink is retained for npm installer internals and any incidental tooling.
   await writeFile(
     configPath,
     `storage: ${storageDir}

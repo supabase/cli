@@ -100,7 +100,7 @@ describe("ApiProxy", () => {
 
     runtime = ManagedRuntime.make(buildProxyLayer(config));
 
-    const proxy = await runtime.runPromise(ApiProxy.asEffect());
+    const proxy = await runtime.runPromise(ApiProxy);
     const addr = proxy.address;
     if (addr._tag === "TcpAddress") {
       const host = addr.hostname === "0.0.0.0" ? "127.0.0.1" : addr.hostname;
@@ -298,7 +298,7 @@ describe("ApiProxy", () => {
 
     const deadRuntime = ManagedRuntime.make(buildProxyLayer(deadConfig));
     try {
-      const deadProxy = await deadRuntime.runPromise(ApiProxy.asEffect());
+      const deadProxy = await deadRuntime.runPromise(ApiProxy);
       const deadAddr2 = deadProxy.address;
       let deadProxyUrl = "";
       if (deadAddr2._tag === "TcpAddress") {

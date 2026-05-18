@@ -1,4 +1,4 @@
-import { Data, Effect, Layer, Schema, ServiceMap } from "effect";
+import { Data, Effect, Layer, Schema, Context } from "effect";
 import { FileSystem, Path } from "effect";
 import { AllocatedPortsSchema, type AllocatedPorts } from "./PortAllocator.ts";
 import {
@@ -511,7 +511,7 @@ function makeIsAlive() {
 // Service
 // ---------------------------------------------------------------------------
 
-export class StateManager extends ServiceMap.Service<
+export class StateManager extends Context.Service<
   StateManager,
   {
     readonly stackDir: (name: string) => string;
@@ -604,4 +604,4 @@ export class StateManager extends ServiceMap.Service<
   }
 }
 
-export type StateManagerService = ServiceMap.Service.Shape<typeof StateManager>;
+export type StateManagerService = typeof StateManager.Service;
