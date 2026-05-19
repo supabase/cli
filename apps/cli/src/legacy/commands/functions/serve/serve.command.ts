@@ -1,6 +1,6 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { withHidden } from "../../../../shared/cli/hidden-flag.ts";
+import { withHidden, withHiddenFromConfig } from "../../../../shared/cli/hidden-flag.ts";
 import { legacyFunctionsServe } from "./serve.handler.ts";
 
 const INSPECT_MODES = ["run", "brk", "wait"] as const;
@@ -35,5 +35,6 @@ export type LegacyFunctionsServeFlags = CliCommand.Command.Config.Infer<typeof c
 export const legacyFunctionsServeCommand = Command.make("serve", config).pipe(
   Command.withDescription("Serve all Functions locally."),
   Command.withShortDescription("Serve all Functions locally"),
+  withHiddenFromConfig(config),
   Command.withHandler((flags) => legacyFunctionsServe(flags)),
 );

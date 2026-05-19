@@ -1,6 +1,6 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { withHidden } from "../../../../shared/cli/hidden-flag.ts";
+import { withHidden, withHiddenFromConfig } from "../../../../shared/cli/hidden-flag.ts";
 import { legacyFunctionsDownload } from "./download.handler.ts";
 
 const config = {
@@ -32,5 +32,6 @@ export const legacyFunctionsDownloadCommand = Command.make("download", config).p
     "Download the source code for a Function from the linked Supabase project. If no function name is provided, downloads all functions.",
   ),
   Command.withShortDescription("Download a Function from Supabase"),
+  withHiddenFromConfig(config),
   Command.withHandler((flags) => legacyFunctionsDownload(flags)),
 );
