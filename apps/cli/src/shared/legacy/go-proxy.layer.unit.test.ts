@@ -1,9 +1,9 @@
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Layer, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { type CliProcessSignal, ProcessControl } from "../runtime/process-control.service.ts";
 import { LegacyGoProxy } from "./go-proxy.service.ts";
-import { makeGoProxyLayer } from "./go-proxy.layer.ts";
+import { formatGoBinaryNotFoundError, makeGoProxyLayer } from "./go-proxy.layer.ts";
 
 /**
  * Regression tests for the SIGINT propagation fix in go-proxy.layer.ts.
@@ -157,6 +157,107 @@ function mockSpawner(exit: ExitBehavior, spawnedBeforeExit?: Deferred.Deferred<v
  */
 const TEST_BINARY = "/test/fake-supabase-go";
 
+describe("formatGoBinaryNotFoundError", () => {
+  const TRIED = [
+    "$SUPABASE_GO_BINARY (unset)",
+    "/usr/local/bin/supabase-go (not found alongside the shim)",
+    "@supabase/cli-linux-x64 (npm package not installed)",
+  ];
+
+  it("renders each tried location as a bullet and includes remediation hints", () => {
+    const message = formatGoBinaryNotFoundError(TRIED);
+    expect(message).toContain("Could not find the `supabase-go` binary");
+    expect(message).toContain("  • $SUPABASE_GO_BINARY (unset)");
+    expect(message).toContain("  • /usr/local/bin/supabase-go (not found alongside the shim)");
+    expect(message).toContain("  • @supabase/cli-linux-x64 (npm package not installed)");
+    expect(message).toContain("npm i -g supabase");
+    expect(message).toContain("SUPABASE_GO_BINARY");
+  });
+
+  it("omits the curl|tar snippet on dev builds (no CLI_VERSION baked in)", () => {
+    // The vitest run does not go through the production bundler, so
+    // CLI_VERSION resolves to the "0.0.0-dev" sentinel from version.ts and
+    // the snippet is suppressed — we have nothing concrete to point at.
+    const message = formatGoBinaryNotFoundError(TRIED);
+    expect(message).not.toContain("curl -sL");
+    // The prose remediation steps still appear so users have actionable hints.
+    expect(message).toContain("Extract the release tarball");
+  });
+});
+
+// The version- and platform-pinned curl|tar snippet exercised below
+// instantiates a fresh module instance with a stubbed CLI_VERSION so we can
+// assert against a known release version + asset filename. The fixture lives
+// in a child `describe` so it doesn't bleed module mocks into other suites.
+describe("formatGoBinaryNotFoundError - pinned snippet", () => {
+  const TRIED = ["$SUPABASE_GO_BINARY (unset)"];
+  const PINNED_VERSION = "2.100.0";
+
+  async function withMockedHost(
+    opts: { platform: NodeJS.Platform; arch: NodeJS.Architecture },
+    fn: (mod: typeof import("./go-proxy.layer.ts")) => void | Promise<void>,
+  ): Promise<void> {
+    vi.resetModules();
+    vi.doMock("../cli/version.ts", () => ({ CLI_VERSION: PINNED_VERSION }));
+    const originalPlatform = process.platform;
+    const originalArch = process.arch;
+    Object.defineProperty(process, "platform", { value: opts.platform, configurable: true });
+    Object.defineProperty(process, "arch", { value: opts.arch, configurable: true });
+    try {
+      const mod = await import("./go-proxy.layer.ts");
+      await fn(mod);
+    } finally {
+      Object.defineProperty(process, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+      Object.defineProperty(process, "arch", { value: originalArch, configurable: true });
+      vi.doUnmock("../cli/version.ts");
+      vi.resetModules();
+    }
+  }
+
+  it("renders a copy-pasteable install snippet for linux x64", async () => {
+    await withMockedHost({ platform: "linux", arch: "x64" }, (mod) => {
+      const message = mod.formatGoBinaryNotFoundError(TRIED);
+      expect(message).toContain(
+        `https://github.com/supabase/cli/releases/download/v${PINNED_VERSION}/supabase_${PINNED_VERSION}_linux_amd64.tar.gz`,
+      );
+      expect(message).toContain(`mkdir -p "$HOME/.local/share/supabase"`);
+      expect(message).toContain(`export PATH="$HOME/.local/share/supabase:$PATH"`);
+    });
+  });
+
+  it("maps Node's win32 platform to the release asset's `windows` slug", async () => {
+    // Release pipeline publishes `.tar.gz` for every (platform, arch) pair,
+    // Windows included, so the snippet renders on win32 too — just with the
+    // modern `windows` slug instead of Node's historical `win32`.
+    await withMockedHost({ platform: "win32", arch: "x64" }, (mod) => {
+      const message = mod.formatGoBinaryNotFoundError(TRIED);
+      expect(message).toContain(
+        `https://github.com/supabase/cli/releases/download/v${PINNED_VERSION}/supabase_${PINNED_VERSION}_windows_amd64.tar.gz`,
+      );
+      // Never emit Node's internal `win32` token in the user-facing URL.
+      expect(message).not.toContain("win32");
+    });
+  });
+
+  it("maps darwin arm64 to the matching release asset", async () => {
+    await withMockedHost({ platform: "darwin", arch: "arm64" }, (mod) => {
+      expect(mod.formatGoBinaryNotFoundError(TRIED)).toContain(
+        `supabase_${PINNED_VERSION}_darwin_arm64.tar.gz`,
+      );
+    });
+  });
+
+  it("omits the snippet on unsupported architectures (no release asset)", async () => {
+    // ia32 has never been a release target — the snippet should not invent a URL.
+    await withMockedHost({ platform: "linux", arch: "ia32" }, (mod) => {
+      expect(mod.formatGoBinaryNotFoundError(TRIED)).not.toContain("curl -sL");
+    });
+  });
+});
+
 describe("makeGoProxyLayer", () => {
   it.effect("passes detached:false and inherited stdio to the spawner", () => {
     const spawner = mockSpawner({ kind: "success", code: 0 });
@@ -293,6 +394,41 @@ describe("makeGoProxyLayer", () => {
         { kind: "acquire", id: 0, signals: ["SIGINT", "SIGTERM", "SIGHUP"] },
         { kind: "release", id: 0 },
       ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  // Regression guard for CLI-1488 — the previous `resolveBinary()` returned the
+  // literal string "supabase" when no Go binary was found, which when run from
+  // a PATH that contained the shim would fork-bomb the shim against itself
+  // (silent multi-minute hang in CI followed by SIGTERM). The layer must now
+  // refuse to spawn anything and surface a specific diagnostic + non-zero exit.
+  it.effect("prints a diagnostic and exits 1 when supabase-go cannot be resolved", () => {
+    const spawner = mockSpawner({ kind: "success", code: 0 });
+    const pc = mockProcessControl({ exitBehavior: "terminateDie" });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const tried = [
+      "$SUPABASE_GO_BINARY (unset)",
+      "/usr/local/bin/supabase-go (not found alongside the shim)",
+    ];
+    const layer = makeGoProxyLayer({ binary: { notFound: tried } }).pipe(
+      Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+    );
+    return Effect.gen(function* () {
+      const proxy = yield* LegacyGoProxy;
+      yield* proxy.exec(["db", "start"]).pipe(Effect.exit);
+
+      // Did NOT spawn anything — the whole point is to refuse the fork-bomb.
+      expect(spawner.spawned).toHaveLength(0);
+      // Exited with code 1 via ProcessControl.exit.
+      expect(pc.exitCalls).toEqual([1]);
+      // Wrote the diagnostic to stderr, including each tried location.
+      expect(stderr).toHaveBeenCalledTimes(1);
+      const written = String(stderr.mock.calls[0]![0]);
+      expect(written).toContain("Could not find the `supabase-go` binary");
+      expect(written).toContain("$SUPABASE_GO_BINARY (unset)");
+      expect(written).toContain("/usr/local/bin/supabase-go");
+      expect(written).toContain("SUPABASE_GO_BINARY");
+      stderr.mockRestore();
     }).pipe(Effect.provide(layer));
   });
 

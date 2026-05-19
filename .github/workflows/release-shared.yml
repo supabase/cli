@@ -46,6 +46,9 @@ on:
 jobs:
   build:
     runs-on: large-linux-x86
+    env:
+      BUN_SHELL: ${{ inputs.shell }}
+      VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -71,10 +74,10 @@ jobs:
           sudo apt-get install -y nfpm
 
       - name: Sync versions
-        run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
+        run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version "${VERSION}"
 
       - name: Build selected shell
-        run: pnpm exec bun apps/cli/scripts/build.ts --version ${{ inputs.version }} --shell ${{ inputs.shell }}
+        run: pnpm exec bun apps/cli/scripts/build.ts --version "${VERSION}" --shell "${BUN_SHELL}"
 
       - name: Verify build artifacts
         run: |
@@ -100,6 +103,9 @@ jobs:
       matrix:
         runner: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
     runs-on: ${{ matrix.runner }}
+    env:
+      NPM_TAG: ${{ inputs.npm_tag }}
+      VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -128,13 +134,17 @@ jobs:
         run: chmod +x packages/cli-*/bin/supabase || true
 
       - name: Run smoke tests
-        run: pnpm run test:smoke -- --version ${{ inputs.version }} --tag ${{ inputs.npm_tag }}
+        run: pnpm run test:smoke -- --version "${VERSION}" --tag "${NPM_TAG}"
         working-directory: apps/cli
 
   publish:
     needs: smoke-test
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
+    env:
+      CHANNEL: ${{ inputs.channel }}
+      NPM_TAG: ${{ inputs.npm_tag }}
+      VERSION: ${{ inputs.version }}
     permissions:
       contents: write
       id-token: write
@@ -151,10 +161,10 @@ jobs:
           name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
 
       - name: Sync versions
-        run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
+        run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version "${VERSION}"
 
       - name: Publish to npm
-        run: pnpm exec bun apps/cli/scripts/publish.ts --tag ${{ inputs.npm_tag }}
+        run: pnpm exec bun apps/cli/scripts/publish.ts --tag ""${NPM_TAG}""
 
       # Push the version tag to origin as soon as npm has the bytes, before any
       # downstream step that can fail. Without this, a failure in the GH-release
@@ -166,7 +176,7 @@ jobs:
       - name: Push version tag
         run: |
           set -euo pipefail
-          tag="v${{ inputs.version }}"
+          tag="v${VERSION}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if git ls-remote --tags origin "refs/tags/${tag}" | grep -q .; then
@@ -193,8 +203,8 @@ jobs:
         if: ${{ inputs.prerelease }}
         run: |
           set -euo pipefail
-          tag="v${{ inputs.version }}"
-          channel="${{ inputs.channel }}"
+          tag="v${VERSION}"
+          channel="${CHANNEL}"
           note_ref="refs/notes/semantic-release-${tag}"
           if git ls-remote origin "${note_ref}" | grep -q .; then
             echo "Channel note ${note_ref} already on origin; skipping push."
@@ -211,7 +221,7 @@ jobs:
         run: |
           set -euo pipefail
           for triple in darwin_arm64 darwin_amd64 linux_arm64 linux_amd64 windows_arm64 windows_amd64; do
-            cp "dist/supabase_${{ inputs.version }}_${triple}.tar.gz" "dist/supabase_${triple}.tar.gz"
+            cp "dist/supabase_${VERSION}_${triple}.tar.gz" "dist/supabase_${triple}.tar.gz"
           done
 
       - name: Create draft GitHub Release
@@ -247,12 +257,15 @@ jobs:
       - name: Publish GitHub Release (immutable)
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit v${{ inputs.version }} --draft=false
+        run: gh release edit "v${VERSION}" --draft=false
 
   publish-homebrew:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
     runs-on: ubuntu-latest
+    env:
+      BREW_NAME: ${{ inputs.brew_name }}
+      VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -284,7 +297,7 @@ jobs:
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Update Homebrew formula
-        run: pnpm exec bun apps/cli/scripts/update-homebrew.ts --version ${{ inputs.version }} --name ${{ inputs.brew_name }}
+        run: pnpm exec bun apps/cli/scripts/update-homebrew.ts --version "${VERSION}" --name "${BREW_NAME}"
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
@@ -292,6 +305,9 @@ jobs:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
     runs-on: ubuntu-latest
+    env:
+      SCOOP_NAME: ${{ inputs.scoop_name }}
+      VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -323,7 +339,7 @@ jobs:
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Update Scoop manifest
-        run: pnpm exec bun apps/cli/scripts/update-scoop.ts --version ${{ inputs.version }} --name ${{ inputs.scoop_name }}
+        run: pnpm exec bun apps/cli/scripts/update-scoop.ts --version "${VERSION}" --name "${SCOOP_NAME}"
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
