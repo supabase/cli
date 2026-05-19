@@ -1395,6 +1395,7 @@ const (
 // Defines values for V1ListEntitlementsResponseEntitlementsFeatureKey.
 const (
 	V1ListEntitlementsResponseEntitlementsFeatureKeyAssistantAdvanceModel                 V1ListEntitlementsResponseEntitlementsFeatureKey = "assistant.advance_model"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyAuditLogDrains                        V1ListEntitlementsResponseEntitlementsFeatureKey = "audit_log_drains"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthAdvancedAuthSettings              V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.advanced_auth_settings"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthCustomJwtTemplate                 V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.custom_jwt_template"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthCustomOauthMaxProviders           V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.custom_oauth.max_providers"
@@ -2203,15 +2204,18 @@ type BranchResponse struct {
 	PreviewProjectStatus *BranchResponsePreviewProjectStatus `json:"preview_project_status,omitempty"`
 	ProjectRef           string                              `json:"project_ref"`
 	ReviewRequestedAt    *time.Time                          `json:"review_requested_at,omitempty"`
-	Status               BranchResponseStatus                `json:"status"`
-	UpdatedAt            time.Time                           `json:"updated_at"`
-	WithData             bool                                `json:"with_data"`
+
+	// Status This field is deprecated. List action runs to get branch status instead.
+	// Deprecated:
+	Status    BranchResponseStatus `json:"status"`
+	UpdatedAt time.Time            `json:"updated_at"`
+	WithData  bool                 `json:"with_data"`
 }
 
 // BranchResponsePreviewProjectStatus defines model for BranchResponse.PreviewProjectStatus.
 type BranchResponsePreviewProjectStatus string
 
-// BranchResponseStatus defines model for BranchResponse.Status.
+// BranchResponseStatus This field is deprecated. List action runs to get branch status instead.
 type BranchResponseStatus string
 
 // BranchRestoreResponse defines model for BranchRestoreResponse.
