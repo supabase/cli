@@ -15,12 +15,6 @@ import (
 	"github.com/supabase/cli/pkg/fetcher"
 )
 
-type createOrganizationInput struct {
-	Name      string
-	HeardFrom string
-	Building  string
-}
-
 type onboardingSurveyRequest struct {
 	Slug      string `json:"slug"`
 	HeardFrom string `json:"heard_from,omitempty"`
@@ -31,15 +25,11 @@ var newConsole = utils.NewConsole
 var submitSurvey = submitOnboardingSurvey
 
 func Run(ctx context.Context, name string) error {
-	input, err := buildCreateOrganizationInput(ctx, name)
-	if err != nil {
-		return err
-	}
 	if utils.OutputFormat.Value == utils.OutputPretty {
 		fmt.Fprintln(os.Stderr, "Creating organization...")
 	}
 	resp, err := utils.GetSupabase().V1CreateAnOrganizationWithResponse(ctx, api.V1CreateAnOrganizationJSONRequestBody{
-		Name: input.Name,
+		Name: name,
 	})
 	if err != nil {
 		return errors.Errorf("failed to create organization: %w", err)
@@ -47,30 +37,32 @@ func Run(ctx context.Context, name string) error {
 		return errors.Errorf("unexpected create organization status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
 
-	survey := onboardingSurveyRequest{
-		Slug:      organizationSlug(*resp.JSON201),
-		HeardFrom: input.HeardFrom,
-		Building:  input.Building,
-	}
-	if err := submitSurvey(ctx, survey); err != nil && utils.OutputFormat.Value == utils.OutputPretty {
-		fmt.Fprintln(os.Stderr, "WARN: failed to submit organization survey:", err)
-	}
-
 	fmt.Println("Created organization:", resp.JSON201.Id)
 	if utils.OutputFormat.Value == utils.OutputPretty {
 		table := list.ToMarkdown([]api.OrganizationResponseV1{*resp.JSON201})
-		return utils.RenderTable(table)
+		if err := utils.RenderTable(table); err != nil {
+			return err
+		}
+		survey, err := buildOnboardingSurveyRequest(ctx, organizationSlug(*resp.JSON201))
+		if err != nil {
+			return err
+		}
+		if err := submitSurvey(ctx, survey); err != nil {
+			fmt.Fprintln(os.Stderr, "WARN: failed to submit organization survey:", err)
+		}
+		return nil
 	}
 	return utils.EncodeOutput(utils.OutputFormat.Value, os.Stdout, *resp.JSON201)
 }
 
-func buildCreateOrganizationInput(ctx context.Context, name string) (createOrganizationInput, error) {
-	body := createOrganizationInput{Name: name}
+func buildOnboardingSurveyRequest(ctx context.Context, slug string) (onboardingSurveyRequest, error) {
+	body := onboardingSurveyRequest{Slug: slug}
 	console := newConsole()
-	if utils.OutputFormat.Value != utils.OutputPretty || !console.IsTTY {
+	if !console.IsTTY {
 		return body, nil
 	}
 
+	fmt.Fprintln(os.Stderr, "Optional: help us improve Supabase by answering two quick questions.")
 	heardFrom, err := console.PromptText(ctx, "Where did you hear about us? (optional) ")
 	if err != nil {
 		return body, err
