@@ -62,14 +62,15 @@ func buildOnboardingSurveyRequest(ctx context.Context, slug string) (onboardingS
 		return body, nil
 	}
 
-	fmt.Fprintln(os.Stderr, "Answer two optional questions so we can improve your Supabase experience. Press Enter to skip.")
-	heardFrom, err := console.PromptText(ctx, "1/2 Where did you hear about us? ")
+	fmt.Fprintln(os.Stderr, "Answer two optional questions to help us improve Supabase. Press Enter to skip.")
+	fmt.Fprintln(os.Stderr)
+	heardFrom, err := console.PromptText(ctx, "1/2: Where did you hear about us? ")
 	if err != nil {
 		return body, err
 	}
 	body.HeardFrom = strings.TrimSpace(heardFrom)
 
-	building, err := console.PromptText(ctx, "2/2 What are you building? ")
+	building, err := console.PromptText(ctx, "2/2: What are you building? ")
 	if err != nil {
 		return body, err
 	}
