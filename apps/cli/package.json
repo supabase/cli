@@ -60,7 +60,7 @@
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:",
-    "posthog-node": "^5.34.3",
+    "posthog-node": "^5.34.6",
     "react": "^19.2.6",
     "react-devtools-core": "^7.0.1",
     "vitest": "catalog:"
