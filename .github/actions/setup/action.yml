@@ -11,7 +11,7 @@ runs:
 
     - name: Restore Bun toolchain cache
       id: bun-toolchain-cache
-      uses: useblacksmith/cache@v5
+      uses: useblacksmith/cache@71c7c918062ba3861252d84b07fe5ab2a6b467a6 # v5
       with:
         path: /opt/hostedtoolcache/bun
         key: bun-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ env.BUN_VERSION }}
@@ -39,7 +39,7 @@ runs:
       run: bun --version
 
     - name: Install Node.js
-      uses: useblacksmith/setup-node@v5
+      uses: useblacksmith/setup-node@65c6ca86fdeb0ab3d85e78f57e4f6a7e4780b391 # v5
       with:
           node-version-file: .nvmrc
           package-manager-cache: false
@@ -49,7 +49,7 @@ runs:
       run: npm install --global --force corepack && corepack enable
 
     - name: Configure dependency cache
-      uses: useblacksmith/setup-node@v5
+      uses: useblacksmith/setup-node@65c6ca86fdeb0ab3d85e78f57e4f6a7e4780b391 # v5
       with:
         cache: pnpm
 
