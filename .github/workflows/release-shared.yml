@@ -134,6 +134,10 @@ jobs:
         run: chmod +x packages/cli-*/bin/supabase || true
 
       - name: Run smoke tests
+        # Force bash so ${VERSION}/${NPM_TAG} expand identically across the
+        # ubuntu/macos/windows matrix — windows-latest defaults to pwsh, which
+        # treats those as empty PowerShell variables (env vars are `$env:VAR`).
+        shell: bash
         run: pnpm run test:smoke -- --version "${VERSION}" --tag "${NPM_TAG}"
         working-directory: apps/cli
 
@@ -164,7 +168,7 @@ jobs:
         run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version "${VERSION}"
 
       - name: Publish to npm
-        run: pnpm exec bun apps/cli/scripts/publish.ts --tag ""${NPM_TAG}""
+        run: pnpm exec bun apps/cli/scripts/publish.ts --tag "${NPM_TAG}"
 
       # Push the version tag to origin as soon as npm has the bytes, before any
       # downstream step that can fail. Without this, a failure in the GH-release
