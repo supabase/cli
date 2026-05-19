@@ -19,6 +19,7 @@ func TestOrganizationCreateCommand(t *testing.T) {
 
 	t.Cleanup(func() {
 		newConsole = utils.NewConsole
+		submitSurvey = submitOnboardingSurvey
 		utils.OutputFormat.Value = utils.OutputPretty
 	})
 
@@ -31,7 +32,7 @@ func TestOrganizationCreateCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/organizations").
 			MatchType("json").
-			JSON(createOrganizationRequest{Name: orgName}).
+			JSON(api.V1CreateAnOrganizationJSONRequestBody{Name: orgName}).
 			Reply(http.StatusCreated).
 			JSON(api.OrganizationResponseV1{
 				Id:   "combined-fuchsia-lion",
@@ -61,16 +62,22 @@ func TestOrganizationCreateCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/organizations").
 			MatchType("json").
-			JSON(createOrganizationRequest{
-				Name:      orgName,
-				HeardFrom: "GitHub",
-				Building:  "AI coding assistant",
-			}).
+			JSON(api.V1CreateAnOrganizationJSONRequestBody{Name: orgName}).
 			Reply(http.StatusCreated).
 			JSON(api.OrganizationResponseV1{
 				Id:   "combined-fuchsia-lion",
 				Name: orgName,
+				Slug: "combined-fuchsia-lion",
 			})
+		gock.New(utils.DefaultApiHost).
+			Post("/platform/organizations/onboarding-survey").
+			MatchType("json").
+			JSON(onboardingSurveyRequest{
+				Slug:      "combined-fuchsia-lion",
+				HeardFrom: "GitHub",
+				Building:  "AI coding assistant",
+			}).
+			Reply(http.StatusNoContent)
 		// Run test
 		assert.NoError(t, Run(context.Background(), orgName))
 		// Validate api
@@ -95,7 +102,7 @@ func TestOrganizationCreateCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/organizations").
 			MatchType("json").
-			JSON(createOrganizationRequest{Name: orgName}).
+			JSON(api.V1CreateAnOrganizationJSONRequestBody{Name: orgName}).
 			Reply(http.StatusCreated).
 			JSON(api.OrganizationResponseV1{
 				Id:   "combined-fuchsia-lion",
@@ -129,12 +136,53 @@ func TestOrganizationCreateCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/organizations").
 			MatchType("json").
-			JSON(createOrganizationRequest{Name: orgName}).
+			JSON(api.V1CreateAnOrganizationJSONRequestBody{Name: orgName}).
 			Reply(http.StatusCreated).
 			JSON(api.OrganizationResponseV1{
 				Id:   "combined-fuchsia-lion",
 				Name: orgName,
 			})
+		// Run test
+		assert.NoError(t, Run(context.Background(), orgName))
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("does not fail organization creation when survey submit fails", func(t *testing.T) {
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		t.Cleanup(fstest.MockStdin(t, "GitHub\nAI coding assistant\n"))
+		newConsole = func() *utils.Console {
+			console := utils.NewConsole()
+			console.IsTTY = true
+			return console
+		}
+		t.Cleanup(func() {
+			newConsole = utils.NewConsole
+		})
+		// Flush pending mocks after test execution
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Post("/v1/organizations").
+			MatchType("json").
+			JSON(api.V1CreateAnOrganizationJSONRequestBody{Name: orgName}).
+			Reply(http.StatusCreated).
+			JSON(api.OrganizationResponseV1{
+				Id:   "combined-fuchsia-lion",
+				Name: orgName,
+				Slug: "combined-fuchsia-lion",
+			})
+		gock.New(utils.DefaultApiHost).
+			Post("/platform/organizations/onboarding-survey").
+			MatchType("json").
+			JSON(onboardingSurveyRequest{
+				Slug:      "combined-fuchsia-lion",
+				HeardFrom: "GitHub",
+				Building:  "AI coding assistant",
+			}).
+			Reply(http.StatusServiceUnavailable).
+			JSON(map[string]string{"message": "unavailable"})
 		// Run test
 		assert.NoError(t, Run(context.Background(), orgName))
 		// Validate api
@@ -150,7 +198,7 @@ func TestOrganizationCreateCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/organizations").
 			MatchType("json").
-			JSON(createOrganizationRequest{Name: orgName}).
+			JSON(api.V1CreateAnOrganizationJSONRequestBody{Name: orgName}).
 			ReplyError(errors.New("network error"))
 		// Run test
 		assert.Error(t, Run(context.Background(), orgName))
@@ -167,7 +215,7 @@ func TestOrganizationCreateCommand(t *testing.T) {
 		gock.New(utils.DefaultApiHost).
 			Post("/v1/organizations").
 			MatchType("json").
-			JSON(createOrganizationRequest{Name: orgName}).
+			JSON(api.V1CreateAnOrganizationJSONRequestBody{Name: orgName}).
 			Reply(http.StatusServiceUnavailable).
 			JSON(map[string]string{"message": "unavailable"})
 		// Run test
