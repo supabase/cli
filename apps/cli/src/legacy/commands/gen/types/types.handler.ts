@@ -16,5 +16,6 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   if (Option.isSome(flags.swiftAccessControl))
     args.push("--swift-access-control", flags.swiftAccessControl.value);
   if (flags.postgrestV9Compat) args.push("--postgrest-v9-compat");
+  if (Option.isSome(flags.queryTimeout)) args.push("--query-timeout", flags.queryTimeout.value);
   yield* proxy.exec(args);
 });

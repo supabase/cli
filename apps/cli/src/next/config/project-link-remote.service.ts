@@ -1,5 +1,5 @@
 import type { Effect } from "effect";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 import type { LinkedServiceVersions } from "./project-link-state.service.ts";
 
 export const linkedProjectVersionServices = ["postgres", "postgrest", "auth", "storage"] as const;
@@ -31,7 +31,6 @@ interface ProjectLinkRemoteShape {
   ) => Effect.Effect<LinkedProjectSnapshot, unknown>;
 }
 
-export class ProjectLinkRemote extends ServiceMap.Service<
-  ProjectLinkRemote,
-  ProjectLinkRemoteShape
->()("supabase/config/ProjectLinkRemote") {}
+export class ProjectLinkRemote extends Context.Service<ProjectLinkRemote, ProjectLinkRemoteShape>()(
+  "supabase/config/ProjectLinkRemote",
+) {}

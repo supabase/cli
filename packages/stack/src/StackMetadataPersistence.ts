@@ -1,8 +1,8 @@
-import { Effect, Layer, ServiceMap } from "effect";
+import { Effect, Layer, Context } from "effect";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { StateManager } from "./StateManager.ts";
 
-export class StackMetadataPersistence extends ServiceMap.Service<
+export class StackMetadataPersistence extends Context.Service<
   StackMetadataPersistence,
   {
     readonly persistCleanupTargets: (cleanupTargets: CleanupTargets) => Effect.Effect<void>;

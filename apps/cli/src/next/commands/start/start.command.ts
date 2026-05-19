@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, ServiceMap } from "effect";
+import { Effect, Layer, Option, Context } from "effect";
 import {
   DEFAULT_MANAGED_STACK_NAME,
   StateManager,
@@ -65,10 +65,9 @@ interface StartVersionStateShape {
   readonly serviceVersionContext: ResolvedServiceVersionContext;
 }
 
-export class StartVersionState extends ServiceMap.Service<
-  StartVersionState,
-  StartVersionStateShape
->()("supabase/commands/start/StartVersionState") {}
+export class StartVersionState extends Context.Service<StartVersionState, StartVersionStateShape>()(
+  "supabase/commands/start/StartVersionState",
+) {}
 
 const flags = {
   stack: Flag.string("stack").pipe(

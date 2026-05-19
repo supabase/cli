@@ -144,6 +144,16 @@ async function archiveTarget(target: (typeof TARGETS)[number]) {
     const files = [path.join(binDir, `supabase${target.ext}`)];
     if (shell === "legacy") files.push(path.join(binDir, `supabase-go${target.ext}`));
     await $`zip -j ${archivePath} ${files}`;
+
+    // setup-cli and other download clients always fetch a .tar.gz, including on
+    // Windows where tc.extractTar handles the archive. Publish a matching
+    // tar.gz alongside the .zip so those clients keep working. See #5257.
+    const tarArchive = target.archive.replace(/\.zip$/, ".tar.gz");
+    const tarArchivePath = path.join(distDir, tarArchive);
+    const tarFiles = [`supabase${target.ext}`];
+    if (shell === "legacy") tarFiles.push(`supabase-go${target.ext}`);
+    console.log(`[${target.pkg}] Creating archive ${tarArchive}...`);
+    await $`tar -czf ${tarArchivePath} -C ${binDir} ${tarFiles}`;
   } else {
     const files = [`supabase${target.ext}`];
     if (shell === "legacy") files.push(`supabase-go${target.ext}`);
@@ -250,6 +260,13 @@ async function generateChecksums() {
     const data = await readFile(archivePath);
     const hash = createHash("sha256").update(data).digest("hex");
     lines.push(`${hash}  ${target.archive}`);
+
+    if (target.archive.endsWith(".zip")) {
+      const tarArchive = target.archive.replace(/\.zip$/, ".tar.gz");
+      const tarData = await readFile(path.join(distDir, tarArchive));
+      const tarHash = createHash("sha256").update(tarData).digest("hex");
+      lines.push(`${tarHash}  ${tarArchive}`);
+    }
   }
 
   const linuxTargets = TARGETS.filter((target) => "nfpmArch" in target);
