@@ -89,12 +89,19 @@ export const stripHiddenFlagsFromHelpDoc = (doc: HelpDoc.HelpDoc): HelpDoc.HelpD
   if (hiddenFlags.size === 0 && hiddenSubcommands.size === 0) return doc;
   const filteredFlags = doc.flags.filter((flag) => !hiddenFlags.has(flag.name));
   const filteredGlobalFlags = doc.globalFlags?.filter((flag) => !hiddenFlags.has(flag.name));
-  const filteredSubcommands = doc.subcommands
-    ?.map((group) => ({
-      ...group,
-      commands: group.commands.filter((command) => !hiddenSubcommands.has(command.name)),
-    }))
-    .filter((group) => group.commands.length > 0);
+  const filteredSubcommands = doc.subcommands?.flatMap((group) => {
+    const commands = group.commands.filter((command) => !hiddenSubcommands.has(command.name));
+    if (commands.length === 0) return [];
+    return [
+      {
+        ...group,
+        commands: commands as unknown as readonly [
+          HelpDoc.SubcommandDoc,
+          ...Array<HelpDoc.SubcommandDoc>,
+        ],
+      },
+    ];
+  });
   return {
     ...doc,
     flags: filteredFlags,

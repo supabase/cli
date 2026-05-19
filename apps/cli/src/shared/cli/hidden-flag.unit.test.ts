@@ -159,9 +159,15 @@ describe("stripHiddenFlagsFromHelpDoc", () => {
     const doc = helpDocWithHiddenSubcommands(["legacy"], {
       subcommands: [
         {
+          group: undefined,
           commands: [
-            { name: "visible", shortDescription: "visible", description: "visible" },
-            { name: "legacy", shortDescription: "legacy", description: "legacy" },
+            {
+              name: "visible",
+              alias: undefined,
+              shortDescription: "visible",
+              description: "visible",
+            },
+            { name: "legacy", alias: undefined, shortDescription: "legacy", description: "legacy" },
           ],
         },
       ],
