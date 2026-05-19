@@ -346,3 +346,46 @@ jobs:
         run: pnpm exec bun apps/cli/scripts/update-scoop.ts --version "${VERSION}" --name "${SCOOP_NAME}"
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+  publish-scoop-main:
+    needs: publish-scoop
+    # Stable channel only — beta lives in our own bucket, never PR'd upstream.
+    if: ${{ !inputs.dry_run && inputs.scoop_name == 'supabase' }}
+    runs-on: ubuntu-latest
+    # Best-effort: the upstream excavator bot will catch us up within a few
+    # hours regardless, so a failure here should not fail the release.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+
+      - name: Generate scoop-main fork token
+        id: app-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            scoop-main
+
+      - name: Configure git for fork push
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh auth setup-git
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Open PR against ScoopInstaller/Main
+        run: pnpm exec bun apps/cli/scripts/update-scoop-main.ts --version ${{ inputs.version }}
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

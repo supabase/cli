@@ -95,7 +95,7 @@
       "src/**/*.e2e.test.ts"
     ],
     "ignore": [
-      "scripts/*.ts",
+      "scripts/**/*.ts",
       "tests/**/*.ts"
     ],
     "ignoreBinaries": [
