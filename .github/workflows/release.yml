@@ -55,7 +55,7 @@ jobs:
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: useblacksmith/checkout@v1
         with:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
@@ -97,7 +97,7 @@ jobs:
       # Authorization header overrides the App token semantic-release puts in
       # the push URL — making the dry-push identify as `github-actions[bot]`
       # and get rejected by branch protection.
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: useblacksmith/checkout@v1
         with:
           fetch-depth: 0
           persist-credentials: false
