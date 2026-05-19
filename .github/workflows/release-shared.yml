@@ -101,7 +101,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
+        runner: [blacksmith-8vcpu-ubuntu-2404, macos-latest, macos-15-intel, windows-latest]
     runs-on: ${{ matrix.runner }}
     env:
       NPM_TAG: ${{ inputs.npm_tag }}
