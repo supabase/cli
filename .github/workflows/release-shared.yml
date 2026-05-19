@@ -45,7 +45,7 @@ on:
 
 jobs:
   build:
-    runs-on: large-linux-x86
+    runs-on: blacksmith-32vcpu-ubuntu-2404
     env:
       BUN_SHELL: ${{ inputs.shell }}
       VERSION: ${{ inputs.version }}
@@ -57,7 +57,7 @@ jobs:
         uses: ./.github/actions/setup
 
       - name: Setup Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version-file: apps/cli-go/go.mod
           cache: true
@@ -98,10 +98,15 @@ jobs:
 
   smoke-test:
     needs: build
+    # macos-15-intel is the slowest smoke leg and the only one not on
+    # Blacksmith (Blacksmith macOS is ARM-only). Skip it on prereleases
+    # (PR smoke + develop -> beta) so beta wall-clock isn't gated by it;
+    # stable releases on main still run the full matrix.
+    if: ${{ !(matrix.runner == 'macos-15-intel' && inputs.prerelease) }}
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
+        runner: [blacksmith-8vcpu-ubuntu-2404, blacksmith-6vcpu-macos-latest, macos-15-intel, blacksmith-8vcpu-windows-2025]
     runs-on: ${{ matrix.runner }}
     env:
       NPM_TAG: ${{ inputs.npm_tag }}
@@ -144,7 +149,7 @@ jobs:
   publish:
     needs: smoke-test
     if: ${{ !inputs.dry_run }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     env:
       CHANNEL: ${{ inputs.channel }}
       NPM_TAG: ${{ inputs.npm_tag }}
@@ -266,7 +271,7 @@ jobs:
   publish-homebrew:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     env:
       BREW_NAME: ${{ inputs.brew_name }}
       VERSION: ${{ inputs.version }}
@@ -308,7 +313,7 @@ jobs:
   publish-scoop:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     env:
       SCOOP_NAME: ${{ inputs.scoop_name }}
       VERSION: ${{ inputs.version }}
