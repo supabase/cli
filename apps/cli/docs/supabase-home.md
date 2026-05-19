@@ -297,6 +297,6 @@ When deciding where something belongs, use this rule of thumb:
 
 ## Related Docs
 
-- [CLI Code Structure](/Users/jgoux/Code/supabase/dx-labs/apps/cli/docs/code-structure.md)
-- [Service Versioning](/Users/jgoux/Code/supabase/dx-labs/packages/stack/docs/service-versioning.md)
-- [Project Config Loading](/Users/jgoux/Code/supabase/dx-labs/packages/config/docs/project-config-loading.md)
+- [CLI Code Structure](./code-structure.md)
+- [Service Versioning](../../../packages/stack/docs/service-versioning.md)
+- [Project Config Loading](../../../packages/config/docs/project-config-loading.md)
