@@ -49,7 +49,7 @@ func TestGenLocalCommand(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		assert.NoError(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{}, true, "", time.Second, fsys, conn.Intercept))
+		assert.NoError(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{}, true, "", time.Second, false, fsys, conn.Intercept))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -64,7 +64,7 @@ func TestGenLocalCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{}, true, "", time.Second, fsys))
+		assert.Error(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{}, true, "", time.Second, false, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -84,7 +84,7 @@ func TestGenLocalCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{}, true, "", time.Second, fsys))
+		assert.Error(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{}, true, "", time.Second, false, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -107,7 +107,26 @@ func TestGenLocalCommand(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		assert.NoError(t, Run(context.Background(), "", dbConfig, LangSwift, []string{}, true, SwiftInternalAccessControl, time.Second, fsys, conn.Intercept))
+		assert.NoError(t, Run(context.Background(), "", dbConfig, LangSwift, []string{}, true, SwiftInternalAccessControl, time.Second, false, fsys, conn.Intercept))
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("skips local stack check for explicit db-url on localhost", func(t *testing.T) {
+		const containerId = "test-pgmeta"
+		imageUrl := utils.GetRegistryImageUrl(utils.Config.Studio.PgmetaImage)
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
+		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		// Run test
+		assert.NoError(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{}, true, "", time.Second, true, fsys, conn.Intercept))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -130,7 +149,7 @@ func TestGenLinkedCommand(t *testing.T) {
 			Reply(200).
 			JSON(api.TypescriptResponse{Types: ""})
 		// Run test
-		assert.NoError(t, Run(context.Background(), projectId, pgconn.Config{}, LangTypescript, []string{}, true, "", time.Second, fsys))
+		assert.NoError(t, Run(context.Background(), projectId, pgconn.Config{}, LangTypescript, []string{}, true, "", time.Second, false, fsys))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -145,7 +164,7 @@ func TestGenLinkedCommand(t *testing.T) {
 			Get("/v1/projects/" + projectId + "/types/typescript").
 			ReplyError(errNetwork)
 		// Run test
-		err := Run(context.Background(), projectId, pgconn.Config{}, LangTypescript, []string{}, true, "", time.Second, fsys)
+		err := Run(context.Background(), projectId, pgconn.Config{}, LangTypescript, []string{}, true, "", time.Second, false, fsys)
 		// Validate api
 		assert.ErrorIs(t, err, errNetwork)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -160,7 +179,7 @@ func TestGenLinkedCommand(t *testing.T) {
 			Get("/v1/projects/" + projectId + "/types/typescript").
 			Reply(http.StatusServiceUnavailable)
 		// Run test
-		assert.Error(t, Run(context.Background(), projectId, pgconn.Config{}, LangTypescript, []string{}, true, "", time.Second, fsys))
+		assert.Error(t, Run(context.Background(), projectId, pgconn.Config{}, LangTypescript, []string{}, true, "", time.Second, false, fsys))
 	})
 }
 
@@ -185,7 +204,7 @@ func TestGenRemoteCommand(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		// Run test
-		assert.NoError(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{"public"}, true, "", time.Second, afero.NewMemMapFs(), conn.Intercept))
+		assert.NoError(t, Run(context.Background(), "", dbConfig, LangTypescript, []string{"public"}, true, "", time.Second, false, afero.NewMemMapFs(), conn.Intercept))
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})

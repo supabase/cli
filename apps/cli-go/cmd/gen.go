@@ -88,7 +88,8 @@ var (
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			if flags.DbConfig.Host == "" {
+			dbURLChanged := cmd.Flags().Changed("db-url")
+			if flags.DbConfig.Host == "" && !dbURLChanged {
 				// If no flag is specified, prompt for project id.
 				if err := flags.ParseProjectRef(ctx, afero.NewMemMapFs()); errors.Is(err, utils.ErrNotLinked) {
 					return errors.New("Must specify one of --local, --linked, --project-id, or --db-url")
@@ -96,7 +97,7 @@ var (
 					return err
 				}
 			}
-			return types.Run(ctx, flags.ProjectRef, flags.DbConfig, lang.Value, schema, postgrestV9Compat, swiftAccessControl.Value, queryTimeout, afero.NewOsFs())
+			return types.Run(ctx, flags.ProjectRef, flags.DbConfig, lang.Value, schema, postgrestV9Compat, swiftAccessControl.Value, queryTimeout, dbURLChanged, afero.NewOsFs())
 		},
 		Example: `  supabase gen types --local
   supabase gen types --linked --lang=go
