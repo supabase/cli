@@ -1,6 +1,6 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { withHidden } from "../../../shared/cli/hidden-flag.ts";
+import { withHidden, withHiddenFromConfig } from "../../../shared/cli/hidden-flag.ts";
 import { legacyStart } from "./start.handler.ts";
 
 const config = {
@@ -25,5 +25,6 @@ export type LegacyStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const legacyStartCommand = Command.make("start", config).pipe(
   Command.withDescription("Start containers for Supabase local development."),
   Command.withShortDescription("Start local Supabase stack"),
+  withHiddenFromConfig(config),
   Command.withHandler((flags) => legacyStart(flags)),
 );

@@ -1,6 +1,6 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { withHidden } from "../../../shared/cli/hidden-flag.ts";
+import { withHidden, withHiddenFromConfig } from "../../../shared/cli/hidden-flag.ts";
 import { legacyInit } from "./init.handler.ts";
 
 const config = {
@@ -34,5 +34,6 @@ export type LegacyInitFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const legacyInitCommand = Command.make("init", config).pipe(
   Command.withDescription("Initialize a local project."),
   Command.withShortDescription("Initialize a local project"),
+  withHiddenFromConfig(config),
   Command.withHandler((flags) => legacyInit(flags)),
 );

@@ -1,6 +1,6 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { withHidden } from "../../../../shared/cli/hidden-flag.ts";
+import { withHidden, withHiddenFromConfig } from "../../../../shared/cli/hidden-flag.ts";
 import { legacyProjectsCreate } from "./create.handler.ts";
 
 const AWS_REGIONS = [
@@ -93,5 +93,6 @@ export const legacyProjectsCreateCommand = Command.make("create", config).pipe(
       description: "Create a new project",
     },
   ]),
+  withHiddenFromConfig(config),
   Command.withHandler((flags) => legacyProjectsCreate(flags)),
 );
