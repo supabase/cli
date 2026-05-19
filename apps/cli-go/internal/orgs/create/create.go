@@ -31,6 +31,9 @@ func Run(ctx context.Context, name string) error {
 	if err != nil {
 		return errors.Errorf("failed to encode organization request: %w", err)
 	}
+	if utils.OutputFormat.Value == utils.OutputPretty {
+		fmt.Fprintln(os.Stderr, "Creating organization...")
+	}
 	resp, err := utils.GetSupabase().V1CreateAnOrganizationWithBodyWithResponse(ctx, "application/json", bytes.NewReader(payload))
 	if err != nil {
 		return errors.Errorf("failed to create organization: %w", err)
@@ -53,13 +56,13 @@ func buildCreateOrganizationRequest(ctx context.Context, name string) (createOrg
 		return body, nil
 	}
 
-	heardFrom, err := console.PromptText(ctx, "Where did you hear about us? ")
+	heardFrom, err := console.PromptText(ctx, "Where did you hear about us? (optional) ")
 	if err != nil {
 		return body, err
 	}
 	body.HeardFrom = strings.TrimSpace(heardFrom)
 
-	building, err := console.PromptText(ctx, "What are you building? ")
+	building, err := console.PromptText(ctx, "What are you building? (optional) ")
 	if err != nil {
 		return body, err
 	}
