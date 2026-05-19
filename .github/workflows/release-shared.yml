@@ -98,6 +98,11 @@ jobs:
 
   smoke-test:
     needs: build
+    # macos-15-intel is the slowest smoke leg and the only one not on
+    # Blacksmith (Blacksmith macOS is ARM-only). Skip it on prereleases
+    # (PR smoke + develop -> beta) so beta wall-clock isn't gated by it;
+    # stable releases on main still run the full matrix.
+    if: ${{ !(matrix.runner == 'macos-15-intel' && inputs.prerelease) }}
     strategy:
       fail-fast: false
       matrix:
