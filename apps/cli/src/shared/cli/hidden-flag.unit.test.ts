@@ -3,9 +3,11 @@ import { Command, Flag, type HelpDoc } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
 import {
   LegacyHiddenFlags,
+  LegacyHiddenSubcommands,
   stripHiddenFlagsFromHelpDoc,
   withHidden,
   withHiddenFromConfig,
+  withHiddenSubcommands,
 } from "./hidden-flag.ts";
 
 const flagDoc = (name: string): HelpDoc.FlagDoc => ({
@@ -31,6 +33,15 @@ const helpDocWithHidden = (
   helpDoc({
     ...overrides,
     annotations: Context.make(LegacyHiddenFlags, new Set(hidden)),
+  });
+
+const helpDocWithHiddenSubcommands = (
+  hidden: ReadonlyArray<string>,
+  overrides: Partial<HelpDoc.HelpDoc>,
+): HelpDoc.HelpDoc =>
+  helpDoc({
+    ...overrides,
+    annotations: Context.make(LegacyHiddenSubcommands, new Set(hidden)),
   });
 
 // Reach into the internal command shape to obtain the help doc the formatter
@@ -110,6 +121,15 @@ describe("withHiddenFromConfig", () => {
   });
 });
 
+describe("withHiddenSubcommands", () => {
+  it("adds hidden subcommand annotations to the command help doc", () => {
+    const cmd = Command.make("demo").pipe(withHiddenSubcommands(["legacy"]));
+    const annotated = Context.get(buildHelpDoc(cmd).annotations, LegacyHiddenSubcommands);
+
+    expect([...annotated]).toEqual(["legacy"]);
+  });
+});
+
 describe("stripHiddenFlagsFromHelpDoc", () => {
   it("returns the doc unchanged when annotations are empty", () => {
     const doc = helpDoc({ flags: [flagDoc("foo")] });
@@ -133,5 +153,27 @@ describe("stripHiddenFlagsFromHelpDoc", () => {
 
     expect(stripped.globalFlags).toBeUndefined();
     expect(stripped.flags.map((f) => f.name)).toEqual(["bar"]);
+  });
+
+  it("filters hidden subcommands by the doc's annotation", () => {
+    const doc = helpDocWithHiddenSubcommands(["legacy"], {
+      subcommands: [
+        {
+          group: undefined,
+          commands: [
+            {
+              name: "visible",
+              alias: undefined,
+              shortDescription: "visible",
+              description: "visible",
+            },
+            { name: "legacy", alias: undefined, shortDescription: "legacy", description: "legacy" },
+          ],
+        },
+      ],
+    });
+
+    const stripped = stripHiddenFlagsFromHelpDoc(doc);
+    expect(stripped.subcommands?.[0]?.commands.map((command) => command.name)).toEqual(["visible"]);
   });
 });
