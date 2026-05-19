@@ -1,4 +1,5 @@
 import { Command } from "effect/unstable/cli";
+import { withHiddenSubcommands } from "../../../shared/cli/hidden-flag.ts";
 import { legacyDbDiffCommand } from "./diff/diff.command.ts";
 import { legacyDbDumpCommand } from "./dump/dump.command.ts";
 import { legacyDbPushCommand } from "./push/push.command.ts";
@@ -16,6 +17,7 @@ import { legacyDbSchemaCommand } from "./schema/schema.command.ts";
 export const legacyDbCommand = Command.make("db").pipe(
   Command.withDescription("Manage Postgres databases."),
   Command.withShortDescription("Manage databases"),
+  withHiddenSubcommands(["branch", "remote", "test"]),
   Command.withSubcommands([
     legacyDbDiffCommand,
     legacyDbDumpCommand,
