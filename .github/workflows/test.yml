@@ -33,7 +33,7 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
       - name: Setup Go
-        uses: useblacksmith/setup-go@f12a3dabb4171193018e496855e47349b360c056 # v5
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version-file: apps/cli-go/go.mod
           cache-dependency-path: apps/cli-go/go.sum
@@ -57,7 +57,7 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
       - name: Setup Go
-        uses: useblacksmith/setup-go@f12a3dabb4171193018e496855e47349b360c056 # v5
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version-file: apps/cli-go/go.mod
           cache-dependency-path: apps/cli-go/go.sum
@@ -114,7 +114,7 @@ jobs:
       - name: Cache Go CLI binary
         if: steps.detect.outputs.cli_e2e == 'true'
         id: cache-go-binary
-        uses: actions/cache@v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: apps/cli-go/supabase-go
           key: go-cli-${{ runner.os }}-${{ hashFiles('apps/cli-go/**/*.go',
@@ -123,7 +123,7 @@ jobs:
       - name: Setup Go
         if: steps.detect.outputs.cli_e2e == 'true' &&
           steps.cache-go-binary.outputs.cache-hit != 'true'
-        uses: useblacksmith/setup-go@f12a3dabb4171193018e496855e47349b360c056 # v5
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version-file: apps/cli-go/go.mod
           cache-dependency-path: apps/cli-go/go.sum
