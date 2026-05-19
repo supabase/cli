@@ -1,5 +1,5 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
-import { withHidden } from "../../../../shared/cli/hidden-flag.ts";
+import { withHidden, withHiddenFromConfig } from "../../../../shared/cli/hidden-flag.ts";
 import { legacyFunctionsDeploy } from "./deploy.handler.ts";
 
 const config = {
@@ -42,6 +42,7 @@ const config = {
 export const legacyFunctionsDeployCommand = Command.make("deploy", config).pipe(
   Command.withDescription("Deploy a Function to the linked Supabase project."),
   Command.withShortDescription("Deploy a Function to Supabase"),
+  withHiddenFromConfig(config),
   Command.withHandler((flags) =>
     legacyFunctionsDeploy({
       functionNames: flags.functionNames.map(String),
