@@ -54,6 +54,7 @@ function mockSequenceSpawner(results: ReadonlyArray<SpawnResult>) {
             isRunning: Effect.succeed(true),
             stdin: Sink.drain,
             kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
             getInputFd: () => Sink.drain,
             getOutputFd: () => Stream.empty,
           });

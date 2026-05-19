@@ -52,4 +52,5 @@ Not applicable (proxied to Go binary).
 
 - If no function name is provided, downloads all functions.
 - Requires a linked project (`--project-ref` or linked project config).
+- `--use-docker` and `--legacy-bundle` are hidden flags forwarded to the Go binary for backward compatibility; they are mutually exclusive with `--use-api`.
 - Phase 0 proxy: all invocations are forwarded to the bundled Go binary.

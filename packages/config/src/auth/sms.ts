@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { secret } from "../lib/env.ts";
 
 const tags = ["auth"];
@@ -42,7 +42,7 @@ function requiredWhenEnabled<
 
     return {
       path: [path],
-      message,
+      issue: message,
     };
   });
 }
@@ -53,45 +53,45 @@ export const sms = Schema.Struct({
     description: "Allow/disallow new user signups via SMS to your project.",
     tags,
     links: [links.auth],
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultEnableSignup)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnableSignup))),
   enable_confirmations: Schema.Boolean.annotate({
     default: defaultEnableConfirmations,
     description: "If enabled, users need to confirm their phone number before signing in.",
     tags,
     links: [links.auth],
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultEnableConfirmations)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnableConfirmations))),
   template: Schema.String.annotate({
     default: defaultTemplate,
     description: "The template to use for the SMS message.",
     tags,
     links: [links.auth],
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultTemplate)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultTemplate))),
   max_frequency: Schema.String.annotate({
     default: defaultMaxFrequency,
     description:
       "Controls the minimum amount of time that must pass before sending another sms otp.",
     tags,
     links: [links.auth],
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultMaxFrequency)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxFrequency))),
   twilio: Schema.Struct({
     enabled: Schema.Boolean.annotate({
       default: defaultTwilioEnabled,
       description: "Enable/disable Twilio provider for phone login.",
       tags,
       links: [links.phoneLogin("Twilio")],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultTwilioEnabled)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultTwilioEnabled))),
     account_sid: Schema.String.annotate({
       default: defaultTwilioAccountSid,
       description: "The account SID for the Twilio API.",
       tags,
       links: [links.phoneLogin("Twilio")],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultTwilioAccountSid)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultTwilioAccountSid))),
     message_service_sid: Schema.String.annotate({
       default: defaultTwilioMessageServiceSid,
       description: "The message service SID for the Twilio API.",
       tags,
       links: [links.phoneLogin("Twilio")],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultTwilioMessageServiceSid)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultTwilioMessageServiceSid))),
     auth_token: Schema.optionalKey(
       secret({
         examples: ["env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"],
@@ -118,14 +118,14 @@ export const sms = Schema.Struct({
         "Missing required field in config: auth.sms.twilio.auth_token",
       ),
     )
-    .pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultTwilio }))),
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultTwilio }))),
   twilio_verify: Schema.Struct({
     enabled: Schema.Boolean.annotate({
       default: defaultTwilioVerifyEnabled,
       description: "Enable/disable Twilio Verify provider for phone verification.",
       tags,
       links: [links.phoneLogin("Twilio")],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultTwilioVerifyEnabled)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultTwilioVerifyEnabled))),
     account_sid: Schema.optionalKey(
       Schema.String.annotate({
         description: "The account SID for the Twilio API.",
@@ -165,14 +165,14 @@ export const sms = Schema.Struct({
         "Missing required field in config: auth.sms.twilio_verify.auth_token",
       ),
     )
-    .pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultTwilioVerify }))),
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultTwilioVerify }))),
   messagebird: Schema.Struct({
     enabled: Schema.Boolean.annotate({
       default: defaultMessagebirdEnabled,
       description: "Enable/disable MessageBird provider for phone login.",
       tags,
       links: [links.phoneLogin("MessageBird")],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultMessagebirdEnabled)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMessagebirdEnabled))),
     originator: Schema.optionalKey(
       Schema.String.annotate({
         description: "The originator of the SMS message.",
@@ -200,14 +200,14 @@ export const sms = Schema.Struct({
         "Missing required field in config: auth.sms.messagebird.access_key",
       ),
     )
-    .pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultMessagebird }))),
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultMessagebird }))),
   textlocal: Schema.Struct({
     enabled: Schema.Boolean.annotate({
       default: defaultTextlocalEnabled,
       description: "Enable/disable Textlocal provider for phone login.",
       tags,
       links: [links.phoneLogin("Textlocal%2520(Community%2520Supported)")],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultTextlocalEnabled)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultTextlocalEnabled))),
     sender: Schema.optionalKey(
       Schema.String.annotate({
         description: "The sender of the SMS message.",
@@ -235,14 +235,14 @@ export const sms = Schema.Struct({
         "Missing required field in config: auth.sms.textlocal.api_key",
       ),
     )
-    .pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultTextlocal }))),
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultTextlocal }))),
   vonage: Schema.Struct({
     enabled: Schema.Boolean.annotate({
       default: defaultVonageEnabled,
       description: "Enable/disable Vonage provider for phone login.",
       tags,
       links: [links.phoneLogin("Vonage")],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultVonageEnabled)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultVonageEnabled))),
     from: Schema.optionalKey(
       Schema.String.annotate({
         description: "The sender of the SMS message.",
@@ -282,7 +282,7 @@ export const sms = Schema.Struct({
         "Missing required field in config: auth.sms.vonage.api_secret",
       ),
     )
-    .pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultVonage }))),
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultVonage }))),
   test_otp: Schema.optionalKey(
     Schema.Record(Schema.String, Schema.String).annotate({
       description: "Use pre-defined map of phone number to OTP for testing.",
@@ -290,4 +290,4 @@ export const sms = Schema.Struct({
       links: [links.auth],
     }),
   ),
-}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultSms })));
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultSms })));

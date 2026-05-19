@@ -8,6 +8,9 @@ interface LegacyFunctionsDeployFlags {
   readonly useApi: boolean;
   readonly importMap: Option.Option<string>;
   readonly prune: boolean;
+  readonly jobs: Option.Option<number>;
+  readonly useDocker: boolean;
+  readonly legacyBundle: boolean;
 }
 
 export const legacyFunctionsDeploy = Effect.fn("legacy.functions.deploy")(function* (
@@ -21,5 +24,8 @@ export const legacyFunctionsDeploy = Effect.fn("legacy.functions.deploy")(functi
   if (flags.useApi) args.push("--use-api");
   if (Option.isSome(flags.importMap)) args.push("--import-map", flags.importMap.value);
   if (flags.prune) args.push("--prune");
+  if (Option.isSome(flags.jobs)) args.push("--jobs", String(flags.jobs.value));
+  if (flags.useDocker) args.push("--use-docker");
+  if (flags.legacyBundle) args.push("--legacy-bundle");
   yield* proxy.exec(args);
 });

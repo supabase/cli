@@ -135,7 +135,7 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
     name: _flags.stack,
   });
 
-  const stack = yield* Effect.provide(Stack.asEffect(), layer.value);
+  const stack = yield* Effect.provide(Stack, layer.value);
   const [info, services] = yield* Effect.all([stack.getInfo(), stack.getAllStates()]);
   const existingMetadata = yield* stateManager.readMetadata(managedStack.state.name).pipe(
     Effect.map(Option.some),

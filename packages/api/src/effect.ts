@@ -6,7 +6,6 @@ import {
 } from "./internal/client.ts";
 import { makeEffectApiClient, type EffectClient } from "./internal/effect-client.ts";
 import {
-  executeApiClientOperation,
   type GeneratedEffectOperations,
   versionedEffectOperations,
 } from "./generated/effect-client.ts";
