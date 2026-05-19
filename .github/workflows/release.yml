@@ -46,7 +46,7 @@ jobs:
       github.event.pull_request.head.ref == 'develop' &&
       github.event.pull_request.base.ref == 'main' &&
       github.event.review.state == 'approved'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: write
     steps:
@@ -68,7 +68,7 @@ jobs:
   plan:
     name: Plan release
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       should_release: ${{ steps.compute.outputs.should_release }}
       version: ${{ steps.compute.outputs.version }}

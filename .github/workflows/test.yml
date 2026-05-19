@@ -25,7 +25,7 @@ jobs:
   check:
     if: github.event.pull_request.draft == false || github.event_name == 'push'
     name: Check code quality
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -49,7 +49,7 @@ jobs:
   test-core:
     if: github.event.pull_request.draft == false || github.event_name == 'push'
     name: Run unit and integration tests
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -73,7 +73,7 @@ jobs:
   test-e2e:
     if: github.event.pull_request.draft == false || github.event_name == 'push'
     name: Run end-to-end tests (shard ${{ matrix.shard }}/3)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     strategy:
       fail-fast: false
       matrix:
@@ -173,7 +173,7 @@ jobs:
       == 'push')
     name: Run end-to-end tests
     needs: test-e2e
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Verify all shards succeeded
         run: |

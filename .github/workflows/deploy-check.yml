@@ -16,7 +16,7 @@ permissions:
 jobs:
   check:
     if: github.head_ref != 'develop'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - run: |
           echo "Pull requests to main branch are only allowed from develop branch."
