@@ -45,7 +45,7 @@ on:
 
 jobs:
   build:
-    runs-on: large-linux-x86
+    runs-on: blacksmith-32vcpu-ubuntu-2404
     env:
       BUN_SHELL: ${{ inputs.shell }}
       VERSION: ${{ inputs.version }}
