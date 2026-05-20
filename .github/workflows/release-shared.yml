@@ -329,23 +329,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "v${VERSION}" --draft=false
 
-  # Post-publish smoke test for the `supabase/setup-cli` GitHub Action against
-  # the just-released beta. The action fetches the binary from the GitHub
-  # release we just published, so it must run after `publish`.
-  #
-  # Gated to beta releases only: beta is where setup-cli regressions need to
-  # be caught fast (it's the channel CI users typically pin via
-  # `version: latest` on `develop`), and running the full matrix on stable
-  # would double the post-publish wall-clock for no extra signal. The same
-  # reusable workflow can be dispatched manually against an arbitrary
-  # already-published version when debugging setup-cli regressions.
-  setup-cli-smoke:
-    needs: publish
-    if: ${{ !inputs.dry_run && inputs.channel == 'beta' }}
-    uses: ./.github/workflows/setup-cli-smoke-test.yml
-    with:
-      version: ${{ inputs.version }}
-
   publish-homebrew:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
@@ -429,3 +412,22 @@ jobs:
         run: pnpm exec bun apps/cli/scripts/update-scoop.ts --version "${VERSION}" --name "${SCOOP_NAME}"
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+  # Post-publish smoke test for the `supabase/setup-cli` GitHub Action against
+  # the just-released CLI. Runs last and intentionally does not gate
+  # publish-homebrew / publish-scoop — by the time the smoke runs, the npm
+  # package and GitHub release are already live and the brew/scoop pushes
+  # have either succeeded or skipped, so a setup-cli regression surfaces as
+  # a red post-release signal without holding back the rest of the channel.
+  #
+  # Depends on the publish jobs only via `needs` for ordering; the `if`
+  # uses `always() && needs.publish.result == 'success'` so the smoke still
+  # runs when publish-homebrew / publish-scoop are skipped (alpha) or fail.
+  # The reusable workflow can also be dispatched manually against any
+  # already-published version when debugging setup-cli regressions.
+  setup-cli-smoke:
+    needs: [publish, publish-homebrew, publish-scoop]
+    if: ${{ always() && !inputs.dry_run && needs.publish.result == 'success' }}
+    uses: ./.github/workflows/setup-cli-smoke-test.yml
+    with:
+      version: ${{ inputs.version }}
