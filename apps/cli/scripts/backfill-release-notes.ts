@@ -175,11 +175,32 @@ try {
   console.error(`==> Re-staged on ${branch} @ ${sha} (without tag ${tag})`);
   console.error(`==> Running semantic-release --dry-run`);
 
+  // semantic-release uses env-ci to detect the current branch, which reads
+  // GITHUB_REF (and friends) from the GitHub Actions environment. `noCi: true`
+  // only bypasses the "not in CI" guard - it does not stop env-ci from
+  // resolving the branch from CI vars. When backfilling v2.100.1 from a
+  // workflow that ran on develop, env-ci returns "develop" even though the
+  // clone's HEAD points at main, and semantic-release then complains that
+  // local develop is behind remote. Strip the GitHub Actions detection vars
+  // so env-ci falls back to reading the branch from git HEAD in the clone.
+  const childEnv = { ...process.env };
+  for (const key of [
+    "GITHUB_ACTIONS",
+    "GITHUB_REF",
+    "GITHUB_REF_NAME",
+    "GITHUB_HEAD_REF",
+    "GITHUB_BASE_REF",
+    "GITHUB_EVENT_NAME",
+    "CI",
+  ]) {
+    delete childEnv[key];
+  }
+
   const result = await semanticRelease(
     { dryRun: true, noCi: true, repositoryUrl: repoUrl },
     {
       cwd: path.join(clone, "apps/cli"),
-      env: process.env,
+      env: childEnv,
       stdout: process.stderr,
       stderr: process.stderr,
     },

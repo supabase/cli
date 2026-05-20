@@ -1,6 +1,22 @@
 name: Backfill release notes
 
 on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to refresh (e.g. v2.100.1)
+        required: true
+        type: string
+      apply:
+        description: Update the GitHub release body (otherwise dry-run only)
+        required: false
+        type: boolean
+        default: false
+      non_blocking:
+        description: Do not fail the workflow run when backfill fails (release pipeline)
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       tag:
@@ -19,6 +35,7 @@ permissions:
 jobs:
   backfill:
     runs-on: ubuntu-latest
+    continue-on-error: ${{ inputs.non_blocking }}
     permissions:
       contents: write
     env:
