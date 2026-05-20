@@ -1,0 +1,91 @@
+name: Backfill release notes
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to refresh (e.g. v2.100.1)
+        required: true
+        type: string
+      apply:
+        description: Update the GitHub release body (otherwise dry-run only)
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ inputs.tag }}
+    steps:
+      - id: app-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+
+      - uses: useblacksmith/checkout@41cdeedae8edb2e684ba22896a5fd2a3cb85db6b # v1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      # semantic-release computes the *next* release based on commits since the
+      # latest channel tag. To re-derive notes for an existing tag, delete the
+      # tag locally and synthesise a branch name that matches the channel
+      # config in apps/cli/package.json (main / develop) at the tag's commit.
+      - name: Re-stage repo as if $TAG were unpublished
+        run: |
+          set -euo pipefail
+          sha=$(git rev-list -n 1 "$TAG")
+          git tag -d "$TAG"
+          if [[ "$TAG" == *-beta.* ]]; then
+            branch=develop
+          else
+            branch=main
+          fi
+          git checkout -B "$branch" "$sha"
+          echo "Re-staged on $branch @ $sha (without tag $TAG)"
+
+      - id: sr
+        uses: cycjimmy/semantic-release-action@b12c8f6015dc215fe37bc154d4ad456dd3833c90 # v6.0.0
+        with:
+          working_directory: apps/cli
+          dry_run: true
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      - name: Verify computed version matches $TAG
+        env:
+          SR_VERSION: ${{ steps.sr.outputs.new_release_version }}
+        run: |
+          set -euo pipefail
+          want="${TAG#v}"
+          if [[ "$SR_VERSION" != "$want" ]]; then
+            echo "::error::semantic-release computed v$SR_VERSION but tag is $TAG; check channel config / tag history"
+            exit 1
+          fi
+
+      - name: Show generated notes
+        env:
+          NOTES: ${{ steps.sr.outputs.new_release_notes }}
+        run: |
+          {
+            echo "## Notes for $TAG"
+            echo
+            printf '%s\n' "$NOTES"
+          } >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$NOTES" > notes.md
+
+      - name: Update GitHub Release body
+        if: inputs.apply
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$TAG" --notes-file notes.md
