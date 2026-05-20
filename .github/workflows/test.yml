@@ -25,7 +25,7 @@ jobs:
   check:
     if: github.event.pull_request.draft == false || github.event_name == 'push'
     name: Check code quality
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -33,7 +33,7 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version-file: apps/cli-go/go.mod
           cache-dependency-path: apps/cli-go/go.sum
@@ -49,7 +49,7 @@ jobs:
   test-core:
     if: github.event.pull_request.draft == false || github.event_name == 'push'
     name: Run unit and integration tests
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -57,7 +57,7 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version-file: apps/cli-go/go.mod
           cache-dependency-path: apps/cli-go/go.sum
@@ -73,14 +73,14 @@ jobs:
   test-e2e:
     if: github.event.pull_request.draft == false || github.event_name == 'push'
     name: Run end-to-end tests (shard ${{ matrix.shard }}/3)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     strategy:
       fail-fast: false
       matrix:
         shard: [ 1, 2, 3 ]
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: useblacksmith/checkout@41cdeedae8edb2e684ba22896a5fd2a3cb85db6b # v1
         with:
           fetch-depth: 0
 
@@ -114,7 +114,7 @@ jobs:
       - name: Cache Go CLI binary
         if: steps.detect.outputs.cli_e2e == 'true'
         id: cache-go-binary
-        uses: actions/cache@v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: apps/cli-go/supabase-go
           key: go-cli-${{ runner.os }}-${{ hashFiles('apps/cli-go/**/*.go',
@@ -123,7 +123,7 @@ jobs:
       - name: Setup Go
         if: steps.detect.outputs.cli_e2e == 'true' &&
           steps.cache-go-binary.outputs.cache-hit != 'true'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version-file: apps/cli-go/go.mod
           cache-dependency-path: apps/cli-go/go.sum

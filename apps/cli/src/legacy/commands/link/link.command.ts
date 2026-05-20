@@ -8,6 +8,7 @@ const config = {
     Flag.optional,
   ),
   password: Flag.string("password").pipe(
+    Flag.withAlias("p"),
     Flag.withDescription("Password to your remote Postgres database."),
     Flag.optional,
   ),
