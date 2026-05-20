@@ -205,7 +205,12 @@ jobs:
   publish:
     needs: smoke-test
     if: ${{ !inputs.dry_run }}
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    # npm provenance verification rejects non-GitHub-hosted runners with
+    # E422 ("Unsupported GitHub Actions runner environment: self-hosted").
+    # Blacksmith runners count as self-hosted from sigstore's POV, so the
+    # publish job must stay on a github-hosted runner. The job is short
+    # and not compute-bound, so the wall-clock cost is negligible.
+    runs-on: ubuntu-latest
     env:
       CHANNEL: ${{ inputs.channel }}
       NPM_TAG: ${{ inputs.npm_tag }}
@@ -327,7 +332,7 @@ jobs:
   publish-homebrew:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     env:
       BREW_NAME: ${{ inputs.brew_name }}
       VERSION: ${{ inputs.version }}
@@ -369,7 +374,7 @@ jobs:
   publish-scoop:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     env:
       SCOOP_NAME: ${{ inputs.scoop_name }}
       VERSION: ${{ inputs.version }}
