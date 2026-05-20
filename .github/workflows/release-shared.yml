@@ -42,11 +42,6 @@ on:
         required: false
         type: string
         default: supabase
-      release_notes:
-        description: Release notes body (markdown) for the GitHub Release
-        required: false
-        type: string
-        default: ""
 
 jobs:
   build:
@@ -309,7 +304,6 @@ jobs:
           name: v${{ inputs.version }}
           draft: true
           prerelease: ${{ inputs.prerelease }}
-          body: ${{ inputs.release_notes }}
           files: |
             dist/supabase_${{ inputs.version }}_darwin_arm64.tar.gz
             dist/supabase_${{ inputs.version }}_darwin_amd64.tar.gz
@@ -337,6 +331,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "v${VERSION}" --draft=false
+
+  # Changelog backfill only needs tag + published GH release (from publish).
+  # Runs in parallel with brew/scoop/smoke; must not gate distribution.
+  backfill-release-notes:
+    uses: ./.github/workflows/backfill-release-notes.yml
+    needs: publish
+    if: ${{ !inputs.dry_run && needs.publish.result == 'success' }}
+    with:
+      tag: v${{ inputs.version }}
+      apply: true
+      non_blocking: true
 
   publish-homebrew:
     needs: publish
