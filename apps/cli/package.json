@@ -63,6 +63,7 @@
     "posthog-node": "^5.34.3",
     "react": "^19.2.6",
     "react-devtools-core": "^7.0.1",
+    "semantic-release": "^24.2.9",
     "vitest": "catalog:"
   },
   "optionalDependencies": {
@@ -114,7 +115,8 @@
       "@typescript/native-preview",
       "oxfmt",
       "oxlint",
-      "oxlint-tsgolint"
+      "oxlint-tsgolint",
+      "semantic-release"
     ]
   },
   "nx": {
