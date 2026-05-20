@@ -32,6 +32,7 @@ var (
 	declarativeLocal     bool
 	declarativeReset     bool
 	declarativeApply     bool
+	declarativeNoApply   bool
 	declarativeFile      string
 	declarativeName      string
 
@@ -100,6 +101,26 @@ func resolveDeclarativeMigrationName(name, file string) string {
 		return name
 	}
 	return file
+}
+
+// resolveDeclarativeSyncShouldApply decides whether to apply the generated migration.
+// Precedence: --no-apply > --apply > global --yes > TTY prompt > non-TTY default (skip).
+func resolveDeclarativeSyncShouldApply(
+	applyFlag, noApplyFlag, yesFlag, tty bool,
+	prompt func() (bool, error),
+) (bool, error) {
+	switch {
+	case noApplyFlag:
+		return false, nil
+	case applyFlag:
+		return true, nil
+	case yesFlag:
+		return true, nil
+	case tty:
+		return prompt()
+	default:
+		return false, nil
+	}
 }
 
 func ensureLocalDatabaseStarted(ctx context.Context, local bool, isRunning func() error, startDatabase func(context.Context) error) error {
@@ -360,14 +381,17 @@ func runDeclarativeSync(cmd *cobra.Command, args []string) error {
 	}
 
 	// Step 6: Prompt to apply migration to local DB
-	shouldApply := declarativeApply
-	if !shouldApply && isTTY() && !viper.GetBool("YES") {
-		shouldApply, err = console.PromptYesNo(ctx, "Apply this migration to local database?", true)
-		if err != nil {
-			return err
-		}
-	} else if viper.GetBool("YES") {
-		shouldApply = true
+	shouldApply, err := resolveDeclarativeSyncShouldApply(
+		declarativeApply,
+		declarativeNoApply,
+		viper.GetBool("YES"),
+		isTTY(),
+		func() (bool, error) {
+			return console.PromptYesNo(ctx, "Apply this migration to local database?", true)
+		},
+	)
+	if err != nil {
+		return err
 	}
 
 	if shouldApply {
@@ -461,6 +485,9 @@ func init() {
 	syncFlags.StringVarP(&declarativeFile, "file", "f", defaultDeclarativeSyncName, "Saves schema diff to a new migration file.")
 	syncFlags.StringVar(&declarativeName, "name", "", "Name for the generated migration file.")
 	syncFlags.BoolVar(&declarativeApply, "apply", false, "Apply the generated migration to the local database without prompting.")
+	syncFlags.BoolVar(&declarativeNoApply, "no-apply", false,
+		"Generate the migration file without prompting or applying it to the local database.")
+	dbDeclarativeSyncCmd.MarkFlagsMutuallyExclusive("apply", "no-apply")
 
 	generateFlags := dbDeclarativeGenerateCmd.Flags()
 	generateFlags.BoolVar(&declarativeOverwrite, "overwrite", false, "Overwrite declarative schema files without confirmation.")
