@@ -75,6 +75,18 @@ try {
   console.error(`==> Cloning ${repoRoot} -> ${clone}`);
   await $`git clone --quiet --no-local ${repoRoot} ${clone}`;
 
+  // `git notes add` (used below to seed channel notes) requires a committer
+  // identity. CI runners don't ship one in ~/.gitconfig, so without this the
+  // seeding loop silently fails - semantic-release then can't see prior beta
+  // tags on the beta channel and computes the wrong next version.
+  await $`git -C ${clone} config --local user.email backfill-release-notes@supabase.local`;
+  await $`git -C ${clone} config --local user.name backfill-release-notes`;
+  // Same reason - and `commit.gpgsign`/`tag.gpgsign` inherited from a user's
+  // global config would make `git notes add` fail in environments without a
+  // signing key. The temp clone never publishes anything, so disable signing.
+  await $`git -C ${clone} config --local commit.gpgsign false`;
+  await $`git -C ${clone} config --local tag.gpgsign false`;
+
   const originUrl = (await $`git -C ${repoRoot} remote get-url origin`.text()).trim();
 
   // Notes refs aren't fetched by `git clone`. Pull from the source repo first
@@ -139,9 +151,7 @@ try {
         ? "alpha"
         : "latest";
     const payload = JSON.stringify({ channels: [channel] });
-    await $`git -C ${clone} notes --ref semantic-release add -f -m ${payload} ${prevTag}^{commit}`
-      .nothrow()
-      .quiet();
+    await $`git -C ${clone} notes --ref semantic-release add -f -m ${payload} ${prevTag}^{commit}`.quiet();
   }
 
   // Apply the *current* release config to the historical checkout. Before

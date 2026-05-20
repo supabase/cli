@@ -23,6 +23,7 @@ jobs:
       contents: write
     env:
       TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: useblacksmith/checkout@41cdeedae8edb2e684ba22896a5fd2a3cb85db6b # v1
         with:
@@ -31,19 +32,10 @@ jobs:
 
       - uses: ./.github/actions/setup
 
-      - name: Compute release notes (dry-run)
-        run: pnpm exec bun apps/cli/scripts/backfill-release-notes.ts --tag "${TAG}" | tee notes.md
-
-      - name: Publish notes to job summary
+      - name: Backfill release notes
         run: |
-          {
-            echo "## Notes for ${TAG}"
-            echo
-            cat notes.md
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Update GitHub Release body
-        if: inputs.apply
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: pnpm exec bun apps/cli/scripts/backfill-release-notes.ts --tag "${TAG}" --apply
+          if [ "${{ inputs.apply }}" = "true" ]; then
+            bun apps/cli/scripts/backfill-release-notes.ts --tag "${TAG}" --apply
+          else
+            bun apps/cli/scripts/backfill-release-notes.ts --tag "${TAG}"
+          fi
