@@ -80,6 +80,7 @@ jobs:
       publish_brew_scoop: ${{ steps.compute.outputs.publish_brew_scoop }}
       dry_run: ${{ steps.compute.outputs.dry_run }}
       channel: ${{ steps.compute.outputs.channel }}
+      release_notes: ${{ steps.compute.outputs.release_notes }}
     steps:
       # semantic-release runs `git push --dry-run HEAD:<branch>` as part of
       # verifyAuth even in `dry_run: true` mode, so the token must have push
@@ -118,6 +119,7 @@ jobs:
           DISPATCH_DRY_RUN: ${{ inputs.dry_run }}
           SR_PUBLISHED: ${{ steps.semantic-release.outputs.new_release_published }}
           SR_VERSION: ${{ steps.semantic-release.outputs.new_release_version }}
+          SR_NOTES: ${{ steps.semantic-release.outputs.new_release_notes }}
         run: |
           set -euo pipefail
           if [[ "$EVENT" == "workflow_dispatch" ]]; then
@@ -181,6 +183,15 @@ jobs:
             echo "dry_run=$dry_run"
             echo "channel=$channel"
           } >> "$GITHUB_OUTPUT"
+          # Multi-line, attacker-influenced (PR titles): use a heredoc with a
+          # random delimiter to avoid collisions, and pass SR_NOTES via env so
+          # ${{ }} is never interpolated into shell.
+          delim="EOF_$(openssl rand -hex 8)"
+          {
+            echo "release_notes<<${delim}"
+            printf '%s\n' "${SR_NOTES:-}"
+            echo "${delim}"
+          } >> "$GITHUB_OUTPUT"
 
   release:
     name: Release
@@ -200,4 +211,5 @@ jobs:
       scoop_name: ${{ needs.plan.outputs.scoop_name }}
       dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
       channel: ${{ needs.plan.outputs.channel }}
+      release_notes: ${{ needs.plan.outputs.release_notes }}
     secrets: inherit

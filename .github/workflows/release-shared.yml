@@ -42,6 +42,11 @@ on:
         required: false
         type: string
         default: supabase
+      release_notes:
+        description: Release notes body (markdown) for the GitHub Release
+        required: false
+        type: string
+        default: ""
 
 jobs:
   build:
@@ -301,6 +306,7 @@ jobs:
           name: v${{ inputs.version }}
           draft: true
           prerelease: ${{ inputs.prerelease }}
+          body: ${{ inputs.release_notes }}
           files: |
             dist/supabase_${{ inputs.version }}_darwin_arm64.tar.gz
             dist/supabase_${{ inputs.version }}_darwin_amd64.tar.gz
