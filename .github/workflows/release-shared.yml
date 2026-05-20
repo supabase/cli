@@ -331,80 +331,20 @@ jobs:
 
   # Post-publish smoke test for the `supabase/setup-cli` GitHub Action against
   # the just-released beta. The action fetches the binary from the GitHub
-  # release we just published, so it must run after `publish`. It exists to
-  # catch regressions like supabase/setup-cli#427 where the action silently
-  # stopped working on Alpine-based containers (musl libc + archive layout
-  # changes broke PATH resolution and binary execution).
+  # release we just published, so it must run after `publish`.
   #
   # Gated to beta releases only: beta is where setup-cli regressions need to
   # be caught fast (it's the channel CI users typically pin via
   # `version: latest` on `develop`), and running the full matrix on stable
-  # would double the post-publish wall-clock for no extra signal.
-  setup-cli-smoke-test:
+  # would double the post-publish wall-clock for no extra signal. The same
+  # reusable workflow can be dispatched manually against an arbitrary
+  # already-published version when debugging setup-cli regressions.
+  setup-cli-smoke:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.channel == 'beta' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        runner:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-    runs-on: ${{ matrix.runner }}
-    env:
-      VERSION: ${{ inputs.version }}
-    steps:
-      - name: Install Supabase CLI via setup-cli
-        uses: supabase/setup-cli@v1
-        with:
-          version: ${{ inputs.version }}
-      - name: Verify supabase --version matches the published beta
-        shell: bash
-        run: |
-          set -euo pipefail
-          actual="$(supabase --version | tr -d '\r' | head -n1)"
-          echo "supabase --version: ${actual}"
-          if [ "${actual}" != "${VERSION}" ]; then
-            echo "Version mismatch: expected ${VERSION}, got ${actual}" >&2
-            exit 1
-          fi
-
-  # Alpine leg of the setup-cli smoke test. Kept as a separate job because
-  # GitHub Actions only honours the `container:` field on Linux runners, and
-  # mixing container + non-container entries in a single matrix via
-  # `container: ${{ matrix.container }}` is fragile when the value is empty.
-  #
-  # The musl-vs-glibc + archive layout regressions tracked in
-  # supabase/setup-cli#427 only reproduce inside a real Alpine container, so
-  # this job is the actual signal the task in CLI-1507 was created for.
-  setup-cli-smoke-test-alpine:
-    needs: publish
-    if: ${{ !inputs.dry_run && inputs.channel == 'beta' }}
-    runs-on: ubuntu-latest
-    # `node:20-alpine` ships a musl-linked Node, which is required for
-    # JavaScript-based actions (setup-cli included) to launch inside an
-    # Alpine container — the runner's mounted glibc Node won't execute here.
-    container:
-      image: node:20-alpine
-    env:
-      VERSION: ${{ inputs.version }}
-    steps:
-      - name: Install Alpine prerequisites
-        run: apk add --no-cache bash curl tar
-      - name: Install Supabase CLI via setup-cli
-        uses: supabase/setup-cli@v1
-        with:
-          version: ${{ inputs.version }}
-      - name: Verify supabase --version matches the published beta
-        shell: bash
-        run: |
-          set -euo pipefail
-          actual="$(supabase --version | tr -d '\r' | head -n1)"
-          echo "supabase --version: ${actual}"
-          if [ "${actual}" != "${VERSION}" ]; then
-            echo "Version mismatch: expected ${VERSION}, got ${actual}" >&2
-            exit 1
-          fi
+    uses: ./.github/workflows/setup-cli-smoke-test.yml
+    with:
+      version: ${{ inputs.version }}
 
   publish-homebrew:
     needs: publish
