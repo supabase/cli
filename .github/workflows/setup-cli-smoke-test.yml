@@ -60,10 +60,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # `supabase --version` prints the version without the leading `v`,
+          # while release tags / setup-cli inputs include it, so strip it
+          # before comparing.
+          expected="${VERSION#v}"
           actual="$(supabase --version | tr -d '\r' | head -n1)"
           echo "supabase --version: ${actual}"
-          if [ "${actual}" != "${VERSION}" ]; then
-            echo "Version mismatch: expected ${VERSION}, got ${actual}" >&2
+          if [ "${actual}" != "${expected}" ]; then
+            echo "Version mismatch: expected ${expected}, got ${actual}" >&2
             exit 1
           fi
 
@@ -108,9 +112,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # `supabase --version` prints the version without the leading `v`,
+          # while release tags / setup-cli inputs include it, so strip it
+          # before comparing.
+          expected="${VERSION#v}"
           actual="$(supabase --version | tr -d '\r' | head -n1)"
           echo "supabase --version: ${actual}"
-          if [ "${actual}" != "${VERSION}" ]; then
-            echo "Version mismatch: expected ${VERSION}, got ${actual}" >&2
+          if [ "${actual}" != "${expected}" ]; then
+            echo "Version mismatch: expected ${expected}, got ${actual}" >&2
             exit 1
           fi
