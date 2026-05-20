@@ -41,9 +41,31 @@ jobs:
       # latest channel tag. To re-derive notes for an existing tag, delete the
       # tag locally and synthesise a branch name that matches the channel
       # config in apps/cli/package.json (main / develop) at the tag's commit.
+      #
+      # Two extra knobs are required vs. a vanilla "checkout + run" pattern:
+      #   - env-ci derives the current branch from $GITHUB_REF, not from
+      #     `git rev-parse --abbrev-ref HEAD`. The backfill workflow runs from
+      #     whatever branch the operator dispatched it on (likely not develop
+      #     or main), so without overriding GITHUB_REF / GITHUB_REF_NAME
+      #     semantic-release sees an unconfigured branch and silently exits
+      #     with no `new_release_*` outputs.
+      #   - semantic-release reads `refs/notes/semantic-release-<tag>` to
+      #     determine each tag's channel. `actions/checkout` does not fetch
+      #     refs/notes/* by default, so without this fetch semantic-release
+      #     would treat every tag as channels=[null] and fall through past
+      #     `v2.98.2` etc. (see docs/ci-beta-tags-investigation.md).
       - name: Re-stage repo as if $TAG were unpublished
         run: |
           set -euo pipefail
+          # Normalise: accept both "v2.99.0-beta.1" and "2.99.0-beta.1".
+          if [[ "$TAG" != v* ]]; then
+            TAG="v$TAG"
+            echo "TAG=$TAG" >> "$GITHUB_ENV"
+          fi
+          if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::Tag $TAG does not exist locally; check the input"
+            exit 1
+          fi
           sha=$(git rev-list -n 1 "$TAG")
           git tag -d "$TAG"
           if [[ "$TAG" == *-beta.* ]]; then
@@ -52,6 +74,12 @@ jobs:
             branch=main
           fi
           git checkout -B "$branch" "$sha"
+          # Make env-ci see the synthesised branch instead of the
+          # dispatch-time ref.
+          echo "GITHUB_REF=refs/heads/$branch" >> "$GITHUB_ENV"
+          echo "GITHUB_REF_NAME=$branch" >> "$GITHUB_ENV"
+          # Pull channel notes so semantic-release can map tags to channels.
+          git fetch --no-tags origin "+refs/notes/*:refs/notes/*" || true
           echo "Re-staged on $branch @ $sha (without tag $TAG)"
 
       - id: sr
