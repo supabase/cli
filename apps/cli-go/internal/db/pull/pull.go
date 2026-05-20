@@ -60,7 +60,10 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 	// 2. Pull schema
 	timestamp := utils.GetCurrentTimestamp()
 	path := new.GetMigrationPath(timestamp, name)
-	if err := run(ctx, schema, path, conn, usePgDeltaDiff, differ, fsys); err != nil {
+	if err := run(ctx, schema, path, conn, usePgDeltaDiff, differ, fsys, options...); err != nil {
+		return err
+	}
+	if err := ensureMigrationWritten(fsys, path); err != nil {
 		return err
 	}
 	// 3. Insert a row to `schema_migrations`
@@ -110,7 +113,7 @@ func pullDeclarativePgDelta(ctx context.Context, schema []string, config pgconn.
 	return nil
 }
 
-func run(ctx context.Context, schema []string, path string, conn *pgx.Conn, usePgDeltaDiff bool, differ diff.DiffFunc, fsys afero.Fs) error {
+func run(ctx context.Context, schema []string, path string, conn *pgx.Conn, usePgDeltaDiff bool, differ diff.DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	config := conn.Config().Config
 	// 1. Assert `supabase/migrations` and `schema_migrations` are in sync.
 	if err := assertRemoteInSync(ctx, conn, fsys); errors.Is(err, errMissing) {
@@ -128,15 +131,13 @@ func run(ctx context.Context, schema []string, path string, conn *pgx.Conn, useP
 		// For the legacy path this is a second pass that captures changes
 		// pg_dump cannot emit (default privileges, managed schemas). For the
 		// pg-delta path this is the only pass and produces the full schema.
-		if err = diffRemoteSchema(ctx, nil, path, config, usePgDeltaDiff, differ, fsys); errors.Is(err, errInSync) {
-			err = nil
-		}
+		err = swallowInitialInSync(diffRemoteSchema(ctx, nil, path, config, usePgDeltaDiff, differ, fsys, options...), fsys, path)
 		return err
 	} else if err != nil {
 		return err
 	}
 	// 2. Fetch remote schema changes
-	return diffRemoteSchema(ctx, schema, path, config, usePgDeltaDiff, differ, fsys)
+	return diffRemoteSchema(ctx, schema, path, config, usePgDeltaDiff, differ, fsys, options...)
 }
 
 func dumpRemoteSchema(ctx context.Context, path string, config pgconn.Config, fsys afero.Fs) error {
@@ -153,13 +154,21 @@ func dumpRemoteSchema(ctx context.Context, path string, config pgconn.Config, fs
 	return migration.DumpSchema(ctx, config, f, dump.DockerExec)
 }
 
-func diffRemoteSchema(ctx context.Context, schema []string, path string, config pgconn.Config, usePgDeltaDiff bool, differ diff.DiffFunc, fsys afero.Fs) error {
+func diffRemoteSchema(ctx context.Context, schema []string, path string, config pgconn.Config, usePgDeltaDiff bool, differ diff.DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// Diff remote db (source) & shadow db (target) and write it as a new migration.
-	output, err := diff.DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, usePgDeltaDiff)
+	result, err := diff.DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, usePgDeltaDiff, options...)
 	if err != nil {
 		return err
 	}
+	output := result.SQL
 	if trimmed := strings.TrimSpace(output); len(trimmed) == 0 {
+		if usePgDeltaDiff && diff.IsPgDeltaDebugEnabled() {
+			if debugDir, debugErr := saveEmptyPgDeltaPullDebug(ctx, config, result.Debug, fsys, options...); debugErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to save pg-delta debug bundle: %v\n", debugErr)
+			} else if len(debugDir) > 0 {
+				return errors.Errorf("%w (debug bundle: %s)", errInSync, debugDir)
+			}
+		}
 		return errors.New(errInSync)
 	}
 	if err := utils.MkdirIfNotExistFS(fsys, filepath.Dir(path)); err != nil {
@@ -225,6 +234,25 @@ func assertRemoteInSync(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) erro
 		return errors.New(errMissing)
 	}
 	return nil
+}
+
+func hasMigrationContent(fsys afero.Fs, path string) bool {
+	info, err := fsys.Stat(path)
+	return err == nil && info.Size() > 0
+}
+
+func swallowInitialInSync(err error, fsys afero.Fs, path string) error {
+	if errors.Is(err, errInSync) && hasMigrationContent(fsys, path) {
+		return nil
+	}
+	return err
+}
+
+func ensureMigrationWritten(fsys afero.Fs, path string) error {
+	if hasMigrationContent(fsys, path) {
+		return nil
+	}
+	return errors.New(errInSync)
 }
 
 func suggestMigrationRepair(extraRemote, extraLocal []string) string {

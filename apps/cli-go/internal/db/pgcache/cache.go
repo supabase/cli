@@ -246,12 +246,11 @@ func pgDeltaTempPath() string {
 }
 
 func exportCatalog(ctx context.Context, targetRef string, options ...func(*pgx.ConnConfig)) (string, error) {
-	env := []string{"TARGET=" + targetRef, "ROLE=postgres"}
-	if ca, err := types.GetRootCA(ctx, targetRef, options...); err != nil {
+	preparedRef, sslEnv, err := types.PreparePgDeltaPostgresRef(ctx, targetRef, types.PgDeltaTargetSSLRootCert, options...)
+	if err != nil {
 		return "", err
-	} else if len(ca) > 0 {
-		env = append(env, "PGDELTA_TARGET_SSLROOTCERT="+ca)
 	}
+	env := append([]string{"TARGET=" + preparedRef, "ROLE=postgres"}, sslEnv...)
 	binds := []string{utils.EdgeRuntimeId + ":/root/.cache/deno:rw"}
 	var stdout, stderr bytes.Buffer
 	script := config.InterpolatePgDeltaScript(config.Config(&utils.Config), pgDeltaCatalogExportTS)

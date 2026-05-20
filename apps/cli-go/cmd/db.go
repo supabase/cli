@@ -181,7 +181,7 @@ var (
 			if usePgDeltaDiff {
 				pullDiffer = diff.DiffPgDelta
 			}
-			useDeclarativePgDelta := shouldUsePgDelta()
+			useDeclarativePgDelta := shouldUseDeclarativePgDeltaPull(usePgDeltaDiff)
 			return pull.Run(cmd.Context(), schema, flags.DbConfig, name, useDeclarativePgDelta, usePgDeltaDiff, pullDiffer, afero.NewOsFs())
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
@@ -356,6 +356,13 @@ without the envelope.`,
 
 func shouldUsePgDelta() bool {
 	return utils.IsPgDeltaEnabled() || usePgDelta || viper.GetBool("EXPERIMENTAL_PG_DELTA")
+}
+
+func shouldUseDeclarativePgDeltaPull(usePgDeltaDiff bool) bool {
+	if usePgDeltaDiff {
+		return false
+	}
+	return shouldUsePgDelta() || usePgDelta
 }
 
 func init() {

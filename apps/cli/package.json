@@ -24,7 +24,8 @@
     "access": "public"
   },
   "scripts": {
-    "build": "pnpm build:next && pnpm build:legacy && pnpm build:shim",
+    "build": "pnpm build:go-sidecar && pnpm build:next && pnpm build:legacy && pnpm build:shim",
+    "build:go-sidecar": "cp ../cli-go/supabase-go dist/supabase-go",
     "build:next": "bun build src/next/main.ts --compile --outfile dist/supabase-next",
     "build:legacy": "bun build src/legacy/main.ts --compile --outfile dist/supabase-legacy",
     "build:shim": "bun build src/shared/cli/bin.ts --outfile dist/supabase.js --target node",

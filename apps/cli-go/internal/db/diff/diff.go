@@ -33,10 +33,11 @@ import (
 type DiffFunc func(context.Context, pgconn.Config, pgconn.Config, []string, ...func(*pgx.ConnConfig)) (string, error)
 
 func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, usePgDelta bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
-	out, err := DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, usePgDelta, options...)
+	result, err := DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, usePgDelta, options...)
 	if err != nil {
 		return err
 	}
+	out := result.SQL
 	branch := utils.GetGitBranch(fsys)
 	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db diff")+" on branch "+utils.Aqua(branch)+".\n")
 	if err := SaveDiff(out, file, fsys); err != nil {
@@ -161,18 +162,18 @@ func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs,
 	return migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys))
 }
 
-func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ DiffFunc, usePgDelta bool, options ...func(*pgx.ConnConfig)) (string, error) {
+func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ DiffFunc, usePgDelta bool, options ...func(*pgx.ConnConfig)) (DatabaseDiff, error) {
 	fmt.Fprintln(w, "Creating shadow database...")
 	shadow, err := CreateShadowDatabase(ctx, utils.Config.Db.ShadowPort)
 	if err != nil {
-		return "", err
+		return DatabaseDiff{}, err
 	}
 	defer utils.DockerRemove(shadow)
 	if err := start.WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, shadow); err != nil {
-		return "", err
+		return DatabaseDiff{}, err
 	}
 	if err := MigrateShadowDatabase(ctx, shadow, fsys, options...); err != nil {
-		return "", err
+		return DatabaseDiff{}, err
 	}
 	shadowConfig := pgconn.Config{
 		Host:     utils.Config.Hostname,
@@ -189,20 +190,20 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 				declDir := utils.GetDeclarativeDir()
 				if exists, _ := afero.DirExists(fsys, declDir); exists {
 					if err := pgdelta.ApplyDeclarative(ctx, config, fsys); err != nil {
-						return "", err
+						return DatabaseDiff{}, err
 					}
 				} else {
 					if err := migrateBaseDatabase(ctx, config, declared, fsys, options...); err != nil {
-						return "", err
+						return DatabaseDiff{}, err
 					}
 				}
 			} else {
 				if err := migrateBaseDatabase(ctx, config, declared, fsys, options...); err != nil {
-					return "", err
+					return DatabaseDiff{}, err
 				}
 			}
 		} else if err != nil {
-			return "", err
+			return DatabaseDiff{}, err
 		}
 	}
 	// Load all user defined schemas
@@ -211,7 +212,30 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 	} else {
 		fmt.Fprintln(w, "Diffing schemas...")
 	}
-	return differ(ctx, shadowConfig, config, schema, options...)
+	var debugCapture *PgDeltaDebugCapture
+	if IsPgDeltaDebugEnabled() && usePgDelta {
+		if snapshot, exportErr := exportCatalogPgDelta(ctx, utils.ToPostgresURL(shadowConfig), "postgres", options...); exportErr == nil {
+			debugCapture = &PgDeltaDebugCapture{SourceCatalog: snapshot}
+		} else {
+			fmt.Fprintf(w, "Warning: failed to export shadow pg-delta catalog: %v\n", exportErr)
+		}
+	}
+	if IsPgDeltaDebugEnabled() && usePgDelta {
+		result, err := DiffPgDeltaRefDetailed(ctx, utils.ToPostgresURL(shadowConfig), utils.ToPostgresURL(config), schema, pgDeltaFormatOptions(), options...)
+		if err != nil {
+			return DatabaseDiff{}, err
+		}
+		if debugCapture == nil {
+			debugCapture = &PgDeltaDebugCapture{}
+		}
+		debugCapture.Stderr = result.Stderr
+		return DatabaseDiff{SQL: result.SQL, Debug: debugCapture}, nil
+	}
+	output, err := differ(ctx, shadowConfig, config, schema, options...)
+	if err != nil {
+		return DatabaseDiff{}, err
+	}
+	return DatabaseDiff{SQL: output, Debug: debugCapture}, nil
 }
 
 func migrateBaseDatabase(ctx context.Context, config pgconn.Config, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {

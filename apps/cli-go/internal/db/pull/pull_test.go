@@ -136,6 +136,43 @@ func TestPullSchema(t *testing.T) {
 	})
 }
 
+func TestInitialPullInSync(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	path := "0_test.sql"
+
+	t.Run("swallows errInSync when pg_dump already wrote migration content", func(t *testing.T) {
+		require.NoError(t, afero.WriteFile(fsys, path, []byte("create table t(id int);"), 0644))
+		err := swallowInitialInSync(errInSync, fsys, path)
+		assert.NoError(t, err)
+	})
+
+	t.Run("returns errInSync for pg-delta initial pull with no migration file", func(t *testing.T) {
+		err := swallowInitialInSync(errInSync, fsys, "missing.sql")
+		assert.ErrorIs(t, err, errInSync)
+	})
+
+	t.Run("returns errInSync when migration file is empty", func(t *testing.T) {
+		require.NoError(t, afero.WriteFile(fsys, "empty.sql", []byte{}, 0644))
+		err := swallowInitialInSync(errInSync, fsys, "empty.sql")
+		assert.ErrorIs(t, err, errInSync)
+	})
+}
+
+func TestEnsureMigrationWritten(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+
+	t.Run("passes when migration file has content", func(t *testing.T) {
+		path := "0_test.sql"
+		require.NoError(t, afero.WriteFile(fsys, path, []byte("create table t(id int);"), 0644))
+		assert.NoError(t, ensureMigrationWritten(fsys, path))
+	})
+
+	t.Run("returns errInSync when migration file is missing", func(t *testing.T) {
+		err := ensureMigrationWritten(fsys, "missing.sql")
+		assert.ErrorIs(t, err, errInSync)
+	})
+}
+
 func TestSyncRemote(t *testing.T) {
 	t.Run("throws error on permission denied", func(t *testing.T) {
 		// Setup in-memory fs

@@ -68,6 +68,22 @@ func pgDeltaFormatOptions() string {
 	return strings.TrimSpace(utils.Config.Experimental.PgDelta.FormatOptions)
 }
 
+func appendPgDeltaPostgresEnv(
+	ctx context.Context,
+	env []string,
+	name string,
+	ref string,
+	sslRootCertEnv string,
+	options ...func(*pgx.ConnConfig),
+) (string, []string, error) {
+	preparedRef, sslEnv, err := types.PreparePgDeltaPostgresRef(ctx, ref, sslRootCertEnv, options...)
+	if err != nil {
+		return "", nil, err
+	}
+	env = append(env, name+"="+containerRef(preparedRef))
+	return preparedRef, append(env, sslEnv...), nil
+}
+
 // DiffPgDelta diffs source and target Postgres configs via pg-delta.
 //
 // This wrapper preserves the old config-based interface while delegating to
@@ -81,17 +97,25 @@ func DiffPgDelta(ctx context.Context, source, target pgconn.Config, schema []str
 // on-disk catalog references used by declarative sync commands. formatOptions
 // is passed through as FORMAT_OPTIONS to the pg-delta script when non-empty.
 func DiffPgDeltaRef(ctx context.Context, sourceRef, targetRef string, schema []string, formatOptions string, options ...func(*pgx.ConnConfig)) (string, error) {
-	env := []string{
-		"TARGET=" + containerRef(targetRef),
+	result, err := DiffPgDeltaRefDetailed(ctx, sourceRef, targetRef, schema, formatOptions, options...)
+	if err != nil {
+		return "", err
+	}
+	return result.SQL, nil
+}
+
+// DiffPgDeltaRefDetailed is like DiffPgDeltaRef but also returns edge-runtime stderr.
+func DiffPgDeltaRefDetailed(ctx context.Context, sourceRef, targetRef string, schema []string, formatOptions string, options ...func(*pgx.ConnConfig)) (PgDeltaDiffResult, error) {
+	var env []string
+	var err error
+	targetRef, env, err = appendPgDeltaPostgresEnv(ctx, env, "TARGET", targetRef, types.PgDeltaTargetSSLRootCert, options...)
+	if err != nil {
+		return PgDeltaDiffResult{}, err
 	}
 	if len(sourceRef) > 0 {
-		env = append(env, "SOURCE="+containerRef(sourceRef))
-	}
-	if isPostgresURL(targetRef) {
-		if ca, err := types.GetRootCA(ctx, targetRef, options...); err != nil {
-			return "", err
-		} else if len(ca) > 0 {
-			env = append(env, "PGDELTA_TARGET_SSLROOTCERT="+ca)
+		sourceRef, env, err = appendPgDeltaPostgresEnv(ctx, env, "SOURCE", sourceRef, types.PgDeltaSourceSSLRootCert, options...)
+		if err != nil {
+			return PgDeltaDiffResult{}, err
 		}
 	}
 	if len(schema) > 0 {
@@ -100,6 +124,9 @@ func DiffPgDeltaRef(ctx context.Context, sourceRef, targetRef string, schema []s
 	if len(strings.TrimSpace(formatOptions)) > 0 {
 		env = append(env, "FORMAT_OPTIONS="+formatOptions)
 	}
+	if IsPgDeltaDebugEnabled() {
+		env = append(env, "PGDELTA_DEBUG=1")
+	}
 	binds := []string{utils.EdgeRuntimeId + ":/root/.cache/deno:rw"}
 	if cwd, err := os.Getwd(); err == nil {
 		binds = append(binds, cwd+":/workspace")
@@ -107,10 +134,16 @@ func DiffPgDeltaRef(ctx context.Context, sourceRef, targetRef string, schema []s
 	var stdout, stderr bytes.Buffer
 	script := config.InterpolatePgDeltaScript(config.Config(&utils.Config), pgDeltaScript)
 	if err := utils.RunEdgeRuntimeScript(ctx, env, script, binds, "error diffing schema", &stdout, &stderr); err != nil {
-		return "", err
+		return PgDeltaDiffResult{}, err
 	}
-	return stdout.String(), nil
+	return PgDeltaDiffResult{
+		SQL:    stdout.String(),
+		Stderr: stderr.String(),
+	}, nil
 }
+
+// exportCatalogPgDelta is overridden in tests to mock catalog export.
+var exportCatalogPgDelta = ExportCatalogPgDelta
 
 // DeclarativeExportPgDelta exports target schema as declarative file payloads
 // while keeping a config-based API for existing call sites.
@@ -121,17 +154,16 @@ func DeclarativeExportPgDelta(ctx context.Context, source, target pgconn.Config,
 // DeclarativeExportPgDeltaRef exports declarative file payloads using either
 // live URLs or catalog references as source/target inputs.
 func DeclarativeExportPgDeltaRef(ctx context.Context, sourceRef, targetRef string, schema []string, formatOptions string, options ...func(*pgx.ConnConfig)) (DeclarativeOutput, error) {
-	env := []string{
-		"TARGET=" + containerRef(targetRef),
+	var env []string
+	var err error
+	targetRef, env, err = appendPgDeltaPostgresEnv(ctx, env, "TARGET", targetRef, types.PgDeltaTargetSSLRootCert, options...)
+	if err != nil {
+		return DeclarativeOutput{}, err
 	}
 	if len(sourceRef) > 0 {
-		env = append(env, "SOURCE="+containerRef(sourceRef))
-	}
-	if isPostgresURL(targetRef) {
-		if ca, err := types.GetRootCA(ctx, targetRef, options...); err != nil {
+		sourceRef, env, err = appendPgDeltaPostgresEnv(ctx, env, "SOURCE", sourceRef, types.PgDeltaSourceSSLRootCert, options...)
+		if err != nil {
 			return DeclarativeOutput{}, err
-		} else if len(ca) > 0 {
-			env = append(env, "PGDELTA_TARGET_SSLROOTCERT="+ca)
 		}
 	}
 	if len(schema) > 0 {
@@ -139,6 +171,9 @@ func DeclarativeExportPgDeltaRef(ctx context.Context, sourceRef, targetRef strin
 	}
 	if len(strings.TrimSpace(formatOptions)) > 0 {
 		env = append(env, "FORMAT_OPTIONS="+formatOptions)
+	}
+	if IsPgDeltaDebugEnabled() {
+		env = append(env, "PGDELTA_DEBUG=1")
 	}
 	binds := []string{utils.EdgeRuntimeId + ":/root/.cache/deno:rw"}
 	if cwd, err := os.Getwd(); err == nil {
@@ -162,18 +197,14 @@ func DeclarativeExportPgDeltaRef(ctx context.Context, sourceRef, targetRef strin
 // ExportCatalogPgDelta snapshots a database/catalog into serialized pg-delta
 // catalog JSON so later operations can diff without reconnecting.
 func ExportCatalogPgDelta(ctx context.Context, targetRef, role string, options ...func(*pgx.ConnConfig)) (string, error) {
-	env := []string{
-		"TARGET=" + targetRef,
+	var env []string
+	var err error
+	targetRef, env, err = appendPgDeltaPostgresEnv(ctx, env, "TARGET", targetRef, types.PgDeltaTargetSSLRootCert, options...)
+	if err != nil {
+		return "", err
 	}
 	if len(role) > 0 {
 		env = append(env, "ROLE="+role)
-	}
-	if isPostgresURL(targetRef) {
-		if ca, err := types.GetRootCA(ctx, targetRef, options...); err != nil {
-			return "", err
-		} else if len(ca) > 0 {
-			env = append(env, "PGDELTA_TARGET_SSLROOTCERT="+ca)
-		}
 	}
 	binds := []string{
 		utils.EdgeRuntimeId + ":/root/.cache/deno:rw",
