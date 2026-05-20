@@ -123,9 +123,63 @@ jobs:
         with:
           name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
 
+      # Docker's classic image store keeps a single platform manifest per
+      # tag, so pulling `alpine:3.21` for amd64 and again for arm64 leaves
+      # only the most recent one in the local store — and `docker save`
+      # captures only that one. Enabling the containerd snapshotter lets
+      # the store hold multi-platform manifests under a single tag, which
+      # is what makes the cache step below work for both arches.
+      - name: Enable containerd image store
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          echo '{"features":{"containerd-snapshotter":true}}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+          docker info --format '{{.DriverStatus}}'
+
       - name: Setup QEMU for cross-platform Docker
         if: runner.os == 'Linux'
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+
+      # Cache the smoke-test base images across runs. Without this, eight
+      # parallel `docker run` calls in smoke-test-linux.ts race on first-time
+      # pulls and surface as docker exit 125 ("daemon could not start the
+      # container") on a subset of jobs. Bump the `-v<N>` suffix to invalidate
+      # the cache when the image list or tags change.
+      - name: Cache smoke-test docker images
+        if: runner.os == 'Linux'
+        id: smoke-docker-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/smoke-docker-images.tar
+          key: smoke-docker-images-debian-bookworm-slim-amazonlinux-2023-alpine-3.21-v1
+
+      - name: Load cached smoke-test docker images
+        if: runner.os == 'Linux' && steps.smoke-docker-cache.outputs.cache-hit == 'true'
+        run: docker load -i ~/.cache/smoke-docker-images.tar
+
+      - name: Pull and save smoke-test docker images
+        if: runner.os == 'Linux' && steps.smoke-docker-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.cache"
+          images=("debian:bookworm-slim" "amazonlinux:2023" "alpine:3.21")
+          for image in "${images[@]}"; do
+            for platform in linux/amd64 linux/arm64; do
+              echo "::group::Pulling $platform $image"
+              attempt=0
+              until docker pull --platform "$platform" "$image"; do
+                attempt=$((attempt + 1))
+                if [ "$attempt" -ge 3 ]; then
+                  echo "Failed to pull $platform $image after $attempt attempts" >&2
+                  exit 1
+                fi
+                sleep $((attempt * 5))
+              done
+              echo "::endgroup::"
+            done
+          done
+          docker save "${images[@]}" -o "$HOME/.cache/smoke-docker-images.tar"
 
       - name: Install Scoop
         if: runner.os == 'Windows'
