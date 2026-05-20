@@ -22,6 +22,10 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "DRY RUN: migrations will *not* be pushed to the database.")
 	}
+	databaseName, statusTarget := "remote database", "Remote database"
+	if utils.IsLocalDatabase(config) {
+		databaseName, statusTarget = "local database", "Local database"
+	}
 	conn, err := utils.ConnectByConfig(ctx, config, options...)
 	if err != nil {
 		return err
@@ -51,7 +55,7 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 		}
 	}
 	if len(pending) == 0 && len(seeds) == 0 && len(globals) == 0 {
-		fmt.Println("Remote database is up to date.")
+		fmt.Println(statusTarget + " is up to date.")
 		return nil
 	}
 	// Push pending migrations
@@ -80,7 +84,7 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 			}
 		}
 		if len(pending) > 0 {
-			msg := fmt.Sprintf("Do you want to push these migrations to the remote database?\n%s\n", confirmPushAll(pending))
+			msg := fmt.Sprintf("Do you want to push these migrations to the %s?\n%s\n", databaseName, confirmPushAll(pending))
 			if shouldPush, err := utils.NewConsole().PromptYesNo(ctx, msg, true); err != nil {
 				return err
 			} else if !shouldPush {
@@ -99,7 +103,7 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 			fmt.Fprintln(os.Stderr, "Schema migrations are up to date.")
 		}
 		if len(seeds) > 0 {
-			msg := fmt.Sprintf("Do you want to seed the remote database with these files?\n%s\n", confirmSeedAll(seeds))
+			msg := fmt.Sprintf("Do you want to seed the %s with these files?\n%s\n", databaseName, confirmSeedAll(seeds))
 			if shouldPush, err := utils.NewConsole().PromptYesNo(ctx, msg, true); err != nil {
 				return err
 			} else if !shouldPush {
