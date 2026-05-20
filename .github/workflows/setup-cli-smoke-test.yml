@@ -1,0 +1,116 @@
+name: setup-cli Smoke Test
+
+# Smoke test for the `supabase/setup-cli` GitHub Action against a specific
+# published CLI version. Run automatically after every beta release (called
+# from release-shared.yml's `setup-cli-smoke` job) and also manually via
+# workflow_dispatch when debugging setup-cli regressions or verifying that
+# a previously broken environment (e.g. Alpine) is back to green.
+#
+# Exists primarily to catch regressions like supabase/setup-cli#427 where
+# musl libc + archive layout changes broke the action on Alpine silently.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Supabase CLI version to install via setup-cli (must already be published to GitHub Releases)
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Supabase CLI version to install via setup-cli (must already be published to GitHub Releases)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  setup-cli-smoke-test:
+    name: setup-cli ${{ matrix.major-version }} (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+        # GitHub Actions doesn't allow expressions in `uses:`, so the action
+        # ref is selected via two `if:`-gated install steps below rather than
+        # interpolating `matrix.major-version` into a single `uses:` line.
+        major-version:
+          - v1
+          - v2
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Install Supabase CLI via setup-cli@v1
+        if: matrix.major-version == 'v1'
+        uses: supabase/setup-cli@v1
+        with:
+          version: ${{ inputs.version }}
+      - name: Install Supabase CLI via setup-cli@v2
+        if: matrix.major-version == 'v2'
+        uses: supabase/setup-cli@v2
+        with:
+          version: ${{ inputs.version }}
+      - name: Verify supabase --version matches the expected version
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(supabase --version | tr -d '\r' | head -n1)"
+          echo "supabase --version: ${actual}"
+          if [ "${actual}" != "${VERSION}" ]; then
+            echo "Version mismatch: expected ${VERSION}, got ${actual}" >&2
+            exit 1
+          fi
+
+  # Alpine leg of the setup-cli smoke test. Kept as a separate job because
+  # GitHub Actions only honours the `container:` field on Linux runners, and
+  # mixing container + non-container entries in a single matrix via
+  # `container: ${{ matrix.container }}` is fragile when the value is empty.
+  #
+  # The musl-vs-glibc + archive layout regressions tracked in
+  # supabase/setup-cli#427 only reproduce inside a real Alpine container, so
+  # this job is the actual signal the workflow was created for.
+  setup-cli-smoke-test-alpine:
+    name: setup-cli ${{ matrix.major-version }} (alpine)
+    strategy:
+      fail-fast: false
+      matrix:
+        major-version:
+          - v1
+          - v2
+    runs-on: ubuntu-latest
+    # `node:20-alpine` ships a musl-linked Node, which is required for
+    # JavaScript-based actions (setup-cli included) to launch inside an
+    # Alpine container — the runner's mounted glibc Node won't execute here.
+    container:
+      image: node:20-alpine
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Install Alpine prerequisites
+        run: apk add --no-cache bash curl tar
+      - name: Install Supabase CLI via setup-cli@v1
+        if: matrix.major-version == 'v1'
+        uses: supabase/setup-cli@v1
+        with:
+          version: ${{ inputs.version }}
+      - name: Install Supabase CLI via setup-cli@v2
+        if: matrix.major-version == 'v2'
+        uses: supabase/setup-cli@v2
+        with:
+          version: ${{ inputs.version }}
+      - name: Verify supabase --version matches the expected version
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(supabase --version | tr -d '\r' | head -n1)"
+          echo "supabase --version: ${actual}"
+          if [ "${actual}" != "${VERSION}" ]; then
+            echo "Version mismatch: expected ${VERSION}, got ${actual}" >&2
+            exit 1
+          fi
