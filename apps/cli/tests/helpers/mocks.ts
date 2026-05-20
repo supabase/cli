@@ -2,7 +2,7 @@ import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
 import { Deferred, Effect, Layer, Option, PubSub, Redacted, Stream } from "effect";
 import type { ReactElement } from "react";
-import type { ProjectConfig, ProjectEnvironment, ProjectPaths } from "@supabase/config";
+import type { ProjectEnvironment, ProjectPaths } from "@supabase/config";
 import {
   NoRunningStackError,
   StateNotFoundError,
@@ -769,7 +769,6 @@ export function mockProjectContext(
   opts: {
     paths?: Option.Option<ProjectPaths>;
     projectEnv?: Option.Option<ProjectEnvironment>;
-    rawProjectConfig?: Option.Option<ProjectConfig>;
   } = {},
 ): Layer.Layer<ProjectContext> {
   return Layer.succeed(
@@ -777,7 +776,6 @@ export function mockProjectContext(
     ProjectContext.of({
       paths: opts.paths ?? Option.none(),
       projectEnv: opts.projectEnv ?? Option.none(),
-      rawProjectConfig: opts.rawProjectConfig ?? Option.none(),
     }),
   );
 }

@@ -74,10 +74,12 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Merge multi-arch manifests
+        env:
+          IMAGE_TAG: ${{ needs.settings.outputs.image_tag }}
         run: |
-          docker buildx imagetools create -t ${{ needs.settings.outputs.image_tag }} \
-          ${{ needs.settings.outputs.image_tag }}_amd64 \
-          ${{ needs.settings.outputs.image_tag }}_arm64
+          docker buildx imagetools create -t "${IMAGE_TAG}" \
+          "${IMAGE_TAG}_amd64" \
+          "${IMAGE_TAG}_arm64"
 
   publish:
     needs:

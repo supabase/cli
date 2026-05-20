@@ -1,7 +1,14 @@
 import { Context, Option } from "effect";
-import { Flag, type HelpDoc } from "effect/unstable/cli";
+import { Command, Flag, type HelpDoc } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
-import { stripHiddenFlagsFromHelpDoc, withHidden } from "./hidden-flag.ts";
+import {
+  LegacyHiddenFlags,
+  LegacyHiddenSubcommands,
+  stripHiddenFlagsFromHelpDoc,
+  withHidden,
+  withHiddenFromConfig,
+  withHiddenSubcommands,
+} from "./hidden-flag.ts";
 
 const flagDoc = (name: string): HelpDoc.FlagDoc => ({
   name,
@@ -19,34 +26,154 @@ const helpDoc = (overrides: Partial<HelpDoc.HelpDoc>): HelpDoc.HelpDoc => ({
   ...overrides,
 });
 
+const helpDocWithHidden = (
+  hidden: ReadonlyArray<string>,
+  overrides: Partial<HelpDoc.HelpDoc>,
+): HelpDoc.HelpDoc =>
+  helpDoc({
+    ...overrides,
+    annotations: Context.make(LegacyHiddenFlags, new Set(hidden)),
+  });
+
+const helpDocWithHiddenSubcommands = (
+  hidden: ReadonlyArray<string>,
+  overrides: Partial<HelpDoc.HelpDoc>,
+): HelpDoc.HelpDoc =>
+  helpDoc({
+    ...overrides,
+    annotations: Context.make(LegacyHiddenSubcommands, new Set(hidden)),
+  });
+
+// Reach into the internal command shape to obtain the help doc the formatter
+// would render. Effect builds this from `Command.annotations`, which is the
+// contract `withHiddenFromConfig` relies on.
+interface CommandImpl {
+  readonly buildHelpDoc: (path: ReadonlyArray<string>) => HelpDoc.HelpDoc;
+}
+const buildHelpDoc = <Name extends string, Input, ContextInput, E, R>(
+  cmd: Command.Command<Name, Input, ContextInput, E, R>,
+): HelpDoc.HelpDoc => (cmd as unknown as CommandImpl).buildHelpDoc([]);
+
 describe("withHidden", () => {
   it("returns the same flag instance", () => {
     const flag = Flag.boolean("legacy-bundle");
     expect(withHidden(flag)).toBe(flag);
   });
 
-  it("registers the underlying single name even when wrapped with combinators", () => {
-    const flag = Flag.string("plan").pipe(Flag.optional);
-    withHidden(flag);
+  it("does not register flag names globally — only commands wired via withHiddenFromConfig hide them", () => {
+    withHidden(Flag.boolean("stray"));
 
-    const stripped = stripHiddenFlagsFromHelpDoc(
-      helpDoc({ flags: [flagDoc("plan"), flagDoc("visible")] }),
-    );
-    expect(stripped.flags.map((f) => f.name)).toEqual(["visible"]);
+    const stripped = stripHiddenFlagsFromHelpDoc(helpDoc({ flags: [flagDoc("stray")] }));
+    expect(stripped.flags.map((f) => f.name)).toEqual(["stray"]);
+  });
+});
+
+describe("withHiddenFromConfig", () => {
+  it("strips wrapped flags from the command's help doc", () => {
+    const config = {
+      plan: withHidden(Flag.string("plan").pipe(Flag.optional)),
+      visible: Flag.boolean("visible"),
+    } as const;
+
+    const cmd = Command.make("demo", config).pipe(withHiddenFromConfig(config));
+    const doc = stripHiddenFlagsFromHelpDoc(buildHelpDoc(cmd));
+
+    expect(doc.flags.map((f) => f.name)).toEqual(["visible"]);
   });
 
-  it("filters hidden flags from globalFlags as well", () => {
-    withHidden(Flag.boolean("preview"));
+  it("scopes hidden-ness to the wrapping command — same flag name in another command stays visible", () => {
+    const hiddenConfig = {
+      interactive: withHidden(Flag.boolean("interactive")),
+    } as const;
+    const visibleConfig = {
+      interactive: Flag.boolean("interactive"),
+    } as const;
 
-    const stripped = stripHiddenFlagsFromHelpDoc(
-      helpDoc({ globalFlags: [flagDoc("preview"), flagDoc("verbose")] }),
+    const hiddenCmd = Command.make("create", hiddenConfig).pipe(withHiddenFromConfig(hiddenConfig));
+    const visibleCmd = Command.make("init", visibleConfig).pipe(
+      withHiddenFromConfig(visibleConfig),
     );
+
+    expect(stripHiddenFlagsFromHelpDoc(buildHelpDoc(hiddenCmd)).flags.map((f) => f.name)).toEqual(
+      [],
+    );
+    expect(stripHiddenFlagsFromHelpDoc(buildHelpDoc(visibleCmd)).flags.map((f) => f.name)).toEqual([
+      "interactive",
+    ]);
+  });
+
+  it("is a no-op when the config contains no hidden flags", () => {
+    const config = { visible: Flag.boolean("visible") } as const;
+    const cmd = Command.make("demo", config);
+    const piped = cmd.pipe(withHiddenFromConfig(config));
+
+    expect(piped).toBe(cmd);
+  });
+
+  it("collects names through Flag combinators like optional", () => {
+    const config = {
+      plan: withHidden(Flag.string("plan").pipe(Flag.optional)),
+    } as const;
+    const cmd = Command.make("demo", config).pipe(withHiddenFromConfig(config));
+    const annotated = Context.get(buildHelpDoc(cmd).annotations, LegacyHiddenFlags);
+
+    expect([...annotated]).toEqual(["plan"]);
+  });
+});
+
+describe("withHiddenSubcommands", () => {
+  it("adds hidden subcommand annotations to the command help doc", () => {
+    const cmd = Command.make("demo").pipe(withHiddenSubcommands(["legacy"]));
+    const annotated = Context.get(buildHelpDoc(cmd).annotations, LegacyHiddenSubcommands);
+
+    expect([...annotated]).toEqual(["legacy"]);
+  });
+});
+
+describe("stripHiddenFlagsFromHelpDoc", () => {
+  it("returns the doc unchanged when annotations are empty", () => {
+    const doc = helpDoc({ flags: [flagDoc("foo")] });
+    expect(stripHiddenFlagsFromHelpDoc(doc)).toBe(doc);
+  });
+
+  it("filters both flags and globalFlags by the doc's annotation", () => {
+    const doc = helpDocWithHidden(["preview", "plan"], {
+      flags: [flagDoc("plan"), flagDoc("visible")],
+      globalFlags: [flagDoc("preview"), flagDoc("verbose")],
+    });
+
+    const stripped = stripHiddenFlagsFromHelpDoc(doc);
+    expect(stripped.flags.map((f) => f.name)).toEqual(["visible"]);
     expect(stripped.globalFlags?.map((f) => f.name)).toEqual(["verbose"]);
   });
 
-  it("leaves docs without globalFlags untouched", () => {
-    const stripped = stripHiddenFlagsFromHelpDoc(helpDoc({ flags: [flagDoc("foo")] }));
+  it("leaves docs without globalFlags untouched in that field", () => {
+    const doc = helpDocWithHidden(["foo"], { flags: [flagDoc("foo"), flagDoc("bar")] });
+    const stripped = stripHiddenFlagsFromHelpDoc(doc);
+
     expect(stripped.globalFlags).toBeUndefined();
-    expect(stripped.flags.map((f) => f.name)).toEqual(["foo"]);
+    expect(stripped.flags.map((f) => f.name)).toEqual(["bar"]);
+  });
+
+  it("filters hidden subcommands by the doc's annotation", () => {
+    const doc = helpDocWithHiddenSubcommands(["legacy"], {
+      subcommands: [
+        {
+          group: undefined,
+          commands: [
+            {
+              name: "visible",
+              alias: undefined,
+              shortDescription: "visible",
+              description: "visible",
+            },
+            { name: "legacy", alias: undefined, shortDescription: "legacy", description: "legacy" },
+          ],
+        },
+      ],
+    });
+
+    const stripped = stripHiddenFlagsFromHelpDoc(doc);
+    expect(stripped.subcommands?.[0]?.commands.map((command) => command.name)).toEqual(["visible"]);
   });
 });
