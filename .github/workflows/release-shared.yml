@@ -332,6 +332,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "v${VERSION}" --draft=false
 
+  # Changelog backfill only needs tag + published GH release (from publish).
+  # Runs in parallel with brew/scoop/smoke; must not gate distribution.
+  backfill-release-notes:
+    uses: ./.github/workflows/backfill-release-notes.yml
+    needs: publish
+    if: ${{ !inputs.dry_run && needs.publish.result == 'success' }}
+    with:
+      tag: v${{ inputs.version }}
+      apply: true
+      non_blocking: true
+
   publish-homebrew:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
