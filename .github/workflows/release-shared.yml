@@ -332,7 +332,7 @@ jobs:
   publish-homebrew:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     env:
       BREW_NAME: ${{ inputs.brew_name }}
       VERSION: ${{ inputs.version }}
@@ -374,7 +374,7 @@ jobs:
   publish-scoop:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     env:
       SCOOP_NAME: ${{ inputs.scoop_name }}
       VERSION: ${{ inputs.version }}
