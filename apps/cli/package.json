@@ -49,7 +49,7 @@
     "@supabase/stack": "workspace:*",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
-    "@types/react": "^19.2.14",
+    "@types/react": "^19.2.15",
     "@typescript/native-preview": "catalog:",
     "@vercel/detect-agent": "^1.2.3",
     "@vitest/coverage-istanbul": "catalog:",
@@ -60,7 +60,7 @@
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:",
-    "posthog-node": "^5.34.3",
+    "posthog-node": "^5.34.6",
     "react": "^19.2.6",
     "react-devtools-core": "^7.0.1",
     "vitest": "catalog:"
