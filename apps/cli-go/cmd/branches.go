@@ -78,7 +78,9 @@ var (
 	branchGetCmd = &cobra.Command{
 		Use:   "get [name]",
 		Short: "Retrieve details of a preview branch",
-		Long:  "Retrieve details of the specified preview branch.",
+		Long: `Retrieve details of the specified preview branch.
+
+Note: For the main branch, password-dependent fields (POSTGRES_URL, POSTGRES_URL_NON_POOLING) are not populated because production database credentials are not retrievable via API.`,
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
