@@ -9,7 +9,6 @@ const config = {
   ),
   customHostname: Flag.string("custom-hostname").pipe(
     Flag.withDescription("The custom hostname to use for your Supabase project."),
-    Flag.optional,
   ),
 } as const;
 

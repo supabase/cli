@@ -8,7 +8,6 @@ export const legacyDomainsCreate = Effect.fn("legacy.domains.create")(function* 
   const proxy = yield* LegacyGoProxy;
   const args: string[] = ["domains", "create"];
   if (Option.isSome(flags.projectRef)) args.push("--project-ref", flags.projectRef.value);
-  if (Option.isSome(flags.customHostname))
-    args.push("--custom-hostname", flags.customHostname.value);
+  args.push("--custom-hostname", flags.customHostname);
   yield* proxy.exec(args);
 });
