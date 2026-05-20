@@ -125,7 +125,8 @@ async function buildGoTarget(target: (typeof TARGETS)[number]) {
   const outfile = path.join(binDir, `supabase-go${target.ext}`);
 
   console.log(`[${target.pkg}] Compiling Go CLI (${goos}/${goarch})...`);
-  await $`go build -trimpath -ldflags="-s -w" -o ${outfile} .`.cwd(goSource).env({
+  const goLdflags = `-s -w -X github.com/supabase/cli/internal/utils.Version=${version}`;
+  await $`go build -trimpath -ldflags=${goLdflags} -o ${outfile} .`.cwd(goSource).env({
     ...process.env,
     GOOS: goos,
     GOARCH: goarch,
