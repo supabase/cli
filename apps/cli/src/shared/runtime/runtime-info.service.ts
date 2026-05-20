@@ -1,4 +1,4 @@
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 
 interface RuntimeInfoShape {
   readonly cwd: string;
@@ -9,6 +9,6 @@ interface RuntimeInfoShape {
   readonly pid: number;
 }
 
-export class RuntimeInfo extends ServiceMap.Service<RuntimeInfo, RuntimeInfoShape>()(
+export class RuntimeInfo extends Context.Service<RuntimeInfo, RuntimeInfoShape>()(
   "supabase/runtime/RuntimeInfo",
 ) {}

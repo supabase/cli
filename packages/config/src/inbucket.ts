@@ -1,5 +1,5 @@
 import dedent from "dedent";
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 
 const links = [
   {
@@ -19,7 +19,7 @@ export const inbucket = Schema.Struct({
     description: "Enable the local Inbucket service.",
     tags,
     links,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultEnabled)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnabled))),
   port: Schema.Number.annotate({
     default: defaultPort,
     description: dedent`
@@ -29,7 +29,7 @@ export const inbucket = Schema.Struct({
     `,
     tags,
     links,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultPort)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPort))),
   smtp_port: Schema.optionalKey(
     Schema.Number.annotate({
       description: "Optional SMTP port to expose for local testing.",
@@ -58,4 +58,4 @@ export const inbucket = Schema.Struct({
       links,
     }),
   ),
-}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultInbucket })));
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultInbucket })));

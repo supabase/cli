@@ -1,0 +1,58 @@
+name: Backfill release notes
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to refresh (e.g. v2.100.1)
+        required: true
+        type: string
+      apply:
+        description: Update the GitHub release body (otherwise dry-run only)
+        required: false
+        type: boolean
+        default: false
+      non_blocking:
+        description: Do not fail the workflow run when backfill fails (release pipeline)
+        required: false
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to refresh (e.g. v2.100.1)
+        required: true
+        type: string
+      apply:
+        description: Update the GitHub release body (otherwise dry-run only)
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ inputs.non_blocking }}
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: useblacksmith/checkout@41cdeedae8edb2e684ba22896a5fd2a3cb85db6b # v1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      - name: Backfill release notes
+        run: |
+          if [ "${{ inputs.apply }}" = "true" ]; then
+            bun apps/cli/scripts/backfill-release-notes.ts --tag "${TAG}" --apply
+          else
+            bun apps/cli/scripts/backfill-release-notes.ts --tag "${TAG}"
+          fi
