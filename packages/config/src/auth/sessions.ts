@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 
 const tags = ["auth"];
 
@@ -28,4 +28,4 @@ export const sessions = Schema.Struct({
   ),
 })
   .annotate({ default: defaultSessions })
-  .pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultSessions })));
+  .pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultSessions })));

@@ -1,6 +1,6 @@
 import { buildGraph } from "@supabase/process-compose";
 import type { ResolvedGraph, ServiceDef } from "@supabase/process-compose";
-import { Effect, Layer, ServiceMap } from "effect";
+import { Effect, Layer, Context } from "effect";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { StackBuildError } from "./errors.ts";
 import type { FunctionsConfig, ResolvedFunctionsConfig } from "./functions.ts";
@@ -494,7 +494,7 @@ export const nativePostgresNeedsDockerAccess = (
   dockerServicesEnabled: boolean,
 ): boolean => postgresResolution.type === "binary" && dockerServicesEnabled;
 
-export class StackBuilder extends ServiceMap.Service<
+export class StackBuilder extends Context.Service<
   StackBuilder,
   {
     readonly build: (

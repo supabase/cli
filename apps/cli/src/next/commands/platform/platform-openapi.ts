@@ -79,7 +79,7 @@ type ObjectShape = {
 
 export type PlatformOpenApiSchema = OpenApiSchema;
 export type PlatformOpenApiParameter = OpenApiParameter;
-export type PlatformOpenApiRequestBody = OpenApiRequestBody;
+type PlatformOpenApiRequestBody = OpenApiRequestBody;
 export type PlatformOpenApiResponse = OpenApiResponse;
 
 export type PlatformOpenApiOperationEntry = {

@@ -1,4 +1,5 @@
-import { Effect, Layer, Option, ServiceMap } from "effect";
+import { Effect, Layer, Option, Context } from "effect";
+import { loadProjectConfig } from "@supabase/config";
 import {
   DEFAULT_MANAGED_STACK_NAME,
   StateManager,
@@ -13,7 +14,6 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { projectLocalServiceVersionsLayer } from "../../config/project-local-service-versions.layer.ts";
 import { ensureProjectStateIgnored } from "../../config/project-gitignore.ts";
 import { CliConfig } from "../../config/cli-config.service.ts";
-import { ProjectContext } from "../../config/project-context.service.ts";
 import { ProjectHome } from "../../config/project-home.service.ts";
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
 import { provideProjectCommandRuntime } from "../../config/project-runtime.layer.ts";
@@ -66,10 +66,9 @@ interface StartVersionStateShape {
   readonly serviceVersionContext: ResolvedServiceVersionContext;
 }
 
-export class StartVersionState extends ServiceMap.Service<
-  StartVersionState,
-  StartVersionStateShape
->()("supabase/commands/start/StartVersionState") {}
+export class StartVersionState extends Context.Service<StartVersionState, StartVersionStateShape>()(
+  "supabase/commands/start/StartVersionState",
+) {}
 
 const flags = {
   stack: Flag.string("stack").pipe(
@@ -138,7 +137,6 @@ export const startCommand = Command.make("start", flags).pipe(
     const runtimeStateEffect = Effect.gen(function* () {
       const output = yield* Output;
       const cliConfig = yield* CliConfig;
-      const projectContext = yield* ProjectContext;
       const projectHome = yield* ProjectHome;
       const runtimeInfo = yield* RuntimeInfo;
       const stateManager = yield* StateManager;
@@ -153,14 +151,12 @@ export const startCommand = Command.make("start", flags).pipe(
           onSome: (metadata) => metadata.services,
         }),
       );
-      const autoExposeNewTables = Option.match(projectContext.rawProjectConfig, {
-        onNone: () => true,
-        // The flag is tri-state in config.toml: unset / true / false. Today, unset and true both
-        // preserve the long-standing local behaviour of auto-exposing new entities in `public`.
-        // The implicit default flips to false on 2026-05-30 to match the new cloud default, and
-        // the field is removed in 2026-10-30.
-        onSome: (config) => config.api.auto_expose_new_tables ?? true,
-      });
+      // The flag is tri-state in config.toml: unset / true / false. Today, unset and true both
+      // preserve the long-standing local behaviour of auto-exposing new entities in `public`.
+      // The implicit default flips to false on 2026-05-30 to match the new cloud default, and
+      // the field is removed in 2026-10-30.
+      const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
+      const autoExposeNewTables = loadedProjectConfig?.config.api.auto_expose_new_tables ?? true;
       const baseStackConfig = withServiceVersions(
         toStartStackConfig(flags.exclude, flags.mode),
         serviceVersionContext.runtimeVersions,

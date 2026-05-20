@@ -1,4 +1,4 @@
-import { Effect, Layer, ServiceMap, Stream, SubscriptionRef } from "effect";
+import { Effect, Layer, Context, Stream, SubscriptionRef } from "effect";
 import type { StackServiceState, StackInfo } from "@supabase/stack/effect";
 import { Stack } from "@supabase/stack/effect";
 
@@ -13,7 +13,7 @@ function updateServiceStates(
     : [...current, state];
 }
 
-export class StartDashboardState extends ServiceMap.Service<
+export class StartDashboardState extends Context.Service<
   StartDashboardState,
   {
     readonly stackInfoRef: SubscriptionRef.SubscriptionRef<StackInfo | null>;

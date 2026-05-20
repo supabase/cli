@@ -57,7 +57,7 @@ export const listStacks = (opts: {
     const metadataEntries =
       opts.projectStateRoot === undefined
         ? yield* scanAllManagedMetadata(opts.cacheRoot)
-        : yield* StateManager.asEffect().pipe(
+        : yield* StateManager.pipe(
             Effect.provide(
               StateManager.make(projectStateManagerPathsFromRoot(opts.projectStateRoot)),
             ),
@@ -72,7 +72,7 @@ export const listStacks = (opts: {
     const states =
       opts.projectStateRoot === undefined
         ? yield* scanAllManagedStates(opts.cacheRoot)
-        : yield* StateManager.asEffect().pipe(
+        : yield* StateManager.pipe(
             Effect.provide(
               StateManager.make(projectStateManagerPathsFromRoot(opts.projectStateRoot)),
             ),
@@ -94,7 +94,7 @@ export const listStacks = (opts: {
         continue;
       }
 
-      const stateManager = yield* StateManager.asEffect().pipe(
+      const stateManager = yield* StateManager.pipe(
         Effect.provide(
           StateManager.make(
             opts.projectStateRoot === undefined
@@ -169,7 +169,7 @@ export const stopDaemon = (opts: {
 > =>
   Effect.gen(function* () {
     const { state, alive } = yield* resolveManagedStack(opts);
-    const stateManager = yield* StateManager.asEffect().pipe(
+    const stateManager = yield* StateManager.pipe(
       Effect.provide(
         StateManager.make(
           opts.projectStateRoot === undefined
@@ -225,7 +225,7 @@ export const deleteManagedStackPersistence = (opts: {
   Effect.gen(function* () {
     const cwd = opts.cwd ?? process.cwd();
     const projectDir = opts.projectDir ?? cwd;
-    const stateManager = yield* StateManager.asEffect().pipe(
+    const stateManager = yield* StateManager.pipe(
       Effect.provide(
         StateManager.make(
           opts.projectStateRoot === undefined

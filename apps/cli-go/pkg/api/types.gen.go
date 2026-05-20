@@ -5,6 +5,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -913,6 +914,16 @@ const (
 	X86Architecture ProjectUpgradeEligibilityResponseValidationErrors8Type = "x86_architecture"
 )
 
+// Defines values for ProjectUpgradeEligibilityResponseValidationErrors9Type.
+const (
+	ProjectHibernating ProjectUpgradeEligibilityResponseValidationErrors9Type = "project_hibernating"
+)
+
+// Defines values for ProjectUpgradeEligibilityResponseWarnings0Type.
+const (
+	PgGraphqlIntrospectionChange ProjectUpgradeEligibilityResponseWarnings0Type = "pg_graphql_introspection_change"
+)
+
 // Defines values for RegionsInfoAllSmartGroupCode.
 const (
 	RegionsInfoAllSmartGroupCodeAmericas RegionsInfoAllSmartGroupCode = "americas"
@@ -1395,6 +1406,7 @@ const (
 // Defines values for V1ListEntitlementsResponseEntitlementsFeatureKey.
 const (
 	V1ListEntitlementsResponseEntitlementsFeatureKeyAssistantAdvanceModel                 V1ListEntitlementsResponseEntitlementsFeatureKey = "assistant.advance_model"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyAuditLogDrains                        V1ListEntitlementsResponseEntitlementsFeatureKey = "audit_log_drains"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthAdvancedAuthSettings              V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.advanced_auth_settings"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthCustomJwtTemplate                 V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.custom_jwt_template"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthCustomOauthMaxProviders           V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.custom_oauth.max_providers"
@@ -1410,6 +1422,7 @@ const (
 	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthUserSessions                      V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.user_sessions"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyBackupRestoreToNewProject             V1ListEntitlementsResponseEntitlementsFeatureKey = "backup.restore_to_new_project"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyBackupRetentionDays                   V1ListEntitlementsResponseEntitlementsFeatureKey = "backup.retention_days"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyBackupSchedule                        V1ListEntitlementsResponseEntitlementsFeatureKey = "backup.schedule"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyBranchingLimit                        V1ListEntitlementsResponseEntitlementsFeatureKey = "branching_limit"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyBranchingPersistent                   V1ListEntitlementsResponseEntitlementsFeatureKey = "branching_persistent"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyCustomDomain                          V1ListEntitlementsResponseEntitlementsFeatureKey = "custom_domain"
@@ -2203,15 +2216,18 @@ type BranchResponse struct {
 	PreviewProjectStatus *BranchResponsePreviewProjectStatus `json:"preview_project_status,omitempty"`
 	ProjectRef           string                              `json:"project_ref"`
 	ReviewRequestedAt    *time.Time                          `json:"review_requested_at,omitempty"`
-	Status               BranchResponseStatus                `json:"status"`
-	UpdatedAt            time.Time                           `json:"updated_at"`
-	WithData             bool                                `json:"with_data"`
+
+	// Status This field is deprecated. List action runs to get branch status instead.
+	// Deprecated:
+	Status    BranchResponseStatus `json:"status"`
+	UpdatedAt time.Time            `json:"updated_at"`
+	WithData  bool                 `json:"with_data"`
 }
 
 // BranchResponsePreviewProjectStatus defines model for BranchResponse.PreviewProjectStatus.
 type BranchResponsePreviewProjectStatus string
 
-// BranchResponseStatus defines model for BranchResponse.Status.
+// BranchResponseStatus This field is deprecated. List action runs to get branch status instead.
 type BranchResponseStatus string
 
 // BranchRestoreResponse defines model for BranchRestoreResponse.
@@ -3390,6 +3406,7 @@ type ProjectUpgradeEligibilityResponse struct {
 	// Deprecated:
 	UserDefinedObjectsInInternalSchemas []string                                                  `json:"user_defined_objects_in_internal_schemas"`
 	ValidationErrors                    []ProjectUpgradeEligibilityResponse_ValidationErrors_Item `json:"validation_errors"`
+	Warnings                            []ProjectUpgradeEligibilityResponse_Warnings_Item         `json:"warnings"`
 }
 
 // ProjectUpgradeEligibilityResponseCurrentAppVersionReleaseChannel defines model for ProjectUpgradeEligibilityResponse.CurrentAppVersionReleaseChannel.
@@ -3493,8 +3510,29 @@ type ProjectUpgradeEligibilityResponseValidationErrors8 struct {
 // ProjectUpgradeEligibilityResponseValidationErrors8Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.8.Type.
 type ProjectUpgradeEligibilityResponseValidationErrors8Type string
 
+// ProjectUpgradeEligibilityResponseValidationErrors9 defines model for .
+type ProjectUpgradeEligibilityResponseValidationErrors9 struct {
+	Type ProjectUpgradeEligibilityResponseValidationErrors9Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseValidationErrors9Type defines model for ProjectUpgradeEligibilityResponse.ValidationErrors.9.Type.
+type ProjectUpgradeEligibilityResponseValidationErrors9Type string
+
 // ProjectUpgradeEligibilityResponse_ValidationErrors_Item defines model for ProjectUpgradeEligibilityResponse.validation_errors.Item.
 type ProjectUpgradeEligibilityResponse_ValidationErrors_Item struct {
+	union json.RawMessage
+}
+
+// ProjectUpgradeEligibilityResponseWarnings0 defines model for .
+type ProjectUpgradeEligibilityResponseWarnings0 struct {
+	Type ProjectUpgradeEligibilityResponseWarnings0Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseWarnings0Type defines model for ProjectUpgradeEligibilityResponse.Warnings.0.Type.
+type ProjectUpgradeEligibilityResponseWarnings0Type string
+
+// ProjectUpgradeEligibilityResponse_Warnings_Item defines model for ProjectUpgradeEligibilityResponse.warnings.Item.
+type ProjectUpgradeEligibilityResponse_Warnings_Item struct {
 	union json.RawMessage
 }
 
@@ -4413,6 +4451,15 @@ type UpgradeDatabaseBody struct {
 // UpgradeDatabaseBodyReleaseChannel defines model for UpgradeDatabaseBody.ReleaseChannel.
 type UpgradeDatabaseBodyReleaseChannel string
 
+// V1BackupScheduleResponse defines model for V1BackupScheduleResponse.
+type V1BackupScheduleResponse struct {
+	// ScheduleFor Time of day to schedule daily backups, in UTC. Format: HH:MM:SS.
+	ScheduleFor string `json:"schedule_for"`
+
+	// UpdatedAt Timestamp of when the backup schedule was last updated.
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // V1BackupsResponse defines model for V1BackupsResponse.
 type V1BackupsResponse struct {
 	Backups []struct {
@@ -4937,6 +4984,12 @@ type V1UndoBody struct {
 	Name string `json:"name"`
 }
 
+// V1UpdateBackupScheduleBody defines model for V1UpdateBackupScheduleBody.
+type V1UpdateBackupScheduleBody struct {
+	// ScheduleFor Time of day to schedule daily backups, in UTC. Format: HH:MM:SS.
+	ScheduleFor string `json:"schedule_for"`
+}
+
 // V1UpdateFunctionBody defines model for V1UpdateFunctionBody.
 type V1UpdateFunctionBody struct {
 	Body      *string `json:"body,omitempty"`
@@ -5374,6 +5427,9 @@ type V1RestorePitrBackupJSONRequestBody = V1RestorePitrBody
 
 // V1CreateRestorePointJSONRequestBody defines body for V1CreateRestorePoint for application/json ContentType.
 type V1CreateRestorePointJSONRequestBody = V1RestorePointPostBody
+
+// V1UpdateBackupScheduleJSONRequestBody defines body for V1UpdateBackupSchedule for application/json ContentType.
+type V1UpdateBackupScheduleJSONRequestBody = V1UpdateBackupScheduleBody
 
 // V1UndoJSONRequestBody defines body for V1Undo for application/json ContentType.
 type V1UndoJSONRequestBody = V1UndoBody
@@ -6695,12 +6751,97 @@ func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUp
 	return err
 }
 
+// AsProjectUpgradeEligibilityResponseValidationErrors9 returns the union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as a ProjectUpgradeEligibilityResponseValidationErrors9
+func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) AsProjectUpgradeEligibilityResponseValidationErrors9() (ProjectUpgradeEligibilityResponseValidationErrors9, error) {
+	var body ProjectUpgradeEligibilityResponseValidationErrors9
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseValidationErrors9 overwrites any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item as the provided ProjectUpgradeEligibilityResponseValidationErrors9
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) FromProjectUpgradeEligibilityResponseValidationErrors9(v ProjectUpgradeEligibilityResponseValidationErrors9) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseValidationErrors9 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_ValidationErrors_Item, using the provided ProjectUpgradeEligibilityResponseValidationErrors9
+func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MergeProjectUpgradeEligibilityResponseValidationErrors9(v ProjectUpgradeEligibilityResponseValidationErrors9) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t ProjectUpgradeEligibilityResponse_ValidationErrors_Item) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
 }
 
 func (t *ProjectUpgradeEligibilityResponse_ValidationErrors_Item) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseWarnings0 returns the union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as a ProjectUpgradeEligibilityResponseWarnings0
+func (t ProjectUpgradeEligibilityResponse_Warnings_Item) AsProjectUpgradeEligibilityResponseWarnings0() (ProjectUpgradeEligibilityResponseWarnings0, error) {
+	var body ProjectUpgradeEligibilityResponseWarnings0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseWarnings0 overwrites any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as the provided ProjectUpgradeEligibilityResponseWarnings0
+func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) FromProjectUpgradeEligibilityResponseWarnings0(v ProjectUpgradeEligibilityResponseWarnings0) error {
+	v.Type = ""
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseWarnings0 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item, using the provided ProjectUpgradeEligibilityResponseWarnings0
+func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEligibilityResponseWarnings0(v ProjectUpgradeEligibilityResponseWarnings0) error {
+	v.Type = ""
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ProjectUpgradeEligibilityResponse_Warnings_Item) Discriminator() (string, error) {
+	var discriminator struct {
+		Discriminator string `json:"type"`
+	}
+	err := json.Unmarshal(t.union, &discriminator)
+	return discriminator.Discriminator, err
+}
+
+func (t ProjectUpgradeEligibilityResponse_Warnings_Item) ValueByDiscriminator() (interface{}, error) {
+	discriminator, err := t.Discriminator()
+	if err != nil {
+		return nil, err
+	}
+	switch discriminator {
+	case "":
+		return t.AsProjectUpgradeEligibilityResponseWarnings0()
+	default:
+		return nil, errors.New("unknown discriminator value: " + discriminator)
+	}
+}
+
+func (t ProjectUpgradeEligibilityResponse_Warnings_Item) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }

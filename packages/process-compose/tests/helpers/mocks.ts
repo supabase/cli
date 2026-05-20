@@ -60,6 +60,7 @@ export function mockChildProcessSpawner(
                 killed.push(killOpts?.killSignal ?? "SIGTERM");
                 running = false;
               }),
+            unref: Effect.succeed(Effect.void),
             getInputFd: () => Sink.drain,
             getOutputFd: () => Stream.empty,
           });
