@@ -91,7 +91,20 @@ try {
     .quiet();
 
   const sha = (await $`git -C ${clone} rev-list -n 1 ${tag}`.text()).trim();
-  await $`git -C ${clone} tag -d ${tag}`.quiet();
+  // Delete the target tag *and* any other local tags pointing at the same
+  // commit. When a stable and a beta share a commit (e.g. v2.100.0 and
+  // v2.100.0-beta.2 both at 9a22aff6), semantic-release picks the higher-
+  // semver one as lastRelease - which becomes HEAD itself, leaving 0
+  // commits and "no release". Dropping the co-incident tags lets it fall
+  // back to the genuine prior release on the channel.
+  const coincidentTagsOut = await $`git -C ${clone} tag --points-at ${sha}`.text();
+  const coincidentTags = coincidentTagsOut
+    .split("\n")
+    .map((t) => t.trim())
+    .filter(Boolean);
+  for (const ct of coincidentTags) {
+    await $`git -C ${clone} tag -d ${ct}`.quiet().nothrow();
+  }
   await $`git -C ${clone} checkout -B ${branch} ${sha} --quiet`;
 
   // The clone only carries refs/heads/$BRANCH locally; seed the other
