@@ -341,6 +341,14 @@ export const textOutputLayer = Layer.effect(
             yield* Effect.sync(() => outro(suggestion));
           }
         }),
+      raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
+        Effect.sync(() => {
+          if (stream === "stderr") {
+            process.stderr.write(text);
+          } else {
+            process.stdout.write(text);
+          }
+        }),
     });
   }),
 );
@@ -408,6 +416,8 @@ export const jsonOutputLayer = Layer.effect(
         writeStdout(JSON.stringify({ ...data, message }) + "\n"),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         writeStdout(JSON.stringify({ _tag: "Error", error: err }) + "\n"),
+      raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
+        stream === "stderr" ? writeStderr(text) : writeStdout(text),
     });
   }),
 );
@@ -420,6 +430,8 @@ export const streamJsonOutputLayer = Layer.effect(
 
     const writeStdout = (s: string) =>
       Stream.make(s).pipe(Stream.run(stdio.stdout()), Effect.orDie);
+    const writeStderr = (s: string) =>
+      Stream.make(s).pipe(Stream.run(stdio.stderr()), Effect.orDie);
     const emitLog = (level: "info" | "warn" | "success" | "error", message: string) => {
       const event: StreamEvent = {
         type: "log",
@@ -502,6 +514,8 @@ export const streamJsonOutputLayer = Layer.effect(
         };
         return writeStdout(JSON.stringify(event) + "\n");
       },
+      raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
+        stream === "stderr" ? writeStderr(text) : writeStdout(text),
     });
   }),
 );

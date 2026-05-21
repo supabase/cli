@@ -790,6 +790,20 @@ export const versionedEffectOperations = {
           input,
         );
       }),
+    getBackupSchedule: (
+      input: typeof operationDefinitions.v1GetBackupSchedule.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v1GetBackupSchedule.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v1GetBackupSchedule">(
+          operationDefinitions.v1GetBackupSchedule,
+          input,
+        );
+      }),
     getDatabaseDisk: (
       input: typeof operationDefinitions.v1GetDatabaseDisk.inputSchema.Type,
     ): Effect.Effect<
@@ -1788,6 +1802,20 @@ export const versionedEffectOperations = {
           input,
         );
       }),
+    restorePhysicalBackup: (
+      input: typeof operationDefinitions.v1RestorePhysicalBackup.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v1RestorePhysicalBackup.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v1RestorePhysicalBackup">(
+          operationDefinitions.v1RestorePhysicalBackup,
+          input,
+        );
+      }),
     restorePitrBackup: (
       input: typeof operationDefinitions.v1RestorePitrBackup.inputSchema.Type,
     ): Effect.Effect<
@@ -1958,6 +1986,20 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v1UpdateAuthServiceConfig">(
           operationDefinitions.v1UpdateAuthServiceConfig,
+          input,
+        );
+      }),
+    updateBackupSchedule: (
+      input: typeof operationDefinitions.v1UpdateBackupSchedule.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v1UpdateBackupSchedule.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v1UpdateBackupSchedule">(
+          operationDefinitions.v1UpdateBackupSchedule,
           input,
         );
       }),
@@ -2453,6 +2495,10 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(operationDefinitions.v1GetAvailableRegions.inputSchema)(
         input,
       ).pipe(Effect.flatMap((decoded) => api.v1.getAvailableRegions(decoded)));
+    case "v1GetBackupSchedule":
+      return Schema.decodeUnknownEffect(operationDefinitions.v1GetBackupSchedule.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v1.getBackupSchedule(decoded)));
     case "v1GetDatabaseDisk":
       return Schema.decodeUnknownEffect(operationDefinitions.v1GetDatabaseDisk.inputSchema)(
         input,
@@ -2745,6 +2791,10 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(operationDefinitions.v1RestoreAProject.inputSchema)(
         input,
       ).pipe(Effect.flatMap((decoded) => api.v1.restoreAProject(decoded)));
+    case "v1RestorePhysicalBackup":
+      return Schema.decodeUnknownEffect(operationDefinitions.v1RestorePhysicalBackup.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v1.restorePhysicalBackup(decoded)));
     case "v1RestorePitrBackup":
       return Schema.decodeUnknownEffect(operationDefinitions.v1RestorePitrBackup.inputSchema)(
         input,
@@ -2797,6 +2847,10 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(operationDefinitions.v1UpdateAuthServiceConfig.inputSchema)(
         input,
       ).pipe(Effect.flatMap((decoded) => api.v1.updateAuthServiceConfig(decoded)));
+    case "v1UpdateBackupSchedule":
+      return Schema.decodeUnknownEffect(operationDefinitions.v1UpdateBackupSchedule.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v1.updateBackupSchedule(decoded)));
     case "v1UpdateDatabasePassword":
       return Schema.decodeUnknownEffect(operationDefinitions.v1UpdateDatabasePassword.inputSchema)(
         input,
