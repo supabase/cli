@@ -1,17 +1,18 @@
 import { Layer } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
 
 import { legacyCredentialsLayer } from "../../auth/legacy-credentials.layer.ts";
+import { legacyHttpClientLayer } from "../../auth/legacy-http-debug.layer.ts";
 import { legacyPlatformApiLayer } from "../../auth/legacy-platform-api.layer.ts";
 import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
 import { legacyProjectRefLayer } from "../../config/legacy-project-ref.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 
-// Shared platform-API stack used by every `backups` subcommand.
+// Shared platform-API stack used by every `backups` subcommand. `legacyHttpClientLayer`
+// wraps the default fetch transport with a debug logger when `--debug` is set.
 const legacyBackupsPlatformApiLayer = legacyPlatformApiLayer.pipe(
   Layer.provide(legacyCredentialsLayer),
   Layer.provide(legacyCliConfigLayer),
-  Layer.provide(FetchHttpClient.layer),
+  Layer.provide(legacyHttpClientLayer),
 );
 
 /**
