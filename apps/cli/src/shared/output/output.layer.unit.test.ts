@@ -168,8 +168,14 @@ describe("Output", () => {
       }).pipe(Effect.provide(layer)),
     );
 
-    it.effect("fail renders an error, gray context, and closing suggestion", () =>
-      Effect.gen(function* () {
+    it.effect("fail writes Go-byte-identical red message + suggestion to stderr", () => {
+      const writes: string[] = [];
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      process.stderr.write = ((chunk: string | Uint8Array) => {
+        writes.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+        return true;
+      }) as typeof process.stderr.write;
+      return Effect.gen(function* () {
         const out = yield* Output;
         yield* out.fail({
           code: "E_TEST",
@@ -177,17 +183,72 @@ describe("Output", () => {
           detail: "extra detail",
           suggestion: "try again",
         });
-        // Errors are routed to stderr (Go parity); clack's `log.error` defaults
-        // to stdout, so we pass `output: process.stderr` explicitly.
-        expect(mockClack.log.error).toHaveBeenCalledWith("\x1B[31mtest error\x1B[39m", {
-          output: process.stderr,
-        });
-        expect(mockClack.log.message).toHaveBeenCalledWith("\x1B[90mextra detail\x1B[39m", {
-          output: process.stderr,
-        });
-        expect(mockClack.outro).toHaveBeenCalledWith("try again");
-      }).pipe(Effect.provide(layer)),
-    );
+        expect(writes).toEqual([
+          "\x1B[31mtest error\x1B[39m\n",
+          "\x1B[90mextra detail\x1B[39m\n",
+          "try again\n",
+        ]);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            process.stderr.write = originalWrite;
+          }),
+        ),
+      );
+    });
+
+    it.effect("fail falls back to the --debug suggestion when caller provides none", () => {
+      const writes: string[] = [];
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      const originalArgv = process.argv;
+      process.stderr.write = ((chunk: string | Uint8Array) => {
+        writes.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+        return true;
+      }) as typeof process.stderr.write;
+      // Strip --debug from argv so the fallback fires.
+      process.argv = originalArgv.filter((arg) => arg !== "--debug");
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.fail({ code: "E_TEST", message: "boom" });
+        expect(writes).toEqual([
+          "\x1B[31mboom\x1B[39m\n",
+          "Try rerunning the command with --debug to troubleshoot the error.\n",
+        ]);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            process.stderr.write = originalWrite;
+            process.argv = originalArgv;
+          }),
+        ),
+      );
+    });
+
+    it.effect("fail omits the --debug suggestion when --debug is set", () => {
+      const writes: string[] = [];
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      const originalArgv = process.argv;
+      process.stderr.write = ((chunk: string | Uint8Array) => {
+        writes.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+        return true;
+      }) as typeof process.stderr.write;
+      process.argv = [...originalArgv, "--debug"];
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.fail({ code: "E_TEST", message: "boom" });
+        expect(writes).toEqual(["\x1B[31mboom\x1B[39m\n"]);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            process.stderr.write = originalWrite;
+            process.argv = originalArgv;
+          }),
+        ),
+      );
+    });
 
     it.effect("promptText passes validate callback to clack", () => {
       mockClack.text.mockImplementation(

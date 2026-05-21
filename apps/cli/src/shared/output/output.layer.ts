@@ -330,21 +330,22 @@ export const textOutputLayer = Layer.effect(
         }),
       success: (message: string) => Effect.sync(() => log.success(message)),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
-        Effect.gen(function* () {
-          // @clack/prompts defaults to process.stdout; route error output to stderr
-          // for Go parity (the Go CLI writes the failure message to stderr).
-          yield* Effect.sync(() =>
-            log.error(styleText("red", err.message), { output: process.stderr }),
-          );
-          const detail = err.detail;
-          if (detail) {
-            yield* Effect.sync(() =>
-              log.message(styleText("gray", detail), { output: process.stderr }),
-            );
+        Effect.sync(() => {
+          // Matches Go's `recoverAndExit` (apps/cli-go/cmd/root.go:300-303): a
+          // red-styled message on stderr, optionally followed by a suggestion.
+          // Bypasses clack's `log.error` framing (`│` guide + `■` icon) so the
+          // output byte-matches the Go CLI for parity tests.
+          process.stderr.write(styleText("red", err.message) + "\n");
+          if (err.detail !== undefined && err.detail !== err.message) {
+            process.stderr.write(styleText("gray", err.detail) + "\n");
           }
-          const suggestion = err.suggestion;
-          if (suggestion) {
-            yield* Effect.sync(() => outro(suggestion));
+          if (err.suggestion !== undefined) {
+            process.stderr.write(err.suggestion + "\n");
+          } else if (!process.argv.includes("--debug")) {
+            // Go's `utils.SuggestDebugFlag` (apps/cli-go/internal/utils/misc.go:41).
+            process.stderr.write(
+              "Try rerunning the command with --debug to troubleshoot the error.\n",
+            );
           }
         }),
       raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
