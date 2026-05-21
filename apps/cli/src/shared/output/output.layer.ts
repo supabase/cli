@@ -331,10 +331,16 @@ export const textOutputLayer = Layer.effect(
       success: (message: string) => Effect.sync(() => log.success(message)),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         Effect.gen(function* () {
-          yield* Effect.sync(() => log.error(styleText("red", err.message)));
+          // @clack/prompts defaults to process.stdout; route error output to stderr
+          // for Go parity (the Go CLI writes the failure message to stderr).
+          yield* Effect.sync(() =>
+            log.error(styleText("red", err.message), { output: process.stderr }),
+          );
           const detail = err.detail;
           if (detail) {
-            yield* Effect.sync(() => log.message(styleText("gray", detail)));
+            yield* Effect.sync(() =>
+              log.message(styleText("gray", detail), { output: process.stderr }),
+            );
           }
           const suggestion = err.suggestion;
           if (suggestion) {

@@ -177,8 +177,14 @@ describe("Output", () => {
           detail: "extra detail",
           suggestion: "try again",
         });
-        expect(mockClack.log.error).toHaveBeenCalledWith("\x1B[31mtest error\x1B[39m");
-        expect(mockClack.log.message).toHaveBeenCalledWith("\x1B[90mextra detail\x1B[39m");
+        // Errors are routed to stderr (Go parity); clack's `log.error` defaults
+        // to stdout, so we pass `output: process.stderr` explicitly.
+        expect(mockClack.log.error).toHaveBeenCalledWith("\x1B[31mtest error\x1B[39m", {
+          output: process.stderr,
+        });
+        expect(mockClack.log.message).toHaveBeenCalledWith("\x1B[90mextra detail\x1B[39m", {
+          output: process.stderr,
+        });
         expect(mockClack.outro).toHaveBeenCalledWith("try again");
       }).pipe(Effect.provide(layer)),
     );
