@@ -15,11 +15,16 @@ import { afterEach, beforeEach } from "vitest";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.ts";
+import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { mockProcessControl } from "../../../../../tests/helpers/mocks.ts";
 import { legacyBackupsList } from "./list.handler.ts";
+
+const mockLinkedProjectCacheLayer = Layer.succeed(LegacyLinkedProjectCache, {
+  cache: () => Effect.void,
+});
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -172,6 +177,7 @@ function setup(opts: SetupOpts = {}) {
     ),
     BunServices.layer,
     Layer.succeed(LegacyOutputFlag, goOutputValue),
+    mockLinkedProjectCacheLayer,
   );
   return { layer, out, api, processCtl, tempRoot };
 }
@@ -369,6 +375,7 @@ describe("legacy backups list integration", () => {
       ),
       BunServices.layer,
       Layer.succeed(LegacyOutputFlag, Option.none()),
+      mockLinkedProjectCacheLayer,
     );
 
     return Effect.gen(function* () {
@@ -408,6 +415,7 @@ describe("legacy backups list integration", () => {
       ),
       BunServices.layer,
       Layer.succeed(LegacyOutputFlag, Option.none()),
+      mockLinkedProjectCacheLayer,
     );
 
     return Effect.gen(function* () {

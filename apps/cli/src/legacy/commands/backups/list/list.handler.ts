@@ -3,6 +3,7 @@ import { Effect, Option } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { renderGlamourTable } from "../../../output/legacy-glamour-table.ts";
@@ -61,45 +62,51 @@ export const legacyBackupsList = Effect.fn("legacy.backups.list")(function* (
   const goOutputFlag = yield* LegacyOutputFlag;
   const api = yield* LegacyPlatformApi;
   const resolver = yield* LegacyProjectRefResolver;
+  const linkedProjectCache = yield* LegacyLinkedProjectCache;
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
-  // The fetching spinner is only meaningful in human-facing text mode — in JSON / stream-json
-  // it would surface dangling `[task] start:` lines on stderr with no completion message.
-  const fetching = output.format === "text" ? yield* output.task("Fetching backups...") : undefined;
-  const response = yield* api.v1.listAllBackups({ ref }).pipe(
-    Effect.tapError(() => fetching?.fail() ?? Effect.void),
-    Effect.catch(mapListError),
-  );
-  yield* fetching?.clear() ?? Effect.void;
+  // Mirror Go's PersistentPostRun (`apps/cli-go/cmd/root.go:176`): write the
+  // linked-project cache whether the main API call succeeds or fails.
+  yield* Effect.gen(function* () {
+    // The fetching spinner is only meaningful in human-facing text mode — in JSON / stream-json
+    // it would surface dangling `[task] start:` lines on stderr with no completion message.
+    const fetching =
+      output.format === "text" ? yield* output.task("Fetching backups...") : undefined;
+    const response = yield* api.v1.listAllBackups({ ref }).pipe(
+      Effect.tapError(() => fetching?.fail() ?? Effect.void),
+      Effect.catch(mapListError),
+    );
+    yield* fetching?.clear() ?? Effect.void;
 
-  const goFmt = Option.getOrUndefined(goOutputFlag);
+    const goFmt = Option.getOrUndefined(goOutputFlag);
 
-  if (goFmt === "json") {
-    yield* output.raw(encodeGoJson(response));
-    return;
-  }
-  if (goFmt === "yaml") {
-    yield* output.raw(encodeYaml(response));
-    return;
-  }
-  if (goFmt === "toml") {
-    yield* output.raw(encodeToml(response) + "\n");
-    return;
-  }
-  if (goFmt === "env") {
-    yield* output.raw(encodeEnv(response) + "\n");
-    return;
-  }
+    if (goFmt === "json") {
+      yield* output.raw(encodeGoJson(response));
+      return;
+    }
+    if (goFmt === "yaml") {
+      yield* output.raw(encodeYaml(response));
+      return;
+    }
+    if (goFmt === "toml") {
+      yield* output.raw(encodeToml(response) + "\n");
+      return;
+    }
+    if (goFmt === "env") {
+      yield* output.raw(encodeEnv(response) + "\n");
+      return;
+    }
 
-  // goFmt is undefined or "pretty" — defer to TS --output-format for JSON/stream-json,
-  // otherwise render the Glamour-styled table (Go --output pretty parity).
-  if (output.format === "json" || output.format === "stream-json") {
-    yield* output.success("", response);
-    return;
-  }
+    // goFmt is undefined or "pretty" — defer to TS --output-format for JSON/stream-json,
+    // otherwise render the Glamour-styled table (Go --output pretty parity).
+    if (output.format === "json" || output.format === "stream-json") {
+      yield* output.success("", response);
+      return;
+    }
 
-  const table =
-    response.backups.length > 0 ? renderLogicalTable(response) : renderPitrTable(response);
-  yield* output.raw(table);
+    const table =
+      response.backups.length > 0 ? renderLogicalTable(response) : renderPitrTable(response);
+    yield* output.raw(table);
+  }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
 });
