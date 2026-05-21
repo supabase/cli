@@ -1,0 +1,73 @@
+name: Propose release notes
+
+# Runs after backfill-release-notes lands the raw semantic-release block in the
+# GitHub Release body. Re-derives that block, asks Claude to rewrite it into
+# user-centric notes per tools/release/release-notes-prompt.md, and opens a PR
+# adding release-notes/v<VERSION>.md. Merging the PR triggers
+# apply-release-notes.yml, which pushes the file's contents to the GH Release.
+#
+# Stable releases only — prerelease tags (-beta./-alpha.) keep the raw body.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to propose notes for (e.g. v2.101.0)
+        required: true
+        type: string
+      non_blocking:
+        description: Do not fail the workflow run when proposing fails (release pipeline)
+        required: false
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to propose notes for (e.g. v2.101.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  propose:
+    # Belt-and-suspenders: the script also refuses prerelease tags, but cheap
+    # to short-circuit here so we never pay for an LLM call we'd discard.
+    if: ${{ !contains(inputs.tag, '-beta.') && !contains(inputs.tag, '-alpha.') }}
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ inputs.non_blocking }}
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      TAG: ${{ inputs.tag }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      # App token gets us push to a protected default branch *and* PR creation
+      # under the App identity, matching the rest of release.yml.
+      - id: app-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+
+      - uses: useblacksmith/checkout@41cdeedae8edb2e684ba22896a5fd2a3cb85db6b # v1
+        with:
+          # Full history + tags so backfill-release-notes.ts can reach the
+          # commit graph it needs (semantic-release walks notes back to the
+          # last release on the channel).
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: ./.github/actions/setup
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Propose release notes
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: pnpm exec bun apps/cli/scripts/propose-release-notes.ts --tag "${TAG}" --apply
