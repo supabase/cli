@@ -6,6 +6,7 @@ import { legacyPlatformApiLayer } from "../../auth/legacy-platform-api.layer.ts"
 import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
 import { legacyProjectRefLayer } from "../../config/legacy-project-ref.layer.ts";
 import { legacyLinkedProjectCacheLayer } from "../../telemetry/legacy-linked-project-cache.layer.ts";
+import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 
 // Shared platform-API stack used by every `backups` subcommand. `legacyHttpClientLayer`
@@ -40,6 +41,7 @@ export function legacyBackupsRuntimeLayer(subcommand: ReadonlyArray<string>) {
       Layer.provide(legacyCliConfigLayer),
       Layer.provide(legacyHttpClientLayer),
     ),
+    legacyTelemetryStateLayer,
     commandRuntimeLayer([...subcommand]),
   );
 }

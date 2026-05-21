@@ -3,6 +3,7 @@ import { Effect, Option } from "effect";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
+import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
@@ -27,11 +28,13 @@ export const legacyBackupsRestore = Effect.fn("legacy.backups.restore")(function
   const api = yield* LegacyPlatformApi;
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
+  const telemetryState = yield* LegacyTelemetryState;
 
   const ref = yield* resolver.resolve(flags.projectRef);
   const recoveryTimeTargetUnix = Option.getOrElse(flags.timestamp, () => 0);
 
-  // Mirror Go's PersistentPostRun — cache writes whether the main call succeeds or fails.
+  // Mirror Go's PersistentPostRun — cache + telemetry flush whether the main
+  // call succeeds or fails.
   yield* Effect.gen(function* () {
     // Spinner only in human-facing text mode — see list.handler.ts.
     const restoring =
@@ -63,5 +66,5 @@ export const legacyBackupsRestore = Effect.fn("legacy.backups.restore")(function
 
     // pretty/yaml/toml/env (Go-compat) + TS text mode → byte-identical text line on stderr.
     yield* output.raw(`Started PITR restore: ${ref}\n`, "stderr");
-  }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
+  }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

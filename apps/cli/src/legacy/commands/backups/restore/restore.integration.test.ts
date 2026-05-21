@@ -16,6 +16,7 @@ import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts"
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
+import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { mockOutput, mockProcessControl, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { legacyBackupsRestore } from "./restore.handler.ts";
@@ -23,6 +24,8 @@ import { legacyBackupsRestore } from "./restore.handler.ts";
 const mockLinkedProjectCacheLayer = Layer.succeed(LegacyLinkedProjectCache, {
   cache: () => Effect.void,
 });
+
+const mockTelemetryStateLayer = Layer.succeed(LegacyTelemetryState, { flush: Effect.void });
 
 const VALID_REF = "abcdefghijklmnopqrst";
 const VALID_TOKEN = "sbp_" + "a".repeat(40);
@@ -129,6 +132,7 @@ function setup(opts: SetupOpts = {}) {
     BunServices.layer,
     Layer.succeed(LegacyOutputFlag, goOutputValue),
     mockLinkedProjectCacheLayer,
+    mockTelemetryStateLayer,
   );
   return { layer, out, api, tempRoot };
 }
@@ -304,6 +308,7 @@ describe("legacy backups restore integration", () => {
       BunServices.layer,
       Layer.succeed(LegacyOutputFlag, Option.none()),
       mockLinkedProjectCacheLayer,
+      mockTelemetryStateLayer,
     );
 
     return Effect.gen(function* () {
@@ -386,6 +391,7 @@ describe("legacy backups restore integration", () => {
       BunServices.layer,
       Layer.succeed(LegacyOutputFlag, Option.none()),
       mockLinkedProjectCacheLayer,
+      mockTelemetryStateLayer,
     );
 
     return Effect.gen(function* () {

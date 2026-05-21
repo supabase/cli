@@ -4,6 +4,7 @@ import { Effect, Option } from "effect";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
+import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { renderGlamourTable } from "../../../output/legacy-glamour-table.ts";
@@ -63,11 +64,13 @@ export const legacyBackupsList = Effect.fn("legacy.backups.list")(function* (
   const api = yield* LegacyPlatformApi;
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
+  const telemetryState = yield* LegacyTelemetryState;
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
   // Mirror Go's PersistentPostRun (`apps/cli-go/cmd/root.go:176`): write the
-  // linked-project cache whether the main API call succeeds or fails.
+  // linked-project cache and persist the telemetry state file whether the main
+  // API call succeeds or fails.
   yield* Effect.gen(function* () {
     // The fetching spinner is only meaningful in human-facing text mode — in JSON / stream-json
     // it would surface dangling `[task] start:` lines on stderr with no completion message.
@@ -108,5 +111,5 @@ export const legacyBackupsList = Effect.fn("legacy.backups.list")(function* (
     const table =
       response.backups.length > 0 ? renderLogicalTable(response) : renderPitrTable(response);
     yield* output.raw(table);
-  }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
+  }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });
