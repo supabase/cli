@@ -45,10 +45,13 @@ on:
 
 jobs:
   build:
-    runs-on: large-linux-x86
+    runs-on: blacksmith-32vcpu-ubuntu-2404
     env:
       BUN_SHELL: ${{ inputs.shell }}
       VERSION: ${{ inputs.version }}
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+      POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -57,7 +60,7 @@ jobs:
         uses: ./.github/actions/setup
 
       - name: Setup Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version-file: apps/cli-go/go.mod
           cache: true
@@ -100,8 +103,15 @@ jobs:
     needs: build
     strategy:
       fail-fast: false
+      # macos-15-intel is the slowest smoke leg and the only one not on
+      # Blacksmith (Blacksmith macOS is ARM-only). Drop it from the matrix
+      # on prereleases (PR smoke + develop -> beta) so beta wall-clock isn't
+      # gated by it; stable releases on main still run the full matrix.
+      # The matrix list is built via fromJSON because GitHub Actions does
+      # not allow the `matrix` context in a job-level `if:` (matrix
+      # expansion happens after job conditions are evaluated).
       matrix:
-        runner: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
+        runner: ${{ fromJSON(inputs.prerelease && '["blacksmith-8vcpu-ubuntu-2404","blacksmith-6vcpu-macos-latest","blacksmith-8vcpu-windows-2025"]' || '["blacksmith-8vcpu-ubuntu-2404","blacksmith-6vcpu-macos-latest","macos-15-intel","blacksmith-8vcpu-windows-2025"]') }}
     runs-on: ${{ matrix.runner }}
     env:
       NPM_TAG: ${{ inputs.npm_tag }}
@@ -118,9 +128,63 @@ jobs:
         with:
           name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
 
+      # Docker's classic image store keeps a single platform manifest per
+      # tag, so pulling `alpine:3.21` for amd64 and again for arm64 leaves
+      # only the most recent one in the local store — and `docker save`
+      # captures only that one. Enabling the containerd snapshotter lets
+      # the store hold multi-platform manifests under a single tag, which
+      # is what makes the cache step below work for both arches.
+      - name: Enable containerd image store
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          echo '{"features":{"containerd-snapshotter":true}}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+          docker info --format '{{.DriverStatus}}'
+
       - name: Setup QEMU for cross-platform Docker
         if: runner.os == 'Linux'
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+
+      # Cache the smoke-test base images across runs. Without this, eight
+      # parallel `docker run` calls in smoke-test-linux.ts race on first-time
+      # pulls and surface as docker exit 125 ("daemon could not start the
+      # container") on a subset of jobs. Bump the `-v<N>` suffix to invalidate
+      # the cache when the image list or tags change.
+      - name: Cache smoke-test docker images
+        if: runner.os == 'Linux'
+        id: smoke-docker-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/smoke-docker-images.tar
+          key: smoke-docker-images-debian-bookworm-slim-amazonlinux-2023-alpine-3.21-v1
+
+      - name: Load cached smoke-test docker images
+        if: runner.os == 'Linux' && steps.smoke-docker-cache.outputs.cache-hit == 'true'
+        run: docker load -i ~/.cache/smoke-docker-images.tar
+
+      - name: Pull and save smoke-test docker images
+        if: runner.os == 'Linux' && steps.smoke-docker-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.cache"
+          images=("debian:bookworm-slim" "amazonlinux:2023" "alpine:3.21")
+          for image in "${images[@]}"; do
+            for platform in linux/amd64 linux/arm64; do
+              echo "::group::Pulling $platform $image"
+              attempt=0
+              until docker pull --platform "$platform" "$image"; do
+                attempt=$((attempt + 1))
+                if [ "$attempt" -ge 3 ]; then
+                  echo "Failed to pull $platform $image after $attempt attempts" >&2
+                  exit 1
+                fi
+                sleep $((attempt * 5))
+              done
+              echo "::endgroup::"
+            done
+          done
+          docker save "${images[@]}" -o "$HOME/.cache/smoke-docker-images.tar"
 
       - name: Install Scoop
         if: runner.os == 'Windows'
@@ -144,6 +208,11 @@ jobs:
   publish:
     needs: smoke-test
     if: ${{ !inputs.dry_run }}
+    # npm provenance verification rejects non-GitHub-hosted runners with
+    # E422 ("Unsupported GitHub Actions runner environment: self-hosted").
+    # Blacksmith runners count as self-hosted from sigstore's POV, so the
+    # publish job must stay on a github-hosted runner. The job is short
+    # and not compute-bound, so the wall-clock cost is negligible.
     runs-on: ubuntu-latest
     env:
       CHANNEL: ${{ inputs.channel }}
@@ -263,6 +332,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "v${VERSION}" --draft=false
 
+  # Changelog backfill only needs tag + published GH release (from publish).
+  # Runs in parallel with brew/scoop/smoke; must not gate distribution.
+  backfill-release-notes:
+    uses: ./.github/workflows/backfill-release-notes.yml
+    needs: publish
+    if: ${{ !inputs.dry_run && needs.publish.result == 'success' }}
+    with:
+      tag: v${{ inputs.version }}
+      apply: true
+      non_blocking: true
+
   publish-homebrew:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
@@ -346,3 +426,22 @@ jobs:
         run: pnpm exec bun apps/cli/scripts/update-scoop.ts --version "${VERSION}" --name "${SCOOP_NAME}"
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+  # Post-publish smoke test for the `supabase/setup-cli` GitHub Action against
+  # the just-released CLI. Runs last and intentionally does not gate
+  # publish-homebrew / publish-scoop — by the time the smoke runs, the npm
+  # package and GitHub release are already live and the brew/scoop pushes
+  # have either succeeded or skipped, so a setup-cli regression surfaces as
+  # a red post-release signal without holding back the rest of the channel.
+  #
+  # Depends on the publish jobs only via `needs` for ordering; the `if`
+  # uses `always() && needs.publish.result == 'success'` so the smoke still
+  # runs when publish-homebrew / publish-scoop are skipped (alpha) or fail.
+  # The reusable workflow can also be dispatched manually against any
+  # already-published version when debugging setup-cli regressions.
+  setup-cli-smoke:
+    needs: [publish, publish-homebrew, publish-scoop]
+    if: ${{ always() && !inputs.dry_run && needs.publish.result == 'success' }}
+    uses: ./.github/workflows/setup-cli-smoke-test.yml
+    with:
+      version: ${{ inputs.version }}

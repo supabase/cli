@@ -125,7 +125,21 @@ async function buildGoTarget(target: (typeof TARGETS)[number]) {
   const outfile = path.join(binDir, `supabase-go${target.ext}`);
 
   console.log(`[${target.pkg}] Compiling Go CLI (${goos}/${goarch})...`);
-  await $`go build -trimpath -ldflags="-s -w" -o ${outfile} .`.cwd(goSource).env({
+  const ldflagParts = ["-s", "-w", `-X github.com/supabase/cli/internal/utils.Version=${version}`];
+  const { SENTRY_DSN, POSTHOG_API_KEY, POSTHOG_ENDPOINT } = process.env;
+  if (SENTRY_DSN) {
+    ldflagParts.push(`-X github.com/supabase/cli/internal/utils.SentryDsn=${SENTRY_DSN}`);
+  }
+  if (POSTHOG_API_KEY) {
+    ldflagParts.push(`-X github.com/supabase/cli/internal/utils.PostHogAPIKey=${POSTHOG_API_KEY}`);
+  }
+  if (POSTHOG_ENDPOINT) {
+    ldflagParts.push(
+      `-X github.com/supabase/cli/internal/utils.PostHogEndpoint=${POSTHOG_ENDPOINT}`,
+    );
+  }
+  const goLdflags = ldflagParts.join(" ");
+  await $`go build -trimpath -ldflags=${goLdflags} -o ${outfile} .`.cwd(goSource).env({
     ...process.env,
     GOOS: goos,
     GOARCH: goarch,

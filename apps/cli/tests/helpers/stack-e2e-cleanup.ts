@@ -184,6 +184,7 @@ async function removeProjectWithDocker(projectDir: string): Promise<boolean> {
   const parentDir = path.dirname(projectDir);
   const projectName = path.basename(projectDir);
 
+  let dockerErr: string | undefined;
   try {
     execFileSync(
       "docker",
@@ -202,11 +203,21 @@ async function removeProjectWithDocker(projectDir: string): Promise<boolean> {
         "-c",
         'cd /parent && rm -rf -- "$TARGET_NAME"',
       ],
-      { stdio: "ignore", timeout: 30_000 },
+      { stdio: ["ignore", "ignore", "pipe"], timeout: 30_000 },
     );
-  } catch {}
+  } catch (error) {
+    const stderr =
+      error != null && typeof error === "object" && "stderr" in error
+        ? String((error as { stderr: unknown }).stderr ?? "").trim()
+        : "";
+    dockerErr = stderr || (error instanceof Error ? error.message : String(error));
+  }
 
-  return !existsSync(projectDir);
+  const removed = !existsSync(projectDir);
+  if (!removed && dockerErr) {
+    console.warn(`[stack-e2e-cleanup] docker fallback for ${projectDir} failed: ${dockerErr}`);
+  }
+  return removed;
 }
 
 async function cleanupProject(
@@ -418,8 +429,19 @@ export function createStackE2eCleanupManager(
         }
       }
 
+      // Cleanup of leaked stack projects is best-effort: assertions in the
+      // test itself have already passed by the time `drain()` runs, and CI
+      // runners are ephemeral so a leaked temp dir doesn't affect
+      // correctness. Surface the details so developers can still see them
+      // locally, but don't fail the test (in particular: `functions dev`
+      // leaves root-owned files from edge-runtime's docker container that
+      // the runner user cannot unlink, and the docker fallback may itself
+      // fail in environments where the daemon is unreachable from the
+      // sandbox).
       if (failures.length > 0) {
-        throw new Error(failures.join("\n"));
+        console.warn(
+          `[stack-e2e-cleanup] ${failures.length} project(s) could not be cleaned up:\n${failures.join("\n")}`,
+        );
       }
     },
     reset() {
