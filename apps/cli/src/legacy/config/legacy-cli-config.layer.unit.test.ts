@@ -65,15 +65,57 @@ describe("legacyCliConfigLayer", () => {
     }).pipe(Effect.provide(makeLayer({ profileFlag: "supabase-local", cwd: tempRoot }))),
   );
 
-  it.effect("falls back to supabase profile when SUPABASE_PROFILE is unknown", () =>
-    Effect.gen(function* () {
+  it.effect(
+    "falls back to supabase profile when SUPABASE_PROFILE is neither a known name nor a readable file",
+    () =>
+      Effect.gen(function* () {
+        const config = yield* LegacyCliConfig;
+        expect(config.profile).toBe("supabase");
+        expect(config.apiUrl).toBe("https://api.supabase.com");
+      }).pipe(
+        Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: "rogue-profile" }, cwd: tempRoot })),
+      ),
+  );
+
+  it.effect("loads api_url and name from a YAML profile file (Go-parity dual semantics)", () => {
+    const profilePath = join(tempRoot, "profile.yaml");
+    writeFileSync(
+      profilePath,
+      ["name: cli-e2e", 'api_url: "http://127.0.0.1:9999"', "project_host: localhost"].join("\n"),
+    );
+    return Effect.gen(function* () {
+      const config = yield* LegacyCliConfig;
+      expect(config.profile).toBe("cli-e2e");
+      expect(config.apiUrl).toBe("http://127.0.0.1:9999");
+    }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: profilePath }, cwd: tempRoot })));
+  });
+
+  it.effect(
+    "falls back to supabase profile when SUPABASE_PROFILE points to a non-existent file",
+    () =>
+      Effect.gen(function* () {
+        const config = yield* LegacyCliConfig;
+        expect(config.profile).toBe("supabase");
+        expect(config.apiUrl).toBe("https://api.supabase.com");
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            env: { SUPABASE_PROFILE: join(tempRoot, "missing.yaml") },
+            cwd: tempRoot,
+          }),
+        ),
+      ),
+  );
+
+  it.effect("falls back to supabase profile when SUPABASE_PROFILE points to malformed YAML", () => {
+    const profilePath = join(tempRoot, "broken.yaml");
+    writeFileSync(profilePath, "::: not yaml :::\n[unbalanced");
+    return Effect.gen(function* () {
       const config = yield* LegacyCliConfig;
       expect(config.profile).toBe("supabase");
       expect(config.apiUrl).toBe("https://api.supabase.com");
-    }).pipe(
-      Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: "rogue-profile" }, cwd: tempRoot })),
-    ),
-  );
+    }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: profilePath }, cwd: tempRoot })));
+  });
 
   it.effect("ignores SUPABASE_API_URL — Go parity", () =>
     Effect.gen(function* () {

@@ -1,23 +1,72 @@
 import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
+import { parse as parseYaml } from "yaml";
 import { CLI_VERSION } from "../../shared/cli/version.ts";
 import { LegacyProfileFlag, LegacyWorkdirFlag } from "../../shared/legacy/global-flags.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { LegacyCliConfig, type LegacyProfileName } from "./legacy-cli-config.service.ts";
 
-const PROFILE_API_URLS: Record<LegacyProfileName, string> = {
-  supabase: "https://api.supabase.com",
-  "supabase-staging": "https://api.supabase.green",
-  "supabase-local": "http://localhost:8080",
+interface ResolvedProfile {
+  readonly name: string;
+  readonly apiUrl: string;
+}
+
+const BUILTIN_PROFILES: Record<LegacyProfileName, ResolvedProfile> = {
+  supabase: { name: "supabase", apiUrl: "https://api.supabase.com" },
+  "supabase-staging": { name: "supabase-staging", apiUrl: "https://api.supabase.green" },
+  "supabase-local": { name: "supabase-local", apiUrl: "http://localhost:8080" },
 };
 
-const KNOWN_PROFILES: ReadonlySet<string> = new Set(Object.keys(PROFILE_API_URLS));
+function isBuiltinProfileName(value: string): value is LegacyProfileName {
+  return value in BUILTIN_PROFILES;
+}
 
-function resolveProfileName(flagValue: string, envValue: string | undefined): LegacyProfileName {
-  const candidate = flagValue !== "supabase" ? flagValue : (envValue ?? "supabase");
-  if (KNOWN_PROFILES.has(candidate)) {
-    return candidate as LegacyProfileName;
+function safeParseYaml(text: string): { name?: unknown; api_url?: unknown } | undefined {
+  try {
+    const value = parseYaml(text);
+    return value !== null && typeof value === "object"
+      ? (value as { name?: unknown; api_url?: unknown })
+      : undefined;
+  } catch {
+    return undefined;
   }
-  return "supabase";
+}
+
+/**
+ * Resolves the profile that produces the API URL. Mirrors Go's `LoadProfile`
+ * (`apps/cli-go/internal/utils/profile.go:96-118`):
+ *
+ * 1. If the token matches a built-in profile name, use that.
+ * 2. Otherwise treat the token as a path to a YAML config file with `api_url:`.
+ * 3. Fall back to the `supabase` built-in if the file is missing or malformed.
+ *
+ * The cli-e2e harness depends on (2) — it writes a per-test YAML profile and
+ * sets `SUPABASE_PROFILE=<that-path>` so both the Go and ts-legacy binaries
+ * route requests to the local replay server.
+ */
+function resolveProfile(
+  flagValue: string,
+  envValue: string | undefined,
+  fs: FileSystem.FileSystem,
+): Effect.Effect<ResolvedProfile> {
+  return Effect.gen(function* () {
+    const token = flagValue !== "supabase" ? flagValue : (envValue ?? "supabase");
+
+    if (isBuiltinProfileName(token)) {
+      return BUILTIN_PROFILES[token];
+    }
+
+    const content = yield* fs.readFileString(token).pipe(Effect.option);
+    if (Option.isNone(content)) return BUILTIN_PROFILES.supabase;
+
+    const parsed = safeParseYaml(content.value);
+    if (parsed === undefined || typeof parsed.api_url !== "string") {
+      return BUILTIN_PROFILES.supabase;
+    }
+    return {
+      name: typeof parsed.name === "string" ? parsed.name : "supabase",
+      apiUrl: parsed.api_url,
+    };
+  });
 }
 
 function resolveWorkdir(
@@ -63,8 +112,11 @@ export const legacyCliConfigLayer = Layer.unwrap(
         const runtimeInfo = yield* RuntimeInfo;
         const env = process.env;
 
-        const profile = resolveProfileName(profileFlag, env["SUPABASE_PROFILE"]);
-        const apiUrl = PROFILE_API_URLS[profile];
+        const { name: profile, apiUrl } = yield* resolveProfile(
+          profileFlag,
+          env["SUPABASE_PROFILE"],
+          fs,
+        );
 
         const rawAccessToken = env["SUPABASE_ACCESS_TOKEN"];
         const accessToken =
