@@ -133,7 +133,7 @@ func DiffPgDeltaRefDetailed(ctx context.Context, sourceRef, targetRef string, sc
 	}
 	var stdout, stderr bytes.Buffer
 	script := config.InterpolatePgDeltaScript(config.Config(&utils.Config), pgDeltaScript)
-	if err := utils.RunEdgeRuntimeScript(ctx, env, script, binds, "error diffing schema", &stdout, &stderr); err != nil {
+	if err := utils.RunEdgeRuntimeScript(ctx, env, script, binds, "error diffing schema", &stdout, &stderr, utils.PgDeltaNpmRegistryOption()); err != nil {
 		return PgDeltaDiffResult{}, err
 	}
 	return PgDeltaDiffResult{
@@ -181,7 +181,7 @@ func DeclarativeExportPgDeltaRef(ctx context.Context, sourceRef, targetRef strin
 	}
 	var stdout, stderr bytes.Buffer
 	script := config.InterpolatePgDeltaScript(config.Config(&utils.Config), pgDeltaDeclarativeExportScript)
-	if err := utils.RunEdgeRuntimeScript(ctx, env, script, binds, "error exporting declarative schema", &stdout, &stderr); err != nil {
+	if err := utils.RunEdgeRuntimeScript(ctx, env, script, binds, "error exporting declarative schema", &stdout, &stderr, utils.PgDeltaNpmRegistryOption()); err != nil {
 		return DeclarativeOutput{}, err
 	}
 	if stdout.Len() == 0 {
@@ -214,7 +214,7 @@ func ExportCatalogPgDelta(ctx context.Context, targetRef, role string, options .
 	}
 	var stdout, stderr bytes.Buffer
 	script := config.InterpolatePgDeltaScript(config.Config(&utils.Config), pgDeltaCatalogExportScript)
-	if err := utils.RunEdgeRuntimeScript(ctx, env, script, binds, "error exporting pg-delta catalog", &stdout, &stderr); err != nil {
+	if err := utils.RunEdgeRuntimeScript(ctx, env, script, binds, "error exporting pg-delta catalog", &stdout, &stderr, utils.PgDeltaNpmRegistryOption()); err != nil {
 		return "", err
 	}
 	snapshot := strings.TrimSpace(stdout.String())

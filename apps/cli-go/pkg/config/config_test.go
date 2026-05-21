@@ -288,7 +288,7 @@ enabled = true
 	t.Run("InterpolatePgDeltaScript substitutes placeholder", func(t *testing.T) {
 		c := NewConfig()
 		require.NoError(t, c.Load("", fs.MapFS{}))
-		// Embedded TS pins use this semver literal before InterpolatePgDeltaScript runs.
+	// Embedded TS pins use this semver literal before InterpolatePgDeltaScript runs.
 		got := InterpolatePgDeltaScript(Config(&c), `from "npm:@supabase/pg-delta@1.0.0-alpha.20";`)
 		assert.Equal(t, `from "npm:@supabase/pg-delta@`+DefaultPgDeltaNpmVersion+`";`, got)
 	})

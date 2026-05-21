@@ -254,7 +254,7 @@ func exportCatalog(ctx context.Context, targetRef string, options ...func(*pgx.C
 	binds := []string{utils.EdgeRuntimeId + ":/root/.cache/deno:rw"}
 	var stdout, stderr bytes.Buffer
 	script := config.InterpolatePgDeltaScript(config.Config(&utils.Config), pgDeltaCatalogExportTS)
-	if err := utils.RunEdgeRuntimeScript(ctx, env, script, binds, "error exporting pg-delta catalog", &stdout, &stderr); err != nil {
+	if err := utils.RunEdgeRuntimeScript(ctx, env, script, binds, "error exporting pg-delta catalog", &stdout, &stderr, utils.PgDeltaNpmRegistryOption()); err != nil {
 		return "", err
 	}
 	snapshot := strings.TrimSpace(stdout.String())
