@@ -88,6 +88,17 @@ Always check `src/shared/` before writing new infrastructure. Do not duplicate w
 | `shared/runtime/`                      | `Browser`, `Stdin`, `Tty`, `ProcessControl`, `RuntimeInfo` services + layers    |
 | `shared/telemetry/`                    | `withCommandInstrumentation`, `Analytics`, tracing                              |
 
+Also check the following `legacy/` infrastructure before writing equivalent helpers from scratch:
+
+| Path                                                    | What it provides                                                                                                                                                                            |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `legacy/config/legacy-cli-config.layer.ts`              | `LegacyCliConfig` — resolves `SUPABASE_PROFILE` (built-in name **or** YAML file path), `--workdir`, `--experimental`, project-id from `supabase/config.toml`                                |
+| `legacy/config/legacy-project-ref.layer.ts`             | `LegacyProjectRefResolver` — `--project-ref` flag → env → linked-project.json → config fallback chain; matches Go's resolver order                                                          |
+| `legacy/telemetry/legacy-telemetry-state.layer.ts`      | `LegacyTelemetryState.flush` — writes `~/.supabase/telemetry.json`, runs in every command's `Effect.ensuring`                                                                               |
+| `legacy/telemetry/legacy-linked-project-cache.layer.ts` | `LegacyLinkedProjectCache.cache(ref)` — writes `~/.supabase/<workdir-hash>/linked-project.json` after `--project-ref` resolves; bypasses generated schema validation (uses raw HTTP client) |
+| `legacy/auth/legacy-http-debug.layer.ts`                | `legacyHttpClientLayer` — wraps the HTTP transport with a `--debug` stderr logger in Go's `log.LstdFlags` format                                                                            |
+| `legacy/output/legacy-glamour-table.ts`                 | `renderGlamourTable(headers, rows)` — byte-exact ASCII match for Go's `glamour.RenderTable(..., AsciiStyle)`                                                                                |
+
 ---
 
 ## Phase 0: Go Binary Wrapper
@@ -138,6 +149,21 @@ src/legacy/commands/<command>/
   <command>.errors.ts    # Domain error types (Data.TaggedError) — add when porting
   SIDE_EFFECTS.md        # Required for every legacy command — see section below
 ```
+
+When a command grows beyond a single handler file, follow the optional helper-file shape that emerged from the backups port:
+
+```
+src/legacy/commands/<command>/
+  <command>.command.ts        # Effect CLI Command + flag wiring + layer provide
+  <command>.handler.ts        # native Effect handler
+  <command>.errors.ts         # Data.TaggedError types
+  <command>.layers.ts         # runtime layer composition for the command family
+  <command>.format.ts         # text formatters (timestamps, regions, booleans)
+  <command>.encoders.ts       # Go-compatible JSON / YAML / TOML / env encoders
+  SIDE_EFFECTS.md
+```
+
+The `.format.ts` and `.encoders.ts` files should be pure functions with no Effect or service dependencies — that keeps them unit-testable and makes Go-parity rules explicit (e.g. JSON key sort order, env-var SCREAMING_SNAKE_CASE flattening, empty arrays coerced to null).
 
 Commands with subcommands use nested directories:
 
@@ -192,6 +218,27 @@ Many Management API commands in `next/commands/` have already been implemented. 
 
 ---
 
+## Legacy Port: Hoist Before You Duplicate
+
+Before writing handler code for a new port, scan the already-ported commands for overlapping logic. If two commands need the same helper (HTTP-error mapping, output encoder, formatter, runtime layer composition), hoist it instead of inlining a copy.
+
+Decision rule:
+
+- **Used by one command only** → keep it in the command's own directory (e.g. `backups/backups.errors.ts`).
+- **Used by ≥2 commands in the same command family** → keep it in the family root (e.g. `backups/backups.encoders.ts` is shared by `list` and `restore`).
+- **Used by ≥2 commands across families** → hoist to `src/legacy/shared/` (create the directory if it doesn't exist) and refactor the existing call sites in the same change. Do not leave the older command using its inlined copy while the new command uses the hoisted version.
+
+Concrete examples worth watching for as more commands land:
+
+- HTTP-error → tagged-error mapping (`backups.errors.ts:mapLegacyBackupHttpError`) — almost every Management API command will need this shape.
+- Go-compatible JSON / YAML / TOML / env encoders (`backups.encoders.ts`) — the flag `--output {json,yaml,toml,env}` is supported by many Go subcommands.
+- Glamour-table rendering helpers and column padding — currently in `legacy/output/legacy-glamour-table.ts`, already correctly hoisted.
+- Timestamp / region / boolean formatters (`backups.format.ts`) — likely shared the moment a second command renders a backup/project/region field.
+
+This rule is consistent with the repo-wide **Refactoring Policy** ("delete obsolete helpers, shims, and parallel code paths as part of the refactor") — it just makes the policy concrete for the legacy-port workflow.
+
+---
+
 ## Legacy Port: Go CLI Output Parity
 
 The legacy shell is a **strict 1:1 port** — not a redesign. The compatibility contract covers:
@@ -203,6 +250,24 @@ The legacy shell is a **strict 1:1 port** — not a redesign. The compatibility 
 - Same exit codes
 
 When in doubt about expected output or behavior, run the equivalent command against the Go CLI reference at `apps/cli-go/` and match it exactly.
+
+---
+
+## Legacy Port: Go Parity Checklist
+
+When porting a Management-API-style command, verify each item before marking the command as `ported`:
+
+1. **Telemetry + linked-project writes run on every invocation** — Go uses `PersistentPostRun` (see `apps/cli-go/cmd/root.go:176`). Wrap the handler body in `.pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush))` so both files are written on success **and** failure. See `backups/list/list.handler.ts:74-114` as the canonical pattern.
+
+2. **Errors go to stderr in text mode, byte-matching Go's template** — `Output.fail` now writes a frame-free message to stderr followed by the "Try rerunning the command with --debug to get more details." suggestion when `--debug` is unset. Don't reintroduce clack's `■ … │` frame. Reference: commits `ee041834`, `cf4f574b`.
+
+3. **`--debug` logs every HTTP request on stderr** — Format `"HTTP YYYY/MM/DD HH:MM:SS <METHOD>: <URL>\n"` (Go's `log.LstdFlags|log.Lmsgprefix`). Provided automatically by `legacyHttpClientLayer`; ensure that layer (not the raw `HttpClient.layer`) is what every legacy command's runtime composes. Reference: commit `39cfec20`.
+
+4. **`SUPABASE_PROFILE` is dual-mode** — accept either a built-in name (`supabase`, `supabase-staging`, `supabase-local`) **or** a filesystem path to a YAML file with `api_url:` / `gotrue_url:` / `db_url:` keys. cli-e2e harness relies on the file-path mode. Reference: commit `288c2937`.
+
+5. **`Layer.provide` does not share to siblings inside `Layer.mergeAll`** — if two sibling layers each require `LegacyCliConfig`, provide it to both explicitly. Smoke-test the bundled binary (`bun run build && ./dist/supabase-legacy …`) when changing production layer wiring; in-process tests don't always catch the missing-service panic. Reference: commit `a816b12e`, `backups.layers.ts:32-46`.
+
+6. **Both `--output` (Go) and `--output-format` (TS) must be honored** — Go's `--output` (`pretty|json|yaml|toml|env`) takes priority when set. Pattern in `backups/list/list.handler.ts:85-113`: branch on `goOutputFlag` first, then fall through to TS `--output-format` text/json/stream-json.
 
 ---
 
@@ -311,6 +376,7 @@ Read https://www.effect.solutions/testing for Effect testing patterns. Note that
 - If a test needs multiple service replacements or `Layer.mergeAll(...)`, it likely belongs in `*.integration.test.ts`.
 - Prefer assertions on outputs and accumulated state over spy-heavy interaction tests.
 - Keep `*.e2e.test.ts` focused on golden paths, CLI surface behavior, and subprocess correctness, not branch-by-branch coverage.
+- **Forbidden pattern (do not add):** spawning the CLI to assert that `--help` renders a flag. Help text is dynamic over flag wiring and is exercised by the integration test's flag parser. The two backups e2e files removed alongside this guidance update are the canonical example of what not to write.
 
 ---
 

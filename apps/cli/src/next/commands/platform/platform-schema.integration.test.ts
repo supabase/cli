@@ -38,8 +38,7 @@ describe("api schema payload", () => {
       route: "/v1/projects",
       method: "GET",
       summary: "List all projects",
-      description:
-        "Returns a list of all projects you've previously created.\n\nUse `/v1/organizations/{slug}/projects` instead when possible to get more precise results and pagination support.",
+      description: "Returns a list of all projects you've previously created.",
     });
   });
 
