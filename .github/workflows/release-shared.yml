@@ -92,7 +92,7 @@ jobs:
           ls -la dist/
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
           path: |
@@ -124,7 +124,7 @@ jobs:
         uses: ./.github/actions/setup
 
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
 
@@ -144,7 +144,7 @@ jobs:
 
       - name: Setup QEMU for cross-platform Docker
         if: runner.os == 'Linux'
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
 
       # Cache the smoke-test base images across runs. Without this, eight
       # parallel `docker run` calls in smoke-test-linux.ts race on first-time
@@ -154,7 +154,7 @@ jobs:
       - name: Cache smoke-test docker images
         if: runner.os == 'Linux'
         id: smoke-docker-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/smoke-docker-images.tar
           key: smoke-docker-images-debian-bookworm-slim-amazonlinux-2023-alpine-3.21-v1
@@ -229,7 +229,7 @@ jobs:
         uses: ./.github/actions/setup
 
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
 
@@ -298,7 +298,7 @@ jobs:
           done
 
       - name: Create draft GitHub Release
-        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v2
         with:
           tag_name: v${{ inputs.version }}
           name: v${{ inputs.version }}
@@ -358,13 +358,13 @@ jobs:
         uses: ./.github/actions/setup
 
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
 
       - name: Generate Homebrew tap token
         id: app-token
-        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
@@ -400,13 +400,13 @@ jobs:
         uses: ./.github/actions/setup
 
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
 
       - name: Generate Scoop bucket token
         id: app-token
-        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
