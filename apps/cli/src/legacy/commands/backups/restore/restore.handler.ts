@@ -9,11 +9,11 @@ import { Output } from "../../../../shared/output/output.service.ts";
 import {
   LegacyBackupRestoreNetworkError,
   LegacyBackupRestoreUnexpectedStatusError,
-  mapLegacyBackupHttpError,
 } from "../backups.errors.ts";
+import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import type { LegacyBackupsRestoreFlags } from "./restore.command.ts";
 
-const mapRestoreError = mapLegacyBackupHttpError({
+const mapRestoreError = mapLegacyHttpError({
   networkError: LegacyBackupRestoreNetworkError,
   statusError: LegacyBackupRestoreUnexpectedStatusError,
   networkMessage: (cause) => `failed to restore backup: ${cause}`,

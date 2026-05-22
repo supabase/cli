@@ -1,16 +1,39 @@
-import type { V1ListAllBackupsOutput } from "@supabase/api/effect";
 import { stringify as stringifyToml } from "smol-toml";
 import { stringify as stringifyYaml } from "yaml";
 
 /**
- * Reproduces Go's `encoding/json` output for `V1BackupsResponse`:
- *   - Top-level and nested struct fields serialize in alphabetical declaration order.
- *   - Go emits `null` for a nil `Backups` slice. The TS schema decodes both `null`
- *     and `[]` upstream into `[]`, so we re-substitute `null` for empty arrays
- *     to match the common PITR-only response shape.
+ * Reproduces Go's `encoding/json` output:
+ *   - Top-level and nested struct fields serialize in alphabetical key order.
+ *   - Trailing newline (matches `encoding/json` MarshalIndent + fmt.Println).
+ *
+ * The optional `nullForEmptyArrays` option mirrors Go's `null` serialization for nil
+ * slices: when the schema decodes both `null` and `[]` to `[]` upstream, the caller can
+ * list array keys that should re-substitute `null` for empty arrays so the JSON bytes
+ * match Go's output. Used by `backups list` to preserve its PITR-only `"backups": null`
+ * shape. Most commands don't need this option.
  */
-export function encodeGoJson(response: typeof V1ListAllBackupsOutput.Type): string {
-  const source = response.backups.length > 0 ? response : { ...response, backups: null };
+export function encodeGoJson<T>(
+  value: T,
+  options?: { readonly nullForEmptyArrays?: ReadonlyArray<string> },
+): string {
+  let source: unknown = value;
+  const nullKeys = options?.nullForEmptyArrays;
+  if (
+    nullKeys !== undefined &&
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  ) {
+    const record = value as Record<string, unknown>;
+    const patched: Record<string, unknown> = { ...record };
+    for (const key of nullKeys) {
+      const v = record[key];
+      if (Array.isArray(v) && v.length === 0) {
+        patched[key] = null;
+      }
+    }
+    source = patched;
+  }
   return JSON.stringify(sortKeysDeep(source), null, 2) + "\n";
 }
 
@@ -113,6 +136,15 @@ function formatEnvValue(value: string): string {
       return String(parsed);
     }
   }
-  const escaped = value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+  // Match Go's `fmt.Sprintf("%q", ...)` escaping: backslash, double-quote, and the
+  // common C-style control characters \n / \r / \t. Without the control-character
+  // escapes a multi-line string value could become multiple KEY=VALUE assignments
+  // when a downstream shell `eval`s or `source`s the output.
+  const escaped = value
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"')
+    .replaceAll("\n", "\\n")
+    .replaceAll("\r", "\\r")
+    .replaceAll("\t", "\\t");
   return `"${escaped}"`;
 }
