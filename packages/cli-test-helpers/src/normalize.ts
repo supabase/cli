@@ -71,6 +71,13 @@ export function normalize(output: string): string {
       )
       // 12. Go goroutine stack trace blocks (goroutine N [state]:\n...)
       .replace(/^goroutine \d+ \[.*?\]:(?:\n[^\n]+)*/gm, "<STACK_TRACE>")
+      // 12b. github.com/go-errors/errors stack frames. The Go CLI prints these in
+      //      dev builds (`utils.Version == ""`) before the actual error message:
+      //          <PATH> (0xADDR)
+      //          \t<funcName>: <source-snippet>
+      //      The TS port intentionally doesn't reconstruct these — strip the
+      //      frame block plus the trailing blank line so parity comparisons ignore them.
+      .replace(/(?:^<PATH> \(0xADDR\)\n\t[^\n]+\n)+\n?/gm, "")
       // 13. Node/Bun stack trace lines (one or more consecutive "    at …" lines)
       .replace(/(?:^[ \t]+at [^\n]+\n?)+/gm, "<STACK_TRACE>\n")
       // 14. File reference line numbers (file.ts:123 or file.ts:123:45)
