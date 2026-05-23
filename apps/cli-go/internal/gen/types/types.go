@@ -33,7 +33,7 @@ const (
 	SwiftInternalAccessControl = "internal"
 )
 
-func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang string, schemas []string, postgrestV9Compat bool, swiftAccessControl string, queryTimeout time.Duration, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang string, schemas []string, postgrestV9Compat bool, swiftAccessControl string, queryTimeout time.Duration, fsys afero.Fs, useDirectDBURL bool, options ...func(*pgx.ConnConfig)) error {
 	originalURL := utils.ToPostgresURL(dbConfig)
 	// Add default schemas if --schema flag is not specified
 	if len(schemas) == 0 {
@@ -61,7 +61,7 @@ func Run(ctx context.Context, projectId string, dbConfig pgconn.Config, lang str
 	}
 
 	hostConfig := container.HostConfig{}
-	if utils.IsLocalDatabase(dbConfig) {
+	if !useDirectDBURL && utils.IsLocalDatabase(dbConfig) {
 		if err := utils.AssertSupabaseDbIsRunning(); err != nil {
 			return err
 		}
