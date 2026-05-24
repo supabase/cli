@@ -3,7 +3,7 @@ import { Command, Flag } from "effect/unstable/cli";
 
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandInstrumentation } from "../../../../shared/telemetry/command-instrumentation.ts";
-import { legacyBackupsRuntimeLayer } from "../backups.layers.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
 import { legacyBackupsRestore } from "./restore.handler.ts";
 
 const config = {
@@ -32,5 +32,5 @@ export const legacyBackupsRestoreCommand = Command.make("restore", config).pipe(
   Command.withHandler((flags) =>
     legacyBackupsRestore(flags).pipe(withCommandInstrumentation(), withJsonErrorHandling),
   ),
-  Command.provide(legacyBackupsRuntimeLayer(["backups", "restore"])),
+  Command.provide(legacyManagementApiRuntimeLayer(["backups", "restore"])),
 );

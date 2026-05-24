@@ -2,56 +2,93 @@
 
 ## Files Read
 
-| Path                       | Format                    | When                                                       |
-| -------------------------- | ------------------------- | ---------------------------------------------------------- |
-| `~/.supabase/access-token` | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable |
+| Path                                   | Format                    | When                                                          |
+| -------------------------------------- | ------------------------- | ------------------------------------------------------------- |
+| `~/.supabase/access-token`             | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable    |
+| `<workdir>/supabase/.temp/project-ref` | plain text (project ref)  | when `--project-ref` flag and `PROJECT_ID` env are both unset |
 
 ## Files Written
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| —    | —      | —    |
+| Path                                             | Format | When                                                                          |
+| ------------------------------------------------ | ------ | ----------------------------------------------------------------------------- |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (after ref resolution), via `Effect.ensuring` — on success and failure |
+| `~/.supabase/telemetry.json`                     | JSON   | always, via `Effect.ensuring` — on success and failure                        |
 
 ## API Routes
 
-| Method | Path                                        | Auth         | Request body | Response (used fields)         |
-| ------ | ------------------------------------------- | ------------ | ------------ | ------------------------------ |
-| `GET`  | `/v1/projects/{ref}/config/ssl-enforcement` | Bearer token | none         | `{enforced, override_enabled}` |
+| Method | Path                                 | Auth         | Request body | Response (used fields)                                               |
+| ------ | ------------------------------------ | ------------ | ------------ | -------------------------------------------------------------------- |
+| `GET`  | `/v1/projects/{ref}/ssl-enforcement` | Bearer token | none         | `{currentConfig: {database: boolean}, appliedSuccessfully: boolean}` |
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                               |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)             |
+| Variable                | Purpose                                              | Required?                                                |
+| ----------------------- | ---------------------------------------------------- | -------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`)  |
+| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)              |
+| `PROJECT_ID`            | project ref fallback when `--project-ref` is unset   | no (falls back to `supabase/.temp/project-ref` → prompt) |
 
 ## Exit Codes
 
-| Code | Condition                                                  |
-| ---- | ---------------------------------------------------------- |
-| `0`  | success — SSL enforcement config printed to stdout         |
-| `1`  | authentication error — no valid token found                |
-| `1`  | API error — non-2xx response from SSL enforcement endpoint |
-| `1`  | network / connection failure                               |
+| Code | Condition                                                                               |
+| ---- | --------------------------------------------------------------------------------------- |
+| `0`  | success — SSL enforcement status printed to stdout                                      |
+| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`) |
+| `1`  | API non-200 (`LegacySslEnforcementGetUnexpectedStatusError`)                            |
+| `1`  | transport failure (`LegacySslEnforcementGetNetworkError`)                               |
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text` (default) — Go CLI compatible
 
-Prints SSL enforcement configuration to stdout.
+Single status line to stdout:
+
+```
+SSL is being enforced.
+```
+
+or
+
+```
+SSL is *NOT* being enforced.
+```
+
+The "_NOT_" form is emitted when `currentConfig.database` is `false` **or** when
+`appliedSuccessfully` is `false` (i.e. the requested config has not yet propagated).
+
+### Go `--output {json,yaml,toml,env}`
+
+Byte-identical to the Go CLI's encoders (`apps/cli-go/internal/utils/output.go`).
+
+- `json` — alphabetical struct-field order with trailing newline.
+- `yaml` — `stringifyYaml(response)`.
+- `toml` — `stringifyToml(response)` with trailing newline.
+- `env` — Viper-flattened SCREAMING_SNAKE_CASE keys (e.g.
+  `APPLIEDSUCCESSFULLY="true"\nCURRENTCONFIG_DATABASE="true"\n`).
+
+### Go `--output pretty`
+
+Same as `text` mode (Go's default).
 
 ### `--output-format json`
 
-Single JSON object emitted to stdout on success.
+The full response object emitted as the `success` event payload:
+
+```json
+{ "currentConfig": { "database": true }, "appliedSuccessfully": true }
+```
 
 ### `--output-format stream-json`
 
-One `result` event on success.
+One `result` event:
 
 ```ndjson
-{"type":"result","data":{...}}
+{"type":"result","data":{"currentConfig":{"database":true},"appliedSuccessfully":true}}
 ```
 
 ## Notes
 
-- Requires `--project-ref` or a linked project (`.supabase/config.json`).
+- The Go `--output` flag wins over the TS `--output-format` flag when both are provided.
+- `linked-project.json` is written **after** the project ref is resolved, regardless of
+  whether the subsequent API call succeeds (mirrors Go's `PersistentPostRun`).
+- `telemetry.json` is written on every invocation, including failures.

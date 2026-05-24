@@ -11,15 +11,20 @@ import { renderGlamourTable } from "../../../output/legacy-glamour-table.ts";
 import {
   LegacyBackupListNetworkError,
   LegacyBackupListUnexpectedStatusError,
-  mapLegacyBackupHttpError,
 } from "../backups.errors.ts";
-import { encodeEnv, encodeGoJson, encodeToml, encodeYaml } from "../backups.encoders.ts";
+import {
+  encodeEnv,
+  encodeGoJson,
+  encodeToml,
+  encodeYaml,
+} from "../../../shared/legacy-go-output.encoders.ts";
+import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { formatBackupTimestamp, formatRegion } from "../backups.format.ts";
 import type { LegacyBackupsListFlags } from "./list.command.ts";
 
 type BackupsResponse = typeof V1ListAllBackupsOutput.Type;
 
-const mapListError = mapLegacyBackupHttpError({
+const mapListError = mapLegacyHttpError({
   networkError: LegacyBackupListNetworkError,
   statusError: LegacyBackupListUnexpectedStatusError,
   networkMessage: (cause) => `failed to list physical backups: ${cause}`,
@@ -85,7 +90,7 @@ export const legacyBackupsList = Effect.fn("legacy.backups.list")(function* (
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
     if (goFmt === "json") {
-      yield* output.raw(encodeGoJson(response));
+      yield* output.raw(encodeGoJson(response, { nullForEmptyArrays: ["backups"] }));
       return;
     }
     if (goFmt === "yaml") {

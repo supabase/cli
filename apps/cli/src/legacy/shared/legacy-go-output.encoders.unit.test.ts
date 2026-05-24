@@ -1,8 +1,13 @@
 import { V1ListAllBackupsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "vitest";
 
-import { encodeEnv, encodeGoJson, encodeToml, encodeYaml } from "./backups.encoders.ts";
+import { encodeEnv, encodeGoJson, encodeToml, encodeYaml } from "./legacy-go-output.encoders.ts";
 
+// These encoders are type-generic. We keep one fixture shaped like the backups
+// response because the `nullForEmptyArrays` option (and the Go-parity byte
+// assertions that exercise it) were extracted from the backups port. The
+// encoder itself has no backups coupling — see the `{ items, name }` fixtures
+// below for plain-object coverage of the option path.
 const SAMPLE_RESPONSE: typeof V1ListAllBackupsOutput.Type = {
   region: "ap-southeast-1",
   walg_enabled: true,
@@ -23,7 +28,7 @@ const SAMPLE_RESPONSE: typeof V1ListAllBackupsOutput.Type = {
 
 describe("encodeGoJson", () => {
   it("emits Go's alphabetical struct-field order and trailing newline for a populated response", () => {
-    const out = encodeGoJson(SAMPLE_RESPONSE);
+    const out = encodeGoJson(SAMPLE_RESPONSE, { nullForEmptyArrays: ["backups"] });
     expect(out).toBe(
       `{
   "backups": [
@@ -49,13 +54,16 @@ describe("encodeGoJson", () => {
   it("emits backups: null and an empty physical_backup_data object for a PITR-only response", () => {
     // Matches Go's `apps/cli-go/internal/backups/list/list_test.go` "encodes json output" fixture
     // — empty backups slice serializes as null, omitempty physical_backup_data fields drop out.
-    const out = encodeGoJson({
-      region: "ap-southeast-1",
-      walg_enabled: false,
-      pitr_enabled: false,
-      backups: [],
-      physical_backup_data: {},
-    });
+    const out = encodeGoJson(
+      {
+        region: "ap-southeast-1",
+        walg_enabled: false,
+        pitr_enabled: false,
+        backups: [],
+        physical_backup_data: {},
+      },
+      { nullForEmptyArrays: ["backups"] },
+    );
     expect(out).toBe(
       `{
   "backups": null,
@@ -63,6 +71,32 @@ describe("encodeGoJson", () => {
   "pitr_enabled": false,
   "region": "ap-southeast-1",
   "walg_enabled": false
+}
+`,
+    );
+  });
+
+  it("leaves arrays intact when nullForEmptyArrays is not provided", () => {
+    // Default behaviour for commands (e.g. ssl-enforcement) that have no nil-slice rewrite.
+    const out = encodeGoJson({ items: [], name: "x" });
+    expect(out).toBe(
+      `{
+  "items": [],
+  "name": "x"
+}
+`,
+    );
+  });
+
+  it("does not substitute null for non-empty arrays even when listed in nullForEmptyArrays", () => {
+    const out = encodeGoJson({ items: [1, 2], name: "x" }, { nullForEmptyArrays: ["items"] });
+    expect(out).toBe(
+      `{
+  "items": [
+    1,
+    2
+  ],
+  "name": "x"
 }
 `,
     );
@@ -133,6 +167,14 @@ describe("encodeEnv", () => {
   it("escapes embedded backslashes and double quotes", () => {
     const out = encodeEnv({ message: 'with "quotes" and \\backslash' });
     expect(out).toBe('MESSAGE="with \\"quotes\\" and \\\\backslash"');
+  });
+
+  it("escapes embedded newlines, carriage returns, and tabs (Go %q parity)", () => {
+    // Without this, a multi-line string value would render as multiple lines in
+    // env output and be interpreted as separate KEY=VALUE assignments by a shell
+    // that `eval`s or `source`s the output.
+    const out = encodeEnv({ description: "line one\nline two\rwith\ttab" });
+    expect(out).toBe('DESCRIPTION="line one\\nline two\\rwith\\ttab"');
   });
 
   it("sorts keys deterministically and emits numeric leafs without quotes", () => {
