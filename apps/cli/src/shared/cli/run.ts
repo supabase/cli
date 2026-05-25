@@ -2,7 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { ProjectConfigStore } from "@supabase/config";
 import { unixHttpClientLayer } from "@supabase/stack";
 import { Cause, Effect, Exit, Fiber, Layer, Stdio } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { CliOutput, Command, GlobalFlag } from "effect/unstable/cli";
 import { CLI_VERSION } from "./version.ts";
 import { Credentials } from "../../next/auth/credentials.service.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
@@ -90,7 +90,32 @@ function cliProgramFor(rootCommand: Command.Command.Any, args: ReadonlyArray<str
       }),
     ),
   );
-  return Command.runWith(rootCommand, { version: CLI_VERSION })(args).pipe(
+  const runCommand = () => Command.runWith(rootCommand, { version: CLI_VERSION })(args);
+  const isVersionOnly = args.length === 1 && args[0] === "--version";
+  const hasVersionFlag = args.some((arg) => arg === "--version" || arg.startsWith("--version="));
+  const command =
+    isVersionOnly || !hasVersionFlag
+      ? runCommand()
+      : (() => {
+          const builtIns = GlobalFlag.BuiltIns as Array<(typeof GlobalFlag.BuiltIns)[number]>;
+          const versionIndex = builtIns.indexOf(GlobalFlag.Version);
+          if (versionIndex === -1) return runCommand();
+
+          return Effect.acquireUseRelease(
+            Effect.sync(() => {
+              builtIns.splice(versionIndex, 1);
+            }),
+            runCommand,
+            () =>
+              Effect.sync(() => {
+                if (!builtIns.includes(GlobalFlag.Version)) {
+                  builtIns.splice(versionIndex, 0, GlobalFlag.Version);
+                }
+              }),
+          );
+        })();
+
+  return command.pipe(
     Effect.provide(formatterLayerFor(args)),
     Effect.provide(analyticsLayer),
     Effect.provide(tracingLayer),
