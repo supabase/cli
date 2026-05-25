@@ -290,8 +290,12 @@ func PopulatePerFunctionConfigs(cwd, importMapPath string, noVerifyJWT *bool, fs
 			return nil, "", err
 		}
 		binds = append(binds, modules...)
+		verifyJWT := true
+		if fc.VerifyJWT != nil {
+			verifyJWT = *fc.VerifyJWT
+		}
 		enabled := dockerFunction{
-			VerifyJWT:      fc.VerifyJWT,
+			VerifyJWT:      verifyJWT,
 			EntrypointPath: utils.ToDockerPath(fc.Entrypoint),
 			ImportMapPath:  utils.ToDockerPath(fc.ImportMap),
 			StaticFiles:    make([]string, len(fc.StaticFiles)),

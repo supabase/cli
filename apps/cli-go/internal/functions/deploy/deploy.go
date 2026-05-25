@@ -111,7 +111,7 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 		function, ok := utils.Config.Functions[name]
 		if !ok {
 			function.Enabled = true
-			function.VerifyJWT = true
+			// Don't set VerifyJWT when not in config, so the API preserves the existing server-side setting
 		}
 		// Precedence order: flag > config > fallback
 		functionDir := filepath.Join(utils.FunctionsDir, name)
@@ -137,7 +137,8 @@ func GetFunctionConfig(slugs []string, importMapPath string, noVerifyJWT *bool, 
 			}
 		}
 		if noVerifyJWT != nil {
-			function.VerifyJWT = !*noVerifyJWT
+			val := !*noVerifyJWT
+			function.VerifyJWT = &val
 		}
 		functionConfig[name] = function
 	}
