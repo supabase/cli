@@ -96,7 +96,7 @@ func TestUpsertFunctions(t *testing.T) {
 			}})
 		// Run test
 		err := client.UpsertFunctions(context.Background(), config.FunctionConfig{
-			"test-a": {Enabled: true, VerifyJWT: true},
+			"test-a": {Enabled: true, VerifyJWT: cast.Ptr(true)},
 			"test-b": {Enabled: false},
 		})
 		// Check error
