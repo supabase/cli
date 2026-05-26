@@ -259,6 +259,43 @@ func TestSetupDatabase(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
+	t.Run("revokes default data api privileges when auto_expose_new_tables is false", func(t *testing.T) {
+		utils.Config.Db.MajorVersion = 14
+		flag := false
+		utils.Config.Api.AutoExposeNewTables = &flag
+		defer func() {
+			utils.Config.Db.MajorVersion = 15
+			utils.Config.Api.AutoExposeNewTables = nil
+		}()
+		utils.Config.Db.Port = 5432
+		utils.GlobalsSql = "create schema public"
+		utils.InitialSchemaPg14Sql = "create schema private"
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		roles := "create role postgres"
+		require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte(roles), 0644))
+		// Setup mock postgres: the revoke SQL must execute between the initial schema and roles.sql
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(utils.GlobalsSql).
+			Reply("CREATE SCHEMA").
+			Query(utils.InitialSchemaPg14Sql).
+			Reply("CREATE SCHEMA").
+			Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query(roles).
+			Reply("CREATE ROLE")
+		// Run test
+		err := SetupLocalDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
 	t.Run("throws error on connect failure", func(t *testing.T) {
 		utils.Config.Db.Port = 0
 		// Run test

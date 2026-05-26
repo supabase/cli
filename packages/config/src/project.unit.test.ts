@@ -107,6 +107,37 @@ describe("project discovery and lazy env resolution", () => {
     }
   });
 
+  test("leaves [api].auto_expose_new_tables unset by default and round-trips an explicit value", async () => {
+    const cwd = makeTempProject();
+    const projectRoot = join(cwd, "repo");
+
+    try {
+      await mkdir(join(projectRoot, "supabase"), { recursive: true });
+      await writeFile(join(projectRoot, "supabase", "config.toml"), `project_id = "ref_123"\n`);
+
+      const defaultLoaded = await runConfigEffect(loadProjectConfig(projectRoot));
+      // Field is intentionally optional today so the implicit default can flip on 2026-05-30
+      // without losing track of users who explicitly opted in either direction.
+      expect(defaultLoaded!.config.api.auto_expose_new_tables).toBeUndefined();
+
+      await writeFile(
+        join(projectRoot, "supabase", "config.toml"),
+        `project_id = "ref_123"\n\n[api]\nauto_expose_new_tables = false\n`,
+      );
+      const explicitFalse = await runConfigEffect(loadProjectConfig(projectRoot));
+      expect(explicitFalse!.config.api.auto_expose_new_tables).toBe(false);
+
+      await writeFile(
+        join(projectRoot, "supabase", "config.toml"),
+        `project_id = "ref_123"\n\n[api]\nauto_expose_new_tables = true\n`,
+      );
+      const explicitTrue = await runConfigEffect(loadProjectConfig(projectRoot));
+      expect(explicitTrue!.config.api.auto_expose_new_tables).toBe(true);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("loads raw config without resolving explicit env() references", async () => {
     const cwd = makeTempProject();
     const projectRoot = join(cwd, "repo");
