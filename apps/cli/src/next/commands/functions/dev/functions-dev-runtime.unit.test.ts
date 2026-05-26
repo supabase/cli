@@ -8,45 +8,40 @@ import {
 import { watchPaths } from "./functions-dev-runtime.ts";
 
 function makeFakeFileWatcher() {
-  return Effect.gen(function* () {
-    const watchedPaths = yield* Queue.unbounded<string>();
-    const queues = new Map<string, Queue.Queue<ReadonlyArray<FileWatchEvent>>>();
+  const queues = new Map<string, Queue.Enqueue<ReadonlyArray<FileWatchEvent>>>();
 
-    const layer = Layer.succeed(
-      FileWatcher,
-      FileWatcher.of({
-        watch: (path) =>
-          Stream.unwrap(
-            Effect.gen(function* () {
-              const queue = yield* Queue.unbounded<ReadonlyArray<FileWatchEvent>>();
-              queues.set(path, queue);
-              yield* Queue.offer(watchedPaths, path);
-              return Stream.fromQueue(queue);
-            }),
-          ),
-      }),
-    );
-
-    const awaitWatch = (expectedPath: string) =>
-      Queue.take(watchedPaths).pipe(
-        Effect.tap((path) =>
+  const layer = Layer.succeed(
+    FileWatcher,
+    FileWatcher.of({
+      watch: (path) =>
+        Stream.callback<ReadonlyArray<FileWatchEvent>>((queue) =>
           Effect.sync(() => {
-            expect(path).toBe(expectedPath);
+            queues.set(path, queue);
           }),
         ),
-      );
+    }),
+  );
 
-    const emit = (path: string, events: ReadonlyArray<FileWatchEvent>) =>
-      Effect.gen(function* () {
-        const queue = queues.get(path);
-        if (queue === undefined) {
-          return yield* Effect.die(new Error(`No watcher registered for ${path}`));
-        }
-        yield* Queue.offer(queue, events);
-      });
-
-    return { awaitWatch, emit, layer };
+  const awaitWatch = Effect.fnUntraced(function* (expectedPath: string) {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if (queues.has(expectedPath)) {
+        return;
+      }
+      yield* Effect.sleep("1 millis");
+    }
+    throw new Error(`No watcher registered for ${expectedPath}`);
   });
+
+  const emit = (path: string, events: ReadonlyArray<FileWatchEvent>) =>
+    Effect.sync(() => {
+      const queue = queues.get(path);
+      if (queue === undefined) {
+        throw new Error(`No watcher registered for ${path}`);
+      }
+      Queue.offerUnsafe(queue, events);
+    });
+
+  return { awaitWatch, emit, layer };
 }
 
 describe("functions dev runtime", () => {
@@ -54,7 +49,7 @@ describe("functions dev runtime", () => {
     const cwd = "/tmp/supabase-functions-dev-watch";
 
     return Effect.gen(function* () {
-      const watcher = yield* makeFakeFileWatcher();
+      const watcher = makeFakeFileWatcher();
       let emitted = false;
 
       const fiber = yield* watchPaths([{ path: cwd, names: ["supabase"] }]).pipe(
@@ -82,7 +77,7 @@ describe("functions dev runtime", () => {
     const supabaseDir = join(cwd, "supabase");
 
     return Effect.gen(function* () {
-      const watcher = yield* makeFakeFileWatcher();
+      const watcher = makeFakeFileWatcher();
 
       const fiber = yield* watchPaths([
         { path: supabaseDir, names: ["functions", "config.toml", "config.json"] },
