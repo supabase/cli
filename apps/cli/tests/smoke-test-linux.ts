@@ -2,7 +2,7 @@ import { $ } from "bun";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
-import { runNpmTest } from "./helpers/npm-registry.ts";
+import { describeError, runNpmTest } from "./helpers/npm-registry.ts";
 import { verifyExpectedShell } from "./helpers/release-shell.ts";
 
 const { values } = parseArgs({
@@ -21,13 +21,7 @@ if (tag !== "latest" && tag !== "alpha" && tag !== "beta") {
 const root = path.resolve(import.meta.dir, "../../..");
 const distDir = path.join(root, "dist");
 
-function shellSentinelCommand(tag: "latest" | "alpha" | "beta") {
-  if (tag === "latest" || tag === "beta") {
-    return 'output=$(supabase hello) && echo "$output" && test "$output" = "hello legacy"';
-  }
-
-  return 'supabase status --help >/tmp/supabase-shell.txt && cat /tmp/supabase-shell.txt && grep -q "status" /tmp/supabase-shell.txt';
-}
+const dispatchProbe = "supabase init --help 2>&1 | grep -q init";
 
 interface TestResult {
   name: string;
@@ -51,13 +45,13 @@ console.log("=".repeat(60));
   try {
     const output = await $`${binPath} --version`.text();
     const trimmed = output.trim();
-    const shellCheck = await verifyExpectedShell(binPath, tag);
+    const shellCheck = await verifyExpectedShell(binPath);
     const passed = /^\d+\.\d+\.\d+/.test(trimmed) && shellCheck.passed;
     console.log(`[${name}] ${passed ? "PASS" : "FAIL"} — ${trimmed}`);
     console.log(`[${name}] ${shellCheck.detail}`);
     results.push({ name, status: passed ? "pass" : "fail" });
   } catch (e) {
-    console.log(`[${name}] FAIL — ${e}`);
+    console.log(`[${name}] FAIL —\n${describeError(e)}`);
     results.push({ name, status: "fail" });
   }
 }
@@ -89,19 +83,32 @@ if (!hasDocker) {
     commands: string,
   ): Promise<DockerResult> {
     console.log(`[${name}] Running...`);
-    try {
-      const output =
-        await $`docker run --rm --platform ${platform} -v ${distDir}:/dist:ro ${image} sh -c ${commands}`.text();
-      const trimmed = output.trim();
-      const lastLine = trimmed.split("\n").pop()!;
-      const passed = /^\d+\.\d+\.\d+/.test(lastLine);
-      console.log(`[${name}] ${passed ? "PASS" : "FAIL"} — ${lastLine}`);
-      return { name, passed, output: trimmed };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.log(`[${name}] FAIL — ${msg}`);
-      return { name, passed: false, output: msg };
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const result =
+        await $`docker run --rm --platform ${platform} -v ${distDir}:/dist:ro ${image} sh -c ${commands}`
+          .nothrow()
+          .quiet();
+      const stdout = result.stdout.toString().trim();
+      const stderr = result.stderr.toString().trim();
+      if (result.exitCode === 0) {
+        const lastLine = stdout.split("\n").pop() ?? "";
+        const passed = /^\d+\.\d+\.\d+/.test(lastLine);
+        console.log(`[${name}] ${passed ? "PASS" : "FAIL"} — ${lastLine}`);
+        if (!passed && stderr) console.log(`[${name}] stderr: ${stderr}`);
+        return { name, passed, output: stdout };
+      }
+      // Exit 125 is a docker daemon / container-start error, not a container
+      // exit code. Retry once before giving up.
+      if (result.exitCode === 125 && attempt === 1) {
+        console.log(`[${name}] docker exit 125, retrying once. stderr: ${stderr}`);
+        continue;
+      }
+      console.log(`[${name}] FAIL — exit ${result.exitCode}`);
+      if (stderr) console.log(`[${name}] stderr: ${stderr}`);
+      if (stdout) console.log(`[${name}] stdout: ${stdout}`);
+      return { name, passed: false, output: `${stdout}\n${stderr}`.trim() };
     }
+    return { name, passed: false, output: "unreachable" };
   }
 
   const jobs: Promise<DockerResult>[] = [];
@@ -114,7 +121,7 @@ if (!hasDocker) {
         `linux-${arch}-tarball`,
         "debian:bookworm-slim",
         dockerPlatform,
-        `tar -xzf /dist/supabase_${version}_linux_${arch}.tar.gz -C /usr/local/bin && supabase --version && ${shellSentinelCommand(tag)}`,
+        `tar -xzf /dist/supabase_${version}_linux_${arch}.tar.gz -C /usr/local/bin && supabase --version && ${dispatchProbe}`,
       ),
     );
 
@@ -123,7 +130,7 @@ if (!hasDocker) {
         `linux-${arch}-deb`,
         "debian:bookworm-slim",
         dockerPlatform,
-        `dpkg -i /dist/supabase_${version}_linux_${arch}.deb && supabase --version && ${shellSentinelCommand(tag)}`,
+        `dpkg -i /dist/supabase_${version}_linux_${arch}.deb && supabase --version && ${dispatchProbe}`,
       ),
     );
 
@@ -132,7 +139,7 @@ if (!hasDocker) {
         `linux-${arch}-rpm`,
         "amazonlinux:2023",
         dockerPlatform,
-        `rpm -ivh /dist/supabase_${version}_linux_${arch}.rpm && supabase --version && ${shellSentinelCommand(tag)}`,
+        `rpm -ivh /dist/supabase_${version}_linux_${arch}.rpm && supabase --version && ${dispatchProbe}`,
       ),
     );
 
@@ -141,7 +148,7 @@ if (!hasDocker) {
         `linux-${arch}-apk`,
         "alpine:3.21",
         dockerPlatform,
-        `apk add --allow-untrusted /dist/supabase_${version}_linux_${arch}.apk && supabase --version && ${shellSentinelCommand(tag)}`,
+        `apk add --allow-untrusted /dist/supabase_${version}_linux_${arch}.apk && supabase --version && ${dispatchProbe}`,
       ),
     );
   }
@@ -162,7 +169,7 @@ try {
   const npmPassed = await runNpmTest(version, tag);
   results.push({ name: "npm", status: npmPassed ? "pass" : "fail" });
 } catch (e) {
-  console.error(`[npm] Error: ${e}`);
+  console.error(`[npm] Error:\n${describeError(e)}`);
   results.push({ name: "npm", status: "fail" });
 }
 

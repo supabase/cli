@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { stringEnum } from "./lib/schema.ts";
 
 const links = [
@@ -20,7 +20,7 @@ export const realtime = Schema.Struct({
     description: "Enable the local Realtime service.",
     tags,
     links,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultEnabled)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnabled))),
   ip_version: stringEnum(["IPv4", "IPv6"], {
     default: defaultIpVersion,
     description: "Bind realtime via either IPv4 or IPv6.",
@@ -31,10 +31,10 @@ export const realtime = Schema.Struct({
         link: "https://supabase.com/docs/guides/realtime/self-hosting",
       },
     ],
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultIpVersion)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultIpVersion))),
   max_header_length: Schema.Number.annotate({
     default: defaultMaxHeaderLength,
     description: "Maximum length of the HTTP header.",
     tags,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultMaxHeaderLength)),
-}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultRealtime })));
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxHeaderLength))),
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultRealtime })));

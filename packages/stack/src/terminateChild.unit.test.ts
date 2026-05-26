@@ -42,7 +42,7 @@ describe("terminateChildProcess", () => {
   it("sends SIGTERM and stops when the child exits in time", async () => {
     const child = new FakeChild((signal, self) => {
       if (signal === "SIGTERM") {
-        setTimeout(() => self.exit(), 0);
+        self.exit();
       }
     });
 
@@ -54,7 +54,7 @@ describe("terminateChildProcess", () => {
   it("escalates to SIGKILL when the child ignores SIGTERM", async () => {
     const child = new FakeChild((signal, self) => {
       if (signal === "SIGKILL") {
-        setTimeout(() => self.exit(), 0);
+        self.exit();
       }
     });
 

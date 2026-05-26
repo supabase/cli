@@ -2,12 +2,12 @@
   {
     "request": {
       "method": "DELETE",
-      "path": "/v1/projects/<PROJECT_REF>/custom-hostname",
+      "path": "/v1/projects/__PROJECT_REF__/custom-hostname",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/2.84.2"
       },
       "body": null
@@ -16,7 +16,7 @@
       "status": 400,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "10",
         "x-ratelimit-remaining": "9",
         "x-ratelimit-reset": "60"

@@ -31,12 +31,17 @@ export function mockChildProcessSpawner(
           opts.onSpawn?.(record);
 
           const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+          let running = true;
 
           yield* Effect.forkDetach(
-            Effect.andThen(
-              Effect.sleep("10 millis"),
-              Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(opts.exitCode ?? 0)),
-            ),
+            Effect.gen(function* () {
+              yield* Effect.sleep("10 millis");
+              running = false;
+              yield* Deferred.succeed(
+                exitDeferred,
+                ChildProcessSpawner.ExitCode(opts.exitCode ?? 0),
+              );
+            }),
           );
 
           const stdoutBytes = (opts.stdout ?? []).map((line) => encoder.encode(`${line}\n`));
@@ -48,12 +53,14 @@ export function mockChildProcessSpawner(
             stderr: Stream.fromIterable(stderrBytes),
             all: Stream.empty,
             exitCode: Deferred.await(exitDeferred),
-            isRunning: Effect.succeed(true),
+            isRunning: Effect.sync(() => running),
             stdin: Sink.drain,
             kill: (killOpts) =>
               Effect.sync(() => {
                 killed.push(killOpts?.killSignal ?? "SIGTERM");
+                running = false;
               }),
+            unref: Effect.succeed(Effect.void),
             getInputFd: () => Sink.drain,
             getOutputFd: () => Stream.empty,
           });

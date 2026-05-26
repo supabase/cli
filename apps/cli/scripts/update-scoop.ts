@@ -30,12 +30,12 @@ const name = values.name!;
 const local = values.local!;
 const dryRun = values["dry-run"]!;
 
-// When name != "supabase", rename the binary on install so it doesn't clash
-// with the official `supabase` CLI a user may already have installed.
-// Scoop's `bin` field accepts either a string (no rename) or a
-// [source, alias] tuple. See https://github.com/ScoopInstaller/Scoop/wiki/App-Manifests#bin
-const binEntry: string | [string, string] =
-  name === "supabase" ? "supabase.exe" : ["supabase.exe", name];
+// The shipped binary is always `supabase.exe`, regardless of channel — only
+// the manifest filename differs (e.g. `supabase-beta.json`) so stable and
+// beta can coexist in the same bucket. Matches the Go CLI's historical
+// scoop-bucket layout (`supabase.json` and `supabase-beta.json` both shim
+// `supabase.exe`).
+const binEntry = "supabase.exe";
 const root = path.resolve(import.meta.dir, "../../..");
 const distDir = path.join(root, "dist");
 

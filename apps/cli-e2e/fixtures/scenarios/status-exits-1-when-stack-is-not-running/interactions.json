@@ -5,7 +5,7 @@
       "path": "/_ping",
       "query": {},
       "headers": {
-        "host": "localhost:<PORT>",
+        "host": "localhost:__PORT__",
         "user-agent": "Docker-Client/unknown-version (darwin)"
       },
       "body": null
@@ -28,11 +28,11 @@
   {
     "request": {
       "method": "GET",
-      "path": "/<DOCKER_VERSION>/containers/supabase_db_test-project/json",
+      "path": "/__DOCKER_VERSION__/containers/supabase_db_test-project/json",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "host": "localhost:<PORT>",
+        "host": "localhost:__PORT__",
         "user-agent": "Docker-Client/unknown-version (darwin)"
       },
       "body": null

@@ -74,6 +74,19 @@
 | `1`  | authentication error (no token found) |
 | `1`  | network / connection failure          |
 
+## Telemetry Events Fired
+
+<!-- List every PostHog event the command emits, including the universal cli_command_executed.
+     Source of truth for what Go emits: apps/cli-go/internal/<command>/*.go (grep for
+     `service.Capture`, `service.Alias`, `service.Identify`, `service.GroupIdentify`,
+     `TrackUpgradeSuggested`). If the legacy command is still a Phase 0 proxy, write
+     "proxy — see Go binary" and leave the table empty; the Go subprocess fires telemetry.
+     Constants live in apps/cli/src/shared/telemetry/event-catalog.ts. -->
+
+| Event                  | When                                       | Notable properties / groups         |
+| ---------------------- | ------------------------------------------ | ----------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
+
 ## Output
 
 <!-- Describe the user-visible output for each --output-format mode.

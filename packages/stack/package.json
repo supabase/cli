@@ -8,7 +8,8 @@
       "bun": "./src/bun.ts",
       "default": "./src/node.ts"
     },
-    "./effect": "./src/effect.ts"
+    "./effect": "./src/effect.ts",
+    "./daemon-bun": "./src/daemon-bun.ts"
   },
   "scripts": {
     "test": "nx run-many -t test:core test:e2e --projects=$npm_package_name",
@@ -20,12 +21,13 @@
   "dependencies": {
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
+    "@supabase/config": "workspace:*",
     "@supabase/process-compose": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "@supabase/supabase-js": "^2.104.0",
+    "@supabase/supabase-js": "^2.105.4",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@typescript/native-preview": "catalog:",
@@ -39,12 +41,10 @@
   "knip": {
     "entry": [
       "src/**/*.test.ts",
-      "src/daemon-bun.ts",
       "src/daemon-node.ts",
       "tests/**/*.ts"
     ],
     "ignoreDependencies": [
-      "@supabase/process-compose",
       "@typescript/native-preview",
       "oxfmt",
       "oxlint",

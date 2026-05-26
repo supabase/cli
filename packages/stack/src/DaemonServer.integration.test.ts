@@ -76,6 +76,14 @@ function mockStack() {
         : Effect.sync(() => {
             serviceCalls.push(`restart:${name}`);
           }),
+    reloadFunctions: () =>
+      Effect.sync(() => {
+        serviceCalls.push("reload-functions");
+      }),
+    reloadEdgeRuntime: () =>
+      Effect.sync(() => {
+        serviceCalls.push("reload-edge-runtime");
+      }),
     getState: (name: string) =>
       name === "unknown"
         ? Effect.fail(new ServiceNotFoundError({ name }))
@@ -154,7 +162,7 @@ describe("DaemonServer", () => {
   beforeAll(async () => {
     mock = mockStack();
     runtime = ManagedRuntime.make(buildDaemonLayer(mock));
-    const daemon = await runtime.runPromise(DaemonServer.asEffect());
+    const daemon = await runtime.runPromise(DaemonServer);
     url = getUrl(daemon.address);
   });
 
@@ -295,6 +303,18 @@ describe("DaemonServer", () => {
     expect(mock.serviceCalls).toContain("restart:postgres");
   });
 
+  test("POST /edge-runtime/reload returns 200", async () => {
+    const res = await fetch(`${url}/edge-runtime/reload`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ edgeRuntime: { policy: "oneshot" } }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+    expect(mock.serviceCalls).toContain("reload-edge-runtime");
+  });
+
   // -------------------------------------------------------------------------
   // Error cases — service not found
   // -------------------------------------------------------------------------
@@ -338,7 +358,7 @@ describe("DaemonServer", () => {
     const freshMock = mockStack();
     const freshRuntime = ManagedRuntime.make(buildDaemonLayer(freshMock));
     try {
-      const daemon = await freshRuntime.runPromise(DaemonServer.asEffect());
+      const daemon = await freshRuntime.runPromise(DaemonServer);
       const freshUrl = getUrl(daemon.address);
 
       // Start waiting for shutdown

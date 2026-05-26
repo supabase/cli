@@ -12,11 +12,6 @@ export class ProjectEnvParseError extends Data.TaggedError("ProjectEnvParseError
   readonly line: number;
 }> {}
 
-export class MissingProjectEnvVarError extends Data.TaggedError("MissingProjectEnvVarError")<{
-  readonly configPath: string;
-  readonly envName: string;
-}> {}
-
 export class MissingProjectConfigValueError extends Data.TaggedError(
   "MissingProjectConfigValueError",
 )<{

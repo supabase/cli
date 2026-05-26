@@ -2,14 +2,14 @@
   {
     "request": {
       "method": "POST",
-      "path": "/v1/projects/<PROJECT_REF>/database/query",
+      "path": "/v1/projects/__PROJECT_REF__/database/query",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
         "content-length": "20",
         "content-type": "application/json",
-        "host": "localhost:<PORT>",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": {
@@ -21,7 +21,7 @@
       "headers": {
         "cache-control": "no-cache",
         "content-type": "application/json",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "118",
         "x-ratelimit-reset": "58"
@@ -36,12 +36,12 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/<PROJECT_REF>",
+      "path": "/v1/projects/__PROJECT_REF__",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": null
@@ -50,21 +50,21 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "111",
         "x-ratelimit-reset": "34"
       },
       "body": {
-        "id": "<PROJECT_REF>",
-        "ref": "<PROJECT_REF>",
-        "organization_id": "<PROJECT_REF>",
-        "organization_slug": "<PROJECT_REF>",
+        "id": "__PROJECT_REF__",
+        "ref": "__PROJECT_REF__",
+        "organization_id": "__PROJECT_REF__",
+        "organization_slug": "__PROJECT_REF__",
         "name": "cli-e2e-test",
         "region": "us-east-1",
         "status": "ACTIVE_HEALTHY",
         "database": {
-          "host": "db.<PROJECT_REF>.supabase.red",
+          "host": "db.__PROJECT_REF__.supabase.red",
           "version": "17.6.1.111",
           "postgres_engine": "17",
           "release_channel": "ga"

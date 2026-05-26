@@ -6,8 +6,8 @@
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": null
@@ -16,20 +16,20 @@
       "status": 200,
       "headers": {
         "content-type": "application/json; charset=utf-8",
-        "x-gotrue-id": "<UUID>",
+        "x-gotrue-id": "__UUID__",
         "x-ratelimit-limit": "120",
         "x-ratelimit-remaining": "119",
         "x-ratelimit-reset": "60"
       },
       "body": [
         {
-          "id": "<PROJECT_REF>",
-          "slug": "<PROJECT_REF>",
+          "id": "__PROJECT_REF__",
+          "slug": "__PROJECT_REF__",
           "name": "colum.ferry@supabase.io's Org"
         },
         {
-          "id": "<PROJECT_REF>",
-          "slug": "<PROJECT_REF>",
+          "id": "__PROJECT_REF__",
+          "slug": "__PROJECT_REF__",
           "name": "CLIPort-TEST"
         }
       ]

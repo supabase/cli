@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Layer, ServiceMap, Sink, Stream } from "effect";
+import { Deferred, Effect, Layer, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
@@ -7,6 +7,7 @@ import { StackBuilder } from "./StackBuilder.ts";
 import type { BuildResult } from "./StackBuilder.ts";
 import type { ResolvedStackConfig } from "./StackBuilder.ts";
 import { enabledServicesForConfig, versionsForConfig } from "./StackBuilder.ts";
+import { nativePostgresNeedsDockerAccess } from "./StackBuilder.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import type { StackPreparationInput } from "./StackPreparation.ts";
@@ -39,6 +40,7 @@ const baseConfig: ResolvedStackConfig = {
   cacheRoot: "/tmp/supabase-cache",
   stackRoot: "/tmp/supabase-stack",
   runtimeRoot: "/tmp/supabase-runtime",
+  projectDir: "/tmp/supabase-project",
   mode: "auto",
   jwtSecret: testJwtSecret,
   ports: basePorts,
@@ -46,6 +48,7 @@ const baseConfig: ResolvedStackConfig = {
   dbPort: 5432,
   publishableKey: defaultPublishableKey,
   secretKey: defaultSecretKey,
+  functions: false,
   autoManagedPaths: [],
   anonJwt: generateJwt(testJwtSecret, "anon"),
   serviceRoleJwt: generateJwt(testJwtSecret, "service_role"),
@@ -53,6 +56,7 @@ const baseConfig: ResolvedStackConfig = {
     port: 5432,
     dataDir: "/tmp/pg-data",
     version: DEFAULT_VERSIONS.postgres,
+    autoExposeNewTables: true,
   },
   postgrest: {
     port: 3001,
@@ -125,6 +129,7 @@ function mockSequenceSpawner(
           isRunning: Effect.succeed(true),
           stdin: Sink.drain,
           kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
           getInputFd: () => Sink.drain,
           getOutputFd: () => Stream.empty,
         });
@@ -144,8 +149,8 @@ function builderLayer(
 }
 
 const prepareAndBuild = (
-  builder: ServiceMap.Service.Shape<typeof StackBuilder>,
-  preparation: ServiceMap.Service.Shape<typeof StackPreparation>,
+  builder: typeof StackBuilder.Service,
+  preparation: typeof StackPreparation.Service,
   config: ResolvedStackConfig,
 ): Effect.Effect<BuildResult, unknown> =>
   Effect.gen(function* () {
@@ -159,6 +164,18 @@ const prepareAndBuild = (
   });
 
 describe("StackBuilder", () => {
+  it("makes native postgres reachable by docker services on every platform", () => {
+    expect(nativePostgresNeedsDockerAccess({ type: "binary", path: "/cache/postgres" }, true)).toBe(
+      true,
+    );
+    expect(
+      nativePostgresNeedsDockerAccess({ type: "binary", path: "/cache/postgres" }, false),
+    ).toBe(false);
+    expect(
+      nativePostgresNeedsDockerAccess({ type: "docker", image: "supabase/postgres" }, true),
+    ).toBe(false);
+  });
+
   it.effect("builds graph with all native binaries", () => {
     const resolver = mockBinaryResolver();
     const layer = builderLayer(resolver);

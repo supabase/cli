@@ -6,9 +6,9 @@
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "authorization": "Bearer <ACCESS_TOKEN>",
+        "authorization": "Bearer __ACCESS_TOKEN__",
         "content-type": "application/json",
-        "host": "localhost:<PORT>",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": {
@@ -21,8 +21,8 @@
         "content-type": "application/json; charset=utf-8"
       },
       "body": {
-        "id": "<PROJECT_REF>",
-        "slug": "<PROJECT_REF>",
+        "id": "__PROJECT_REF__",
+        "slug": "__PROJECT_REF__",
         "name": "My Test Org"
       }
     }

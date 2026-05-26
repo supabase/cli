@@ -3,7 +3,27 @@ import type { ServiceDef } from "@supabase/process-compose";
 interface PostgresInitOptions {
   readonly postgresDir: string;
   readonly dbPort: number;
+  /**
+   * When false, append the SQL that Studio runs at cloud project creation to revoke the default
+   * Data API privileges on the `public` schema so newly-created entities require explicit GRANTs.
+   */
+  readonly autoExposeNewTables: boolean;
 }
+
+/**
+ * SQL that matches what Studio runs at cloud project creation when "Default privileges for new
+ * entities" is off. Revokes the default GRANTs installed by the bundled initial schema so new
+ * tables/sequences/functions in `public` owned by `postgres` are not reachable via the Data API
+ * roles without explicit GRANTs.
+ */
+export const REVOKE_DEFAULT_DATA_API_PRIVILEGES_SQL = `
+alter default privileges for role postgres in schema public
+  revoke select, insert, update, delete on tables from anon, authenticated, service_role;
+alter default privileges for role postgres in schema public
+  revoke usage, select on sequences from anon, authenticated, service_role;
+alter default privileges for role postgres in schema public
+  revoke execute on functions from anon, authenticated, service_role;
+`.trim();
 
 export const makePostgresInitService = (opts: PostgresInitOptions): ServiceDef => {
   const pgBinDir = `${opts.postgresDir}/bin`;
@@ -12,6 +32,16 @@ export const makePostgresInitService = (opts: PostgresInitOptions): ServiceDef =
 
   const psql = `${pgBinDir}/psql -h 127.0.0.1 -p ${opts.dbPort}`;
   const psqlOpts = `-v ON_ERROR_STOP=1 --no-password --no-psqlrc`;
+
+  const revokeStep = opts.autoExposeNewTables
+    ? ""
+    : `
+  # Revoke default privileges for the Data API roles on schema public so new tables
+  # require explicit GRANTs. Mirrors Studio's behaviour at cloud project creation.
+  ${psql} ${psqlOpts} -U postgres -d postgres <<'EOSQL'
+${REVOKE_DEFAULT_DATA_API_PRIVILEGES_SQL}
+EOSQL
+`;
 
   // Replaces calling migrate.sh (which spawns ~57 separate psql processes) with
   // chained -f flags that run all SQL files in a single psql session, cutting
@@ -61,7 +91,7 @@ EOSQL
 
   # Reset stats (non-fatal, matches migrate.sh)
   ${psql} ${psqlOpts} -U supabase_admin -d postgres -c 'SELECT extensions.pg_stat_statements_reset(); SELECT pg_stat_reset();' || true
-fi
+${revokeStep}fi
 
 # Backfill schemas/databases used by docker-backed auxiliary services.
 ${psql} ${psqlOpts} -U postgres -d postgres <<'EOSQL'

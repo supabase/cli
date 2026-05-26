@@ -330,15 +330,30 @@ export const textOutputLayer = Layer.effect(
         }),
       success: (message: string) => Effect.sync(() => log.success(message)),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
-        Effect.gen(function* () {
-          yield* Effect.sync(() => log.error(styleText("red", err.message)));
-          const detail = err.detail;
-          if (detail) {
-            yield* Effect.sync(() => log.message(styleText("gray", detail)));
+        Effect.sync(() => {
+          // Matches Go's `recoverAndExit` (apps/cli-go/cmd/root.go:300-303): a
+          // red-styled message on stderr, optionally followed by a suggestion.
+          // Bypasses clack's `log.error` framing (`│` guide + `■` icon) so the
+          // output byte-matches the Go CLI for parity tests.
+          process.stderr.write(styleText("red", err.message) + "\n");
+          if (err.detail !== undefined && err.detail !== err.message) {
+            process.stderr.write(styleText("gray", err.detail) + "\n");
           }
-          const suggestion = err.suggestion;
-          if (suggestion) {
-            yield* Effect.sync(() => outro(suggestion));
+          if (err.suggestion !== undefined) {
+            process.stderr.write(err.suggestion + "\n");
+          } else if (!process.argv.includes("--debug")) {
+            // Go's `utils.SuggestDebugFlag` (apps/cli-go/internal/utils/misc.go:41).
+            process.stderr.write(
+              "Try rerunning the command with --debug to troubleshoot the error.\n",
+            );
+          }
+        }),
+      raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
+        Effect.sync(() => {
+          if (stream === "stderr") {
+            process.stderr.write(text);
+          } else {
+            process.stdout.write(text);
           }
         }),
     });
@@ -408,6 +423,8 @@ export const jsonOutputLayer = Layer.effect(
         writeStdout(JSON.stringify({ ...data, message }) + "\n"),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         writeStdout(JSON.stringify({ _tag: "Error", error: err }) + "\n"),
+      raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
+        stream === "stderr" ? writeStderr(text) : writeStdout(text),
     });
   }),
 );
@@ -420,6 +437,8 @@ export const streamJsonOutputLayer = Layer.effect(
 
     const writeStdout = (s: string) =>
       Stream.make(s).pipe(Stream.run(stdio.stdout()), Effect.orDie);
+    const writeStderr = (s: string) =>
+      Stream.make(s).pipe(Stream.run(stdio.stderr()), Effect.orDie);
     const emitLog = (level: "info" | "warn" | "success" | "error", message: string) => {
       const event: StreamEvent = {
         type: "log",
@@ -502,6 +521,8 @@ export const streamJsonOutputLayer = Layer.effect(
         };
         return writeStdout(JSON.stringify(event) + "\n");
       },
+      raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
+        stream === "stderr" ? writeStderr(text) : writeStdout(text),
     });
   }),
 );

@@ -6,6 +6,7 @@ import { CliOutput, Command } from "effect/unstable/cli";
 import { CLI_VERSION } from "./version.ts";
 import { Credentials } from "../../next/auth/credentials.service.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
+import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { outputLayerFor } from "../output/output.layer.ts";
 import { normalizeCause } from "../output/normalize-error.ts";
 import type { OutputFormat } from "../output/types.ts";
@@ -20,7 +21,7 @@ import { runtimeInfoLayer } from "../runtime/runtime-info.layer.ts";
 import { ttyLayer } from "../runtime/tty.layer.ts";
 import { CommandRuntime } from "../runtime/command-runtime.service.ts";
 import { ProcessControl } from "../runtime/process-control.service.ts";
-import { analyticsLayer } from "../telemetry/analytics.layer.ts";
+import type { Analytics } from "../telemetry/analytics.service.ts";
 import { telemetryRuntimeLayer } from "../telemetry/runtime.layer.ts";
 import { tracingLayer } from "../telemetry/tracing.layer.ts";
 
@@ -41,7 +42,7 @@ function formatterLayerFor(args: ReadonlyArray<string>) {
   const format = outputFormatFor(args);
   return format === "json" || format === "stream-json"
     ? CliOutput.layer(jsonCliOutputFormatter())
-    : Layer.empty;
+    : CliOutput.layer(textCliOutputFormatter());
 }
 
 function projectContextLayerFor(runtimeLayer: Layer.Layer<never>) {
@@ -64,7 +65,17 @@ function projectHomeLayerFor(runtimeLayer: Layer.Layer<never>) {
   );
 }
 
-function cliProgramFor(rootCommand: Command.Command.Any, args: ReadonlyArray<string>) {
+type AnyAnalyticsLayer = Layer.Layer<Analytics, never, any>;
+
+export interface RunCliOptions {
+  readonly analyticsLayer: AnyAnalyticsLayer;
+}
+
+function cliProgramFor(
+  rootCommand: Command.Command.Any,
+  args: ReadonlyArray<string>,
+  options: RunCliOptions,
+) {
   const runtimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
   const fallbackCommandLayer = Layer.mergeAll(
     // Root command env inference currently leaks some subcommand-provided services.
@@ -91,7 +102,7 @@ function cliProgramFor(rootCommand: Command.Command.Any, args: ReadonlyArray<str
   );
   return Command.runWith(rootCommand, { version: CLI_VERSION })(args).pipe(
     Effect.provide(formatterLayerFor(args)),
-    Effect.provide(analyticsLayer),
+    Effect.provide(options.analyticsLayer),
     Effect.provide(tracingLayer),
     Effect.provide(telemetryRuntimeLayer),
     Effect.provide(cliConfigLayerFor(runtimeLayer)),
@@ -105,7 +116,7 @@ function cliProgramFor(rootCommand: Command.Command.Any, args: ReadonlyArray<str
   );
 }
 
-export async function runCli(rootCommand: Command.Command.Any) {
+export async function runCli(rootCommand: Command.Command.Any, options: RunCliOptions) {
   const args = await Effect.runPromise(
     Effect.gen(function* () {
       const stdio = yield* Stdio.Stdio;
@@ -114,7 +125,7 @@ export async function runCli(rootCommand: Command.Command.Any) {
   );
 
   const useGlobalSignalInterrupt = !args.includes("start");
-  const cliProgram = cliProgramFor(rootCommand, args);
+  const cliProgram = cliProgramFor(rootCommand, args, options);
 
   const signalAwareProgram = Effect.scoped(
     Effect.gen(function* () {

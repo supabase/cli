@@ -126,6 +126,7 @@ func Run(ctx context.Context, params RunParams) error {
 	}
 
 	if putResp.JSON200 == nil {
+		// GET branch above early-returns on failure, so this and the GET fire are mutually exclusive (max one event per invocation).
 		if orgSlug, isGated := utils.SuggestUpgradeOnError(ctx, params.ProjectRef, "auth.saml_2", putResp.StatusCode()); isGated {
 			telemetry.TrackUpgradeSuggested(ctx, "auth.saml_2", orgSlug)
 		}

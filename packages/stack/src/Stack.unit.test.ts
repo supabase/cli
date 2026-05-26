@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { BunServices } from "@effect/platform-bun";
 import { createHmac } from "node:crypto";
 import { Effect, Fiber, Layer, Stream } from "effect";
 import { mockChildProcessSpawner } from "../../process-compose/tests/helpers/mocks.ts";
@@ -40,6 +41,7 @@ const defaultConfig: ResolvedStackConfig = {
   cacheRoot: "/tmp/supabase-cache",
   stackRoot: "/tmp/supabase-stack",
   runtimeRoot: "/tmp/supabase-runtime",
+  projectDir: "/tmp/supabase-project",
   mode: "native",
   jwtSecret: testJwtSecret,
   ports: defaultPorts,
@@ -47,6 +49,7 @@ const defaultConfig: ResolvedStackConfig = {
   dbPort: 54322,
   publishableKey: defaultPublishableKey,
   secretKey: defaultSecretKey,
+  functions: false,
   autoManagedPaths: [],
   anonJwt: generateJwt(testJwtSecret, "anon"),
   serviceRoleJwt: generateJwt(testJwtSecret, "service_role"),
@@ -54,6 +57,7 @@ const defaultConfig: ResolvedStackConfig = {
     port: 54322,
     dataDir: "/tmp/supabase/data",
     version: DEFAULT_VERSIONS.postgres,
+    autoExposeNewTables: true,
   },
   postgrest: {
     port: 54323,
@@ -108,6 +112,7 @@ function setupLayer(config: ResolvedStackConfig = defaultConfig) {
   const layer = Stack.layer(config).pipe(
     Layer.provide(coordinatorLayer),
     Layer.provide(spawner.layer),
+    Layer.provide(BunServices.layer),
   );
 
   return { layer, resolver, spawner };
@@ -297,6 +302,7 @@ describe("Stack", () => {
     const layer = Stack.layer(defaultConfig).pipe(
       Layer.provide(coordinatorLayer),
       Layer.provide(spawner.layer),
+      Layer.provide(BunServices.layer),
     );
 
     return Effect.gen(function* () {

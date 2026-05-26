@@ -1,4 +1,4 @@
-import { Cause, Data, Effect, Exit, Layer, Queue, ServiceMap, Stream } from "effect";
+import { Cause, Data, Effect, Exit, Layer, Queue, Context, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { BinaryResolver } from "./BinaryResolver.ts";
 import type { ChecksumMismatchError } from "./errors.ts";
@@ -6,6 +6,7 @@ import { DockerPullError } from "./errors.ts";
 import type { ServiceResolution } from "./resolve.ts";
 import {
   DEFAULT_VERSIONS,
+  SERVICE_NAMES,
   dockerImageCandidatesForService,
   type ServiceName,
   type VersionManifest,
@@ -88,8 +89,7 @@ export const prepareAssetsWithDependencies = (
 ): Effect.Effect<PreparedStackArtifacts, DockerPullError | ChecksumMismatchError> =>
   Effect.gen(function* () {
     const versions = { ...DEFAULT_VERSIONS, ...input?.versions };
-    const services: ReadonlyArray<ServiceName> =
-      input?.services ?? (["postgres", "postgrest", "auth", "edge-runtime"] as const);
+    const services: ReadonlyArray<ServiceName> = input?.services ?? SERVICE_NAMES;
     const mode = input?.mode ?? "auto";
 
     type Entry = readonly [ServiceName, ServiceResolution];
@@ -152,7 +152,7 @@ export const prepareAssetsWithDependencies = (
     return artifacts;
   });
 
-export class StackPreparation extends ServiceMap.Service<
+export class StackPreparation extends Context.Service<
   StackPreparation,
   {
     readonly prepare: (

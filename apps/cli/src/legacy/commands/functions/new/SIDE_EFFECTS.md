@@ -8,9 +8,9 @@
 
 ## Files Written
 
-| Path                                           | Format     | When                               |
-| ---------------------------------------------- | ---------- | ---------------------------------- |
-| `<workdir>/supabase/functions/<name>/index.ts` | TypeScript | always (creates function scaffold) |
+| Path                                           | Format     | When                                                             |
+| ---------------------------------------------- | ---------- | ---------------------------------------------------------------- |
+| `<workdir>/supabase/functions/<name>/index.ts` | TypeScript | always (creates function scaffold, template depends on `--auth`) |
 
 ## API Routes
 
@@ -50,4 +50,5 @@ Not applicable (proxied to Go binary).
 
 - Creates a new Edge Function scaffold locally.
 - Requires exactly one argument: the function name.
+- `--auth` selects the auth-mode template (`none` | `apikey` | `user`, default: `apikey`).
 - Phase 0 proxy: all invocations are forwarded to the bundled Go binary.

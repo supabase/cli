@@ -33,10 +33,10 @@ func NewConsole() *Console {
 
 // Prevent interactive terminals from hanging more than 10 minutes
 const ttyTimeout = time.Minute * 10
+const nonTTYTimeout = time.Millisecond * 100
 
 func (c *Console) ReadLine(ctx context.Context) string {
-	// Wait a few ms for input
-	timeout := time.Millisecond
+	timeout := nonTTYTimeout
 	if c.IsTTY {
 		timeout = ttyTimeout
 	}

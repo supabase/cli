@@ -3,7 +3,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
-import { createTmpDir, runNpmTest } from "./helpers/npm-registry.ts";
+import { createTmpDir, describeError, runNpmTest } from "./helpers/npm-registry.ts";
 import { verifyExpectedShell } from "./helpers/release-shell.ts";
 
 const { values } = parseArgs({
@@ -43,13 +43,13 @@ console.log("=".repeat(60));
   try {
     const output = await $`${binPath} --version`.text();
     const trimmed = output.trim();
-    const shellCheck = await verifyExpectedShell(binPath, tag);
+    const shellCheck = await verifyExpectedShell(binPath);
     const passed = /^\d+\.\d+\.\d+/.test(trimmed) && shellCheck.passed;
     console.log(`[${name}] ${passed ? "PASS" : "FAIL"} — ${trimmed}`);
     console.log(`[${name}] ${shellCheck.detail}`);
     results.push({ name, status: passed ? "pass" : "fail" });
   } catch (e) {
-    console.log(`[${name}] FAIL — ${e}`);
+    console.log(`[${name}] FAIL —\n${describeError(e)}`);
     results.push({ name, status: "fail" });
   }
 }
@@ -64,7 +64,7 @@ try {
   const npmPassed = await runNpmTest(version, tag);
   results.push({ name: "npm", status: npmPassed ? "pass" : "fail" });
 } catch (e) {
-  console.error(`[npm] Error: ${e}`);
+  console.error(`[npm] Error:\n${describeError(e)}`);
   results.push({ name: "npm", status: "fail" });
 }
 
@@ -103,7 +103,7 @@ if (!hasBrew) {
 
       const output = await $`supabase --version`.text();
       const trimmed = output.trim();
-      const shellCheck = await verifyExpectedShell("supabase", tag);
+      const shellCheck = await verifyExpectedShell("supabase");
       const passed = /^\d+\.\d+\.\d+/.test(trimmed) && shellCheck.passed;
 
       console.log(`[brew] ${passed ? "PASS" : "FAIL"} — supabase --version: ${trimmed}`);
@@ -114,7 +114,7 @@ if (!hasBrew) {
       await $`brew untap supabase/test-tap`.nothrow();
     }
   } catch (e) {
-    console.error(`[brew] Error: ${e}`);
+    console.error(`[brew] Error:\n${describeError(e)}`);
     results.push({ name: "brew", status: "fail" });
   }
 }

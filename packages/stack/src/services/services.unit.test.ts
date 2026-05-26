@@ -2,12 +2,15 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { makeAnalyticsServiceDocker } from "./analytics.ts";
+import { analyticsDockerRuntimeNetwork, makeAnalyticsServiceDocker } from "./analytics.ts";
 import { makeAuthServiceNative, makeAuthServiceDocker } from "./auth.ts";
 import { makeEdgeRuntimeServiceDocker, makeEdgeRuntimeServiceNative } from "./edge-runtime.ts";
 import { makeImgproxyServiceDocker } from "./imgproxy.ts";
 import { makeMailpitServiceDocker } from "./mailpit.ts";
-import { makePostgresInitService } from "./postgres-init.ts";
+import {
+  makePostgresInitService,
+  REVOKE_DEFAULT_DATA_API_PRIVILEGES_SQL,
+} from "./postgres-init.ts";
 import { makePostgresService, makePostgresServiceDocker } from "./postgres.ts";
 import { makePostgrestService } from "./postgrest.ts";
 import { makePoolerServiceDocker, poolerContainerPorts } from "./pooler.ts";
@@ -21,6 +24,7 @@ const POSTGRES_BIN_PATH = `/cache/postgres/${DEFAULT_VERSIONS.postgres}/darwin-a
 const POSTGREST_BIN_PATH = `/cache/postgrest/${DEFAULT_VERSIONS.postgrest}/macos-aarch64`;
 const AUTH_BIN_PATH = `/cache/auth/${DEFAULT_VERSIONS.auth}/arm64`;
 const EDGE_RUNTIME_BIN_PATH = `/cache/edge-runtime/${DEFAULT_VERSIONS["edge-runtime"]}/aarch64-darwin`;
+const LINUX_HOST_GATEWAY_ARGS = ["--add-host", "host.docker.internal:host-gateway"];
 
 describe("makePostgresService", () => {
   it("creates a postgres ServiceDef with correct defaults", () => {
@@ -58,6 +62,22 @@ describe("makePostgresService", () => {
     expect(def.dependencies).toBeUndefined();
     expect(def.restart).toBe("unless-stopped");
     expect(def.supervision).toBeDefined();
+  });
+});
+
+describe("analyticsDockerRuntimeNetwork", () => {
+  it("uses the container port behind Docker port mapping on Linux", () => {
+    expect(analyticsDockerRuntimeNetwork("linux", 54328, "host.docker.internal")).toEqual({
+      listenPort: 4000,
+      nodeHost: "0.0.0.0",
+    });
+  });
+
+  it("uses the container port behind Docker port mapping on non-Linux hosts", () => {
+    expect(analyticsDockerRuntimeNetwork("darwin", 54328, "host.docker.internal")).toEqual({
+      listenPort: 4000,
+      nodeHost: "0.0.0.0",
+    });
   });
 });
 
@@ -111,7 +131,7 @@ describe("makePostgresServiceDocker", () => {
       image: dockerImageForService("postgres", DEFAULT_VERSIONS.postgres),
       dataDir: "/tmp/supabase/data",
       port: DB_PORT,
-      networkArgs: ["--network=host"],
+      networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", `${DB_PORT}:${DB_PORT}`],
       jwtSecret: "test-jwt-secret-with-at-least-32-characters",
       jwtExpiry: 3600,
       apiPort: API_PORT,
@@ -122,7 +142,8 @@ describe("makePostgresServiceDocker", () => {
     expect(def.args).toContain("run");
     expect(def.args).toContain("--rm");
     expect(def.args).toContain(`supabase-postgres-${API_PORT}`);
-    expect(def.args).toContain("--network=host");
+    expect(def.args).toContain("host.docker.internal:host-gateway");
+    expect(def.args).toContain(`${DB_PORT}:${DB_PORT}`);
     expect(def.args).toContain(dockerImageForService("postgres", DEFAULT_VERSIONS.postgres));
     expect(def.args).toContain("/tmp/supabase/data:/var/lib/postgresql/data");
     // Verify port is passed to postgres inside the container
@@ -153,7 +174,7 @@ describe("makePostgresServiceDocker", () => {
       image: dockerImageForService("postgres", DEFAULT_VERSIONS.postgres),
       dataDir: "/tmp/supabase/data",
       port: DB_PORT,
-      networkArgs: ["--network=host"],
+      networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", `${DB_PORT}:${DB_PORT}`],
       jwtSecret: "test-jwt-secret-with-at-least-32-characters",
       jwtExpiry: 3600,
       apiPort: API_PORT,
@@ -243,7 +264,7 @@ describe("makeAuthServiceDocker", () => {
       jwtExpiry: 3600,
       externalUrl: `http://127.0.0.1:${API_PORT}`,
       dbHost: "127.0.0.1",
-      networkArgs: ["--network=host"],
+      networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", "9999:9999"],
       apiPort: API_PORT,
       dependencies: [{ service: "postgres", condition: "healthy" }],
     });
@@ -253,7 +274,8 @@ describe("makeAuthServiceDocker", () => {
     expect(def.args).toContain("run");
     expect(def.args).toContain("--rm");
     expect(def.args).toContain(`supabase-auth-${API_PORT}`);
-    expect(def.args).toContain("--network=host");
+    expect(def.args).toContain("host.docker.internal:host-gateway");
+    expect(def.args).toContain("9999:9999");
     expect(def.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
     expect(def.supervision).toEqual({
       orphanCleanup: [{ _tag: "DockerRemove", containerName: `supabase-auth-${API_PORT}` }],
@@ -274,20 +296,24 @@ describe("makeEdgeRuntimeServiceDocker", () => {
         inspectorPort: 54341,
         policy: "per_worker",
         env: { SUPABASE_INTERNAL_DEBUG: "true" },
-        networkArgs: ["--network=host"],
+        networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", "54340:54340", "-p", "54341:54341"],
         dependencies: [{ service: "postgres", condition: "healthy" }],
       });
 
-      const bootstrapPath = path.join(tempDir, "edge-runtime", "index.ts");
+      const bootstrapDir = path.join(tempDir, "edge-runtime");
+      const bootstrapPath = path.join(bootstrapDir, "index.ts");
       expect(readFileSync(bootstrapPath, "utf8")).toContain("FUNCTIONS_NOT_CONFIGURED");
       expect(readFileSync(bootstrapPath, "utf8")).toContain("/_internal/health");
       expect(def.name).toBe("edge-runtime");
       expect(def.command).toBe("docker");
       expect(def.args).toContain(`supabase-edge-runtime-${API_PORT}`);
-      expect(def.args).toContain("--network=host");
+      expect(def.args).toContain("host.docker.internal:host-gateway");
+      expect(def.args).toContain("54340:54340");
       expect(def.args).toContain(`--port=54340`);
       expect(def.args).toContain(`--policy=per_worker`);
-      expect(def.args).toContain(`${bootstrapPath}:/workspace/index.ts:ro`);
+      expect(def.args).toContain(`${bootstrapDir}:/workspace:ro`);
+      expect(def.args).toContain("--ulimit");
+      expect(def.args).toContain("nofile=65536:65536");
       expect(def.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
       expect(def.healthCheck?.probe).toEqual({
         _tag: "Http",
@@ -347,6 +373,7 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: POSTGRES_BIN_PATH,
       dbPort: DB_PORT,
+      autoExposeNewTables: true,
     });
 
     expect(def.name).toBe("postgres-init");
@@ -364,6 +391,7 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: POSTGRES_BIN_PATH,
       dbPort: DB_PORT,
+      autoExposeNewTables: true,
     });
     const script = def.args?.[1] as string;
     expect(script).not.toContain("set -e");
@@ -373,6 +401,7 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: "/cache/postgres/17/darwin-arm64",
       dbPort: DB_PORT,
+      autoExposeNewTables: true,
     });
     const script = def.args?.[1] as string;
     expect(script).toContain("authenticator");
@@ -383,6 +412,7 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: "/cache/postgres/17/darwin-arm64",
       dbPort: DB_PORT,
+      autoExposeNewTables: true,
     });
     const script = def.args?.[1] as string;
 
@@ -397,12 +427,41 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: "/cache/postgres/17/darwin-arm64",
       dbPort: DB_PORT,
+      autoExposeNewTables: true,
     });
     const script = def.args?.[1] as string;
     expect(script).not.toMatch(/sh .+migrate\.sh/);
     expect(script).toContain("-f $sql");
     expect(script).toContain("init-scripts/*.sql");
     expect(script).toContain("migrations/*.sql");
+  });
+
+  it("does not revoke default Data API privileges when autoExposeNewTables is true", () => {
+    const def = makePostgresInitService({
+      postgresDir: POSTGRES_BIN_PATH,
+      dbPort: DB_PORT,
+      autoExposeNewTables: true,
+    });
+    const script = def.args?.[1] as string;
+    expect(script).not.toContain("alter default privileges");
+    expect(script).not.toContain("revoke select, insert, update, delete on tables");
+  });
+
+  it("revokes default Data API privileges on `public` when autoExposeNewTables is false", () => {
+    const def = makePostgresInitService({
+      postgresDir: POSTGRES_BIN_PATH,
+      dbPort: DB_PORT,
+      autoExposeNewTables: false,
+    });
+    const script = def.args?.[1] as string;
+    expect(script).toContain(REVOKE_DEFAULT_DATA_API_PRIVILEGES_SQL);
+    expect(script).toContain(
+      "revoke select, insert, update, delete on tables from anon, authenticated, service_role",
+    );
+    expect(script).toContain(
+      "revoke usage, select on sequences from anon, authenticated, service_role",
+    );
+    expect(script).toContain("revoke execute on functions from anon, authenticated, service_role");
   });
 });
 
@@ -414,7 +473,15 @@ describe("docker-backed auxiliary services", () => {
       webPort: 54323,
       smtpPort: 54324,
       pop3Port: 54325,
-      networkArgs: ["--network=host"],
+      networkArgs: [
+        ...LINUX_HOST_GATEWAY_ARGS,
+        "-p",
+        "54323:54323",
+        "-p",
+        "54324:54324",
+        "-p",
+        "54325:54325",
+      ],
     });
 
     expect(def.healthCheck?.probe).toEqual({
@@ -432,7 +499,7 @@ describe("docker-backed auxiliary services", () => {
       apiPort: API_PORT,
       port: 54326,
       dataDir: "/tmp/supabase/storage",
-      networkArgs: ["--network=host"],
+      networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", "54326:54326"],
       dependencies: [{ service: "storage", condition: "healthy" }],
     });
 
@@ -475,6 +542,8 @@ describe("docker-backed auxiliary services", () => {
       image: dockerImageForService("analytics", DEFAULT_VERSIONS.analytics),
       apiPort: API_PORT,
       hostPort: 54328,
+      listenPort: 4000,
+      nodeHost: "0.0.0.0",
       dbHost: "127.0.0.1",
       dbPort: DB_PORT,
       apiKey: "test-api-key",
@@ -483,6 +552,7 @@ describe("docker-backed auxiliary services", () => {
       dependencies: [{ service: "postgres", condition: "healthy" }],
     });
 
+    const args = def.args ?? [];
     expect(def.healthCheck?.probe).toEqual({
       _tag: "Http",
       host: "127.0.0.1",
@@ -491,9 +561,32 @@ describe("docker-backed auxiliary services", () => {
       scheme: "http",
     });
     expect(def.healthCheck?.initialDelaySeconds).toBe(10);
+    expect(args).toContain("PORT=4000");
+    expect(args).toContain("PHX_HTTP_PORT=4000");
+    expect(args).toContain("54328:4000");
+    expect(args).toContain("LOGFLARE_NODE_HOST=0.0.0.0");
+  });
+
+  it("keeps analytics on its container port when Linux uses bridge networking", () => {
+    const def = makeAnalyticsServiceDocker({
+      image: dockerImageForService("analytics", DEFAULT_VERSIONS.analytics),
+      apiPort: API_PORT,
+      hostPort: 54328,
+      listenPort: 4000,
+      nodeHost: "0.0.0.0",
+      dbHost: "host.docker.internal",
+      dbPort: DB_PORT,
+      apiKey: "test-api-key",
+      backend: "postgres",
+      networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", "54328:4000"],
+      dependencies: [{ service: "postgres", condition: "healthy" }],
+    });
+
     expect(def.args).toContain("PORT=4000");
-    expect(def.args).toContain("54328:4000");
+    expect(def.args).toContain("PHX_HTTP_PORT=4000");
     expect(def.args).toContain("LOGFLARE_NODE_HOST=0.0.0.0");
+    expect(def.args).toContain("host.docker.internal:host-gateway");
+    expect(def.args).toContain("54328:4000");
   });
 
   it("keeps pooler container ports fixed and maps only the selected proxy port outward", () => {

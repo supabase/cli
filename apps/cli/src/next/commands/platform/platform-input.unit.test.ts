@@ -390,6 +390,7 @@ describe("platform input", () => {
         }),
       success: () => Effect.void,
       fail: () => Effect.void,
+      raw: () => Effect.void,
     });
 
     return Effect.gen(function* () {

@@ -1,4 +1,6 @@
-import { unlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as Net from "node:net";
 import { describe, expect, it } from "@effect/vitest";
 import { layer as BunChildProcessSpawnerLayer } from "@effect/platform-bun/BunChildProcessSpawner";
@@ -17,6 +19,7 @@ const setupProbe = (probe: ProbeConfig, overrides?: Partial<HealthCheckConfig>) 
   Effect.gen(function* () {
     let healthy = false;
     const healthySignal = yield* Deferred.make<void>();
+    const unhealthySignal = yield* Deferred.make<void>();
     const config = {
       name: "test",
       healthCheck: {
@@ -35,12 +38,13 @@ const setupProbe = (probe: ProbeConfig, overrides?: Partial<HealthCheckConfig>) 
             yield* Deferred.succeed(healthySignal, void 0);
           }),
         onUnhealthy: () =>
-          Effect.sync(() => {
+          Effect.gen(function* () {
             healthy = false;
+            yield* Deferred.succeed(unhealthySignal, void 0);
           }),
       },
     };
-    return { healthySignal, config, isHealthy: () => healthy };
+    return { healthySignal, unhealthySignal, config, isHealthy: () => healthy };
   });
 
 describe("HealthProbe", () => {
@@ -110,6 +114,7 @@ describe("HealthProbe", () => {
               isRunning: Effect.succeed(false),
               stdin: Sink.drain,
               kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
               getInputFd: () => Sink.drain,
               getOutputFd: () => Stream.empty,
             });
@@ -283,12 +288,13 @@ describe("HealthProbe", () => {
 
   it.live("transitions to Unhealthy after failureThreshold failures following Healthy", () =>
     Effect.gen(function* () {
-      const flagFile = `/tmp/health-probe-test-${Date.now()}`;
+      const tempDir = mkdtempSync(join(tmpdir(), "health-probe-test-"));
+      const flagFile = join(tempDir, "healthy");
 
       // Create the flag file so probe succeeds initially
       writeFileSync(flagFile, "");
 
-      const { healthySignal, config, isHealthy } = yield* setupProbe(
+      const { healthySignal, unhealthySignal, config, isHealthy } = yield* setupProbe(
         { _tag: "Exec", command: "test", args: ["-f", flagFile] },
         { periodSeconds: 0.01, successThreshold: 1, failureThreshold: 2 },
       );
@@ -305,11 +311,11 @@ describe("HealthProbe", () => {
         /* ignore */
       }
 
-      // Wait for failureThreshold probes
-      yield* Effect.sleep(Duration.millis(300));
+      yield* Deferred.await(unhealthySignal).pipe(Effect.timeout(Duration.seconds(5)));
 
       expect(isHealthy()).toBe(false);
       yield* Fiber.interrupt(fiber);
+      rmSync(tempDir, { recursive: true, force: true });
     }).pipe(Effect.provide(platformLayer)),
   );
 });

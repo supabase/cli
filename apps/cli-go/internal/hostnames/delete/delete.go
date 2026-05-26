@@ -12,7 +12,7 @@ import (
 )
 
 func Run(ctx context.Context, projectRef string, fsys afero.Fs) error {
-	resp, err := utils.GetSupabase().V1DeleteHostnameConfigWithResponse(ctx, projectRef)
+	resp, err := utils.GetSupabase().V1DeleteHostnameConfigWithResponse(ctx, projectRef, nil)
 	if err != nil {
 		return errors.Errorf("failed to delete custom hostname: %w", err)
 	} else if resp.StatusCode() != http.StatusOK {

@@ -13,6 +13,25 @@ import {
   registerTempStackProject,
 } from "./stack-e2e-cleanup.ts";
 
+const BINARY_EXT = process.platform === "win32" ? ".exe" : "";
+const SHIM_PATH = fileURLToPath(new URL("../../dist/supabase.js", import.meta.url));
+const LEGACY_BINARY_PATH = fileURLToPath(
+  new URL(`../../dist/supabase-legacy${BINARY_EXT}`, import.meta.url),
+);
+const NEXT_BINARY_PATH = fileURLToPath(
+  new URL(`../../dist/supabase-next${BINARY_EXT}`, import.meta.url),
+);
+
+function assertBuildArtifactsExist(shell: "legacy" | "next", binaryPath: string): void {
+  if (!existsSync(SHIM_PATH) || !existsSync(binaryPath)) {
+    throw new Error(
+      `Missing ${shell} CLI build artifacts. Run \`pnpm --filter supabase build\` before invoking ${shell} e2e tests.\n` +
+        `  expected shim:   ${SHIM_PATH}\n` +
+        `  expected binary: ${binaryPath}`,
+    );
+  }
+}
+
 type RunResult = {
   stdout: string;
   stderr: string;
@@ -20,6 +39,7 @@ type RunResult = {
 };
 
 const DEFAULT_EXIT_TIMEOUT_MS = 60_000;
+const OUTPUT_TAIL_LENGTH = 4_000;
 
 interface SpawnedSupabase {
   readonly pid: number;
@@ -138,6 +158,16 @@ function killProcessGroup(pid: number, signal: NodeJS.Signals): void {
   } catch {}
 }
 
+function outputTail(label: string, output: string): string {
+  if (output.length === 0) {
+    return `${label}: <empty>`;
+  }
+
+  const tail =
+    output.length > OUTPUT_TAIL_LENGTH ? output.slice(output.length - OUTPUT_TAIL_LENGTH) : output;
+  return `${label}:\n${tail}`;
+}
+
 export function spawnSupabase(
   args: string[],
   options?: {
@@ -158,37 +188,39 @@ export function spawnSupabase(
   const ownHome = options?.home ? null : makeTempHome();
   const homeDir = options?.home ?? ownHome!.dir;
   noteStackProjectHome(options?.cwd, homeDir);
-  const sourceCliLauncher = fileURLToPath(new URL("./source-cli-launcher.mjs", import.meta.url));
-  const sourceCliEntrypoint = fileURLToPath(
-    new URL(
-      options?.entrypoint === "legacy" ? "../../src/legacy/main.ts" : "../../src/next/main.ts",
-      import.meta.url,
-    ),
-  );
+  const entrypoint = options?.entrypoint ?? "next";
   const usesStartWrapper = args[0] === "start";
-  const proc = spawn(
-    usesStartWrapper ? "node" : "bun",
-    usesStartWrapper
-      ? [sourceCliLauncher, sourceCliEntrypoint, ...args]
-      : [sourceCliEntrypoint, ...args],
-    {
-      cwd: options?.cwd,
-      env: {
-        ...process.env,
-        SUPABASE_HOME: homeDir,
-        SUPABASE_NO_KEYRING: "1",
-        // Keep e2e subprocesses quiet by default while still allowing per-test overrides.
-        SUPABASE_TELEMETRY_DISABLED: "1",
-        ...options?.env,
-      },
-      stdio:
-        usesStartWrapper || options?.stdin !== undefined
-          ? ["pipe", "pipe", "pipe"]
-          : ["ignore", "pipe", "pipe"],
-      // Own process group so tests can distinguish product cleanup from helper cleanup.
-      detached: true,
-    },
-  );
+  // Exercise the same shim + compiled shell binary handoff that published
+  // packages use. `SUPABASE_CLI_BINARY_OVERRIDE` points the shim at the local
+  // build artifact without needing platform wrapper packages.
+  let execCmd: string;
+  let execArgs: string[];
+  const env: Record<string, string> = {
+    ...process.env,
+    SUPABASE_HOME: homeDir,
+    SUPABASE_NO_KEYRING: "1",
+    SUPABASE_TELEMETRY_DISABLED: "1",
+    ...options?.env,
+  };
+  if (entrypoint === "legacy") {
+    assertBuildArtifactsExist("legacy", LEGACY_BINARY_PATH);
+    env["SUPABASE_CLI_BINARY_OVERRIDE"] = LEGACY_BINARY_PATH;
+  } else {
+    assertBuildArtifactsExist("next", NEXT_BINARY_PATH);
+    env["SUPABASE_CLI_BINARY_OVERRIDE"] = NEXT_BINARY_PATH;
+  }
+  execCmd = "node";
+  execArgs = [SHIM_PATH, ...args];
+  const proc = spawn(execCmd, execArgs, {
+    cwd: options?.cwd,
+    env,
+    stdio:
+      usesStartWrapper || options?.stdin !== undefined
+        ? ["pipe", "pipe", "pipe"]
+        : ["ignore", "pipe", "pipe"],
+    // Own process group so tests can distinguish product cleanup from helper cleanup.
+    detached: true,
+  });
   const stdoutStream = proc.stdout;
   const stderrStream = proc.stderr;
 
@@ -198,6 +230,26 @@ export function spawnSupabase(
 
   let stdout = "";
   let stderr = "";
+  let closeResult: RunResult | undefined;
+  let cleanedUpProcessGroup = false;
+  let disposedOwnHome = false;
+  const closeWaiters = new Set<(result: RunResult) => void>();
+
+  const cleanupProcessGroupOnClose = () => {
+    if (cleanedUpProcessGroup || !(options?.cleanupProcessGroupOnClose ?? true)) {
+      return;
+    }
+    cleanedUpProcessGroup = true;
+    killProcessGroup(proc.pid!, "SIGKILL");
+  };
+
+  const disposeOwnHome = () => {
+    if (disposedOwnHome) {
+      return;
+    }
+    disposedOwnHome = true;
+    ownHome?.[Symbol.dispose]();
+  };
 
   stdoutStream.on("data", (data: Buffer) => {
     stdout += data.toString();
@@ -205,6 +257,14 @@ export function spawnSupabase(
 
   stderrStream.on("data", (data: Buffer) => {
     stderr += data.toString();
+  });
+
+  proc.once("close", (code) => {
+    closeResult = { stdout, stderr, exitCode: code ?? 1 };
+    for (const waiter of closeWaiters) {
+      waiter(closeResult);
+    }
+    closeWaiters.clear();
   });
 
   if (options?.stdin !== undefined && proc.stdin) {
@@ -215,6 +275,12 @@ export function spawnSupabase(
   const waitForExit = async (
     timeoutMs = options?.exitTimeoutMs ?? DEFAULT_EXIT_TIMEOUT_MS,
   ): Promise<RunResult> => {
+    if (closeResult) {
+      cleanupProcessGroupOnClose();
+      disposeOwnHome();
+      return closeResult;
+    }
+
     const result = await new Promise<RunResult>((resolve) => {
       const timeout = setTimeout(() => {
         killProcessGroup(proc.pid!, "SIGKILL");
@@ -224,17 +290,17 @@ export function spawnSupabase(
       }, timeoutMs);
       timeout.unref();
 
-      proc.on("close", (code) => {
+      const onClose = (result: RunResult) => {
         clearTimeout(timeout);
-        if (options?.cleanupProcessGroupOnClose ?? true) {
-          killProcessGroup(proc.pid!, "SIGKILL");
-        }
+        closeWaiters.delete(onClose);
+        cleanupProcessGroupOnClose();
+        resolve(result);
+      };
 
-        resolve({ stdout, stderr, exitCode: code ?? 1 });
-      });
+      closeWaiters.add(onClose);
     });
 
-    ownHome?.[Symbol.dispose]();
+    disposeOwnHome();
     return result;
   };
 
@@ -253,11 +319,32 @@ export function spawnSupabase(
       if (pattern.test(stdout)) {
         return;
       }
+      if (closeResult) {
+        throw new Error(
+          [
+            `Process exited before output matched ${pattern}`,
+            `Command: supabase ${args.join(" ")}`,
+            `PID: ${proc.pid ?? "<unknown>"}`,
+            outputTail("stdout tail", stdout),
+            outputTail("stderr tail", stderr),
+          ].join("\n\n"),
+        );
+      }
 
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
           cleanup();
-          reject(new Error(`Timed out waiting for output matching ${pattern}`));
+          reject(
+            new Error(
+              [
+                `Timed out waiting for output matching ${pattern}`,
+                `Command: supabase ${args.join(" ")}`,
+                `PID: ${proc.pid ?? "<unknown>"}`,
+                outputTail("stdout tail", stdout),
+                outputTail("stderr tail", stderr),
+              ].join("\n\n"),
+            ),
+          );
         }, timeoutMs);
 
         const onStdout = (_data: Buffer) => {
@@ -269,7 +356,17 @@ export function spawnSupabase(
 
         const onClose = () => {
           cleanup();
-          reject(new Error(`Process exited before output matched ${pattern}`));
+          reject(
+            new Error(
+              [
+                `Process exited before output matched ${pattern}`,
+                `Command: supabase ${args.join(" ")}`,
+                `PID: ${proc.pid ?? "<unknown>"}`,
+                outputTail("stdout tail", stdout),
+                outputTail("stderr tail", stderr),
+              ].join("\n\n"),
+            ),
+          );
         };
 
         const cleanup = () => {

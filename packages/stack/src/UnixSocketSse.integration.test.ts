@@ -67,6 +67,8 @@ function makeStackLayer(opts: {
       name === "postgres" ? Effect.void : Effect.fail(new ServiceNotFoundError({ name })),
     restartService: (name: string) =>
       name === "postgres" ? Effect.void : Effect.fail(new ServiceNotFoundError({ name })),
+    reloadFunctions: () => Effect.void,
+    reloadEdgeRuntime: () => Effect.void,
     getState: (name: string) =>
       name === "postgres"
         ? Effect.succeed(POSTGRES_STATE)
@@ -119,7 +121,7 @@ describe("Unix socket SSE integration", () => {
       );
 
       try {
-        await runtime.runPromise(DaemonServer.asEffect());
+        await runtime.runPromise(DaemonServer);
 
         const res = await fetch("http://localhost/logs", { unix: socketPath } as RequestInit);
 
@@ -159,10 +161,10 @@ describe("Unix socket SSE integration", () => {
       );
 
       try {
-        await serverRuntime.runPromise(DaemonServer.asEffect());
+        await serverRuntime.runPromise(DaemonServer);
 
         const entries = await clientRuntime.runPromise(
-          Effect.flatMap(Stack.asEffect(), (stack) =>
+          Effect.flatMap(Stack, (stack) =>
             stack.subscribeAllLogs().pipe(Stream.take(1), Stream.runCollect),
           ),
         );

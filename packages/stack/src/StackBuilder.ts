@@ -1,8 +1,9 @@
 import { buildGraph } from "@supabase/process-compose";
 import type { ResolvedGraph, ServiceDef } from "@supabase/process-compose";
-import { Effect, Layer, ServiceMap } from "effect";
+import { Effect, Layer, Context } from "effect";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { StackBuildError } from "./errors.ts";
+import type { FunctionsConfig, ResolvedFunctionsConfig } from "./functions.ts";
 import { generateJwks } from "./JwtGenerator.ts";
 import {
   detectPlatform,
@@ -11,7 +12,7 @@ import {
   dockerPortMapArgs,
 } from "./Platform.ts";
 import type { ServiceResolution } from "./resolve.ts";
-import { makeAnalyticsServiceDocker } from "./services/analytics.ts";
+import { analyticsDockerRuntimeNetwork, makeAnalyticsServiceDocker } from "./services/analytics.ts";
 import { makeAuthServiceDocker, makeAuthServiceNative } from "./services/auth.ts";
 import {
   makeEdgeRuntimeServiceDocker,
@@ -38,6 +39,14 @@ export interface PostgresConfig {
   readonly port?: number;
   readonly dataDir?: string;
   readonly version?: string;
+  /**
+   * When true (default), the bundled initial schema GRANTs that expose new tables, views,
+   * sequences, and functions in `public` to the Data API roles (`anon`, `authenticated`,
+   * `service_role`) are kept in place. When false, those default privileges are revoked so the
+   * local stack matches the new cloud default and requires explicit GRANTs to surface entities
+   * through the Data API.
+   */
+  readonly autoExposeNewTables?: boolean;
 }
 
 export interface PostgrestConfig {
@@ -133,11 +142,13 @@ export interface StackConfig {
   readonly cacheRoot?: string;
   readonly stackRoot?: string;
   readonly runtimeRoot?: string;
+  readonly projectDir?: string;
   readonly mode?: "native" | "auto" | "docker";
   readonly jwtSecret?: string;
   readonly port?: number;
   readonly publishableKey?: string;
   readonly secretKey?: string;
+  readonly functions?: FunctionsConfig | false;
   readonly postgres?: PostgresConfig;
   readonly postgrest?: PostgrestConfig | false;
   readonly auth?: AuthConfig | false;
@@ -157,6 +168,7 @@ export interface ResolvedPostgresConfig {
   readonly port: number;
   readonly dataDir: string;
   readonly version: string;
+  readonly autoExposeNewTables: boolean;
 }
 
 export interface ResolvedPostgrestConfig {
@@ -254,6 +266,7 @@ export interface ResolvedStackConfig {
   readonly cacheRoot: string;
   readonly stackRoot: string;
   readonly runtimeRoot: string;
+  readonly projectDir: string;
   readonly mode: "native" | "auto" | "docker";
   readonly jwtSecret: string;
   readonly ports: AllocatedPorts;
@@ -261,6 +274,7 @@ export interface ResolvedStackConfig {
   readonly dbPort: number;
   readonly publishableKey: string;
   readonly secretKey: string;
+  readonly functions: ResolvedFunctionsConfig | false;
   readonly autoManagedPaths: ReadonlyArray<string>;
   readonly anonJwt: string;
   readonly serviceRoleJwt: string;
@@ -475,7 +489,12 @@ const requirePreparedDockerImage = (
     ),
   );
 
-export class StackBuilder extends ServiceMap.Service<
+export const nativePostgresNeedsDockerAccess = (
+  postgresResolution: ServiceResolution,
+  dockerServicesEnabled: boolean,
+): boolean => postgresResolution.type === "binary" && dockerServicesEnabled;
+
+export class StackBuilder extends Context.Service<
   StackBuilder,
   {
     readonly build: (
@@ -491,6 +510,7 @@ export class StackBuilder extends ServiceMap.Service<
 
         const platform = yield* detectPlatform;
         const serviceHost = dockerHostAddress(platform.os);
+        const projectDir = config.projectDir;
 
         const postgresResolution = yield* requirePreparedResolution(prepared, "postgres");
 
@@ -521,8 +541,10 @@ export class StackBuilder extends ServiceMap.Service<
           (authResolution !== false && authResolution.type === "docker") ||
           (postgrestResolution !== false && postgrestResolution.type === "docker");
 
-        const needsDockerAccess =
-          postgresResolution.type === "binary" && platform.os !== "linux" && dockerServicesEnabled;
+        const needsDockerAccess = nativePostgresNeedsDockerAccess(
+          postgresResolution,
+          dockerServicesEnabled,
+        );
         const hasPostgresInit = postgresResolution.type === "binary";
         const postgresDeps = dependsOnPostgres(hasPostgresInit);
         const jwtJwks = generateJwks(config.jwtSecret);
@@ -556,6 +578,7 @@ export class StackBuilder extends ServiceMap.Service<
             ...makePostgresInitService({
               postgresDir: postgresResolution.path,
               dbPort: config.dbPort,
+              autoExposeNewTables: config.postgres.autoExposeNewTables,
             }),
             enabled: true,
           });
@@ -652,6 +675,7 @@ export class StackBuilder extends ServiceMap.Service<
                   image: edgeRuntimeResolution.image,
                   apiPort: config.apiPort,
                   runtimeRoot: config.runtimeRoot,
+                  projectDir,
                   port: config.edgeRuntime.port,
                   inspectorPort: config.edgeRuntime.inspectorPort,
                   policy: config.edgeRuntime.policy,
@@ -765,11 +789,18 @@ export class StackBuilder extends ServiceMap.Service<
 
         if (config.analytics !== false) {
           const analyticsImage = yield* requirePreparedDockerImage(prepared, "analytics");
+          const analyticsRuntimeNetwork = analyticsDockerRuntimeNetwork(
+            platform.os,
+            config.analytics.port,
+            serviceHost,
+          );
           defs.push({
             ...makeAnalyticsServiceDocker({
               image: analyticsImage,
               apiPort: config.apiPort,
               hostPort: config.analytics.port,
+              listenPort: analyticsRuntimeNetwork.listenPort,
+              nodeHost: analyticsRuntimeNetwork.nodeHost,
               dbHost: serviceHost,
               dbPort: config.dbPort,
               apiKey: config.analytics.apiKey,

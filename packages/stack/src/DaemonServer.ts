@@ -1,4 +1,4 @@
-import { Deferred, Effect, Layer, ServiceMap, Stream } from "effect";
+import { Deferred, Effect, Layer, Context, Stream } from "effect";
 import {
   Headers,
   HttpRouter,
@@ -7,13 +7,13 @@ import {
   HttpServerResponse,
 } from "effect/unstable/http";
 import * as Sse from "effect/unstable/encoding/Sse";
-import { Stack } from "./Stack.ts";
+import { EdgeRuntimeReloadConfigSchema, Stack } from "./Stack.ts";
 
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
 
-export class DaemonServer extends ServiceMap.Service<
+export class DaemonServer extends Context.Service<
   DaemonServer,
   {
     readonly address: HttpServer.Address;
@@ -102,7 +102,7 @@ export class DaemonServer extends ServiceMap.Service<
           "GET",
           "/logs",
           Effect.gen(function* () {
-            const searchParams = yield* HttpServerRequest.ParsedSearchParams.asEffect();
+            const searchParams = yield* HttpServerRequest.ParsedSearchParams;
             const services = parseServices(searchParams.service);
             return sseResponse(stack.subscribeAllLogs(services), "log", (e) => JSON.stringify(e));
           }),
@@ -113,7 +113,7 @@ export class DaemonServer extends ServiceMap.Service<
           "GET",
           "/logs/history",
           Effect.gen(function* () {
-            const searchParams = yield* HttpServerRequest.ParsedSearchParams.asEffect();
+            const searchParams = yield* HttpServerRequest.ParsedSearchParams;
             const limit = parseLimit(searchParams.limit);
             const services = parseServices(searchParams.service);
             const entries = yield* stack.logHistoryAll(limit, services);
@@ -127,7 +127,7 @@ export class DaemonServer extends ServiceMap.Service<
           "/logs/:service/history",
           Effect.gen(function* () {
             const routeParams = yield* HttpRouter.params;
-            const searchParams = yield* HttpServerRequest.ParsedSearchParams.asEffect();
+            const searchParams = yield* HttpServerRequest.ParsedSearchParams;
             const service = parseSingleParam(routeParams.service)!;
             const limit = parseLimit(searchParams.limit);
             const entries = yield* stack.logHistory(service, limit);
@@ -206,6 +206,56 @@ export class DaemonServer extends ServiceMap.Service<
             ),
           ),
         ),
+
+        HttpRouter.route(
+          "POST",
+          "/functions/reload",
+          Effect.gen(function* () {
+            const searchParams = yield* HttpServerRequest.ParsedSearchParams;
+            yield* stack.reloadFunctions({
+              envFile: parseSingleParam(searchParams.envFile),
+              noVerifyJwt: parseBoolean(searchParams.noVerifyJwt),
+            });
+            return HttpServerResponse.jsonUnsafe({ ok: true });
+          }).pipe(
+            Effect.catchTag("ServiceNotFoundError", (e) =>
+              Effect.succeed(
+                HttpServerResponse.jsonUnsafe(
+                  { error: `Service not found: ${e.name}` },
+                  { status: 404 },
+                ),
+              ),
+            ),
+            Effect.catchTag("ServiceReadyError", (e) =>
+              Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.reason }, { status: 500 })),
+            ),
+          ),
+        ),
+
+        HttpRouter.route(
+          "POST",
+          "/edge-runtime/reload",
+          Effect.gen(function* () {
+            const body = yield* HttpServerRequest.schemaBodyJson(EdgeRuntimeReloadConfigSchema);
+            yield* stack.reloadEdgeRuntime(body);
+            return HttpServerResponse.jsonUnsafe({ ok: true });
+          }).pipe(
+            Effect.catchTag("ServiceNotFoundError", (e) =>
+              Effect.succeed(
+                HttpServerResponse.jsonUnsafe(
+                  { error: `Service not found: ${e.name}` },
+                  { status: 404 },
+                ),
+              ),
+            ),
+            Effect.catchTag("ServiceReadyError", (e) =>
+              Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.reason }, { status: 500 })),
+            ),
+            Effect.catchTag("StackBuildError", (e) =>
+              Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.message }, { status: 500 })),
+            ),
+          ),
+        ),
       ];
 
       const httpEffect = yield* HttpRouter.toHttpEffect(HttpRouter.addAll(routes));
@@ -236,4 +286,10 @@ function parseServices(
 function parseSingleParam(value: string | ReadonlyArray<string> | undefined): string | undefined {
   if (value === undefined) return undefined;
   return typeof value === "string" ? value : value[0];
+}
+
+function parseBoolean(value: string | ReadonlyArray<string> | undefined): boolean | undefined {
+  const raw = parseSingleParam(value);
+  if (raw === undefined) return undefined;
+  return raw === "true";
 }

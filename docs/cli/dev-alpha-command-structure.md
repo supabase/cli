@@ -142,7 +142,7 @@ The public command surface for alpha is:
 - Functions
   - `supabase functions new`
   - `supabase functions list`
-  - `supabase functions serve`
+  - `supabase functions dev`
   - `supabase functions push`
   - `supabase functions pull`
 - Environment (future, when environment management will be implemented in the API)
@@ -190,7 +190,7 @@ For alpha, `dev` will be an orchestrator over the command tree above. It will no
 - `local start` to bring up local services
 - `schema apply` to apply local database changes
 - `migrations apply` for direct migration-file workflows
-- `functions serve` to run Functions locally
+- `functions dev` to run a Functions-only local development loop
 - local env and config resolution to keep the local runtime aligned with project inputs
 
 In alpha, `dev` should watch both declarative schema inputs and direct migration files under `supabase/migrations`. Declarative schema remains the primary workflow, but users who need more control should still be able to work at the migrations layer without fighting `dev`.

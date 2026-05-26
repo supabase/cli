@@ -9,6 +9,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { cleanupAutoManagedPaths, dockerForceRemove } from "./cleanup.ts";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { toStackError } from "./errors.ts";
+import type { FunctionsConfig } from "./functions.ts";
 import {
   defaultJwtSecret,
   defaultPublishableKey,
@@ -33,6 +34,7 @@ import { allocatePorts, DEFAULT_PORTS, PORT_FIELDS, type AllocatedPorts } from "
 import { StackMetadataSchema } from "./StackMetadata.ts";
 import { InvalidStackStateError, StackAlreadyRunningError } from "./StateManager.ts";
 import { Stack } from "./Stack.ts";
+import type { EdgeRuntimeReloadConfig } from "./Stack.ts";
 import type { StackServiceState } from "./StackServiceState.ts";
 import { UnixHttpClient } from "./UnixHttpClient.ts";
 import type {
@@ -96,6 +98,8 @@ export interface StackHandle extends AsyncDisposable {
   startService(name: string): Promise<void>;
   stopService(name: string): Promise<void>;
   restartService(name: string): Promise<void>;
+  reloadFunctions(opts?: FunctionsConfig): Promise<void>;
+  reloadEdgeRuntime(opts: EdgeRuntimeReloadConfig): Promise<void>;
   ready(opts?: ReadyOptions): Promise<void>;
   serviceReady(name: string, opts?: ReadyOptions): Promise<void>;
   getStatus(): Promise<ReadonlyArray<StackServiceState>>;
@@ -333,6 +337,14 @@ function resolveEdgeRuntimeConfig(
   };
 }
 
+function resolveFunctionsConfig(config: StackConfig) {
+  if (config.functions === false) return false;
+  return {
+    envFile: config.functions?.envFile,
+    noVerifyJwt: config.functions?.noVerifyJwt ?? false,
+  };
+}
+
 function resolveStorageConfig(
   input: StorageConfig | undefined,
   raw: StorageConfig | false | undefined,
@@ -460,6 +472,7 @@ export async function resolveConfig(
   opts: ResolveConfigOptions = {},
 ): Promise<ResolvedStackConfig> {
   const config = input ?? {};
+  const projectDir = config.projectDir ?? process.cwd();
   const resolvedMode = config.mode ?? "auto";
   const roots = resolveRoots(config, opts);
   const postgresInput = config.postgres ?? {};
@@ -530,6 +543,7 @@ export async function resolveConfig(
     cacheRoot: roots.cacheRoot,
     stackRoot: roots.stackRoot,
     runtimeRoot: roots.runtimeRoot,
+    projectDir,
     mode: resolvedMode,
     jwtSecret,
     ports,
@@ -537,6 +551,7 @@ export async function resolveConfig(
     dbPort: ports.dbPort,
     publishableKey: config.publishableKey ?? defaultPublishableKey,
     secretKey: config.secretKey ?? defaultSecretKey,
+    functions: resolveFunctionsConfig(config),
     autoManagedPaths: roots.autoManagedPaths,
     anonJwt,
     serviceRoleJwt,
@@ -544,6 +559,7 @@ export async function resolveConfig(
       port: ports.dbPort,
       dataDir: postgresDataDir,
       version: postgresInput.version ?? DEFAULT_VERSIONS.postgres,
+      autoExposeNewTables: postgresInput.autoExposeNewTables ?? true,
     },
     postgrest: resolvePostgrestConfig(postgrestInput, config.postgrest, ports),
     auth: resolveAuthConfig(authInput, config.auth, ports, ports.apiPort),
@@ -614,6 +630,7 @@ export async function resolveDaemonConfig(
       cacheRoot,
       stackRoot,
       runtimeRoot,
+      projectDir: effectiveProjectDir,
     },
     {
       stackRoot,
@@ -683,7 +700,7 @@ export async function createStack(
   const runtime = ManagedRuntime.make(fullLayer);
 
   try {
-    const services = await runtime.services();
+    const services = await runtime.context();
     const localStack = await runtime.runPromise(
       Effect.gen(function* () {
         return yield* Stack;
@@ -711,6 +728,8 @@ export async function createStack(
       startService: (name) => run(localStack.startService(name)),
       stopService: (name) => run(localStack.stopService(name)),
       restartService: (name) => run(localStack.restartService(name)),
+      reloadFunctions: (opts) => run(localStack.reloadFunctions(opts)),
+      reloadEdgeRuntime: (opts) => run(localStack.reloadEdgeRuntime(opts)),
       ready: (opts) => {
         const effect =
           opts?.timeout != null

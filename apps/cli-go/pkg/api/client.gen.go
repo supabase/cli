@@ -412,7 +412,7 @@ type ClientInterface interface {
 	V1UpdateStorageConfig(ctx context.Context, ref string, body V1UpdateStorageConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1DeleteHostnameConfig request
-	V1DeleteHostnameConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	V1DeleteHostnameConfig(ctx context.Context, ref string, params *V1DeleteHostnameConfigParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1GetHostnameConfig request
 	V1GetHostnameConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -448,6 +448,14 @@ type ClientInterface interface {
 	V1CreateRestorePointWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	V1CreateRestorePoint(ctx context.Context, ref string, body V1CreateRestorePointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1GetBackupSchedule request
+	V1GetBackupSchedule(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1UpdateBackupScheduleWithBody request with any body
+	V1UpdateBackupScheduleWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1UpdateBackupSchedule(ctx context.Context, ref string, body V1UpdateBackupScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// V1UndoWithBody request with any body
 	V1UndoWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2073,8 +2081,8 @@ func (c *Client) V1UpdateStorageConfig(ctx context.Context, ref string, body V1U
 	return c.Client.Do(req)
 }
 
-func (c *Client) V1DeleteHostnameConfig(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewV1DeleteHostnameConfigRequest(c.Server, ref)
+func (c *Client) V1DeleteHostnameConfig(ctx context.Context, ref string, params *V1DeleteHostnameConfigParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1DeleteHostnameConfigRequest(c.Server, ref, params)
 	if err != nil {
 		return nil, err
 	}
@@ -2231,6 +2239,42 @@ func (c *Client) V1CreateRestorePointWithBody(ctx context.Context, ref string, c
 
 func (c *Client) V1CreateRestorePoint(ctx context.Context, ref string, body V1CreateRestorePointJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1CreateRestorePointRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetBackupSchedule(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetBackupScheduleRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateBackupScheduleWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateBackupScheduleRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1UpdateBackupSchedule(ctx context.Context, ref string, body V1UpdateBackupScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1UpdateBackupScheduleRequest(c.Server, ref, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7526,7 +7570,7 @@ func NewV1UpdateStorageConfigRequestWithBody(server string, ref string, contentT
 }
 
 // NewV1DeleteHostnameConfigRequest generates requests for V1DeleteHostnameConfig
-func NewV1DeleteHostnameConfigRequest(server string, ref string) (*http.Request, error) {
+func NewV1DeleteHostnameConfigRequest(server string, ref string, params *V1DeleteHostnameConfigParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -7549,6 +7593,28 @@ func NewV1DeleteHostnameConfigRequest(server string, ref string) (*http.Request,
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.RemoveAddon != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "remove_addon", runtime.ParamLocationQuery, *params.RemoveAddon); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
@@ -7930,6 +7996,87 @@ func NewV1CreateRestorePointRequestWithBody(server string, ref string, contentTy
 	}
 
 	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1GetBackupScheduleRequest generates requests for V1GetBackupSchedule
+func NewV1GetBackupScheduleRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/backups/schedule", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1UpdateBackupScheduleRequest calls the generic V1UpdateBackupSchedule builder with application/json body
+func NewV1UpdateBackupScheduleRequest(server string, ref string, body V1UpdateBackupScheduleJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1UpdateBackupScheduleRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1UpdateBackupScheduleRequestWithBody generates requests for V1UpdateBackupSchedule with any type of body
+func NewV1UpdateBackupScheduleRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/backups/schedule", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -11336,7 +11483,7 @@ type ClientWithResponsesInterface interface {
 	V1UpdateStorageConfigWithResponse(ctx context.Context, ref string, body V1UpdateStorageConfigJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateStorageConfigResponse, error)
 
 	// V1DeleteHostnameConfigWithResponse request
-	V1DeleteHostnameConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteHostnameConfigResponse, error)
+	V1DeleteHostnameConfigWithResponse(ctx context.Context, ref string, params *V1DeleteHostnameConfigParams, reqEditors ...RequestEditorFn) (*V1DeleteHostnameConfigResponse, error)
 
 	// V1GetHostnameConfigWithResponse request
 	V1GetHostnameConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetHostnameConfigResponse, error)
@@ -11372,6 +11519,14 @@ type ClientWithResponsesInterface interface {
 	V1CreateRestorePointWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1CreateRestorePointResponse, error)
 
 	V1CreateRestorePointWithResponse(ctx context.Context, ref string, body V1CreateRestorePointJSONRequestBody, reqEditors ...RequestEditorFn) (*V1CreateRestorePointResponse, error)
+
+	// V1GetBackupScheduleWithResponse request
+	V1GetBackupScheduleWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetBackupScheduleResponse, error)
+
+	// V1UpdateBackupScheduleWithBodyWithResponse request with any body
+	V1UpdateBackupScheduleWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateBackupScheduleResponse, error)
+
+	V1UpdateBackupScheduleWithResponse(ctx context.Context, ref string, body V1UpdateBackupScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateBackupScheduleResponse, error)
 
 	// V1UndoWithBodyWithResponse request with any body
 	V1UndoWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UndoResponse, error)
@@ -13775,6 +13930,50 @@ func (r V1CreateRestorePointResponse) StatusCode() int {
 	return 0
 }
 
+type V1GetBackupScheduleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *V1BackupScheduleResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetBackupScheduleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetBackupScheduleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1UpdateBackupScheduleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *V1BackupScheduleResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1UpdateBackupScheduleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1UpdateBackupScheduleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1UndoResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -16153,8 +16352,8 @@ func (c *ClientWithResponses) V1UpdateStorageConfigWithResponse(ctx context.Cont
 }
 
 // V1DeleteHostnameConfigWithResponse request returning *V1DeleteHostnameConfigResponse
-func (c *ClientWithResponses) V1DeleteHostnameConfigWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DeleteHostnameConfigResponse, error) {
-	rsp, err := c.V1DeleteHostnameConfig(ctx, ref, reqEditors...)
+func (c *ClientWithResponses) V1DeleteHostnameConfigWithResponse(ctx context.Context, ref string, params *V1DeleteHostnameConfigParams, reqEditors ...RequestEditorFn) (*V1DeleteHostnameConfigResponse, error) {
+	rsp, err := c.V1DeleteHostnameConfig(ctx, ref, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -16272,6 +16471,32 @@ func (c *ClientWithResponses) V1CreateRestorePointWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseV1CreateRestorePointResponse(rsp)
+}
+
+// V1GetBackupScheduleWithResponse request returning *V1GetBackupScheduleResponse
+func (c *ClientWithResponses) V1GetBackupScheduleWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1GetBackupScheduleResponse, error) {
+	rsp, err := c.V1GetBackupSchedule(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetBackupScheduleResponse(rsp)
+}
+
+// V1UpdateBackupScheduleWithBodyWithResponse request with arbitrary body returning *V1UpdateBackupScheduleResponse
+func (c *ClientWithResponses) V1UpdateBackupScheduleWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1UpdateBackupScheduleResponse, error) {
+	rsp, err := c.V1UpdateBackupScheduleWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateBackupScheduleResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1UpdateBackupScheduleWithResponse(ctx context.Context, ref string, body V1UpdateBackupScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateBackupScheduleResponse, error) {
+	rsp, err := c.V1UpdateBackupSchedule(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1UpdateBackupScheduleResponse(rsp)
 }
 
 // V1UndoWithBodyWithResponse request with arbitrary body returning *V1UndoResponse
@@ -19437,6 +19662,58 @@ func ParseV1CreateRestorePointResponse(rsp *http.Response) (*V1CreateRestorePoin
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetBackupScheduleResponse parses an HTTP response from a V1GetBackupScheduleWithResponse call
+func ParseV1GetBackupScheduleResponse(rsp *http.Response) (*V1GetBackupScheduleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetBackupScheduleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest V1BackupScheduleResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1UpdateBackupScheduleResponse parses an HTTP response from a V1UpdateBackupScheduleWithResponse call
+func ParseV1UpdateBackupScheduleResponse(rsp *http.Response) (*V1UpdateBackupScheduleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1UpdateBackupScheduleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest V1BackupScheduleResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	}
 

@@ -1,4 +1,4 @@
-import { Effect, Option, ServiceMap } from "effect";
+import { Effect, Option, Context } from "effect";
 import * as Cause from "effect/Cause";
 import * as Redacted from "effect/Redacted";
 import type { SchemaError } from "effect/Schema";
@@ -56,10 +56,9 @@ export interface SupabaseApiClientShape {
   ) => Effect.Effect<OperationOutput<Id>, SupabaseApiError>;
 }
 
-export class SupabaseApiClient extends ServiceMap.Service<
-  SupabaseApiClient,
-  SupabaseApiClientShape
->()("@supabase/api/SupabaseApiClient") {}
+export class SupabaseApiClient extends Context.Service<SupabaseApiClient, SupabaseApiClientShape>()(
+  "@supabase/api/SupabaseApiClient",
+) {}
 
 export class SupabaseApiConfigError extends Error {
   readonly _tag = "SupabaseApiConfigError";

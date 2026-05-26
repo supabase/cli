@@ -6,9 +6,9 @@
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
-        "apikey": "<JWT>",
-        "authorization": "Bearer <ACCESS_TOKEN>",
-        "host": "localhost:<PORT>",
+        "apikey": "__JWT__",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
         "user-agent": "SupabaseCLI/"
       },
       "body": null
@@ -23,8 +23,8 @@
         "last-modified": "Mon, 27 Apr 2026 10:30:57 GMT",
         "sb-gateway-mode": "direct",
         "sb-gateway-version": "1",
-        "sb-project-ref": "<PROJECT_REF>",
-        "sb-request-id": "<UUID>",
+        "sb-project-ref": "__PROJECT_REF__",
+        "sb-request-id": "__UUID__",
         "x-robots-tag": "none",
         "x-smart-cdn": "true"
       },

@@ -21,11 +21,13 @@ function scenarioSlug(task: { name: string; suite?: { name: string } | null }): 
   return prefix + slugify(task.name);
 }
 
+type ExecOptions = NonNullable<Parameters<typeof exec>[2]>;
+
 interface BehaviourFixtures {
   projectRef: string;
   orgId: string;
   workspace: TempDir;
-  run: (cmd: string[]) => Promise<CLIResult>;
+  run: (cmd: string[], execOpts?: ExecOptions) => Promise<CLIResult>;
   runNoProjectId: (cmd: string[]) => Promise<CLIResult>;
   apiUrl: string;
   storageBucket: string;
@@ -38,7 +40,8 @@ interface BehaviourFixtures {
  *  - `projectRef` — a real project ref (record mode) or the replay default
  *  - `orgId` — a real org slug (record mode) or the replay default
  *  - `workspace` — fresh temp dir, auto-disposed after the test
- *  - `run` — pre-configured `exec()` for the current TARGET
+ *  - `run` — pre-configured `exec()` for the current TARGET (optional second
+ *    argument forwarded as `exec` options, e.g. extra `env` entries)
  *  - `apiUrl` — the replay server base URL (for setting up error overrides)
  *
  *  Auto-wires a named scenario for the test before running it, so the replay
@@ -90,7 +93,7 @@ export const testBehaviour = test.extend<BehaviourFixtures>({
       cwd: workspace.path,
       projectId: inject("projectRef") as string,
     });
-    await use((cmd) => exec(harness, cmd));
+    await use((cmd, execOpts) => exec(harness, cmd, execOpts));
   },
 
   runNoProjectId: async ({ workspace }, use) => {
