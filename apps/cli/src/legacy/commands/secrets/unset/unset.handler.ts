@@ -70,8 +70,11 @@ export const legacySecretsUnset = Effect.fn("legacy.secrets.unset")(function* (
 
     let confirmed: boolean;
     if (yes) {
-      // Match Go's confirm-by-flag UX: echo the prompt label + `[Y/n] y` to stderr.
-      yield* output.raw(`${label}[Y/n] y\n`, "stderr");
+      // Match Go's confirm-by-flag UX byte-for-byte: `PromptYesNo` formats the
+      // line as `fmt.Sprintf("%s [%s] ", label, choices)` then `Fprintln` adds
+      // the `y` and trailing newline. The single space between `${label}` and
+      // `[Y/n]` is intentional — `console.go:69`.
+      yield* output.raw(`${label} [Y/n] y\n`, "stderr");
       confirmed = true;
     } else if (!tty.stdinIsTty) {
       // Go's `PromptYesNo` defaults to true after a 100ms non-TTY read timeout
