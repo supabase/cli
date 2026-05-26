@@ -1407,6 +1407,7 @@ func appendStorageVectorEnv(env []string, dbConfig pgconn.Config) []string {
 		dbConfig.Database,
 	)
 	return append(env,
+		envOrDefault("VECTOR_ENABLED", "true"),
 		envOrDefault("VECTOR_BUCKET_PROVIDER", "pgvector"),
 		envOrDefault("VECTOR_STORE_MIGRATIONS_ENABLED", "true"),
 		envOrDefault("VECTOR_DATABASE_URL", defaultVectorURL),
