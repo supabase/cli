@@ -101,7 +101,8 @@
     ],
     "ignore": [
       "scripts/*.ts",
-      "tests/**/*.ts"
+      "tests/**/*.ts",
+      "src/shared/telemetry/event-catalog.ts"
     ],
     "ignoreBinaries": [
       "nx"

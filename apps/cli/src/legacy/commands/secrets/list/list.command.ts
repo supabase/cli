@@ -2,8 +2,8 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { Command, Flag } from "effect/unstable/cli";
 
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { withCommandInstrumentation } from "../../../../shared/telemetry/command-instrumentation.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacySecretsList } from "./list.handler.ts";
 
 const config = {
@@ -29,7 +29,10 @@ export const legacySecretsListCommand = Command.make("list", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacySecretsList(flags).pipe(withCommandInstrumentation(), withJsonErrorHandling),
+    legacySecretsList(flags).pipe(
+      withLegacyCommandInstrumentation({ flags }),
+      withJsonErrorHandling,
+    ),
   ),
   Command.provide(legacyManagementApiRuntimeLayer(["secrets", "list"])),
 );
