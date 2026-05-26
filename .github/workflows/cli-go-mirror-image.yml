@@ -15,8 +15,6 @@ on:
         description: "org/image:tag"
         required: true
         type: string
-    paths:
-      - apps/cli-go/**
 
 permissions:
   contents: read
@@ -50,6 +48,3 @@ jobs:
           dst: |
             public.ecr.aws/supabase/${{ steps.strip.outputs.image }}
             ghcr.io/supabase/${{ steps.strip.outputs.image }}
-defaults:
-  run:
-    working-directory: apps/cli-go
