@@ -1,0 +1,58 @@
+name: Apply release notes
+
+# When a PR that touches release-notes/v<VERSION>.md is merged to main, push
+# the contents of each touched file to the corresponding GitHub Release body.
+# The proposer (propose-release-notes.yml) creates these PRs; reviewers approve
+# by merging.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+    paths:
+      - "release-notes/**"
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: useblacksmith/checkout@41cdeedae8edb2e684ba22896a5fd2a3cb85db6b # v1
+        with:
+          ref: main
+          # Fetch only the merge commit; release-notes files are checked in by
+          # the PR and we don't need history here.
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      - name: Apply each touched release-notes file
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        # `gh pr view --json files` returns every file the PR touched. Filter
+        # to release-notes/v<VERSION>.md, derive the tag from the basename,
+        # and invoke the apply script per file. Tolerates PRs that bundle
+        # multiple version files, though in practice the proposer creates one
+        # file per PR.
+        run: |
+          set -euo pipefail
+          files=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" \
+            --json files --jq '.files[].path' | \
+            grep -E '^release-notes/v[0-9]+\.[0-9]+\.[0-9]+\.md$' || true)
+          if [ -z "$files" ]; then
+            echo "No release-notes/ files in PR #$PR_NUMBER; nothing to apply." >&2
+            exit 0
+          fi
+          while IFS= read -r file; do
+            base=$(basename "$file" .md)
+            tag="${base}"
+            echo "==> Applying $file to release $tag"
+            pnpm exec bun apps/cli/scripts/apply-release-notes.ts --tag "$tag"
+          done <<< "$files"
