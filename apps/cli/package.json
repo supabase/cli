@@ -63,7 +63,10 @@
     "posthog-node": "^5.34.3",
     "react": "^19.2.6",
     "react-devtools-core": "^7.0.1",
-    "vitest": "catalog:"
+    "semantic-release": "^24.2.9",
+    "smol-toml": "^1.6.1",
+    "vitest": "catalog:",
+    "yaml": "^2.9.0"
   },
   "optionalDependencies": {
     "@supabase/cli-darwin-arm64": "workspace:*",
@@ -85,7 +88,8 @@
       }
     ],
     "plugins": [
-      "@semantic-release/commit-analyzer"
+      "@semantic-release/commit-analyzer",
+      "@semantic-release/release-notes-generator"
     ]
   },
   "knip": {
@@ -113,7 +117,8 @@
       "@typescript/native-preview",
       "oxfmt",
       "oxlint",
-      "oxlint-tsgolint"
+      "oxlint-tsgolint",
+      "semantic-release"
     ]
   },
   "nx": {

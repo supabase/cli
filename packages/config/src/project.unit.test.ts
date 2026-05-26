@@ -251,7 +251,7 @@ jwt_secret = "env(PREVIEW_JWT_SECRET)"
     }
   });
 
-  test("resolveProjectValue fails when an explicit env() reference is missing", async () => {
+  test("resolveProjectValue preserves env() literal when the env var is missing (Go parity)", async () => {
     const cwd = makeTempProject();
     const projectRoot = join(cwd, "repo");
 
@@ -269,21 +269,20 @@ jwt_secret = "env(MISSING_SECRET)"
       const loaded = await runConfigEffect(loadProjectConfig(projectRoot));
       const projectEnv = await runConfigEffect(loadProjectEnvironment({ cwd: projectRoot }));
 
-      await expect(
-        runConfigEffect(
-          resolveProjectValue(loaded!.config.auth.jwt_secret, projectEnv!, "auth.jwt_secret"),
-        ),
-      ).rejects.toMatchObject({
-        _tag: "MissingProjectEnvVarError",
-        configPath: "auth.jwt_secret",
-        envName: "MISSING_SECRET",
-      });
+      const resolved = await runConfigEffect(
+        resolveProjectValue(loaded!.config.auth.jwt_secret, projectEnv!, "auth.jwt_secret"),
+      );
+
+      // Secret paths are normally redacted, but unresolved env() literals pass
+      // through as plain strings so callers can see the missing reference.
+      expect(Redacted.isRedacted(resolved)).toBe(false);
+      expect(resolved).toBe("env(MISSING_SECRET)");
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
   });
 
-  test("resolveProjectSubtree fails when the selected subtree contains a missing env()", async () => {
+  test("resolveProjectSubtree preserves env() literals nested inside the selected subtree", async () => {
     const cwd = makeTempProject();
     const projectRoot = join(cwd, "repo");
 
@@ -302,15 +301,11 @@ auth_token = "env(MISSING_SECRET)"
       const loaded = await runConfigEffect(loadProjectConfig(projectRoot));
       const projectEnv = await runConfigEffect(loadProjectEnvironment({ cwd: projectRoot }));
 
-      await expect(
-        runConfigEffect(
-          resolveProjectSubtree(loaded!.config.auth.sms.twilio, projectEnv!, "auth.sms.twilio"),
-        ),
-      ).rejects.toMatchObject({
-        _tag: "MissingProjectEnvVarError",
-        configPath: "auth.sms.twilio.auth_token",
-        envName: "MISSING_SECRET",
-      });
+      const resolved = await runConfigEffect(
+        resolveProjectSubtree(loaded!.config.auth.sms.twilio, projectEnv!, "auth.sms.twilio"),
+      );
+
+      expect(resolved.auth_token).toBe("env(MISSING_SECRET)");
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

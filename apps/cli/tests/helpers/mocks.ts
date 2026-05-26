@@ -229,6 +229,7 @@ export function mockOutput(
   const messages: OutputMessage[] = [];
   const progressEvents: ProgressEvent[] = [];
   const events: OutputEvent[] = [];
+  const rawChunks: Array<{ text: string; stream: "stdout" | "stderr" }> = [];
   const promptSelectCalls: Array<{
     message: string;
     options: ReadonlyArray<{
@@ -378,11 +379,28 @@ export function mockOutput(
         }),
       promptMultiSelect: (_message, options) =>
         Effect.succeed(options.map((option) => option.value)),
+      raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
+        Effect.sync(() => {
+          rawChunks.push({ text, stream });
+        }),
     }),
     messages,
     progressEvents,
     events,
     promptSelectCalls,
+    rawChunks,
+    get stdoutText() {
+      return rawChunks
+        .filter((c) => c.stream === "stdout")
+        .map((c) => c.text)
+        .join("");
+    },
+    get stderrText() {
+      return rawChunks
+        .filter((c) => c.stream === "stderr")
+        .map((c) => c.text)
+        .join("");
+    },
   };
 }
 

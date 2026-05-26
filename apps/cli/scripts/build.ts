@@ -12,7 +12,7 @@ const MUSL_TARGETS = [
     nfpmArch: "arm64",
   },
   {
-    bunTarget: "bun-linux-x64-musl",
+    bunTarget: "bun-linux-x64-musl-baseline",
     pkg: "cli-linux-x64-musl",
     nfpmArch: "amd64",
   },
@@ -62,14 +62,14 @@ const TARGETS = [
     ext: "",
   },
   {
-    bunTarget: "bun-linux-x64",
+    bunTarget: "bun-linux-x64-baseline",
     pkg: "cli-linux-x64",
     archive: `supabase_${version}_linux_amd64.tar.gz`,
     nfpmArch: "amd64",
     ext: "",
   },
   {
-    bunTarget: "bun-windows-x64",
+    bunTarget: "bun-windows-x64-baseline",
     pkg: "cli-windows-x64",
     archive: `supabase_${version}_windows_amd64.zip`,
     ext: ".exe",
@@ -93,8 +93,8 @@ const GO_TARGETS: Record<BunTarget, { goos: string; goarch: string }> = {
   "bun-darwin-arm64": { goos: "darwin", goarch: "arm64" },
   "bun-darwin-x64": { goos: "darwin", goarch: "amd64" },
   "bun-linux-arm64": { goos: "linux", goarch: "arm64" },
-  "bun-linux-x64": { goos: "linux", goarch: "amd64" },
-  "bun-windows-x64": { goos: "windows", goarch: "amd64" },
+  "bun-linux-x64-baseline": { goos: "linux", goarch: "amd64" },
+  "bun-windows-x64-baseline": { goos: "windows", goarch: "amd64" },
   "bun-windows-arm64": { goos: "windows", goarch: "arm64" },
 };
 
@@ -102,7 +102,7 @@ function libcForBunTarget(target: string): "glibc" | "musl" | "" {
   if (!target.startsWith("bun-linux-")) {
     return "";
   }
-  return target.endsWith("-musl") ? "musl" : "glibc";
+  return target.includes("-musl") ? "musl" : "glibc";
 }
 
 async function buildTarget(target: (typeof TARGETS)[number]) {
@@ -125,7 +125,21 @@ async function buildGoTarget(target: (typeof TARGETS)[number]) {
   const outfile = path.join(binDir, `supabase-go${target.ext}`);
 
   console.log(`[${target.pkg}] Compiling Go CLI (${goos}/${goarch})...`);
-  await $`go build -trimpath -ldflags="-s -w" -o ${outfile} .`.cwd(goSource).env({
+  const ldflagParts = ["-s", "-w", `-X github.com/supabase/cli/internal/utils.Version=${version}`];
+  const { SENTRY_DSN, POSTHOG_API_KEY, POSTHOG_ENDPOINT } = process.env;
+  if (SENTRY_DSN) {
+    ldflagParts.push(`-X github.com/supabase/cli/internal/utils.SentryDsn=${SENTRY_DSN}`);
+  }
+  if (POSTHOG_API_KEY) {
+    ldflagParts.push(`-X github.com/supabase/cli/internal/utils.PostHogAPIKey=${POSTHOG_API_KEY}`);
+  }
+  if (POSTHOG_ENDPOINT) {
+    ldflagParts.push(
+      `-X github.com/supabase/cli/internal/utils.PostHogEndpoint=${POSTHOG_ENDPOINT}`,
+    );
+  }
+  const goLdflags = ldflagParts.join(" ");
+  await $`go build -trimpath -ldflags=${goLdflags} -o ${outfile} .`.cwd(goSource).env({
     ...process.env,
     GOOS: goos,
     GOARCH: goarch,
