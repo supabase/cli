@@ -53,6 +53,7 @@
     "@typescript/native-preview": "catalog:",
     "@vercel/detect-agent": "^1.2.3",
     "@vitest/coverage-istanbul": "catalog:",
+    "dotenv": "^17.4.2",
     "effect": "catalog:",
     "ink": "^7.0.3",
     "ink-spinner": "^5.0.0",
