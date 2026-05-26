@@ -45,6 +45,14 @@
 | `1`  | `LegacyBackupRestoreUnexpectedStatusError` — non-201 response from the restore endpoint    |
 | `1`  | `LegacyBackupRestoreNetworkError` — transport-level network failure                        |
 
+## Telemetry Events Fired
+
+| Event                  | When                                       | Notable properties / groups                                                          |
+| ---------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` / `--timestamp` → `<redacted>`) |
+
+Matches `apps/cli-go/internal/backups/restore/`. Go does not fire any custom telemetry event for this command.
+
 ## Output
 
 Go's `restore` command ignores `--output` entirely (`apps/cli-go/internal/backups/restore/restore.go:22`) and always writes the success line to **stderr**. The legacy port mirrors that for every Go `--output` value. The `--output-format` (TS-only) JSON modes get a structured payload — non-breaking because Go has no JSON for restore.

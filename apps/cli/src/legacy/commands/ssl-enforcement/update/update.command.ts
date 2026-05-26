@@ -2,8 +2,8 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { withCommandInstrumentation } from "../../../../shared/telemetry/command-instrumentation.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacySslEnforcementUpdate } from "./update.handler.ts";
 
 const config = {
@@ -29,7 +29,10 @@ export const legacySslEnforcementUpdateCommand = Command.make("update", config).
   Command.withDescription("Update SSL enforcement configuration."),
   Command.withShortDescription("Update SSL enforcement configuration"),
   Command.withHandler((flags) =>
-    legacySslEnforcementUpdate(flags).pipe(withCommandInstrumentation(), withJsonErrorHandling),
+    legacySslEnforcementUpdate(flags).pipe(
+      withLegacyCommandInstrumentation({ flags }),
+      withJsonErrorHandling,
+    ),
   ),
   Command.provide(legacyManagementApiRuntimeLayer(["ssl-enforcement", "update"])),
 );

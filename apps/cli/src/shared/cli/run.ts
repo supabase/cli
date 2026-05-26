@@ -21,7 +21,7 @@ import { runtimeInfoLayer } from "../runtime/runtime-info.layer.ts";
 import { ttyLayer } from "../runtime/tty.layer.ts";
 import { CommandRuntime } from "../runtime/command-runtime.service.ts";
 import { ProcessControl } from "../runtime/process-control.service.ts";
-import { analyticsLayer } from "../telemetry/analytics.layer.ts";
+import type { Analytics } from "../telemetry/analytics.service.ts";
 import { telemetryRuntimeLayer } from "../telemetry/runtime.layer.ts";
 import { tracingLayer } from "../telemetry/tracing.layer.ts";
 
@@ -65,7 +65,17 @@ function projectHomeLayerFor(runtimeLayer: Layer.Layer<never>) {
   );
 }
 
-function cliProgramFor(rootCommand: Command.Command.Any, args: ReadonlyArray<string>) {
+type AnyAnalyticsLayer = Layer.Layer<Analytics, never, any>;
+
+export interface RunCliOptions {
+  readonly analyticsLayer: AnyAnalyticsLayer;
+}
+
+function cliProgramFor(
+  rootCommand: Command.Command.Any,
+  args: ReadonlyArray<string>,
+  options: RunCliOptions,
+) {
   const runtimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
   const fallbackCommandLayer = Layer.mergeAll(
     // Root command env inference currently leaks some subcommand-provided services.
@@ -117,7 +127,7 @@ function cliProgramFor(rootCommand: Command.Command.Any, args: ReadonlyArray<str
 
   return command.pipe(
     Effect.provide(formatterLayerFor(args)),
-    Effect.provide(analyticsLayer),
+    Effect.provide(options.analyticsLayer),
     Effect.provide(tracingLayer),
     Effect.provide(telemetryRuntimeLayer),
     Effect.provide(cliConfigLayerFor(runtimeLayer)),
@@ -131,7 +141,7 @@ function cliProgramFor(rootCommand: Command.Command.Any, args: ReadonlyArray<str
   );
 }
 
-export async function runCli(rootCommand: Command.Command.Any) {
+export async function runCli(rootCommand: Command.Command.Any, options: RunCliOptions) {
   const args = await Effect.runPromise(
     Effect.gen(function* () {
       const stdio = yield* Stdio.Stdio;
@@ -140,7 +150,7 @@ export async function runCli(rootCommand: Command.Command.Any) {
   );
 
   const useGlobalSignalInterrupt = !args.includes("start");
-  const cliProgram = cliProgramFor(rootCommand, args);
+  const cliProgram = cliProgramFor(rootCommand, args, options);
 
   const signalAwareProgram = Effect.scoped(
     Effect.gen(function* () {

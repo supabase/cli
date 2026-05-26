@@ -204,6 +204,7 @@ These route-first equivalents are intentionally lower-level than the old Go comm
 ## Legacy Shell Wrapping Status
 
 Phase 0 proxy wrappers in the legacy shell (`src/legacy/`). Each wrapped command forwards to the bundled Go binary via `LegacyGoProxy`.
+The `migration` command group also accepts Go's top-level `migrations` alias and forwards singular `migration` argv to Go.
 
 Legend:
 
@@ -226,9 +227,9 @@ Legend:
 | `branches unpause`                     | `wrapped`     | [`../src/legacy/commands/branches/unpause/unpause.command.ts`](../src/legacy/commands/branches/unpause/unpause.command.ts)                                                                |
 | `branches delete`                      | `wrapped`     | [`../src/legacy/commands/branches/delete/delete.command.ts`](../src/legacy/commands/branches/delete/delete.command.ts)                                                                    |
 | `branches disable`                     | `wrapped`     | [`../src/legacy/commands/branches/disable/disable.command.ts`](../src/legacy/commands/branches/disable/disable.command.ts)                                                                |
-| `secrets list`                         | `wrapped`     | [`../src/legacy/commands/secrets/list/list.command.ts`](../src/legacy/commands/secrets/list/list.command.ts)                                                                              |
-| `secrets set`                          | `wrapped`     | [`../src/legacy/commands/secrets/set/set.command.ts`](../src/legacy/commands/secrets/set/set.command.ts)                                                                                  |
-| `secrets unset`                        | `wrapped`     | [`../src/legacy/commands/secrets/unset/unset.command.ts`](../src/legacy/commands/secrets/unset/unset.command.ts)                                                                          |
+| `secrets list`                         | `ported`      | [`../src/legacy/commands/secrets/list/list.command.ts`](../src/legacy/commands/secrets/list/list.command.ts)                                                                              |
+| `secrets set`                          | `ported`      | [`../src/legacy/commands/secrets/set/set.command.ts`](../src/legacy/commands/secrets/set/set.command.ts)                                                                                  |
+| `secrets unset`                        | `ported`      | [`../src/legacy/commands/secrets/unset/unset.command.ts`](../src/legacy/commands/secrets/unset/unset.command.ts)                                                                          |
 | `config push`                          | `wrapped`     | [`../src/legacy/commands/config/push/push.command.ts`](../src/legacy/commands/config/push/push.command.ts)                                                                                |
 | `backups list`                         | `ported`      | [`../src/legacy/commands/backups/list/list.command.ts`](../src/legacy/commands/backups/list/list.command.ts)                                                                              |
 | `backups restore`                      | `ported`      | [`../src/legacy/commands/backups/restore/restore.command.ts`](../src/legacy/commands/backups/restore/restore.command.ts)                                                                  |
