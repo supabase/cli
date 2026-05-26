@@ -269,6 +269,32 @@ When porting a Management-API-style command, verify each item before marking the
 
 6. **Both `--output` (Go) and `--output-format` (TS) must be honored** — Go's `--output` (`pretty|json|yaml|toml|env`) takes priority when set. Pattern in `backups/list/list.handler.ts:85-113`: branch on `goOutputFlag` first, then fall through to TS `--output-format` text/json/stream-json.
 
+7. **PostHog telemetry payload matches Go 1:1** — see the next section.
+
+---
+
+## Legacy Port: Telemetry Parity
+
+The legacy shell sends the same PostHog events to the same product analytics pipeline as the Go CLI. Drift is silent (no test will catch it) and breaks dashboards. The rules:
+
+- **The canonical catalog is `shared/telemetry/event-catalog.ts`** — a 1:1 mirror of `apps/cli-go/internal/telemetry/events.go`. Reference its exported constants (`EventCommandExecuted`, `PropFlags`, `EnvSignalPresenceKeys`, …) instead of writing bare strings. When the Go catalog changes, update the TS catalog in the same PR.
+- **Native legacy commands wrap with `withLegacyCommandInstrumentation`** (from `legacy/telemetry/legacy-command-instrumentation.ts`) — _not_ the shared `withCommandInstrumentation`. The legacy variant emits Go-shape properties: a single `flags` map (vs `flags_used`/`flag_values`), `is_agent: boolean` (vs `ai_tool: string`), and `env_signals`.
+- **Pass `flags` to the wrapper** so boolean flag values can be detected and logged verbatim: `handler(flags).pipe(withLegacyCommandInstrumentation({ flags }), ...)`. Sensitive values become the literal string `"<redacted>"` to match Go.
+- **Use `safeFlags: ["flag-name"]`** to whitelist flags that Go marks with `markFlagTelemetrySafe` (grep `apps/cli-go/cmd/*.go`). Today these are `--project-ref` (sso, branches, link, functions, projects/api-keys), `--project-id` (gen/types), `--org-id` (projects/create), and `--version` (migration/squash).
+- **Proxy handlers (`LegacyGoProxy.exec`) must NOT wrap with any instrumentation.** The Go subprocess fires its own telemetry; a TS wrapper would double-count `cli_command_executed`.
+- **When promoting a command from proxy to native, reproduce every `phtelemetry.*` call in the Go counterpart.** Grep `apps/cli-go/internal/<command>/` for `service.Capture`, `service.Alias`, `service.Identify`, `service.GroupIdentify`, and `TrackUpgradeSuggested`. The current Go custom events that legacy ports must reproduce when natively ported:
+
+  | Command                                                       | Event                   | Identity / groups                                                                                                  | Go source                                     |
+  | ------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- |
+  | `login`                                                       | `cli_login_completed`   | `analytics.alias(gotrueId, deviceId)` + `analytics.identify(gotrueId)` after token persists                        | `internal/login/login.go:283-296`             |
+  | `link`                                                        | `cli_project_linked`    | `analytics.groupIdentify("organization", slug, …)` + `analytics.groupIdentify("project", ref, …)` after link write | `internal/link/link.go:60`                    |
+  | `start`                                                       | `cli_stack_started`     | none — fired after stack health check passes                                                                       | `internal/start/start.go:1245`                |
+  | `sso/{list,create,update,remove}`, `branches/{create,update}` | `cli_upgrade_suggested` | none — payload is `{feature_key, org_slug}`, fired inside billing-gate error branch                                | 7 call-sites under `internal/{sso,branches}/` |
+
+  Reference pattern for login: `next/commands/login/login.handler.ts:38-62`.
+
+- **Tracing layer is local-only observability**, not PostHog. Span names (`legacy.<command>.<sub>`) and the NDJSON exporter never leave the user's machine. No parity implication.
+
 ---
 
 ## Legacy Port: File Location Compatibility
