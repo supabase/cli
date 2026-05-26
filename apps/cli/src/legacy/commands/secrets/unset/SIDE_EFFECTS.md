@@ -51,6 +51,14 @@
 | `1`  | `LegacySecretsUnsetUnexpectedStatusError` — non-2xx response from DELETE                   |
 | `1`  | `LegacySecretsUnsetNetworkError` — DELETE transport failure                                |
 
+## Telemetry Events Fired
+
+| Event                  | When                                       | Notable properties / groups                                          |
+| ---------------------- | ------------------------------------------ | -------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`) |
+
+Matches `apps/cli-go/internal/secrets/unset/`. Go does not fire any custom telemetry event for this command.
+
 ## Output
 
 ### `--output pretty` (Go default) / `--output-format text`

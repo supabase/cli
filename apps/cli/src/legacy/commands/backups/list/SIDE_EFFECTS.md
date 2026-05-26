@@ -45,6 +45,14 @@
 | `1`  | `LegacyBackupListUnexpectedStatusError` — non-2xx response from the backups endpoint       |
 | `1`  | `LegacyBackupListNetworkError` — transport-level network failure                           |
 
+## Telemetry Events Fired
+
+| Event                  | When                                       | Notable properties / groups                                          |
+| ---------------------- | ------------------------------------------ | -------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`) |
+
+Matches `apps/cli-go/internal/backups/list/`. Go does not fire any custom telemetry event for this command.
+
 ## Output
 
 The legacy `--output {pretty,json,yaml,toml,env}` flag (Go-compatible) and the new global `--output-format {text,json,stream-json}` flag are both honored. `--output` wins when both are supplied. `pretty` and `text` map to the same render path.
