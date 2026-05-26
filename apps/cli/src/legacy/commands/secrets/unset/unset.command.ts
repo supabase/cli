@@ -1,4 +1,9 @@
+import type * as CliCommand from "effect/unstable/cli/Command";
 import { Argument, Command, Flag } from "effect/unstable/cli";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { withCommandInstrumentation } from "../../../../shared/telemetry/command-instrumentation.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
 import { legacySecretsUnset } from "./unset.handler.ts";
 
 const config = {
@@ -10,7 +15,9 @@ const config = {
     Argument.withDescription("Secret names to unset."),
     Argument.variadic(),
   ),
-};
+} as const;
+
+export type LegacySecretsUnsetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const legacySecretsUnsetCommand = Command.make("unset", config).pipe(
   Command.withDescription("Unset a secret(s) from the linked Supabase project."),
@@ -26,9 +33,7 @@ export const legacySecretsUnsetCommand = Command.make("unset", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacySecretsUnset({
-      projectRef: flags.projectRef,
-      names: flags.names.map(String),
-    }),
+    legacySecretsUnset(flags).pipe(withCommandInstrumentation(), withJsonErrorHandling),
   ),
+  Command.provide(legacyManagementApiRuntimeLayer(["secrets", "unset"])),
 );
