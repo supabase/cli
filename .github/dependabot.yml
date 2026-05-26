@@ -33,7 +33,7 @@ updates:
         patterns:
           - "*"
   - package-ecosystem: "docker"
-    directory: "pkg/config/templates"
+    directory: "/apps/cli-go/pkg/config/templates"
     schedule:
       interval: "cron"
       cronjob: "0 0 * * *"
