@@ -204,6 +204,7 @@ These route-first equivalents are intentionally lower-level than the old Go comm
 ## Legacy Shell Wrapping Status
 
 Phase 0 proxy wrappers in the legacy shell (`src/legacy/`). Each wrapped command forwards to the bundled Go binary via `LegacyGoProxy`.
+The `migration` command group also accepts Go's top-level `migrations` alias and forwards singular `migration` argv to Go.
 
 Legend:
 
