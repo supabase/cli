@@ -72,6 +72,10 @@ const config = {
     Flag.withDescription("URL to notify when branch is active healthy."),
     Flag.optional,
   ),
+  gitBranch: Flag.string("git-branch").pipe(
+    Flag.withDescription("Associate a git branch with the new preview branch."),
+    Flag.optional,
+  ),
 } as const;
 
 export type LegacyBranchesCreateFlags = CliCommand.Command.Config.Infer<typeof config>;

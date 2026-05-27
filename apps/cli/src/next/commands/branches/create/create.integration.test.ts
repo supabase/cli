@@ -64,6 +64,7 @@ const BASE_FLAGS: CreateFlags = {
   persistent: false,
   withData: false,
   notifyUrl: Option.none(),
+  gitBranch: Option.none(),
   switchAfter: true,
 };
 
@@ -316,6 +317,7 @@ describe("branches create handler", () => {
         persistent: true,
         withData: true,
         notifyUrl: Option.some("https://example.com/hook"),
+        gitBranch: Option.some("feature/login-page"),
         switchAfter: false,
       };
 
@@ -326,6 +328,25 @@ describe("branches create handler", () => {
       expect(api.capturedInput?.persistent).toBe(true);
       expect(api.capturedInput?.with_data).toBe(true);
       expect(api.capturedInput?.notify_url).toBe("https://example.com/hook");
+      expect(api.capturedInput?.git_branch).toBe("feature/login-page");
+    }),
+  );
+
+  it.live("prefers --git-branch over the auto-detected git branch", () =>
+    Effect.gen(function* () {
+      const { layer, api } = setup({
+        env: { GITHUB_HEAD_REF: "feature/auto-detect" },
+        format: "json",
+      });
+      const flags: CreateFlags = {
+        ...BASE_FLAGS,
+        gitBranch: Option.some("feature/explicit"),
+      };
+
+      yield* create(flags).pipe(Effect.provide(layer));
+
+      expect(api.capturedInput?.branch_name).toBe("feature/auto-detect");
+      expect(api.capturedInput?.git_branch).toBe("feature/explicit");
     }),
   );
 

@@ -109,7 +109,8 @@ export const create = Effect.fn("branches.create")(function* (flags: CreateFlags
 
   const { project } = maybeLinkState.value;
 
-  const { branchName, gitBranch } = yield* resolveBranchName(flags.name);
+  const { branchName, gitBranch: detectedGitBranch } = yield* resolveBranchName(flags.name);
+  const gitBranch = Option.isSome(flags.gitBranch) ? flags.gitBranch : detectedGitBranch;
 
   const desiredInstanceSize = Option.getOrUndefined(flags.size);
 
