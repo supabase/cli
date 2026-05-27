@@ -233,6 +233,17 @@ func TestServiceNeedsIdentityStitch(t *testing.T) {
 		require.NoError(t, service.StitchLogin("user-123"))
 		assert.False(t, service.NeedsIdentityStitch())
 	})
+
+	t.Run("false in CI even with empty DistinctID", func(t *testing.T) {
+		ciFsys := afero.NewMemMapFs()
+		ciService, err := NewService(ciFsys, Options{
+			Analytics: &fakeAnalytics{enabled: true},
+			Now:       func() time.Time { return now },
+			IsCI:      true,
+		})
+		require.NoError(t, err)
+		assert.False(t, ciService.NeedsIdentityStitch())
+	})
 }
 
 func TestServiceCaptureHonorsConsentAndEnvOptOut(t *testing.T) {
