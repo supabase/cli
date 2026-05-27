@@ -2,39 +2,24 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { type V1ListAllBackupsOutput, makeApiClient } from "@supabase/api/effect";
+import { type V1ListAllBackupsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
-import { Effect, Exit, Layer, Option, Redacted } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { afterEach, beforeEach } from "vitest";
+import { Effect, Exit, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
-import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
-import { mockProcessControl } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import {
+  LEGACY_VALID_REF,
+  buildLegacyTestRuntime,
+  mockLegacyCliConfig,
+  mockLegacyPlatformApi,
+  useLegacyTempWorkdir,
+} from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacyBackupsList } from "./list.handler.ts";
-
-const mockLinkedProjectCacheLayer = Layer.succeed(LegacyLinkedProjectCache, {
-  cache: () => Effect.void,
-});
-
-const mockTelemetryStateLayer = Layer.succeed(LegacyTelemetryState, { flush: Effect.void });
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
-
-const VALID_REF = "abcdefghijklmnopqrst";
-const VALID_TOKEN = "sbp_" + "a".repeat(40);
 
 const PITR_RESPONSE: typeof V1ListAllBackupsOutput.Type = {
   region: "ap-southeast-1",
@@ -59,80 +44,9 @@ const LOGICAL_RESPONSE: typeof V1ListAllBackupsOutput.Type = {
   physical_backup_data: {},
 };
 
-function jsonResponse(request: HttpClientRequest.HttpClientRequest, status: number, body: unknown) {
-  return HttpClientResponse.fromWeb(
-    request,
-    new Response(JSON.stringify(body), {
-      status,
-      headers: { "content-type": "application/json" },
-    }),
-  );
-}
-
-function httpClientLayer(
-  handler: (
-    request: HttpClientRequest.HttpClientRequest,
-  ) => Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>,
-) {
-  return Layer.succeed(
-    HttpClient.HttpClient,
-    HttpClient.make((request) => handler(request)),
-  );
-}
-
-function mockPlatformApi(opts: {
-  response?: typeof V1ListAllBackupsOutput.Type;
-  status?: number;
-  network?: "fail";
-  apiUrl?: string;
-  userAgent?: string;
-}) {
-  const requests: Array<{
-    url: string;
-    method: string;
-    headers: Readonly<Record<string, string | undefined>>;
-  }> = [];
-
-  const status = opts.status ?? 200;
-  const handler = (
-    request: HttpClientRequest.HttpClientRequest,
-  ): Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError> => {
-    requests.push({ url: request.url, method: request.method, headers: request.headers });
-    if (opts.network === "fail") {
-      return Effect.fail(
-        new HttpClientError.HttpClientError({
-          reason: new HttpClientError.TransportError({
-            request,
-            description: "ECONNREFUSED",
-          }),
-        }),
-      );
-    }
-    return Effect.succeed(jsonResponse(request, status, opts.response ?? PITR_RESPONSE));
-  };
-
-  const layer = Layer.effect(
-    LegacyPlatformApi,
-    makeApiClient({
-      baseUrl: opts.apiUrl ?? "https://api.supabase.com",
-      accessToken: VALID_TOKEN,
-      userAgent: opts.userAgent ?? "SupabaseCLI/0.0.0-dev",
-    }),
-  ).pipe(Layer.provide(httpClientLayer(handler)));
-
-  return { layer, requests };
-}
-
-function mockCliConfig(opts: { workdir: string; apiUrl?: string; userAgent?: string }) {
-  return Layer.succeed(LegacyCliConfig, {
-    profile: "supabase",
-    apiUrl: opts.apiUrl ?? "https://api.supabase.com",
-    accessToken: Option.some(Redacted.make(VALID_TOKEN)),
-    projectId: Option.some(VALID_REF),
-    workdir: opts.workdir,
-    userAgent: opts.userAgent ?? "SupabaseCLI/0.0.0-dev",
-  });
-}
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -140,61 +54,33 @@ interface SetupOpts {
   response?: typeof V1ListAllBackupsOutput.Type;
   status?: number;
   network?: "fail";
-  stdinIsTty?: boolean;
   apiUrl?: string;
   userAgent?: string;
 }
 
-let tempRoot: string;
-let currentOut: ReturnType<typeof mockOutput>;
+const tempRoot = useLegacyTempWorkdir("supabase-backups-list-int-");
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  currentOut = out;
-  const api = mockPlatformApi({
-    response: opts.response,
-    status: opts.status,
+  const api = mockLegacyPlatformApi({
+    response: { status: opts.status ?? 200, body: opts.response ?? PITR_RESPONSE },
     network: opts.network,
     apiUrl: opts.apiUrl,
     userAgent: opts.userAgent,
   });
-  const cliConfig = mockCliConfig({
-    workdir: tempRoot,
+  const cliConfig = mockLegacyCliConfig({
+    workdir: tempRoot.current,
     apiUrl: opts.apiUrl,
     userAgent: opts.userAgent,
   });
-  const processCtl = mockProcessControl();
-  const goOutputValue = opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput);
-  const layer = Layer.mergeAll(
-    out.layer,
-    api.layer,
+  const layer = buildLegacyTestRuntime({
+    out,
+    api,
     cliConfig,
-    mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
-    processCtl.layer,
-    legacyProjectRefLayer.pipe(
-      Layer.provide(api.layer),
-      Layer.provide(cliConfig),
-      Layer.provide(mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false })),
-      Layer.provide(out.layer),
-      Layer.provide(BunServices.layer),
-    ),
-    BunServices.layer,
-    Layer.succeed(LegacyOutputFlag, goOutputValue),
-    mockLinkedProjectCacheLayer,
-    mockTelemetryStateLayer,
-  );
-  return { layer, out, api, processCtl, tempRoot };
+    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+  });
+  return { layer, out, api };
 }
-
-const stdoutText = () => currentOut.stdoutText;
-
-beforeEach(() => {
-  tempRoot = mkdtempSync(join(tmpdir(), "supabase-backups-list-int-"));
-});
-
-afterEach(() => {
-  rmSync(tempRoot, { recursive: true, force: true });
-});
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -202,37 +88,35 @@ afterEach(() => {
 
 describe("legacy backups list integration", () => {
   it.live("renders a PITR-only table when no physical backups exist", () => {
-    const { layer } = setup({ response: PITR_RESPONSE });
+    const { layer, out } = setup({ response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* legacyBackupsList({ projectRef: Option.none() });
-      const out = stdoutText();
-      expect(out).toContain("REGION");
-      expect(out).toContain("WALG");
-      expect(out).toContain("PITR");
-      expect(out).toContain("EARLIEST TIMESTAMP");
-      expect(out).toContain("LATEST TIMESTAMP");
-      expect(out).toContain("Southeast Asia (Singapore)");
-      expect(out).toContain("| true ");
+      expect(out.stdoutText).toContain("REGION");
+      expect(out.stdoutText).toContain("WALG");
+      expect(out.stdoutText).toContain("PITR");
+      expect(out.stdoutText).toContain("EARLIEST TIMESTAMP");
+      expect(out.stdoutText).toContain("LATEST TIMESTAMP");
+      expect(out.stdoutText).toContain("Southeast Asia (Singapore)");
+      expect(out.stdoutText).toContain("| true ");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("renders a logical backups table with PHYSICAL classification", () => {
-    const { layer } = setup({ response: LOGICAL_RESPONSE });
+    const { layer, out } = setup({ response: LOGICAL_RESPONSE });
     return Effect.gen(function* () {
       yield* legacyBackupsList({ projectRef: Option.none() });
-      const out = stdoutText();
-      expect(out).toContain("BACKUP TYPE");
-      expect(out).toContain("PHYSICAL");
-      expect(out).toContain("COMPLETED");
-      expect(out).toContain("2026-02-08 16:44:07");
+      expect(out.stdoutText).toContain("BACKUP TYPE");
+      expect(out.stdoutText).toContain("PHYSICAL");
+      expect(out.stdoutText).toContain("COMPLETED");
+      expect(out.stdoutText).toContain("2026-02-08 16:44:07");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("translates ap-southeast-1 to Southeast Asia (Singapore)", () => {
-    const { layer } = setup({ response: PITR_RESPONSE });
+    const { layer, out } = setup({ response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* legacyBackupsList({ projectRef: Option.none() });
-      expect(stdoutText()).toContain("Southeast Asia (Singapore)");
+      expect(out.stdoutText).toContain("Southeast Asia (Singapore)");
     }).pipe(Effect.provide(layer));
   });
 
@@ -257,13 +141,13 @@ describe("legacy backups list integration", () => {
   });
 
   it.live("emits indented JSON to stdout for --output json (Go-compat)", () => {
-    const { layer } = setup({ goOutput: "json", response: PITR_RESPONSE });
+    const { layer, out } = setup({ goOutput: "json", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* legacyBackupsList({ projectRef: Option.none() });
       // Byte-identical to Go's `encoding/json` output: alphabetical struct-field order,
       // and a nil Backups slice serializes as `null` (matches
       // `apps/cli-go/internal/backups/list/list_test.go` fixture).
-      expect(stdoutText()).toBe(
+      expect(out.stdoutText).toBe(
         `{
   "backups": null,
   "physical_backup_data": {},
@@ -277,55 +161,50 @@ describe("legacy backups list integration", () => {
   });
 
   it.live("emits YAML to stdout for --output yaml", () => {
-    const { layer } = setup({ goOutput: "yaml", response: PITR_RESPONSE });
+    const { layer, out } = setup({ goOutput: "yaml", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* legacyBackupsList({ projectRef: Option.none() });
-      const out = stdoutText();
-      expect(out).toContain("region: ap-southeast-1");
-      expect(out).toContain("walg_enabled: true");
+      expect(out.stdoutText).toContain("region: ap-southeast-1");
+      expect(out.stdoutText).toContain("walg_enabled: true");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("emits TOML to stdout for --output toml", () => {
-    const { layer } = setup({ goOutput: "toml", response: PITR_RESPONSE });
+    const { layer, out } = setup({ goOutput: "toml", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* legacyBackupsList({ projectRef: Option.none() });
-      const out = stdoutText();
-      expect(out).toContain('region = "ap-southeast-1"');
-      expect(out).toContain("walg_enabled = true");
+      expect(out.stdoutText).toContain('region = "ap-southeast-1"');
+      expect(out.stdoutText).toContain("walg_enabled = true");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("emits KEY=VALUE lines for --output env", () => {
-    const { layer } = setup({ goOutput: "env", response: PITR_RESPONSE });
+    const { layer, out } = setup({ goOutput: "env", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* legacyBackupsList({ projectRef: Option.none() });
-      const out = stdoutText();
-      expect(out).toContain('REGION="ap-southeast-1"');
-      expect(out).toContain('WALG_ENABLED="true"');
+      expect(out.stdoutText).toContain('REGION="ap-southeast-1"');
+      expect(out.stdoutText).toContain('WALG_ENABLED="true"');
     }).pipe(Effect.provide(layer));
   });
 
   it.live("treats --output pretty as identical to text mode (Glamour table)", () => {
-    const { layer } = setup({ goOutput: "pretty", response: PITR_RESPONSE });
+    const { layer, out } = setup({ goOutput: "pretty", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* legacyBackupsList({ projectRef: Option.none() });
-      expect(stdoutText()).toContain("Southeast Asia (Singapore)");
+      expect(out.stdoutText).toContain("Southeast Asia (Singapore)");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("--output flag value wins over --output-format when both provided", () => {
-    const { layer } = setup({
+    const { layer, out } = setup({
       format: "json",
       goOutput: "yaml",
       response: PITR_RESPONSE,
     });
     return Effect.gen(function* () {
       yield* legacyBackupsList({ projectRef: Option.none() });
-      const out = stdoutText();
-      expect(out).toContain("region: ap-southeast-1");
-      // YAML-shape rather than indented JSON.
-      expect(out.startsWith("{")).toBe(false);
+      expect(out.stdoutText).toContain("region: ap-southeast-1");
+      expect(out.stdoutText.startsWith("{")).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
@@ -334,7 +213,7 @@ describe("legacy backups list integration", () => {
     return Effect.gen(function* () {
       yield* legacyBackupsList({ projectRef: Option.none() });
       expect(api.requests).toHaveLength(1);
-      expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/database/backups`);
+      expect(api.requests[0]?.url).toContain(`/v1/projects/${LEGACY_VALID_REF}/database/backups`);
     }).pipe(Effect.provide(layer));
   });
 
@@ -348,81 +227,37 @@ describe("legacy backups list integration", () => {
   });
 
   it.live("reads supabase/.temp/project-ref when env and flag are unset", () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "supabase-backups-list-int-fileref-"));
+    const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-backups-list-int-fileref-"));
     const fileRef = "filerefabcdefghijklm";
-    mkdirSync(join(tempRoot, "supabase", ".temp"), { recursive: true });
-    writeFileSync(join(tempRoot, "supabase", ".temp", "project-ref"), fileRef);
+    mkdirSync(join(localTempRoot, "supabase", ".temp"), { recursive: true });
+    writeFileSync(join(localTempRoot, "supabase", ".temp", "project-ref"), fileRef);
 
     const out = mockOutput({ format: "text" });
-    const api = mockPlatformApi({ response: PITR_RESPONSE });
-    const cliConfig = Layer.succeed(LegacyCliConfig, {
-      profile: "supabase",
-      apiUrl: "https://api.supabase.com",
-      accessToken: Option.some(Redacted.make(VALID_TOKEN)),
+    const api = mockLegacyPlatformApi({ response: { status: 200, body: PITR_RESPONSE } });
+    const cliConfig = mockLegacyCliConfig({
+      workdir: localTempRoot,
       projectId: Option.none(),
-      workdir: tempRoot,
-      userAgent: "SupabaseCLI/0.0.0-dev",
     });
-    const processCtl = mockProcessControl();
-    const layer = Layer.mergeAll(
-      out.layer,
-      api.layer,
-      cliConfig,
-      mockTty({ stdinIsTty: false, stdoutIsTty: false }),
-      processCtl.layer,
-      legacyProjectRefLayer.pipe(
-        Layer.provide(api.layer),
-        Layer.provide(cliConfig),
-        Layer.provide(mockTty({ stdinIsTty: false, stdoutIsTty: false })),
-        Layer.provide(out.layer),
-        Layer.provide(BunServices.layer),
-      ),
-      BunServices.layer,
-      Layer.succeed(LegacyOutputFlag, Option.none()),
-      mockLinkedProjectCacheLayer,
-      mockTelemetryStateLayer,
-    );
+    const layer = buildLegacyTestRuntime({ out, api, cliConfig });
 
     return Effect.gen(function* () {
       yield* legacyBackupsList({ projectRef: Option.none() });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${fileRef}/`);
     }).pipe(
       Effect.provide(layer),
-      Effect.ensuring(Effect.sync(() => rmSync(tempRoot, { recursive: true, force: true }))),
+      Effect.ensuring(Effect.sync(() => rmSync(localTempRoot, { recursive: true, force: true }))),
     );
   });
 
   it.live("fails with LegacyProjectNotLinkedError when no ref source matches off-TTY", () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "supabase-backups-list-int-no-ref-"));
+    const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-backups-list-int-no-ref-"));
     const out = mockOutput({ format: "text" });
-    const api = mockPlatformApi({ response: PITR_RESPONSE });
-    const cliConfig = Layer.succeed(LegacyCliConfig, {
-      profile: "supabase",
-      apiUrl: "https://api.supabase.com",
-      accessToken: Option.some(Redacted.make(VALID_TOKEN)),
+    const api = mockLegacyPlatformApi({ response: { status: 200, body: PITR_RESPONSE } });
+    const cliConfig = mockLegacyCliConfig({
+      workdir: localTempRoot,
       projectId: Option.none(),
-      workdir: tempRoot,
-      userAgent: "SupabaseCLI/0.0.0-dev",
     });
-    const processCtl = mockProcessControl();
-    const layer = Layer.mergeAll(
-      out.layer,
-      api.layer,
-      cliConfig,
-      mockTty({ stdinIsTty: false, stdoutIsTty: false }),
-      processCtl.layer,
-      legacyProjectRefLayer.pipe(
-        Layer.provide(api.layer),
-        Layer.provide(cliConfig),
-        Layer.provide(mockTty({ stdinIsTty: false, stdoutIsTty: false })),
-        Layer.provide(out.layer),
-        Layer.provide(BunServices.layer),
-      ),
-      BunServices.layer,
-      Layer.succeed(LegacyOutputFlag, Option.none()),
-      mockLinkedProjectCacheLayer,
-      mockTelemetryStateLayer,
-    );
+    const layer = buildLegacyTestRuntime({ out, api, cliConfig });
 
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -432,7 +267,9 @@ describe("legacy backups list integration", () => {
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("LegacyProjectNotLinkedError");
       }
-    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(tempRoot, { recursive: true, force: true }))));
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => rmSync(localTempRoot, { recursive: true, force: true }))),
+    );
   });
 
   it.live("fails with LegacyInvalidProjectRefError when the resolved ref is malformed", () => {

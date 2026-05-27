@@ -12,6 +12,7 @@
     "config": {
       "dbAllowedCidrs": ["0.0.0.0/0"],
       "dbAllowedCidrsV6": ["::/0"]
-    }
+    },
+    "status": "applied"
   }
 }

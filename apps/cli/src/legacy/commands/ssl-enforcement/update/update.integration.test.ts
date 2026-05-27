@@ -2,32 +2,26 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { type V1GetSslEnforcementConfigOutput, makeApiClient } from "@supabase/api/effect";
+import { type V1GetSslEnforcementConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
-import { Effect, Exit, Layer, Option, Redacted } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { afterEach, beforeEach } from "vitest";
+import { Effect, Exit, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
-import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { mockOutput, mockProcessControl, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import {
+  LEGACY_VALID_REF,
+  buildLegacyTestRuntime,
+  mockLegacyCliConfig,
+  mockLegacyLinkedProjectCacheTracked,
+  mockLegacyPlatformApi,
+  mockLegacyTelemetryStateTracked,
+  useLegacyTempWorkdir,
+} from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacySslEnforcementUpdate } from "./update.handler.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
-
-const VALID_REF = "abcdefghijklmnopqrst";
-const VALID_TOKEN = "sbp_" + "a".repeat(40);
 
 const SSL_ENFORCED: typeof V1GetSslEnforcementConfigOutput.Type = {
   currentConfig: { database: true },
@@ -45,88 +39,8 @@ const SSL_DESIRED_BUT_NOT_APPLIED: typeof V1GetSslEnforcementConfigOutput.Type =
 };
 
 // ---------------------------------------------------------------------------
-// Mock helpers
+// Setup
 // ---------------------------------------------------------------------------
-
-function httpClientLayer(
-  handler: (
-    request: HttpClientRequest.HttpClientRequest,
-  ) => Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>,
-) {
-  return Layer.succeed(
-    HttpClient.HttpClient,
-    HttpClient.make((request) => handler(request)),
-  );
-}
-
-function mockPlatformApi(opts: {
-  response?: typeof V1GetSslEnforcementConfigOutput.Type;
-  status?: number;
-  network?: "fail";
-}) {
-  const requests: Array<{
-    url: string;
-    method: string;
-    headers: Readonly<Record<string, string | undefined>>;
-    body?: unknown;
-  }> = [];
-
-  const handler = (request: HttpClientRequest.HttpClientRequest) =>
-    Effect.gen(function* () {
-      let body: unknown = undefined;
-      if (request.body._tag === "Uint8Array") {
-        const decoded = new TextDecoder().decode(request.body.body);
-        try {
-          body = JSON.parse(decoded);
-        } catch {
-          body = decoded;
-        }
-      }
-      requests.push({ url: request.url, method: request.method, headers: request.headers, body });
-
-      if (opts.network === "fail") {
-        return yield* Effect.fail(
-          new HttpClientError.HttpClientError({
-            reason: new HttpClientError.TransportError({
-              request,
-              description: "ECONNREFUSED",
-            }),
-          }),
-        );
-      }
-
-      const status = opts.status ?? 200;
-      return HttpClientResponse.fromWeb(
-        request,
-        new Response(JSON.stringify(opts.response ?? SSL_ENFORCED), {
-          status,
-          headers: { "content-type": "application/json" },
-        }),
-      );
-    });
-
-  const layer = Layer.effect(
-    LegacyPlatformApi,
-    makeApiClient({
-      baseUrl: "https://api.supabase.com",
-      accessToken: VALID_TOKEN,
-      userAgent: "SupabaseCLI/0.0.0-dev",
-    }),
-  ).pipe(Layer.provide(httpClientLayer(handler)));
-
-  return { layer, requests };
-}
-
-function mockCliConfig(workdir: string) {
-  return Layer.succeed(LegacyCliConfig, {
-    profile: "supabase",
-    apiUrl: "https://api.supabase.com",
-    accessToken: Option.some(Redacted.make(VALID_TOKEN)),
-    projectId: Option.some(VALID_REF),
-    workdir,
-    userAgent: "SupabaseCLI/0.0.0-dev",
-  });
-}
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -134,96 +48,44 @@ interface SetupOpts {
   response?: typeof V1GetSslEnforcementConfigOutput.Type;
   status?: number;
   network?: "fail";
-  stdinIsTty?: boolean;
 }
 
-let tempRoot: string;
-let currentOut: ReturnType<typeof mockOutput>;
+const tempRoot = useLegacyTempWorkdir("supabase-ssl-enforcement-update-int-");
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  currentOut = out;
-  const api = mockPlatformApi({
-    response: opts.response,
-    status: opts.status,
+  const api = mockLegacyPlatformApi({
+    response: { status: opts.status ?? 200, body: opts.response ?? SSL_ENFORCED },
     network: opts.network,
   });
-  const cliConfig = mockCliConfig(tempRoot);
-  const processCtl = mockProcessControl();
-  const goOutputValue = opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput);
-  const layer = Layer.mergeAll(
-    out.layer,
-    api.layer,
+  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const layer = buildLegacyTestRuntime({
+    out,
+    api,
     cliConfig,
-    mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
-    processCtl.layer,
-    legacyProjectRefLayer.pipe(
-      Layer.provide(api.layer),
-      Layer.provide(cliConfig),
-      Layer.provide(mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false })),
-      Layer.provide(out.layer),
-      Layer.provide(BunServices.layer),
-    ),
-    BunServices.layer,
-    Layer.succeed(LegacyOutputFlag, goOutputValue),
-    mockLinkedProjectCacheLayer,
-    mockTelemetryStateLayer,
-  );
-  return { layer, out, api, processCtl, tempRoot };
-}
-
-const stdoutText = () => currentOut.stdoutText;
-
-// ---------------------------------------------------------------------------
-// Telemetry + linked-project cache tracking helpers
-// ---------------------------------------------------------------------------
-
-function mockTelemetryStateTracked() {
-  let flushed = false;
-  const layer = Layer.succeed(LegacyTelemetryState, {
-    get flush() {
-      return Effect.sync(() => {
-        flushed = true;
-      });
-    },
+    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
   });
-  return {
-    layer,
-    get flushed() {
-      return flushed;
-    },
-  };
+  return { layer, out, api };
 }
 
-function mockLinkedProjectCacheTracked() {
-  let cached = false;
-  const layer = Layer.succeed(LegacyLinkedProjectCache, {
-    cache: (_ref: string) =>
-      Effect.sync(() => {
-        cached = true;
-      }),
+function setupTracked(opts: SetupOpts = {}) {
+  const out = mockOutput({ format: opts.format ?? "text" });
+  const api = mockLegacyPlatformApi({
+    response: { status: opts.status ?? 200, body: opts.response ?? SSL_ENFORCED },
+    network: opts.network,
   });
-  return {
-    layer,
-    get cached() {
-      return cached;
-    },
-  };
+  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const telemetry = mockLegacyTelemetryStateTracked();
+  const cache = mockLegacyLinkedProjectCacheTracked();
+  const layer = buildLegacyTestRuntime({
+    out,
+    api,
+    cliConfig,
+    telemetry: telemetry.layer,
+    linkedProjectCache: cache.layer,
+  });
+  return { layer, out, api, telemetry, cache };
 }
-
-const mockLinkedProjectCacheLayer = Layer.succeed(LegacyLinkedProjectCache, {
-  cache: () => Effect.void,
-});
-
-const mockTelemetryStateLayer = Layer.succeed(LegacyTelemetryState, { flush: Effect.void });
-
-beforeEach(() => {
-  tempRoot = mkdtempSync(join(tmpdir(), "supabase-ssl-enforcement-update-int-"));
-});
-
-afterEach(() => {
-  rmSync(tempRoot, { recursive: true, force: true });
-});
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -295,32 +157,7 @@ describe("legacy ssl-enforcement update integration", () => {
   });
 
   it.live("writes telemetry but NOT linked-project cache when validation fails", () => {
-    const telemetry = mockTelemetryStateTracked();
-    const cache = mockLinkedProjectCacheTracked();
-    const out = mockOutput({ format: "text" });
-    currentOut = out;
-    const api = mockPlatformApi({});
-    const cliConfig = mockCliConfig(tempRoot);
-    const processCtl = mockProcessControl();
-    const layer = Layer.mergeAll(
-      out.layer,
-      api.layer,
-      cliConfig,
-      mockTty({ stdinIsTty: false, stdoutIsTty: false }),
-      processCtl.layer,
-      legacyProjectRefLayer.pipe(
-        Layer.provide(api.layer),
-        Layer.provide(cliConfig),
-        Layer.provide(mockTty({ stdinIsTty: false, stdoutIsTty: false })),
-        Layer.provide(out.layer),
-        Layer.provide(BunServices.layer),
-      ),
-      BunServices.layer,
-      Layer.succeed(LegacyOutputFlag, Option.none()),
-      cache.layer,
-      telemetry.layer,
-    );
-
+    const { layer, telemetry, cache } = setupTracked();
     return Effect.gen(function* () {
       yield* Effect.exit(
         legacySslEnforcementUpdate({
@@ -373,40 +210,40 @@ describe("legacy ssl-enforcement update integration", () => {
   // -------------------------------------------------------------------------
 
   it.live('prints "SSL is being enforced." when database=true and appliedSuccessfully=true', () => {
-    const { layer } = setup({ response: SSL_ENFORCED });
+    const { layer, out } = setup({ response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* legacySslEnforcementUpdate({
         projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
       });
-      expect(stdoutText()).toBe("SSL is being enforced.\n");
+      expect(out.stdoutText).toBe("SSL is being enforced.\n");
     }).pipe(Effect.provide(layer));
   });
 
   it.live('prints "SSL is *NOT* being enforced." when database=false', () => {
-    const { layer } = setup({ response: SSL_NOT_ENFORCED });
+    const { layer, out } = setup({ response: SSL_NOT_ENFORCED });
     return Effect.gen(function* () {
       yield* legacySslEnforcementUpdate({
         projectRef: Option.none(),
         enableDbSslEnforcement: false,
         disableDbSslEnforcement: true,
       });
-      expect(stdoutText()).toBe("SSL is *NOT* being enforced.\n");
+      expect(out.stdoutText).toBe("SSL is *NOT* being enforced.\n");
     }).pipe(Effect.provide(layer));
   });
 
   it.live(
     'prints "SSL is *NOT* being enforced." when database=true but appliedSuccessfully=false',
     () => {
-      const { layer } = setup({ response: SSL_DESIRED_BUT_NOT_APPLIED });
+      const { layer, out } = setup({ response: SSL_DESIRED_BUT_NOT_APPLIED });
       return Effect.gen(function* () {
         yield* legacySslEnforcementUpdate({
           projectRef: Option.none(),
           enableDbSslEnforcement: true,
           disableDbSslEnforcement: false,
         });
-        expect(stdoutText()).toBe("SSL is *NOT* being enforced.\n");
+        expect(out.stdoutText).toBe("SSL is *NOT* being enforced.\n");
       }).pipe(Effect.provide(layer));
     },
   );
@@ -416,26 +253,26 @@ describe("legacy ssl-enforcement update integration", () => {
   // -------------------------------------------------------------------------
 
   it.live("emits Go-compatible env output for --output env (exact bytes)", () => {
-    const { layer } = setup({ goOutput: "env", response: SSL_ENFORCED });
+    const { layer, out } = setup({ goOutput: "env", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* legacySslEnforcementUpdate({
         projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
       });
-      expect(stdoutText()).toBe('APPLIEDSUCCESSFULLY="true"\nCURRENTCONFIG_DATABASE="true"\n');
+      expect(out.stdoutText).toBe('APPLIEDSUCCESSFULLY="true"\nCURRENTCONFIG_DATABASE="true"\n');
     }).pipe(Effect.provide(layer));
   });
 
   it.live("emits Go-compatible indented JSON for --output json (exact bytes)", () => {
-    const { layer } = setup({ goOutput: "json", response: SSL_ENFORCED });
+    const { layer, out } = setup({ goOutput: "json", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* legacySslEnforcementUpdate({
         projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
       });
-      expect(stdoutText()).toBe(
+      expect(out.stdoutText).toBe(
         `{
   "appliedSuccessfully": true,
   "currentConfig": {
@@ -448,42 +285,40 @@ describe("legacy ssl-enforcement update integration", () => {
   });
 
   it.live("emits YAML for --output yaml", () => {
-    const { layer } = setup({ goOutput: "yaml", response: SSL_ENFORCED });
+    const { layer, out } = setup({ goOutput: "yaml", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* legacySslEnforcementUpdate({
         projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
       });
-      const out = stdoutText();
-      expect(out).toContain("appliedSuccessfully: true");
-      expect(out).toContain("database: true");
+      expect(out.stdoutText).toContain("appliedSuccessfully: true");
+      expect(out.stdoutText).toContain("database: true");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("emits TOML for --output toml", () => {
-    const { layer } = setup({ goOutput: "toml", response: SSL_ENFORCED });
+    const { layer, out } = setup({ goOutput: "toml", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* legacySslEnforcementUpdate({
         projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
       });
-      const out = stdoutText();
-      expect(out).toContain("appliedSuccessfully = true");
-      expect(out).toContain("[currentConfig]");
+      expect(out.stdoutText).toContain("appliedSuccessfully = true");
+      expect(out.stdoutText).toContain("[currentConfig]");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("treats --output pretty as identical to text mode", () => {
-    const { layer } = setup({ goOutput: "pretty", response: SSL_ENFORCED });
+    const { layer, out } = setup({ goOutput: "pretty", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* legacySslEnforcementUpdate({
         projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
       });
-      expect(stdoutText()).toBe("SSL is being enforced.\n");
+      expect(out.stdoutText).toBe("SSL is being enforced.\n");
     }).pipe(Effect.provide(layer));
   });
 
@@ -523,17 +358,15 @@ describe("legacy ssl-enforcement update integration", () => {
   });
 
   it.live("--output (Go) wins over --output-format (TS) when both provided", () => {
-    const { layer } = setup({ format: "json", goOutput: "yaml", response: SSL_ENFORCED });
+    const { layer, out } = setup({ format: "json", goOutput: "yaml", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* legacySslEnforcementUpdate({
         projectRef: Option.none(),
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
       });
-      const out = stdoutText();
-      expect(out).toContain("appliedSuccessfully: true");
-      // YAML-shape rather than indented JSON
-      expect(out.startsWith("{")).toBe(false);
+      expect(out.stdoutText).toContain("appliedSuccessfully: true");
+      expect(out.stdoutText.startsWith("{")).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
@@ -550,7 +383,7 @@ describe("legacy ssl-enforcement update integration", () => {
         disableDbSslEnforcement: false,
       });
       expect(api.requests).toHaveLength(1);
-      expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/ssl-enforcement`);
+      expect(api.requests[0]?.url).toContain(`/v1/projects/${LEGACY_VALID_REF}/ssl-enforcement`);
     }).pipe(Effect.provide(layer));
   });
 
@@ -574,35 +407,12 @@ describe("legacy ssl-enforcement update integration", () => {
     writeFileSync(join(localTempRoot, "supabase", ".temp", "project-ref"), fileRef);
 
     const out = mockOutput({ format: "text" });
-    currentOut = out;
-    const api = mockPlatformApi({ response: SSL_ENFORCED });
-    const cliConfig = Layer.succeed(LegacyCliConfig, {
-      profile: "supabase",
-      apiUrl: "https://api.supabase.com",
-      accessToken: Option.some(Redacted.make(VALID_TOKEN)),
-      projectId: Option.none(),
+    const api = mockLegacyPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
+    const cliConfig = mockLegacyCliConfig({
       workdir: localTempRoot,
-      userAgent: "SupabaseCLI/0.0.0-dev",
+      projectId: Option.none(),
     });
-    const processCtl = mockProcessControl();
-    const layer = Layer.mergeAll(
-      out.layer,
-      api.layer,
-      cliConfig,
-      mockTty({ stdinIsTty: false, stdoutIsTty: false }),
-      processCtl.layer,
-      legacyProjectRefLayer.pipe(
-        Layer.provide(api.layer),
-        Layer.provide(cliConfig),
-        Layer.provide(mockTty({ stdinIsTty: false, stdoutIsTty: false })),
-        Layer.provide(out.layer),
-        Layer.provide(BunServices.layer),
-      ),
-      BunServices.layer,
-      Layer.succeed(LegacyOutputFlag, Option.none()),
-      mockLinkedProjectCacheLayer,
-      mockTelemetryStateLayer,
-    );
+    const layer = buildLegacyTestRuntime({ out, api, cliConfig });
 
     return Effect.gen(function* () {
       yield* legacySslEnforcementUpdate({
@@ -620,35 +430,12 @@ describe("legacy ssl-enforcement update integration", () => {
   it.live("fails with LegacyProjectNotLinkedError when no ref source matches off-TTY", () => {
     const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-ssl-update-int-no-ref-"));
     const out = mockOutput({ format: "text" });
-    currentOut = out;
-    const api = mockPlatformApi({ response: SSL_ENFORCED });
-    const cliConfig = Layer.succeed(LegacyCliConfig, {
-      profile: "supabase",
-      apiUrl: "https://api.supabase.com",
-      accessToken: Option.some(Redacted.make(VALID_TOKEN)),
-      projectId: Option.none(),
+    const api = mockLegacyPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
+    const cliConfig = mockLegacyCliConfig({
       workdir: localTempRoot,
-      userAgent: "SupabaseCLI/0.0.0-dev",
+      projectId: Option.none(),
     });
-    const processCtl = mockProcessControl();
-    const layer = Layer.mergeAll(
-      out.layer,
-      api.layer,
-      cliConfig,
-      mockTty({ stdinIsTty: false, stdoutIsTty: false }),
-      processCtl.layer,
-      legacyProjectRefLayer.pipe(
-        Layer.provide(api.layer),
-        Layer.provide(cliConfig),
-        Layer.provide(mockTty({ stdinIsTty: false, stdoutIsTty: false })),
-        Layer.provide(out.layer),
-        Layer.provide(BunServices.layer),
-      ),
-      BunServices.layer,
-      Layer.succeed(LegacyOutputFlag, Option.none()),
-      mockLinkedProjectCacheLayer,
-      mockTelemetryStateLayer,
-    );
+    const layer = buildLegacyTestRuntime({ out, api, cliConfig });
 
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
