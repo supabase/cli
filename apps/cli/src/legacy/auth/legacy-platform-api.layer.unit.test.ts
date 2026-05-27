@@ -3,7 +3,7 @@ import { Effect, Exit, FileSystem, Layer, Option, Path, Redacted } from "effect"
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -43,6 +43,8 @@ function mockTelemetryRuntime(
     configDir?: string;
     deviceId?: string;
     distinctId?: string;
+    isFirstRun?: boolean;
+    isTty?: boolean;
     isCi?: boolean;
   } = {},
 ) {
@@ -56,8 +58,8 @@ function mockTelemetryRuntime(
       deviceId: opts.deviceId ?? "device-123",
       sessionId: "session-123",
       ...(opts.distinctId === undefined ? {} : { distinctId: opts.distinctId }),
-      isFirstRun: false,
-      isTty: false,
+      isFirstRun: opts.isFirstRun ?? false,
+      isTty: opts.isTty ?? false,
       isCi: opts.isCi ?? false,
       os: "darwin",
       arch: "arm64",
@@ -93,18 +95,18 @@ function nodeFileSystemLayer() {
   return Layer.succeed(FileSystem.FileSystem, {
     [FileSystem.FileSystem.key]: FileSystem.FileSystem.key,
     exists: (filePath: string) =>
-      Effect.promise(() =>
+      Effect.tryPromise(() =>
         access(filePath)
           .then(() => true)
           .catch(() => false),
       ),
     makeDirectory: (dirPath: string, opts?: { recursive?: boolean; mode?: number }) =>
-      Effect.promise(() =>
+      Effect.tryPromise(() =>
         mkdir(dirPath, { recursive: opts?.recursive, mode: opts?.mode }).then(() => undefined),
       ),
-    readFileString: (filePath: string) => Effect.promise(() => readFile(filePath, "utf8")),
+    readFileString: (filePath: string) => Effect.tryPromise(() => readFile(filePath, "utf8")),
     writeFileString: (filePath: string, content: string, opts?: { mode?: number }) =>
-      Effect.promise(() => writeFile(filePath, content, { mode: opts?.mode })),
+      Effect.tryPromise(() => writeFile(filePath, content, { mode: opts?.mode })),
   } as unknown as FileSystem.FileSystem);
 }
 
@@ -144,6 +146,8 @@ function withBaseDeps(
     analytics?: ReturnType<typeof mockAnalytics>;
     configDir?: string;
     distinctId?: string;
+    isFirstRun?: boolean;
+    isTty?: boolean;
     isCi?: boolean;
   } = {},
 ) {
@@ -155,6 +159,8 @@ function withBaseDeps(
         mockTelemetryRuntime({
           configDir: opts.configDir,
           distinctId: opts.distinctId,
+          isFirstRun: opts.isFirstRun,
+          isTty: opts.isTty,
           isCi: opts.isCi,
         }),
       ),
@@ -320,6 +326,56 @@ describe("legacyPlatformApiLayer", () => {
         expect(analytics.aliases).toEqual([]);
         expect(analytics.identifies).toEqual([]);
         expect(readTelemetryConfig(configDir).distinct_id).toBeUndefined();
+      } finally {
+        rmSync(configDir, { recursive: true, force: true });
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("does not stitch identity in a first-run non-TTY runtime", () => {
+    const configDir = mkdtempSync(path.join(tmpdir(), "supabase-legacy-platform-api-"));
+    const analytics = mockAnalytics();
+    const http = captureRequests({ "X-Gotrue-Id": "user-123" });
+    const layer = legacyPlatformApiLayer.pipe(
+      Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
+      Layer.provide(mockCredentials(Option.none())),
+      Layer.provide(http.layer),
+      withBaseDeps({ analytics, configDir, isFirstRun: true, isTty: false }),
+    );
+
+    return Effect.gen(function* () {
+      try {
+        const api = yield* LegacyPlatformApi;
+        yield* api.v1.listAllProjects();
+
+        expect(analytics.aliases).toEqual([]);
+        expect(analytics.identifies).toEqual([]);
+        expect(existsSync(path.join(configDir, "telemetry.json"))).toBe(false);
+      } finally {
+        rmSync(configDir, { recursive: true, force: true });
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("stitches identity in a first-run TTY runtime", () => {
+    const configDir = mkdtempSync(path.join(tmpdir(), "supabase-legacy-platform-api-"));
+    const analytics = mockAnalytics();
+    const http = captureRequests({ "X-Gotrue-Id": "user-123" });
+    const layer = legacyPlatformApiLayer.pipe(
+      Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
+      Layer.provide(mockCredentials(Option.none())),
+      Layer.provide(http.layer),
+      withBaseDeps({ analytics, configDir, isFirstRun: true, isTty: true }),
+    );
+
+    return Effect.gen(function* () {
+      try {
+        const api = yield* LegacyPlatformApi;
+        yield* api.v1.listAllProjects();
+
+        expect(analytics.aliases).toEqual([{ distinctId: "user-123", alias: "device-123" }]);
+        expect(analytics.identifies).toEqual([{ distinctId: "user-123", properties: {} }]);
+        expect(readTelemetryConfig(configDir).distinct_id).toBe("user-123");
       } finally {
         rmSync(configDir, { recursive: true, force: true });
       }

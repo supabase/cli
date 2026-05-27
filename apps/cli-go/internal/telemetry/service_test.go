@@ -222,6 +222,7 @@ func TestServiceNeedsIdentityStitch(t *testing.T) {
 	service, err := NewService(fsys, Options{
 		Analytics: analytics,
 		Now:       func() time.Time { return now },
+		IsTTY:     true,
 	})
 	require.NoError(t, err)
 
@@ -243,6 +244,34 @@ func TestServiceNeedsIdentityStitch(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.False(t, ciService.NeedsIdentityStitch())
+	})
+
+	t.Run("false in first-run non-TTY runtime", func(t *testing.T) {
+		ephemeralFsys := afero.NewMemMapFs()
+		ephemeralService, err := NewService(ephemeralFsys, Options{
+			Analytics: &fakeAnalytics{enabled: true},
+			Now:       func() time.Time { return now },
+		})
+		require.NoError(t, err)
+		assert.False(t, ephemeralService.NeedsIdentityStitch())
+	})
+
+	t.Run("true in persisted non-TTY runtime", func(t *testing.T) {
+		persistedFsys := afero.NewMemMapFs()
+		require.NoError(t, SaveState(State{
+			Enabled:           true,
+			DeviceID:          uuid.NewString(),
+			SessionID:         uuid.NewString(),
+			SessionLastActive: now,
+			SchemaVersion:     SchemaVersion,
+		}, persistedFsys))
+
+		persistedService, err := NewService(persistedFsys, Options{
+			Analytics: &fakeAnalytics{enabled: true},
+			Now:       func() time.Time { return now },
+		})
+		require.NoError(t, err)
+		assert.True(t, persistedService.NeedsIdentityStitch())
 	})
 }
 

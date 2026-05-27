@@ -52,6 +52,14 @@ function numberField(value: unknown, key: string): number | undefined {
   return typeof field === "number" && Number.isFinite(field) ? field : undefined;
 }
 
+function isEphemeralIdentityRuntime(runtime: {
+  readonly isCi: boolean;
+  readonly isFirstRun: boolean;
+  readonly isTty: boolean;
+}) {
+  return runtime.isCi || (runtime.isFirstRun && !runtime.isTty);
+}
+
 const makeLegacyPlatformApiServices = Effect.gen(function* () {
   const cliConfig = yield* LegacyCliConfig;
   const credentials = yield* LegacyCredentials;
@@ -63,7 +71,7 @@ const makeLegacyPlatformApiServices = Effect.gen(function* () {
 
   const needsIdentityStitch =
     runtime.consent === "granted" &&
-    !runtime.isCi &&
+    !isEphemeralIdentityRuntime(runtime) &&
     (runtime.distinctId === undefined || runtime.distinctId.length === 0);
 
   const stitchIdentity = (gotrueId: string) =>
