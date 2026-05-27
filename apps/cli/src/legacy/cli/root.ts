@@ -3,6 +3,7 @@ import { Command } from "effect/unstable/cli";
 import { legacyBackupsCommand } from "../commands/backups/backups.command.ts";
 import { legacyBootstrapCommand } from "../commands/bootstrap/bootstrap.command.ts";
 import { legacyBranchesCommand } from "../commands/branches/branches.command.ts";
+import { legacyCompletionCommand } from "../commands/completion/completion.command.ts";
 import { legacyConfigCommand } from "../commands/config/config.command.ts";
 import { legacyDbCommand } from "../commands/db/db.command.ts";
 import { legacyDomainsCommand } from "../commands/domains/domains.command.ts";
@@ -58,6 +59,7 @@ export const legacyRoot = Command.make("supabase").pipe(
     legacyBackupsCommand,
     legacyBootstrapCommand,
     legacyBranchesCommand,
+    legacyCompletionCommand,
     legacyConfigCommand,
     legacyDbCommand,
     legacyDomainsCommand,

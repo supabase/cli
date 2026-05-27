@@ -251,6 +251,7 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 	isImgProxyEnabled := utils.Config.Storage.ImageTransformation != nil &&
 		utils.Config.Storage.ImageTransformation.Enabled && !isContainerExcluded(utils.Config.Storage.ImgProxyImage, excluded)
 	isS3ProtocolEnabled := utils.Config.Storage.S3Protocol != nil && utils.Config.Storage.S3Protocol.Enabled
+	isVectorBucketsEnabled := utils.Config.Storage.VectorBuckets.Enabled
 	fmt.Fprintln(os.Stderr, "Starting containers...")
 
 	workdir, err := os.Getwd()
@@ -938,35 +939,39 @@ EOF
 	// Start Storage.
 	if isStorageEnabled {
 		dockerStoragePath := "/mnt"
+		storageEnv := []string{
+			"DB_MIGRATIONS_FREEZE_AT=" + utils.Config.Storage.TargetMigration,
+			"ANON_KEY=" + utils.Config.Auth.AnonKey.Value,
+			"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
+			"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
+			fmt.Sprintf("JWT_JWKS=%s", jwks),
+			fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:%d/%s", dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
+			fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
+			"STORAGE_BACKEND=file",
+			"FILE_STORAGE_BACKEND_PATH=" + dockerStoragePath,
+			"TENANT_ID=stub",
+			// TODO: https://github.com/supabase/storage-api/issues/55
+			"STORAGE_S3_REGION=" + utils.Config.Storage.S3Credentials.Region,
+			"GLOBAL_S3_BUCKET=stub",
+			fmt.Sprintf("ENABLE_IMAGE_TRANSFORMATION=%t", isImgProxyEnabled),
+			fmt.Sprintf("IMGPROXY_URL=http://%s:5001", utils.ImgProxyId),
+			"TUS_URL_PATH=/storage/v1/upload/resumable",
+			fmt.Sprintf("S3_PROTOCOL_ENABLED=%t", isS3ProtocolEnabled),
+			"S3_PROTOCOL_ACCESS_KEY_ID=" + utils.Config.Storage.S3Credentials.AccessKeyId,
+			"S3_PROTOCOL_ACCESS_KEY_SECRET=" + utils.Config.Storage.S3Credentials.SecretAccessKey,
+			"S3_PROTOCOL_PREFIX=/storage/v1",
+			"UPLOAD_FILE_SIZE_LIMIT=52428800000",
+			"UPLOAD_FILE_SIZE_LIMIT_STANDARD=5242880000",
+			"SIGNED_UPLOAD_URL_EXPIRATION_TIME=7200",
+		}
+		if isVectorBucketsEnabled {
+			storageEnv = appendStorageVectorEnv(storageEnv, dbConfig)
+		}
 		if _, err := utils.DockerStart(
 			ctx,
 			container.Config{
 				Image: utils.Config.Storage.Image,
-				Env: []string{
-					"DB_MIGRATIONS_FREEZE_AT=" + utils.Config.Storage.TargetMigration,
-					"ANON_KEY=" + utils.Config.Auth.AnonKey.Value,
-					"SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
-					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
-					fmt.Sprintf("JWT_JWKS=%s", jwks),
-					fmt.Sprintf("DATABASE_URL=postgresql://supabase_storage_admin:%s@%s:%d/%s", dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database),
-					fmt.Sprintf("FILE_SIZE_LIMIT=%v", utils.Config.Storage.FileSizeLimit),
-					"STORAGE_BACKEND=file",
-					"FILE_STORAGE_BACKEND_PATH=" + dockerStoragePath,
-					"TENANT_ID=stub",
-					// TODO: https://github.com/supabase/storage-api/issues/55
-					"STORAGE_S3_REGION=" + utils.Config.Storage.S3Credentials.Region,
-					"GLOBAL_S3_BUCKET=stub",
-					fmt.Sprintf("ENABLE_IMAGE_TRANSFORMATION=%t", isImgProxyEnabled),
-					fmt.Sprintf("IMGPROXY_URL=http://%s:5001", utils.ImgProxyId),
-					"TUS_URL_PATH=/storage/v1/upload/resumable",
-					fmt.Sprintf("S3_PROTOCOL_ENABLED=%t", isS3ProtocolEnabled),
-					"S3_PROTOCOL_ACCESS_KEY_ID=" + utils.Config.Storage.S3Credentials.AccessKeyId,
-					"S3_PROTOCOL_ACCESS_KEY_SECRET=" + utils.Config.Storage.S3Credentials.SecretAccessKey,
-					"S3_PROTOCOL_PREFIX=/storage/v1",
-					"UPLOAD_FILE_SIZE_LIMIT=52428800000",
-					"UPLOAD_FILE_SIZE_LIMIT_STANDARD=5242880000",
-					"SIGNED_UPLOAD_URL_EXPIRATION_TIME=7200",
-				},
+				Env:   storageEnv,
 				Healthcheck: &container.HealthConfig{
 					// For some reason, localhost resolves to IPv6 address on GitPod which breaks healthcheck.
 					Test: []string{
@@ -1369,6 +1374,42 @@ func appendGotrueExternalProviderEnv(env []string) []string {
 		}
 	}
 	return env
+}
+
+// appendStorageVectorEnv wires the storage container with the vector-bucket
+// env contract from supabase/storage#1094. The CLI provides three CLI-owned
+// defaults that the operator can override from their shell environment:
+//
+//   - VECTOR_BUCKET_PROVIDER selects the local provider; pgvector is the only
+//     locally-available implementation.
+//   - VECTOR_STORE_MIGRATIONS_ENABLED tells storage to run its vector-store
+//     migrations on boot. Defaults on so a fresh stack is usable, but operators
+//     who run those migrations out of band can disable it.
+//   - VECTOR_DATABASE_URL hands storage a connection string with createdb
+//     permission so it can manage its own vectors database. We default to the
+//     postgres superuser on the local stack, mirroring the existing DATABASE_URL
+//     credentials, but operators are expected to override this to reach an
+//     external postgres in self-hosted setups.
+func appendStorageVectorEnv(env []string, dbConfig pgconn.Config) []string {
+	envOrDefault := func(key, def string) string {
+		if v, ok := os.LookupEnv(key); ok {
+			return key + "=" + v
+		}
+		return key + "=" + def
+	}
+	defaultVectorURL := fmt.Sprintf(
+		"postgresql://postgres:%s@%s:%d/%s",
+		dbConfig.Password,
+		dbConfig.Host,
+		dbConfig.Port,
+		dbConfig.Database,
+	)
+	return append(env,
+		envOrDefault("VECTOR_ENABLED", "true"),
+		envOrDefault("VECTOR_BUCKET_PROVIDER", "pgvector"),
+		envOrDefault("VECTOR_STORE_MIGRATIONS_ENABLED", "true"),
+		envOrDefault("VECTOR_DATABASE_URL", defaultVectorURL),
+	)
 }
 
 func printSecurityNotice() {
