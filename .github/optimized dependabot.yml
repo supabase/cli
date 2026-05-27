@@ -1,0 +1,49 @@
+version: 2
+
+updates:
+  # ---------- GitHub Actions ----------
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: daily
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # ---------- Go Modules ----------
+  - package-ecosystem: gomod
+    directories:
+      - /
+      - /pkg
+    schedule:
+      interval: daily
+    groups:
+      go-minor-patch:
+        update-types: ["minor", "patch"]
+        exclude-patterns:
+          - github.com/compose-spec/compose-go/v2
+
+  # ---------- NPM ----------
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: daily
+    groups:
+      npm-all:
+        patterns: ["*"]
+
+  # ---------- Docker ----------
+  - package-ecosystem: docker
+    directory: /pkg/config/templates
+    schedule:
+      interval: daily
+    commit-message:
+      prefix: "fix(docker):"
+    groups:
+      docker-minor-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: library/kong
+      - dependency-name: axllent/mailpit
+      - dependency-name: darthsim/imgproxy
+      - dependency-name: timberio/vector
