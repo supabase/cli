@@ -16,6 +16,26 @@ const RESPONSE_ERROR_TAGS: ReadonlySet<HttpClientError.HttpClientErrorReason["_t
 // and avoids forwarding arbitrary bytes verbatim if the trust boundary ever changes.
 const MAX_BODY_LEN = 1024;
 
+// Strip ASCII control characters from the response body before embedding it in an error
+// message. The Management API is trusted, but defence-in-depth: a body containing `\r\n`
+// could fracture a structured log line, and `\x00` could truncate output in shells that
+// treat NUL as EOS. Tab is preserved so JSON whitespace round-trips visually intact.
+function sanitizeErrorBody(input: string): string {
+  // Strip ASCII control chars except \t (0x09), \n (0x0a), \r (0x0d) and DEL (0x7f).
+  // Then also strip CR — we keep \n and \t because they appear in legitimate JSON
+  // pretty-printing and shouldn't visually corrupt single-line stderr output.
+  let out = "";
+  for (let i = 0; i < input.length; i++) {
+    const code = input.charCodeAt(i);
+    const isLowCtrl = code < 0x20 && code !== 0x09 && code !== 0x0a;
+    const isDel = code === 0x7f;
+    const isCr = code === 0x0d;
+    if (isLowCtrl || isDel || isCr) continue;
+    out += input[i];
+  }
+  return out;
+}
+
 type NetworkErrorFactory<E> = new (args: { readonly message: string }) => E;
 
 type StatusErrorFactory<E> = new (args: {
@@ -47,7 +67,9 @@ export function mapLegacyHttpError<N, S>(opts: {
           const rawBody = yield* cause.response.text.pipe(
             Effect.orElseSucceed(() => cause.reason.description ?? ""),
           );
-          const body = rawBody.length > MAX_BODY_LEN ? rawBody.slice(0, MAX_BODY_LEN) : rawBody;
+          const cappedBody =
+            rawBody.length > MAX_BODY_LEN ? rawBody.slice(0, MAX_BODY_LEN) : rawBody;
+          const body = sanitizeErrorBody(cappedBody);
           return yield* Effect.fail(
             new opts.statusError({
               status,

@@ -1,39 +1,21 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-import { type V1ListAllSecretsOutput, makeApiClient } from "@supabase/api/effect";
+import { type V1ListAllSecretsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
-import { Effect, Exit, Layer, Option, Redacted } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { afterEach, beforeEach } from "vitest";
+import { Effect, Exit, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
-import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { mockOutput, mockProcessControl, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import {
+  LEGACY_VALID_REF,
+  buildLegacyTestRuntime,
+  mockLegacyCliConfig,
+  mockLegacyPlatformApi,
+  useLegacyTempWorkdir,
+} from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacySecretsList } from "./list.handler.ts";
-
-const mockLinkedProjectCacheLayer = Layer.succeed(LegacyLinkedProjectCache, {
-  cache: () => Effect.void,
-});
-
-const mockTelemetryStateLayer = Layer.succeed(LegacyTelemetryState, { flush: Effect.void });
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
-
-const VALID_REF = "abcdefghijklmnopqrst";
-const VALID_TOKEN = "sbp_" + "a".repeat(40);
 
 type SecretsResponse = typeof V1ListAllSecretsOutput.Type;
 
@@ -42,78 +24,9 @@ const SAMPLE_SECRETS: SecretsResponse = [
   { name: "BAR", value: "digest-bar" },
 ];
 
-function jsonResponse(request: HttpClientRequest.HttpClientRequest, status: number, body: unknown) {
-  return HttpClientResponse.fromWeb(
-    request,
-    new Response(JSON.stringify(body), {
-      status,
-      headers: { "content-type": "application/json" },
-    }),
-  );
-}
-
-function httpClientLayer(
-  handler: (
-    request: HttpClientRequest.HttpClientRequest,
-  ) => Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>,
-) {
-  return Layer.succeed(
-    HttpClient.HttpClient,
-    HttpClient.make((request) => handler(request)),
-  );
-}
-
-function mockPlatformApi(opts: {
-  response?: SecretsResponse;
-  status?: number;
-  network?: "fail";
-  apiUrl?: string;
-}) {
-  const requests: Array<{
-    url: string;
-    method: string;
-  }> = [];
-
-  const status = opts.status ?? 200;
-  const handler = (
-    request: HttpClientRequest.HttpClientRequest,
-  ): Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError> => {
-    requests.push({ url: request.url, method: request.method });
-    if (opts.network === "fail") {
-      return Effect.fail(
-        new HttpClientError.HttpClientError({
-          reason: new HttpClientError.TransportError({
-            request,
-            description: "ECONNREFUSED",
-          }),
-        }),
-      );
-    }
-    return Effect.succeed(jsonResponse(request, status, opts.response ?? []));
-  };
-
-  const layer = Layer.effect(
-    LegacyPlatformApi,
-    makeApiClient({
-      baseUrl: opts.apiUrl ?? "https://api.supabase.com",
-      accessToken: VALID_TOKEN,
-      userAgent: "SupabaseCLI/0.0.0-dev",
-    }),
-  ).pipe(Layer.provide(httpClientLayer(handler)));
-
-  return { layer, requests };
-}
-
-function mockCliConfig(opts: { workdir: string; projectId?: Option.Option<string> }) {
-  return Layer.succeed(LegacyCliConfig, {
-    profile: "supabase",
-    apiUrl: "https://api.supabase.com",
-    accessToken: Option.some(Redacted.make(VALID_TOKEN)),
-    projectId: opts.projectId ?? Option.some(VALID_REF),
-    workdir: opts.workdir,
-    userAgent: "SupabaseCLI/0.0.0-dev",
-  });
-}
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -124,50 +37,26 @@ interface SetupOpts {
   projectId?: Option.Option<string>;
 }
 
-let tempRoot: string;
-let currentOut: ReturnType<typeof mockOutput>;
+const tempRoot = useLegacyTempWorkdir("supabase-secrets-list-int-");
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  currentOut = out;
-  const api = mockPlatformApi({
-    response: opts.response,
-    status: opts.status,
+  const api = mockLegacyPlatformApi({
+    response: { status: opts.status ?? 200, body: opts.response ?? [] },
     network: opts.network,
   });
-  const cliConfig = mockCliConfig({ workdir: tempRoot, projectId: opts.projectId });
-  const processCtl = mockProcessControl();
-  const goOutputValue = opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput);
-  const layer = Layer.mergeAll(
-    out.layer,
-    api.layer,
+  const cliConfig = mockLegacyCliConfig({
+    workdir: tempRoot.current,
+    projectId: opts.projectId,
+  });
+  const layer = buildLegacyTestRuntime({
+    out,
+    api,
     cliConfig,
-    mockTty({ stdinIsTty: false, stdoutIsTty: false }),
-    processCtl.layer,
-    legacyProjectRefLayer.pipe(
-      Layer.provide(api.layer),
-      Layer.provide(cliConfig),
-      Layer.provide(mockTty({ stdinIsTty: false, stdoutIsTty: false })),
-      Layer.provide(out.layer),
-      Layer.provide(BunServices.layer),
-    ),
-    BunServices.layer,
-    Layer.succeed(LegacyOutputFlag, goOutputValue),
-    mockLinkedProjectCacheLayer,
-    mockTelemetryStateLayer,
-  );
-  return { layer, out, api, processCtl };
+    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+  });
+  return { layer, out, api };
 }
-
-const stdoutText = () => currentOut.stdoutText;
-
-beforeEach(() => {
-  tempRoot = mkdtempSync(join(tmpdir(), "supabase-secrets-list-int-"));
-});
-
-afterEach(() => {
-  rmSync(tempRoot, { recursive: true, force: true });
-});
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -175,20 +64,19 @@ afterEach(() => {
 
 describe("legacy secrets list integration", () => {
   it.live("renders a Glamour ASCII table with NAME and DIGEST columns in text mode", () => {
-    const { layer } = setup({ response: SAMPLE_SECRETS });
+    const { layer, out } = setup({ response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       yield* legacySecretsList({ projectRef: Option.none() });
-      const out = stdoutText();
-      expect(out).toContain("NAME");
-      expect(out).toContain("DIGEST");
-      expect(out).toContain("BAR");
-      expect(out).toContain("FOO");
-      expect(out).toContain("digest-foo");
+      expect(out.stdoutText).toContain("NAME");
+      expect(out.stdoutText).toContain("DIGEST");
+      expect(out.stdoutText).toContain("BAR");
+      expect(out.stdoutText).toContain("FOO");
+      expect(out.stdoutText).toContain("digest-foo");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("sorts secrets alphabetically by name regardless of API response order", () => {
-    const { layer } = setup({
+    const { layer, out } = setup({
       response: [
         { name: "ZED", value: "z-digest" },
         { name: "ALPHA", value: "a-digest" },
@@ -197,10 +85,9 @@ describe("legacy secrets list integration", () => {
     });
     return Effect.gen(function* () {
       yield* legacySecretsList({ projectRef: Option.none() });
-      const out = stdoutText();
-      const alphaPos = out.indexOf("ALPHA");
-      const midPos = out.indexOf("MID");
-      const zedPos = out.indexOf("ZED");
+      const alphaPos = out.stdoutText.indexOf("ALPHA");
+      const midPos = out.stdoutText.indexOf("MID");
+      const zedPos = out.stdoutText.indexOf("ZED");
       expect(alphaPos).toBeGreaterThan(-1);
       expect(midPos).toBeGreaterThan(alphaPos);
       expect(zedPos).toBeGreaterThan(midPos);
@@ -208,14 +95,14 @@ describe("legacy secrets list integration", () => {
   });
 
   it.live("renders literal `|` characters in secret names without escaping (Go parity)", () => {
-    const { layer } = setup({
+    const { layer, out } = setup({
       response: [{ name: "with|pipe", value: "digest" }],
     });
     return Effect.gen(function* () {
       yield* legacySecretsList({ projectRef: Option.none() });
       // Go's pipeline: markdown `\|` → glamour decodes to literal `|`. Our
       // renderer skips the markdown step and emits the literal pipe directly.
-      expect(stdoutText()).toContain("with|pipe");
+      expect(out.stdoutText).toContain("with|pipe");
     }).pipe(Effect.provide(layer));
   });
 
@@ -244,12 +131,12 @@ describe("legacy secrets list integration", () => {
   });
 
   it.live("emits Go-byte-exact indented JSON to stdout for --output json", () => {
-    const { layer } = setup({ goOutput: "json", response: SAMPLE_SECRETS });
+    const { layer, out } = setup({ goOutput: "json", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       yield* legacySecretsList({ projectRef: Option.none() });
       // Sorted (BAR before FOO) and alphabetical-key JSON; matches Go's struct
       // declaration order for SecretResponse {Name, UpdatedAt, Value}.
-      expect(stdoutText()).toBe(
+      expect(out.stdoutText).toBe(
         `[
   {
     "name": "BAR",
@@ -266,24 +153,22 @@ describe("legacy secrets list integration", () => {
   });
 
   it.live("emits a YAML array to stdout for --output yaml", () => {
-    const { layer } = setup({ goOutput: "yaml", response: SAMPLE_SECRETS });
+    const { layer, out } = setup({ goOutput: "yaml", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       yield* legacySecretsList({ projectRef: Option.none() });
-      const out = stdoutText();
-      expect(out).toContain("- name: BAR");
-      expect(out).toContain("value: digest-bar");
-      expect(out).toContain("- name: FOO");
+      expect(out.stdoutText).toContain("- name: BAR");
+      expect(out.stdoutText).toContain("value: digest-bar");
+      expect(out.stdoutText).toContain("- name: FOO");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("wraps the array as { secrets = [...] } for --output toml", () => {
-    const { layer } = setup({ goOutput: "toml", response: SAMPLE_SECRETS });
+    const { layer, out } = setup({ goOutput: "toml", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       yield* legacySecretsList({ projectRef: Option.none() });
-      const out = stdoutText();
-      expect(out).toContain("[[secrets]]");
-      expect(out).toContain('name = "BAR"');
-      expect(out).toContain('value = "digest-bar"');
+      expect(out.stdoutText).toContain("[[secrets]]");
+      expect(out.stdoutText).toContain('name = "BAR"');
+      expect(out.stdoutText).toContain('value = "digest-bar"');
     }).pipe(Effect.provide(layer));
   });
 
@@ -301,25 +186,23 @@ describe("legacy secrets list integration", () => {
   });
 
   it.live("treats --output pretty as identical to text mode (Glamour table)", () => {
-    const { layer } = setup({ goOutput: "pretty", response: SAMPLE_SECRETS });
+    const { layer, out } = setup({ goOutput: "pretty", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       yield* legacySecretsList({ projectRef: Option.none() });
-      expect(stdoutText()).toContain("DIGEST");
+      expect(out.stdoutText).toContain("DIGEST");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("--output flag value wins over --output-format when both provided", () => {
-    const { layer } = setup({
+    const { layer, out } = setup({
       format: "json",
       goOutput: "yaml",
       response: SAMPLE_SECRETS,
     });
     return Effect.gen(function* () {
       yield* legacySecretsList({ projectRef: Option.none() });
-      const out = stdoutText();
-      expect(out).toContain("- name: BAR");
-      // YAML shape, not indented JSON.
-      expect(out.startsWith("[")).toBe(false);
+      expect(out.stdoutText).toContain("- name: BAR");
+      expect(out.stdoutText.startsWith("[")).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
@@ -328,7 +211,7 @@ describe("legacy secrets list integration", () => {
     return Effect.gen(function* () {
       yield* legacySecretsList({ projectRef: Option.none() });
       expect(api.requests).toHaveLength(1);
-      expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/secrets`);
+      expect(api.requests[0]?.url).toContain(`/v1/projects/${LEGACY_VALID_REF}/secrets`);
     }).pipe(Effect.provide(layer));
   });
 

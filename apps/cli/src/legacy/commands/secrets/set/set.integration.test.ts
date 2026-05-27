@@ -1,123 +1,26 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { makeApiClient } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
-import { Effect, Exit, Layer, Option, Redacted } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { afterEach, beforeEach } from "vitest";
+import { Effect, Exit, Layer, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
-import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import {
   mockOutput,
-  mockProcessControl,
   mockRuntimeInfo,
-  mockTty,
   processEnvLayer,
 } from "../../../../../tests/helpers/mocks.ts";
+import {
+  LEGACY_VALID_REF,
+  buildLegacyTestRuntime,
+  mockLegacyCliConfig,
+  mockLegacyPlatformApi,
+  useLegacyTempWorkdir,
+} from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacySecretsSet } from "./set.handler.ts";
 
-const mockLinkedProjectCacheLayer = Layer.succeed(LegacyLinkedProjectCache, {
-  cache: () => Effect.void,
-});
-
-const mockTelemetryStateLayer = Layer.succeed(LegacyTelemetryState, { flush: Effect.void });
-
 // ---------------------------------------------------------------------------
-// Fixtures
+// Setup
 // ---------------------------------------------------------------------------
-
-const VALID_REF = "abcdefghijklmnopqrst";
-const VALID_TOKEN = "sbp_" + "a".repeat(40);
-
-function jsonResponse(request: HttpClientRequest.HttpClientRequest, status: number, body: unknown) {
-  return HttpClientResponse.fromWeb(
-    request,
-    new Response(JSON.stringify(body), {
-      status,
-      headers: { "content-type": "application/json" },
-    }),
-  );
-}
-
-function httpClientLayer(
-  handler: (
-    request: HttpClientRequest.HttpClientRequest,
-  ) => Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>,
-) {
-  return Layer.succeed(
-    HttpClient.HttpClient,
-    HttpClient.make((request) => handler(request)),
-  );
-}
-
-interface ApiRequest {
-  url: string;
-  method: string;
-  body: string;
-}
-
-function mockPlatformApi(opts: { status?: number; network?: "fail" } = {}) {
-  const requests: ApiRequest[] = [];
-
-  const status = opts.status ?? 201;
-  const handler = (
-    request: HttpClientRequest.HttpClientRequest,
-  ): Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError> => {
-    return Effect.gen(function* () {
-      const body =
-        request.body._tag === "Uint8Array"
-          ? new TextDecoder().decode(request.body.body)
-          : request.body._tag === "Raw"
-            ? String(request.body.body)
-            : "";
-      requests.push({ url: request.url, method: request.method, body });
-      if (opts.network === "fail") {
-        return yield* Effect.fail(
-          new HttpClientError.HttpClientError({
-            reason: new HttpClientError.TransportError({
-              request,
-              description: "ECONNREFUSED",
-            }),
-          }),
-        );
-      }
-      return jsonResponse(request, status, null);
-    });
-  };
-
-  const layer = Layer.effect(
-    LegacyPlatformApi,
-    makeApiClient({
-      baseUrl: "https://api.supabase.com",
-      accessToken: VALID_TOKEN,
-      userAgent: "SupabaseCLI/0.0.0-dev",
-    }),
-  ).pipe(Layer.provide(httpClientLayer(handler)));
-
-  return { layer, requests };
-}
-
-function mockCliConfig(opts: { workdir: string }) {
-  return Layer.succeed(LegacyCliConfig, {
-    profile: "supabase",
-    apiUrl: "https://api.supabase.com",
-    accessToken: Option.some(Redacted.make(VALID_TOKEN)),
-    projectId: Option.some(VALID_REF),
-    workdir: opts.workdir,
-    userAgent: "SupabaseCLI/0.0.0-dev",
-  });
-}
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -127,61 +30,38 @@ interface SetupOpts {
   env?: Record<string, string | undefined>;
 }
 
-let tempRoot: string;
-let currentOut: ReturnType<typeof mockOutput>;
+const tempRoot = useLegacyTempWorkdir("supabase-secrets-set-int-");
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  currentOut = out;
-  const api = mockPlatformApi({ status: opts.status, network: opts.network });
-  const cliConfig = mockCliConfig({ workdir: tempRoot });
-  const processCtl = mockProcessControl();
-  const tty = mockTty({ stdinIsTty: false, stdoutIsTty: false });
-  const runtimeInfo = mockRuntimeInfo({ cwd: tempRoot });
-  const envLayer = processEnvLayer(opts.env ?? {});
-  const goOutputValue = opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput);
-
+  const api = mockLegacyPlatformApi({
+    // POST `/v1/projects/{ref}/secrets` returns 201 with no body on success.
+    response: { status: opts.status ?? 201, body: null },
+    network: opts.network,
+  });
+  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
   const layer = Layer.mergeAll(
-    out.layer,
-    api.layer,
-    cliConfig,
-    tty,
-    processCtl.layer,
-    runtimeInfo,
-    envLayer,
-    legacyProjectRefLayer.pipe(
-      Layer.provide(api.layer),
-      Layer.provide(cliConfig),
-      Layer.provide(tty),
-      Layer.provide(out.layer),
-      Layer.provide(BunServices.layer),
-    ),
-    BunServices.layer,
-    Layer.succeed(LegacyOutputFlag, goOutputValue),
-    mockLinkedProjectCacheLayer,
-    mockTelemetryStateLayer,
+    buildLegacyTestRuntime({
+      out,
+      api,
+      cliConfig,
+      goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    }),
+    mockRuntimeInfo({ cwd: tempRoot.current }),
+    processEnvLayer(opts.env ?? {}),
   );
-  return { layer, out, api, processCtl };
+  return { layer, out, api };
 }
-
-const stdoutText = () => currentOut.stdoutText;
-const stderrText = () => currentOut.stderrText;
-
-beforeEach(() => {
-  tempRoot = mkdtempSync(join(tmpdir(), "supabase-secrets-set-int-"));
-});
-
-afterEach(() => {
-  rmSync(tempRoot, { recursive: true, force: true });
-});
 
 function writeConfig(content: string) {
-  mkdirSync(join(tempRoot, "supabase"), { recursive: true });
-  writeFileSync(join(tempRoot, "supabase", "config.toml"), content);
+  mkdirSync(join(tempRoot.current, "supabase"), { recursive: true });
+  writeFileSync(join(tempRoot.current, "supabase", "config.toml"), content);
 }
 
-function parsePostBody(body: string): Array<{ name: string; value: string }> {
-  return JSON.parse(body) as Array<{ name: string; value: string }>;
+function parsePostBody(body: unknown): Array<{ name: string; value: string }> {
+  // `mockLegacyPlatformApi` JSON-decodes the request body when it parses; this
+  // helper just narrows the type for the test assertions.
+  return body as Array<{ name: string; value: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,7 +70,7 @@ function parsePostBody(body: string): Array<{ name: string; value: string }> {
 
 describe("legacy secrets set integration", () => {
   it.live("sets a single secret via CLI arg FOO=bar", () => {
-    const { layer, api } = setup();
+    const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* legacySecretsSet({
         projectRef: Option.none(),
@@ -199,7 +79,7 @@ describe("legacy secrets set integration", () => {
       });
       expect(api.requests).toHaveLength(1);
       expect(parsePostBody(api.requests[0]!.body)).toEqual([{ name: "FOO", value: "bar" }]);
-      expect(stdoutText()).toBe("Finished supabase secrets set.\n");
+      expect(out.stdoutText).toBe("Finished supabase secrets set.\n");
     }).pipe(Effect.provide(layer));
   });
 
@@ -222,7 +102,7 @@ describe("legacy secrets set integration", () => {
   });
 
   it.live("sets secrets from --env-file with a relative path (joined to CWD)", () => {
-    writeFileSync(join(tempRoot, "myfile.env"), "FROM_FILE=fromvalue\n");
+    writeFileSync(join(tempRoot.current, "myfile.env"), "FROM_FILE=fromvalue\n");
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* legacySecretsSet({
@@ -237,7 +117,7 @@ describe("legacy secrets set integration", () => {
   });
 
   it.live("sets secrets from --env-file with an absolute path", () => {
-    const abs = join(tempRoot, "absolute.env");
+    const abs = join(tempRoot.current, "absolute.env");
     writeFileSync(abs, "ABS=value\n");
     const { layer, api } = setup();
     return Effect.gen(function* () {
@@ -251,7 +131,7 @@ describe("legacy secrets set integration", () => {
   });
 
   it.live("CLI args override --env-file entries for the same key", () => {
-    writeFileSync(join(tempRoot, "override.env"), "FOO=from-file\n");
+    writeFileSync(join(tempRoot.current, "override.env"), "FOO=from-file\n");
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* legacySecretsSet({
@@ -272,7 +152,7 @@ FROM_CONFIG = "config-value"
 SHARED = "config-shared"
 `,
       );
-      writeFileSync(join(tempRoot, ".env-file"), "SHARED=envfile-shared\n");
+      writeFileSync(join(tempRoot.current, ".env-file"), "SHARED=envfile-shared\n");
       const { layer, api } = setup();
       return Effect.gen(function* () {
         yield* legacySecretsSet({
@@ -318,12 +198,6 @@ UNRESOLVED = "env(NOT_SET_ANYWHERE)"
 LITERAL = "plain-value"
 `,
     );
-    // Go's DecryptSecretHookFunc leaves SHA256 empty when the value is still
-    // an `env(VAR)` literal at decode time; set.go:48-52 then skips those
-    // entries. In the TS path `resolveProjectSubtree` wraps resolved secret
-    // strings in `Redacted`, leaving unresolved literals as plain strings —
-    // the handler filters by `Redacted.isRedacted(...)`, so UNRESOLVED is
-    // dropped while RESOLVED and LITERAL survive.
     const { layer, api } = setup({ env: { MY_DB_URL: "postgres://x" } });
     return Effect.gen(function* () {
       yield* legacySecretsSet({
@@ -353,9 +227,6 @@ port = "env(SUPABASE_ANALYTICS_PORT)"
 FOO = "literal-foo"
 `,
       );
-      // The CLI-1489 fix in `@supabase/config` interpolates env() refs on
-      // numeric fields before schema decode. With SUPABASE_ANALYTICS_PORT
-      // resolvable from the test env, the strict decoder no longer crashes.
       const { layer, api } = setup({ env: { SUPABASE_ANALYTICS_PORT: "54327" } });
       return Effect.gen(function* () {
         yield* legacySecretsSet({
@@ -371,7 +242,7 @@ FOO = "literal-foo"
   );
 
   it.live("skips SUPABASE_-prefixed entries with a stderr warning", () => {
-    const { layer, api } = setup();
+    const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* legacySecretsSet({
         projectRef: Option.none(),
@@ -380,7 +251,7 @@ FOO = "literal-foo"
       });
       const body = parsePostBody(api.requests[0]!.body);
       expect(body).toEqual([{ name: "FOO", value: "bar" }]);
-      expect(stderrText()).toContain(
+      expect(out.stderrText).toContain(
         "Env name cannot start with SUPABASE_, skipping: SUPABASE_BAD",
       );
     }).pipe(Effect.provide(layer));
@@ -512,14 +383,14 @@ FOO = "literal-foo"
       });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
-      expect(success?.data).toEqual({ project_ref: VALID_REF, count: 2 });
+      expect(success?.data).toEqual({ project_ref: LEGACY_VALID_REF, count: 2 });
     }).pipe(Effect.provide(layer));
   });
 
   it.live(
     "text mode prints `Finished supabase secrets set.\\n` regardless of --output value",
     () => {
-      const { layer } = setup({ goOutput: "json" });
+      const { layer, out } = setup({ goOutput: "json" });
       return Effect.gen(function* () {
         yield* legacySecretsSet({
           projectRef: Option.none(),
@@ -527,7 +398,7 @@ FOO = "literal-foo"
           secrets: ["FOO=bar"],
         });
         // Go ignores `--output` for `set` (set.go:42) — text-mode message lands regardless.
-        expect(stdoutText()).toBe("Finished supabase secrets set.\n");
+        expect(out.stdoutText).toBe("Finished supabase secrets set.\n");
       }).pipe(Effect.provide(layer));
     },
   );

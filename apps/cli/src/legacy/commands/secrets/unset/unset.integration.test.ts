@@ -1,142 +1,25 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-import { type V1ListAllSecretsOutput, makeApiClient } from "@supabase/api/effect";
+import { type V1ListAllSecretsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
-import { Effect, Exit, Layer, Option, Redacted } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { afterEach, beforeEach } from "vitest";
+import { Effect, Exit, Layer, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
-import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
-import { mockOutput, mockProcessControl, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import {
+  LEGACY_VALID_REF,
+  buildLegacyTestRuntime,
+  legacyJsonResponse,
+  legacyTransportFailure,
+  mockLegacyCliConfig,
+  mockLegacyPlatformApi,
+  useLegacyTempWorkdir,
+} from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacySecretsUnset } from "./unset.handler.ts";
 
-const mockLinkedProjectCacheLayer = Layer.succeed(LegacyLinkedProjectCache, {
-  cache: () => Effect.void,
-});
-
-const mockTelemetryStateLayer = Layer.succeed(LegacyTelemetryState, { flush: Effect.void });
-
 // ---------------------------------------------------------------------------
-// Fixtures
+// Setup
 // ---------------------------------------------------------------------------
-
-const VALID_REF = "abcdefghijklmnopqrst";
-const VALID_TOKEN = "sbp_" + "a".repeat(40);
 
 type SecretsList = typeof V1ListAllSecretsOutput.Type;
-
-function jsonResponse(request: HttpClientRequest.HttpClientRequest, status: number, body: unknown) {
-  return HttpClientResponse.fromWeb(
-    request,
-    new Response(JSON.stringify(body), {
-      status,
-      headers: { "content-type": "application/json" },
-    }),
-  );
-}
-
-function httpClientLayer(
-  handler: (
-    request: HttpClientRequest.HttpClientRequest,
-  ) => Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>,
-) {
-  return Layer.succeed(
-    HttpClient.HttpClient,
-    HttpClient.make((request) => handler(request)),
-  );
-}
-
-interface ApiRequest {
-  url: string;
-  method: string;
-  body: string;
-}
-
-function mockPlatformApi(
-  opts: {
-    list?: SecretsList;
-    listStatus?: number;
-    listNetwork?: "fail";
-    deleteStatus?: number;
-    deleteNetwork?: "fail";
-  } = {},
-) {
-  const requests: ApiRequest[] = [];
-
-  const handler = (
-    request: HttpClientRequest.HttpClientRequest,
-  ): Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError> => {
-    return Effect.gen(function* () {
-      const body =
-        request.body._tag === "Uint8Array"
-          ? new TextDecoder().decode(request.body.body)
-          : request.body._tag === "Raw"
-            ? String(request.body.body)
-            : "";
-      requests.push({ url: request.url, method: request.method, body });
-
-      if (request.method === "GET") {
-        if (opts.listNetwork === "fail") {
-          return yield* Effect.fail(
-            new HttpClientError.HttpClientError({
-              reason: new HttpClientError.TransportError({
-                request,
-                description: "ECONNREFUSED",
-              }),
-            }),
-          );
-        }
-        return jsonResponse(request, opts.listStatus ?? 200, opts.list ?? []);
-      }
-
-      // DELETE
-      if (opts.deleteNetwork === "fail") {
-        return yield* Effect.fail(
-          new HttpClientError.HttpClientError({
-            reason: new HttpClientError.TransportError({
-              request,
-              description: "ECONNREFUSED",
-            }),
-          }),
-        );
-      }
-      return jsonResponse(request, opts.deleteStatus ?? 200, null);
-    });
-  };
-
-  const layer = Layer.effect(
-    LegacyPlatformApi,
-    makeApiClient({
-      baseUrl: "https://api.supabase.com",
-      accessToken: VALID_TOKEN,
-      userAgent: "SupabaseCLI/0.0.0-dev",
-    }),
-  ).pipe(Layer.provide(httpClientLayer(handler)));
-
-  return { layer, requests };
-}
-
-function mockCliConfig(opts: { workdir: string }) {
-  return Layer.succeed(LegacyCliConfig, {
-    profile: "supabase",
-    apiUrl: "https://api.supabase.com",
-    accessToken: Option.some(Redacted.make(VALID_TOKEN)),
-    projectId: Option.some(VALID_REF),
-    workdir: opts.workdir,
-    userAgent: "SupabaseCLI/0.0.0-dev",
-  });
-}
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -151,62 +34,45 @@ interface SetupOpts {
   deleteNetwork?: "fail";
 }
 
-let tempRoot: string;
-let currentOut: ReturnType<typeof mockOutput>;
+const tempRoot = useLegacyTempWorkdir("supabase-secrets-unset-int-");
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({
     format: opts.format ?? "text",
     confirmLogout: opts.confirm,
   });
-  currentOut = out;
-  const api = mockPlatformApi({
-    list: opts.list,
-    listStatus: opts.listStatus,
-    listNetwork: opts.listNetwork,
-    deleteStatus: opts.deleteStatus,
-    deleteNetwork: opts.deleteNetwork,
+  // GET = list, DELETE = unset. Each branch supports its own status/network
+  // override via the `handler` escape hatch.
+  const api = mockLegacyPlatformApi({
+    handler: (request) => {
+      if (request.method === "GET") {
+        if (opts.listNetwork === "fail") {
+          return Effect.fail(legacyTransportFailure(request));
+        }
+        return Effect.succeed(legacyJsonResponse(request, opts.listStatus ?? 200, opts.list ?? []));
+      }
+      if (opts.deleteNetwork === "fail") {
+        return Effect.fail(legacyTransportFailure(request));
+      }
+      return Effect.succeed(legacyJsonResponse(request, opts.deleteStatus ?? 200, null));
+    },
   });
-  const cliConfig = mockCliConfig({ workdir: tempRoot });
-  const processCtl = mockProcessControl();
-  const tty = mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false });
-  const goOutputValue = opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput);
-
+  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
   const layer = Layer.mergeAll(
-    out.layer,
-    api.layer,
-    cliConfig,
-    tty,
-    processCtl.layer,
-    legacyProjectRefLayer.pipe(
-      Layer.provide(api.layer),
-      Layer.provide(cliConfig),
-      Layer.provide(tty),
-      Layer.provide(out.layer),
-      Layer.provide(BunServices.layer),
-    ),
-    BunServices.layer,
-    Layer.succeed(LegacyOutputFlag, goOutputValue),
+    buildLegacyTestRuntime({
+      out,
+      api,
+      cliConfig,
+      tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
+      goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
-    mockLinkedProjectCacheLayer,
-    mockTelemetryStateLayer,
   );
   return { layer, out, api };
 }
 
-const stderrText = () => currentOut.stderrText;
-const stdoutText = () => currentOut.stdoutText;
-
-beforeEach(() => {
-  tempRoot = mkdtempSync(join(tmpdir(), "supabase-secrets-unset-int-"));
-});
-
-afterEach(() => {
-  rmSync(tempRoot, { recursive: true, force: true });
-});
-
-function parseDeleteBody(body: string): string[] {
-  return JSON.parse(body) as string[];
+function parseDeleteBody(body: unknown): string[] {
+  return body as string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -215,7 +81,7 @@ function parseDeleteBody(body: string): string[] {
 
 describe("legacy secrets unset integration", () => {
   it.live("unsets a single secret given explicitly (with --yes)", () => {
-    const { layer, api } = setup({ yes: true });
+    const { layer, out, api } = setup({ yes: true });
     return Effect.gen(function* () {
       yield* legacySecretsUnset({ projectRef: Option.none(), names: ["FOO"] });
       // No GET call: names came from args.
@@ -223,7 +89,7 @@ describe("legacy secrets unset integration", () => {
       const deletes = api.requests.filter((r) => r.method === "DELETE");
       expect(deletes).toHaveLength(1);
       expect(parseDeleteBody(deletes[0]!.body)).toEqual(["FOO"]);
-      expect(stdoutText()).toBe("Finished supabase secrets unset.\n");
+      expect(out.stdoutText).toBe("Finished supabase secrets unset.\n");
     }).pipe(Effect.provide(layer));
   });
 
@@ -258,43 +124,42 @@ describe("legacy secrets unset integration", () => {
   });
 
   it.live("empty-args path with all-SUPABASE_ secrets writes stderr no-op and exits 0", () => {
-    const { layer, api } = setup({
+    const { layer, out, api } = setup({
       yes: true,
       list: [{ name: "SUPABASE_ONLY", value: "d" }],
     });
     return Effect.gen(function* () {
       yield* legacySecretsUnset({ projectRef: Option.none(), names: [] });
-      expect(stderrText()).toContain("You have not set any function secrets, nothing to do.");
+      expect(out.stderrText).toContain("You have not set any function secrets, nothing to do.");
       expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("empty-args path with empty server list writes the stderr no-op and exits 0", () => {
-    const { layer, api } = setup({ yes: true, list: [] });
+    const { layer, out, api } = setup({ yes: true, list: [] });
     return Effect.gen(function* () {
       yield* legacySecretsUnset({ projectRef: Option.none(), names: [] });
-      expect(stderrText()).toContain("You have not set any function secrets, nothing to do.");
+      expect(out.stderrText).toContain("You have not set any function secrets, nothing to do.");
       expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("--yes bypasses the prompt and echoes [Y/n] y to stderr", () => {
-    const { layer } = setup({ yes: true });
+    const { layer, out } = setup({ yes: true });
     return Effect.gen(function* () {
       yield* legacySecretsUnset({ projectRef: Option.none(), names: ["FOO"] });
-      const stderr = stderrText();
-      expect(stderr).toContain("Do you want to unset these function secrets?");
-      expect(stderr).toContain(" • FOO");
-      expect(stderr).toContain("[Y/n] y");
+      expect(out.stderrText).toContain("Do you want to unset these function secrets?");
+      expect(out.stderrText).toContain(" • FOO");
+      expect(out.stderrText).toContain("[Y/n] y");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("non-TTY without --yes auto-confirms silently (Go parity)", () => {
-    const { layer, api } = setup({ yes: false, stdinIsTty: false });
+    const { layer, out, api } = setup({ yes: false, stdinIsTty: false });
     return Effect.gen(function* () {
       yield* legacySecretsUnset({ projectRef: Option.none(), names: ["FOO"] });
       // Go's PromptYesNo defaults to true after 100ms non-TTY read timeout — no stderr echo.
-      expect(stderrText()).not.toContain("[Y/n]");
+      expect(out.stderrText).not.toContain("[Y/n]");
       expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(1);
     }).pipe(Effect.provide(layer));
   });
@@ -382,7 +247,7 @@ describe("legacy secrets unset integration", () => {
       });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
-      expect(success?.data).toEqual({ project_ref: VALID_REF, count: 2 });
+      expect(success?.data).toEqual({ project_ref: LEGACY_VALID_REF, count: 2 });
     }).pipe(Effect.provide(layer));
   });
 
@@ -398,10 +263,10 @@ describe("legacy secrets unset integration", () => {
   it.live(
     "text mode prints `Finished supabase secrets unset.\\n` regardless of --output value",
     () => {
-      const { layer } = setup({ yes: true, goOutput: "json" });
+      const { layer, out } = setup({ yes: true, goOutput: "json" });
       return Effect.gen(function* () {
         yield* legacySecretsUnset({ projectRef: Option.none(), names: ["FOO"] });
-        expect(stdoutText()).toBe("Finished supabase secrets unset.\n");
+        expect(out.stdoutText).toBe("Finished supabase secrets unset.\n");
       }).pipe(Effect.provide(layer));
     },
   );
