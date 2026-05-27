@@ -10,7 +10,7 @@ Reference:
 ## Legend
 
 - `ported`: TS command exists and the flag/parameter surface is materially aligned with the old Go CLI
-- `partial`: TS feature exists but differs materially from the old Go CLI shape, flag surface, or invocation style. This includes feature parity delivered through framework-built global flags such as `--help` and `--completions` instead of matching Go subcommands exactly.
+- `partial`: TS feature exists but differs materially from the old Go CLI shape, flag surface, or invocation style. This includes feature parity delivered through framework-built global flags such as `--help` instead of matching Go subcommands exactly.
 - `missing`: no TS command/subcommand exists yet
 
 Percentages and counts below are based on final leaf commands only. Command groups like `db`, `functions`, and `completion` are not counted as commands.
@@ -19,29 +19,29 @@ Percentages and counts below are based on final leaf commands only. Command grou
 
 | Metric                    |   Count | Percent |
 | ------------------------- | ------: | ------: |
-| Fully ported commands     |  2 / 94 |    2.1% |
-| Partially ported commands | 59 / 94 |   62.8% |
+| Fully ported commands     |  6 / 94 |    6.4% |
+| Partially ported commands | 55 / 94 |   58.5% |
 
 ## Family Summary
 
-| Family                    | Final commands |  `ported` |  `partial` | `missing` | Represented in TS |
-| ------------------------- | -------------: | --------: | ---------: | --------: | ----------------: |
-| Quick Start               |              1 |    0 (0%) |     0 (0%) |  1 (100%) |            0 (0%) |
-| Project / Stack Lifecycle |              9 | 2 (22.2%) |  7 (77.8%) |    0 (0%) |          9 (100%) |
-| Database                  |             19 |    0 (0%) |     0 (0%) | 19 (100%) |            0 (0%) |
-| Code Generation           |              3 |    0 (0%) |     0 (0%) |  3 (100%) |            0 (0%) |
-| Functions                 |              6 |    0 (0%) |     0 (0%) |  6 (100%) |            0 (0%) |
-| Storage                   |              4 |    0 (0%) |     0 (0%) |  4 (100%) |            0 (0%) |
-| Management APIs           |             47 |    0 (0%) |  47 (100%) |    0 (0%) |         47 (100%) |
-| Additional Commands       |              5 |    0 (0%) | 5 (100.0%) |    0 (0%) |        5 (100.0%) |
+| Family                    | Final commands |  `ported` | `partial` | `missing` | Represented in TS |
+| ------------------------- | -------------: | --------: | --------: | --------: | ----------------: |
+| Quick Start               |              1 |    0 (0%) |    0 (0%) |  1 (100%) |            0 (0%) |
+| Project / Stack Lifecycle |              9 | 2 (22.2%) | 7 (77.8%) |    0 (0%) |          9 (100%) |
+| Database                  |             19 |    0 (0%) |    0 (0%) | 19 (100%) |            0 (0%) |
+| Code Generation           |              3 |    0 (0%) |    0 (0%) |  3 (100%) |            0 (0%) |
+| Functions                 |              6 |    0 (0%) |    0 (0%) |  6 (100%) |            0 (0%) |
+| Storage                   |              4 |    0 (0%) |    0 (0%) |  4 (100%) |            0 (0%) |
+| Management APIs           |             47 |    0 (0%) | 47 (100%) |    0 (0%) |         47 (100%) |
+| Additional Commands       |              5 |   4 (80%) |   1 (20%) |    0 (0%) |        5 (100.0%) |
 
 ## Global Flags Overview
 
 This tracker is command-focused, but root global flag drift is large enough to note separately.
 
-| Surface                 | TS path                                                                  | Missing old flags/params                                                                                                        | Extra TS flags/params | Notes                                                                                                                                                                                                                                        |
-| ----------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `supabase` global flags | [`../src/shared/cli/global-flags.ts`](../src/shared/cli/global-flags.ts) | `--create-ticket`, `--debug`, `--dns-resolver`, `--experimental`, `--network-id`, `--output`, `--profile`, `--workdir`, `--yes` | `--output-format`     | Root flag parity is still far from the Go CLI, but the framework already provides global `--help` and `--completions`, so help and shell completion have feature parity even though they no longer live under explicit Go-style subcommands. |
+| Surface                 | TS path                                                                  | Missing old flags/params                                                                                                        | Extra TS flags/params | Notes                                                                                                                                                                                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `supabase` global flags | [`../src/shared/cli/global-flags.ts`](../src/shared/cli/global-flags.ts) | `--create-ticket`, `--debug`, `--dns-resolver`, `--experimental`, `--network-id`, `--output`, `--profile`, `--workdir`, `--yes` | `--output-format`     | Root flag parity is still far from the Go CLI, but the framework already provides global `--help`, and `supabase completion <shell>` is restored as a Go-style subcommand. The framework's `--completions` global flag remains available for `next/` users. |
 
 ## TS-only Commands
 
@@ -193,13 +193,13 @@ These route-first equivalents are intentionally lower-level than the old Go comm
 
 ## Additional Commands
 
-| Old command             | TS status | TS command path or `missing`        | Missing flags/params                              | Extra TS flags/params | Notes                                                                                                                |
-| ----------------------- | --------- | ----------------------------------- | ------------------------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `completion bash`       | `partial` | `supabase --completions bash`       | Go-style `completion bash` subcommand shape       | `-`                   | Feature parity exists via the framework-provided global `--completions` flag instead of a dedicated subcommand tree. |
-| `completion fish`       | `partial` | `supabase --completions fish`       | Go-style `completion fish` subcommand shape       | `-`                   | Feature parity exists via the framework-provided global `--completions` flag instead of a dedicated subcommand tree. |
-| `completion powershell` | `partial` | `supabase --completions powershell` | Go-style `completion powershell` subcommand shape | `-`                   | Feature parity exists via the framework-provided global `--completions` flag instead of a dedicated subcommand tree. |
-| `completion zsh`        | `partial` | `supabase --completions zsh`        | Go-style `completion zsh` subcommand shape        | `-`                   | Feature parity exists via the framework-provided global `--completions` flag instead of a dedicated subcommand tree. |
-| `help`                  | `partial` | `supabase --help`                   | Go-style top-level `help` command shape           | `-`                   | Feature parity exists via the framework-provided global `--help` flag instead of a dedicated `help` command.         |
+| Old command             | TS status | TS command path or `missing`     | Missing flags/params                    | Extra TS flags/params | Notes                                                                                                        |
+| ----------------------- | --------- | -------------------------------- | --------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `completion bash`       | `ported`  | `supabase completion bash`       | `-`                                     | `-`                   | Proxies verbatim to the Go binary so the emitted script is byte-identical to Cobra's output (CLI-1532).      |
+| `completion fish`       | `ported`  | `supabase completion fish`       | `-`                                     | `-`                   | Proxies verbatim to the Go binary so the emitted script is byte-identical to Cobra's output (CLI-1532).      |
+| `completion powershell` | `ported`  | `supabase completion powershell` | `-`                                     | `-`                   | Proxies verbatim to the Go binary so the emitted script is byte-identical to Cobra's output (CLI-1532).      |
+| `completion zsh`        | `ported`  | `supabase completion zsh`        | `-`                                     | `-`                   | Proxies verbatim to the Go binary so the emitted script is byte-identical to Cobra's output (CLI-1532).      |
+| `help`                  | `partial` | `supabase --help`                | Go-style top-level `help` command shape | `-`                   | Feature parity exists via the framework-provided global `--help` flag instead of a dedicated `help` command. |
 
 ## Legacy Shell Wrapping Status
 
