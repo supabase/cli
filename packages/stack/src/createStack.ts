@@ -559,6 +559,7 @@ export async function resolveConfig(
       port: ports.dbPort,
       dataDir: postgresDataDir,
       version: postgresInput.version ?? DEFAULT_VERSIONS.postgres,
+      autoExposeNewTables: postgresInput.autoExposeNewTables ?? true,
     },
     postgrest: resolvePostgrestConfig(postgrestInput, config.postgrest, ports),
     auth: resolveAuthConfig(authInput, config.auth, ports, ports.apiPort),
@@ -699,7 +700,7 @@ export async function createStack(
   const runtime = ManagedRuntime.make(fullLayer);
 
   try {
-    const services = await runtime.services();
+    const services = await runtime.context();
     const localStack = await runtime.runPromise(
       Effect.gen(function* () {
         return yield* Stack;

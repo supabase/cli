@@ -1,6 +1,6 @@
 import { buildGraph } from "@supabase/process-compose";
 import type { ResolvedGraph, ServiceDef } from "@supabase/process-compose";
-import { Effect, Layer, ServiceMap } from "effect";
+import { Effect, Layer, Context } from "effect";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { StackBuildError } from "./errors.ts";
 import type { FunctionsConfig, ResolvedFunctionsConfig } from "./functions.ts";
@@ -39,6 +39,14 @@ export interface PostgresConfig {
   readonly port?: number;
   readonly dataDir?: string;
   readonly version?: string;
+  /**
+   * When true (default), the bundled initial schema GRANTs that expose new tables, views,
+   * sequences, and functions in `public` to the Data API roles (`anon`, `authenticated`,
+   * `service_role`) are kept in place. When false, those default privileges are revoked so the
+   * local stack matches the new cloud default and requires explicit GRANTs to surface entities
+   * through the Data API.
+   */
+  readonly autoExposeNewTables?: boolean;
 }
 
 export interface PostgrestConfig {
@@ -160,6 +168,7 @@ export interface ResolvedPostgresConfig {
   readonly port: number;
   readonly dataDir: string;
   readonly version: string;
+  readonly autoExposeNewTables: boolean;
 }
 
 export interface ResolvedPostgrestConfig {
@@ -485,7 +494,7 @@ export const nativePostgresNeedsDockerAccess = (
   dockerServicesEnabled: boolean,
 ): boolean => postgresResolution.type === "binary" && dockerServicesEnabled;
 
-export class StackBuilder extends ServiceMap.Service<
+export class StackBuilder extends Context.Service<
   StackBuilder,
   {
     readonly build: (
@@ -569,6 +578,7 @@ export class StackBuilder extends ServiceMap.Service<
             ...makePostgresInitService({
               postgresDir: postgresResolution.path,
               dbPort: config.dbPort,
+              autoExposeNewTables: config.postgres.autoExposeNewTables,
             }),
             enabled: true,
           });

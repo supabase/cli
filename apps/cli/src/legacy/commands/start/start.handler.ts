@@ -7,5 +7,6 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
   const args: string[] = ["start"];
   for (const name of flags.exclude) args.push("--exclude", name);
   if (flags.ignoreHealthCheck) args.push("--ignore-health-check");
+  if (flags.preview) args.push("--preview");
   yield* proxy.exec(args);
 });

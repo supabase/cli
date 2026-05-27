@@ -1247,11 +1247,7 @@ EOF
 	if err := start.WaitForHealthyService(ctx, serviceTimeout, started...); err != nil {
 		return err
 	}
-	if service := phtelemetry.FromContext(ctx); service != nil {
-		if err := service.Capture(ctx, phtelemetry.EventStackStarted, nil, nil); err != nil {
-			fmt.Fprintln(utils.GetDebugLogger(), err)
-		}
-	}
+	_ = phtelemetry.FromContext(ctx).Capture(ctx, phtelemetry.EventStackStarted, nil, nil)
 	return nil
 }
 
@@ -1360,6 +1356,10 @@ func buildGotrueEnv(dbConfig pgconn.Config) []string {
 
 func appendGotrueExternalProviderEnv(env []string) []string {
 	for name, config := range utils.Config.Auth.External {
+		redirectUri := config.RedirectUri
+		if redirectUri == "" {
+			redirectUri = utils.Config.Auth.JwtIssuer + "/callback"
+		}
 		env = append(
 			env,
 			fmt.Sprintf("GOTRUE_EXTERNAL_%s_ENABLED=%v", strings.ToUpper(name), config.Enabled),
@@ -1367,10 +1367,8 @@ func appendGotrueExternalProviderEnv(env []string) []string {
 			fmt.Sprintf("GOTRUE_EXTERNAL_%s_SECRET=%s", strings.ToUpper(name), config.Secret.Value),
 			fmt.Sprintf("GOTRUE_EXTERNAL_%s_SKIP_NONCE_CHECK=%t", strings.ToUpper(name), config.SkipNonceCheck),
 			fmt.Sprintf("GOTRUE_EXTERNAL_%s_EMAIL_OPTIONAL=%t", strings.ToUpper(name), config.EmailOptional),
+			fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=%s", strings.ToUpper(name), redirectUri),
 		)
-		if config.RedirectUri != "" {
-			env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_%s_REDIRECT_URI=%s", strings.ToUpper(name), config.RedirectUri))
-		}
 		if config.Url != "" {
 			env = append(env, fmt.Sprintf("GOTRUE_EXTERNAL_%s_URL=%s", strings.ToUpper(name), config.Url))
 		}

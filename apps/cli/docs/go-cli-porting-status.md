@@ -204,6 +204,7 @@ These route-first equivalents are intentionally lower-level than the old Go comm
 ## Legacy Shell Wrapping Status
 
 Phase 0 proxy wrappers in the legacy shell (`src/legacy/`). Each wrapped command forwards to the bundled Go binary via `LegacyGoProxy`.
+The `migration` command group also accepts Go's top-level `migrations` alias and forwards singular `migration` argv to Go.
 
 Legend:
 
@@ -226,12 +227,12 @@ Legend:
 | `branches unpause`                     | `wrapped`     | [`../src/legacy/commands/branches/unpause/unpause.command.ts`](../src/legacy/commands/branches/unpause/unpause.command.ts)                                                                |
 | `branches delete`                      | `wrapped`     | [`../src/legacy/commands/branches/delete/delete.command.ts`](../src/legacy/commands/branches/delete/delete.command.ts)                                                                    |
 | `branches disable`                     | `wrapped`     | [`../src/legacy/commands/branches/disable/disable.command.ts`](../src/legacy/commands/branches/disable/disable.command.ts)                                                                |
-| `secrets list`                         | `wrapped`     | [`../src/legacy/commands/secrets/list/list.command.ts`](../src/legacy/commands/secrets/list/list.command.ts)                                                                              |
-| `secrets set`                          | `wrapped`     | [`../src/legacy/commands/secrets/set/set.command.ts`](../src/legacy/commands/secrets/set/set.command.ts)                                                                                  |
-| `secrets unset`                        | `wrapped`     | [`../src/legacy/commands/secrets/unset/unset.command.ts`](../src/legacy/commands/secrets/unset/unset.command.ts)                                                                          |
+| `secrets list`                         | `ported`      | [`../src/legacy/commands/secrets/list/list.command.ts`](../src/legacy/commands/secrets/list/list.command.ts)                                                                              |
+| `secrets set`                          | `ported`      | [`../src/legacy/commands/secrets/set/set.command.ts`](../src/legacy/commands/secrets/set/set.command.ts)                                                                                  |
+| `secrets unset`                        | `ported`      | [`../src/legacy/commands/secrets/unset/unset.command.ts`](../src/legacy/commands/secrets/unset/unset.command.ts)                                                                          |
 | `config push`                          | `wrapped`     | [`../src/legacy/commands/config/push/push.command.ts`](../src/legacy/commands/config/push/push.command.ts)                                                                                |
-| `backups list`                         | `wrapped`     | [`../src/legacy/commands/backups/list/list.command.ts`](../src/legacy/commands/backups/list/list.command.ts)                                                                              |
-| `backups restore`                      | `wrapped`     | [`../src/legacy/commands/backups/restore/restore.command.ts`](../src/legacy/commands/backups/restore/restore.command.ts)                                                                  |
+| `backups list`                         | `ported`      | [`../src/legacy/commands/backups/list/list.command.ts`](../src/legacy/commands/backups/list/list.command.ts)                                                                              |
+| `backups restore`                      | `ported`      | [`../src/legacy/commands/backups/restore/restore.command.ts`](../src/legacy/commands/backups/restore/restore.command.ts)                                                                  |
 | `snippets list`                        | `wrapped`     | [`../src/legacy/commands/snippets/list/list.command.ts`](../src/legacy/commands/snippets/list/list.command.ts)                                                                            |
 | `snippets download`                    | `wrapped`     | [`../src/legacy/commands/snippets/download/download.command.ts`](../src/legacy/commands/snippets/download/download.command.ts)                                                            |
 | `sso list`                             | `wrapped`     | [`../src/legacy/commands/sso/list/list.command.ts`](../src/legacy/commands/sso/list/list.command.ts)                                                                                      |
@@ -255,8 +256,8 @@ Legend:
 | `network-restrictions update`          | `wrapped`     | [`../src/legacy/commands/network-restrictions/update/update.command.ts`](../src/legacy/commands/network-restrictions/update/update.command.ts)                                            |
 | `encryption get-root-key`              | `wrapped`     | [`../src/legacy/commands/encryption/get-root-key/get-root-key.command.ts`](../src/legacy/commands/encryption/get-root-key/get-root-key.command.ts)                                        |
 | `encryption update-root-key`           | `wrapped`     | [`../src/legacy/commands/encryption/update-root-key/update-root-key.command.ts`](../src/legacy/commands/encryption/update-root-key/update-root-key.command.ts)                            |
-| `ssl-enforcement get`                  | `wrapped`     | [`../src/legacy/commands/ssl-enforcement/get/get.command.ts`](../src/legacy/commands/ssl-enforcement/get/get.command.ts)                                                                  |
-| `ssl-enforcement update`               | `wrapped`     | [`../src/legacy/commands/ssl-enforcement/update/update.command.ts`](../src/legacy/commands/ssl-enforcement/update/update.command.ts)                                                      |
+| `ssl-enforcement get`                  | `ported`      | [`../src/legacy/commands/ssl-enforcement/get/get.command.ts`](../src/legacy/commands/ssl-enforcement/get/get.command.ts)                                                                  |
+| `ssl-enforcement update`               | `ported`      | [`../src/legacy/commands/ssl-enforcement/update/update.command.ts`](../src/legacy/commands/ssl-enforcement/update/update.command.ts)                                                      |
 | `postgres-config get`                  | `wrapped`     | [`../src/legacy/commands/postgres-config/get/get.command.ts`](../src/legacy/commands/postgres-config/get/get.command.ts)                                                                  |
 | `postgres-config update`               | `wrapped`     | [`../src/legacy/commands/postgres-config/update/update.command.ts`](../src/legacy/commands/postgres-config/update/update.command.ts)                                                      |
 | `postgres-config delete`               | `wrapped`     | [`../src/legacy/commands/postgres-config/delete/delete.command.ts`](../src/legacy/commands/postgres-config/delete/delete.command.ts)                                                      |

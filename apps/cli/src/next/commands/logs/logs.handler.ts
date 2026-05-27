@@ -71,7 +71,7 @@ export const logs = Effect.fnUntraced(function* (flags: LogsFlags) {
         projectStateRoot: projectHome.projectHomeDir,
         name: flags.stack,
       });
-      const stack = yield* Effect.provide(Stack.asEffect(), layer);
+      const stack = yield* Effect.provide(Stack, layer);
       const services = flags.service.length === 0 ? undefined : flags.service;
       const history = flags.tail > 0 ? yield* stack.logHistoryAll(flags.tail, services) : [];
       const historyStream = Stream.fromIterable(history).pipe(

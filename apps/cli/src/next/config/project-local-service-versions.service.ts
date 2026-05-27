@@ -1,5 +1,5 @@
 import type { Effect, Option } from "effect";
-import { Data, Schema, ServiceMap } from "effect";
+import { Data, Schema, Context } from "effect";
 
 const LocalServiceVersionsSchema = Schema.Struct({
   postgres: Schema.optionalKey(Schema.String),
@@ -37,7 +37,7 @@ interface ProjectLocalServiceVersionsShape {
   >;
 }
 
-export class ProjectLocalServiceVersions extends ServiceMap.Service<
+export class ProjectLocalServiceVersions extends Context.Service<
   ProjectLocalServiceVersions,
   ProjectLocalServiceVersionsShape
 >()("supabase/config/ProjectLocalServiceVersions") {}

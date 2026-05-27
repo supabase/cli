@@ -83,11 +83,9 @@ function buildCommand(target: CLITarget): BuiltCommand {
       return { cmd: ["node", TS_CLI_SHIM], binaryOverride: binaryPath };
     }
     case "ts-next": {
-      // The `ts-next` shell is not yet runnable end-to-end through the
-      // `bun --compile` standalone binary (daemon-fork dispatch and the
-      // `@parcel/watcher` native binding still need work in compiled mode).
-      // Run it directly from source via `bun` until those are resolved.
-      return { cmd: ["bun", join(WORKSPACE_ROOT, "apps/cli/src/next/main.ts")] };
+      const binaryPath = tsCliBinary("next");
+      assertTsCliBuilt(binaryPath);
+      return { cmd: ["node", TS_CLI_SHIM], binaryOverride: binaryPath };
     }
   }
 }
@@ -123,12 +121,15 @@ export async function exec(
     ...opts?.env,
   };
 
-  // The Go CLI (and the ts-legacy CLI which shells out to Go) uses a profile
-  // system rather than SUPABASE_API_URL. Write a temporary profile file
-  // pointing to the replay server. SUPABASE_PROFILE is picked up by Go's viper
-  // (prefix SUPABASE_ + AutomaticEnv). For ts-legacy, the profile file is
-  // inherited by the Go subprocess because it spawns with extendEnv: true.
-  // ts-next reads SUPABASE_API_URL directly, so it doesn't need a profile file.
+  // The Go CLI uses a profile system rather than SUPABASE_API_URL. Write a
+  // temporary profile file pointing to the replay server.
+  // - Go's viper reads SUPABASE_PROFILE as a config file path (prefix
+  //   SUPABASE_ + AutomaticEnv) when the value isn't a built-in profile name.
+  // - The ts-legacy CLI mirrors this dual semantics in `LegacyCliConfig`
+  //   (built-in name first, YAML file path second) for any natively-ported
+  //   command; proxy-wrapped commands still shell out to Go which reads the
+  //   same file directly.
+  // - ts-next reads SUPABASE_API_URL directly, so it doesn't need a profile file.
   let profilePath: string | undefined;
   if (harness.target === "go" || harness.target === "ts-legacy") {
     profilePath = join(tmpdir(), `cli-e2e-profile-${randomUUID()}.yaml`);

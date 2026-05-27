@@ -204,6 +204,7 @@ function mockChildProcessSpawner(
                 killEvents.notify();
                 yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(143));
               }),
+            unref: Effect.succeed(Effect.void),
             getInputFd: () => Sink.drain,
             getOutputFd: () => Stream.empty,
           });
@@ -286,6 +287,7 @@ function mockStuckChildProcessSpawner() {
                 // Await exit like the real spawner — blocks until process exits
                 yield* Deferred.await(exitDeferred);
               }).pipe(Effect.asVoid),
+            unref: Effect.succeed(Effect.void),
             getInputFd: () => Sink.drain,
             getOutputFd: () => Stream.empty,
           });
@@ -439,8 +441,8 @@ describe("Orchestrator", () => {
       yield* orc.start();
       yield* proc.waitForSpawnCount(1);
       expect(proc.spawned).toHaveLength(1);
-      expect(proc.spawned[0]?.command).toMatch(/(^node$|node(\.exe)?$|\/node$|\\node\.exe$)/);
-      expect(proc.spawned[0]?.args[0]).toContain("supervisor-runtime.mjs");
+      expect(proc.spawned[0]?.command).toBe(process.execPath);
+      expect(proc.spawned[0]?.args[0]).toContain("supervisor-runtime.ts");
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 

@@ -12,7 +12,7 @@ const MUSL_TARGETS = [
     nfpmArch: "arm64",
   },
   {
-    bunTarget: "bun-linux-x64-musl",
+    bunTarget: "bun-linux-x64-musl-baseline",
     pkg: "cli-linux-x64-musl",
     nfpmArch: "amd64",
   },
@@ -62,14 +62,14 @@ const TARGETS = [
     ext: "",
   },
   {
-    bunTarget: "bun-linux-x64",
+    bunTarget: "bun-linux-x64-baseline",
     pkg: "cli-linux-x64",
     archive: `supabase_${version}_linux_amd64.tar.gz`,
     nfpmArch: "amd64",
     ext: "",
   },
   {
-    bunTarget: "bun-windows-x64",
+    bunTarget: "bun-windows-x64-baseline",
     pkg: "cli-windows-x64",
     archive: `supabase_${version}_windows_amd64.zip`,
     ext: ".exe",
@@ -93,19 +93,27 @@ const GO_TARGETS: Record<BunTarget, { goos: string; goarch: string }> = {
   "bun-darwin-arm64": { goos: "darwin", goarch: "arm64" },
   "bun-darwin-x64": { goos: "darwin", goarch: "amd64" },
   "bun-linux-arm64": { goos: "linux", goarch: "arm64" },
-  "bun-linux-x64": { goos: "linux", goarch: "amd64" },
-  "bun-windows-x64": { goos: "windows", goarch: "amd64" },
+  "bun-linux-x64-baseline": { goos: "linux", goarch: "amd64" },
+  "bun-windows-x64-baseline": { goos: "windows", goarch: "amd64" },
   "bun-windows-arm64": { goos: "windows", goarch: "arm64" },
 };
+
+function libcForBunTarget(target: string): "glibc" | "musl" | "" {
+  if (!target.startsWith("bun-linux-")) {
+    return "";
+  }
+  return target.includes("-musl") ? "musl" : "glibc";
+}
 
 async function buildTarget(target: (typeof TARGETS)[number]) {
   const binDir = path.join(root, "packages", target.pkg, "bin");
   await mkdir(binDir, { recursive: true });
 
   const outfile = path.join(binDir, `supabase${target.ext}`);
+  const libc = libcForBunTarget(target.bunTarget);
 
   console.log(`[${target.pkg}] Compiling Bun CLI...`);
-  await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --outfile=${outfile}`;
+  await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --define=SUPABASE_LIBC=${JSON.stringify(libc)} --outfile=${outfile}`;
   console.log(`[${target.pkg}] Done.`);
 }
 
@@ -117,7 +125,21 @@ async function buildGoTarget(target: (typeof TARGETS)[number]) {
   const outfile = path.join(binDir, `supabase-go${target.ext}`);
 
   console.log(`[${target.pkg}] Compiling Go CLI (${goos}/${goarch})...`);
-  await $`go build -trimpath -ldflags="-s -w" -o ${outfile} .`.cwd(goSource).env({
+  const ldflagParts = ["-s", "-w", `-X github.com/supabase/cli/internal/utils.Version=${version}`];
+  const { SENTRY_DSN, POSTHOG_API_KEY, POSTHOG_ENDPOINT } = process.env;
+  if (SENTRY_DSN) {
+    ldflagParts.push(`-X github.com/supabase/cli/internal/utils.SentryDsn=${SENTRY_DSN}`);
+  }
+  if (POSTHOG_API_KEY) {
+    ldflagParts.push(`-X github.com/supabase/cli/internal/utils.PostHogAPIKey=${POSTHOG_API_KEY}`);
+  }
+  if (POSTHOG_ENDPOINT) {
+    ldflagParts.push(
+      `-X github.com/supabase/cli/internal/utils.PostHogEndpoint=${POSTHOG_ENDPOINT}`,
+    );
+  }
+  const goLdflags = ldflagParts.join(" ");
+  await $`go build -trimpath -ldflags=${goLdflags} -o ${outfile} .`.cwd(goSource).env({
     ...process.env,
     GOOS: goos,
     GOARCH: goarch,
@@ -136,6 +158,16 @@ async function archiveTarget(target: (typeof TARGETS)[number]) {
     const files = [path.join(binDir, `supabase${target.ext}`)];
     if (shell === "legacy") files.push(path.join(binDir, `supabase-go${target.ext}`));
     await $`zip -j ${archivePath} ${files}`;
+
+    // setup-cli and other download clients always fetch a .tar.gz, including on
+    // Windows where tc.extractTar handles the archive. Publish a matching
+    // tar.gz alongside the .zip so those clients keep working. See #5257.
+    const tarArchive = target.archive.replace(/\.zip$/, ".tar.gz");
+    const tarArchivePath = path.join(distDir, tarArchive);
+    const tarFiles = [`supabase${target.ext}`];
+    if (shell === "legacy") tarFiles.push(`supabase-go${target.ext}`);
+    console.log(`[${target.pkg}] Creating archive ${tarArchive}...`);
+    await $`tar -czf ${tarArchivePath} -C ${binDir} ${tarFiles}`;
   } else {
     const files = [`supabase${target.ext}`];
     if (shell === "legacy") files.push(`supabase-go${target.ext}`);
@@ -150,8 +182,9 @@ async function buildMuslBinaries() {
       await mkdir(binDir, { recursive: true });
 
       const outfile = path.join(binDir, "supabase");
+      const libc = libcForBunTarget(target.bunTarget);
       console.log(`[${target.pkg}] Compiling Bun CLI (musl)...`);
-      await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --outfile=${outfile}`;
+      await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --define=SUPABASE_LIBC=${JSON.stringify(libc)} --outfile=${outfile}`;
 
       if (shell === "legacy") {
         // Go binary is CGO_ENABLED=0 (fully static), so the glibc Linux build works on
@@ -241,6 +274,13 @@ async function generateChecksums() {
     const data = await readFile(archivePath);
     const hash = createHash("sha256").update(data).digest("hex");
     lines.push(`${hash}  ${target.archive}`);
+
+    if (target.archive.endsWith(".zip")) {
+      const tarArchive = target.archive.replace(/\.zip$/, ".tar.gz");
+      const tarData = await readFile(path.join(distDir, tarArchive));
+      const tarHash = createHash("sha256").update(tarData).digest("hex");
+      lines.push(`${tarHash}  ${tarArchive}`);
+    }
   }
 
   const linuxTargets = TARGETS.filter((target) => "nfpmArch" in target);

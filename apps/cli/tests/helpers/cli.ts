@@ -18,14 +18,16 @@ const SHIM_PATH = fileURLToPath(new URL("../../dist/supabase.js", import.meta.ur
 const LEGACY_BINARY_PATH = fileURLToPath(
   new URL(`../../dist/supabase-legacy${BINARY_EXT}`, import.meta.url),
 );
-const NEXT_SOURCE_ENTRYPOINT = fileURLToPath(new URL("../../src/next/main.ts", import.meta.url));
+const NEXT_BINARY_PATH = fileURLToPath(
+  new URL(`../../dist/supabase-next${BINARY_EXT}`, import.meta.url),
+);
 
-function assertLegacyBuildArtifactsExist(): void {
-  if (!existsSync(SHIM_PATH) || !existsSync(LEGACY_BINARY_PATH)) {
+function assertBuildArtifactsExist(shell: "legacy" | "next", binaryPath: string): void {
+  if (!existsSync(SHIM_PATH) || !existsSync(binaryPath)) {
     throw new Error(
-      `Missing legacy CLI build artifacts. Run \`pnpm --filter supabase build\` before invoking legacy e2e tests.\n` +
+      `Missing ${shell} CLI build artifacts. Run \`pnpm --filter supabase build\` before invoking ${shell} e2e tests.\n` +
         `  expected shim:   ${SHIM_PATH}\n` +
-        `  expected binary: ${LEGACY_BINARY_PATH}`,
+        `  expected binary: ${binaryPath}`,
     );
   }
 }
@@ -188,14 +190,9 @@ export function spawnSupabase(
   noteStackProjectHome(options?.cwd, homeDir);
   const entrypoint = options?.entrypoint ?? "next";
   const usesStartWrapper = args[0] === "start";
-  // The `next` shell drives the local stack daemon (`start --detach`,
-  // `functions dev`, ...) and depends on `@parcel/watcher`'s native binding
-  // — neither path works end-to-end through a `bun --compile` self-contained
-  // binary yet, so the next-shell e2e suite continues to run against the
-  // source tree via `bun src/...`. The `legacy` shell has no daemon and no
-  // native deps, so its e2e suite exercises the real shipped artifact:
-  // `node dist/supabase.js` (the Node shim) with `SUPABASE_CLI_BINARY_OVERRIDE`
-  // pointing at the per-shell `bun build --compile` standalone executable.
+  // Exercise the same shim + compiled shell binary handoff that published
+  // packages use. `SUPABASE_CLI_BINARY_OVERRIDE` points the shim at the local
+  // build artifact without needing platform wrapper packages.
   let execCmd: string;
   let execArgs: string[];
   const env: Record<string, string> = {
@@ -206,20 +203,14 @@ export function spawnSupabase(
     ...options?.env,
   };
   if (entrypoint === "legacy") {
-    assertLegacyBuildArtifactsExist();
+    assertBuildArtifactsExist("legacy", LEGACY_BINARY_PATH);
     env["SUPABASE_CLI_BINARY_OVERRIDE"] = LEGACY_BINARY_PATH;
-    execCmd = "node";
-    execArgs = [SHIM_PATH, ...args];
   } else {
-    const sourceLauncher = fileURLToPath(new URL("./source-cli-launcher.mjs", import.meta.url));
-    if (usesStartWrapper) {
-      execCmd = "node";
-      execArgs = [sourceLauncher, NEXT_SOURCE_ENTRYPOINT, ...args];
-    } else {
-      execCmd = "bun";
-      execArgs = [NEXT_SOURCE_ENTRYPOINT, ...args];
-    }
+    assertBuildArtifactsExist("next", NEXT_BINARY_PATH);
+    env["SUPABASE_CLI_BINARY_OVERRIDE"] = NEXT_BINARY_PATH;
   }
+  execCmd = "node";
+  execArgs = [SHIM_PATH, ...args];
   const proc = spawn(execCmd, execArgs, {
     cwd: options?.cwd,
     env,
@@ -239,6 +230,26 @@ export function spawnSupabase(
 
   let stdout = "";
   let stderr = "";
+  let closeResult: RunResult | undefined;
+  let cleanedUpProcessGroup = false;
+  let disposedOwnHome = false;
+  const closeWaiters = new Set<(result: RunResult) => void>();
+
+  const cleanupProcessGroupOnClose = () => {
+    if (cleanedUpProcessGroup || !(options?.cleanupProcessGroupOnClose ?? true)) {
+      return;
+    }
+    cleanedUpProcessGroup = true;
+    killProcessGroup(proc.pid!, "SIGKILL");
+  };
+
+  const disposeOwnHome = () => {
+    if (disposedOwnHome) {
+      return;
+    }
+    disposedOwnHome = true;
+    ownHome?.[Symbol.dispose]();
+  };
 
   stdoutStream.on("data", (data: Buffer) => {
     stdout += data.toString();
@@ -246,6 +257,14 @@ export function spawnSupabase(
 
   stderrStream.on("data", (data: Buffer) => {
     stderr += data.toString();
+  });
+
+  proc.once("close", (code) => {
+    closeResult = { stdout, stderr, exitCode: code ?? 1 };
+    for (const waiter of closeWaiters) {
+      waiter(closeResult);
+    }
+    closeWaiters.clear();
   });
 
   if (options?.stdin !== undefined && proc.stdin) {
@@ -256,6 +275,12 @@ export function spawnSupabase(
   const waitForExit = async (
     timeoutMs = options?.exitTimeoutMs ?? DEFAULT_EXIT_TIMEOUT_MS,
   ): Promise<RunResult> => {
+    if (closeResult) {
+      cleanupProcessGroupOnClose();
+      disposeOwnHome();
+      return closeResult;
+    }
+
     const result = await new Promise<RunResult>((resolve) => {
       const timeout = setTimeout(() => {
         killProcessGroup(proc.pid!, "SIGKILL");
@@ -265,17 +290,17 @@ export function spawnSupabase(
       }, timeoutMs);
       timeout.unref();
 
-      proc.on("close", (code) => {
+      const onClose = (result: RunResult) => {
         clearTimeout(timeout);
-        if (options?.cleanupProcessGroupOnClose ?? true) {
-          killProcessGroup(proc.pid!, "SIGKILL");
-        }
+        closeWaiters.delete(onClose);
+        cleanupProcessGroupOnClose();
+        resolve(result);
+      };
 
-        resolve({ stdout, stderr, exitCode: code ?? 1 });
-      });
+      closeWaiters.add(onClose);
     });
 
-    ownHome?.[Symbol.dispose]();
+    disposeOwnHome();
     return result;
   };
 
@@ -293,6 +318,17 @@ export function spawnSupabase(
     waitForOutput: async (pattern: RegExp, timeoutMs = 60_000) => {
       if (pattern.test(stdout)) {
         return;
+      }
+      if (closeResult) {
+        throw new Error(
+          [
+            `Process exited before output matched ${pattern}`,
+            `Command: supabase ${args.join(" ")}`,
+            `PID: ${proc.pid ?? "<unknown>"}`,
+            outputTail("stdout tail", stdout),
+            outputTail("stderr tail", stderr),
+          ].join("\n\n"),
+        );
       }
 
       await new Promise<void>((resolve, reject) => {

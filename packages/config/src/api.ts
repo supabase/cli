@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 
 const links = [
   {
@@ -23,13 +23,13 @@ export const api = Schema.Struct({
     description: "Enable the local PostgREST service.",
     tags,
     links,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultEnabled)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnabled))),
   port: Schema.Number.annotate({
     default: defaultPort,
     description: "Port to use for the API URL.",
     tags,
     links,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultPort)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPort))),
   schemas: Schema.Array(
     Schema.String.annotate({
       description:
@@ -39,7 +39,7 @@ export const api = Schema.Struct({
     }),
   )
     .annotate({ default: defaultSchemas })
-    .pipe(Schema.withDecodingDefaultKey(() => [...defaultSchemas])),
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed([...defaultSchemas]))),
   extra_search_path: Schema.Array(
     Schema.String.annotate({
       description: "Extra schemas to add to the search_path of every request.",
@@ -48,21 +48,29 @@ export const api = Schema.Struct({
     }),
   )
     .annotate({ default: defaultExtraSearchPath })
-    .pipe(Schema.withDecodingDefaultKey(() => [...defaultExtraSearchPath])),
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed([...defaultExtraSearchPath]))),
   max_rows: Schema.Number.annotate({
     default: defaultMaxRows,
     description:
       "The maximum number of rows returned from a view, table, or stored procedure. Limits payload size for accidental or malicious requests.",
     tags,
     links,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultMaxRows)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxRows))),
+  auto_expose_new_tables: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "Controls whether newly-created tables, views, sequences and functions in the `public` schema by `postgres` are reachable through the Data API roles (`anon`, `authenticated`, `service_role`) without explicit GRANTs. Leave unset today to keep long-standing local behaviour. The implicit default flips to `false` on 2026-05-30 to match the new cloud default, and the field is removed in 2026-10-30 once the always-revoked behaviour is permanent. Set to `false` to opt in early; set to `true` to lock in today's behaviour through the deprecation window.",
+      tags,
+      links,
+    }),
+  ),
   tls: Schema.Struct({
     enabled: Schema.Boolean.annotate({
       default: defaultTlsEnabled,
       description: "Enable HTTPS endpoints locally using a self-signed certificate.",
       tags,
       links,
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultTlsEnabled)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultTlsEnabled))),
     cert_path: Schema.optionalKey(
       Schema.String.annotate({
         description: "Path to the self-signed certificate.",
@@ -77,11 +85,11 @@ export const api = Schema.Struct({
         links,
       }),
     ),
-  }).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultTls }))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultTls }))),
   external_url: Schema.optionalKey(
     Schema.String.annotate({
       description: "External URL for accessing the API server.",
       tags,
     }),
   ),
-}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultApi })));
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultApi })));

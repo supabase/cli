@@ -4,13 +4,13 @@ import type { PlatformApi } from "../../auth/platform-api.service.ts";
 
 export type PlatformHttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD";
 
-export type PlatformFieldLocation = "path" | "query" | "header" | "body";
+type PlatformFieldLocation = "path" | "query" | "header" | "body";
 
-export type PlatformFieldKind = "string" | "boolean" | "enum" | "unknown" | "array" | "object";
+type PlatformFieldKind = "string" | "boolean" | "enum" | "unknown" | "array" | "object";
 
 export type PlatformSchemaKind = PlatformFieldKind | "integer" | "number" | "union";
 
-export type PlatformBodyKind = "none" | "json" | "binary" | "multipart" | "urlencoded";
+type PlatformBodyKind = "none" | "json" | "binary" | "multipart" | "urlencoded";
 
 export interface PlatformSchemaNode {
   readonly name?: string;
@@ -89,7 +89,7 @@ export interface PlatformRouteDescriptor {
   }>;
 }
 
-export type PlatformOperationError = PlatformInputError | SupabaseApiError;
+type PlatformOperationError = PlatformInputError | SupabaseApiError;
 
 interface PlatformInputError {
   readonly _tag: "PlatformInputError";

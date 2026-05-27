@@ -675,4 +675,141 @@ major_version = 16
     expect(schemaString).toContain("env");
     expect(schemaString).not.toContain("versions");
   });
+
+  test("resolves env() on numeric port fields (CLI-1489)", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "ref_123"
+
+[api]
+port = "env(SUPABASE_API_PORT)"
+
+[db]
+port = "env(SUPABASE_DB_PORT)"
+
+[analytics]
+port = "env(SUPABASE_ANALYTICS_PORT)"
+`,
+      );
+      await writeFile(
+        join(cwd, "supabase", ".env"),
+        "SUPABASE_API_PORT=54321\nSUPABASE_DB_PORT=54322\nSUPABASE_ANALYTICS_PORT=54327\n",
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+
+      expect(loaded).not.toBeNull();
+      expect(loaded!.config.api.port).toBe(54321);
+      expect(loaded!.config.db.port).toBe(54322);
+      expect(loaded!.config.analytics.port).toBe(54327);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves env() on boolean fields", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "ref_123"
+
+[analytics]
+enabled = "env(SUPABASE_ANALYTICS_ENABLED)"
+`,
+      );
+      await writeFile(join(cwd, "supabase", ".env"), "SUPABASE_ANALYTICS_ENABLED=false\n");
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded!.config.analytics.enabled).toBe(false);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves env() literals on string fields when the var is unset (Go parity)", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "ref_123"
+
+[auth]
+jwt_secret = "env(MISSING_SECRET)"
+`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded!.config.auth.jwt_secret).toBe("env(MISSING_SECRET)");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("fails to decode a numeric field when env var is unset", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "ref_123"
+
+[analytics]
+port = "env(MISSING_PORT)"
+`,
+      );
+
+      const exit = await Effect.runPromiseExit(
+        loadProjectConfig(cwd).pipe(Effect.provide(BunServices.layer)),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure)).toBe(true);
+        if (Option.isSome(failure)) {
+          expect((failure.value as { _tag: string })._tag).toBe("ProjectConfigParseError");
+        }
+      }
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("falls back to ambient process.env when .env is missing", async () => {
+    const cwd = makeTempProject();
+    const previous = process.env.SUPABASE_DB_PORT_TEST;
+    process.env.SUPABASE_DB_PORT_TEST = "55555";
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "ref_123"
+
+[db]
+port = "env(SUPABASE_DB_PORT_TEST)"
+`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded!.config.db.port).toBe(55555);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.SUPABASE_DB_PORT_TEST;
+      } else {
+        process.env.SUPABASE_DB_PORT_TEST = previous;
+      }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
 });

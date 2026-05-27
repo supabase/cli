@@ -12,7 +12,7 @@ permissions:
 jobs:
   sync:
     name: Sync API Types
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -58,16 +58,17 @@ jobs:
           base: develop
 
       - name: Approve a PR
-        if: steps.check.outputs.has_changes == 'true'
-        run: gh pr review --approve "${{ steps.cpr.outputs.pull-request-number }}"
+        if: steps.check.outputs.has_changes == 'true' && steps.cpr.outputs.pull-request-operation == 'created'
+        continue-on-error: true
+        run: gh pr review --approve --repo "${{ github.repository }}" "${{ steps.cpr.outputs.pull-request-number }}"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Enable Pull Request Automerge
         if: steps.check.outputs.has_changes == 'true'
-        run: gh pr merge --auto --squash "${{ steps.cpr.outputs.pull-request-number }}"
+        run: gh pr merge --auto --squash --repo "${{ github.repository }}" "${{ steps.cpr.outputs.pull-request-number }}"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 defaults:
   run:
     working-directory: apps/cli-go

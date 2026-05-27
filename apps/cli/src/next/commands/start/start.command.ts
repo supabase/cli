@@ -1,4 +1,5 @@
-import { Effect, Layer, Option, ServiceMap } from "effect";
+import { Effect, Layer, Option, Context } from "effect";
+import { loadProjectConfig } from "@supabase/config";
 import {
   DEFAULT_MANAGED_STACK_NAME,
   StateManager,
@@ -65,10 +66,9 @@ interface StartVersionStateShape {
   readonly serviceVersionContext: ResolvedServiceVersionContext;
 }
 
-export class StartVersionState extends ServiceMap.Service<
-  StartVersionState,
-  StartVersionStateShape
->()("supabase/commands/start/StartVersionState") {}
+export class StartVersionState extends Context.Service<StartVersionState, StartVersionStateShape>()(
+  "supabase/commands/start/StartVersionState",
+) {}
 
 const flags = {
   stack: Flag.string("stack").pipe(
@@ -151,10 +151,20 @@ export const startCommand = Command.make("start", flags).pipe(
           onSome: (metadata) => metadata.services,
         }),
       );
-      const stackConfig = withServiceVersions(
+      // The flag is tri-state in config.toml: unset / true / false. Today, unset and true both
+      // preserve the long-standing local behaviour of auto-exposing new entities in `public`.
+      // The implicit default flips to false on 2026-05-30 to match the new cloud default, and
+      // the field is removed in 2026-10-30.
+      const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
+      const autoExposeNewTables = loadedProjectConfig?.config.api.auto_expose_new_tables ?? true;
+      const baseStackConfig = withServiceVersions(
         toStartStackConfig(flags.exclude, flags.mode),
         serviceVersionContext.runtimeVersions,
       );
+      const stackConfig = {
+        ...baseStackConfig,
+        postgres: { ...baseStackConfig.postgres, autoExposeNewTables },
+      };
       const resolvedConfig = yield* Effect.promise(() =>
         resolveDaemonConfig({
           cacheRoot: cliConfig.supabaseHome,

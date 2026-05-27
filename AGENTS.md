@@ -114,6 +114,7 @@ Use `nx show project <name> --json` to discover available targets before running
 ## Pull Requests
 
 PR titles must follow conventional-commits format because the `Lint Pull Request` workflow runs `amannn/action-semantic-pull-request` against the title. Use `<type>(<scope>): <subject>` (e.g. `fix(cli): …`, `test(cli): …`, `feat(api): …`). A bare descriptive title like "Build TypeScript CLI as compiled Bun binaries" will fail the lint. When a PR is created (including by the Claude Code UI or someone else), check the title against this rule and update it if needed.
+Do not include a validation, test plan, or list of checks in PR descriptions. CI enforces validation for PRs, so PR descriptions should focus on what changed, why it changed, and any reviewer-relevant context that CI cannot infer.
 
 ## Refactoring Policy
 

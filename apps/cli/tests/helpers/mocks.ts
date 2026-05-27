@@ -2,7 +2,7 @@ import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
 import { Deferred, Effect, Layer, Option, PubSub, Redacted, Stream } from "effect";
 import type { ReactElement } from "react";
-import type { ProjectConfig, ProjectEnvironment, ProjectPaths } from "@supabase/config";
+import type { ProjectEnvironment, ProjectPaths } from "@supabase/config";
 import {
   NoRunningStackError,
   StateNotFoundError,
@@ -229,6 +229,7 @@ export function mockOutput(
   const messages: OutputMessage[] = [];
   const progressEvents: ProgressEvent[] = [];
   const events: OutputEvent[] = [];
+  const rawChunks: Array<{ text: string; stream: "stdout" | "stderr" }> = [];
   const promptSelectCalls: Array<{
     message: string;
     options: ReadonlyArray<{
@@ -378,11 +379,28 @@ export function mockOutput(
         }),
       promptMultiSelect: (_message, options) =>
         Effect.succeed(options.map((option) => option.value)),
+      raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
+        Effect.sync(() => {
+          rawChunks.push({ text, stream });
+        }),
     }),
     messages,
     progressEvents,
     events,
     promptSelectCalls,
+    rawChunks,
+    get stdoutText() {
+      return rawChunks
+        .filter((c) => c.stream === "stdout")
+        .map((c) => c.text)
+        .join("");
+    },
+    get stderrText() {
+      return rawChunks
+        .filter((c) => c.stream === "stderr")
+        .map((c) => c.text)
+        .join("");
+    },
   };
 }
 
@@ -769,7 +787,6 @@ export function mockProjectContext(
   opts: {
     paths?: Option.Option<ProjectPaths>;
     projectEnv?: Option.Option<ProjectEnvironment>;
-    rawProjectConfig?: Option.Option<ProjectConfig>;
   } = {},
 ): Layer.Layer<ProjectContext> {
   return Layer.succeed(
@@ -777,7 +794,6 @@ export function mockProjectContext(
     ProjectContext.of({
       paths: opts.paths ?? Option.none(),
       projectEnv: opts.projectEnv ?? Option.none(),
-      rawProjectConfig: opts.rawProjectConfig ?? Option.none(),
     }),
   );
 }

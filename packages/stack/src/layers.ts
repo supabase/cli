@@ -153,7 +153,7 @@ export const daemonLayer = (
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const unixHttpClient = yield* UnixHttpClient;
-    const stateManager = yield* StateManager.asEffect().pipe(
+    const stateManager = yield* StateManager.pipe(
       Effect.provide(
         StateManager.make(
           singleStackStateManagerPaths(config.stackRoot, config.runtimeRoot, config.name),
@@ -236,6 +236,10 @@ const forkDaemon = (entryPoint: string): Effect.Effect<ChildProcess, DaemonStart
       fork(entryPoint, [], {
         stdio: ["ignore", "ignore", "ignore", "ipc"],
         detached: true,
+        env: {
+          ...process.env,
+          SUPABASE_STACK_RUN_DAEMON: "1",
+        },
       }),
     catch: (e) =>
       new DaemonStartError({

@@ -83,19 +83,32 @@ if (!hasDocker) {
     commands: string,
   ): Promise<DockerResult> {
     console.log(`[${name}] Running...`);
-    try {
-      const output =
-        await $`docker run --rm --platform ${platform} -v ${distDir}:/dist:ro ${image} sh -c ${commands}`.text();
-      const trimmed = output.trim();
-      const lastLine = trimmed.split("\n").pop()!;
-      const passed = /^\d+\.\d+\.\d+/.test(lastLine);
-      console.log(`[${name}] ${passed ? "PASS" : "FAIL"} — ${lastLine}`);
-      return { name, passed, output: trimmed };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.log(`[${name}] FAIL — ${msg}`);
-      return { name, passed: false, output: msg };
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const result =
+        await $`docker run --rm --platform ${platform} -v ${distDir}:/dist:ro ${image} sh -c ${commands}`
+          .nothrow()
+          .quiet();
+      const stdout = result.stdout.toString().trim();
+      const stderr = result.stderr.toString().trim();
+      if (result.exitCode === 0) {
+        const lastLine = stdout.split("\n").pop() ?? "";
+        const passed = /^\d+\.\d+\.\d+/.test(lastLine);
+        console.log(`[${name}] ${passed ? "PASS" : "FAIL"} — ${lastLine}`);
+        if (!passed && stderr) console.log(`[${name}] stderr: ${stderr}`);
+        return { name, passed, output: stdout };
+      }
+      // Exit 125 is a docker daemon / container-start error, not a container
+      // exit code. Retry once before giving up.
+      if (result.exitCode === 125 && attempt === 1) {
+        console.log(`[${name}] docker exit 125, retrying once. stderr: ${stderr}`);
+        continue;
+      }
+      console.log(`[${name}] FAIL — exit ${result.exitCode}`);
+      if (stderr) console.log(`[${name}] stderr: ${stderr}`);
+      if (stdout) console.log(`[${name}] stdout: ${stdout}`);
+      return { name, passed: false, output: `${stdout}\n${stderr}`.trim() };
     }
+    return { name, passed: false, output: "unreachable" };
   }
 
   const jobs: Promise<DockerResult>[] = [];
