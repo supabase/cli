@@ -185,10 +185,13 @@ describe("legacy hidden subcommands", () => {
   });
 
   it("still executes hidden subcommands by exact name", async () => {
+    // `branches disable` was a hidden proxy before the native port (CLI-1289).
+    // It is now a native handler — `branches/disable/disable.integration.test.ts`
+    // covers its execution path. The other three remain Go proxies, so this
+    // test continues to verify the hidden-by-name dispatch via `LegacyGoProxy`.
     const proxy = mockLegacyGoProxy();
     await Effect.runPromise(
       Effect.gen(function* () {
-        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["branches", "disable"]);
         yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["db", "test"]);
         yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["db", "branch", "list"]);
         yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
@@ -202,7 +205,6 @@ describe("legacy hidden subcommands", () => {
     );
 
     expect(proxy.calls).toEqual([
-      ["branches", "disable"],
       ["db", "test"],
       ["db", "branch", "list"],
       ["db", "remote", "changes"],
