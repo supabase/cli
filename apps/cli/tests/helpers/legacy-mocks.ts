@@ -12,6 +12,7 @@ import * as HttpClientRequestModule from "effect/unstable/http/HttpClientRequest
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import { afterEach, beforeEach } from "vitest";
 
+import { LegacyCredentials } from "../../src/legacy/auth/legacy-credentials.service.ts";
 import { LegacyPlatformApi } from "../../src/legacy/auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../src/legacy/config/legacy-cli-config.service.ts";
 import { legacyProjectRefLayer } from "../../src/legacy/config/legacy-project-ref.layer.ts";
@@ -46,6 +47,17 @@ export const mockLegacyLinkedProjectCacheLayer = Layer.succeed(LegacyLinkedProje
 
 export const mockLegacyTelemetryStateLayer = Layer.succeed(LegacyTelemetryState, {
   flush: Effect.void,
+});
+
+// Default LegacyCredentials mock. `mockLegacyCliConfig` defaults to an env-set
+// access token, so handlers never hit the credentials fallback in tests — but
+// the service still needs to be in the layer to satisfy the required-services
+// signature. Save/delete die to surface accidental writes inside read-only
+// handlers.
+export const mockLegacyCredentialsLayer = Layer.succeed(LegacyCredentials, {
+  getAccessToken: Effect.sync(() => Option.none()),
+  saveAccessToken: () => Effect.die("unexpected legacy credentials write in test"),
+  deleteAccessToken: Effect.die("unexpected legacy credentials delete in test"),
 });
 
 // ---------------------------------------------------------------------------
@@ -214,6 +226,11 @@ export interface MockLegacyPlatformApiResult {
   // it never actually triggers with the defaults this factory supplies, but the
   // type leaks through the Layer.effect signature.
   readonly layer: Layer.Layer<LegacyPlatformApi, SupabaseApiConfigError>;
+  // Same recording handler exposed as a standalone HttpClient layer so legacy
+  // handlers that bypass the typed client (e.g. sso add/update preserving
+  // arbitrary attribute_mapping keys) can hit `httpClient.execute(req)` while
+  // still recording requests into the shared `requests` array.
+  readonly httpClientLayer: Layer.Layer<HttpClient.HttpClient>;
   readonly requests: ReadonlyArray<LegacyRecordedRequest>;
 }
 
@@ -260,6 +277,8 @@ export function mockLegacyPlatformApi(
       return legacyJsonResponse(request, 200, null);
     });
 
+  const httpClientLayer = legacyHttpClientLayer(handler);
+
   const layer = Layer.effect(
     LegacyPlatformApi,
     makeApiClient({
@@ -267,9 +286,9 @@ export function mockLegacyPlatformApi(
       accessToken: opts.accessToken ?? LEGACY_VALID_TOKEN,
       userAgent: opts.userAgent ?? LEGACY_DEFAULT_USER_AGENT,
     }),
-  ).pipe(Layer.provide(legacyHttpClientLayer(handler)));
+  ).pipe(Layer.provide(httpClientLayer));
 
-  return { layer, requests };
+  return { layer, httpClientLayer, requests };
 }
 
 // ---------------------------------------------------------------------------
@@ -372,12 +391,20 @@ export function useLegacyTempWorkdir(prefix = "supabase-legacy-test-"): {
 
 type GoOutputValue = "env" | "pretty" | "json" | "toml" | "yaml";
 
+// ---------------------------------------------------------------------------
+// Analytics mock lives in `./mocks.ts` (`mockAnalytics`) — same shape we used
+// to ship in a `mockLegacyAnalytics` helper here. Use `mockAnalytics()` from
+// the shared mocks module directly.
+
 export interface BuildLegacyTestRuntimeOpts {
   readonly out: { readonly layer: Layer.Layer<Output> };
   // `Layer.Layer<LegacyPlatformApi, SupabaseApiConfigError>` from
   // `mockLegacyPlatformApi`; the error channel never fires in practice but
   // its presence here keeps callers from needing an `as` cast.
-  readonly api: { readonly layer: Layer.Layer<LegacyPlatformApi, SupabaseApiConfigError> };
+  readonly api: {
+    readonly layer: Layer.Layer<LegacyPlatformApi, SupabaseApiConfigError>;
+    readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>;
+  };
   readonly cliConfig: Layer.Layer<LegacyCliConfig>;
   readonly tty?: Layer.Layer<Tty>;
   readonly processControl?: { readonly layer: Layer.Layer<ProcessControl> };
@@ -396,6 +423,20 @@ export function buildLegacyTestRuntime(opts: BuildLegacyTestRuntimeOpts) {
   const linkedProjectCache = opts.linkedProjectCache ?? mockLegacyLinkedProjectCacheLayer;
   const analytics = (opts.analytics ?? mockAnalytics()).layer;
   const goOutput = opts.goOutput ?? Option.none<GoOutputValue>();
+  const httpClient = opts.api.httpClientLayer;
+
+  // When the caller doesn't expose an HttpClient layer, use a stub that fails
+  // loudly if any code path tries to consume it. Always wiring HttpClient at
+  // the top level keeps the layer's exported services stable for type-checking
+  // (otherwise the conditional branch confuses TS-side inference).
+  const noopHttpClient = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make(() =>
+      Effect.die(
+        "unexpected HttpClient.execute() in legacy test runtime — pass api.httpClientLayer",
+      ),
+    ),
+  );
 
   return Layer.mergeAll(
     opts.out.layer,
@@ -416,5 +457,7 @@ export function buildLegacyTestRuntime(opts: BuildLegacyTestRuntimeOpts) {
     linkedProjectCache,
     telemetry,
     analytics,
+    mockLegacyCredentialsLayer,
+    httpClient ?? noopHttpClient,
   );
 }

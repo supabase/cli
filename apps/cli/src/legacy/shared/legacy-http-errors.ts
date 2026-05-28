@@ -16,6 +16,17 @@ const RESPONSE_ERROR_TAGS: ReadonlySet<HttpClientError.HttpClientErrorReason["_t
 // and avoids forwarding arbitrary bytes verbatim if the trust boundary ever changes.
 const MAX_BODY_LEN = 1024;
 
+/**
+ * Truncate + sanitize a response body for inclusion in an error message.
+ * Mirrors the policy applied by `mapLegacyHttpError` so handlers that bypass
+ * the typed client (e.g. `sso add` and `sso update` raw-HTTP POST/PUT) can
+ * share the same defence-in-depth.
+ */
+export function sanitizeLegacyErrorBody(input: string): string {
+  const capped = input.length > MAX_BODY_LEN ? input.slice(0, MAX_BODY_LEN) : input;
+  return sanitizeErrorBody(capped);
+}
+
 // Strip ASCII control characters from the response body before embedding it in an error
 // message. The Management API is trusted, but defence-in-depth: a body containing `\r\n`
 // could fracture a structured log line, and `\x00` could truncate output in shells that
@@ -67,9 +78,7 @@ export function mapLegacyHttpError<N, S>(opts: {
           const rawBody = yield* cause.response.text.pipe(
             Effect.orElseSucceed(() => cause.reason.description ?? ""),
           );
-          const cappedBody =
-            rawBody.length > MAX_BODY_LEN ? rawBody.slice(0, MAX_BODY_LEN) : rawBody;
-          const body = sanitizeErrorBody(cappedBody);
+          const body = sanitizeLegacyErrorBody(rawBody);
           return yield* Effect.fail(
             new opts.statusError({
               status,
