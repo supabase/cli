@@ -13,12 +13,6 @@ export const LegacyHiddenFlags: Context.Reference<ReadonlySet<string>> = Context
   defaultValue: () => new Set<string>(),
 });
 
-export const LegacyHiddenSubcommands: Context.Reference<ReadonlySet<string>> = Context.Reference<
-  ReadonlySet<string>
->("supabase/legacy/LegacyHiddenSubcommands", {
-  defaultValue: () => new Set<string>(),
-});
-
 const hiddenFlagNames = new WeakMap<object, ReadonlyArray<string>>();
 
 const collectSingleNames = (param: Param.Param<Param.ParamKind, unknown>): Array<string> => {
@@ -76,36 +70,14 @@ export const withHiddenFromConfig =
     return Command.annotate(cmd, LegacyHiddenFlags, hidden);
   };
 
-export const withHiddenSubcommands =
-  (names: ReadonlyArray<string>) =>
-  <Name extends string, Input, ContextInput, E, R>(
-    cmd: Command.Command<Name, Input, ContextInput, E, R>,
-  ): Command.Command<Name, Input, ContextInput, E, R> =>
-    Command.annotate(cmd, LegacyHiddenSubcommands, new Set(names));
-
 export const stripHiddenFlagsFromHelpDoc = (doc: HelpDoc.HelpDoc): HelpDoc.HelpDoc => {
   const hiddenFlags = Context.get(doc.annotations, LegacyHiddenFlags);
-  const hiddenSubcommands = Context.get(doc.annotations, LegacyHiddenSubcommands);
-  if (hiddenFlags.size === 0 && hiddenSubcommands.size === 0) return doc;
+  if (hiddenFlags.size === 0) return doc;
   const filteredFlags = doc.flags.filter((flag) => !hiddenFlags.has(flag.name));
   const filteredGlobalFlags = doc.globalFlags?.filter((flag) => !hiddenFlags.has(flag.name));
-  const filteredSubcommands = doc.subcommands?.flatMap((group) => {
-    const commands = group.commands.filter((command) => !hiddenSubcommands.has(command.name));
-    if (commands.length === 0) return [];
-    return [
-      {
-        ...group,
-        commands: commands as unknown as readonly [
-          HelpDoc.SubcommandDoc,
-          ...Array<HelpDoc.SubcommandDoc>,
-        ],
-      },
-    ];
-  });
   return {
     ...doc,
     flags: filteredFlags,
-    ...(filteredSubcommands !== undefined && { subcommands: filteredSubcommands }),
     ...(filteredGlobalFlags !== undefined && { globalFlags: filteredGlobalFlags }),
   };
 };
