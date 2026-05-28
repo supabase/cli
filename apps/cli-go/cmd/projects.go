@@ -24,11 +24,12 @@ var (
 		Short:   "Manage Supabase projects",
 	}
 
-	interactive bool
-	projectName string
-	orgId       string
-	dbPassword  string
-	region      = utils.EnumFlag{
+	interactive      bool
+	projectName      string
+	orgId            string
+	dbPassword       string
+	highAvailability bool
+	region           = utils.EnumFlag{
 		Allowed: utils.AwsRegions(),
 	}
 	size = utils.EnumFlag{
@@ -80,6 +81,9 @@ var (
 			}
 			if cmd.Flags().Changed("size") {
 				body.DesiredInstanceSize = (*api.V1CreateProjectBodyDesiredInstanceSize)(&size.Value)
+			}
+			if cmd.Flags().Changed("high-availability") {
+				body.HighAvailability = cast.Ptr(highAvailability)
 			}
 			return create.Run(cmd.Context(), body, afero.NewOsFs())
 		},
@@ -137,6 +141,7 @@ func init() {
 	markFlagTelemetrySafe(createFlags.Lookup("org-id"))
 	createFlags.StringVar(&dbPassword, "db-password", "", "Database password of the project.")
 	createFlags.Var(&region, "region", "Select a region close to you for the best performance.")
+	createFlags.BoolVar(&highAvailability, "high-availability", false, "Enable high availability for the project.")
 	createFlags.String("plan", "", "Select a plan that suits your needs.")
 	cobra.CheckErr(createFlags.MarkHidden("plan"))
 	createFlags.Var(&size, "size", "Select a desired instance size for your project.")

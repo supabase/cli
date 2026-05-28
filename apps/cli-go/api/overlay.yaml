@@ -48,3 +48,9 @@ actions:
   update:
     schema:
       type: string
+- target: $.components.schemas.V1CreateProjectBody.properties
+  description: Adds high availability create-project flag hidden from the generated NestJS spec
+  update:
+    high_availability:
+      type: boolean
+      description: Whether to enable high availability for the project.

@@ -12,6 +12,8 @@ export const legacyProjectsCreate = Effect.fn("legacy.projects.create")(function
   if (Option.isSome(flags.dbPassword)) args.push("--db-password", flags.dbPassword.value);
   if (Option.isSome(flags.region)) args.push("--region", flags.region.value);
   if (Option.isSome(flags.size)) args.push("--size", flags.size.value);
+  if (Option.isSome(flags.highAvailability))
+    args.push(`--high-availability=${flags.highAvailability.value ? "true" : "false"}`);
   if (Option.isSome(flags.interactive))
     args.push(`--interactive=${flags.interactive.value ? "true" : "false"}`);
   if (Option.isSome(flags.plan)) args.push("--plan", flags.plan.value);

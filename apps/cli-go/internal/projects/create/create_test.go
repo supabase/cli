@@ -48,6 +48,34 @@ func TestProjectCreateCommand(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
+	t.Run("creates a new high availability project", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+		// Flush pending mocks after test execution
+		defer gock.OffAll()
+		highAvailabilityParams := params
+		highAvailabilityParams.HighAvailability = cast.Ptr(true)
+		gock.New(utils.DefaultApiHost).
+			Post("/v1/projects").
+			MatchType("json").
+			JSON(highAvailabilityParams).
+			Reply(201).
+			JSON(api.V1ProjectResponse{
+				Id:               apitest.RandomProjectRef(),
+				OrganizationSlug: highAvailabilityParams.OrganizationSlug,
+				Name:             highAvailabilityParams.Name,
+				Region:           string(*highAvailabilityParams.Region),
+				CreatedAt:        "2022-04-25T02:14:55.906498Z",
+			})
+		// Run test
+		assert.NoError(t, Run(context.Background(), highAvailabilityParams, fsys))
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
 	t.Run("throws error on failure to load token", func(t *testing.T) {
 		assert.Error(t, Run(context.Background(), params, afero.NewMemMapFs()))
 	})
