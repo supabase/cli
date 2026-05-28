@@ -191,8 +191,14 @@ describe("legacy hidden subcommands", () => {
         yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["branches", "disable"]);
         yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["db", "test"]);
         yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["db", "branch", "list"]);
-        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["db", "remote", "changes"]);
-      }).pipe(Effect.provide(Layer.mergeAll(proxy.layer, CliOutput.layer(textCliOutputFormatter())))) as Effect.Effect<void>,
+        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+          "db",
+          "remote",
+          "changes",
+        ]);
+      }).pipe(
+        Effect.provide(Layer.mergeAll(proxy.layer, CliOutput.layer(textCliOutputFormatter()))),
+      ) as Effect.Effect<void>,
     );
 
     expect(proxy.calls).toEqual([
