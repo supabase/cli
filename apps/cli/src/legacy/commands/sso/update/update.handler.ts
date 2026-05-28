@@ -18,7 +18,7 @@ import { mapLegacyHttpError, sanitizeLegacyErrorBody } from "../../../shared/leg
 import { resolveLegacyAccessToken } from "../../../shared/legacy-resolve-token.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { suggestUpgradeOnError } from "../../../telemetry/legacy-upgrade-suggested.ts";
+import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
 import {
   LegacySsoMutexFlagError,
   LegacySsoUpdateAttributeMappingFileError,
@@ -52,7 +52,11 @@ const handleGetError = (ref: string, providerId: string, cause: SupabaseApiError
   Effect.gen(function* () {
     const mapped = yield* Effect.flip(mapGetStatusOrNetwork(cause));
     if (mapped._tag === "LegacySsoUpdateUnexpectedStatusError") {
-      yield* suggestUpgradeOnError(ref, "auth.saml_2", mapped.status);
+      yield* legacySuggestUpgrade({
+        projectRef: ref,
+        featureKey: "auth.saml_2",
+        statusCode: mapped.status,
+      });
       if (mapped.status === 404) {
         return yield* Effect.fail(
           new LegacySsoUpdateNotFoundError({
@@ -205,7 +209,11 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
         // Cap + sanitise to match `mapLegacyHttpError`'s defences — see add handler
         // for the rationale; the raw-HTTP path must not bypass these.
         const bodyText = sanitizeLegacyErrorBody(rawBody);
-        yield* suggestUpgradeOnError(ref, "auth.saml_2", response.status);
+        yield* legacySuggestUpgrade({
+          projectRef: ref,
+          featureKey: "auth.saml_2",
+          statusCode: response.status,
+        });
         yield* fetching?.fail() ?? Effect.void;
         return yield* Effect.fail(
           // Go reuses the GET error message even for PUT (see `update.go:133`).

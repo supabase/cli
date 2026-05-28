@@ -9,7 +9,7 @@ import { encodeGoJson, encodeToml, encodeYaml } from "../../../shared/legacy-go-
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { suggestUpgradeOnError } from "../../../telemetry/legacy-upgrade-suggested.ts";
+import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
 import {
   LegacySsoRemoveNetworkError,
   LegacySsoRemoveNotFoundError,
@@ -29,7 +29,11 @@ const handleRemoveError = (ref: string, providerId: string, cause: SupabaseApiEr
   Effect.gen(function* () {
     const mapped = yield* Effect.flip(mapStatusOrNetwork(cause));
     if (mapped._tag === "LegacySsoRemoveUnexpectedStatusError") {
-      yield* suggestUpgradeOnError(ref, "auth.saml_2", mapped.status);
+      yield* legacySuggestUpgrade({
+        projectRef: ref,
+        featureKey: "auth.saml_2",
+        statusCode: mapped.status,
+      });
       if (mapped.status === 404) {
         return yield* Effect.fail(
           new LegacySsoRemoveNotFoundError({

@@ -16,7 +16,7 @@ import { sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
 import { resolveLegacyAccessToken } from "../../../shared/legacy-resolve-token.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { suggestUpgradeOnError } from "../../../telemetry/legacy-upgrade-suggested.ts";
+import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
 import {
   LegacySsoAddAttributeMappingFileError,
   LegacySsoAddMetadataFileError,
@@ -137,7 +137,11 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
         // mapper uses (`mapLegacyHttpError`) so error output stays bounded and
         // shell-safe — the raw-HTTP path must not skip these defences.
         const bodyText = sanitizeLegacyErrorBody(rawBody);
-        yield* suggestUpgradeOnError(ref, "auth.saml_2", response.status);
+        yield* legacySuggestUpgrade({
+          projectRef: ref,
+          featureKey: "auth.saml_2",
+          statusCode: response.status,
+        });
         yield* creating?.fail() ?? Effect.void;
         if (response.status === 404) {
           return yield* Effect.fail(

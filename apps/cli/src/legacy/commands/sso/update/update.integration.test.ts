@@ -309,7 +309,7 @@ describe("legacy sso update integration", () => {
   });
 
   it.live("PUT 4xx + gated entitlement → unexpected error + cli_upgrade_suggested", () => {
-    // suggestUpgradeOnError fires only on 4xx (matches Go's `plan_gate.go:29`).
+    // legacySuggestUpgrade fires only on 4xx (matches Go's `plan_gate.go:29`).
     const { layer, analytics } = setup({
       putStatus: 403,
       putBody: { error: "forbidden" },
