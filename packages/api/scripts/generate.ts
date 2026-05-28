@@ -204,6 +204,17 @@ function identifier(value: string): string {
   return camel[0] ? camel[0].toUpperCase() + camel.slice(1) : camel;
 }
 
+// OpenAPI 3.0 treats `format: "uuid"` as a hint, not validation. Without a
+// concrete `pattern`, the resulting Effect schema's UUID branch has no check,
+// so a 20-letter project ref matches both branches of `oneOf [project-ref, uuid]`
+// unions (e.g. `branch_id_or_ref`) and validation fails at "Expected exactly one
+// member to match". Add the canonical RFC 4122 pattern so the branches become
+// mutually exclusive. Mirrored by an inline patch in `contracts.ts` (search
+// "Patched: OpenAPI's `format: \"uuid\"`") that survives ad-hoc edits between
+// regenerations.
+const UUID_PATTERN =
+  "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
+
 function sanitizeOpenApiSchema(schema: OpenApiSchema): OpenApiSchema {
   const sanitized: OpenApiSchema = {};
 
@@ -225,6 +236,14 @@ function sanitizeOpenApiSchema(schema: OpenApiSchema): OpenApiSchema {
     }
 
     sanitized[key] = rawValue;
+  }
+
+  if (
+    sanitized.type === "string" &&
+    sanitized.format === "uuid" &&
+    sanitized.pattern === undefined
+  ) {
+    sanitized.pattern = UUID_PATTERN;
   }
 
   return sanitized;

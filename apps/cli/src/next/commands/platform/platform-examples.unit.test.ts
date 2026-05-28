@@ -110,7 +110,7 @@ describe("platform example generation", () => {
       expect.objectContaining({
         description: "Pass the required path, query, or header input with `--params`.",
         command:
-          'supabase api request /v1/branches/{branch_id_or_ref} --method DELETE --params \'{"branch_id_or_ref":"branch-ref"}\'',
+          'supabase api request /v1/branches/{branch_id_or_ref} --method DELETE --params \'{"branch_id_or_ref":"abcdefghijklmnopqrst"}\'',
       }),
     ]);
   });

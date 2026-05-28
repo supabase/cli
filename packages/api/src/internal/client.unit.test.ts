@@ -451,7 +451,11 @@ describe("makeSupabaseApiClient", () => {
       makeSupabaseApiClient(config).pipe(
         Effect.flatMap((client) =>
           client.execute<"v1DiffABranch">(operationDefinitions.v1DiffABranch, {
-            branch_id_or_ref: "branch-ref",
+            // 20-letter project ref. Used to be "branch-ref" but the UUID
+            // branch of the oneOf union now has an actual pattern check, so
+            // free-form strings like "branch-ref" no longer match either
+            // branch.
+            branch_id_or_ref: "abcdefghijklmnopqrst",
           }),
         ),
         Effect.provide(
