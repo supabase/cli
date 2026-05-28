@@ -1,11 +1,19 @@
 import { Effect, Layer, Context } from "effect";
 import type { CleanupTargets } from "./CleanupTargets.ts";
-import { StateManager } from "./StateManager.ts";
+import {
+  StateManager,
+  type InvalidStackMetadataError,
+  type UnsupportedStackMetadataVersionError,
+} from "./StateManager.ts";
+
+type PersistCleanupTargetsError = InvalidStackMetadataError | UnsupportedStackMetadataVersionError;
 
 export class StackMetadataPersistence extends Context.Service<
   StackMetadataPersistence,
   {
-    readonly persistCleanupTargets: (cleanupTargets: CleanupTargets) => Effect.Effect<void>;
+    readonly persistCleanupTargets: (
+      cleanupTargets: CleanupTargets,
+    ) => Effect.Effect<void, PersistCleanupTargetsError>;
   }
 >()("stack/StackMetadataPersistence") {
   static noop: Layer.Layer<StackMetadataPersistence> = Layer.succeed(this, {
