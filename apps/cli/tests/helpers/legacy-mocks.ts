@@ -3,11 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
-import { makeApiClient, type SupabaseApiConfigError } from "@supabase/api/effect";
+import { type ApiClient, makeApiClient, type SupabaseApiConfigError } from "@supabase/api/effect";
 import { Effect, Layer, Option, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClientRequestModule from "effect/unstable/http/HttpClientRequest";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import { afterEach, beforeEach } from "vitest";
 
@@ -19,8 +20,10 @@ import { LegacyTelemetryState } from "../../src/legacy/telemetry/legacy-telemetr
 import { LegacyOutputFlag } from "../../src/shared/legacy/global-flags.ts";
 import type { Output } from "../../src/shared/output/output.service.ts";
 import type { ProcessControl } from "../../src/shared/runtime/process-control.service.ts";
+import type { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
 import type { Tty } from "../../src/shared/runtime/tty.service.ts";
-import { mockProcessControl, mockTty } from "./mocks.ts";
+import { Analytics } from "../../src/shared/telemetry/analytics.service.ts";
+import { mockAnalytics, mockProcessControl, mockRuntimeInfo, mockTty } from "./mocks.ts";
 
 // ---------------------------------------------------------------------------
 // Constants — Go-parity test fixtures used across every native-port integration
@@ -142,6 +145,22 @@ export function legacyTransportFailure(
   });
 }
 
+/**
+ * Builds a real `HttpClientError` with a `StatusCodeError` reason for the
+ * given status code. Useful for the direct-service mock when the handler under
+ * test branches on `HttpClientError.isHttpClientError(cause)` + `cause.response.status`.
+ */
+export function legacyStatusCodeFailure(status: number): HttpClientError.HttpClientError {
+  const request = HttpClientRequestModule.get("https://api.supabase.com/mock");
+  const response = HttpClientResponse.fromWeb(
+    request,
+    new Response("", { status, headers: { "content-type": "application/json" } }),
+  );
+  return new HttpClientError.HttpClientError({
+    reason: new HttpClientError.StatusCodeError({ request, response }),
+  });
+}
+
 function legacyHttpClientLayer(
   handler: (
     request: HttpClientRequest.HttpClientRequest,
@@ -254,6 +273,65 @@ export function mockLegacyPlatformApi(
 }
 
 // ---------------------------------------------------------------------------
+// Direct-service mock for LegacyPlatformApi.
+//
+// Bypasses the real API client's input/output schema validation by providing
+// `LegacyPlatformApi` via `Layer.succeed` directly. Use this when:
+//
+//   - the API schema is too strict for the test scenario (e.g. the
+//     `branch_id_or_ref` oneOf union rejects 20-letter project refs because
+//     the UUID branch has no actual UUID pattern check), AND
+//   - the handler logic under test does not depend on the byte-exact wire
+//     format of requests/responses.
+//
+// The recorded `requests` array tracks `{ method, input }` for every call.
+// Methods not present in `v1Stubs` die at call time so missing wiring shows
+// up loud and clear instead of silently returning undefined.
+// ---------------------------------------------------------------------------
+
+type V1Stubs = Partial<{
+  readonly [K in keyof ApiClient["v1"]]: (
+    input: Parameters<ApiClient["v1"][K]>[0],
+  ) => Effect.Effect<unknown, unknown>;
+}>;
+
+export interface MockLegacyPlatformApiServiceOpts {
+  readonly v1?: V1Stubs;
+}
+
+export interface MockLegacyPlatformApiServiceResult {
+  readonly layer: Layer.Layer<LegacyPlatformApi>;
+  readonly requests: ReadonlyArray<{ readonly method: string; readonly input: unknown }>;
+}
+
+export function mockLegacyPlatformApiService(
+  opts: MockLegacyPlatformApiServiceOpts = {},
+): MockLegacyPlatformApiServiceResult {
+  const requests: Array<{ method: string; input: unknown }> = [];
+  const stubs = opts.v1 ?? {};
+
+  const v1Proxy = new Proxy({} as ApiClient["v1"], {
+    get(_target, prop: string) {
+      return (input: unknown) =>
+        Effect.gen(function* () {
+          requests.push({ method: prop, input });
+          const stub = (stubs as Record<string, unknown>)[prop] as
+            | ((i: unknown) => Effect.Effect<unknown, unknown>)
+            | undefined;
+          if (stub === undefined) {
+            return yield* Effect.die(`Unmocked LegacyPlatformApi.v1.${prop}`);
+          }
+          return yield* stub(input);
+        });
+    },
+  });
+
+  const layer = Layer.succeed(LegacyPlatformApi, { v1: v1Proxy } as ApiClient);
+
+  return { layer, requests };
+}
+
+// ---------------------------------------------------------------------------
 // Temp workdir lifecycle — calls vitest beforeEach/afterEach internally, so
 // the helper must be invoked at module scope (or inside the surrounding
 // `describe`). Accessing `.current` outside a test throws.
@@ -303,16 +381,20 @@ export interface BuildLegacyTestRuntimeOpts {
   readonly cliConfig: Layer.Layer<LegacyCliConfig>;
   readonly tty?: Layer.Layer<Tty>;
   readonly processControl?: { readonly layer: Layer.Layer<ProcessControl> };
+  readonly runtimeInfo?: Layer.Layer<RuntimeInfo>;
   readonly telemetry?: Layer.Layer<LegacyTelemetryState>;
   readonly linkedProjectCache?: Layer.Layer<LegacyLinkedProjectCache>;
+  readonly analytics?: { readonly layer: Layer.Layer<Analytics> };
   readonly goOutput?: Option.Option<GoOutputValue>;
 }
 
 export function buildLegacyTestRuntime(opts: BuildLegacyTestRuntimeOpts) {
   const tty = opts.tty ?? mockTty({ stdinIsTty: false, stdoutIsTty: false });
   const processControl = (opts.processControl ?? mockProcessControl()).layer;
+  const runtimeInfo = opts.runtimeInfo ?? mockRuntimeInfo();
   const telemetry = opts.telemetry ?? mockLegacyTelemetryStateLayer;
   const linkedProjectCache = opts.linkedProjectCache ?? mockLegacyLinkedProjectCacheLayer;
+  const analytics = (opts.analytics ?? mockAnalytics()).layer;
   const goOutput = opts.goOutput ?? Option.none<GoOutputValue>();
 
   return Layer.mergeAll(
@@ -321,6 +403,7 @@ export function buildLegacyTestRuntime(opts: BuildLegacyTestRuntimeOpts) {
     opts.cliConfig,
     tty,
     processControl,
+    runtimeInfo,
     legacyProjectRefLayer.pipe(
       Layer.provide(opts.api.layer),
       Layer.provide(opts.cliConfig),
@@ -332,5 +415,6 @@ export function buildLegacyTestRuntime(opts: BuildLegacyTestRuntimeOpts) {
     Layer.succeed(LegacyOutputFlag, goOutput),
     linkedProjectCache,
     telemetry,
+    analytics,
   );
 }

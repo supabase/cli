@@ -250,7 +250,9 @@ describe("api schema payload", () => {
       },
       examples: expect.arrayContaining([
         expect.objectContaining({
-          command: expect.stringContaining('--params \'{"branch_id_or_ref":"branch-ref"}\''),
+          command: expect.stringContaining(
+            '--params \'{"branch_id_or_ref":"abcdefghijklmnopqrst"}\'',
+          ),
         }),
       ]),
     });
