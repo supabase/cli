@@ -2,7 +2,11 @@ import * as Schema from "effect/Schema";
 
 // non-recursive definitions
 export const BranchResponse = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   name: Schema.String,
   project_ref: Schema.String,
   parent_project_ref: Schema.String,
@@ -156,7 +160,11 @@ export const V1ServiceHealthResponse = Schema.Struct({
   error: Schema.optionalKey(Schema.String),
 });
 export const ThirdPartyAuth = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   type: Schema.String,
   oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -325,7 +333,11 @@ export const V1AuthorizeJitAccessInput = Schema.Struct({
   rhost: Schema.String.check(Schema.isMinLength(1)),
 });
 export const V1AuthorizeJitAccessOutput = Schema.Struct({
-  user_id: Schema.String.annotate({ format: "uuid" }),
+  user_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   user_role: Schema.Struct({
     role: Schema.String.check(Schema.isMinLength(1)),
     expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
@@ -339,7 +351,11 @@ export const V1AuthorizeJitAccessOutput = Schema.Struct({
   }),
 });
 export const V1AuthorizeUserInput = Schema.Struct({
-  client_id: Schema.String.annotate({ format: "uuid" }),
+  client_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   response_type: Schema.Literals(["code", "token", "id_token token"]),
   redirect_uri: Schema.String,
   scope: Schema.optionalKey(Schema.String),
@@ -489,7 +505,11 @@ export const V1CreateABranchInput = Schema.Struct({
   ),
 });
 export const V1CreateABranchOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   name: Schema.String,
   project_ref: Schema.String,
   parent_project_ref: Schema.String,
@@ -734,6 +754,17 @@ export const V1CreateASsoProviderInput = Schema.Struct({
         Schema.Struct({
           name: Schema.optionalKey(Schema.String),
           names: Schema.optionalKey(Schema.Array(Schema.String)),
+          default: Schema.optionalKey(
+            Schema.Union(
+              [
+                Schema.Struct({}),
+                Schema.Number.check(Schema.isFinite()),
+                Schema.String,
+                Schema.Boolean,
+              ],
+              { mode: "oneOf" },
+            ),
+          ),
           array: Schema.optionalKey(Schema.Boolean),
         }),
       ),
@@ -763,6 +794,17 @@ export const V1CreateASsoProviderOutput = Schema.Struct({
             Schema.Struct({
               name: Schema.optionalKey(Schema.String),
               names: Schema.optionalKey(Schema.Array(Schema.String)),
+              default: Schema.optionalKey(
+                Schema.Union(
+                  [
+                    Schema.Struct({}),
+                    Schema.Number.check(Schema.isFinite()),
+                    Schema.String,
+                    Schema.Boolean,
+                  ],
+                  { mode: "oneOf" },
+                ),
+              ),
               array: Schema.optionalKey(Schema.Boolean),
             }),
           ),
@@ -807,7 +849,11 @@ export const V1CreateLegacySigningKeyInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1CreateLegacySigningKeyOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
   public_jwk: Schema.optionalKey(Schema.Union([Schema.Unknown, Schema.Null])),
@@ -870,7 +916,11 @@ export const V1CreateProjectClaimTokenOutput = Schema.Struct({
   token_alias: Schema.String,
   expires_at: Schema.String,
   created_at: Schema.String,
-  created_by: Schema.String.annotate({ format: "uuid" }),
+  created_by: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
 });
 export const V1CreateProjectSigningKeyInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -882,7 +932,15 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
     Schema.Union(
       [
         Schema.Struct({
-          kid: Schema.optionalKey(Schema.String.annotate({ format: "uuid" })),
+          kid: Schema.optionalKey(
+            Schema.String.annotate({ format: "uuid" }).check(
+              Schema.isPattern(
+                new RegExp(
+                  "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                ),
+              ),
+            ),
+          ),
           use: Schema.optionalKey(Schema.Literal("sig")),
           key_ops: Schema.optionalKey(
             Schema.Array(Schema.Literals(["sign", "verify"]))
@@ -902,7 +960,15 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
           qi: Schema.String,
         }),
         Schema.Struct({
-          kid: Schema.optionalKey(Schema.String.annotate({ format: "uuid" })),
+          kid: Schema.optionalKey(
+            Schema.String.annotate({ format: "uuid" }).check(
+              Schema.isPattern(
+                new RegExp(
+                  "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                ),
+              ),
+            ),
+          ),
           use: Schema.optionalKey(Schema.Literal("sig")),
           key_ops: Schema.optionalKey(
             Schema.Array(Schema.Literals(["sign", "verify"]))
@@ -918,7 +984,15 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
           d: Schema.String,
         }),
         Schema.Struct({
-          kid: Schema.optionalKey(Schema.String.annotate({ format: "uuid" })),
+          kid: Schema.optionalKey(
+            Schema.String.annotate({ format: "uuid" }).check(
+              Schema.isPattern(
+                new RegExp(
+                  "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                ),
+              ),
+            ),
+          ),
           use: Schema.optionalKey(Schema.Literal("sig")),
           key_ops: Schema.optionalKey(
             Schema.Array(Schema.Literals(["sign", "verify"]))
@@ -933,7 +1007,15 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
           d: Schema.String,
         }),
         Schema.Struct({
-          kid: Schema.optionalKey(Schema.String.annotate({ format: "uuid" })),
+          kid: Schema.optionalKey(
+            Schema.String.annotate({ format: "uuid" }).check(
+              Schema.isPattern(
+                new RegExp(
+                  "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                ),
+              ),
+            ),
+          ),
           use: Schema.optionalKey(Schema.Literal("sig")),
           key_ops: Schema.optionalKey(
             Schema.Array(Schema.Literals(["sign", "verify"]))
@@ -951,7 +1033,11 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
   ),
 });
 export const V1CreateProjectSigningKeyOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
   public_jwk: Schema.optionalKey(Schema.Union([Schema.Unknown, Schema.Null])),
@@ -967,7 +1053,11 @@ export const V1CreateProjectTpaIntegrationInput = Schema.Struct({
   custom_jwks: Schema.optionalKey(Schema.Unknown),
 });
 export const V1CreateProjectTpaIntegrationOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   type: Schema.String,
   oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -1006,10 +1096,6 @@ export const V1DeleteABranchInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      // Patched: OpenAPI's `format: "uuid"` is a hint only, so the upstream
-      // Schema generator leaves this branch unconstrained — that lets a
-      // 20-letter project ref match both branches and fail `oneOf`. Adding
-      // the canonical RFC 4122 pattern makes the branches mutually exclusive.
       Schema.String.annotate({ format: "uuid" }).check(
         Schema.isPattern(
           new RegExp(
@@ -1043,7 +1129,11 @@ export const V1DeleteASsoProviderInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  provider_id: Schema.String.annotate({ format: "uuid" }),
+  provider_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
 });
 export const V1DeleteASsoProviderOutput = Schema.Struct({
   id: Schema.String,
@@ -1060,6 +1150,17 @@ export const V1DeleteASsoProviderOutput = Schema.Struct({
             Schema.Struct({
               name: Schema.optionalKey(Schema.String),
               names: Schema.optionalKey(Schema.Array(Schema.String)),
+              default: Schema.optionalKey(
+                Schema.Union(
+                  [
+                    Schema.Struct({}),
+                    Schema.Number.check(Schema.isFinite()),
+                    Schema.String,
+                    Schema.Boolean,
+                  ],
+                  { mode: "oneOf" },
+                ),
+              ),
               array: Schema.optionalKey(Schema.Boolean),
             }),
           ),
@@ -1092,7 +1193,11 @@ export const V1DeleteJitAccessInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  user_id: Schema.String.annotate({ format: "uuid" }),
+  user_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
 });
 export const V1DeleteLoginRolesInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -1118,7 +1223,11 @@ export const V1DeleteProjectApiKeyInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   reveal: Schema.optionalKey(Schema.Boolean),
   was_compromised: Schema.optionalKey(Schema.Boolean),
   reason: Schema.optionalKey(Schema.String),
@@ -1151,10 +1260,18 @@ export const V1DeleteProjectTpaIntegrationInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  tpa_id: Schema.String.annotate({ format: "uuid" }),
+  tpa_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
 });
 export const V1DeleteProjectTpaIntegrationOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   type: Schema.String,
   oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -1204,10 +1321,6 @@ export const V1DiffABranchInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      // Patched: OpenAPI's `format: "uuid"` is a hint only, so the upstream
-      // Schema generator leaves this branch unconstrained — that lets a
-      // 20-letter project ref match both branches and fail `oneOf`. Adding
-      // the canonical RFC 4122 pattern makes the branches mutually exclusive.
       Schema.String.annotate({ format: "uuid" }).check(
         Schema.isPattern(
           new RegExp(
@@ -1240,7 +1353,15 @@ export const V1EnableDatabaseWebhookInput = Schema.Struct({
 export const V1ExchangeOauthTokenInput = Schema.Struct({
   body: Schema.Struct({
     grant_type: Schema.optionalKey(Schema.Literals(["authorization_code", "refresh_token"])),
-    client_id: Schema.optionalKey(Schema.String.annotate({ format: "uuid" })),
+    client_id: Schema.optionalKey(
+      Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
+        ),
+      ),
+    ),
     client_secret: Schema.optionalKey(Schema.String),
     code: Schema.optionalKey(Schema.String),
     code_verifier: Schema.optionalKey(Schema.String),
@@ -1275,7 +1396,11 @@ export const V1GetABranchInput = Schema.Struct({
   name: Schema.String,
 });
 export const V1GetABranchOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   name: Schema.String,
   project_ref: Schema.String,
   parent_project_ref: Schema.String,
@@ -1331,10 +1456,6 @@ export const V1GetABranchConfigInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      // Patched: OpenAPI's `format: "uuid"` is a hint only, so the upstream
-      // Schema generator leaves this branch unconstrained — that lets a
-      // 20-letter project ref match both branches and fail `oneOf`. Adding
-      // the canonical RFC 4122 pattern makes the branches mutually exclusive.
       Schema.String.annotate({ format: "uuid" }).check(
         Schema.isPattern(
           new RegExp(
@@ -1415,7 +1536,13 @@ export const V1GetAMigrationOutput = Schema.Struct({
   created_by: Schema.optionalKey(Schema.String),
   idempotency_key: Schema.optionalKey(Schema.String),
 });
-export const V1GetASnippetInput = Schema.Struct({ id: Schema.String.annotate({ format: "uuid" }) });
+export const V1GetASnippetInput = Schema.Struct({
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
+});
 export const V1GetASnippetOutput = Schema.Struct({
   id: Schema.String,
   inserted_at: Schema.String,
@@ -1445,7 +1572,11 @@ export const V1GetASsoProviderInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  provider_id: Schema.String.annotate({ format: "uuid" }),
+  provider_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
 });
 export const V1GetASsoProviderOutput = Schema.Struct({
   id: Schema.String,
@@ -1462,6 +1593,17 @@ export const V1GetASsoProviderOutput = Schema.Struct({
             Schema.Struct({
               name: Schema.optionalKey(Schema.String),
               names: Schema.optionalKey(Schema.Array(Schema.String)),
+              default: Schema.optionalKey(
+                Schema.Union(
+                  [
+                    Schema.Struct({}),
+                    Schema.Number.check(Schema.isFinite()),
+                    Schema.String,
+                    Schema.Boolean,
+                  ],
+                  { mode: "oneOf" },
+                ),
+              ),
               array: Schema.optionalKey(Schema.Boolean),
             }),
           ),
@@ -2156,7 +2298,11 @@ export const V1GetJitAccessInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1GetJitAccessOutput = Schema.Struct({
-  user_id: Schema.String.annotate({ format: "uuid" }),
+  user_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   user_roles: Schema.Array(
     Schema.Struct({
       role: Schema.String.check(Schema.isMinLength(1)),
@@ -2201,7 +2347,11 @@ export const V1GetLegacySigningKeyInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1GetLegacySigningKeyOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
   public_jwk: Schema.optionalKey(Schema.Union([Schema.Unknown, Schema.Null])),
@@ -2346,7 +2496,11 @@ export const V1GetOrganizationProjectClaimOutput = Schema.Struct({
   }),
   expires_at: Schema.String,
   created_at: Schema.String,
-  created_by: Schema.String.annotate({ format: "uuid" }),
+  created_by: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
 });
 export const V1GetPerformanceAdvisorsInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -2694,7 +2848,11 @@ export const V1GetProjectApiKeyInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   reveal: Schema.optionalKey(Schema.Boolean),
 });
 export const V1GetProjectApiKeyOutput = Schema.Struct({
@@ -2732,7 +2890,11 @@ export const V1GetProjectClaimTokenOutput = Schema.Struct({
   token_alias: Schema.String,
   expires_at: Schema.String,
   created_at: Schema.String,
-  created_by: Schema.String.annotate({ format: "uuid" }),
+  created_by: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
 });
 export const V1GetProjectDiskAutoscaleConfigInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -2850,13 +3012,21 @@ export const V1GetProjectPgbouncerConfigOutput = Schema.Struct({
   reserve_pool_size: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
 });
 export const V1GetProjectSigningKeyInput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1GetProjectSigningKeyOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
   public_jwk: Schema.optionalKey(Schema.Union([Schema.Unknown, Schema.Null])),
@@ -2871,7 +3041,13 @@ export const V1GetProjectSigningKeysInput = Schema.Struct({
 export const V1GetProjectSigningKeysOutput = Schema.Struct({
   keys: Schema.Array(
     Schema.Struct({
-      id: Schema.String.annotate({ format: "uuid" }),
+      id: Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
+        ),
+      ),
       algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
       status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
       public_jwk: Schema.optionalKey(Schema.Union([Schema.Unknown, Schema.Null])),
@@ -2884,10 +3060,18 @@ export const V1GetProjectTpaIntegrationInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  tpa_id: Schema.String.annotate({ format: "uuid" }),
+  tpa_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
 });
 export const V1GetProjectTpaIntegrationOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   type: Schema.String,
   oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -3382,6 +3566,17 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
                 Schema.Struct({
                   name: Schema.optionalKey(Schema.String),
                   names: Schema.optionalKey(Schema.Array(Schema.String)),
+                  default: Schema.optionalKey(
+                    Schema.Union(
+                      [
+                        Schema.Struct({}),
+                        Schema.Number.check(Schema.isFinite()),
+                        Schema.String,
+                        Schema.Boolean,
+                      ],
+                      { mode: "oneOf" },
+                    ),
+                  ),
                   array: Schema.optionalKey(Schema.Boolean),
                 }),
               ),
@@ -3434,7 +3629,13 @@ export const V1ListJitAccessInput = Schema.Struct({
 export const V1ListJitAccessOutput = Schema.Struct({
   items: Schema.Array(
     Schema.Struct({
-      user_id: Schema.String.annotate({ format: "uuid" }),
+      user_id: Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
+        ),
+      ),
       user_roles: Schema.Array(
         Schema.Struct({
           role: Schema.String.check(Schema.isMinLength(1)),
@@ -3605,10 +3806,6 @@ export const V1MergeABranchInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      // Patched: OpenAPI's `format: "uuid"` is a hint only, so the upstream
-      // Schema generator leaves this branch unconstrained — that lets a
-      // 20-letter project ref match both branches and fail `oneOf`. Adding
-      // the canonical RFC 4122 pattern makes the branches mutually exclusive.
       Schema.String.annotate({ format: "uuid" }).check(
         Schema.isPattern(
           new RegExp(
@@ -3652,7 +3849,11 @@ export const V1OauthAuthorizeProjectClaimInput = Schema.Struct({
   project_ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  client_id: Schema.String.annotate({ format: "uuid" }),
+  client_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   response_type: Schema.Literals(["code", "token", "id_token token"]),
   redirect_uri: Schema.String,
   state: Schema.optionalKey(Schema.String),
@@ -3723,10 +3924,6 @@ export const V1PushABranchInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      // Patched: OpenAPI's `format: "uuid"` is a hint only, so the upstream
-      // Schema generator leaves this branch unconstrained — that lets a
-      // 20-letter project ref match both branches and fail `oneOf`. Adding
-      // the canonical RFC 4122 pattern makes the branches mutually exclusive.
       Schema.String.annotate({ format: "uuid" }).check(
         Schema.isPattern(
           new RegExp(
@@ -3790,13 +3987,21 @@ export const V1RemoveProjectAddonInput = Schema.Struct({
   ),
 });
 export const V1RemoveProjectSigningKeyInput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1RemoveProjectSigningKeyOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
   public_jwk: Schema.optionalKey(Schema.Union([Schema.Unknown, Schema.Null])),
@@ -3810,10 +4015,6 @@ export const V1ResetABranchInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      // Patched: OpenAPI's `format: "uuid"` is a hint only, so the upstream
-      // Schema generator leaves this branch unconstrained — that lets a
-      // 20-letter project ref match both branches and fail `oneOf`. Adding
-      // the canonical RFC 4122 pattern makes the branches mutually exclusive.
       Schema.String.annotate({ format: "uuid" }).check(
         Schema.isPattern(
           new RegExp(
@@ -3837,10 +4038,6 @@ export const V1RestoreABranchInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      // Patched: OpenAPI's `format: "uuid"` is a hint only, so the upstream
-      // Schema generator leaves this branch unconstrained — that lets a
-      // 20-letter project ref match both branches and fail `oneOf`. Adding
-      // the canonical RFC 4122 pattern makes the branches mutually exclusive.
       Schema.String.annotate({ format: "uuid" }).check(
         Schema.isPattern(
           new RegExp(
@@ -3875,7 +4072,11 @@ export const V1RestorePitrBackupInput = Schema.Struct({
     .check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export const V1RevokeTokenInput = Schema.Struct({
-  client_id: Schema.String.annotate({ format: "uuid" }),
+  client_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   client_secret: Schema.String,
   refresh_token: Schema.String,
 });
@@ -3936,10 +4137,6 @@ export const V1UpdateABranchConfigInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      // Patched: OpenAPI's `format: "uuid"` is a hint only, so the upstream
-      // Schema generator leaves this branch unconstrained — that lets a
-      // 20-letter project ref match both branches and fail `oneOf`. Adding
-      // the canonical RFC 4122 pattern makes the branches mutually exclusive.
       Schema.String.annotate({ format: "uuid" }).check(
         Schema.isPattern(
           new RegExp(
@@ -3978,7 +4175,11 @@ export const V1UpdateABranchConfigInput = Schema.Struct({
   ),
 });
 export const V1UpdateABranchConfigOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   name: Schema.String,
   project_ref: Schema.String,
   parent_project_ref: Schema.String,
@@ -4070,7 +4271,11 @@ export const V1UpdateASsoProviderInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  provider_id: Schema.String.annotate({ format: "uuid" }),
+  provider_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   metadata_xml: Schema.optionalKey(Schema.String),
   metadata_url: Schema.optionalKey(Schema.String),
   domains: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -4081,6 +4286,17 @@ export const V1UpdateASsoProviderInput = Schema.Struct({
         Schema.Struct({
           name: Schema.optionalKey(Schema.String),
           names: Schema.optionalKey(Schema.Array(Schema.String)),
+          default: Schema.optionalKey(
+            Schema.Union(
+              [
+                Schema.Struct({}),
+                Schema.Number.check(Schema.isFinite()),
+                Schema.String,
+                Schema.Boolean,
+              ],
+              { mode: "oneOf" },
+            ),
+          ),
           array: Schema.optionalKey(Schema.Boolean),
         }),
       ),
@@ -4110,6 +4326,17 @@ export const V1UpdateASsoProviderOutput = Schema.Struct({
             Schema.Struct({
               name: Schema.optionalKey(Schema.String),
               names: Schema.optionalKey(Schema.Array(Schema.String)),
+              default: Schema.optionalKey(
+                Schema.Union(
+                  [
+                    Schema.Struct({}),
+                    Schema.Number.check(Schema.isFinite()),
+                    Schema.String,
+                    Schema.Boolean,
+                  ],
+                  { mode: "oneOf" },
+                ),
+              ),
               array: Schema.optionalKey(Schema.Boolean),
             }),
           ),
@@ -4994,7 +5221,13 @@ export const V1UpdateJitAccessInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  user_id: Schema.String.annotate({ format: "uuid" }).check(Schema.isMinLength(1)),
+  user_id: Schema.String.annotate({ format: "uuid" })
+    .check(Schema.isMinLength(1))
+    .check(
+      Schema.isPattern(
+        new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      ),
+    ),
   roles: Schema.Array(
     Schema.Struct({
       role: Schema.String.check(Schema.isMinLength(1)),
@@ -5012,7 +5245,11 @@ export const V1UpdateJitAccessInput = Schema.Struct({
   ),
 });
 export const V1UpdateJitAccessOutput = Schema.Struct({
-  user_id: Schema.String.annotate({ format: "uuid" }),
+  user_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   user_roles: Schema.Array(
     Schema.Struct({
       role: Schema.String.check(Schema.isMinLength(1)),
@@ -5269,7 +5506,11 @@ export const V1UpdateProjectApiKeyInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   reveal: Schema.optionalKey(Schema.Boolean),
   name: Schema.optionalKey(
     Schema.String.check(Schema.isMinLength(4))
@@ -5308,14 +5549,22 @@ export const V1UpdateProjectLegacyApiKeysInput = Schema.Struct({
 });
 export const V1UpdateProjectLegacyApiKeysOutput = Schema.Struct({ enabled: Schema.Boolean });
 export const V1UpdateProjectSigningKeyInput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
 });
 export const V1UpdateProjectSigningKeyOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
   public_jwk: Schema.optionalKey(Schema.Union([Schema.Unknown, Schema.Null])),

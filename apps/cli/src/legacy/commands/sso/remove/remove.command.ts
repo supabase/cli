@@ -1,5 +1,9 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacySsoRemove } from "./remove.handler.ts";
 
 const config = {
@@ -15,7 +19,7 @@ export type LegacySsoRemoveFlags = CliCommand.Command.Config.Infer<typeof config
 
 export const legacySsoRemoveCommand = Command.make("remove", config).pipe(
   Command.withDescription(
-    "Remove a connection to an already added SSO identity provider. Removing the provider will prevent existing users from logging in.",
+    "Remove a connection to an already added SSO identity provider. Removing the provider will prevent existing users from logging in. Please treat this command with care.",
   ),
   Command.withShortDescription("Remove an existing SSO identity provider"),
   Command.withExamples([
@@ -25,5 +29,11 @@ export const legacySsoRemoveCommand = Command.make("remove", config).pipe(
       description: "Remove an SSO provider by ID",
     },
   ]),
-  Command.withHandler((flags) => legacySsoRemove(flags)),
+  Command.withHandler((flags) =>
+    legacySsoRemove(flags).pipe(
+      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyManagementApiRuntimeLayer(["sso", "remove"])),
 );

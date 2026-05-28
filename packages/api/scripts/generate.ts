@@ -215,11 +215,30 @@ function identifier(value: string): string {
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 
-function sanitizeOpenApiSchema(schema: OpenApiSchema): OpenApiSchema {
+// Keys that we want to strip from a schema node because they describe
+// documentation / example values rather than the value's shape. JSON Schema's
+// `default` is a primitive (or array/object) literal used for documentation —
+// not part of the type contract — so we drop it during sanitization to keep
+// the generated Effect schema lean.
+const SCHEMA_METADATA_KEYS = new Set(["default", "example", "examples"]);
+
+// Recurses into a schema. The `inPropertiesMap` flag tracks whether the current
+// object is the value of a JSON Schema `properties: {...}` map — in that
+// context, keys are user-defined property NAMES (which may legitimately be
+// literally `"default"`, `"example"`, etc.) and we must NOT strip them.
+//
+// Without this distinction, an OpenAPI schema like
+//   { properties: { default: { oneOf: [...] } } }
+// would have the `default` field silently dropped during generation, producing
+// a TypeScript schema that omits the property. This bit the SAML SSO
+// attribute-mapping codegen (each key has `name?`, `names?`, `array?`, and
+// `default?: any` per OpenAPI spec; the `default?: any` field was silently
+// stripped because of this).
+function sanitizeOpenApiSchema(schema: OpenApiSchema, inPropertiesMap = false): OpenApiSchema {
   const sanitized: OpenApiSchema = {};
 
   for (const [key, rawValue] of Object.entries(schema)) {
-    if (key === "default" || key === "example" || key === "examples") {
+    if (!inPropertiesMap && SCHEMA_METADATA_KEYS.has(key)) {
       continue;
     }
 
@@ -231,7 +250,11 @@ function sanitizeOpenApiSchema(schema: OpenApiSchema): OpenApiSchema {
     }
 
     if (isRecord(rawValue)) {
-      sanitized[key] = sanitizeOpenApiSchema(rawValue);
+      // The immediate children of `properties: {...}` are property-name keys
+      // mapping to schemas; recurse with `inPropertiesMap=true` so the
+      // metadata-stripping logic skips that level.
+      const recurseInPropertiesMap = !inPropertiesMap && key === "properties";
+      sanitized[key] = sanitizeOpenApiSchema(rawValue, recurseInPropertiesMap);
       continue;
     }
 

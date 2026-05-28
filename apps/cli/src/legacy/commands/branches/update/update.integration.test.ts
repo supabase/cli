@@ -6,11 +6,9 @@ import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts
 import {
   buildLegacyTestRuntime,
   legacyJsonResponse,
-  legacyStatusCodeFailure,
   mockLegacyCliConfig,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
-  mockLegacyPlatformApiService,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -22,8 +20,7 @@ type UpdatedBranch = typeof V1UpdateABranchConfigOutput.Type;
 // V1UpdateABranchConfigInput.branch_id_or_ref is a oneOf [project-ref, uuid] union.
 // A 20-lowercase project ref matches BOTH branches → schema rejects.
 // HTTP-level mock tests pass a v4 UUID so the schema picks exactly one branch.
-// The upgrade-suggest test uses `mockLegacyPlatformApiService` to bypass schema
-// validation entirely so it can exercise the production-shape branchRef path.
+// HTTP-level mock tests pass a v4 UUID so the schema picks exactly one branch.
 const BRANCH_UUID = "11111111-1111-4111-8111-111111111111";
 const BRANCH_REF = "cccccccccccccccccccc";
 
@@ -272,38 +269,48 @@ describe("legacy branches update integration", () => {
   it.live(
     "fires cli_upgrade_suggested with the branch ref + branching_persistent on 4xx gated",
     () => {
-      const captured: Array<{ method: string; input: unknown }> = [];
       const out = mockOutput({ format: "text" });
       const analytics = mockAnalytics();
       const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
 
-      const apiMock = mockLegacyPlatformApiService({
-        v1: {
-          // Real `HttpClientError` with `StatusCodeError` reason so the handler's
-          // `HttpClientError.isHttpClientError(cause)` check + `cause.response.status`
-          // read see a 402.
-          updateABranchConfig: () => Effect.fail(legacyStatusCodeFailure(402)),
-          getProject: () => Effect.succeed(projectResponse(BRANCH_REF) as never),
-          getOrganizationEntitlements: () =>
-            Effect.succeed(
-              entitlementResponse({
-                featureKey: "branching_persistent",
-                hasAccess: false,
-              }) as never,
-            ),
-        },
+      // `legacySuggestUpgrade` bypasses the typed Management API client to GET
+      // the project + entitlements (see its file-level comment — required so
+      // cli-e2e replay fixtures with `__PROJECT_REF__` placeholders don't trip
+      // strict schema decode). Route all three URLs through `mockLegacyPlatformApi`'s
+      // handler so the assertion covers the request log produced by the same
+      // HttpClient the production code uses.
+      const apiMock = mockLegacyPlatformApi({
+        handler: (request) =>
+          Effect.sync(() => {
+            if (request.method === "PATCH" && request.url.includes("/v1/branches/")) {
+              return legacyJsonResponse(request, 402, { message: "upgrade required" });
+            }
+            if (request.method === "GET" && request.url.endsWith(`/v1/projects/${BRANCH_REF}`)) {
+              return legacyJsonResponse(request, 200, projectResponse(BRANCH_REF));
+            }
+            if (
+              request.method === "GET" &&
+              request.url.endsWith(`/v1/organizations/${ORG_SLUG}/entitlements`)
+            ) {
+              return legacyJsonResponse(
+                request,
+                200,
+                entitlementResponse({
+                  featureKey: "branching_persistent",
+                  hasAccess: false,
+                }),
+              );
+            }
+            return legacyJsonResponse(request, 200, null);
+          }),
       });
 
       const layer = buildLegacyTestRuntime({
         out,
-        // The service mock's layer has no upstream error channel; the test
-        // runtime's typing allows either layer shape here.
-        api: { layer: apiMock.layer as never },
+        api: apiMock,
         cliConfig,
         analytics,
       });
-
-      void captured;
 
       return Effect.gen(function* () {
         yield* Effect.exit(
@@ -315,14 +322,21 @@ describe("legacy branches update integration", () => {
         );
         // The branch ref the resolver returned is what `legacySuggestUpgrade`
         // should query getProject with — Go parity.
-        const projectCall = apiMock.requests.find((r) => r.method === "getProject");
-        expect(projectCall?.input).toMatchObject({ ref: BRANCH_REF });
+        const projectCall = apiMock.requests.find(
+          (r) => r.method === "GET" && r.url.endsWith(`/v1/projects/${BRANCH_REF}`),
+        );
+        expect(projectCall).toBeDefined();
+        const entitlementsCall = apiMock.requests.find((r) =>
+          r.url.endsWith(`/v1/organizations/${ORG_SLUG}/entitlements`),
+        );
+        expect(entitlementsCall).toBeDefined();
         expect(analytics.captured).toEqual([
           {
             event: "cli_upgrade_suggested",
             properties: { feature_key: "branching_persistent", org_slug: ORG_SLUG },
           },
         ]);
+        expect(out.stderrText).toContain("Upgrade your plan:");
       }).pipe(Effect.provide(layer));
     },
   );
