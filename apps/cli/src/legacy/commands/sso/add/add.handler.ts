@@ -6,7 +6,12 @@ import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { encodeGoJson, encodeToml, encodeYaml } from "../../../shared/legacy-go-output.encoders.ts";
+import {
+  encodeGoJson,
+  encodeGoStructJsonBody,
+  encodeToml,
+  encodeYaml,
+} from "../../../shared/legacy-go-output.encoders.ts";
 import { sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
 import { resolveLegacyAccessToken } from "../../../shared/legacy-resolve-token.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
@@ -111,7 +116,9 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
       ).pipe(
         Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
         HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
-        HttpClientRequest.bodyText(JSON.stringify(body), "application/json"),
+        // Body keys serialised in Go-struct order (alphabetical) so the
+        // cli-e2e replay server's string-compare body match succeeds.
+        HttpClientRequest.bodyText(encodeGoStructJsonBody(body), "application/json"),
       );
 
       const response = yield* httpClient.execute(request).pipe(
