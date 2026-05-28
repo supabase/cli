@@ -45,6 +45,9 @@ catalogs:
     knip:
       specifier: ^6.14.2
       version: 6.14.2
+    nx:
+      specifier: ^22.7.5
+      version: 22.7.5
     oxfmt:
       specifier: ^0.52.0
       version: 0.52.0
@@ -69,7 +72,7 @@ importers:
         specifier: 'catalog:'
         version: 1.15.40
       nx:
-        specifier: 22.7.5
+        specifier: 'catalog:'
         version: 22.7.5(@swc-node/register@1.11.1(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@swc/core@1.15.40)(@swc/types@0.1.26)(typescript@6.0.3))(@swc/core@1.15.40)
       verdaccio:
         specifier: ^6.7.2
