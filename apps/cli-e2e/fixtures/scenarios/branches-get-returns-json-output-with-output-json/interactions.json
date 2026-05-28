@@ -125,6 +125,7 @@
       "body": [
         {
           "connection_string": "postgresql://postgres:password@my-branch.supabase.co:5432/postgres",
+          "connectionString": "postgresql://postgres:password@my-branch.supabase.co:5432/postgres",
           "database_type": "PRIMARY",
           "db_host": "my-branch.supabase.co",
           "db_name": "postgres",

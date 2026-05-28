@@ -1012,7 +1012,9 @@ export const V1DeleteABranchInput = Schema.Struct({
       // the canonical RFC 4122 pattern makes the branches mutually exclusive.
       Schema.String.annotate({ format: "uuid" }).check(
         Schema.isPattern(
-          new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
         ),
       ),
     ],
@@ -1208,7 +1210,9 @@ export const V1DiffABranchInput = Schema.Struct({
       // the canonical RFC 4122 pattern makes the branches mutually exclusive.
       Schema.String.annotate({ format: "uuid" }).check(
         Schema.isPattern(
-          new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
         ),
       ),
     ],
@@ -1333,7 +1337,9 @@ export const V1GetABranchConfigInput = Schema.Struct({
       // the canonical RFC 4122 pattern makes the branches mutually exclusive.
       Schema.String.annotate({ format: "uuid" }).check(
         Schema.isPattern(
-          new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
         ),
       ),
     ],
@@ -3605,7 +3611,9 @@ export const V1MergeABranchInput = Schema.Struct({
       // the canonical RFC 4122 pattern makes the branches mutually exclusive.
       Schema.String.annotate({ format: "uuid" }).check(
         Schema.isPattern(
-          new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
         ),
       ),
     ],
@@ -3721,7 +3729,9 @@ export const V1PushABranchInput = Schema.Struct({
       // the canonical RFC 4122 pattern makes the branches mutually exclusive.
       Schema.String.annotate({ format: "uuid" }).check(
         Schema.isPattern(
-          new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
         ),
       ),
     ],
@@ -3806,7 +3816,9 @@ export const V1ResetABranchInput = Schema.Struct({
       // the canonical RFC 4122 pattern makes the branches mutually exclusive.
       Schema.String.annotate({ format: "uuid" }).check(
         Schema.isPattern(
-          new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
         ),
       ),
     ],
@@ -3831,7 +3843,9 @@ export const V1RestoreABranchInput = Schema.Struct({
       // the canonical RFC 4122 pattern makes the branches mutually exclusive.
       Schema.String.annotate({ format: "uuid" }).check(
         Schema.isPattern(
-          new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
         ),
       ),
     ],
@@ -3928,7 +3942,9 @@ export const V1UpdateABranchConfigInput = Schema.Struct({
       // the canonical RFC 4122 pattern makes the branches mutually exclusive.
       Schema.String.annotate({ format: "uuid" }).check(
         Schema.isPattern(
-          new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
         ),
       ),
     ],
