@@ -1,13 +1,15 @@
-import { Context, Option } from "effect";
-import { Command, Flag, type HelpDoc } from "effect/unstable/cli";
+import { Context, Effect, Layer, Option } from "effect";
+import { CliOutput, Command, Flag, type HelpDoc } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
+import { legacyBranchesCommand } from "../../legacy/commands/branches/branches.command.ts";
+import { legacyDbCommand } from "../../legacy/commands/db/db.command.ts";
+import { LegacyGoProxy } from "../legacy/go-proxy.service.ts";
+import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import {
   LegacyHiddenFlags,
-  LegacyHiddenSubcommands,
   stripHiddenFlagsFromHelpDoc,
   withHidden,
   withHiddenFromConfig,
-  withHiddenSubcommands,
 } from "./hidden-flag.ts";
 
 const flagDoc = (name: string): HelpDoc.FlagDoc => ({
@@ -35,15 +37,6 @@ const helpDocWithHidden = (
     annotations: Context.make(LegacyHiddenFlags, new Set(hidden)),
   });
 
-const helpDocWithHiddenSubcommands = (
-  hidden: ReadonlyArray<string>,
-  overrides: Partial<HelpDoc.HelpDoc>,
-): HelpDoc.HelpDoc =>
-  helpDoc({
-    ...overrides,
-    annotations: Context.make(LegacyHiddenSubcommands, new Set(hidden)),
-  });
-
 // Reach into the internal command shape to obtain the help doc the formatter
 // would render. Effect builds this from `Command.annotations`, which is the
 // contract `withHiddenFromConfig` relies on.
@@ -53,6 +46,22 @@ interface CommandImpl {
 const buildHelpDoc = <Name extends string, Input, ContextInput, E, R>(
   cmd: Command.Command<Name, Input, ContextInput, E, R>,
 ): HelpDoc.HelpDoc => (cmd as unknown as CommandImpl).buildHelpDoc([]);
+
+function mockLegacyGoProxy() {
+  const calls: Array<ReadonlyArray<string>> = [];
+  const layer = Layer.succeed(LegacyGoProxy, {
+    exec: (args) =>
+      Effect.sync(() => {
+        calls.push([...args]);
+      }),
+  });
+
+  return { layer, calls };
+}
+
+const legacyTestRoot = Command.make("supabase").pipe(
+  Command.withSubcommands([legacyBranchesCommand, legacyDbCommand]),
+);
 
 describe("withHidden", () => {
   it("returns the same flag instance", () => {
@@ -121,15 +130,6 @@ describe("withHiddenFromConfig", () => {
   });
 });
 
-describe("withHiddenSubcommands", () => {
-  it("adds hidden subcommand annotations to the command help doc", () => {
-    const cmd = Command.make("demo").pipe(withHiddenSubcommands(["legacy"]));
-    const annotated = Context.get(buildHelpDoc(cmd).annotations, LegacyHiddenSubcommands);
-
-    expect([...annotated]).toEqual(["legacy"]);
-  });
-});
-
 describe("stripHiddenFlagsFromHelpDoc", () => {
   it("returns the doc unchanged when annotations are empty", () => {
     const doc = helpDoc({ flags: [flagDoc("foo")] });
@@ -154,26 +154,60 @@ describe("stripHiddenFlagsFromHelpDoc", () => {
     expect(stripped.globalFlags).toBeUndefined();
     expect(stripped.flags.map((f) => f.name)).toEqual(["bar"]);
   });
+});
 
-  it("filters hidden subcommands by the doc's annotation", () => {
-    const doc = helpDocWithHiddenSubcommands(["legacy"], {
-      subcommands: [
-        {
-          group: undefined,
-          commands: [
-            {
-              name: "visible",
-              alias: undefined,
-              shortDescription: "visible",
-              description: "visible",
-            },
-            { name: "legacy", alias: undefined, shortDescription: "legacy", description: "legacy" },
-          ],
-        },
-      ],
-    });
+describe("legacy hidden subcommands", () => {
+  it("omits hidden branch and db subcommands from help docs", () => {
+    const branchesHelp = buildHelpDoc(legacyBranchesCommand);
+    expect(branchesHelp.subcommands?.[0]?.commands.map((command) => command.name)).toEqual([
+      "list",
+      "create",
+      "get",
+      "update",
+      "pause",
+      "unpause",
+      "delete",
+    ]);
 
-    const stripped = stripHiddenFlagsFromHelpDoc(doc);
-    expect(stripped.subcommands?.[0]?.commands.map((command) => command.name)).toEqual(["visible"]);
+    const dbHelp = buildHelpDoc(legacyDbCommand);
+    expect(dbHelp.subcommands?.[0]?.commands.map((command) => command.name)).toEqual([
+      "diff",
+      "dump",
+      "push",
+      "pull",
+      "reset",
+      "lint",
+      "start",
+      "query",
+      "advisors",
+      "schema",
+    ]);
+  });
+
+  it("still executes hidden subcommands by exact name", async () => {
+    // `branches disable` was a hidden proxy before the native port (CLI-1289).
+    // It is now a native handler — `branches/disable/disable.integration.test.ts`
+    // covers its execution path. The other three remain Go proxies, so this
+    // test continues to verify the hidden-by-name dispatch via `LegacyGoProxy`.
+    const proxy = mockLegacyGoProxy();
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["db", "test"]);
+        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["db", "branch", "list"]);
+        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+          "db",
+          "remote",
+          "changes",
+        ]);
+      }).pipe(
+        Effect.provide(Layer.mergeAll(proxy.layer, CliOutput.layer(textCliOutputFormatter()))),
+      ) as Effect.Effect<void>,
+    );
+
+    expect(proxy.calls).toEqual([
+      ["db", "test"],
+      ["db", "branch", "list"],
+      ["db", "remote", "changes"],
+    ]);
   });
 });

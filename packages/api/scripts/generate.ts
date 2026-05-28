@@ -204,11 +204,41 @@ function identifier(value: string): string {
   return camel[0] ? camel[0].toUpperCase() + camel.slice(1) : camel;
 }
 
-function sanitizeOpenApiSchema(schema: OpenApiSchema): OpenApiSchema {
+// OpenAPI 3.0 treats `format: "uuid"` as a hint, not validation. Without a
+// concrete `pattern`, the resulting Effect schema's UUID branch has no check,
+// so a 20-letter project ref matches both branches of `oneOf [project-ref, uuid]`
+// unions (e.g. `branch_id_or_ref`) and validation fails at "Expected exactly one
+// member to match". Add the canonical RFC 4122 pattern so the branches become
+// mutually exclusive. Mirrored by an inline patch in `contracts.ts` (search
+// "Patched: OpenAPI's `format: \"uuid\"`") that survives ad-hoc edits between
+// regenerations.
+const UUID_PATTERN =
+  "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
+
+// Keys that we want to strip from a schema node because they describe
+// documentation / example values rather than the value's shape. JSON Schema's
+// `default` is a primitive (or array/object) literal used for documentation —
+// not part of the type contract — so we drop it during sanitization to keep
+// the generated Effect schema lean.
+const SCHEMA_METADATA_KEYS = new Set(["default", "example", "examples"]);
+
+// Recurses into a schema. The `inPropertiesMap` flag tracks whether the current
+// object is the value of a JSON Schema `properties: {...}` map — in that
+// context, keys are user-defined property NAMES (which may legitimately be
+// literally `"default"`, `"example"`, etc.) and we must NOT strip them.
+//
+// Without this distinction, an OpenAPI schema like
+//   { properties: { default: { oneOf: [...] } } }
+// would have the `default` field silently dropped during generation, producing
+// a TypeScript schema that omits the property. This bit the SAML SSO
+// attribute-mapping codegen (each key has `name?`, `names?`, `array?`, and
+// `default?: any` per OpenAPI spec; the `default?: any` field was silently
+// stripped because of this).
+function sanitizeOpenApiSchema(schema: OpenApiSchema, inPropertiesMap = false): OpenApiSchema {
   const sanitized: OpenApiSchema = {};
 
   for (const [key, rawValue] of Object.entries(schema)) {
-    if (key === "default" || key === "example" || key === "examples") {
+    if (!inPropertiesMap && SCHEMA_METADATA_KEYS.has(key)) {
       continue;
     }
 
@@ -220,11 +250,23 @@ function sanitizeOpenApiSchema(schema: OpenApiSchema): OpenApiSchema {
     }
 
     if (isRecord(rawValue)) {
-      sanitized[key] = sanitizeOpenApiSchema(rawValue);
+      // The immediate children of `properties: {...}` are property-name keys
+      // mapping to schemas; recurse with `inPropertiesMap=true` so the
+      // metadata-stripping logic skips that level.
+      const recurseInPropertiesMap = !inPropertiesMap && key === "properties";
+      sanitized[key] = sanitizeOpenApiSchema(rawValue, recurseInPropertiesMap);
       continue;
     }
 
     sanitized[key] = rawValue;
+  }
+
+  if (
+    sanitized.type === "string" &&
+    sanitized.format === "uuid" &&
+    sanitized.pattern === undefined
+  ) {
+    sanitized.pattern = UUID_PATTERN;
   }
 
   return sanitized;

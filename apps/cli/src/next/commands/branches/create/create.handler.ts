@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, Option } from "effect";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
 import {
   ProjectLinkState,
@@ -7,40 +7,9 @@ import {
 import { Output } from "../../../../shared/output/output.service.ts";
 import { formatTableRow, outputTable } from "../../../../shared/output/table.ts";
 import { formatUtcDate, formatUtcTime } from "../../../../shared/output/time.ts";
-import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
+import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
 import type { CreateFlags } from "./create.command.ts";
 import { BranchAlreadyExistsError, NoBranchNameError } from "../errors.ts";
-
-const detectGitBranch: Effect.Effect<
-  Option.Option<string>,
-  never,
-  RuntimeInfo | FileSystem.FileSystem | Path.Path
-> = Effect.gen(function* () {
-  const githubHeadRef = process.env.GITHUB_HEAD_REF;
-  if (githubHeadRef) {
-    return Option.some(githubHeadRef);
-  }
-
-  const runtimeInfo = yield* RuntimeInfo;
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-
-  let dir = path.resolve(runtimeInfo.cwd);
-  const root = path.parse(dir).root;
-
-  while (true) {
-    const headPath = path.join(dir, ".git", "HEAD");
-    const content = yield* fs.readFileString(headPath).pipe(Effect.option);
-    if (Option.isSome(content)) {
-      const match = content.value.trim().match(/^ref: refs\/heads\/(.+)$/);
-      return match?.[1] !== undefined ? Option.some(match[1]) : Option.none<string>();
-    }
-    if (dir === root) {
-      return Option.none<string>();
-    }
-    dir = path.dirname(dir);
-  }
-});
 
 const resolveBranchName = Effect.fnUntraced(function* (nameOpt: Option.Option<string>) {
   if (Option.isSome(nameOpt)) {
