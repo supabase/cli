@@ -65,4 +65,4 @@ Single `success` event with the payload as data.
 ## Notes
 
 - All three URLs are deterministic functions of the project ref.
-- The `Single sign-on URL (ACS URL) ` label preserves the trailing space from Go's `render.go:170` source markdown — verbatim parity.
+- Go's markdown source at `render.go:170` includes a trailing space in the `Single sign-on URL (ACS URL) ` label, but Glamour collapses it when computing column widths. Our flat ASCII renderer would double it up against the cell padding, so the label is emitted without the trailing space to match Go's rendered output (which the cli-e2e parity harness compares against).

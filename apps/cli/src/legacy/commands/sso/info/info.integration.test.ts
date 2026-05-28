@@ -59,6 +59,21 @@ describe("legacy sso info integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  // Parity guard for cli-e2e: Go's Glamour renders the ACS URL row as
+  // `Single sign-on URL (ACS URL) | https://…` (single space before the
+  // column separator). An earlier "byte-parity" attempt to preserve the
+  // trailing space in Go's markdown source produced two spaces against our
+  // flat renderer's padding and broke the parity harness. Pin the exact
+  // byte sequence so it can't drift back.
+  it.live("emits exactly one space between the ACS URL label and the column separator", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* legacySsoInfo({ projectRef: Option.none() });
+      expect(out.stdoutText).toContain(`Single sign-on URL (ACS URL) | ${expectedAcsUrl}`);
+      expect(out.stdoutText).not.toContain("Single sign-on URL (ACS URL)  |");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("TS --output-format=json emits a structured payload", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {

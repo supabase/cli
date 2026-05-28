@@ -306,9 +306,14 @@ export function renderInfoMarkdown(ref: string): string {
   return renderGlamourTable(
     ["PROPERTY", "VALUE"],
     [
-      // Trailing space in the ACS URL label is intentional — mirrors Go's
-      // `render.go:170` source markdown verbatim ("Single sign-on URL (ACS URL) ").
-      ["Single sign-on URL (ACS URL) ", payload.acs_url],
+      // The Go markdown source at `render.go:170` includes a trailing space
+      // ("Single sign-on URL (ACS URL) "), but Glamour collapses it when
+      // computing column widths so the rendered output has a single space
+      // between the label and the column separator. Our flat ASCII renderer
+      // would preserve the trailing space and double it up against the cell
+      // padding — so we drop it here. The cli-e2e parity harness compares
+      // against Go's rendered output (not the markdown source).
+      ["Single sign-on URL (ACS URL)", payload.acs_url],
       ["Audience URI (SP Entity ID)", payload.entity_id],
       ["Default Relay State", payload.relay_state],
     ],
