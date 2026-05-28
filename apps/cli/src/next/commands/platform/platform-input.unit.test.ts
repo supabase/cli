@@ -124,13 +124,16 @@ describe("platform input", () => {
 
   it.effect("accepts string-only union params in dry-run mode", () =>
     Effect.gen(function* () {
+      // Must satisfy one of the oneOf branches (20-letter project ref or
+      // RFC 4122 UUID). A bare "foo" used to slip through when the UUID branch
+      // had no pattern check; the @supabase/api schema patch closed that gap.
       const decoded = yield* decodePlatformInput(
         deleteBranchDescriptor,
         deleteBranchDescriptor.inputSchema,
-        { branch_id_or_ref: "foo" },
+        { branch_id_or_ref: "abcdefghijklmnopqrst" },
       );
 
-      expect(decoded).toEqual({ branch_id_or_ref: "foo" });
+      expect(decoded).toEqual({ branch_id_or_ref: "abcdefghijklmnopqrst" });
     }),
   );
 

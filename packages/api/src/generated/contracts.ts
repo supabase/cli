@@ -1006,7 +1006,15 @@ export const V1DeleteABranchInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }),
+      // Patched: OpenAPI's `format: "uuid"` is a hint only, so the upstream
+      // Schema generator leaves this branch unconstrained — that lets a
+      // 20-letter project ref match both branches and fail `oneOf`. Adding
+      // the canonical RFC 4122 pattern makes the branches mutually exclusive.
+      Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+        ),
+      ),
     ],
     { mode: "oneOf" },
   ),
@@ -1194,7 +1202,15 @@ export const V1DiffABranchInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }),
+      // Patched: OpenAPI's `format: "uuid"` is a hint only, so the upstream
+      // Schema generator leaves this branch unconstrained — that lets a
+      // 20-letter project ref match both branches and fail `oneOf`. Adding
+      // the canonical RFC 4122 pattern makes the branches mutually exclusive.
+      Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+        ),
+      ),
     ],
     { mode: "oneOf" },
   ),
@@ -1311,7 +1327,15 @@ export const V1GetABranchConfigInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }),
+      // Patched: OpenAPI's `format: "uuid"` is a hint only, so the upstream
+      // Schema generator leaves this branch unconstrained — that lets a
+      // 20-letter project ref match both branches and fail `oneOf`. Adding
+      // the canonical RFC 4122 pattern makes the branches mutually exclusive.
+      Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+        ),
+      ),
     ],
     { mode: "oneOf" },
   ),
@@ -3575,7 +3599,15 @@ export const V1MergeABranchInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }),
+      // Patched: OpenAPI's `format: "uuid"` is a hint only, so the upstream
+      // Schema generator leaves this branch unconstrained — that lets a
+      // 20-letter project ref match both branches and fail `oneOf`. Adding
+      // the canonical RFC 4122 pattern makes the branches mutually exclusive.
+      Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+        ),
+      ),
     ],
     { mode: "oneOf" },
   ),
@@ -3683,7 +3715,15 @@ export const V1PushABranchInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }),
+      // Patched: OpenAPI's `format: "uuid"` is a hint only, so the upstream
+      // Schema generator leaves this branch unconstrained — that lets a
+      // 20-letter project ref match both branches and fail `oneOf`. Adding
+      // the canonical RFC 4122 pattern makes the branches mutually exclusive.
+      Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+        ),
+      ),
     ],
     { mode: "oneOf" },
   ),
@@ -3760,7 +3800,15 @@ export const V1ResetABranchInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }),
+      // Patched: OpenAPI's `format: "uuid"` is a hint only, so the upstream
+      // Schema generator leaves this branch unconstrained — that lets a
+      // 20-letter project ref match both branches and fail `oneOf`. Adding
+      // the canonical RFC 4122 pattern makes the branches mutually exclusive.
+      Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+        ),
+      ),
     ],
     { mode: "oneOf" },
   ),
@@ -3777,7 +3825,15 @@ export const V1RestoreABranchInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }),
+      // Patched: OpenAPI's `format: "uuid"` is a hint only, so the upstream
+      // Schema generator leaves this branch unconstrained — that lets a
+      // 20-letter project ref match both branches and fail `oneOf`. Adding
+      // the canonical RFC 4122 pattern makes the branches mutually exclusive.
+      Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+        ),
+      ),
     ],
     { mode: "oneOf" },
   ),
@@ -3866,7 +3922,15 @@ export const V1UpdateABranchConfigInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }),
+      // Patched: OpenAPI's `format: "uuid"` is a hint only, so the upstream
+      // Schema generator leaves this branch unconstrained — that lets a
+      // 20-letter project ref match both branches and fail `oneOf`. Adding
+      // the canonical RFC 4122 pattern makes the branches mutually exclusive.
+      Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+        ),
+      ),
     ],
     { mode: "oneOf" },
   ),
