@@ -19,7 +19,8 @@ import {
   encodeYaml,
 } from "../../../shared/legacy-go-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
-import { formatBackupTimestamp, formatRegion } from "../backups.format.ts";
+import { formatLegacyTimestamp } from "../../../shared/legacy-timestamp.format.ts";
+import { formatRegion } from "../backups.format.ts";
 import type { LegacyBackupsListFlags } from "./list.command.ts";
 
 type BackupsResponse = typeof V1ListAllBackupsOutput.Type;
@@ -56,7 +57,7 @@ function renderLogicalTable(response: BackupsResponse): string {
     region,
     backup.is_physical_backup ? "PHYSICAL" : "LOGICAL",
     backup.status,
-    formatBackupTimestamp(backup.inserted_at),
+    formatLegacyTimestamp(backup.inserted_at),
   ]);
   return renderGlamourTable(LOGICAL_HEADERS, rows);
 }
