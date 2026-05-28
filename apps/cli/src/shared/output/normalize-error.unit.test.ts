@@ -34,6 +34,51 @@ describe("normalizeCliError", () => {
     });
   });
 
+  test("MissingOption renders Go Cobra's `required flag(s) X not set` wording", () => {
+    const error = { _tag: "MissingOption", option: "type" };
+    expect(normalizeCliError(error)).toEqual({
+      code: "MissingOption",
+      message: `Error: required flag(s) "type" not set`,
+    });
+  });
+
+  test("MissingOption with missing `option` field falls back to bare wording", () => {
+    const error = { _tag: "MissingOption" };
+    expect(normalizeCliError(error)).toEqual({
+      code: "MissingOption",
+      message: "Error: required flag(s) not set",
+    });
+  });
+
+  test("ShowHelp envelope unwraps a single MissingOption to Cobra wording", () => {
+    // Effect CLI raises `ShowHelp` containing the parse error in its `errors`
+    // array. We unwrap to surface the actionable message instead of "Help requested".
+    const error = {
+      _tag: "ShowHelp",
+      commandPath: ["sso", "add"],
+      errors: [{ _tag: "MissingOption", option: "type" }],
+    };
+    expect(normalizeCliError(error)).toEqual({
+      code: "MissingOption",
+      message: `Error: required flag(s) "type" not set`,
+    });
+  });
+
+  test("ShowHelp with multiple errors does not unwrap (falls back to generic)", () => {
+    const error = {
+      _tag: "ShowHelp",
+      commandPath: ["sso", "add"],
+      errors: [
+        { _tag: "MissingOption", option: "type" },
+        { _tag: "MissingOption", option: "project-ref" },
+      ],
+    };
+    // Should fall through to generic — message comes from ShowHelp itself,
+    // which doesn't include one in our test fixture.
+    const result = normalizeCliError(error);
+    expect(result.code).toBe("ShowHelp");
+  });
+
   test("normalizes a cause via its first failure", () => {
     const normalized = normalizeCause(Cause.fail({ _tag: "NoRunningStackError", cwd: "/tmp" }));
 

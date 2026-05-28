@@ -47,6 +47,24 @@ function sortKeysDeep(value: unknown): unknown {
   return sorted;
 }
 
+/**
+ * Serialize an outbound API request body the way Go's `json.Marshal` would
+ * for a struct: keys sorted alphabetically (the `@supabase/api`-generated
+ * structs declare fields alphabetically, and `json.Marshal` serializes in
+ * field-declaration order), no indentation, no trailing newline.
+ *
+ * Use this on the raw-HTTP code path in `sso add` / `sso update` (and future
+ * handlers that bypass the typed client). The cli-e2e replay server compares
+ * recorded request bodies via `JSON.stringify`-based string equality, so
+ * key-order parity is required for parity tests to pass.
+ *
+ * `encodeGoJson` is the parallel for human-facing `--output json` output
+ * (indented + trailing `\n`).
+ */
+export function encodeGoStructJsonBody(value: unknown): string {
+  return JSON.stringify(sortKeysDeep(value));
+}
+
 export function encodeYaml(value: unknown): string {
   return stringifyYaml(value);
 }
