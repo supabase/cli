@@ -296,7 +296,7 @@ describe("legacyPlatformApiLayer", () => {
         yield* api.v1.listAllProjects();
 
         expect(analytics.aliases).toEqual([{ distinctId: "user-123", alias: "device-123" }]);
-        expect(analytics.identifies).toEqual([{ distinctId: "user-123", properties: {} }]);
+        expect(analytics.identifies).toEqual([]);
         const telemetry = readTelemetryConfig(configDir);
         expect(telemetry.distinct_id).toBe("user-123");
         expect(telemetry.enabled).toBe(true);
@@ -374,7 +374,7 @@ describe("legacyPlatformApiLayer", () => {
         yield* api.v1.listAllProjects();
 
         expect(analytics.aliases).toEqual([{ distinctId: "user-123", alias: "device-123" }]);
-        expect(analytics.identifies).toEqual([{ distinctId: "user-123", properties: {} }]);
+        expect(analytics.identifies).toEqual([]);
         expect(readTelemetryConfig(configDir).distinct_id).toBe("user-123");
       } finally {
         rmSync(configDir, { recursive: true, force: true });
