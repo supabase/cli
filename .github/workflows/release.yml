@@ -53,10 +53,12 @@ jobs:
       - id: app-token
         uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
         with:
-          app-id: ${{ secrets.APP_ID }}
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
       - uses: useblacksmith/checkout@41cdeedae8edb2e684ba22896a5fd2a3cb85db6b # v1
         with:
+          persist-credentials: true
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
       - name: Fast-forward main
@@ -92,6 +94,7 @@ jobs:
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
       # `persist-credentials: false` is required: otherwise checkout caches the
       # default GITHUB_TOKEN as an `http.extraheader` in git config, and that
       # Authorization header overrides the App token semantic-release puts in
@@ -200,4 +203,27 @@ jobs:
       scoop_name: ${{ needs.plan.outputs.scoop_name }}
       dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
       channel: ${{ needs.plan.outputs.channel }}
-    secrets: inherit
+    secrets:
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+      POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
+      GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
+
+  # Posts to the release Slack channel once the pipeline succeeds. Listing
+  # `release` in `needs` without a status function in `if:` keeps the implicit
+  # success() gate, so this only runs when both plan and release succeeded.
+  # The `if:` then filters to real (non-dry-run) beta/stable cuts; alpha and
+  # dry runs stay silent. Nothing depends on this job, so a Slack/webhook
+  # failure can't affect the already-completed release.
+  notify-slack:
+    name: Notify Slack
+    needs: [plan, release]
+    if: >-
+      needs.plan.outputs.dry_run != 'true' &&
+      (needs.plan.outputs.channel == 'beta' || needs.plan.outputs.channel == 'stable')
+    uses: ./.github/workflows/slack-notify.yml
+    with:
+      version: ${{ needs.plan.outputs.version }}
+      channel: ${{ needs.plan.outputs.channel }}
+    secrets:
+      SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}

@@ -1,0 +1,72 @@
+name: Reusable Slack Notification
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Released version (without the leading v, e.g. 1.2.3)
+        required: true
+        type: string
+      channel:
+        description: Release channel (alpha | beta | stable), used to label the message
+        required: false
+        type: string
+    secrets:
+      SLACK_RELEASE_WEBHOOK:
+        required: true
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Slack notification
+        # Values flow in through env so the payload heredoc never interpolates
+        # untrusted strings into the shell — only github.run_id/github.sha are
+        # inlined, and those are GitHub-controlled.
+        env:
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          SHA: ${{ github.sha }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
+        run: |
+          set -euo pipefail
+
+          SHORT_SHA="${SHA:0:7}"
+          HEADER="🚀 Supabase CLI v${VERSION} released"
+          if [[ "$CHANNEL" == "beta" ]]; then
+            HEADER="🚀 Supabase CLI v${VERSION} released (beta)"
+          fi
+
+          CHANGELOG_URL="https://github.com/${REPO}/releases/tag/v${VERSION}"
+          COMMIT_URL="https://github.com/${REPO}/commit/${SHA}"
+          RUN_URL="https://github.com/${REPO}/actions/runs/${RUN_ID}"
+
+          payload=$(cat <<EOF
+          {
+            "text": "🚀 Supabase CLI Version ${VERSION} has been released",
+            "blocks": [
+              {
+                "type": "header",
+                "text": { "type": "plain_text", "text": "${HEADER}", "emoji": true }
+              },
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*Changelog:* <${CHANGELOG_URL}|v${VERSION} release notes>\n*Commit:* <${COMMIT_URL}|${SHORT_SHA}>\n*Workflow run:* <${RUN_URL}|view run>"
+                }
+              },
+              {
+                "type": "context",
+                "elements": [
+                  { "type": "mrkdwn", "text": "Channel: ${CHANNEL:-n/a} • ${REPO}" }
+                ]
+              }
+            ]
+          }
+          EOF
+          )
+
+          curl -fsSL -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK"

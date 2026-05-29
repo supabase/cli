@@ -9,6 +9,8 @@ updates:
       actions-major:
         patterns:
           - "*"
+    cooldown:
+      default-days: 7
   - package-ecosystem: "gomod"
     directories:
       - "/"
@@ -23,6 +25,8 @@ updates:
           - patch
         exclude-patterns:
           - github.com/compose-spec/compose-go/v2
+    cooldown:
+      default-days: 7
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
@@ -32,6 +36,8 @@ updates:
       npm-major:
         patterns:
           - "*"
+    cooldown:
+      default-days: 7
   - package-ecosystem: "docker"
     directory: "/apps/cli-go/pkg/config/templates"
     schedule:
@@ -49,3 +55,5 @@ updates:
       - dependency-name: "axllent/mailpit"
       - dependency-name: "darthsim/imgproxy"
       - dependency-name: "timberio/vector"
+    cooldown:
+      default-days: 7
