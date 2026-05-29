@@ -212,7 +212,7 @@ jobs:
   # Posts to the release Slack channel once the pipeline succeeds. Listing
   # `release` in `needs` without a status function in `if:` keeps the implicit
   # success() gate, so this only runs when both plan and release succeeded.
-  # The `if:` then filters to real (non-dry-run) beta/stable cuts; alpha and
+  # The `if:` then filters to real (non-dry-run) stable cuts; alpha, beta, and
   # dry runs stay silent. Nothing depends on this job, so a Slack/webhook
   # failure can't affect the already-completed release.
   notify-slack:
@@ -220,7 +220,7 @@ jobs:
     needs: [plan, release]
     if: >-
       needs.plan.outputs.dry_run != 'true' &&
-      (needs.plan.outputs.channel == 'beta' || needs.plan.outputs.channel == 'stable')
+      needs.plan.outputs.channel == 'stable'
     uses: ./.github/workflows/slack-notify.yml
     with:
       version: ${{ needs.plan.outputs.version }}
