@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -171,11 +171,7 @@ describe("legacyProjectRefLayer", () => {
       const { resolve } = yield* LegacyProjectRefResolver;
       yield* resolve(Option.none());
       // The resolver must not write the file — only `supabase link` does.
-      const exists = yield* Effect.tryPromise({
-        try: () => import("node:fs").then((m) => m.existsSync(refPath)),
-        catch: () => false,
-      });
-      expect(exists).toBe(false);
+      expect(existsSync(refPath)).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
@@ -224,5 +220,68 @@ describe("legacyProjectRefLayer", () => {
       const exit = yield* Effect.exit(resolve(Option.none()));
       expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(Effect.provide(layer));
+  });
+
+  describe("resolveOptional", () => {
+    it.effect("prefers the flag value", () => {
+      writeRefFile(tempRoot, ANOTHER_REF);
+      const { layer } = makeLayer({ workdir: tempRoot, projectId: ANOTHER_REF });
+      return Effect.gen(function* () {
+        const { resolveOptional } = yield* LegacyProjectRefResolver;
+        const ref = yield* resolveOptional(Option.some(VALID_REF));
+        expect(ref).toEqual(Option.some(VALID_REF));
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("falls back to projectId then the ref file", () => {
+      const { layer } = makeLayer({ workdir: tempRoot, projectId: VALID_REF });
+      return Effect.gen(function* () {
+        const { resolveOptional } = yield* LegacyProjectRefResolver;
+        const ref = yield* resolveOptional(Option.none());
+        expect(ref).toEqual(Option.some(VALID_REF));
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("reads the ref file when flag and projectId are unset", () => {
+      writeRefFile(tempRoot, VALID_REF);
+      const { layer } = makeLayer({ workdir: tempRoot });
+      return Effect.gen(function* () {
+        const { resolveOptional } = yield* LegacyProjectRefResolver;
+        const ref = yield* resolveOptional(Option.none());
+        expect(ref).toEqual(Option.some(VALID_REF));
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("returns None and never fails when nothing resolves", () => {
+      const { layer } = makeLayer({ workdir: tempRoot });
+      return Effect.gen(function* () {
+        const { resolveOptional } = yield* LegacyProjectRefResolver;
+        const ref = yield* resolveOptional(Option.none());
+        expect(Option.isNone(ref)).toBe(true);
+      }).pipe(Effect.provide(layer));
+    });
+  });
+
+  describe("promptProjectRef", () => {
+    it.effect("prompts with the given title, returns the choice, and echoes it", () => {
+      const projects = [
+        { id: VALID_REF, name: "alpha", organization_slug: "acme", region: "us-east-1" },
+        { id: ANOTHER_REF, name: "beta", organization_slug: "acme", region: "eu-west-1" },
+      ];
+      const { layer, out } = makeLayer({
+        workdir: tempRoot,
+        stdinIsTty: true,
+        projects,
+        promptSelectResponses: [ANOTHER_REF],
+      });
+      return Effect.gen(function* () {
+        const { promptProjectRef } = yield* LegacyProjectRefResolver;
+        const ref = yield* promptProjectRef("Which project do you want to delete?");
+        expect(ref).toBe(ANOTHER_REF);
+        expect(out.promptSelectCalls[0]?.message).toBe("Which project do you want to delete?");
+        const infos = out.messages.filter((m) => m.type === "info").map((m) => m.message);
+        expect(infos).toContain(`Selected project: ${ANOTHER_REF}`);
+      }).pipe(Effect.provide(layer));
+    });
   });
 });

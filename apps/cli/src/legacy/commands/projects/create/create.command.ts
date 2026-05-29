@@ -1,6 +1,9 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withHidden, withHiddenFromConfig } from "../../../../shared/cli/hidden-flag.ts";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyProjectsCreate } from "./create.handler.ts";
 
 const AWS_REGIONS = [
@@ -94,5 +97,11 @@ export const legacyProjectsCreateCommand = Command.make("create", config).pipe(
     },
   ]),
   withHiddenFromConfig(config),
-  Command.withHandler((flags) => legacyProjectsCreate(flags)),
+  Command.withHandler((flags) =>
+    legacyProjectsCreate(flags).pipe(
+      withLegacyCommandInstrumentation({ flags, safeFlags: ["org-id"] }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyManagementApiRuntimeLayer(["projects", "create"])),
 );
