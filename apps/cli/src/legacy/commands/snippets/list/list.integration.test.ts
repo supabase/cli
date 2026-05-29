@@ -172,13 +172,16 @@ describe("legacy snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=json emits alphabetically-keyed JSON with `data: null` for empty", () => {
+  it.live("Go --output=json emits alphabetically-keyed JSON, preserving empty arrays", () => {
     const { layer, out } = setup({ goOutput: "json", response: EMPTY_RESPONSE });
     return Effect.gen(function* () {
       yield* legacySnippetsList({ projectRef: Option.none() });
-      // Mirrors Go's `api.SnippetList{}` → `{"data": null}\n` (no other keys).
+      // The API returns `{"data": []}`; Go's `encoding/json` round-trip
+      // preserves nil-vs-empty (real responses always send `[]`, never null).
+      // Our raw-HTTP bypass means we faithfully echo whatever the API sent —
+      // no `nullForEmptyArrays` coercion.
       expect(out.stdoutText).toBe(`{
-  "data": null
+  "data": []
 }
 `);
     }).pipe(Effect.provide(layer));
