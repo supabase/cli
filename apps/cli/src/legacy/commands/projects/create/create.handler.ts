@@ -1,8 +1,7 @@
-import type { V1CreateAProjectInput } from "@supabase/api/effect";
+import { type V1CreateAProjectInput, operationDefinitions } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
+import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -12,12 +11,10 @@ import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import {
   encodeEnv,
   encodeGoJson,
-  encodeGoStructJsonBody,
   encodeToml,
   encodeYaml,
 } from "../../../shared/legacy-go-output.encoders.ts";
 import { sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
-import { resolveLegacyAccessToken } from "../../../shared/legacy-resolve-token.ts";
 import {
   LegacyProjectsCreateMissingArgError,
   LegacyProjectsCreateNetworkError,
@@ -48,8 +45,8 @@ export const legacyProjectsCreate = Effect.fn("legacy.projects.create")(function
 ) {
   const output = yield* Output;
   const goOutputFlag = yield* LegacyOutputFlag;
+  const api = yield* LegacyPlatformApi;
   const cliConfig = yield* LegacyCliConfig;
-  const httpClient = yield* HttpClient.HttpClient;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   const tty = yield* Tty;
@@ -119,18 +116,10 @@ export const legacyProjectsCreate = Effect.fn("legacy.projects.create")(function
     const creating =
       output.format === "text" ? yield* output.task("Creating project...") : undefined;
 
-    // Bypass the typed client: Go's `json.Marshal` serializes the request body
-    // with alphabetically-sorted keys, which `encodeGoStructJsonBody` reproduces
-    // for the cli-e2e replay server's byte-compare. The typed client would also
-    // reject the `__PROJECT_REF__` placeholder in the response (`ref` schema).
-    const tokenOpt = yield* resolveLegacyAccessToken;
-    const request = HttpClientRequest.post(`${cliConfig.apiUrl}/v1/projects`).pipe(
-      Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
-      HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
-      HttpClientRequest.bodyText(encodeGoStructJsonBody(input), "application/json"),
-    );
-
-    const response = yield* httpClient.execute(request).pipe(
+    // `executeRaw` sends the body with Go-sorted keys (matching `json.Marshal`)
+    // and skips output decoding: the 201 response's `ref` can be the cli-e2e
+    // `__PROJECT_REF__` placeholder, which the generated schema rejects.
+    const response = yield* api.executeRaw(operationDefinitions.v1CreateAProject, input).pipe(
       Effect.tapError(() => creating?.fail() ?? Effect.void),
       Effect.mapError(
         (cause) =>

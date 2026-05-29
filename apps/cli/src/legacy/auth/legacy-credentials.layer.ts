@@ -156,23 +156,32 @@ const makeLegacyCredentials = Effect.gen(function* () {
 
     deleteProjectCredential: (ref: string) =>
       Effect.sync(() => {
-        // Mirrors Go's `StoreProvider.Delete` (`store.go:54-65`): when the
-        // keyring is unsupported (WSL osrelease, or `@napi-rs/keyring` failed to
-        // load), Go returns `ErrNotSupported`, which delete.go prints to stderr.
+        // Mirrors Go's `StoreProvider.Delete` (`store.go:54-65`). Go returns
+        // `ErrNotSupported` ("Keyring is not supported on WSL") both when the
+        // WSL osrelease check trips AND when the keyring backend is unreachable
+        // (go-keyring maps `exec.ErrNotFound` to the same message — this is what
+        // fires on headless CI runners without a Secret Service / D-Bus). A
+        // genuinely missing entry is `keyring.ErrNotFound`, which delete.go
+        // swallows.
         if (wsl || Option.isNone(keyringModule)) {
           return Option.some(KEYRING_NOT_SUPPORTED_MESSAGE);
         }
-        // Backend available: best-effort delete. A missing entry is Go's
-        // `keyring.ErrNotFound`, which delete.go swallows — so we surface nothing.
         try {
           const entry = new keyringModule.value.Entry(KEYRING_SERVICE, ref);
-          if (entry.getPassword()) {
-            entry.deleteCredential();
+          entry.deleteCredential();
+          return Option.none<string>();
+        } catch (cause) {
+          const message = cause instanceof Error ? cause.message : String(cause);
+          // `@napi-rs/keyring` (keyring-core `NoEntry`) raises "No matching
+          // credential found" when the entry is absent — the only case Go
+          // swallows (`keyring.ErrNotFound`). Anything else (e.g. "no secret
+          // service provider or dbus session found" on a headless CI runner)
+          // means the backend is unavailable -> Go's `ErrNotSupported`.
+          if (/No matching credential found/i.test(message)) {
+            return Option.none<string>();
           }
-        } catch {
-          // Entry not found / transient backend error — swallowed, like Go.
+          return Option.some(KEYRING_NOT_SUPPORTED_MESSAGE);
         }
-        return Option.none<string>();
       }),
   });
 });

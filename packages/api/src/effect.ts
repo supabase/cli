@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import {
   makeSupabaseApiClient,
   type SupabaseApiClientOptions,
+  type SupabaseApiClientShape,
   type SupabaseApiConfig,
 } from "./internal/client.ts";
 import { makeEffectApiClient, type EffectClient } from "./internal/effect-client.ts";
@@ -27,8 +28,14 @@ export * from "./generated/contracts.ts";
 export { executeApiClientOperation } from "./generated/effect-client.ts";
 
 export const makeApiClient = (config: SupabaseApiConfig = {}, options?: SupabaseApiClientOptions) =>
-  Effect.map(makeSupabaseApiClient(config, options), (client) =>
-    makeEffectApiClient(client, versionedEffectOperations),
-  );
+  Effect.map(makeSupabaseApiClient(config, options), (client) => ({
+    ...makeEffectApiClient(client, versionedEffectOperations),
+    // Expose the raw-execute escape hatch alongside the typed operations so
+    // callers can opt out of strict output decoding without hand-building
+    // requests (reuses the client's URL/auth/header/body handling).
+    executeRaw: client.executeRaw,
+  }));
 
-export type ApiClient = EffectClient<GeneratedEffectOperations>;
+export type ApiClient = EffectClient<GeneratedEffectOperations> & {
+  readonly executeRaw: SupabaseApiClientShape["executeRaw"];
+};

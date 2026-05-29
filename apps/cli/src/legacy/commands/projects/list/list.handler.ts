@@ -1,8 +1,7 @@
+import { operationDefinitions } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -10,7 +9,6 @@ import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { encodeGoJson, encodeToml, encodeYaml } from "../../../shared/legacy-go-output.encoders.ts";
 import { sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
-import { resolveLegacyAccessToken } from "../../../shared/legacy-resolve-token.ts";
 import {
   LegacyProjectsEnvNotSupportedError,
   LegacyProjectsListNetworkError,
@@ -28,8 +26,7 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
 ) {
   const output = yield* Output;
   const goOutputFlag = yield* LegacyOutputFlag;
-  const cliConfig = yield* LegacyCliConfig;
-  const httpClient = yield* HttpClient.HttpClient;
+  const api = yield* LegacyPlatformApi;
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
@@ -42,17 +39,11 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
     const fetching =
       output.format === "text" ? yield* output.task("Fetching projects...") : undefined;
 
-    // Bypass the typed client: the generated `V1ProjectWithDatabaseResponse.ref`
-    // schema enforces `isMinLength(20)` + `^[a-z]+$`, which the cli-e2e replay
-    // fixtures (literal `__PROJECT_REF__`) cannot satisfy. Same workaround as
-    // `legacySuggestUpgrade` / the linked-project cache.
-    const tokenOpt = yield* resolveLegacyAccessToken;
-    const request = HttpClientRequest.get(`${cliConfig.apiUrl}/v1/projects`).pipe(
-      Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
-      HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
-    );
-
-    const response = yield* httpClient.execute(request).pipe(
+    // `executeRaw` returns the undecoded response: the generated
+    // `V1ProjectWithDatabaseResponse.ref` schema enforces `isMinLength(20)` +
+    // `^[a-z]+$`, which the cli-e2e replay fixtures (literal `__PROJECT_REF__`)
+    // cannot satisfy. Auth / URL / headers are still handled by the API client.
+    const response = yield* api.executeRaw(operationDefinitions.v1ListAllProjects, {}).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.mapError(
         (cause) =>

@@ -368,6 +368,8 @@ describe("legacy projects create integration", () => {
   });
 
   it.live("tolerates a 201 response with a placeholder/short ref (lenient parse)", () => {
+    // The typed client rejects refs shorter than 20 chars; `executeRaw` must
+    // render the placeholder verbatim (cli-e2e fixtures embed `__PROJECT_REF__`).
     const { layer, out } = setup({
       byMethod: {
         POST: { status: 201, body: { ...CREATED, id: "__PROJECT_REF__", ref: "__PROJECT_REF__" } },
