@@ -210,4 +210,18 @@ describe("legacySuggestUpgrade", () => {
       expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
   });
+
+  it.live("skips cli_upgrade_suggested analytics when trackAnalytics=false", () => {
+    const { layer, analytics, out } = setup();
+    return Effect.gen(function* () {
+      yield* legacySuggestUpgrade({
+        projectRef: LEGACY_VALID_REF,
+        featureKey: "branching_limit",
+        statusCode: 402,
+        trackAnalytics: false,
+      });
+      expect(analytics.captured).toHaveLength(0);
+      expect(out.stderrText).toContain("Upgrade your plan:");
+    }).pipe(Effect.provide(layer));
+  });
 });
