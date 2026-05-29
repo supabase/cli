@@ -40,9 +40,14 @@ export const legacyVanitySubdomainsGet = Effect.fn("legacy.vanity-subdomains.get
     const ref = yield* resolver.resolve(flags.projectRef);
 
     yield* Effect.gen(function* () {
-      const response = yield* api.v1
-        .getVanitySubdomainConfig({ ref })
-        .pipe(Effect.catch(mapGetError));
+      const fetching =
+        output.format === "text" ? yield* output.task("Getting vanity subdomain...") : undefined;
+      const response = yield* api.v1.getVanitySubdomainConfig({ ref }).pipe(
+        Effect.tapError(() => fetching?.fail() ?? Effect.void),
+        Effect.catch(mapGetError),
+      );
+      yield* fetching?.clear() ?? Effect.void;
+
       const legacyOutput = Option.getOrUndefined(legacyOutputFlag);
 
       if (legacyOutput === "json") {

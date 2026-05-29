@@ -41,16 +41,25 @@ export const legacyVanitySubdomainsCheckAvailability = Effect.fn(
     const ref = yield* resolver.resolve(flags.projectRef);
 
     yield* Effect.gen(function* () {
+      const checking =
+        output.format === "text"
+          ? yield* output.task("Checking vanity subdomain availability...")
+          : undefined;
       const response = yield* api.v1
         .checkVanitySubdomainAvailability({
           ref,
           vanity_subdomain: flags.desiredSubdomain,
         })
         .pipe(
+          Effect.tapError(() => checking?.fail() ?? Effect.void),
           Effect.catch((cause) =>
             Effect.gen(function* () {
+              // Flip the always-failing mapper into a success so we can inspect the
+              // tagged error before deciding whether to suggest an upgrade, then re-fail.
               const mapped = yield* Effect.flip(mapCheckError(cause));
               if (mapped._tag === "LegacyVanitySubdomainsCheckUnexpectedStatusError") {
+                // Go's check command calls SuggestUpgradeOnError without a following
+                // TrackUpgradeSuggested, so suppress the analytics event for parity.
                 yield* legacySuggestUpgrade({
                   projectRef: ref,
                   featureKey: "vanity_subdomain",
@@ -62,6 +71,8 @@ export const legacyVanitySubdomainsCheckAvailability = Effect.fn(
             }),
           ),
         );
+      yield* checking?.clear() ?? Effect.void;
+
       const legacyOutput = Option.getOrUndefined(legacyOutputFlag);
 
       if (legacyOutput === "json") {

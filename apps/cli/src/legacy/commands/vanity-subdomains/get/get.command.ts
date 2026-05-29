@@ -20,7 +20,7 @@ export const legacyVanitySubdomainsGetCommand = Command.make("get", config).pipe
   Command.withShortDescription("Get the current vanity subdomain"),
   Command.withHandler((flags) =>
     legacyVanitySubdomainsGet(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+      withLegacyCommandInstrumentation({ flags }),
       withJsonErrorHandling,
     ),
   ),

@@ -25,7 +25,7 @@ export const legacyVanitySubdomainsActivateCommand = Command.make("activate", co
   Command.withShortDescription("Activate a vanity subdomain"),
   Command.withHandler((flags) =>
     legacyVanitySubdomainsActivate(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+      withLegacyCommandInstrumentation({ flags }),
       withJsonErrorHandling,
     ),
   ),

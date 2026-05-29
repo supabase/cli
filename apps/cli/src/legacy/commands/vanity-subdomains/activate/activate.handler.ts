@@ -40,14 +40,21 @@ export const legacyVanitySubdomainsActivate = Effect.fn("legacy.vanity-subdomain
       const ref = yield* resolver.resolve(flags.projectRef);
 
       yield* Effect.gen(function* () {
+        const activating =
+          output.format === "text"
+            ? yield* output.task("Activating vanity subdomain...")
+            : undefined;
         const response = yield* api.v1
           .activateVanitySubdomainConfig({
             ref,
             vanity_subdomain: flags.desiredSubdomain,
           })
           .pipe(
+            Effect.tapError(() => activating?.fail() ?? Effect.void),
             Effect.catch((cause) =>
               Effect.gen(function* () {
+                // Flip the always-failing mapper into a success so we can inspect the
+                // tagged error before deciding whether to suggest an upgrade, then re-fail.
                 const mapped = yield* Effect.flip(mapActivateError(cause));
                 if (mapped._tag === "LegacyVanitySubdomainsActivateUnexpectedStatusError") {
                   yield* legacySuggestUpgrade({
@@ -60,6 +67,8 @@ export const legacyVanitySubdomainsActivate = Effect.fn("legacy.vanity-subdomain
               }),
             ),
           );
+        yield* activating?.clear() ?? Effect.void;
+
         const legacyOutput = Option.getOrUndefined(legacyOutputFlag);
 
         if (legacyOutput === "json") {

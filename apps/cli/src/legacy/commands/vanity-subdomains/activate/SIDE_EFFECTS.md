@@ -16,9 +16,9 @@
 
 ## API Routes
 
-| Method | Path                                  | Auth         | Request body                   | Response (used fields)      |
-| ------ | ------------------------------------- | ------------ | ------------------------------ | --------------------------- |
-| `POST` | `/v1/projects/{ref}/vanity-subdomain` | Bearer token | `{ vanity_subdomain: string }` | `{ custom_domain: string }` |
+| Method | Path                                           | Auth         | Request body                   | Response (used fields)      |
+| ------ | ---------------------------------------------- | ------------ | ------------------------------ | --------------------------- |
+| `POST` | `/v1/projects/{ref}/vanity-subdomain/activate` | Bearer token | `{ vanity_subdomain: string }` | `{ custom_domain: string }` |
 
 ## Environment Variables
 

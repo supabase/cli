@@ -49,6 +49,12 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
   readonly projectRef: string;
   readonly featureKey: string;
   readonly statusCode: number;
+  /**
+   * Whether to fire the `cli_upgrade_suggested` analytics event when a gate is
+   * detected. Defaults to `true`. Pass `false` for Go call-sites that invoke
+   * `SuggestUpgradeOnError` without a following `TrackUpgradeSuggested`
+   * (e.g. `vanity-subdomains check-availability`), so telemetry stays 1:1 with Go.
+   */
   readonly trackAnalytics?: boolean;
 }) {
   if (opts.statusCode < 400 || opts.statusCode >= 500) {

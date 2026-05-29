@@ -34,7 +34,17 @@ export const legacyVanitySubdomainsDelete = Effect.fn("legacy.vanity-subdomains.
     const ref = yield* resolver.resolve(flags.projectRef);
 
     yield* Effect.gen(function* () {
-      yield* api.v1.deactivateVanitySubdomainConfig({ ref }).pipe(Effect.catch(mapDeleteError));
+      const deleting =
+        output.format === "text" ? yield* output.task("Deleting vanity subdomain...") : undefined;
+      yield* api.v1.deactivateVanitySubdomainConfig({ ref }).pipe(
+        Effect.tapError(() => deleting?.fail() ?? Effect.void),
+        Effect.catch(mapDeleteError),
+      );
+      yield* deleting?.clear() ?? Effect.void;
+
+      // Go's delete ignores --output entirely (stderr-only success). We still read
+      // the legacy flag so that an explicit --output suppresses the TS json/stream-json
+      // success event, matching Go's behavior of emitting nothing to stdout.
       const legacyOutput = Option.getOrUndefined(legacyOutputFlag);
 
       if (

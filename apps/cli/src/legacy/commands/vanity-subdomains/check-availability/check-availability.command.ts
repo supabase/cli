@@ -28,7 +28,7 @@ export const legacyVanitySubdomainsCheckAvailabilityCommand = Command.make(
   Command.withShortDescription("Check subdomain availability"),
   Command.withHandler((flags) =>
     legacyVanitySubdomainsCheckAvailability(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+      withLegacyCommandInstrumentation({ flags }),
       withJsonErrorHandling,
     ),
   ),

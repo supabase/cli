@@ -22,7 +22,7 @@ export const legacyVanitySubdomainsDeleteCommand = Command.make("delete", config
   Command.withShortDescription("Delete the vanity subdomain"),
   Command.withHandler((flags) =>
     legacyVanitySubdomainsDelete(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+      withLegacyCommandInstrumentation({ flags }),
       withJsonErrorHandling,
     ),
   ),
