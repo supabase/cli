@@ -17,10 +17,13 @@ subcommand's own `SIDE_EFFECTS.md`.
 | --------------------------- | ------- | ---------------------------------------------------------------- |
 | `<workdir>/supabase/.temp/` | removed | `delete` only — when the deleted ref matches the linked ref file |
 
-> `delete` also runs Go's best-effort per-ref keyring delete
-> (`credentials.StoreProvider.Delete(ref)`): a missing entry is swallowed, and an
-> unsupported keyring surfaces `Keyring is not supported on WSL` on stderr —
-> byte-for-byte with Go.
+> Go best-effort deletes the per-ref keyring credential on `delete`, but Go only
+> ever stores the profile-scoped access token in the keyring (never a per-ref
+> entry), so that delete always targets a non-existent entry — a no-op for both
+> CLIs. Go's only observable output there is its keyring-backend _availability_
+> error (`Keyring is not supported on WSL`, emitted when the system keyring is
+> down, e.g. on headless CI); that environment noise is normalized away in the
+> cli-e2e parity harness.
 
 ## API Routes
 

@@ -2,7 +2,6 @@ import type { V1DeleteAProjectOutput } from "@supabase/api/effect";
 import { Effect, FileSystem, Option, Path } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
-import { LegacyCredentials } from "../../../auth/legacy-credentials.service.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyInvalidProjectRefError } from "../../../config/legacy-project-ref.errors.ts";
@@ -34,7 +33,6 @@ export const legacyProjectsDelete = Effect.fn("legacy.projects.delete")(function
   const output = yield* Output;
   const api = yield* LegacyPlatformApi;
   const resolver = yield* LegacyProjectRefResolver;
-  const credentials = yield* LegacyCredentials;
   const cliConfig = yield* LegacyCliConfig;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
@@ -114,17 +112,18 @@ export const legacyProjectsDelete = Effect.fn("legacy.projects.delete")(function
     );
     yield* deleting?.clear() ?? Effect.void;
 
-    // Best-effort per-ref credential delete (`delete.go:46-48`): Go prints any
-    // non-`ErrNotFound` error (e.g. an unsupported keyring) to stderr.
-    const credentialError = yield* credentials.deleteProjectCredential(ref);
-    if (Option.isSome(credentialError)) {
-      yield* output.raw(`${credentialError.value}\n`, "stderr");
-    }
+    // Go best-effort deletes the per-ref keyring credential (`delete.go:46-48`),
+    // but Go only ever *stores* the profile-scoped access token in the keyring
+    // (`StoreProvider.Set` is only called with `CurrentProfile.Name`, never a
+    // ref). So that delete always targets a non-existent entry — a functional
+    // no-op for both CLIs. The only thing it can emit is Go's keyring-backend
+    // *availability* error ("Keyring is not supported on WSL", e.g. on a
+    // headless CI runner with no D-Bus session); that is environment noise the
+    // cli-e2e parity harness normalizes away (the TS `@napi-rs/keyring` kernel
+    // keyutils backend never hits it). We therefore skip the no-op entirely.
 
-    // Best-effort unlink (`delete.go:45-56`): when the linked ref file matches
-    // the deleted ref, remove the `supabase/.temp` directory. The per-ref
-    // keyring delete Go performs is a no-op in the TS credential model (the
-    // stored token is profile-scoped, not ref-scoped) — see SIDE_EFFECTS.md.
+    // Best-effort unlink (`delete.go:49-56`): when the linked ref file matches
+    // the deleted ref, remove the `supabase/.temp` directory.
     const tempDir = path.join(cliConfig.workdir, "supabase", ".temp");
     const refPath = path.join(tempDir, "project-ref");
     // Go uses `afero.FileContainsBytes` (substring), but the link file written by

@@ -13,8 +13,11 @@
 | --------------------------- | ------- | -------------------------------------------------------------- |
 | `<workdir>/supabase/.temp/` | removed | when the deleted ref matches the linked ref file (best-effort) |
 
-> Also runs Go's best-effort per-ref keyring delete: a missing entry is swallowed;
-> an unsupported keyring prints `Keyring is not supported on WSL` to stderr (Go parity).
+> Go best-effort deletes the per-ref keyring credential, but it only ever stores
+> the profile-scoped access token in the keyring (never a per-ref entry), so the
+> delete always targets a non-existent entry — a no-op for both CLIs. Go's
+> "Keyring is not supported on WSL" stderr line (system keyring unavailable, e.g.
+> headless CI) is keyring-backend noise normalized away in the parity harness.
 
 ## API Routes
 

@@ -9,10 +9,6 @@ const KEYRING_SERVICE = "Supabase CLI";
 const LEGACY_KEYRING_ACCOUNT = "access-token";
 const WSL_OSRELEASE_PATH = "/proc/sys/kernel/osrelease";
 
-// Go's `credentials.ErrNotSupported` (`store.go:14`), surfaced to stderr by
-// `projects delete` when the per-ref keyring delete cannot run.
-const KEYRING_NOT_SUPPORTED_MESSAGE = "Keyring is not supported on WSL";
-
 const ACCESS_TOKEN_PATTERN = /^sbp_(oauth_)?[a-f0-9]{40}$/;
 
 const INVALID_TOKEN_MESSAGE = "Invalid access token format. Must be like `sbp_0102...1920`.";
@@ -153,36 +149,6 @@ const makeLegacyCredentials = Effect.gen(function* () {
       }
       return anyDeleted;
     }),
-
-    deleteProjectCredential: (ref: string) =>
-      Effect.sync(() => {
-        // Mirrors Go's `StoreProvider.Delete` (`store.go:54-65`). Go returns
-        // `ErrNotSupported` ("Keyring is not supported on WSL") both when the
-        // WSL osrelease check trips AND when the keyring backend is unreachable
-        // (go-keyring maps `exec.ErrNotFound` to the same message — this is what
-        // fires on headless CI runners without a Secret Service / D-Bus). A
-        // genuinely missing entry is `keyring.ErrNotFound`, which delete.go
-        // swallows.
-        if (wsl || Option.isNone(keyringModule)) {
-          return Option.some(KEYRING_NOT_SUPPORTED_MESSAGE);
-        }
-        try {
-          const entry = new keyringModule.value.Entry(KEYRING_SERVICE, ref);
-          entry.deleteCredential();
-          return Option.none<string>();
-        } catch (cause) {
-          const message = cause instanceof Error ? cause.message : String(cause);
-          // `@napi-rs/keyring` (keyring-core `NoEntry`) raises "No matching
-          // credential found" when the entry is absent — the only case Go
-          // swallows (`keyring.ErrNotFound`). Anything else (e.g. "no secret
-          // service provider or dbus session found" on a headless CI runner)
-          // means the backend is unavailable -> Go's `ErrNotSupported`.
-          if (/No matching credential found/i.test(message)) {
-            return Option.none<string>();
-          }
-          return Option.some(KEYRING_NOT_SUPPORTED_MESSAGE);
-        }
-      }),
   });
 });
 
