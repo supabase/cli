@@ -14,8 +14,17 @@ import { formatHostnameStatus, type LegacyHostnameResponse } from "./domains.for
  * Emit a custom-hostname response across all output modes, mirroring the Go
  * subcommands (`apps/cli-go/internal/hostnames/{get,create,activate,reverify}`):
  *
- *   - Go always writes the human status text to **stderr** (`PrintStatus`),
- *     then, when `-o != pretty`, encodes the full response to **stdout**.
+ *   - In `pretty`/text mode the human status text goes to **stderr** (Go's
+ *     `PrintStatus`), and nothing goes to stdout.
+ *   - In a structured Go `-o` mode (`json`/`yaml`/`toml`/`env`) the encoded
+ *     response goes to **stdout** and the human status is **suppressed**. Go
+ *     technically still writes `PrintStatus` to stderr here, but because the
+ *     `5_services_reconfigured`/`4_origin_setup_completed` messages carry no
+ *     trailing newline they get fused with — and stripped alongside — Go's
+ *     version-update notice (see `normalize.ts` rule 11), so the observable Go
+ *     stderr in machine-output mode is empty. Suppressing keeps stdout clean and
+ *     matches that contract (verified by the `domains get --output json` parity
+ *     e2e).
  *   - `--include-raw-output` (deprecated) forces `-o` to `json` when it is unset
  *     or `pretty`.
  *   - For the TS-native `--output-format json|stream-json` modes (no Go `-o`),
@@ -32,25 +41,19 @@ export const emitLegacyHostnameResult = Effect.fnUntraced(function* (
   const effectiveGoFmt =
     includeRawOutput && (goFmt === undefined || goFmt === "pretty") ? "json" : goFmt;
 
-  const statusText = formatHostnameStatus(response);
-
   if (effectiveGoFmt === "json") {
-    yield* output.raw(statusText, "stderr");
     yield* output.raw(encodeGoJson(response));
     return;
   }
   if (effectiveGoFmt === "yaml") {
-    yield* output.raw(statusText, "stderr");
     yield* output.raw(encodeYaml(response));
     return;
   }
   if (effectiveGoFmt === "toml") {
-    yield* output.raw(statusText, "stderr");
     yield* output.raw(encodeToml(response) + "\n");
     return;
   }
   if (effectiveGoFmt === "env") {
-    yield* output.raw(statusText, "stderr");
     yield* output.raw(encodeEnv(response) + "\n");
     return;
   }
@@ -62,5 +65,5 @@ export const emitLegacyHostnameResult = Effect.fnUntraced(function* (
   }
 
   // text mode (Go pretty parity): status to stderr, nothing to stdout.
-  yield* output.raw(statusText, "stderr");
+  yield* output.raw(formatHostnameStatus(response), "stderr");
 });

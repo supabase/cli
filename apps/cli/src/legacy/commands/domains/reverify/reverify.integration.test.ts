@@ -86,12 +86,12 @@ describe("legacy domains reverify integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits indented Go JSON to stdout for -o json", () => {
+  it.live("emits indented Go JSON to stdout with no status on stderr for -o json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* legacyDomainsReverify(baseFlags);
       expect(out.stdoutText.startsWith("{")).toBe(true);
-      expect(out.stderrText).toContain("being initialized");
+      expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 

@@ -168,21 +168,21 @@ describe("legacy domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits indented Go JSON to stdout for -o json", () => {
+  it.live("emits indented Go JSON to stdout with no status on stderr for -o json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* legacyDomainsCreate(flags());
       expect(out.stdoutText.startsWith("{")).toBe(true);
-      expect(out.stderrText).toContain("Custom hostname configuration complete");
+      expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits YAML to stdout for -o yaml", () => {
+  it.live("emits YAML to stdout with no status on stderr for -o yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* legacyDomainsCreate(flags());
       expect(out.stdoutText).toContain(`custom_hostname: ${CUSTOM_HOSTNAME}`);
-      expect(out.stderrText).toContain("Custom hostname configuration complete");
+      expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 

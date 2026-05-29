@@ -93,13 +93,15 @@ describe("legacy domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits indented Go JSON to stdout and status to stderr for -o json", () => {
+  it.live("emits indented Go JSON to stdout with no status on stderr for -o json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* legacyDomainsGet(baseFlags);
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stdoutText).toContain('"custom_hostname": "shop.acme.dev"');
-      expect(out.stderrText).toContain("Custom hostname configuration not started.");
+      // Structured -o output: human status is suppressed (Go's no-newline status
+      // is fused with + stripped alongside its version-update notice — see emit).
+      expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 

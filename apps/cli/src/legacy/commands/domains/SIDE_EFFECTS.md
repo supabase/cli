@@ -57,9 +57,11 @@ No custom events: the Go `internal/hostnames` package emits no `phtelemetry.*` c
 
 ## Output
 
-`PrintStatus` text is written to **stderr** in every Go output mode; structured
-output (when `-o != pretty`) is written to **stdout**. `delete` only prints a
-fixed success line to stderr and ignores `-o`.
+In `pretty`/text mode the `PrintStatus` text is written to **stderr** and nothing
+to stdout. In a structured `-o` mode (`json`/`yaml`/`toml`/`env`) the encoded
+response goes to **stdout** and the human status is suppressed on stderr (see the
+divergence note below). `delete` only prints a fixed success line to stderr and
+ignores `-o`.
 
 ### `--output-format text` (Go CLI compatible)
 
@@ -83,8 +85,8 @@ A `result` event carrying the custom-hostname response object.
 ### Go `-o {json,yaml,toml,env}`
 
 When the Go `--output`/`-o` flag is set (or `--include-raw-output` forces `json`),
-the full response is encoded to stdout in that format, and the status text is still
-written to stderr. `delete` ignores `-o`.
+the full response is encoded to stdout in that format and the human status is
+suppressed on stderr. `delete` ignores `-o`.
 
 ## Notes
 
@@ -96,3 +98,4 @@ written to stderr. `delete` ignores `-o`.
   - `--include-raw-output` is declared as a normal boolean **on each subcommand** (Go declares it as a persistent flag on the `domains` group). Two consequences: (a) it must appear after the subcommand name (`domains get --include-raw-output`) rather than before it (`domains --include-raw-output get`), matching how `--project-ref` is already handled shell-wide; (b) it cannot reproduce Cobra's help-hiding or the `Flag --include-raw-output has been deprecated` stderr warning, which Effect CLI has no hook for. It still reproduces the behavioral effect (forces `-o json` when `-o` is unset/pretty); on `delete` it is inert, matching Go.
   - `-o json|yaml|toml|env` encode the decoded snake_case response, not Go's PascalCase struct keys (consistent with `backups list` / `sso add`).
   - The degenerate `validation_records != 1` status message approximates Go's `%+v` struct dump (which embeds a non-deterministic pointer address).
+  - In a structured `-o` mode the human status is suppressed on stderr. Go technically still writes `PrintStatus` to stderr, but the `5_*`/`4_*` messages carry no trailing newline, so they fuse with Go's version-update notice and are stripped together by the e2e normalizer — making Go's observable machine-output stderr empty. Suppressing keeps stdout clean and matches the parity contract.
