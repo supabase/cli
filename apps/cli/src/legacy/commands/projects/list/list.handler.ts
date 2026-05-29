@@ -1,37 +1,35 @@
-import type { V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
+import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { encodeGoJson, encodeToml, encodeYaml } from "../../../shared/legacy-go-output.encoders.ts";
-import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
+import { sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
+import { resolveLegacyAccessToken } from "../../../shared/legacy-resolve-token.ts";
 import {
   LegacyProjectsEnvNotSupportedError,
   LegacyProjectsListNetworkError,
   LegacyProjectsListUnexpectedStatusError,
 } from "../projects.errors.ts";
-import { type LegacyLinkedProject, renderProjectsListTable } from "../projects.format.ts";
+import {
+  type LegacyLinkedProject,
+  readProjectField,
+  renderProjectsListTable,
+} from "../projects.format.ts";
 import type { LegacyProjectsListFlags } from "./list.command.ts";
-
-type Projects = typeof V1ListAllProjectsOutput.Type;
-
-const mapListError = mapLegacyHttpError({
-  networkError: LegacyProjectsListNetworkError,
-  statusError: LegacyProjectsListUnexpectedStatusError,
-  networkMessage: (cause) => `failed to list projects: ${cause}`,
-  statusMessage: (_status, body) => `Unexpected error retrieving projects: ${body}`,
-});
 
 export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
   _flags: LegacyProjectsListFlags,
 ) {
   const output = yield* Output;
   const goOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
+  const cliConfig = yield* LegacyCliConfig;
+  const httpClient = yield* HttpClient.HttpClient;
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
@@ -43,15 +41,70 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
   yield* Effect.gen(function* () {
     const fetching =
       output.format === "text" ? yield* output.task("Fetching projects...") : undefined;
-    const response: Projects = yield* api.v1.listAllProjects().pipe(
-      Effect.tapError(() => fetching?.fail() ?? Effect.void),
-      Effect.catch(mapListError),
+
+    // Bypass the typed client: the generated `V1ProjectWithDatabaseResponse.ref`
+    // schema enforces `isMinLength(20)` + `^[a-z]+$`, which the cli-e2e replay
+    // fixtures (literal `__PROJECT_REF__`) cannot satisfy. Same workaround as
+    // `legacySuggestUpgrade` / the linked-project cache.
+    const tokenOpt = yield* resolveLegacyAccessToken;
+    const request = HttpClientRequest.get(`${cliConfig.apiUrl}/v1/projects`).pipe(
+      Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
+      HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
     );
+
+    const response = yield* httpClient.execute(request).pipe(
+      Effect.tapError(() => fetching?.fail() ?? Effect.void),
+      Effect.mapError(
+        (cause) =>
+          new LegacyProjectsListNetworkError({ message: `failed to list projects: ${cause}` }),
+      ),
+    );
+
+    if (response.status !== 200) {
+      const body = sanitizeLegacyErrorBody(
+        yield* response.text.pipe(Effect.orElseSucceed(() => "")),
+      );
+      yield* fetching?.fail() ?? Effect.void;
+      return yield* new LegacyProjectsListUnexpectedStatusError({
+        status: response.status,
+        body,
+        message: `Unexpected error retrieving projects: ${body}`,
+      });
+    }
+
+    const parsed = yield* response.json.pipe(
+      Effect.tapError(() => fetching?.fail() ?? Effect.void),
+      Effect.mapError(
+        (cause) =>
+          new LegacyProjectsListUnexpectedStatusError({
+            status: response.status,
+            body: "",
+            message: `Unexpected error retrieving projects: ${cause}`,
+          }),
+      ),
+    );
+    if (!Array.isArray(parsed)) {
+      yield* fetching?.fail() ?? Effect.void;
+      return yield* new LegacyProjectsListUnexpectedStatusError({
+        status: response.status,
+        body: "",
+        message: "Unexpected error retrieving projects: response was not an array",
+      });
+    }
     yield* fetching?.clear() ?? Effect.void;
 
-    const projects: ReadonlyArray<LegacyLinkedProject> = response.map((project) => ({
-      ...project,
-      linked: Option.isSome(linkedRef) && linkedRef.value === project.id,
+    // Go's `list.go:31-33` prints the `LoadProjectRef` error to stderr when no
+    // ref resolves (the `errors.New(ErrNotLinked)` wrapper is never `==` the
+    // sentinel, so the guard always fires), then renders the table anyway.
+    // `ErrNotLinked` colours "supabase link" via `Aqua` — plain on a non-TTY —
+    // and uses no backticks, unlike the resolver's hard-fail message.
+    if (Option.isNone(linkedRef)) {
+      yield* output.raw("Cannot find project ref. Have you run supabase link?\n", "stderr");
+    }
+
+    const projects: ReadonlyArray<LegacyLinkedProject> = parsed.map((project) => ({
+      ...(typeof project === "object" && project !== null ? project : {}),
+      linked: Option.isSome(linkedRef) && readProjectField(project, "id") === linkedRef.value,
     }));
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
@@ -83,8 +136,6 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
 
     yield* output.raw(renderProjectsListTable(projects));
   }).pipe(
-    // Cache the linked ref only when one actually resolved (Go caches via
-    // PersistentPostRun off `flags.ProjectRef`, which stays empty when unlinked).
     Effect.ensuring(
       Option.isSome(linkedRef) ? linkedProjectCache.cache(linkedRef.value) : Effect.void,
     ),

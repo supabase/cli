@@ -127,6 +127,22 @@ describe("legacy projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("warns on stderr when no project is linked (Go parity)", () => {
+    const { layer, out } = setup({ response: [SAMPLE_PROJECT], linked: false });
+    return Effect.gen(function* () {
+      yield* legacyProjectsList({});
+      expect(out.stderrText).toContain("Cannot find project ref. Have you run supabase link?");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("does not warn on stderr when a project is linked", () => {
+    const { layer, out } = setup({ response: [SAMPLE_PROJECT], linked: true });
+    return Effect.gen(function* () {
+      yield* legacyProjectsList({});
+      expect(out.stderrText).not.toContain("Cannot find project ref");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("emits a success event with { projects } for --output-format json", () => {
     const { layer, out } = setup({ format: "json", response: [SAMPLE_PROJECT], linked: true });
     return Effect.gen(function* () {
@@ -210,11 +226,25 @@ describe("legacy projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when the API returns a malformed project body (decode failure)", () => {
-    const { layer } = setup({ response: [{ id: "x" }] as unknown as Projects });
+  it.live("fails with an unexpected-status error when the body is not an array", () => {
+    const { layer } = setup({ response: {} as unknown as Projects });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyProjectsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectsListUnexpectedStatusError");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("tolerates placeholder/short refs in the response (lenient parse)", () => {
+    // The typed client rejects refs shorter than 20 chars; the raw-HTTP path
+    // must render them verbatim (cli-e2e fixtures embed `__PROJECT_REF__`).
+    const placeholder = { ...SAMPLE_PROJECT, id: "__PROJECT_REF__", ref: "__PROJECT_REF__" };
+    const { layer, out } = setup({ response: [placeholder as unknown as Projects[number]] });
+    return Effect.gen(function* () {
+      yield* legacyProjectsList({});
+      expect(out.stdoutText).toContain("__PROJECT_REF__");
     }).pipe(Effect.provide(layer));
   });
 

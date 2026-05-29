@@ -9,6 +9,10 @@ const KEYRING_SERVICE = "Supabase CLI";
 const LEGACY_KEYRING_ACCOUNT = "access-token";
 const WSL_OSRELEASE_PATH = "/proc/sys/kernel/osrelease";
 
+// Go's `credentials.ErrNotSupported` (`store.go:14`), surfaced to stderr by
+// `projects delete` when the per-ref keyring delete cannot run.
+const KEYRING_NOT_SUPPORTED_MESSAGE = "Keyring is not supported on WSL";
+
 const ACCESS_TOKEN_PATTERN = /^sbp_(oauth_)?[a-f0-9]{40}$/;
 
 const INVALID_TOKEN_MESSAGE = "Invalid access token format. Must be like `sbp_0102...1920`.";
@@ -149,6 +153,27 @@ const makeLegacyCredentials = Effect.gen(function* () {
       }
       return anyDeleted;
     }),
+
+    deleteProjectCredential: (ref: string) =>
+      Effect.sync(() => {
+        // Mirrors Go's `StoreProvider.Delete` (`store.go:54-65`): when the
+        // keyring is unsupported (WSL osrelease, or `@napi-rs/keyring` failed to
+        // load), Go returns `ErrNotSupported`, which delete.go prints to stderr.
+        if (wsl || Option.isNone(keyringModule)) {
+          return Option.some(KEYRING_NOT_SUPPORTED_MESSAGE);
+        }
+        // Backend available: best-effort delete. A missing entry is Go's
+        // `keyring.ErrNotFound`, which delete.go swallows — so we surface nothing.
+        try {
+          const entry = new keyringModule.value.Entry(KEYRING_SERVICE, ref);
+          if (entry.getPassword()) {
+            entry.deleteCredential();
+          }
+        } catch {
+          // Entry not found / transient backend error — swallowed, like Go.
+        }
+        return Option.none<string>();
+      }),
   });
 });
 

@@ -1,8 +1,4 @@
-import type {
-  ApiKeyResponse,
-  V1CreateAProjectOutput,
-  V1ProjectWithDatabaseResponse,
-} from "@supabase/api/effect";
+import type { ApiKeyResponse } from "@supabase/api/effect";
 
 import { renderGlamourTable } from "../../output/legacy-glamour-table.ts";
 import { apiKeyValue } from "../../shared/legacy-api-keys.format.ts";
@@ -14,13 +10,23 @@ import { formatLegacyTimestamp } from "../../shared/legacy-timestamp.format.ts";
 // api-keys`.
 // ---------------------------------------------------------------------------
 
-type Project = typeof V1ProjectWithDatabaseResponse.Type;
-type CreatedProject = typeof V1CreateAProjectOutput.Type;
 type ApiKey = typeof ApiKeyResponse.Type;
 
-/** A project annotated with whether it is the linked one (Go's `linkedProject`). */
-export interface LegacyLinkedProject extends Project {
-  readonly linked: boolean;
+/**
+ * Lenient project record. `projects list` / `create` parse the `/v1/projects`
+ * response via the raw HTTP client because the typed client's `ref:
+ * isMinLength(20)` + `^[a-z]+$` schema rejects the cli-e2e `__PROJECT_REF__`
+ * placeholder fixtures (the same reason `legacySuggestUpgrade` and the
+ * linked-project cache bypass the typed client). Projects therefore flow
+ * through as plain JSON objects.
+ */
+export type LegacyLinkedProject = Readonly<Record<string, unknown>> & { readonly linked: boolean };
+
+/** Read a string field from a parsed JSON value (empty string when absent/non-string). */
+export function readProjectField(project: unknown, key: string): string {
+  if (typeof project !== "object" || project === null) return "";
+  const value = Reflect.get(project, key);
+  return typeof value === "string" ? value : "";
 }
 
 // ---------------------------------------------------------------------------
@@ -103,24 +109,24 @@ function formatBullet(linked: boolean): string {
 export function renderProjectsListTable(projects: ReadonlyArray<LegacyLinkedProject>): string {
   const rows = projects.map((project) => [
     formatBullet(project.linked),
-    project.organization_slug,
-    project.id,
-    project.name,
-    formatRegion(project.region),
-    formatLegacyTimestamp(project.created_at),
+    readProjectField(project, "organization_slug"),
+    readProjectField(project, "id"),
+    readProjectField(project, "name"),
+    formatRegion(readProjectField(project, "region")),
+    formatLegacyTimestamp(readProjectField(project, "created_at")),
   ]);
   return renderGlamourTable(LIST_HEADERS, rows);
 }
 
 /** Reproduces Go's `projects create` pretty table (`create.go:36-47`). */
-export function renderProjectCreateTable(project: CreatedProject): string {
+export function renderProjectCreateTable(project: unknown): string {
   const rows = [
     [
-      project.organization_slug,
-      project.id,
-      project.name,
-      formatRegion(project.region),
-      formatLegacyTimestamp(project.created_at),
+      readProjectField(project, "organization_slug"),
+      readProjectField(project, "id"),
+      readProjectField(project, "name"),
+      formatRegion(readProjectField(project, "region")),
+      formatLegacyTimestamp(readProjectField(project, "created_at")),
     ],
   ];
   return renderGlamourTable(CREATE_HEADERS, rows);

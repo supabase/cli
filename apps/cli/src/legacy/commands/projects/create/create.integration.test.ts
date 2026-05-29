@@ -346,19 +346,44 @@ describe("legacy projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails on a malformed create response body (decode failure)", () => {
-    const { layer } = setup({ byMethod: { POST: { status: 201, body: { id: 123 } } } });
+  it.live("sends the request body with Go-sorted keys", () => {
+    const { layer, api } = setup();
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        legacyProjectsCreate({
-          ...BASE_FLAGS,
-          name: Option.some("alpha"),
-          orgId: Option.some("acme"),
-          dbPassword: Option.some("s3cret-pass"),
-          region: Option.some("us-east-1"),
-        }),
+      yield* legacyProjectsCreate({
+        ...BASE_FLAGS,
+        name: Option.some("alpha"),
+        orgId: Option.some("acme"),
+        dbPassword: Option.some("s3cret-pass"),
+        region: Option.some("us-east-1"),
+        size: Option.some("micro"),
+      });
+      // Go's `json.Marshal` serializes struct fields alphabetically; the
+      // cli-e2e replay server byte-compares the request body. JSON.parse →
+      // stringify round-trips key order, so this asserts the on-the-wire order.
+      const body = api.requests.find((r) => r.method === "POST")?.body;
+      expect(JSON.stringify(body)).toBe(
+        '{"db_pass":"s3cret-pass","desired_instance_size":"micro","name":"alpha","organization_slug":"acme","region":"us-east-1"}',
       );
-      expect(Exit.isFailure(exit)).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("tolerates a 201 response with a placeholder/short ref (lenient parse)", () => {
+    const { layer, out } = setup({
+      byMethod: {
+        POST: { status: 201, body: { ...CREATED, id: "__PROJECT_REF__", ref: "__PROJECT_REF__" } },
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyProjectsCreate({
+        ...BASE_FLAGS,
+        name: Option.some("alpha"),
+        orgId: Option.some("acme"),
+        dbPassword: Option.some("s3cret-pass"),
+        region: Option.some("us-east-1"),
+      });
+      expect(out.stderrText).toContain(
+        "Created a new project at https://supabase.com/dashboard/project/__PROJECT_REF__",
+      );
     }).pipe(Effect.provide(layer));
   });
 

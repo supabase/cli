@@ -13,8 +13,8 @@
 | --------------------------- | ------- | -------------------------------------------------------------- |
 | `<workdir>/supabase/.temp/` | removed | when the deleted ref matches the linked ref file (best-effort) |
 
-> Go also deletes the per-ref keyring credential; in the TS credential model the token
-> is profile-scoped (not ref-scoped), so this is a documented no-op.
+> Also runs Go's best-effort per-ref keyring delete: a missing entry is swallowed;
+> an unsupported keyring prints `Keyring is not supported on WSL` to stderr (Go parity).
 
 ## API Routes
 

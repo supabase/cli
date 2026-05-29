@@ -1,7 +1,8 @@
-import type { V1CreateAProjectInput, V1CreateAProjectOutput } from "@supabase/api/effect";
+import type { V1CreateAProjectInput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -11,16 +12,22 @@ import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import {
   encodeEnv,
   encodeGoJson,
+  encodeGoStructJsonBody,
   encodeToml,
   encodeYaml,
 } from "../../../shared/legacy-go-output.encoders.ts";
-import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
+import { sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
+import { resolveLegacyAccessToken } from "../../../shared/legacy-resolve-token.ts";
 import {
   LegacyProjectsCreateMissingArgError,
   LegacyProjectsCreateNetworkError,
   LegacyProjectsCreateUnexpectedStatusError,
 } from "../projects.errors.ts";
-import { dashboardUrlForProfile, renderProjectCreateTable } from "../projects.format.ts";
+import {
+  dashboardUrlForProfile,
+  readProjectField,
+  renderProjectCreateTable,
+} from "../projects.format.ts";
 import {
   legacyPromptDbPassword,
   legacyPromptOrgId,
@@ -30,14 +37,6 @@ import {
 import type { LegacyProjectsCreateFlags } from "./create.command.ts";
 
 type CreateInput = typeof V1CreateAProjectInput.Type;
-type CreatedProject = typeof V1CreateAProjectOutput.Type;
-
-const mapCreateError = mapLegacyHttpError({
-  networkError: LegacyProjectsCreateNetworkError,
-  statusError: LegacyProjectsCreateUnexpectedStatusError,
-  networkMessage: (cause) => `failed to create project: ${cause}`,
-  statusMessage: (_status, body) => `Unexpected error creating project: ${body}`,
-});
 
 /** Go's `printKeyValue` (`create.go:52-56`): `key` + `:` + pad to width 20 + value. */
 function printKeyValue(key: string, value: string): string {
@@ -49,8 +48,8 @@ export const legacyProjectsCreate = Effect.fn("legacy.projects.create")(function
 ) {
   const output = yield* Output;
   const goOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
   const cliConfig = yield* LegacyCliConfig;
+  const httpClient = yield* HttpClient.HttpClient;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   const tty = yield* Tty;
@@ -119,15 +118,46 @@ export const legacyProjectsCreate = Effect.fn("legacy.projects.create")(function
 
     const creating =
       output.format === "text" ? yield* output.task("Creating project...") : undefined;
-    const created: CreatedProject = yield* api.v1.createAProject(input).pipe(
-      Effect.tapError(() => creating?.fail() ?? Effect.void),
-      Effect.catch(mapCreateError),
+
+    // Bypass the typed client: Go's `json.Marshal` serializes the request body
+    // with alphabetically-sorted keys, which `encodeGoStructJsonBody` reproduces
+    // for the cli-e2e replay server's byte-compare. The typed client would also
+    // reject the `__PROJECT_REF__` placeholder in the response (`ref` schema).
+    const tokenOpt = yield* resolveLegacyAccessToken;
+    const request = HttpClientRequest.post(`${cliConfig.apiUrl}/v1/projects`).pipe(
+      Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
+      HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
+      HttpClientRequest.bodyText(encodeGoStructJsonBody(input), "application/json"),
     );
+
+    const response = yield* httpClient.execute(request).pipe(
+      Effect.tapError(() => creating?.fail() ?? Effect.void),
+      Effect.mapError(
+        (cause) =>
+          new LegacyProjectsCreateNetworkError({ message: `failed to create project: ${cause}` }),
+      ),
+    );
+
+    if (response.status !== 201) {
+      const body = sanitizeLegacyErrorBody(
+        yield* response.text.pipe(Effect.orElseSucceed(() => "")),
+      );
+      yield* creating?.fail() ?? Effect.void;
+      return yield* new LegacyProjectsCreateUnexpectedStatusError({
+        status: response.status,
+        body,
+        message: `Unexpected error creating project: ${body}`,
+      });
+    }
+
+    const created = yield* response.json.pipe(Effect.orElseSucceed((): unknown => ({})));
     yield* creating?.clear() ?? Effect.void;
-    createdRef = created.id;
+
+    const id = readProjectField(created, "id");
+    createdRef = id.length > 0 ? id : undefined;
 
     // Go prints this to stderr for every output format (`create.go:33-34`).
-    const projectUrl = `${dashboardUrlForProfile(cliConfig.profile)}/project/${created.id}`;
+    const projectUrl = `${dashboardUrlForProfile(cliConfig.profile)}/project/${id}`;
     yield* output.raw(`Created a new project at ${projectUrl}\n`, "stderr");
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
@@ -149,7 +179,8 @@ export const legacyProjectsCreate = Effect.fn("legacy.projects.create")(function
     }
 
     if (output.format === "json" || output.format === "stream-json") {
-      yield* output.success("Created project", { ...created });
+      const data = typeof created === "object" && created !== null ? created : {};
+      yield* output.success("Created project", { ...data });
       return;
     }
 

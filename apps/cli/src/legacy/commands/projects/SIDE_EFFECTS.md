@@ -17,10 +17,10 @@ subcommand's own `SIDE_EFFECTS.md`.
 | --------------------------- | ------- | ---------------------------------------------------------------- |
 | `<workdir>/supabase/.temp/` | removed | `delete` only — when the deleted ref matches the linked ref file |
 
-> Go also deletes the per-ref keyring credential on `delete`. In the TS credential
-> model the stored token is profile-scoped, not ref-scoped, so there is no per-ref
-> entry to remove — this step is a documented no-op. The user-visible outcome
-> (project gone + linked `.temp` dir removed) is preserved.
+> `delete` also runs Go's best-effort per-ref keyring delete
+> (`credentials.StoreProvider.Delete(ref)`): a missing entry is swallowed, and an
+> unsupported keyring surfaces `Keyring is not supported on WSL` on stderr —
+> byte-for-byte with Go.
 
 ## API Routes
 

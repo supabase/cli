@@ -59,6 +59,10 @@ export const mockLegacyCredentialsLayer = Layer.succeed(LegacyCredentials, {
   getAccessToken: Effect.sync(() => Option.none()),
   saveAccessToken: () => Effect.die("unexpected legacy credentials write in test"),
   deleteAccessToken: Effect.die("unexpected legacy credentials delete in test"),
+  // `projects delete` calls this best-effort cleanup; default to a no-op
+  // (nothing to surface). Tests that exercise the unsupported-keyring stderr
+  // line override this layer.
+  deleteProjectCredential: () => Effect.succeed(Option.none<string>()),
 });
 
 // ---------------------------------------------------------------------------

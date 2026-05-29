@@ -35,6 +35,7 @@ function mockCredentials(token: Option.Option<string>) {
     getAccessToken: Effect.succeed(Option.map(token, Redacted.make)),
     saveAccessToken: () => Effect.void,
     deleteAccessToken: Effect.succeed(false),
+    deleteProjectCredential: () => Effect.succeed(Option.none<string>()),
   });
 }
 
