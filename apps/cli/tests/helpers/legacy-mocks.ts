@@ -10,6 +10,7 @@ import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import * as HttpClientRequestModule from "effect/unstable/http/HttpClientRequest";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as UrlParams from "effect/unstable/http/UrlParams";
 import { afterEach, beforeEach } from "vitest";
 
 import { LegacyCredentials } from "../../src/legacy/auth/legacy-credentials.service.ts";
@@ -199,6 +200,16 @@ export interface LegacyRecordedRequest {
   readonly method: string;
   readonly headers: Readonly<Record<string, string | undefined>>;
   readonly body?: unknown;
+  // Captured separately because Effect's HttpClient keeps `urlParams` on the
+  // request struct and only merges it into the final URL inside the real
+  // transport layer (`HttpClient.ts:747`). Tests that need to assert on
+  // GET-style query parameters (e.g. `/v1/snippets?project_ref=…`) read this
+  // serialized form instead of `url`.
+  readonly urlParams: string;
+  // Convenience: `url + "?" + urlParams` (or just `url` when there are none).
+  // Use this when an assertion wants to check the path and query in one
+  // string, mirroring what `curl -v` would print as the request line.
+  readonly urlWithParams: string;
 }
 
 export interface LegacyApiResponse {
@@ -250,11 +261,14 @@ export function mockLegacyPlatformApi(
           body = decoded;
         }
       }
+      const params = UrlParams.toString(request.urlParams);
       const recorded: LegacyRecordedRequest = {
         url: request.url,
         method: request.method,
         headers: request.headers,
         body,
+        urlParams: params,
+        urlWithParams: params === "" ? request.url : `${request.url}?${params}`,
       };
       requests.push(recorded);
 
