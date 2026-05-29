@@ -1,5 +1,9 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyVanitySubdomainsActivate } from "./activate.handler.ts";
 
 const config = {
@@ -19,5 +23,11 @@ export const legacyVanitySubdomainsActivateCommand = Command.make("activate", co
     "Activate a vanity subdomain for your Supabase project. This reconfigures your Supabase project to respond to requests on your vanity subdomain. After the vanity subdomain is activated, your project's auth services will no longer function on the {project-ref}.{supabase-domain} hostname.",
   ),
   Command.withShortDescription("Activate a vanity subdomain"),
-  Command.withHandler((flags) => legacyVanitySubdomainsActivate(flags)),
+  Command.withHandler((flags) =>
+    legacyVanitySubdomainsActivate(flags).pipe(
+      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyManagementApiRuntimeLayer(["vanity-subdomains", "activate"])),
 );

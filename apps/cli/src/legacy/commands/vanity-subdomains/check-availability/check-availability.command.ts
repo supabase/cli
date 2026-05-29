@@ -1,5 +1,9 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyVanitySubdomainsCheckAvailability } from "./check-availability.handler.ts";
 
 const config = {
@@ -22,5 +26,11 @@ export const legacyVanitySubdomainsCheckAvailabilityCommand = Command.make(
 ).pipe(
   Command.withDescription("Checks if a desired subdomain is available for use."),
   Command.withShortDescription("Check subdomain availability"),
-  Command.withHandler((flags) => legacyVanitySubdomainsCheckAvailability(flags)),
+  Command.withHandler((flags) =>
+    legacyVanitySubdomainsCheckAvailability(flags).pipe(
+      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyManagementApiRuntimeLayer(["vanity-subdomains", "check-availability"])),
 );

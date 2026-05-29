@@ -49,6 +49,7 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
   readonly projectRef: string;
   readonly featureKey: string;
   readonly statusCode: number;
+  readonly trackAnalytics?: boolean;
 }) {
   if (opts.statusCode < 400 || opts.statusCode >= 500) {
     return;
@@ -117,8 +118,10 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
     yield* output.raw(suggestion + "\n", "stderr");
   }
 
-  yield* analytics.capture(EventUpgradeSuggested, {
-    [PropFeatureKey]: opts.featureKey,
-    [PropOrgSlug]: orgSlug,
-  });
+  if (opts.trackAnalytics !== false) {
+    yield* analytics.capture(EventUpgradeSuggested, {
+      [PropFeatureKey]: opts.featureKey,
+      [PropOrgSlug]: orgSlug,
+    });
+  }
 });
