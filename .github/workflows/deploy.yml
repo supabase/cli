@@ -7,8 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  pull-requests: write
-  contents: write
+  contents: read
 
 jobs:
   deploy:
@@ -17,11 +16,15 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
+          persist-credentials: false
       - id: app-token
         uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
         with:
-          app-id: ${{ secrets.APP_ID }}
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - run: "gh pr create -B main -H develop --title 'chore: production deploy' --label 'do not merge' --fill"
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

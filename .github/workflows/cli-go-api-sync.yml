@@ -5,9 +5,9 @@ on:
     types:
       - api-sync
   workflow_dispatch: # allow manual triggering
+
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   sync:
@@ -15,6 +15,8 @@ jobs:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
@@ -39,8 +41,10 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
         with:
-          app-id: ${{ secrets.APP_ID }}
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-pull-requests: write
+          permission-contents: write
 
       - name: Create Pull Request
         if: steps.check.outputs.has_changes == 'true'
@@ -60,15 +64,17 @@ jobs:
       - name: Approve a PR
         if: steps.check.outputs.has_changes == 'true' && steps.cpr.outputs.pull-request-operation == 'created'
         continue-on-error: true
-        run: gh pr review --approve --repo "${{ github.repository }}" "${{ steps.cpr.outputs.pull-request-number }}"
+        run: gh pr review --approve --repo "${{ github.repository }}" "${STEPS_CPR_OUTPUTS_PULL_REQUEST_NUMBER}"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          STEPS_CPR_OUTPUTS_PULL_REQUEST_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
 
       - name: Enable Pull Request Automerge
         if: steps.check.outputs.has_changes == 'true'
-        run: gh pr merge --auto --squash --repo "${{ github.repository }}" "${{ steps.cpr.outputs.pull-request-number }}"
+        run: gh pr merge --auto --squash --repo "${{ github.repository }}" "${STEPS_CPR_OUTPUTS_PULL_REQUEST_NUMBER}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STEPS_CPR_OUTPUTS_PULL_REQUEST_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
 defaults:
   run:
     working-directory: apps/cli-go
