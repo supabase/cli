@@ -52,7 +52,9 @@
 
 ### `--output-format text` / Go `--output pretty` (Go CLI compatible)
 
-Glamour-styled ASCII table with columns `ID`, `NAME`, `VISIBILITY`, `OWNER`, `CREATED AT (UTC)`, `UPDATED AT (UTC)`. Pipe characters in `name` and `owner.username` are escaped as `\|` to match Go's `strings.ReplaceAll`.
+Glamour-styled ASCII table with columns `ID`, `NAME`, `VISIBILITY`, `OWNER`, `CREATED AT (UTC)`, `UPDATED AT (UTC)`. Literal `|` characters in `name`, `visibility`, or `owner.username` are passed through verbatim (Go applies a `strings.ReplaceAll` markdown-intermediate escape that glamour decodes back; the final ASCII bytes carry the raw `|`).
+
+API-supplied strings are not stripped of ANSI / terminal control sequences before rendering — matches Go's glamour pass-through.
 
 ```
   ID           | NAME         | VISIBILITY | OWNER    | CREATED AT (UTC)    | UPDATED AT (UTC)

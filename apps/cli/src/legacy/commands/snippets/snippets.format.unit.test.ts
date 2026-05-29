@@ -1,27 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { escapePipe, renderSnippetsTable } from "./snippets.format.ts";
-
-describe("escapePipe", () => {
-  it("escapes a single pipe", () => {
-    expect(escapePipe("a|b")).toBe("a\\|b");
-  });
-
-  it("escapes all pipes in the value", () => {
-    expect(escapePipe("name|with|pipes")).toBe("name\\|with\\|pipes");
-  });
-
-  it("returns the value unchanged when there is no pipe", () => {
-    expect(escapePipe("plain")).toBe("plain");
-  });
-
-  it("returns the empty string unchanged", () => {
-    expect(escapePipe("")).toBe("");
-  });
-});
+import { renderSnippetsTable } from "./snippets.format.ts";
 
 describe("renderSnippetsTable", () => {
-  it("renders headers in a Glamour ASCII table", () => {
+  it("renders headers in a Glamour ASCII table when the list is empty", () => {
     const out = renderSnippetsTable([]);
     expect(out).toContain("ID");
     expect(out).toContain("NAME");
@@ -31,7 +13,7 @@ describe("renderSnippetsTable", () => {
     expect(out).toContain("UPDATED AT (UTC)");
   });
 
-  it("escapes pipes in name, visibility, and owner.username", () => {
+  it("preserves literal `|` characters in name, visibility, and owner (Glamour decodes Go's escape back)", () => {
     const out = renderSnippetsTable([
       {
         id: "00000000-0000-0000-0000-000000000001",
@@ -42,9 +24,12 @@ describe("renderSnippetsTable", () => {
         updated_at: "2023-10-13T17:48:58.491Z",
       },
     ]);
-    expect(out).toContain("name\\|here");
-    expect(out).toContain("user\\|public");
-    expect(out).toContain("user\\|name");
+    expect(out).toContain("name|here");
+    expect(out).toContain("user|public");
+    expect(out).toContain("user|name");
+    // No `\|` escape — Go's `strings.ReplaceAll` is a markdown intermediate
+    // that glamour decodes; the final bytes carry the raw `|`.
+    expect(out).not.toContain("\\|");
   });
 
   it("formats RFC3339 timestamps as UTC YYYY-MM-DD HH:MM:SS", () => {

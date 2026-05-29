@@ -46,11 +46,9 @@ export const legacySnippetsList = Effect.fn("legacy.snippets.list")(function* (
 
     yield* Effect.gen(function* () {
       if (Option.getOrUndefined(goOutputFlag) === "env") {
-        return yield* Effect.fail(
-          new LegacySnippetsEnvNotSupportedError({
-            message: "--output env flag is not supported",
-          }),
-        );
+        return yield* new LegacySnippetsEnvNotSupportedError({
+          message: "--output env flag is not supported",
+        });
       }
 
       const fetching =

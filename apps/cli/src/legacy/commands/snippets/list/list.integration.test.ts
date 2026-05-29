@@ -45,10 +45,10 @@ const PIPE_RESPONSE: SnippetsResponse = {
   data: [
     {
       ...SNIPPET_BASE,
-      // The Schema literal for `visibility` only accepts a fixed set, but Go
-      // applies the pipe-escape unconditionally — verify the escape on `name`
-      // and `owner.username` (the user-controlled fields that can realistically
-      // contain `|`).
+      // Go's `strings.ReplaceAll(value, "|", "\\|")` is a markdown-intermediate
+      // escape that glamour decodes back to literal `|` in the rendered ASCII
+      // bytes. `renderGlamourTable` bypasses glamour, so we pass raw values —
+      // any `|` in `name` / `owner.username` must appear literally in stdout.
       name: "name|with|pipes",
       owner: { id: 7, username: "user|name" },
     },
@@ -124,12 +124,14 @@ describe("legacy snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("escapes `|` characters embedded in snippet name and owner username", () => {
+  it.live("preserves literal `|` characters in snippet name and owner username (Go parity)", () => {
     const { layer, out } = setup({ response: PIPE_RESPONSE });
     return Effect.gen(function* () {
       yield* legacySnippetsList({ projectRef: Option.none() });
-      expect(out.stdoutText).toContain("name\\|with\\|pipes");
-      expect(out.stdoutText).toContain("user\\|name");
+      expect(out.stdoutText).toContain("name|with|pipes");
+      expect(out.stdoutText).toContain("user|name");
+      // No `\|` escape — Go's intermediate escape is round-tripped by glamour.
+      expect(out.stdoutText).not.toContain("\\|");
     }).pipe(Effect.provide(layer));
   });
 

@@ -58,11 +58,9 @@ export const legacySnippetsDownload = Effect.fn("legacy.snippets.download")(func
 
     yield* Effect.gen(function* () {
       if (!UUID_RE.test(flags.snippetId)) {
-        return yield* Effect.fail(
-          new LegacySnippetsInvalidIdError({
-            message: uuidErrorMessage(flags.snippetId),
-          }),
-        );
+        return yield* new LegacySnippetsInvalidIdError({
+          message: uuidErrorMessage(flags.snippetId),
+        });
       }
 
       const fetching =
