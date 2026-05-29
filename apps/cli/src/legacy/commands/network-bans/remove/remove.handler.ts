@@ -50,9 +50,12 @@ export const legacyNetworkBansRemove = Effect.fn("legacy.network-bans.remove")(f
         })
         .pipe(Effect.catch(mapRemoveError));
 
-      const legacyOutput = Option.getOrUndefined(legacyOutputFlag);
+      // Go's `bansRemoveCmd.PostRun` always prints the success line to stdout
+      // regardless of `--output` (`apps/cli-go/cmd/bans.go:28-30`). The TS-native
+      // `--output-format json/stream-json` modes emit a structured success event
+      // instead, but only when Go `--output` is unset (Go priority — CLAUDE.md item 6).
       if (
-        legacyOutput === undefined &&
+        Option.isNone(legacyOutputFlag) &&
         (output.format === "json" || output.format === "stream-json")
       ) {
         yield* output.success("Successfully removed network bans.");
