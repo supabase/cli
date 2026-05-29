@@ -2,55 +2,42 @@
 
 ## Files Read
 
-| Path                              | Format                    | When                                                       |
-| --------------------------------- | ------------------------- | ---------------------------------------------------------- |
-| `~/.supabase/access-token`        | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable |
-| `<workdir>/.supabase/config.json` | JSON                      | always, to resolve linked project ref                      |
+Same auth and project-ref resolution chain as every Management-API legacy command.
 
 ## Files Written
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| —    | —      | —    |
+| Path                                             | Format | When                                                                     |
+| ------------------------------------------------ | ------ | ------------------------------------------------------------------------ |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves — Go parity |
+| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command — Go parity              |
 
 ## API Routes
 
-| Method | Path                               | Auth         | Request body | Response (used fields) |
-| ------ | ---------------------------------- | ------------ | ------------ | ---------------------- |
-| `POST` | `/v1/branches/{branch_id}/unpause` | Bearer token | none         | none                   |
+| Method | Path                                 | Auth         | When                                                           | Response          |
+| ------ | ------------------------------------ | ------------ | -------------------------------------------------------------- | ----------------- |
+| `GET`  | `/v1/projects/{ref}/branches/{name}` | Bearer token | branch input is not a UUID and not a `^[a-z]{20}$` ref pattern | `{project_ref}`   |
+| `GET`  | `/v1/branches/{branch_id_or_ref}`    | Bearer token | branch input is a UUID                                         | `{ref}`           |
+| `POST` | `/v1/projects/{branch_ref}/restore`  | Bearer token | always — final unpause action                                  | none (expect 200) |
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                               |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)             |
+`SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROFILE`, `SUPABASE_PROJECT_ID`, `SUPABASE_WORKDIR` — same semantics as `branches list`.
 
 ## Exit Codes
 
-| Code | Condition                                                            |
-| ---- | -------------------------------------------------------------------- |
-| `0`  | success — branch unpaused                                            |
-| `1`  | authentication error — no valid token found                          |
-| `1`  | API error — non-2xx response from `/v1/branches/{branch_id}/unpause` |
-| `1`  | network / connection failure                                         |
-| `1`  | branch not found                                                     |
+| Code | Condition                                                                             |
+| ---- | ------------------------------------------------------------------------------------- |
+| `0`  | success — branch unpaused                                                             |
+| `1`  | `LegacyBranchesUnpauseUnexpectedStatusError` — non-200 response from restore endpoint |
+| `1`  | `LegacyBranchesUnpauseNetworkError` — transport-level network failure                 |
+| `1`  | Branch-id resolution errors                                                           |
+
+## Telemetry Events Fired
+
+| Event                  | When                                       | Notable properties                  |
+| ---------------------- | ------------------------------------------ | ----------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
-
-No output on success (exit 0).
-
-### `--output-format json`
-
-No structured output on success.
-
-### `--output-format stream-json`
-
-No structured output on success.
-
-## Notes
-
-- Accepts optional positional `[name]` argument (branch name or ID). If omitted in interactive mode, prompts the user to select a branch.
-- The Go CLI internally resolves a branch name to a project ref by calling `/v1/projects/{ref}/branches/{name}` first, then POSTs to `/v1/projects/{branch_project_ref}/restore`.
+Silent on success in every mode (Go parity).

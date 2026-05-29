@@ -340,7 +340,15 @@ export class StackLifecycleCoordinator extends Context.Service<
               prepared,
             );
 
-            yield* metadataPersistence.persistCleanupTargets(cleanupTargets);
+            yield* metadataPersistence.persistCleanupTargets(cleanupTargets).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new StackBuildError({
+                    detail: "Failed to persist stack cleanup metadata",
+                    cause,
+                  }),
+              ),
+            );
 
             const orchLayer = Orchestrator.layer(graph).pipe(
               Layer.provide(Layer.succeed(LogBuffer, logBuffer)),
