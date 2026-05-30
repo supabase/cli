@@ -67,6 +67,10 @@ const config = {
     Flag.withDescription("Select a desired instance size for your project."),
     Flag.optional,
   ),
+  highAvailability: Flag.boolean("high-availability").pipe(
+    Flag.withDescription("Enable high availability for the project."),
+    Flag.optional,
+  ),
   interactive: withHidden(
     Flag.boolean("interactive").pipe(
       Flag.withDescription("Enables interactive mode."),
