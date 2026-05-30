@@ -181,6 +181,20 @@ export const textOutputLayer = Layer.effect(
           : Effect.sync(() => log.info(JSON.stringify(event))),
       task: (message: string) =>
         Effect.sync(() => {
+          if (!tty.stdoutIsTty) {
+            // Non-TTY stdout (CI, pipe, redirect) — suppress the @clack spinner,
+            // which writes cursor-hide and animated-frame ANSI to stdout and
+            // pollutes machine-parsed output. See supabase/cli#5397.
+            const noop = () => Effect.void;
+            return {
+              message: noop,
+              succeed: noop,
+              fail: noop,
+              info: noop,
+              cancel: noop,
+              clear: noop,
+            };
+          }
           let shown = false;
           let settled = false;
           let currentMessage = message;

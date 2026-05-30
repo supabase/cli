@@ -154,6 +154,21 @@ describe("Output", () => {
         }).pipe(Effect.provide(layer)),
     );
 
+    it.effect("task suppresses the spinner entirely when stdout is not a TTY", () =>
+      Effect.gen(function* () {
+        vi.useFakeTimers();
+        const out = yield* Output;
+        const task = yield* out.task("Fetching branches...");
+        vi.advanceTimersByTime(1000);
+        yield* task.clear();
+
+        expect(mockClack.spinnerFactory).not.toHaveBeenCalled();
+        expect(mockClack.spinnerHandle.start).not.toHaveBeenCalled();
+      }).pipe(
+        Effect.provide(textOutputLayer.pipe(Layer.provide(mockTty({ stdoutIsTty: false })))),
+      ),
+    );
+
     it.effect("task prefixes continuation lines for multiline completions", () =>
       Effect.gen(function* () {
         vi.useFakeTimers();
