@@ -44,7 +44,7 @@ function formatPrettyValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
-export function renderPostgresConfigTable(config: LegacyPostgresConfigMap): string {
+function renderPostgresConfigTable(config: LegacyPostgresConfigMap): string {
   return renderGlamourTable(
     ["Parameter", "Value"],
     sortConfigEntries(config).map(([key, value]) => [key, formatPrettyValue(value)]),
@@ -61,7 +61,7 @@ function encodeTomlScalar(value: unknown): string {
   return JSON.stringify(JSON.stringify(value));
 }
 
-export function encodePostgresConfigToml(config: LegacyPostgresConfigMap): string {
+function encodePostgresConfigToml(config: LegacyPostgresConfigMap): string {
   const lines = sortConfigEntries(config).map(
     ([key, value]) => `${key} = ${encodeTomlScalar(value)}`,
   );

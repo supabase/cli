@@ -22,16 +22,16 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                                  |
-| ----------------------- | ---------------------------------------------------- | ---------------------------------------------------------- |
+| Variable                | Purpose                                              | Required?                                                 |
+| ----------------------- | ---------------------------------------------------- | --------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring -> `~/.supabase/access-token`)  |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)                |
+| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)               |
 | `PROJECT_ID`            | project ref fallback when `--project-ref` is unset   | no (falls back to `supabase/.temp/project-ref` -> prompt) |
 
 ## Exit Codes
 
-| Code | Condition                                                                                |
-| ---- | ---------------------------------------------------------------------------------------- |
+| Code | Condition                                                                               |
+| ---- | --------------------------------------------------------------------------------------- |
 | `0`  | success - Postgres config printed                                                       |
 | `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`) |
 | `1`  | API non-2xx (`LegacyPostgresConfigGetUnexpectedStatusError`)                            |
@@ -40,8 +40,8 @@
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups                                          |
-| ---------------------- | ------------------------------------------ | -------------------------------------------------------------------- |
+| Event                  | When                                       | Notable properties / groups                                           |
+| ---------------------- | ------------------------------------------ | --------------------------------------------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` -> `<redacted>`) |
 
 ## Output

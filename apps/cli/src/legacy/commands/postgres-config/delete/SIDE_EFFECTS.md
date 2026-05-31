@@ -16,38 +16,38 @@
 
 ## API Routes
 
-| Method | Path                                          | Auth         | Request body                                                     | Response (used fields) |
-| ------ | --------------------------------------------- | ------------ | ---------------------------------------------------------------- | ---------------------- |
-| `GET`  | `/v1/projects/{ref}/config/database/postgres` | Bearer token | none                                                             | full JSON object       |
+| Method | Path                                          | Auth         | Request body                                                    | Response (used fields) |
+| ------ | --------------------------------------------- | ------------ | --------------------------------------------------------------- | ---------------------- |
+| `GET`  | `/v1/projects/{ref}/config/database/postgres` | Bearer token | none                                                            | full JSON object       |
 | `PUT`  | `/v1/projects/{ref}/config/database/postgres` | Bearer token | current config minus deleted keys (`restart_database` optional) | full JSON object       |
 
 This command does not call a delete endpoint. It mirrors Go: fetch current config, remove the specified keys locally, then send the remaining object back via `PUT`.
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                                  |
-| ----------------------- | ---------------------------------------------------- | ---------------------------------------------------------- |
+| Variable                | Purpose                                              | Required?                                                 |
+| ----------------------- | ---------------------------------------------------- | --------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring -> `~/.supabase/access-token`)  |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)                |
+| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)               |
 | `PROJECT_ID`            | project ref fallback when `--project-ref` is unset   | no (falls back to `supabase/.temp/project-ref` -> prompt) |
 
 ## Exit Codes
 
-| Code | Condition                                                                                             |
-| ---- | ----------------------------------------------------------------------------------------------------- |
-| `0`  | success - Postgres config updated with the deleted keys removed                                       |
-| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)             |
-| `1`  | initial GET non-2xx (`LegacyPostgresConfigGetUnexpectedStatusError`)                                 |
-| `1`  | initial GET transport failure (`LegacyPostgresConfigGetNetworkError`)                                |
-| `1`  | PUT non-2xx (`LegacyPostgresConfigDeleteUnexpectedStatusError`)                                      |
-| `1`  | PUT transport failure (`LegacyPostgresConfigDeleteNetworkError`)                                     |
-| `1`  | request serialization failure (`LegacyPostgresConfigDeleteSerializeError`)                           |
+| Code | Condition                                                                                                    |
+| ---- | ------------------------------------------------------------------------------------------------------------ |
+| `0`  | success - Postgres config updated with the deleted keys removed                                              |
+| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                      |
+| `1`  | initial GET non-2xx (`LegacyPostgresConfigGetUnexpectedStatusError`)                                         |
+| `1`  | initial GET transport failure (`LegacyPostgresConfigGetNetworkError`)                                        |
+| `1`  | PUT non-2xx (`LegacyPostgresConfigDeleteUnexpectedStatusError`)                                              |
+| `1`  | PUT transport failure (`LegacyPostgresConfigDeleteNetworkError`)                                             |
+| `1`  | request serialization failure (`LegacyPostgresConfigDeleteSerializeError`)                                   |
 | `1`  | invalid JSON response (`LegacyPostgresConfigGetUnmarshalError` / `LegacyPostgresConfigDeleteUnmarshalError`) |
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups                                          |
-| ---------------------- | ------------------------------------------ | -------------------------------------------------------------------- |
+| Event                  | When                                       | Notable properties / groups                                           |
+| ---------------------- | ------------------------------------------ | --------------------------------------------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` -> `<redacted>`) |
 
 ## Output

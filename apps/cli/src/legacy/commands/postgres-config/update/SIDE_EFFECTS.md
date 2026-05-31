@@ -16,39 +16,39 @@
 
 ## API Routes
 
-| Method | Path                                          | Auth         | Request body                                                  | Response (used fields) |
-| ------ | --------------------------------------------- | ------------ | ------------------------------------------------------------- | ---------------------- |
-| `GET`  | `/v1/projects/{ref}/config/database/postgres` | Bearer token | none                                                          | full JSON object       |
+| Method | Path                                          | Auth         | Request body                                                   | Response (used fields) |
+| ------ | --------------------------------------------- | ------------ | -------------------------------------------------------------- | ---------------------- |
+| `GET`  | `/v1/projects/{ref}/config/database/postgres` | Bearer token | none                                                           | full JSON object       |
 | `PUT`  | `/v1/projects/{ref}/config/database/postgres` | Bearer token | full config object (conditional GET merge unless replace mode) | full JSON object       |
 
 The initial `GET` is skipped when `--replace-existing-overrides` is set. Otherwise the command fetches current overrides first, merges the new values locally, then sends the final merged object back via `PUT`.
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                                  |
-| ----------------------- | ---------------------------------------------------- | ---------------------------------------------------------- |
+| Variable                | Purpose                                              | Required?                                                 |
+| ----------------------- | ---------------------------------------------------- | --------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring -> `~/.supabase/access-token`)  |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)                |
+| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)               |
 | `PROJECT_ID`            | project ref fallback when `--project-ref` is unset   | no (falls back to `supabase/.temp/project-ref` -> prompt) |
 
 ## Exit Codes
 
-| Code | Condition                                                                                             |
-| ---- | ----------------------------------------------------------------------------------------------------- |
-| `0`  | success - Postgres config updated                                                                     |
-| `1`  | malformed `--config` (`LegacyPostgresConfigInvalidConfigValueError`)                                 |
-| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)             |
-| `1`  | initial GET non-2xx (`LegacyPostgresConfigGetUnexpectedStatusError`)                                 |
-| `1`  | initial GET transport failure (`LegacyPostgresConfigGetNetworkError`)                                |
-| `1`  | PUT non-2xx (`LegacyPostgresConfigUpdateUnexpectedStatusError`)                                      |
-| `1`  | PUT transport failure (`LegacyPostgresConfigUpdateNetworkError`)                                     |
-| `1`  | request serialization failure (`LegacyPostgresConfigUpdateSerializeError`)                           |
+| Code | Condition                                                                                                    |
+| ---- | ------------------------------------------------------------------------------------------------------------ |
+| `0`  | success - Postgres config updated                                                                            |
+| `1`  | malformed `--config` (`LegacyPostgresConfigInvalidConfigValueError`)                                         |
+| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                      |
+| `1`  | initial GET non-2xx (`LegacyPostgresConfigGetUnexpectedStatusError`)                                         |
+| `1`  | initial GET transport failure (`LegacyPostgresConfigGetNetworkError`)                                        |
+| `1`  | PUT non-2xx (`LegacyPostgresConfigUpdateUnexpectedStatusError`)                                              |
+| `1`  | PUT transport failure (`LegacyPostgresConfigUpdateNetworkError`)                                             |
+| `1`  | request serialization failure (`LegacyPostgresConfigUpdateSerializeError`)                                   |
 | `1`  | invalid JSON response (`LegacyPostgresConfigGetUnmarshalError` / `LegacyPostgresConfigUpdateUnmarshalError`) |
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups                                          |
-| ---------------------- | ------------------------------------------ | -------------------------------------------------------------------- |
+| Event                  | When                                       | Notable properties / groups                                           |
+| ---------------------- | ------------------------------------------ | --------------------------------------------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` -> `<redacted>`) |
 
 ## Output
