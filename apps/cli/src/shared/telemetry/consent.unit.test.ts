@@ -1,4 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
+import { BunServices } from "@effect/platform-bun";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { Effect, Layer } from "effect";
 import { cliConfigLayer } from "../../next/config/cli-config.layer.ts";
 import {
@@ -6,7 +10,7 @@ import {
   mockRuntimeInfo,
   processEnvLayer,
 } from "../../../tests/helpers/mocks.ts";
-import { getEffectiveConsent } from "./consent.ts";
+import { getEffectiveConsent, readTelemetryConfig } from "./consent.ts";
 import type { TelemetryConfig } from "./types.ts";
 
 function makeConfig(consent: TelemetryConfig["consent"]): TelemetryConfig {
@@ -38,6 +42,14 @@ function emptyEnv() {
     processEnvLayer(),
     cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
   );
+}
+
+function makeTempDir(): string {
+  return mkdtempSync(path.join(tmpdir(), "supabase-consent-test-"));
+}
+
+function writeTelemetryFile(dir: string, content: string): void {
+  writeFileSync(path.join(dir, "telemetry.json"), content);
 }
 
 describe("getEffectiveConsent", () => {
@@ -89,4 +101,19 @@ describe("getEffectiveConsent", () => {
       expect(consent).toBe("granted");
     }).pipe(Effect.provide(emptyEnv())),
   );
+});
+
+describe("readTelemetryConfig", () => {
+  it.live("returns null for malformed JSON instead of throwing", () => {
+    const dir = makeTempDir();
+    writeTelemetryFile(dir, "");
+
+    return Effect.gen(function* () {
+      const config = yield* readTelemetryConfig(dir);
+      expect(config).toBeNull();
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
 });
