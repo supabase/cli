@@ -670,9 +670,11 @@ major_version = 16
     const document = Schema.toJsonSchemaDocument(ProjectConfigSchema).schema;
     const schemaString = JSON.stringify(document);
 
+    expect(schemaString).toContain("local_smtp");
     expect(schemaString).toContain("remotes");
     expect(schemaString).toContain("static_files");
     expect(schemaString).toContain("env");
+    expect(schemaString).not.toContain("inbucket");
     expect(schemaString).not.toContain("versions");
   });
 

@@ -151,6 +151,35 @@ function parseProjectConfigDocument(content: string, format: ConfigFormat): unkn
   return format === "json" ? JSON.parse(content) : SmolToml.parse(content);
 }
 
+function normalizeDeprecatedSMTPSections(document: unknown): unknown {
+  if (!isObject(document)) {
+    return document;
+  }
+  const normalized = { ...document };
+  if ("inbucket" in normalized) {
+    if (!("local_smtp" in normalized)) {
+      normalized.local_smtp = normalized.inbucket;
+    }
+    delete normalized.inbucket;
+  }
+  if (isObject(normalized.remotes)) {
+    normalized.remotes = Object.fromEntries(
+      Object.entries(normalized.remotes).map(([name, remote]) => {
+        if (!isObject(remote) || !("inbucket" in remote)) {
+          return [name, remote];
+        }
+        const normalizedRemote = { ...remote };
+        if (!("local_smtp" in normalizedRemote)) {
+          normalizedRemote.local_smtp = normalizedRemote.inbucket;
+        }
+        delete normalizedRemote.inbucket;
+        return [name, normalizedRemote];
+      }),
+    );
+  }
+  return normalized;
+}
+
 function getSchemaRef(document: unknown): string | undefined {
   if (!isObject(document)) {
     return undefined;
@@ -214,6 +243,7 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (filePath: stri
     try: () => parseProjectConfigDocument(content, format),
     catch: (cause) => new ProjectConfigParseError({ path: filePath, format, cause }),
   });
+  const normalized = normalizeDeprecatedSMTPSections(document);
 
   // Substitute `env(VAR)` references against `.env`/`.env.local`/ambient env
   // before schema decode. Required for numeric/boolean fields, which would
@@ -227,7 +257,7 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (filePath: stri
     baseEnv: process.env,
   });
   const interpolated = interpolateEnvReferencesAgainstSchema(
-    document,
+    normalized,
     projectEnv?.values ?? {},
     ProjectConfigSchema,
   );

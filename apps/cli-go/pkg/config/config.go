@@ -144,7 +144,7 @@ type (
 		Db           db             `toml:"db" json:"db"`
 		Realtime     realtime       `toml:"realtime" json:"realtime"`
 		Studio       studio         `toml:"studio" json:"studio"`
-		Inbucket     inbucket       `toml:"inbucket" json:"inbucket"`
+		Inbucket     inbucket       `toml:"local_smtp" json:"local_smtp"`
 		Storage      storage        `toml:"storage" json:"storage"`
 		Auth         auth           `toml:"auth" json:"auth"`
 		EdgeRuntime  edgeRuntime    `toml:"edge_runtime" json:"edge_runtime"`
@@ -488,13 +488,17 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 		viper.ExperimentalBindStruct(),
 		viper.EnvKeyReplacer(strings.NewReplacer(".", "_")),
 	)
+	fileConfig := viper.New()
 	v.SetEnvPrefix("SUPABASE")
 	v.AutomaticEnv()
 	if err := c.mergeDefaultValues(v); err != nil {
 		return err
 	} else if err := mergeFileConfig(v, filename, fsys); err != nil {
 		return err
+	} else if err := mergeFileConfig(fileConfig, filename, fsys); err != nil {
+		return err
 	}
+	v = normalizeDeprecatedSMTPConfig(v, fileConfig)
 	// Find [remotes.*] block to override base config
 	idToName := map[string]string{}
 	for name, remote := range v.GetStringMap("remotes") {
@@ -512,6 +516,40 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 		}
 	}
 	return c.load(v)
+}
+
+func normalizeDeprecatedSMTPConfig(v, fileConfig *viper.Viper) *viper.Viper {
+	settings := v.AllSettings()
+	if fileConfig.IsSet("inbucket") {
+		fmt.Fprintln(os.Stderr, `WARN: config section [inbucket] is deprecated. Please use [local_smtp] instead.`)
+		if !fileConfig.IsSet("local_smtp") {
+			settings["local_smtp"] = settings["inbucket"]
+		}
+		delete(settings, "inbucket")
+	}
+	if remotes, ok := settings["remotes"].(map[string]any); ok {
+		for name, raw := range remotes {
+			remote, ok := raw.(map[string]any)
+			if !ok || !fileConfig.IsSet(fmt.Sprintf("remotes.%s.inbucket", name)) {
+				continue
+			}
+			fmt.Fprintf(
+				os.Stderr,
+				"WARN: config section [remotes.%s.inbucket] is deprecated. Please use [remotes.%s.local_smtp] instead.\n",
+				name,
+				name,
+			)
+			if !fileConfig.IsSet(fmt.Sprintf("remotes.%s.local_smtp", name)) {
+				remote["local_smtp"] = remote["inbucket"]
+			}
+			delete(remote, "inbucket")
+		}
+	}
+	u := viper.New()
+	if err := u.MergeConfigMap(settings); err != nil {
+		return v
+	}
+	return u
 }
 
 func (c *config) mergeDefaultValues(v *viper.Viper) error {
@@ -907,7 +945,7 @@ func (c *config) Validate(fsys fs.FS) error {
 	// Validate smtp config
 	if c.Inbucket.Enabled {
 		if c.Inbucket.Port == 0 {
-			return errors.New("Missing required field in config: inbucket.port")
+			return errors.New("Missing required field in config: local_smtp.port")
 		}
 	}
 	// Validate auth config
