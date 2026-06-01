@@ -14,17 +14,18 @@
 
 ## API Routes
 
-| Method | Path           | Auth         | Request body                                                                | Response (used fields)                              |
-| ------ | -------------- | ------------ | --------------------------------------------------------------------------- | --------------------------------------------------- |
-| `POST` | `/v1/projects` | Bearer token | `{name, organization_slug, db_pass, region, desired_instance_size?}` (JSON) | `{id, name, organization_slug, region, created_at}` |
+| Method | Path                | Auth         | Request body                                                                 | Response (used fields)                                           |
+| ------ | ------------------- | ------------ | ---------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `GET`  | `/v1/organizations` | Bearer token | —                                                                            | `[{id, slug, name}]` — interactive org prompt only               |
+| `POST` | `/v1/projects`      | Bearer token | `{name, organization_slug, db_pass, region?, desired_instance_size?}` (JSON) | `{id, ref, name, organization_slug, region, created_at, status}` |
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                               |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)             |
-| `DB_PASSWORD`           | database password (can be set via env var or flag)   | required in non-interactive mode (via `--db-password`)  |
+| Variable                | Purpose                                                                                                               | Required?                                               |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                  | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_API_URL`      | override Management API base URL                                                                                      | no (defaults to `https://api.supabase.com`)             |
+| `DB_PASSWORD`           | **not consumed** — Go only mirrors `--db-password` into viper for local-stack reuse; `projects create` never reads it | n/a                                                     |
 
 ## Exit Codes
 
@@ -35,6 +36,13 @@
 | `1`  | API error — non-2xx response from `/v1/projects`    |
 | `1`  | network / connection failure                        |
 | `1`  | required flags missing in non-interactive mode      |
+| `1`  | empty project name (interactive prompt left blank)  |
+
+## Telemetry Events Fired
+
+| Event                  | When                                       | Notable properties / groups                                        |
+| ---------------------- | ------------------------------------------ | ------------------------------------------------------------------ |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--org-id` is telemetry-safe) |
 
 ## Flags
 

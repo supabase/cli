@@ -137,9 +137,6 @@ func (s *Service) StitchLogin(distinctID string) error {
 		if err := s.analytics.Alias(distinctID, s.state.DeviceID); err != nil {
 			return err
 		}
-		if err := s.analytics.Identify(distinctID, nil); err != nil {
-			return err
-		}
 	}
 	s.state.DistinctID = distinctID
 	return SaveState(s.state, s.fsys)
