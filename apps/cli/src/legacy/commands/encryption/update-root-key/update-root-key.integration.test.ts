@@ -66,8 +66,11 @@ describe("legacy encryption update-root-key integration", () => {
       const put = api.requests.find((r) => r.method === "PUT");
       expect(put?.url).toContain(`/v1/projects/${LEGACY_VALID_REF}/pgsodium`);
       expect(put?.body).toEqual({ root_key: "new-key" });
+      // Go parity: prompt to stderr, trailing newline to stdout (defer Println),
+      // finished notice to stderr.
+      expect(out.stderrText).toContain("Enter a new root key: ");
       expect(out.stderrText).toContain("Finished supabase root-key update.");
-      expect(out.stdoutText).toBe("");
+      expect(out.stdoutText).toBe("\n");
     }).pipe(Effect.provide(layer));
   });
 
@@ -99,6 +102,9 @@ describe("legacy encryption update-root-key integration", () => {
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.message).toBe("");
       expect(success?.data).toEqual({ root_key: "new-key" });
+      // json mode reserves stdout for the structured result — no prompt newline.
+      expect(out.stdoutText).toBe("");
+      expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 

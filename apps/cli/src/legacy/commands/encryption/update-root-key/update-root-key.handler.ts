@@ -25,15 +25,22 @@ export const legacyEncryptionUpdateRootKey = Effect.fn("legacy.encryption.update
 
     const ref = yield* resolver.resolve(flags.projectRef);
 
-    // Faithful port of Go's `credentials.PromptMasked(os.Stdin)`: piped stdin is
-    // read verbatim (then trimmed), a real TTY is read with a masked prompt.
-    // Both `promptPassword` and `readPipedText` trim, matching Go's
-    // `strings.TrimSpace(input)`. The prompt label mirrors Go's stderr write
-    // (`"Enter a new root key: "`); clack adds its own framing on a TTY, so the
-    // rendered prompt is not byte-identical to Go (documented in SIDE_EFFECTS.md).
-    const rootKey = stdin.isTTY
-      ? yield* output.promptPassword("Enter a new root key: ")
-      : Option.getOrElse(yield* stdin.readPipedText, () => "");
+    // Faithful port of Go's `update.Run` + `credentials.PromptMasked(os.Stdin)`.
+    // Go unconditionally writes the prompt to stderr, reads the key (masked on a
+    // TTY, `io.Copy` of all stdin when piped), then prints a trailing newline to
+    // stdout (`defer fmt.Println()`) — even when stdin is piped. Both read paths
+    // trim, matching Go's `strings.TrimSpace(input)`. The stderr prompt + stdout
+    // newline are reproduced only in text mode; json / stream-json reserve stdout
+    // for the structured result. On a TTY the masked prompt uses clack framing, so
+    // the rendered prompt is not byte-identical to Go (see SIDE_EFFECTS.md).
+    let rootKey: string;
+    if (stdin.isTTY) {
+      rootKey = yield* output.promptPassword("Enter a new root key: ");
+    } else {
+      if (output.format === "text") yield* output.raw("Enter a new root key: ", "stderr");
+      rootKey = Option.getOrElse(yield* stdin.readPipedText, () => "");
+      if (output.format === "text") yield* output.raw("\n", "stdout");
+    }
 
     // Mirror Go's PersistentPostRun: write the linked-project cache and persist
     // the telemetry state file on success and failure.
