@@ -243,7 +243,7 @@ func TestRunDockerUnbundle(t *testing.T) {
 			Reply(http.StatusOK).
 			BodyString("fake eszip payload")
 
-		err := Run(context.Background(), slugDocker, project, false, true, fsys)
+		err := Run(context.Background(), slugDocker, project, false, true, fsys, true)
 		require.NoError(t, err)
 
 		eszipPath := filepath.Join(utils.TempDir, fmt.Sprintf("output_%s.eszip", slugDocker))

@@ -118,11 +118,12 @@ func downloadFunction(ctx context.Context, projectRef, slug, extractScriptPath s
 	return nil
 }
 
-func Run(ctx context.Context, slug, projectRef string, useLegacyBundle, useDocker bool, fsys afero.Fs) error {
+func Run(ctx context.Context, slug, projectRef string, useLegacyBundle, useDocker bool, fsys afero.Fs, useDockerChanged ...bool) error {
 	// Sanity check
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
+	dockerFlagChanged := len(useDockerChanged) > 0 && useDockerChanged[0]
 
 	// Defaults to server-side unbundling with multipart/form-data
 	downloader := downloadWithServerSideUnbundle
@@ -130,8 +131,9 @@ func Run(ctx context.Context, slug, projectRef string, useLegacyBundle, useDocke
 		downloader = RunLegacy
 	} else if useDocker {
 		if utils.IsDockerRunning(ctx) {
-			// Download eszip file for client-side unbundling with edge-runtime
-			downloader = downloadWithDockerUnbundle
+			downloader = func(ctx context.Context, slug string, projectRef string, fsys afero.Fs) error {
+				return downloadWithDockerUnbundle(ctx, slug, projectRef, fsys, dockerFlagChanged)
+			}
 		} else {
 			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Docker is not running")
 		}
@@ -141,6 +143,25 @@ func Run(ctx context.Context, slug, projectRef string, useLegacyBundle, useDocke
 		return downloader(ctx, slug, projectRef, fsys)
 	}
 	return downloadAll(ctx, projectRef, fsys, downloader)
+}
+
+func downloadWithDockerUnbundle(ctx context.Context, slug string, projectRef string, fsys afero.Fs, useDockerChanged bool) error {
+	var stderr bytes.Buffer
+	err := downloadOneAndUnbundle(ctx, slug, projectRef, fsys, &stderr)
+	if err == nil {
+		if stderr.Len() > 0 {
+			fmt.Fprint(os.Stderr, stderr.String())
+		}
+		return nil
+	}
+	if !useDockerChanged && strings.Contains(strings.ToLower(stderr.String()), "invalid eszip") {
+		return downloadWithServerSideUnbundle(ctx, slug, projectRef, fsys)
+	}
+	if stderr.Len() > 0 {
+		fmt.Fprint(os.Stderr, stderr.String())
+	}
+	utils.CmdSuggestion += suggestLegacyBundle(slug)
+	return err
 }
 
 func downloadAll(ctx context.Context, projectRef string, fsys afero.Fs, downloader func(context.Context, string, string, afero.Fs) error) error {
@@ -169,7 +190,7 @@ func downloadAll(ctx context.Context, projectRef string, fsys afero.Fs, download
 	return nil
 }
 
-func downloadWithDockerUnbundle(ctx context.Context, slug string, projectRef string, fsys afero.Fs) error {
+func downloadOneAndUnbundle(ctx context.Context, slug string, projectRef string, fsys afero.Fs, stderr io.Writer) error {
 	eszipPath, err := downloadOne(ctx, slug, projectRef, fsys)
 	if err != nil {
 		return err
@@ -182,11 +203,7 @@ func downloadWithDockerUnbundle(ctx context.Context, slug string, projectRef str
 		}()
 	}
 	// Extract eszip to functions directory
-	err = extractOne(ctx, slug, eszipPath)
-	if err != nil {
-		utils.CmdSuggestion += suggestLegacyBundle(slug)
-	}
-	return err
+	return extractOne(ctx, slug, eszipPath, stderr)
 }
 
 func downloadOne(ctx context.Context, slug, projectRef string, fsys afero.Fs) (string, error) {
@@ -218,7 +235,7 @@ func downloadOne(ctx context.Context, slug, projectRef string, fsys afero.Fs) (s
 	return eszipPath, nil
 }
 
-func extractOne(ctx context.Context, slug, eszipPath string) error {
+func extractOne(ctx context.Context, slug, eszipPath string, stderr io.Writer) error {
 	hostFuncDirPath, err := filepath.Abs(utils.FunctionsDir)
 	if err != nil {
 		return errors.Errorf("failed to resolve functions path: %w", err)
@@ -251,13 +268,13 @@ func extractOne(ctx context.Context, slug, eszipPath string) error {
 		network.NetworkingConfig{},
 		"",
 		os.Stdout,
-		getErrorLogger(),
+		getErrorLogger(stderr),
 	)
 }
 
-func getErrorLogger() io.Writer {
+func getErrorLogger(stderr io.Writer) io.Writer {
 	if utils.Config.EdgeRuntime.DenoVersion > 1 {
-		return os.Stderr
+		return stderr
 	}
 	// Additional error handling for deno v1
 	r, w := io.Pipe()
@@ -265,13 +282,13 @@ func getErrorLogger() io.Writer {
 		logs := bufio.NewScanner(r)
 		for logs.Scan() {
 			line := logs.Text()
-			fmt.Fprintln(os.Stderr, line)
+			fmt.Fprintln(stderr, line)
 			if strings.EqualFold(line, "invalid eszip v2") {
 				utils.CmdSuggestion = suggestDenoV2()
 			}
 		}
 		if err := logs.Err(); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(stderr, err)
 		}
 	}()
 	return w
