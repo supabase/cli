@@ -45,6 +45,7 @@ describe("legacyCliConfigLayer", () => {
       const config = yield* LegacyCliConfig;
       expect(config.profile).toBe("supabase");
       expect(config.apiUrl).toBe("https://api.supabase.com");
+      expect(config.projectHost).toBe("supabase.co");
     }).pipe(Effect.provide(makeLayer({ cwd: tempRoot }))),
   );
 
@@ -53,6 +54,7 @@ describe("legacyCliConfigLayer", () => {
       const config = yield* LegacyCliConfig;
       expect(config.profile).toBe("supabase-staging");
       expect(config.apiUrl).toBe("https://api.supabase.green");
+      expect(config.projectHost).toBe("supabase.red");
     }).pipe(
       Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: "supabase-staging" }, cwd: tempRoot })),
     ),
@@ -63,6 +65,14 @@ describe("legacyCliConfigLayer", () => {
       const config = yield* LegacyCliConfig;
       expect(config.apiUrl).toBe("http://localhost:8080");
     }).pipe(Effect.provide(makeLayer({ profileFlag: "supabase-local", cwd: tempRoot }))),
+  );
+
+  it.effect("resolves the snap profile API URL and project host", () =>
+    Effect.gen(function* () {
+      const config = yield* LegacyCliConfig;
+      expect(config.apiUrl).toBe("https://cloudapi.snap.com");
+      expect(config.projectHost).toBe("snapcloud.dev");
+    }).pipe(Effect.provide(makeLayer({ profileFlag: "snap", cwd: tempRoot }))),
   );
 
   it.effect(
@@ -87,6 +97,16 @@ describe("legacyCliConfigLayer", () => {
       const config = yield* LegacyCliConfig;
       expect(config.profile).toBe("cli-e2e");
       expect(config.apiUrl).toBe("http://127.0.0.1:9999");
+      expect(config.projectHost).toBe("localhost");
+    }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: profilePath }, cwd: tempRoot })));
+  });
+
+  it.effect("defaults project_host to supabase.co when a YAML profile omits it", () => {
+    const profilePath = join(tempRoot, "no-host.yaml");
+    writeFileSync(profilePath, ["name: cli-e2e", 'api_url: "http://127.0.0.1:9999"'].join("\n"));
+    return Effect.gen(function* () {
+      const config = yield* LegacyCliConfig;
+      expect(config.projectHost).toBe("supabase.co");
     }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: profilePath }, cwd: tempRoot })));
   });
 

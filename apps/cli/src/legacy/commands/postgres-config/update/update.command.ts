@@ -1,5 +1,9 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyPostgresConfigUpdate } from "./update.handler.ts";
 
 const config = {
@@ -26,5 +30,11 @@ export type LegacyPostgresConfigUpdateFlags = CliCommand.Command.Config.Infer<ty
 export const legacyPostgresConfigUpdateCommand = Command.make("update", config).pipe(
   Command.withDescription("Update Postgres database config."),
   Command.withShortDescription("Update Postgres database config"),
-  Command.withHandler((flags) => legacyPostgresConfigUpdate(flags)),
+  Command.withHandler((flags) =>
+    legacyPostgresConfigUpdate(flags).pipe(
+      withLegacyCommandInstrumentation({ flags }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyManagementApiRuntimeLayer(["postgres-config", "update"])),
 );

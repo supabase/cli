@@ -1,5 +1,8 @@
 import { Argument, Command } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyProjectsDelete } from "./delete.handler.ts";
 
 const config = {
@@ -19,5 +22,11 @@ export const legacyProjectsDeleteCommand = Command.make("delete", config).pipe(
       description: "Delete a project by ref",
     },
   ]),
-  Command.withHandler((flags) => legacyProjectsDelete(flags)),
+  Command.withHandler((flags) =>
+    legacyProjectsDelete(flags).pipe(
+      withLegacyCommandInstrumentation({ flags, safeFlags: [] }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyManagementApiRuntimeLayer(["projects", "delete"])),
 );

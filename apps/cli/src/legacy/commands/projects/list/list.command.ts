@@ -1,5 +1,9 @@
 import { Command } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyProjectsList } from "./list.handler.ts";
 
 const config = {};
@@ -18,5 +22,11 @@ export const legacyProjectsListCommand = Command.make("list", config).pipe(
       description: "Machine-readable JSON output",
     },
   ]),
-  Command.withHandler((flags) => legacyProjectsList(flags)),
+  Command.withHandler((flags) =>
+    legacyProjectsList(flags).pipe(
+      withLegacyCommandInstrumentation({ flags, safeFlags: [] }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyManagementApiRuntimeLayer(["projects", "list"])),
 );
