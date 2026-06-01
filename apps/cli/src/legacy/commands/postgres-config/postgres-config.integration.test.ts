@@ -158,6 +158,37 @@ describe("legacy postgres-config get", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("lets the Go --output flag win over --output-format json", () => {
+    const out = mockOutput({ format: "json" });
+    const api = mockLegacyPlatformApi({
+      response: { status: 200, body: { max_connections: 100 } },
+    });
+    const layer = runtimeWith({ out, api, legacyOutput: "toml" });
+
+    return Effect.gen(function* () {
+      yield* legacyPostgresConfigGet({ projectRef: Option.none() });
+      expect(out.stdoutText).toBe("max_connections = 100.0\n");
+      expect(out.messages.some((message) => message.type === "success")).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("treats --output pretty as the human-readable table", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi({
+      response: { status: 200, body: { max_connections: 100 } },
+    });
+    const layer = runtimeWith({ out, api, legacyOutput: "pretty" });
+
+    return Effect.gen(function* () {
+      yield* legacyPostgresConfigGet({ projectRef: Option.none() });
+      expect(out.stderrText).toBe(
+        "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
+      );
+      expect(out.stdoutText).toContain("Parameter");
+      expect(out.stdoutText).toContain("max_connections");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("maps HTTP 503 to the get unexpected-status error", () => {
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({ response: { status: 503, body: {} } });

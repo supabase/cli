@@ -5,6 +5,12 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
+  LegacyPostgresConfigDeleteNetworkError,
+  LegacyPostgresConfigDeleteSerializeError,
+  LegacyPostgresConfigDeleteUnexpectedStatusError,
+  LegacyPostgresConfigDeleteUnmarshalError,
+} from "../postgres-config.errors.ts";
+import {
   fetchCurrentPostgresConfig,
   putPostgresConfig,
   writePostgresConfigOutput,
@@ -37,9 +43,16 @@ export const legacyPostgresConfigDelete = Effect.fn("legacy.postgres-config.dele
         currentConfig["restart_database"] = false;
       }
 
-      const updated = yield* putPostgresConfig(ref, currentConfig, "delete").pipe(
-        Effect.tapError(() => deleting?.fail() ?? Effect.void),
-      );
+      const updated = yield* putPostgresConfig(ref, currentConfig, {
+        serializeError: (args) => new LegacyPostgresConfigDeleteSerializeError(args),
+        networkError: (args) => new LegacyPostgresConfigDeleteNetworkError(args),
+        statusError: (args) => new LegacyPostgresConfigDeleteUnexpectedStatusError(args),
+        unmarshalError: (args) => new LegacyPostgresConfigDeleteUnmarshalError(args),
+        networkMessage: (description) => `failed to delete config overrides: ${description}`,
+        statusMessage: (status, body) =>
+          `unexpected delete config overrides status ${status}: ${body}`,
+        unmarshalMessage: (description) => `failed to unmarshal delete response: ${description}`,
+      }).pipe(Effect.tapError(() => deleting?.fail() ?? Effect.void));
 
       yield* deleting?.clear() ?? Effect.void;
       yield* writePostgresConfigOutput(updated);

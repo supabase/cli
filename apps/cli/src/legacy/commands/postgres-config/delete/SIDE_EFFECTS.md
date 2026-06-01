@@ -92,6 +92,7 @@ One `result` event on success.
 
 ## Notes
 
+- The Go `--output` flag wins over the TS `--output-format` flag when both are provided.
 - Flags: `--config` (repeatable, config keys to delete), `--no-restart`.
 - Requires `--project-ref` or a linked project (`.supabase/config.json`).
 - Each config key is trimmed with `strings.TrimSpace` before deletion, matching Go.

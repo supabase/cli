@@ -16,22 +16,12 @@ import {
 import { sanitizeLegacyErrorBody } from "../../shared/legacy-http-errors.ts";
 import { resolveLegacyAccessToken } from "../../shared/legacy-resolve-token.ts";
 import {
-  LegacyPostgresConfigDeleteSerializeError,
-  LegacyPostgresConfigDeleteNetworkError,
-  LegacyPostgresConfigDeleteUnexpectedStatusError,
-  LegacyPostgresConfigDeleteUnmarshalError,
   LegacyPostgresConfigGetNetworkError,
   LegacyPostgresConfigGetUnexpectedStatusError,
   LegacyPostgresConfigGetUnmarshalError,
-  LegacyPostgresConfigUpdateSerializeError,
-  LegacyPostgresConfigUpdateNetworkError,
-  LegacyPostgresConfigUpdateUnexpectedStatusError,
-  LegacyPostgresConfigUpdateUnmarshalError,
 } from "./postgres-config.errors.ts";
 
 export type LegacyPostgresConfigMap = Record<string, unknown>;
-
-type LegacyPostgresOutput = "env" | "pretty" | "json" | "toml" | "yaml";
 
 function sortConfigEntries(config: LegacyPostgresConfigMap): Array<[string, unknown]> {
   return Object.entries(config).sort(([a], [b]) => a.localeCompare(b));
@@ -55,12 +45,19 @@ function encodeTomlScalar(value: unknown): string {
   if (typeof value === "string") return JSON.stringify(value);
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "number") {
+    // Go decodes the API response with `json.Unmarshal` into `map[string]any`,
+    // so every JSON number becomes a `float64`. Go's TOML marshaller then prints
+    // integral floats with a `.0` suffix (e.g. `max_connections = 100.0`). The
+    // shared `encodeToml` (smol-toml) would emit `100` instead, so this command
+    // cannot use it without breaking byte-for-byte parity with the Go CLI.
     return Number.isInteger(value) ? `${value}.0` : String(value);
   }
   if (value === null) return JSON.stringify("<nil>");
   return JSON.stringify(JSON.stringify(value));
 }
 
+// Hand-rolled to reproduce Go's `float64` TOML rendering (see `encodeTomlScalar`).
+// Intentionally does not delegate to the shared `encodeToml`/smol-toml encoder.
 function encodePostgresConfigToml(config: LegacyPostgresConfigMap): string {
   const lines = sortConfigEntries(config).map(
     ([key, value]) => `${key} = ${encodeTomlScalar(value)}`,
@@ -84,11 +81,11 @@ export function normalizeTimeoutConfig(config: LegacyPostgresConfigMap): void {
   }
 }
 
-function mapTransportMessage(
+function mapTransportMessage<E>(
   cause: unknown,
   message: (description: string) => string,
-  wrap: (args: { readonly message: string }) => unknown,
-) {
+  wrap: (args: { readonly message: string }) => E,
+): E {
   if (HttpClientError.isHttpClientError(cause)) {
     const description = cause.reason.description ?? cause.reason._tag;
     return wrap({ message: message(description) });
@@ -107,11 +104,11 @@ function requestWithAuth(
   );
 }
 
-function parseJsonObject(
+function parseJsonObject<E>(
   rawBody: string,
   errorMessage: (description: string) => string,
-  wrap: (args: { readonly message: string }) => unknown,
-): Effect.Effect<LegacyPostgresConfigMap, unknown> {
+  wrap: (args: { readonly message: string }) => E,
+): Effect.Effect<LegacyPostgresConfigMap, E> {
   return Effect.try({
     try: () => {
       const parsed = JSON.parse(rawBody) as unknown;
@@ -167,93 +164,89 @@ export const fetchCurrentPostgresConfig = Effect.fn("legacy.postgres-config.fetc
   },
 );
 
-export const putPostgresConfig = Effect.fn("legacy.postgres-config.put")(function* (
+/**
+ * Per-operation error wiring for {@link putPostgresConfig}. Both `update` and
+ * `delete` issue the same PUT, but tag failures with their own error types and
+ * Go-parity message verbs. Passing the constructors and message templates as
+ * arguments (mirroring `mapLegacyHttpError`) keeps each call site's error
+ * channel precise instead of widening it to the union of both operations.
+ */
+export interface PutPostgresConfigErrors<SerErr, NetErr, StatErr, UnmErr> {
+  readonly serializeError: (args: { readonly message: string }) => SerErr;
+  readonly networkError: (args: { readonly message: string }) => NetErr;
+  readonly statusError: (args: {
+    readonly status: number;
+    readonly body: string;
+    readonly message: string;
+  }) => StatErr;
+  readonly unmarshalError: (args: { readonly message: string }) => UnmErr;
+  readonly networkMessage: (description: string) => string;
+  readonly statusMessage: (status: number, body: string) => string;
+  readonly unmarshalMessage: (description: string) => string;
+}
+
+export const putPostgresConfig = <SerErr, NetErr, StatErr, UnmErr>(
   ref: string,
   config: LegacyPostgresConfigMap,
-  mode: "update" | "delete",
-) {
-  const httpClient = yield* HttpClient.HttpClient;
-  const cliConfig = yield* LegacyCliConfig;
-  const tokenOpt = yield* resolveLegacyAccessToken;
+  errors: PutPostgresConfigErrors<SerErr, NetErr, StatErr, UnmErr>,
+) =>
+  Effect.gen(function* () {
+    const httpClient = yield* HttpClient.HttpClient;
+    const cliConfig = yield* LegacyCliConfig;
+    const tokenOpt = yield* resolveLegacyAccessToken;
 
-  // Use raw HTTP instead of the generated input schema: Go accepts arbitrary
-  // config keys from repeated `--config key=value`, while the typed client
-  // only models the currently known OpenAPI fields.
-  const encodedBody = yield* Effect.try({
-    try: () => encodeGoStructJsonBody(config),
-    catch: (cause) =>
-      mode === "update"
-        ? new LegacyPostgresConfigUpdateSerializeError({
-            message: `failed to serialize config overrides: ${String(cause)}`,
-          })
-        : new LegacyPostgresConfigDeleteSerializeError({
-            message: `failed to serialize config overrides: ${String(cause)}`,
-          }),
-  });
+    // Use raw HTTP instead of the generated input schema: Go accepts arbitrary
+    // config keys from repeated `--config key=value`, while the typed client
+    // only models the currently known OpenAPI fields.
+    const encodedBody = yield* Effect.try({
+      try: () => encodeGoStructJsonBody(config),
+      catch: (cause) =>
+        errors.serializeError({
+          message: `failed to serialize config overrides: ${String(cause)}`,
+        }),
+    });
 
-  const request = requestWithAuth(
-    HttpClientRequest.put(`${cliConfig.apiUrl}/v1/projects/${ref}/config/database/postgres`).pipe(
-      HttpClientRequest.bodyText(encodedBody, "application/json"),
-    ),
-    tokenOpt,
-    cliConfig.userAgent,
-  );
-
-  const response = yield* httpClient.execute(request).pipe(
-    Effect.mapError((cause) =>
-      mode === "update"
-        ? mapTransportMessage(
-            cause,
-            (description) => `failed to update config overrides: ${description}`,
-            (args) => new LegacyPostgresConfigUpdateNetworkError(args),
-          )
-        : mapTransportMessage(
-            cause,
-            (description) => `failed to delete config overrides: ${description}`,
-            (args) => new LegacyPostgresConfigDeleteNetworkError(args),
-          ),
-    ),
-  );
-
-  if (response.status !== 200) {
-    const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-    const body = sanitizeLegacyErrorBody(rawBody);
-    return yield* Effect.fail(
-      mode === "update"
-        ? new LegacyPostgresConfigUpdateUnexpectedStatusError({
-            status: response.status,
-            body,
-            message: `unexpected update config overrides status ${response.status}: ${body}`,
-          })
-        : new LegacyPostgresConfigDeleteUnexpectedStatusError({
-            status: response.status,
-            body,
-            message: `unexpected delete config overrides status ${response.status}: ${body}`,
-          }),
+    const request = requestWithAuth(
+      HttpClientRequest.put(`${cliConfig.apiUrl}/v1/projects/${ref}/config/database/postgres`).pipe(
+        HttpClientRequest.bodyText(encodedBody, "application/json"),
+      ),
+      tokenOpt,
+      cliConfig.userAgent,
     );
-  }
 
-  const rawBody = yield* response.text;
-  return yield* parseJsonObject(
-    rawBody,
-    (description) =>
-      mode === "update"
-        ? `failed to unmarshal update response: ${description}`
-        : `failed to unmarshal delete response: ${description}`,
-    mode === "update"
-      ? (args) => new LegacyPostgresConfigUpdateUnmarshalError(args)
-      : (args) => new LegacyPostgresConfigDeleteUnmarshalError(args),
-  );
-});
+    const response = yield* httpClient
+      .execute(request)
+      .pipe(
+        Effect.mapError((cause) =>
+          mapTransportMessage(cause, errors.networkMessage, errors.networkError),
+        ),
+      );
+
+    if (response.status !== 200) {
+      const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+      const body = sanitizeLegacyErrorBody(rawBody);
+      return yield* Effect.fail(
+        errors.statusError({
+          status: response.status,
+          body,
+          message: errors.statusMessage(response.status, body),
+        }),
+      );
+    }
+
+    const rawBody = yield* response.text;
+    return yield* parseJsonObject(rawBody, errors.unmarshalMessage, errors.unmarshalError);
+  }).pipe(Effect.withSpan("legacy.postgres-config.put"));
 
 export const writePostgresConfigOutput = Effect.fn("legacy.postgres-config.write-output")(
   function* (config: LegacyPostgresConfigMap) {
     const output = yield* Output;
     const legacyOutputFlag = yield* LegacyOutputFlag;
-    const legacyOutput = Option.getOrUndefined(legacyOutputFlag) as
-      | LegacyPostgresOutput
-      | undefined;
+    const legacyOutput = Option.getOrUndefined(legacyOutputFlag);
 
+    // Go's `--output` flag takes priority over the TS `--output-format` flag.
+    // `pretty` (and an unset flag) fall through to the human-readable table /
+    // structured-success path below.
     if (legacyOutput === "json") {
       yield* output.raw(encodeGoJson(config));
       return;

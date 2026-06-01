@@ -93,6 +93,7 @@ One `result` event on success.
 
 ## Notes
 
+- The Go `--output` flag wins over the TS `--output-format` flag when both are provided.
 - Flags: `--config` (repeatable, parsed with the same `strings.Split(value, "=")` rule as Go), `--replace-existing-overrides`, `--no-restart`.
 - Requires `--project-ref` or a linked project (`.supabase/config.json`).
 - Integer-like values are coerced to integers, boolean-like values are coerced to booleans, and everything else stays stringly typed before the final JSON body is serialized.

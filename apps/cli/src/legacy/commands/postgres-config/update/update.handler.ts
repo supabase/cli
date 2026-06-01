@@ -4,7 +4,13 @@ import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.ser
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { LegacyPostgresConfigInvalidConfigValueError } from "../postgres-config.errors.ts";
+import {
+  LegacyPostgresConfigInvalidConfigValueError,
+  LegacyPostgresConfigUpdateNetworkError,
+  LegacyPostgresConfigUpdateSerializeError,
+  LegacyPostgresConfigUpdateUnexpectedStatusError,
+  LegacyPostgresConfigUpdateUnmarshalError,
+} from "../postgres-config.errors.ts";
 import {
   fetchCurrentPostgresConfig,
   normalizeTimeoutConfig,
@@ -54,9 +60,16 @@ export const legacyPostgresConfigUpdate = Effect.fn("legacy.postgres-config.upda
 
       normalizeTimeoutConfig(finalOverrides);
 
-      const updated = yield* putPostgresConfig(ref, finalOverrides, "update").pipe(
-        Effect.tapError(() => updating?.fail() ?? Effect.void),
-      );
+      const updated = yield* putPostgresConfig(ref, finalOverrides, {
+        serializeError: (args) => new LegacyPostgresConfigUpdateSerializeError(args),
+        networkError: (args) => new LegacyPostgresConfigUpdateNetworkError(args),
+        statusError: (args) => new LegacyPostgresConfigUpdateUnexpectedStatusError(args),
+        unmarshalError: (args) => new LegacyPostgresConfigUpdateUnmarshalError(args),
+        networkMessage: (description) => `failed to update config overrides: ${description}`,
+        statusMessage: (status, body) =>
+          `unexpected update config overrides status ${status}: ${body}`,
+        unmarshalMessage: (description) => `failed to unmarshal update response: ${description}`,
+      }).pipe(Effect.tapError(() => updating?.fail() ?? Effect.void));
 
       yield* updating?.clear() ?? Effect.void;
       yield* writePostgresConfigOutput(updated);
