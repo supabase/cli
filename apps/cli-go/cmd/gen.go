@@ -96,7 +96,8 @@ var (
 					return err
 				}
 			}
-			return types.Run(ctx, flags.ProjectRef, flags.DbConfig, lang.Value, schema, postgrestV9Compat, swiftAccessControl.Value, queryTimeout, afero.NewOsFs())
+			useDirectDBURL := cmd.Flags().Changed("db-url")
+			return types.Run(ctx, flags.ProjectRef, flags.DbConfig, lang.Value, schema, postgrestV9Compat, swiftAccessControl.Value, queryTimeout, afero.NewOsFs(), useDirectDBURL)
 		},
 		Example: `  supabase gen types --local
   supabase gen types --linked --lang=go
