@@ -1,4 +1,4 @@
-import { chmodSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
 import { testBehaviour, testParity } from "./test-context.ts";
@@ -58,9 +58,12 @@ describe("telemetry", () => {
     });
 
     testBehaviour("handles corrupted config gracefully", async ({ run, workspace }) => {
-      writeFileSync(join(workspace.path, "telemetry.json"), "{{not valid json}}");
+      const telemetryPath = join(workspace.path, "telemetry.json");
+      writeFileSync(telemetryPath, "{{not valid json}}");
       const result = await run(["telemetry", "status"]);
-      expect(result.exitCode).not.toBe(0);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toMatch(/Telemetry is (enabled|disabled)\./);
+      expect(() => JSON.parse(readFileSync(telemetryPath, "utf8"))).not.toThrow();
     });
 
     testParity(["telemetry", "status"]);
