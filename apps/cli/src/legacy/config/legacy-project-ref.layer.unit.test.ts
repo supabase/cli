@@ -21,6 +21,7 @@ function mockCliConfig(opts: { workdir: string; projectId?: string }) {
   return Layer.succeed(LegacyCliConfig, {
     profile: "supabase",
     apiUrl: "https://api.supabase.com",
+    projectHost: "supabase.co",
     accessToken: Option.none(),
     projectId: opts.projectId === undefined ? Option.none() : Option.some(opts.projectId),
     workdir: opts.workdir,
