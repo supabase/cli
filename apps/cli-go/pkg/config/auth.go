@@ -163,8 +163,8 @@ type (
 		PasswordRequirements       PasswordRequirements `toml:"password_requirements" json:"password_requirements"`
 		SigningKeysPath            string               `toml:"signing_keys_path" json:"signing_keys_path"`
 		SigningKeys                []JWK                `toml:"-" json:"-"`
-		Passkey                    *passkey             `toml:"passkey" json:"passkey"`
-		Webauthn                   *webauthn            `toml:"webauthn" json:"webauthn"`
+		Passkey                    *Passkey             `toml:"passkey" json:"passkey"`
+		Webauthn                   *Webauthn            `toml:"webauthn" json:"webauthn"`
 
 		RateLimit   rateLimit   `toml:"rate_limit" json:"rate_limit"`
 		Captcha     *captcha    `toml:"captcha" json:"captcha"`
@@ -381,11 +381,11 @@ type (
 		Ethereum ethereum `toml:"ethereum" json:"ethereum"`
 	}
 
-	passkey struct {
+	Passkey struct {
 		Enabled bool `toml:"enabled" json:"enabled"`
 	}
 
-	webauthn struct {
+	Webauthn struct {
 		RpDisplayName string   `toml:"rp_display_name" json:"rp_display_name"`
 		RpId          string   `toml:"rp_id" json:"rp_id"`
 		RpOrigins     []string `toml:"rp_origins" json:"rp_origins"`
@@ -517,11 +517,11 @@ func (c *captcha) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	c.Enabled = ValOrDefault(remoteConfig.SecurityCaptchaEnabled, false)
 }
 
-func (p passkey) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+func (p Passkey) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.PasskeyEnabled = cast.Ptr(p.Enabled)
 }
 
-func (p *passkey) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+func (p *Passkey) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	// When local config is not set, we assume platform defaults should not change
 	if p == nil {
 		return
@@ -529,13 +529,13 @@ func (p *passkey) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	p.Enabled = remoteConfig.PasskeyEnabled
 }
 
-func (w webauthn) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
+func (w Webauthn) toAuthConfigBody(body *v1API.UpdateAuthConfigBody) {
 	body.WebauthnRpDisplayName = nullable.NewNullableWithValue(w.RpDisplayName)
 	body.WebauthnRpId = nullable.NewNullableWithValue(w.RpId)
 	body.WebauthnRpOrigins = nullable.NewNullableWithValue(strings.Join(w.RpOrigins, ","))
 }
 
-func (w *webauthn) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
+func (w *Webauthn) fromAuthConfig(remoteConfig v1API.AuthConfigResponse) {
 	// When local config is not set, we assume platform defaults should not change
 	if w == nil {
 		return
