@@ -1,48 +1,24 @@
-import { Context, Effect, Layer, Option } from "effect";
-import { CliOutput, Command, Flag, type HelpDoc } from "effect/unstable/cli";
+import { Effect, Layer } from "effect";
+import { CliOutput, Command, type HelpDoc } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
 import { legacyBranchesCommand } from "../../legacy/commands/branches/branches.command.ts";
 import { legacyDbCommand } from "../../legacy/commands/db/db.command.ts";
+import { legacyFunctionsCommand } from "../../legacy/commands/functions/functions.command.ts";
+import { legacyFunctionsDeployCommand } from "../../legacy/commands/functions/deploy/deploy.command.ts";
+import { legacyFunctionsDownloadCommand } from "../../legacy/commands/functions/download/download.command.ts";
+import { legacyFunctionsServeCommand } from "../../legacy/commands/functions/serve/serve.command.ts";
+import { legacyInitCommand } from "../../legacy/commands/init/init.command.ts";
+import { legacyProjectsCommand } from "../../legacy/commands/projects/projects.command.ts";
+import { legacyProjectsCreateCommand } from "../../legacy/commands/projects/create/create.command.ts";
+import { legacyStartCommand } from "../../legacy/commands/start/start.command.ts";
+import { legacyStopCommand } from "../../legacy/commands/stop/stop.command.ts";
 import { LegacyGoProxy } from "../legacy/go-proxy.service.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
-import {
-  LegacyHiddenFlags,
-  stripHiddenFlagsFromHelpDoc,
-  withHidden,
-  withHiddenFromConfig,
-} from "./hidden-flag.ts";
 
-const flagDoc = (name: string): HelpDoc.FlagDoc => ({
-  name,
-  aliases: [`--${name}`],
-  type: "boolean",
-  description: Option.none(),
-  required: false,
-});
-
-const helpDoc = (overrides: Partial<HelpDoc.HelpDoc>): HelpDoc.HelpDoc => ({
-  description: "",
-  usage: "",
-  flags: [],
-  annotations: Context.empty(),
-  ...overrides,
-});
-
-const helpDocWithHidden = (
-  hidden: ReadonlyArray<string>,
-  overrides: Partial<HelpDoc.HelpDoc>,
-): HelpDoc.HelpDoc =>
-  helpDoc({
-    ...overrides,
-    annotations: Context.make(LegacyHiddenFlags, new Set(hidden)),
-  });
-
-// Reach into the internal command shape to obtain the help doc the formatter
-// would render. Effect builds this from `Command.annotations`, which is the
-// contract `withHiddenFromConfig` relies on.
 interface CommandImpl {
   readonly buildHelpDoc: (path: ReadonlyArray<string>) => HelpDoc.HelpDoc;
 }
+
 const buildHelpDoc = <Name extends string, Input, ContextInput, E, R>(
   cmd: Command.Command<Name, Input, ContextInput, E, R>,
 ): HelpDoc.HelpDoc => (cmd as unknown as CommandImpl).buildHelpDoc([]);
@@ -60,99 +36,143 @@ function mockLegacyGoProxy() {
 }
 
 const legacyTestRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([legacyBranchesCommand, legacyDbCommand]),
+  Command.withSubcommands([
+    legacyStartCommand,
+    legacyStopCommand,
+    legacyInitCommand,
+    legacyFunctionsCommand,
+    legacyProjectsCommand,
+    legacyBranchesCommand,
+    legacyDbCommand,
+  ]),
 );
 
-describe("withHidden", () => {
-  it("returns the same flag instance", () => {
-    const flag = Flag.boolean("legacy-bundle");
-    expect(withHidden(flag)).toBe(flag);
-  });
+const silentCliOutputFormatter: CliOutput.Formatter = {
+  formatCliError: () => "",
+  formatError: () => "",
+  formatErrors: () => "",
+  formatHelpDoc: () => "",
+  formatVersion: () => "",
+};
 
-  it("does not register flag names globally — only commands wired via withHiddenFromConfig hide them", () => {
-    withHidden(Flag.boolean("stray"));
+describe("native hidden flags", () => {
+  it("omits hidden flags from help docs for every legacy command that still carries one", () => {
+    expect(buildHelpDoc(legacyStartCommand).flags.map((flag) => flag.name)).toEqual([
+      "exclude",
+      "ignore-health-check",
+    ]);
 
-    const stripped = stripHiddenFlagsFromHelpDoc(helpDoc({ flags: [flagDoc("stray")] }));
-    expect(stripped.flags.map((f) => f.name)).toEqual(["stray"]);
-  });
-});
+    expect(buildHelpDoc(legacyStopCommand).flags.map((flag) => flag.name)).toEqual([
+      "project-id",
+      "no-backup",
+      "all",
+    ]);
 
-describe("withHiddenFromConfig", () => {
-  it("strips wrapped flags from the command's help doc", () => {
-    const config = {
-      plan: withHidden(Flag.string("plan").pipe(Flag.optional)),
-      visible: Flag.boolean("visible"),
-    } as const;
-
-    const cmd = Command.make("demo", config).pipe(withHiddenFromConfig(config));
-    const doc = stripHiddenFlagsFromHelpDoc(buildHelpDoc(cmd));
-
-    expect(doc.flags.map((f) => f.name)).toEqual(["visible"]);
-  });
-
-  it("scopes hidden-ness to the wrapping command — same flag name in another command stays visible", () => {
-    const hiddenConfig = {
-      interactive: withHidden(Flag.boolean("interactive")),
-    } as const;
-    const visibleConfig = {
-      interactive: Flag.boolean("interactive"),
-    } as const;
-
-    const hiddenCmd = Command.make("create", hiddenConfig).pipe(withHiddenFromConfig(hiddenConfig));
-    const visibleCmd = Command.make("init", visibleConfig).pipe(
-      withHiddenFromConfig(visibleConfig),
-    );
-
-    expect(stripHiddenFlagsFromHelpDoc(buildHelpDoc(hiddenCmd)).flags.map((f) => f.name)).toEqual(
-      [],
-    );
-    expect(stripHiddenFlagsFromHelpDoc(buildHelpDoc(visibleCmd)).flags.map((f) => f.name)).toEqual([
+    expect(buildHelpDoc(legacyInitCommand).flags.map((flag) => flag.name)).toEqual([
       "interactive",
+      "use-orioledb",
+      "force",
+    ]);
+
+    expect(buildHelpDoc(legacyFunctionsDownloadCommand).flags.map((flag) => flag.name)).toEqual([
+      "project-ref",
+      "use-api",
+    ]);
+
+    expect(buildHelpDoc(legacyFunctionsDeployCommand).flags.map((flag) => flag.name)).toEqual([
+      "project-ref",
+      "no-verify-jwt",
+      "use-api",
+      "import-map",
+      "prune",
+      "jobs",
+    ]);
+
+    expect(buildHelpDoc(legacyFunctionsServeCommand).flags.map((flag) => flag.name)).toEqual([
+      "no-verify-jwt",
+      "env-file",
+      "import-map",
+      "inspect",
+      "inspect-mode",
+      "inspect-main",
+    ]);
+
+    expect(buildHelpDoc(legacyProjectsCreateCommand).flags.map((flag) => flag.name)).toEqual([
+      "org-id",
+      "db-password",
+      "region",
+      "size",
     ]);
   });
 
-  it("is a no-op when the config contains no hidden flags", () => {
-    const config = { visible: Flag.boolean("visible") } as const;
-    const cmd = Command.make("demo", config);
-    const piped = cmd.pipe(withHiddenFromConfig(config));
+  it("still parses and forwards every hidden flag by exact name", async () => {
+    const proxy = mockLegacyGoProxy();
 
-    expect(piped).toBe(cmd);
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["start", "--preview"]);
+        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+          "stop",
+          "--backup=false",
+        ]);
+        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+          "init",
+          "--with-vscode-workspace",
+          "--with-vscode-settings",
+          "--with-intellij-settings",
+        ]);
+        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+          "functions",
+          "download",
+          "hello",
+          "--use-docker",
+          "--legacy-bundle",
+        ]);
+        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+          "functions",
+          "deploy",
+          "hello",
+          "--use-docker",
+          "--legacy-bundle",
+        ]);
+        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+          "functions",
+          "serve",
+          "--all=false",
+        ]);
+      }).pipe(
+        Effect.provide(Layer.mergeAll(proxy.layer, CliOutput.layer(textCliOutputFormatter()))),
+      ) as Effect.Effect<void>,
+    );
+
+    expect(proxy.calls).toEqual([
+      ["start", "--preview"],
+      ["stop", "--backup=false"],
+      ["init", "--with-vscode-workspace", "--with-vscode-settings", "--with-intellij-settings"],
+      ["functions", "download", "hello", "--use-docker", "--legacy-bundle"],
+      ["functions", "deploy", "hello", "--use-docker", "--legacy-bundle"],
+      ["functions", "serve", "--all=false"],
+    ]);
   });
 
-  it("collects names through Flag combinators like optional", () => {
-    const config = {
-      plan: withHidden(Flag.string("plan").pipe(Flag.optional)),
-    } as const;
-    const cmd = Command.make("demo", config).pipe(withHiddenFromConfig(config));
-    const annotated = Context.get(buildHelpDoc(cmd).annotations, LegacyHiddenFlags);
+  it("does not leak hidden flag names through unknown-flag suggestions", async () => {
+    const proxy = mockLegacyGoProxy();
 
-    expect([...annotated]).toEqual(["plan"]);
-  });
-});
+    const exit = await Effect.runPromise(
+      Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+        "projects",
+        "create",
+        "demo",
+        "--pla",
+      ]).pipe(
+        Effect.provide(Layer.mergeAll(proxy.layer, CliOutput.layer(silentCliOutputFormatter))),
+        Effect.exit,
+      ) as Effect.Effect<unknown, never, never>,
+    );
 
-describe("stripHiddenFlagsFromHelpDoc", () => {
-  it("returns the doc unchanged when annotations are empty", () => {
-    const doc = helpDoc({ flags: [flagDoc("foo")] });
-    expect(stripHiddenFlagsFromHelpDoc(doc)).toBe(doc);
-  });
-
-  it("filters both flags and globalFlags by the doc's annotation", () => {
-    const doc = helpDocWithHidden(["preview", "plan"], {
-      flags: [flagDoc("plan"), flagDoc("visible")],
-      globalFlags: [flagDoc("preview"), flagDoc("verbose")],
-    });
-
-    const stripped = stripHiddenFlagsFromHelpDoc(doc);
-    expect(stripped.flags.map((f) => f.name)).toEqual(["visible"]);
-    expect(stripped.globalFlags?.map((f) => f.name)).toEqual(["verbose"]);
-  });
-
-  it("leaves docs without globalFlags untouched in that field", () => {
-    const doc = helpDocWithHidden(["foo"], { flags: [flagDoc("foo"), flagDoc("bar")] });
-    const stripped = stripHiddenFlagsFromHelpDoc(doc);
-
-    expect(stripped.globalFlags).toBeUndefined();
-    expect(stripped.flags.map((f) => f.name)).toEqual(["bar"]);
+    expect((exit as { _tag: string })._tag).toBe("Failure");
+    expect(JSON.stringify(exit)).toContain('"suggestions":[]');
+    expect(JSON.stringify(exit)).not.toContain("--plan");
   });
 });
 
@@ -185,11 +205,8 @@ describe("legacy hidden subcommands", () => {
   });
 
   it("still executes hidden subcommands by exact name", async () => {
-    // `branches disable` was a hidden proxy before the native port (CLI-1289).
-    // It is now a native handler — `branches/disable/disable.integration.test.ts`
-    // covers its execution path. The other three remain Go proxies, so this
-    // test continues to verify the hidden-by-name dispatch via `LegacyGoProxy`.
     const proxy = mockLegacyGoProxy();
+
     await Effect.runPromise(
       Effect.gen(function* () {
         yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["db", "test"]);
