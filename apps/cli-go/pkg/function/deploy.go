@@ -34,7 +34,7 @@ func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.Funct
 			Name:           &slug,
 			EntrypointPath: toRelPath(fc.Entrypoint),
 			ImportMapPath:  cast.Ptr(toRelPath(fc.ImportMap)),
-			VerifyJwt:      &fc.VerifyJWT,
+			VerifyJwt:      fc.VerifyJWT,
 		}
 		files := make([]string, len(fc.StaticFiles))
 		for i, sf := range fc.StaticFiles {

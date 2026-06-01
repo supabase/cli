@@ -67,13 +67,13 @@ OUTER:
 		} else if err != nil {
 			return err
 		}
-		meta.VerifyJwt = &function.VerifyJWT
+		meta.VerifyJwt = function.VerifyJWT
 		bodyHash := sha256.Sum256(body.Bytes())
 		meta.SHA256 = hex.EncodeToString(bodyHash[:])
 		// Skip if function has not changed
 		if i, exists := slugToIndex[slug]; exists && i >= 0 &&
 			result[i].EzbrSha256 != nil && *result[i].EzbrSha256 == meta.SHA256 &&
-			result[i].VerifyJwt != nil && *result[i].VerifyJwt == function.VerifyJWT {
+			result[i].VerifyJwt != nil && function.VerifyJWT != nil && *result[i].VerifyJwt == *function.VerifyJWT {
 			fmt.Fprintln(os.Stderr, "No change found in Function:", slug)
 			continue
 		}
