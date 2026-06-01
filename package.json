@@ -12,7 +12,7 @@
     "local-registry": "bun tools/release/local-registry.ts",
     "cli-release": "bun tools/release/local-release.ts"
   },
-  "packageManager": "pnpm@10.33.0",
+  "packageManager": "pnpm@11.4.0",
   "devDependencies": {
     "@swc-node/register": "catalog:",
     "@swc/core": "catalog:",
