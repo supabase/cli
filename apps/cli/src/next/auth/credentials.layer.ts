@@ -1,5 +1,6 @@
 import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 
+import { normalizeKeyringToken } from "../../shared/auth/keyring-token.ts";
 import { CliConfig } from "../config/cli-config.service.ts";
 import { Credentials } from "./credentials.service.ts";
 
@@ -32,7 +33,7 @@ const makeCredentials = Effect.gen(function* () {
         try {
           const entry = new keyringModule.value.Entry(SERVICE, ACCOUNT);
           const token = entry.getPassword();
-          if (token) return Option.some(Redacted.make(token));
+          if (token) return Option.some(Redacted.make(normalizeKeyringToken(token)));
         } catch {
           /* fall through */
         }
@@ -40,7 +41,7 @@ const makeCredentials = Effect.gen(function* () {
         try {
           const entry = new keyringModule.value.Entry(SERVICE, LEGACY_ACCOUNT);
           const token = entry.getPassword();
-          if (token) return Option.some(Redacted.make(token));
+          if (token) return Option.some(Redacted.make(normalizeKeyringToken(token)));
         } catch {
           /* fall through */
         }

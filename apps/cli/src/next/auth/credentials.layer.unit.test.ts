@@ -20,6 +20,8 @@ let throwOnSetPassword = false;
 const throwOnGetPasswordAccounts = new Set<string>();
 const returnNullForAccounts = new Set<string>();
 const throwOnDeletePasswordAccounts = new Set<string>();
+const encodeGoKeyringBase64 = (token: string) =>
+  `go-keyring-base64:${Buffer.from(token).toString("base64")}`;
 
 vi.mock("@napi-rs/keyring", () => ({
   Entry: class Entry {
@@ -101,6 +103,15 @@ describe("Credentials", () => {
   describe("getAccessToken", () => {
     it.effect("reads from current account", () => {
       passwords.set("Supabase CLI/access-token", "current-token");
+      return Effect.gen(function* () {
+        const { getAccessToken } = yield* Credentials;
+        const token = yield* getAccessToken;
+        expectSomeToken(token, "current-token");
+      }).pipe(Effect.provide(makeLayer(tempHome)));
+    });
+
+    it.effect("decodes Go keyring base64 values from current account", () => {
+      passwords.set("Supabase CLI/access-token", encodeGoKeyringBase64("current-token"));
       return Effect.gen(function* () {
         const { getAccessToken } = yield* Credentials;
         const token = yield* getAccessToken;
