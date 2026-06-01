@@ -7,7 +7,10 @@ import { makeAuthServiceNative, makeAuthServiceDocker } from "./auth.ts";
 import { makeEdgeRuntimeServiceDocker, makeEdgeRuntimeServiceNative } from "./edge-runtime.ts";
 import { makeImgproxyServiceDocker } from "./imgproxy.ts";
 import { makeMailpitServiceDocker } from "./mailpit.ts";
-import { makePostgresInitService } from "./postgres-init.ts";
+import {
+  makePostgresInitService,
+  REVOKE_DEFAULT_DATA_API_PRIVILEGES_SQL,
+} from "./postgres-init.ts";
 import { makePostgresService, makePostgresServiceDocker } from "./postgres.ts";
 import { makePostgrestService } from "./postgrest.ts";
 import { makePoolerServiceDocker, poolerContainerPorts } from "./pooler.ts";
@@ -370,6 +373,7 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: POSTGRES_BIN_PATH,
       dbPort: DB_PORT,
+      autoExposeNewTables: true,
     });
 
     expect(def.name).toBe("postgres-init");
@@ -387,6 +391,7 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: POSTGRES_BIN_PATH,
       dbPort: DB_PORT,
+      autoExposeNewTables: true,
     });
     const script = def.args?.[1] as string;
     expect(script).not.toContain("set -e");
@@ -396,6 +401,7 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: "/cache/postgres/17/darwin-arm64",
       dbPort: DB_PORT,
+      autoExposeNewTables: true,
     });
     const script = def.args?.[1] as string;
     expect(script).toContain("authenticator");
@@ -406,6 +412,7 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: "/cache/postgres/17/darwin-arm64",
       dbPort: DB_PORT,
+      autoExposeNewTables: true,
     });
     const script = def.args?.[1] as string;
 
@@ -420,12 +427,41 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: "/cache/postgres/17/darwin-arm64",
       dbPort: DB_PORT,
+      autoExposeNewTables: true,
     });
     const script = def.args?.[1] as string;
     expect(script).not.toMatch(/sh .+migrate\.sh/);
     expect(script).toContain("-f $sql");
     expect(script).toContain("init-scripts/*.sql");
     expect(script).toContain("migrations/*.sql");
+  });
+
+  it("does not revoke default Data API privileges when autoExposeNewTables is true", () => {
+    const def = makePostgresInitService({
+      postgresDir: POSTGRES_BIN_PATH,
+      dbPort: DB_PORT,
+      autoExposeNewTables: true,
+    });
+    const script = def.args?.[1] as string;
+    expect(script).not.toContain("alter default privileges");
+    expect(script).not.toContain("revoke select, insert, update, delete on tables");
+  });
+
+  it("revokes default Data API privileges on `public` when autoExposeNewTables is false", () => {
+    const def = makePostgresInitService({
+      postgresDir: POSTGRES_BIN_PATH,
+      dbPort: DB_PORT,
+      autoExposeNewTables: false,
+    });
+    const script = def.args?.[1] as string;
+    expect(script).toContain(REVOKE_DEFAULT_DATA_API_PRIVILEGES_SQL);
+    expect(script).toContain(
+      "revoke select, insert, update, delete on tables from anon, authenticated, service_role",
+    );
+    expect(script).toContain(
+      "revoke usage, select on sequences from anon, authenticated, service_role",
+    );
+    expect(script).toContain("revoke execute on functions from anon, authenticated, service_role");
   });
 });
 

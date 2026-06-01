@@ -3,8 +3,11 @@ import { Effect, Context } from "effect";
 export type AnalyticsContext = {
   readonly command_run_id?: string;
   readonly command?: string;
+  // next/ shell shape — separate `flags_used` (names) and `flag_values` (allowlist).
   readonly flags_used?: ReadonlyArray<string>;
   readonly flag_values?: Record<string, unknown>;
+  // legacy/ shell shape — single `flags` map mirroring Go's redaction.
+  readonly flags?: Record<string, unknown>;
   readonly distinct_id?: string;
   readonly groups?: {
     readonly organization?: string;

@@ -39,6 +39,14 @@
 | `1`  | API non-200 (`LegacySslEnforcementUpdateUnexpectedStatusError`)                                                               |
 | `1`  | transport failure (`LegacySslEnforcementUpdateNetworkError`)                                                                  |
 
+## Telemetry Events Fired
+
+| Event                  | When                                       | Notable properties / groups                                                                                                                                |
+| ---------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`; `--enable-db-ssl-enforcement` / `--disable-db-ssl-enforcement` booleans pass through) |
+
+Matches `apps/cli-go/internal/sslenforcement/update/`. Go does not fire any custom telemetry event for this command.
+
 ## Output
 
 ### `--output-format text` (default) — Go CLI compatible

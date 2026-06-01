@@ -2,65 +2,88 @@
 
 ## Files Read
 
-| Path                              | Format                    | When                                                       |
-| --------------------------------- | ------------------------- | ---------------------------------------------------------- |
-| `~/.supabase/access-token`        | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable |
-| `<workdir>/.supabase/config.json` | JSON                      | always, to resolve linked project ref                      |
+| Path                                      | Format                    | When                                                                                          |
+| ----------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
+| keyring `"Supabase CLI"` / `<profile>`    | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `LegacyCliConfig.profile` |
+| keyring `"Supabase CLI"` / `access-token` | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
+| `~/.supabase/access-token`                | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
+| `<workdir>/supabase/.temp/project-ref`    | plain text                | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset                                 |
 
 ## Files Written
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| —    | —      | —    |
+| Path                                             | Format | When                                                                     |
+| ------------------------------------------------ | ------ | ------------------------------------------------------------------------ |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves — Go parity |
+| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command — Go parity              |
 
 ## API Routes
 
-| Method | Path                          | Auth         | Request body | Response (used fields)                                                                                     |
-| ------ | ----------------------------- | ------------ | ------------ | ---------------------------------------------------------------------------------------------------------- |
-| `GET`  | `/v1/projects/{ref}/branches` | Bearer token | none         | `[{id, name, is_default, git_branch, with_data, status, created_at, updated_at, project_ref, persistent}]` |
+| Method | Path                          | Auth         | Request body | Response (used fields)                                                                                                               |
+| ------ | ----------------------------- | ------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`  | `/v1/projects/{ref}/branches` | Bearer token | none         | `[{id, name, project_ref, parent_project_ref, is_default, git_branch?, persistent, status, created_at, updated_at, with_data, ...}]` |
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                               |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)             |
+| Variable                | Purpose                                                                                                                                                                                                                                                                                              | Required?                                                                  |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                                                                                                                                                                                 | no (falls back to keyring → `~/.supabase/access-token`)                    |
+| `SUPABASE_PROFILE`      | selects API base URL: `supabase` → `api.supabase.com`, `supabase-staging` → `api.supabase.green`, `supabase-local` → `http://localhost:8080`. May alternatively be a filesystem path to a YAML profile with at least `api_url:` and optional `name:` (Go parity — used by the cli-e2e test harness). | no (defaults to `supabase`)                                                |
+| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset                                                                                                                                                                                                                                                   | no (also reads `<workdir>/supabase/.temp/project-ref` then prompts on TTY) |
+| `SUPABASE_WORKDIR`      | base directory for the `.temp/project-ref` lookup                                                                                                                                                                                                                                                    | no (walks up from CWD looking for `supabase/config.toml`)                  |
 
 ## Exit Codes
 
-| Code | Condition                                                       |
-| ---- | --------------------------------------------------------------- |
-| `0`  | success — branches printed to stdout                            |
-| `1`  | authentication error — no valid token found                     |
-| `1`  | API error — non-2xx response from `/v1/projects/{ref}/branches` |
-| `1`  | network / connection failure                                    |
-| `1`  | unsupported output format (e.g. `--output env`)                 |
+| Code | Condition                                                                       |
+| ---- | ------------------------------------------------------------------------------- |
+| `0`  | success — branches printed to stdout                                            |
+| `1`  | `LegacyPlatformAuthRequiredError` — no token in env/keyring/file                |
+| `1`  | `LegacyProjectNotLinkedError` — `--project-ref` unset, env/file empty, non-TTY  |
+| `1`  | `LegacyInvalidProjectRefError` — resolved ref violates `^[a-z]{20}$`            |
+| `1`  | `LegacyBranchesListUnexpectedStatusError` — non-2xx response from list endpoint |
+| `1`  | `LegacyBranchesListNetworkError` — transport-level network failure              |
+| `1`  | `LegacyBranchesEnvNotSupportedError` — `--output env` flag is rejected          |
+
+## Telemetry Events Fired
+
+| Event                  | When                                       | Notable properties / groups                                       |
+| ---------------------- | ------------------------------------------ | ----------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` whitelisted) |
+
+Matches `apps/cli-go/internal/branches/list/`. Go does not fire any custom telemetry event for this command.
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+The legacy `--output {pretty,json,yaml,toml,env}` flag (Go-compatible) and the new global `--output-format {text,json,stream-json}` flag are both honored. `--output` wins when both are supplied. `pretty` and `text` map to the same Glamour render.
 
-Prints a Markdown-style table to stdout. Columns: `ID`, `NAME`, `DEFAULT`, `GIT BRANCH`, `WITH DATA`, `STATUS`, `CREATED AT (UTC)`, `UPDATED AT (UTC)`.
+### `--output pretty` (Go default) / `--output-format text`
 
-```
- ID                  | NAME    | DEFAULT | GIT BRANCH | WITH DATA | STATUS           | CREATED AT (UTC)    | UPDATED AT (UTC)
- --------------------|---------|---------|------------|-----------|------------------|---------------------|--------------------
- staging-project-ref | Staging | false   | develop    | true      | CREATING_PROJECT | 2026-01-02 03:04:05 | 2026-01-03 03:04:05
-```
+Prints a Glamour-styled markdown table with columns `ID`, `NAME`, `DEFAULT`, `GIT BRANCH`, `WITH DATA`, `STATUS`, `CREATED AT (UTC)`, `UPDATED AT (UTC)`. Byte-matched against the Go CLI.
+
+### `--output json` (Go-compat)
+
+Indented JSON of the `BranchResponse[]` array with alphabetical keys + trailing newline.
+
+### `--output yaml`
+
+YAML document of the branch array.
+
+### `--output toml`
+
+TOML document wrapping the array as `[[branches]]` (Go parity).
+
+### `--output env`
+
+Fails with `LegacyBranchesEnvNotSupportedError("--output env flag is not supported")`.
 
 ### `--output-format json`
 
-Single JSON array emitted to stdout on success. Each element is the full branch object as returned by the Management API.
+Single JSON object via `Output.success` with `{branches: [...]}` data.
 
 ### `--output-format stream-json`
 
-One `result` event on success.
-
-```ndjson
-{"type":"result","data":[{...}]}
-```
+One `result` NDJSON event with `{branches: [...]}`.
 
 ## Notes
 
-- Requires a linked project (reads `--project-ref` or `.supabase/config.json`).
-- The Go CLI also supports `--output toml` via its own flag. The TypeScript port uses the global `--output-format` flag instead.
+- Reads timestamp formatting follows Go's `utils.FormatTime` (UTC `YYYY-MM-DD HH:MM:SS`).
+- Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth. No `X-Supabase-Command` headers.

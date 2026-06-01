@@ -124,13 +124,16 @@ describe("platform input", () => {
 
   it.effect("accepts string-only union params in dry-run mode", () =>
     Effect.gen(function* () {
+      // Must satisfy one of the oneOf branches (20-letter project ref or
+      // RFC 4122 UUID). A bare "foo" used to slip through when the UUID branch
+      // had no pattern check; the @supabase/api schema patch closed that gap.
       const decoded = yield* decodePlatformInput(
         deleteBranchDescriptor,
         deleteBranchDescriptor.inputSchema,
-        { branch_id_or_ref: "foo" },
+        { branch_id_or_ref: "abcdefghijklmnopqrst" },
       );
 
-      expect(decoded).toEqual({ branch_id_or_ref: "foo" });
+      expect(decoded).toEqual({ branch_id_or_ref: "abcdefghijklmnopqrst" });
     }),
   );
 
@@ -370,11 +373,15 @@ describe("platform input", () => {
       promptText: (message, options) =>
         Effect.sync(() => {
           prompts.push(message);
-          const validationError = options?.validate?.("branch-ref");
+          // Use a 20-letter project ref so the value satisfies the
+          // `branch_id_or_ref` oneOf union. The plain "branch-ref"
+          // placeholder used to pass when the UUID branch was unconstrained;
+          // the schema fix tightened that.
+          const validationError = options?.validate?.("abcdefghijklmnopqrst");
           if (validationError !== undefined) {
             throw new Error(`Unexpected validation error: ${validationError}`);
           }
-          return "branch-ref";
+          return "abcdefghijklmnopqrst";
         }),
       promptPassword: () => Effect.succeed(""),
       promptConfirm: () => Effect.succeed(true),
@@ -396,7 +403,7 @@ describe("platform input", () => {
     return Effect.gen(function* () {
       const completed = yield* promptForMissingPlatformFields(deleteBranchDescriptor, {});
       expect(completed).toEqual({
-        branch_id_or_ref: "branch-ref",
+        branch_id_or_ref: "abcdefghijklmnopqrst",
       });
       expect(prompts).toEqual(["Branch Id Or Ref"]);
     }).pipe(Effect.provide(out), Effect.provide(mockStdin(true)));

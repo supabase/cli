@@ -9,14 +9,15 @@ on:
       image:
         required: true
         type: string
+    secrets:
+      PROD_AWS_ROLE:
+        required: true
   workflow_dispatch:
     inputs:
       image:
         description: "org/image:tag"
         required: true
         type: string
-    paths:
-      - apps/cli-go/**
 
 permissions:
   contents: read
@@ -28,8 +29,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - id: strip
+        env:
+          TAG: ${{ github.event.client_payload.image || inputs.image }}
         run: |
-          TAG=${{ github.event.client_payload.image || inputs.image }}
           echo "image=${TAG##*/}" >> $GITHUB_OUTPUT
       - name: configure aws credentials
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
@@ -50,6 +52,3 @@ jobs:
           dst: |
             public.ecr.aws/supabase/${{ steps.strip.outputs.image }}
             ghcr.io/supabase/${{ steps.strip.outputs.image }}
-defaults:
-  run:
-    working-directory: apps/cli-go
