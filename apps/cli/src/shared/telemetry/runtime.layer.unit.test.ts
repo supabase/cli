@@ -95,4 +95,20 @@ describe("telemetryRuntimeLayer", () => {
       Effect.ensuring(Effect.sync(() => rmSync(homeDir, { recursive: true, force: true }))),
     );
   });
+
+  it.live("silently ignores structurally invalid telemetry.json instead of crashing", () => {
+    const homeDir = makeTempDir();
+    const configPath = path.join(homeDir, "telemetry.json");
+    writeFileSync(configPath, JSON.stringify({ consent: "granted" }));
+
+    return Effect.gen(function* () {
+      const runtime = yield* TelemetryRuntime;
+      expect(runtime.consent).toBe("granted");
+      expect(runtime.isFirstRun).toBe(true);
+      expect(existsSync(configPath)).toBe(true);
+    }).pipe(
+      Effect.provide(buildLayer({ homeDir })),
+      Effect.ensuring(Effect.sync(() => rmSync(homeDir, { recursive: true, force: true }))),
+    );
+  });
 });
