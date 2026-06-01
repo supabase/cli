@@ -22,6 +22,7 @@ function mockCliConfig(opts: { accessToken?: string; apiUrl?: string; userAgent?
   return Layer.succeed(LegacyCliConfig, {
     profile: "supabase",
     apiUrl: opts.apiUrl ?? "https://api.supabase.com",
+    projectHost: "supabase.co",
     accessToken:
       opts.accessToken === undefined ? Option.none() : Option.some(Redacted.make(opts.accessToken)),
     projectId: Option.none(),
