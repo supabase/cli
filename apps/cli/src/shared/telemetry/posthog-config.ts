@@ -1,17 +1,43 @@
 // PostHog connection config shared by both shells' analytics layers.
-// The host is constant (both PostHog projects share the instance). The key is
-// injected at build time by apps/cli/scripts/build.ts via
-// `bun build --define "process.env.SUPABASE_CLI_POSTHOG_KEY=..."` from the
-// POSTHOG_API_KEY release secret; outside a release build it is empty and
-// telemetry no-ops.
+// Release builds inject the shipped host/key via apps/cli/scripts/build.ts.
+import { Option } from "effect";
 
 const DEFAULT_HOST = "https://eu.i.posthog.com";
-const DEFAULT_KEY = process.env.SUPABASE_CLI_POSTHOG_KEY ?? "";
 
-export const posthogConfig: {
+export interface PosthogConfig {
   readonly host: string;
-  readonly key: string;
-} = {
-  host: process.env.SUPABASE_TELEMETRY_POSTHOG_HOST ?? DEFAULT_HOST,
-  key: process.env.SUPABASE_TELEMETRY_POSTHOG_KEY ?? DEFAULT_KEY,
-};
+  readonly key: Option.Option<string>;
+}
+
+function nonEmptyString(value: string | undefined): Option.Option<string> {
+  return value === undefined || value === "" ? Option.none() : Option.some(value);
+}
+
+function readNonEmptyEnv(
+  env: Readonly<Record<string, string | undefined>>,
+  key: string,
+): Option.Option<string> {
+  return nonEmptyString(env[key]);
+}
+
+function shippedPosthogHost(): Option.Option<string> {
+  return nonEmptyString(process.env.SUPABASE_CLI_POSTHOG_HOST);
+}
+
+function shippedPosthogKey(): Option.Option<string> {
+  return nonEmptyString(process.env.SUPABASE_CLI_POSTHOG_KEY);
+}
+
+export function resolvePosthogConfig(
+  env: Readonly<Record<string, string | undefined>>,
+): PosthogConfig {
+  return {
+    host: readNonEmptyEnv(env, "SUPABASE_TELEMETRY_POSTHOG_HOST").pipe(
+      Option.orElse(shippedPosthogHost),
+      Option.getOrElse(() => DEFAULT_HOST),
+    ),
+    key: readNonEmptyEnv(env, "SUPABASE_TELEMETRY_POSTHOG_KEY").pipe(
+      Option.orElse(shippedPosthogKey),
+    ),
+  };
+}

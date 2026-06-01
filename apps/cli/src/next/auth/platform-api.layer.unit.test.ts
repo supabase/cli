@@ -49,7 +49,7 @@ function cliConfigLayer(token = Option.none<Redacted.Redacted<string>>()) {
       dashboardUrl: "https://supabase.com/dashboard",
       projectHost: "supabase.co",
       telemetryPosthogHost: "https://us.i.posthog.com",
-      telemetryPosthogKey: "phc_test_key",
+      telemetryPosthogKey: Option.some("phc_test_key"),
       accessToken: token,
       noKeyring: Option.none(),
       supabaseHome: "/tmp/supabase-cli-test-home",

@@ -158,12 +158,12 @@ describe("cliConfigLayer", () => {
     );
   });
 
-  it.live("falls back to an empty no-op PostHog key when nothing is injected or overridden", () => {
+  it.live("has no PostHog key when nothing is injected or overridden", () => {
     const tempDir = makeTempDir();
     return Effect.gen(function* () {
       const cliConfig = yield* CliConfig;
 
-      expect(cliConfig.telemetryPosthogKey).toBe("");
+      expect(Option.isNone(cliConfig.telemetryPosthogKey)).toBe(true);
     }).pipe(
       Effect.provide(buildLayer({ cwd: tempDir })),
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
@@ -175,13 +175,34 @@ describe("cliConfigLayer", () => {
     return Effect.gen(function* () {
       const cliConfig = yield* CliConfig;
 
-      expect(cliConfig.telemetryPosthogKey).toBe("phc_env_override");
+      expect(cliConfig.telemetryPosthogKey).toEqual(Option.some("phc_env_override"));
     }).pipe(
       Effect.provide(
         buildLayer({
           cwd: tempDir,
           env: {
             SUPABASE_TELEMETRY_POSTHOG_KEY: "phc_env_override",
+          },
+        }),
+      ),
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("uses the build-injected PostHog key and host when no runtime override is set", () => {
+    const tempDir = makeTempDir();
+    return Effect.gen(function* () {
+      const cliConfig = yield* CliConfig;
+
+      expect(cliConfig.telemetryPosthogHost).toBe("https://build-posthog.example");
+      expect(cliConfig.telemetryPosthogKey).toEqual(Option.some("phc_build_key"));
+    }).pipe(
+      Effect.provide(
+        buildLayer({
+          cwd: tempDir,
+          env: {
+            SUPABASE_CLI_POSTHOG_HOST: "https://build-posthog.example",
+            SUPABASE_CLI_POSTHOG_KEY: "phc_build_key",
           },
         }),
       ),

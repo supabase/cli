@@ -26,7 +26,7 @@ import {
   PropSchemaVersion,
   PropSessionId,
 } from "../../shared/telemetry/event-catalog.ts";
-import { posthogConfig } from "../../shared/telemetry/posthog-config.ts";
+import { resolvePosthogConfig } from "../../shared/telemetry/posthog-config.ts";
 import { telemetryRuntimeLayer } from "../../shared/telemetry/runtime.layer.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 
@@ -139,8 +139,9 @@ export const legacyAnalyticsLayer = Layer.effect(
     const aiTool = yield* AiTool;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const posthogConfig = resolvePosthogConfig(process.env);
 
-    if (runtime.consent !== "granted" || posthogConfig.key === "") {
+    if (runtime.consent !== "granted" || Option.isNone(posthogConfig.key)) {
       return Analytics.of({
         capture: () => Effect.void,
         identify: () => Effect.void,
@@ -149,7 +150,7 @@ export const legacyAnalyticsLayer = Layer.effect(
       });
     }
 
-    const client = new PostHog(posthogConfig.key, {
+    const client = new PostHog(posthogConfig.key.value, {
       host: posthogConfig.host,
       flushAt: 1,
       flushInterval: 0,
