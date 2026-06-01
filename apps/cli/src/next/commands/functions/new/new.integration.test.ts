@@ -44,7 +44,7 @@ function commandTreeSupportLayer(cwd: string) {
         dashboardUrl: "https://supabase.com/dashboard",
         projectHost: "supabase.co",
         telemetryPosthogHost: "https://us.i.posthog.com",
-        telemetryPosthogKey: "phc_test_key",
+        telemetryPosthogKey: Option.some("phc_test_key"),
         accessToken: Option.none(),
         noKeyring: Option.none(),
         supabaseHome: join(cwd, ".cache", "supabase"),
