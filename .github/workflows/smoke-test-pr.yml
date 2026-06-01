@@ -58,4 +58,5 @@ jobs:
     # `!inputs.dry_run` and never execute here, but GitHub validates secret
     # references at startup, so the called workflow needs the secrets bag
     # propagated even when the jobs that use them are skipped.
-    secrets: inherit
+    secrets:
+      GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}

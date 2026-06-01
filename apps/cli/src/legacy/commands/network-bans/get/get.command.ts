@@ -1,5 +1,9 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyNetworkBansGet } from "./get.handler.ts";
 
 const config = {
@@ -14,5 +18,11 @@ export type LegacyNetworkBansGetFlags = CliCommand.Command.Config.Infer<typeof c
 export const legacyNetworkBansGetCommand = Command.make("get", config).pipe(
   Command.withDescription("Get the current network bans."),
   Command.withShortDescription("Get the current network bans"),
-  Command.withHandler((flags) => legacyNetworkBansGet(flags)),
+  Command.withHandler((flags) =>
+    legacyNetworkBansGet(flags).pipe(
+      withLegacyCommandInstrumentation({ flags }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyManagementApiRuntimeLayer(["network-bans", "get"])),
 );

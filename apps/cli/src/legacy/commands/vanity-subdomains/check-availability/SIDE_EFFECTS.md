@@ -2,57 +2,73 @@
 
 ## Files Read
 
-| Path                       | Format                    | When                                                       |
-| -------------------------- | ------------------------- | ---------------------------------------------------------- |
-| `~/.supabase/access-token` | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable |
+| Path                                   | Format                    | When                                                          |
+| -------------------------------------- | ------------------------- | ------------------------------------------------------------- |
+| `~/.supabase/access-token`             | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable    |
+| `<workdir>/supabase/.temp/project-ref` | plain text (project ref)  | when `--project-ref` flag and `PROJECT_ID` env are both unset |
 
 ## Files Written
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| —    | —      | —    |
+| Path                                             | Format | When                                                  |
+| ------------------------------------------------ | ------ | ----------------------------------------------------- |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | after ref resolution, on success and failure          |
+| `~/.supabase/telemetry.json`                     | JSON   | always, via `Effect.ensuring`, on success and failure |
 
 ## API Routes
 
-| Method | Path                                                     | Auth         | Request body | Response (used fields)           |
-| ------ | -------------------------------------------------------- | ------------ | ------------ | -------------------------------- |
-| `GET`  | `/v1/projects/{ref}/vanity-subdomain/check-availability` | Bearer token | none         | `{available, available_domains}` |
+| Method | Path                                                     | Auth         | Request body                   | Response (used fields)   |
+| ------ | -------------------------------------------------------- | ------------ | ------------------------------ | ------------------------ |
+| `POST` | `/v1/projects/{ref}/vanity-subdomain/check-availability` | Bearer token | `{ vanity_subdomain: string }` | `{ available: boolean }` |
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                               |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)             |
+| Variable                | Purpose                                              | Required?                                                  |
+| ----------------------- | ---------------------------------------------------- | ---------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring then `~/.supabase/access-token`) |
+| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)                |
+| `PROJECT_ID`            | project ref fallback when `--project-ref` is unset   | no (falls back to `supabase/.temp/project-ref`)            |
 
 ## Exit Codes
 
-| Code | Condition                                               |
-| ---- | ------------------------------------------------------- |
-| `0`  | success — availability result printed to stdout         |
-| `1`  | authentication error — no valid token found             |
-| `1`  | API error — non-2xx response from availability endpoint |
-| `1`  | network / connection failure                            |
+| Code | Condition                                                                               |
+| ---- | --------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                 |
+| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`) |
+| `1`  | API non-2xx (`LegacyVanitySubdomainsCheckUnexpectedStatusError`)                        |
+| `1`  | transport failure (`LegacyVanitySubdomainsCheckNetworkError`)                           |
+
+## Telemetry Events Fired
+
+| Event                  | When                                       | Notable properties / groups         |
+| ---------------------- | ------------------------------------------ | ----------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
+
+This command may print an upgrade suggestion for gated 4xx responses, but it does not fire
+`cli_upgrade_suggested`.
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text` / legacy `--output pretty`
 
-Prints subdomain availability result to stdout.
+Prints:
+
+```text
+Subdomain <desired-subdomain> available: <true|false>
+```
+
+### Legacy `--output {json,yaml,toml,env}`
+
+Encodes the response object directly.
 
 ### `--output-format json`
 
-Single JSON object emitted to stdout on success.
+Single structured success event with the full response object.
 
 ### `--output-format stream-json`
 
-One `result` event on success.
-
-```ndjson
-{"type":"result","data":{...}}
-```
+One `result` event with the full response object.
 
 ## Notes
 
-- Requires `--desired-subdomain` flag (mandatory).
-- Requires `--project-ref` or a linked project (`.supabase/config.json`).
+- The legacy `--output` flag wins over TS `--output-format` when both are provided.
+- `linked-project.json` is written after ref resolution, even when the API call fails.
