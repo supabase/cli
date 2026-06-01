@@ -4,6 +4,14 @@ import type { ConsentState, TelemetryConfig } from "./types.ts";
 
 export const getConfigDir = CliConfig.useSync((cliConfig) => cliConfig.supabaseHome);
 
+function parseTelemetryConfig(content: string): TelemetryConfig | null {
+  try {
+    return JSON.parse(content) as TelemetryConfig;
+  } catch {
+    return null;
+  }
+}
+
 export const readTelemetryConfig = Effect.fnUntraced(
   function* (configDir: string) {
     const fs = yield* FileSystem.FileSystem;
@@ -12,7 +20,7 @@ export const readTelemetryConfig = Effect.fnUntraced(
     const exists = yield* fs.exists(configPath);
     if (!exists) return null;
     const content = yield* fs.readFileString(configPath);
-    return JSON.parse(content) as TelemetryConfig;
+    return parseTelemetryConfig(content);
   },
   (effect) => Effect.orElseSucceed(effect, () => null),
 );
@@ -24,11 +32,10 @@ export const writeTelemetryConfig = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.makeDirectory(configDir, { recursive: true, mode: 0o700 });
-  yield* fs.writeFileString(
-    path.join(configDir, "telemetry.json"),
-    JSON.stringify(config, null, 2),
-    { mode: 0o600 },
-  );
+  const configPath = path.join(configDir, "telemetry.json");
+  const tmpPath = `${configPath}.tmp.${Date.now()}`;
+  yield* fs.writeFileString(tmpPath, JSON.stringify(config, null, 2), { mode: 0o600 });
+  yield* fs.rename(tmpPath, configPath);
 }, Effect.orDie);
 
 export const getEffectiveConsent = Effect.fnUntraced(function* (config: TelemetryConfig | null) {
