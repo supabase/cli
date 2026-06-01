@@ -54,6 +54,18 @@ export interface SupabaseApiClientShape {
     definition: OperationDefinition<Id>,
     input: OperationInput<Id>,
   ) => Effect.Effect<OperationOutput<Id>, SupabaseApiError>;
+  /**
+   * Execute an operation but return the raw HTTP response without decoding the
+   * output schema or filtering on status. Use this when the response body
+   * cannot satisfy the strict generated schema (e.g. cli-e2e replay fixtures
+   * embed a `__PROJECT_REF__` placeholder that violates `ref`'s 20-char
+   * pattern), so the caller can parse the body leniently. Request building —
+   * URL, auth, headers, body serialization — is identical to `execute`.
+   */
+  readonly executeRaw: <Id extends OperationId>(
+    definition: OperationDefinition<Id>,
+    input: OperationInput<Id>,
+  ) => Effect.Effect<HttpClientResponse.HttpClientResponse, SupabaseApiError>;
 }
 
 export class SupabaseApiClient extends Context.Service<SupabaseApiClient, SupabaseApiClientShape>()(
@@ -326,6 +338,25 @@ function asBinaryRequestBody(value: unknown): Effect.Effect<Uint8Array, HttpBody
   return Effect.succeed(new TextEncoder().encode(String(revealed)));
 }
 
+// Serialize JSON bodies with alphabetically-sorted keys (recursively) to match
+// Go's `encoding/json`, which emits oapi-codegen's alphabetically-declared
+// struct fields and sorts map keys. Without this, multi-field request bodies
+// serialize in OpenAPI-spec field order and diverge from the Go CLI on the
+// wire (only single/already-sorted bodies happen to match).
+function sortJsonKeysDeep(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortJsonKeysDeep);
+  }
+  if (!isPlainObject(value)) {
+    return value;
+  }
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(value).sort()) {
+    sorted[key] = sortJsonKeysDeep(value[key]);
+  }
+  return sorted;
+}
+
 function encodeBody(
   request: HttpClientRequest.HttpClientRequest,
   definition: OperationDefinition,
@@ -343,7 +374,7 @@ function encodeBody(
         payload[field] = revealRedactedValue(value);
       }
     }
-    return HttpClientRequest.bodyJson(request, payload);
+    return HttpClientRequest.bodyJson(request, sortJsonKeysDeep(payload));
   }
 
   const body = revealRedactedValue(Reflect.get(input, definition.requestBody.field));
@@ -358,7 +389,7 @@ function encodeBody(
 
   switch (definition.requestBody.contentType) {
     case "application/json":
-      return HttpClientRequest.bodyJson(request, body);
+      return HttpClientRequest.bodyJson(request, sortJsonKeysDeep(body));
     case "application/x-www-form-urlencoded":
       return Effect.succeed(HttpClientRequest.bodyUrlParams(request, asUrlParamsInput(body)));
     case "multipart/form-data":
@@ -496,6 +527,12 @@ export function makeSupabaseApiClient(
             return yield* decodeVoidResponse(definition, response);
           }
           return yield* Effect.die(`Unsupported response kind: ${definition.response.kind}`);
+        }),
+      executeRaw: (definition, input) =>
+        Effect.gen(function* () {
+          const validated = yield* Schema.decodeUnknownEffect(definition.inputSchema)(input);
+          const request = yield* buildRequest(definition, validated);
+          return yield* prepared.execute(request);
         }),
     };
   });

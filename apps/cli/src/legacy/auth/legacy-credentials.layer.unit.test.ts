@@ -88,6 +88,8 @@ afterEach(() => {
 
 const VALID_TOKEN = "sbp_" + "a".repeat(40);
 const VALID_OAUTH_TOKEN = "sbp_oauth_" + "b".repeat(40);
+const encodeGoKeyringBase64 = (token: string) =>
+  `go-keyring-base64:${Buffer.from(token).toString("base64")}`;
 
 const expectSomeToken = (token: Option.Option<Redacted.Redacted<string>>, expected: string) => {
   expect(Option.isSome(token)).toBe(true);
@@ -108,6 +110,15 @@ describe("legacyCredentialsLayer.getAccessToken", () => {
 
   it.effect("uses the keyring profile account when env is unset", () => {
     passwords.set("Supabase CLI/supabase", VALID_TOKEN);
+    return Effect.gen(function* () {
+      const { getAccessToken } = yield* LegacyCredentials;
+      const token = yield* getAccessToken;
+      expectSomeToken(token, VALID_TOKEN);
+    }).pipe(Effect.provide(makeLayer()));
+  });
+
+  it.effect("decodes Go keyring base64 values from the keyring profile account", () => {
+    passwords.set("Supabase CLI/supabase", encodeGoKeyringBase64(VALID_TOKEN));
     return Effect.gen(function* () {
       const { getAccessToken } = yield* LegacyCredentials;
       const token = yield* getAccessToken;

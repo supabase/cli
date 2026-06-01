@@ -1,6 +1,7 @@
 import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
+import { normalizeKeyringToken } from "../../shared/auth/keyring-token.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { LegacyCredentials } from "./legacy-credentials.service.ts";
 import { LegacyInvalidAccessTokenError } from "./legacy-errors.ts";
@@ -33,7 +34,9 @@ const tryKeyringRead = (
     try: () => {
       const entry = new module.Entry(KEYRING_SERVICE, account);
       const value = entry.getPassword();
-      return value && value.length > 0 ? Option.some(value) : Option.none<string>();
+      return value && value.length > 0
+        ? Option.some(normalizeKeyringToken(value))
+        : Option.none<string>();
     },
     catch: () => Option.none<string>(),
   }).pipe(Effect.orElseSucceed(() => Option.none<string>()));

@@ -159,14 +159,16 @@ func AssertServiceIsRunning(ctx context.Context, containerId string) error {
 }
 
 func IsGitRepo() bool {
-	opts := &git.PlainOpenOptions{DetectDotGit: true}
-	_, err := git.PlainOpenWithOptions(".", opts)
+	_, err := findGitRoot(".")
 	return err == nil
 }
 
 func IsGitIgnored(fp ...string) (bool, error) {
-	opts := &git.PlainOpenOptions{DetectDotGit: true}
-	repo, err := git.PlainOpenWithOptions(".", opts)
+	root, err := findGitRoot(".")
+	if err != nil {
+		return false, err
+	}
+	repo, err := git.PlainOpen(root)
 	if err != nil {
 		return false, err
 	}
@@ -180,6 +182,25 @@ func IsGitIgnored(fp ...string) (bool, error) {
 	}
 	m := gitignore.NewMatcher(ps)
 	return m.Match(fp, false), nil
+}
+
+func findGitRoot(path string) (string, error) {
+	cwd, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(cwd, git.GitDirName)); err == nil {
+			return cwd, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		if parent := filepath.Dir(cwd); parent != cwd {
+			cwd = parent
+		} else {
+			return "", git.ErrRepositoryNotExists
+		}
+	}
 }
 
 // If the `os.Getwd()` is within a supabase project, this will return

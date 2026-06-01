@@ -1,32 +1,13 @@
 import { describe, expect, it } from "vitest";
 
+import { apiKeysToEnv } from "../../shared/legacy-api-keys.format.ts";
 import {
-  apiKeysToEnv,
-  formatUtcDateTime,
   parsePoolerConnectionString,
   renderBranchGetTable,
   renderBranchesListTable,
   toPostgresUrl,
   toStandardEnvs,
 } from "./branches.format.ts";
-
-describe("formatUtcDateTime", () => {
-  it("formats ISO date-time as UTC YYYY-MM-DD HH:MM:SS", () => {
-    expect(formatUtcDateTime("2026-05-27T03:04:05Z")).toBe("2026-05-27 03:04:05");
-  });
-
-  it("zero-pads single-digit months and minutes", () => {
-    expect(formatUtcDateTime("2026-01-02T03:04:05Z")).toBe("2026-01-02 03:04:05");
-  });
-
-  it("returns the empty string unchanged", () => {
-    expect(formatUtcDateTime("")).toBe("");
-  });
-
-  it("returns garbage input unchanged when Date.parse cannot decode it", () => {
-    expect(formatUtcDateTime("not-a-date")).toBe("not-a-date");
-  });
-});
 
 describe("renderBranchesListTable", () => {
   it("renders all 8 columns in declared order", () => {
