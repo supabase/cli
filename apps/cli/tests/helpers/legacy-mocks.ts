@@ -361,7 +361,11 @@ export function mockLegacyPlatformApiService(
     },
   });
 
-  const layer = Layer.succeed(LegacyPlatformApi, { v1: v1Proxy } as ApiClient);
+  const layer = Layer.succeed(LegacyPlatformApi, {
+    v1: v1Proxy,
+    // Direct-service consumers don't exercise the raw-execute escape hatch.
+    executeRaw: () => Effect.die("Unmocked LegacyPlatformApi.executeRaw"),
+  } as ApiClient);
 
   return { layer, requests };
 }
