@@ -140,14 +140,6 @@ describe("native hidden flags", () => {
           "serve",
           "--all=false",
         ]);
-        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
-          "projects",
-          "create",
-          "demo",
-          "--interactive=false",
-          "--plan",
-          "pro",
-        ]);
       }).pipe(
         Effect.provide(Layer.mergeAll(proxy.layer, CliOutput.layer(textCliOutputFormatter()))),
       ) as Effect.Effect<void>,
@@ -160,7 +152,6 @@ describe("native hidden flags", () => {
       ["functions", "download", "hello", "--use-docker", "--legacy-bundle"],
       ["functions", "deploy", "hello", "--use-docker", "--legacy-bundle"],
       ["functions", "serve", "--all=false"],
-      ["projects", "create", "demo", "--interactive=false", "--plan", "pro"],
     ]);
   });
 

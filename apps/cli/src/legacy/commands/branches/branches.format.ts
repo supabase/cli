@@ -6,6 +6,8 @@ import type {
 } from "@supabase/api/effect";
 
 import { renderGlamourTable } from "../../output/legacy-glamour-table.ts";
+import { apiKeysToEnv } from "../../shared/legacy-api-keys.format.ts";
+import { formatLegacyTimestamp } from "../../shared/legacy-timestamp.format.ts";
 
 // ---------------------------------------------------------------------------
 // Pure formatters — no Effect / no service dependencies, kept unit-testable.
@@ -33,26 +35,6 @@ const GET_HEADERS = [
   "STATUS",
 ] as const;
 
-function pad2(value: number): string {
-  return value.toString().padStart(2, "0");
-}
-
-/**
- * Reproduces Go's `utils.FormatTime`: parse the ISO date-time and re-render
- * as UTC "YYYY-MM-DD HH:MM:SS". Used for the CREATED AT / UPDATED AT columns
- * of `branches list`.
- */
-export function formatUtcDateTime(value: string): string {
-  if (value.length === 0) return value;
-  const parsed = Date.parse(value);
-  if (Number.isNaN(parsed)) return value;
-  const d = new Date(parsed);
-  return (
-    `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ` +
-    `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}`
-  );
-}
-
 type Branch = typeof BranchResponse.Type;
 
 /**
@@ -72,8 +54,8 @@ export function renderBranchesListTable(branches: ReadonlyArray<Branch>): string
     b.git_branch ?? " ",
     b.with_data ? "true" : "false",
     b.status,
-    formatUtcDateTime(b.created_at),
-    formatUtcDateTime(b.updated_at),
+    formatLegacyTimestamp(b.created_at),
+    formatLegacyTimestamp(b.updated_at),
   ]);
   return renderGlamourTable(LIST_HEADERS, rows);
 }
@@ -201,22 +183,6 @@ export function toPostgresUrl(config: PgConfig, connectTimeoutSeconds: number = 
 type ApiKey = typeof ApiKeyResponse.Type;
 type Pooler = typeof SupavisorConfigResponse.Type;
 type Detail = typeof V1GetABranchConfigOutput.Type;
-
-/**
- * Reproduces Go's `apiKeys.ToEnv` (`api_keys.go:51-66`):
- * uppercase the name, wrap as `SUPABASE_<NAME>_KEY`, fall back to `"******"`
- * when the api_key value is nullable-null.
- */
-export function apiKeysToEnv(keys: ReadonlyArray<ApiKey>): Record<string, string> {
-  const envs: Record<string, string> = {};
-  for (const entry of keys) {
-    const name = entry.name.toUpperCase();
-    const key = `SUPABASE_${name}_KEY`;
-    const value = entry.api_key === undefined || entry.api_key === null ? "******" : entry.api_key;
-    envs[key] = value;
-  }
-  return envs;
-}
 
 export interface StandardEnvsResult {
   readonly envs: Record<string, string>;

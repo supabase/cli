@@ -353,6 +353,34 @@ func TestBuildGotrueEnv(t *testing.T) {
 		assert.Equal(t, "http://127.0.0.1:54321/auth/v1/verify", env["GOTRUE_MAILER_URLPATHS_INVITE"])
 		assert.Equal(t, "https://example.com/custom/callback", env["GOTRUE_EXTERNAL_AZURE_REDIRECT_URI"])
 	})
+
+	t.Run("wires passkey and webauthn settings", func(t *testing.T) {
+		utils.Config = config.NewConfig()
+		utils.Config.Auth.Passkey = &config.Passkey{Enabled: true}
+		utils.Config.Auth.Webauthn = &config.Webauthn{
+			RpDisplayName: "Supabase",
+			RpId:          "localhost",
+			RpOrigins:     []string{"http://127.0.0.1:5173", "http://localhost:5173"},
+		}
+
+		env := envToMap(appendGotruePasskeyEnv(buildGotrueEnv(pgconn.Config{})))
+
+		assert.Equal(t, "true", env["GOTRUE_PASSKEY_ENABLED"])
+		assert.Equal(t, "localhost", env["GOTRUE_WEBAUTHN_RP_ID"])
+		assert.Equal(t, "Supabase", env["GOTRUE_WEBAUTHN_RP_DISPLAY_NAME"])
+		assert.Equal(t, "http://127.0.0.1:5173,http://localhost:5173", env["GOTRUE_WEBAUTHN_RP_ORIGINS"])
+	})
+
+	t.Run("omits passkey and webauthn env when sections are unset", func(t *testing.T) {
+		utils.Config = config.NewConfig()
+
+		env := envToMap(appendGotruePasskeyEnv(buildGotrueEnv(pgconn.Config{})))
+
+		_, hasPasskey := env["GOTRUE_PASSKEY_ENABLED"]
+		_, hasRpId := env["GOTRUE_WEBAUTHN_RP_ID"]
+		assert.False(t, hasPasskey)
+		assert.False(t, hasRpId)
+	})
 }
 
 func TestFormatMapForEnvConfig(t *testing.T) {

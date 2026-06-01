@@ -2,29 +2,45 @@ import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import { parse as parseYaml } from "yaml";
 import { CLI_VERSION } from "../../shared/cli/version.ts";
 import { LegacyProfileFlag, LegacyWorkdirFlag } from "../../shared/legacy/global-flags.ts";
+import { legacyProjectHost } from "../shared/legacy-profile.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { LegacyCliConfig, type LegacyProfileName } from "./legacy-cli-config.service.ts";
 
 interface ResolvedProfile {
   readonly name: string;
   readonly apiUrl: string;
+  readonly projectHost: string;
 }
 
-const BUILTIN_PROFILES: Record<LegacyProfileName, ResolvedProfile> = {
-  supabase: { name: "supabase", apiUrl: "https://api.supabase.com" },
-  "supabase-staging": { name: "supabase-staging", apiUrl: "https://api.supabase.green" },
-  "supabase-local": { name: "supabase-local", apiUrl: "http://localhost:8080" },
+const BUILTIN_PROFILE_API_URLS: Record<LegacyProfileName, string> = {
+  supabase: "https://api.supabase.com",
+  "supabase-staging": "https://api.supabase.green",
+  "supabase-local": "http://localhost:8080",
+  snap: "https://cloudapi.snap.com",
 };
 
 function isBuiltinProfileName(value: string): value is LegacyProfileName {
-  return value in BUILTIN_PROFILES;
+  return value in BUILTIN_PROFILE_API_URLS;
 }
 
-function safeParseYaml(text: string): { name?: unknown; api_url?: unknown } | undefined {
+// `projectHost` is sourced from `legacy-profile.ts` (the single source of truth that
+// mirrors Go's `allProfiles` table and is also consumed by `branches get`), so the
+// per-profile host mapping is not duplicated here.
+function resolvedBuiltin(name: LegacyProfileName): ResolvedProfile {
+  return {
+    name,
+    apiUrl: BUILTIN_PROFILE_API_URLS[name],
+    projectHost: legacyProjectHost(name),
+  };
+}
+
+function safeParseYaml(
+  text: string,
+): { name?: unknown; api_url?: unknown; project_host?: unknown } | undefined {
   try {
     const value = parseYaml(text);
     return value !== null && typeof value === "object"
-      ? (value as { name?: unknown; api_url?: unknown })
+      ? (value as { name?: unknown; api_url?: unknown; project_host?: unknown })
       : undefined;
   } catch {
     return undefined;
@@ -41,7 +57,8 @@ function safeParseYaml(text: string): { name?: unknown; api_url?: unknown } | un
  *
  * The cli-e2e harness depends on (2) — it writes a per-test YAML profile and
  * sets `SUPABASE_PROFILE=<that-path>` so both the Go and ts-legacy binaries
- * route requests to the local replay server.
+ * route requests to the local replay server. YAML profiles may also carry a
+ * `project_host:` key (Go's `Profile.ProjectHost`); it defaults to `supabase.co`.
  */
 function resolveProfile(
   flagValue: string,
@@ -52,19 +69,23 @@ function resolveProfile(
     const token = flagValue !== "supabase" ? flagValue : (envValue ?? "supabase");
 
     if (isBuiltinProfileName(token)) {
-      return BUILTIN_PROFILES[token];
+      return resolvedBuiltin(token);
     }
 
     const content = yield* fs.readFileString(token).pipe(Effect.option);
-    if (Option.isNone(content)) return BUILTIN_PROFILES.supabase;
+    if (Option.isNone(content)) return resolvedBuiltin("supabase");
 
     const parsed = safeParseYaml(content.value);
     if (parsed === undefined || typeof parsed.api_url !== "string") {
-      return BUILTIN_PROFILES.supabase;
+      return resolvedBuiltin("supabase");
     }
     return {
       name: typeof parsed.name === "string" ? parsed.name : "supabase",
       apiUrl: parsed.api_url,
+      projectHost:
+        typeof parsed.project_host === "string"
+          ? parsed.project_host
+          : legacyProjectHost("supabase"),
     };
   });
 }
@@ -112,11 +133,11 @@ export const legacyCliConfigLayer = Layer.unwrap(
         const runtimeInfo = yield* RuntimeInfo;
         const env = process.env;
 
-        const { name: profile, apiUrl } = yield* resolveProfile(
-          profileFlag,
-          env["SUPABASE_PROFILE"],
-          fs,
-        );
+        const {
+          name: profile,
+          apiUrl,
+          projectHost,
+        } = yield* resolveProfile(profileFlag, env["SUPABASE_PROFILE"], fs);
 
         const rawAccessToken = env["SUPABASE_ACCESS_TOKEN"];
         const accessToken =
@@ -143,6 +164,7 @@ export const legacyCliConfigLayer = Layer.unwrap(
         return LegacyCliConfig.of({
           profile,
           apiUrl,
+          projectHost,
           accessToken,
           projectId,
           workdir,

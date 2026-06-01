@@ -224,6 +224,8 @@ export function mockOutput(
     promptTextFail?: boolean;
     promptTextResponses?: ReadonlyArray<string>;
     promptSelectResponses?: ReadonlyArray<string>;
+    promptPasswordResponses?: ReadonlyArray<string>;
+    promptConfirmResponses?: ReadonlyArray<boolean>;
   } = {},
 ) {
   const messages: OutputMessage[] = [];
@@ -248,6 +250,8 @@ export function mockOutput(
   }> = [];
   const promptTextResponses = [...(opts.promptTextResponses ?? [])];
   const promptSelectResponses = [...(opts.promptSelectResponses ?? [])];
+  const promptPasswordResponses = [...(opts.promptPasswordResponses ?? [])];
+  const promptConfirmResponses = [...(opts.promptConfirmResponses ?? [])];
   return {
     layer: Layer.succeed(Output, {
       format: opts.format ?? "text",
@@ -369,8 +373,11 @@ export function mockOutput(
           return Effect.succeed(promptTextResponses.shift() ?? "123456");
         };
       })(),
-      promptPassword: () => Effect.succeed(""),
-      promptConfirm: () => Effect.succeed(opts.confirmLogout ?? opts.confirmRelogin ?? true),
+      promptPassword: () => Effect.succeed(promptPasswordResponses.shift() ?? ""),
+      promptConfirm: () =>
+        Effect.succeed(
+          promptConfirmResponses.shift() ?? opts.confirmLogout ?? opts.confirmRelogin ?? true,
+        ),
       promptSelect: (message, options, behavior) =>
         Effect.sync(() => {
           promptSelectCalls.push({ message, options, behavior });

@@ -94,6 +94,16 @@ export function normalize(output: string): string {
       // 17. Docker shadow-DB endpoint lines emitted when a container starts:
       //     "endpoint <adjective_noun> (<64-hex>)" — both parts are random per container.
       .replace(/\bendpoint \w+_\w+ \([0-9a-f]{64}\)/g, "endpoint <CONTAINER> (<ENDPOINT_HASH>)")
+      // 17b. System-keyring availability noise. The Go CLI uses an OS keyring
+      //      (dbus Secret Service on Linux) and prints "Keyring is not supported
+      //      on WSL" to stderr when it is unavailable — e.g. on headless CI
+      //      runners with no D-Bus session. The ts-legacy keyring
+      //      (`@napi-rs/keyring`) uses the kernel keyutils backend, which is
+      //      always available, so it never prints this. The line is a
+      //      keyring-backend implementation detail, not command behavior, so
+      //      strip it from both sides. (Same class of divergence that defers the
+      //      login/logout parity tests in auth.e2e.test.ts.)
+      .replace(/^Keyring is not supported on WSL\n?/gm, "")
       // 18. Trailing whitespace on each line
       .replace(/[ \t]+$/gm, "")
       // 19. Collapse 3+ consecutive blank lines to two newlines
