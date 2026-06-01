@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	fs "testing/fstest"
 
@@ -17,6 +18,12 @@ import (
 func TestMain(m *testing.M) {
 	// Setup mock edge runtime binary
 	if len(os.Args) > 1 && os.Args[1] == "bundle" {
+		if path := os.Getenv("TEST_BUNDLE_ARGS_FILE"); len(path) > 0 {
+			if err := os.WriteFile(path, []byte(strings.Join(os.Args[1:], "\n")), 0600); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+		}
 		if msg := os.Getenv("TEST_BUNDLE_ERROR"); len(msg) > 0 {
 			fmt.Fprintln(os.Stderr, msg)
 			os.Exit(1)
@@ -61,6 +68,32 @@ func TestBundleFunction(t *testing.T) {
 		staticFile := fmt.Sprintf("file://%s/hello/data.pdf", filepath.ToSlash(cwd))
 		assert.Equal(t, cast.Ptr([]string{staticFile}), meta.StaticPatterns)
 		assert.Nil(t, meta.VerifyJwt)
+	})
+
+	t.Run("passes deno config as import map", func(t *testing.T) {
+		argsFile := filepath.Join(t.TempDir(), "args")
+		t.Setenv("TEST_BUNDLE_ARGS_FILE", argsFile)
+		var body bytes.Buffer
+		fsys := fs.MapFS{
+			"hello.eszip": &fs.MapFile{},
+		}
+		bundler := nativeBundler{fsys: fsys}
+
+		_, err := bundler.Bundle(
+			context.Background(),
+			"hello",
+			"hello/index.ts",
+			"hello/deno.json",
+			nil,
+			&body,
+		)
+
+		require.NoError(t, err)
+		data, err := os.ReadFile(argsFile)
+		require.NoError(t, err)
+		args := strings.Split(string(data), "\n")
+		assert.Contains(t, args, "--import-map")
+		assert.Contains(t, args, "hello/deno.json")
 	})
 
 	t.Run("ignores empty value", func(t *testing.T) {

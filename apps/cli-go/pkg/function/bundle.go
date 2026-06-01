@@ -59,7 +59,7 @@ func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	outputPath := filepath.Join(b.tempDir, slug+".eszip")
 	// TODO: make edge runtime write to stdout
 	args := []string{"bundle", "--entrypoint", entrypoint, "--output", outputPath}
-	if len(importMap) > 0 && !ShouldUseDenoJsonDiscovery(entrypoint, importMap) {
+	if len(importMap) > 0 {
 		args = append(args, "--import-map", importMap)
 	}
 	for _, staticFile := range staticFiles {
@@ -88,10 +88,6 @@ func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 	}
 	defer eszipBytes.Close()
 	return meta, Compress(eszipBytes, output)
-}
-
-func ShouldUseDenoJsonDiscovery(entrypoint, importMap string) bool {
-	return isDeno(filepath.Base(importMap)) && filepath.Dir(importMap) == filepath.Dir(entrypoint)
 }
 
 func ShouldUsePackageJsonDiscovery(entrypoint, importMap string, fsys fs.StatFS) bool {
