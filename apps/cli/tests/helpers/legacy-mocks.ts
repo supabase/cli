@@ -116,6 +116,7 @@ export function mockLegacyCliConfig(opts: {
   readonly workdir: string;
   readonly profile?: string;
   readonly apiUrl?: string;
+  readonly projectHost?: string;
   readonly accessToken?: Option.Option<Redacted.Redacted<string>>;
   readonly projectId?: Option.Option<string>;
   readonly userAgent?: string;
@@ -123,6 +124,7 @@ export function mockLegacyCliConfig(opts: {
   return Layer.succeed(LegacyCliConfig, {
     profile: opts.profile ?? "supabase",
     apiUrl: opts.apiUrl ?? LEGACY_DEFAULT_API_URL,
+    projectHost: opts.projectHost ?? "supabase.co",
     accessToken: opts.accessToken ?? Option.some(Redacted.make(LEGACY_VALID_TOKEN)),
     projectId: opts.projectId ?? Option.some(LEGACY_VALID_REF),
     workdir: opts.workdir,
@@ -359,7 +361,11 @@ export function mockLegacyPlatformApiService(
     },
   });
 
-  const layer = Layer.succeed(LegacyPlatformApi, { v1: v1Proxy } as ApiClient);
+  const layer = Layer.succeed(LegacyPlatformApi, {
+    v1: v1Proxy,
+    // Direct-service consumers don't exercise the raw-execute escape hatch.
+    executeRaw: () => Effect.die("Unmocked LegacyPlatformApi.executeRaw"),
+  } as ApiClient);
 
   return { layer, requests };
 }

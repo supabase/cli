@@ -44,7 +44,7 @@ export const legacyProjectRefLayer = Layer.effect(
       return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
     });
 
-    const promptForProjectRef = Effect.gen(function* () {
+    const promptForProjectRef = Effect.fnUntraced(function* (title: string) {
       const projects = yield* api.v1.listAllProjects().pipe(
         Effect.mapError(
           (cause) =>
@@ -60,7 +60,7 @@ export const legacyProjectRefLayer = Layer.effect(
         label: project.id,
         hint: `name: ${project.name}, org: ${project.organization_slug}, region: ${project.region}`,
       }));
-      const chosen = yield* output.promptSelect("Select a project:", options).pipe(
+      const chosen = yield* output.promptSelect(title, options).pipe(
         Effect.mapError(
           (cause) =>
             new LegacyProjectNotLinkedError({
@@ -88,13 +88,24 @@ export const legacyProjectRefLayer = Layer.effect(
             return yield* assertValid(fileValue.value);
           }
           if (tty.stdinIsTty && output.interactive) {
-            const chosen = yield* promptForProjectRef;
+            const chosen = yield* promptForProjectRef("Select a project:");
             return yield* assertValid(chosen);
           }
           return yield* Effect.fail(
             new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
           );
         }),
+      resolveOptional: (flagValue) =>
+        Effect.gen(function* () {
+          if (Option.isSome(flagValue) && flagValue.value.length > 0) {
+            return Option.some(flagValue.value);
+          }
+          if (Option.isSome(cliConfig.projectId)) {
+            return cliConfig.projectId;
+          }
+          return yield* readRefFile;
+        }),
+      promptProjectRef: promptForProjectRef,
     });
   }),
 );

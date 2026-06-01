@@ -747,6 +747,7 @@ EOF
 			)
 		}
 
+		env = appendGotruePasskeyEnv(env)
 		env = appendGotrueExternalProviderEnv(env)
 		env = append(env,
 			fmt.Sprintf("GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED=%v", utils.Config.Auth.Web3.Solana.Enabled),
@@ -1352,6 +1353,24 @@ func buildGotrueEnv(dbConfig pgconn.Config) []string {
 		fmt.Sprintf("GOTRUE_RATE_LIMIT_SMS_SENT=%v", utils.Config.Auth.RateLimit.SmsSent),
 		fmt.Sprintf("GOTRUE_RATE_LIMIT_WEB3=%v", utils.Config.Auth.RateLimit.Web3),
 	}
+}
+
+// appendGotruePasskeyEnv wires the Auth container with passkey/WebAuthn
+// settings from the [auth.passkey] and [auth.webauthn] config sections. Both
+// sections are optional (nil when unset), so each block is guarded.
+func appendGotruePasskeyEnv(env []string) []string {
+	if utils.Config.Auth.Passkey != nil {
+		env = append(env, fmt.Sprintf("GOTRUE_PASSKEY_ENABLED=%v", utils.Config.Auth.Passkey.Enabled))
+	}
+	if w := utils.Config.Auth.Webauthn; w != nil {
+		env = append(
+			env,
+			"GOTRUE_WEBAUTHN_RP_ID="+w.RpId,
+			"GOTRUE_WEBAUTHN_RP_DISPLAY_NAME="+w.RpDisplayName,
+			"GOTRUE_WEBAUTHN_RP_ORIGINS="+strings.Join(w.RpOrigins, ","),
+		)
+	}
+	return env
 }
 
 func appendGotrueExternalProviderEnv(env []string) []string {
