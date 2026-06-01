@@ -2,8 +2,8 @@ import {
   createPlan,
   deserializeCatalog,
   formatSqlStatements,
-} from "npm:@supabase/pg-delta@1.0.0-alpha.20";
-import { supabase } from "npm:@supabase/pg-delta@1.0.0-alpha.20/integrations/supabase";
+} from "npm:@supabase/pg-delta@1.0.0-alpha.25";
+import { supabase } from "npm:@supabase/pg-delta@1.0.0-alpha.25/integrations/supabase";
 
 async function resolveInput(ref: string | undefined) {
   if (!ref) {
@@ -41,11 +41,25 @@ try {
   const result = await createPlan(
     await resolveInput(source),
     await resolveInput(target),
-    supabase,
+    {
+      ...supabase,
+      skipDefaultPrivilegeSubtraction: true,
+    },
   );
   let statements = result?.plan.statements ?? [];
   if (formatOptions != null) {
     statements = formatSqlStatements(statements, formatOptions);
+  }
+  if (Deno.env.get("PGDELTA_DEBUG")) {
+    console.error(
+      JSON.stringify({
+        statementCount: statements.length,
+        source: source ? "connected" : "null",
+        target: target ? "connected" : "null",
+        includedSchemas: includedSchemas ?? null,
+        skipDefaultPrivilegeSubtraction: true,
+      }),
+    );
   }
   for (const sql of statements) {
     console.log(`${sql};`);

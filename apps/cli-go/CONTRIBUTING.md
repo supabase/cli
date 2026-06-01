@@ -41,3 +41,52 @@ go test ./... -race -v -count=1 -failfast
 ## API client
 
 The Supabase API client is generated from OpenAPI spec. See [our guide](api/README.md) for updating the client and types.
+
+## Testing local pg-delta builds
+
+To exercise unpublished `@supabase/pg-delta` changes inside CLI edge-runtime scripts (`db pull`, `db diff`, `db push`, etc.), publish a local build via Verdaccio in [pg-toolbelt](https://github.com/supabase/pg-toolbelt) and point the CLI at that registry.
+
+### 1. Start Verdaccio (pg-toolbelt)
+
+```sh
+cd pg-toolbelt
+bun run verdaccio:start
+```
+
+Verdaccio listens on `http://localhost:4873`. `@supabase/*` packages you publish locally are served from local storage; other `@supabase/*` dependencies (for example `@supabase/pg-topo`) are proxied to npmjs.
+
+### 2. Publish a local pg-delta build
+
+After changing `packages/pg-delta`:
+
+```sh
+bun run pg-delta:publish-local \
+  --write-version-to=/path/to/test-project/supabase/.temp/pgdelta-version
+```
+
+This publishes a fresh `0.0.0-local.<timestamp>` version and restores `package.json` afterward. The version file tells the CLI which npm version to request (`EffectivePgDeltaNpmVersion`).
+
+Re-run whenever you change pg-delta source.
+
+### 3. Run the CLI against the local registry
+
+Set `PGDELTA_NPM_REGISTRY` to a URL reachable **from inside the edge-runtime Docker container**:
+
+```sh
+# Docker Desktop (macOS / Windows)
+export PGDELTA_NPM_REGISTRY=http://host.docker.internal:4873
+
+# Linux (Docker 20.10+)
+export PGDELTA_NPM_REGISTRY=http://host.docker.internal:4873
+# or: export PGDELTA_NPM_REGISTRY=http://172.17.0.1:4873
+```
+
+Then run any pg-delta-backed command, for example:
+
+```sh
+supabase db pull --db-url "$DATABASE_URL" --diff-engine pg-delta
+```
+
+When set, the CLI injects a scoped `.npmrc` and forwards `NPM_CONFIG_REGISTRY` into the edge-runtime container (`PgDeltaNpmRegistryOption` in `internal/utils/pgdelta_local.go`).
+
+Unset `PGDELTA_NPM_REGISTRY` to return to the npmjs version pinned in config / `supabase/.temp/pgdelta-version`.

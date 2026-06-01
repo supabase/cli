@@ -203,9 +203,9 @@ func TestDiffDatabase(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Config.Db.Image) + "/json").
 			ReplyError(errNetwork)
 		// Run test
-		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false)
+		result, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false)
 		// Check error
-		assert.Empty(t, diff)
+		assert.Empty(t, result)
 		assert.ErrorIs(t, err, errNetwork)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -234,9 +234,9 @@ func TestDiffDatabase(t *testing.T) {
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
 			Reply(http.StatusOK)
 		// Run test
-		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false)
+		result, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false)
 		// Check error
-		assert.Empty(t, diff)
+		assert.Empty(t, result)
 		assert.ErrorContains(t, err, "test-shadow-db container is not running: exited")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -266,9 +266,9 @@ func TestDiffDatabase(t *testing.T) {
 		conn.Query(utils.GlobalsSql).
 			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
 		// Run test
-		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false, conn.Intercept)
+		result, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false, conn.Intercept)
 		// Check error
-		assert.Empty(t, diff)
+		assert.Empty(t, result)
 		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)
 At statement: 0
 create schema public`)
@@ -321,7 +321,7 @@ create schema public`)
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", []string{sql}).
 			Reply("INSERT 0 1")
 		// Run test
-		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false, func(cc *pgx.ConnConfig) {
+		result, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false, func(cc *pgx.ConnConfig) {
 			if cc.Host == dbConfig.Host {
 				// Fake a SSL error when connecting to target database
 				cc.LookupFunc = func(ctx context.Context, host string) (addrs []string, err error) {
@@ -333,7 +333,7 @@ create schema public`)
 			}
 		})
 		// Check error
-		assert.Empty(t, diff)
+		assert.Empty(t, result)
 		assert.ErrorContains(t, err, "error diffing schema")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})

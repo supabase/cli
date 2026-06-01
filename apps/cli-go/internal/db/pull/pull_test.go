@@ -84,6 +84,34 @@ func TestPullSchema(t *testing.T) {
 		assert.Equal(t, []byte("test"), contents)
 	})
 
+	t.Run("skips pg_dump for pg-delta diff engine on initial pull", func(t *testing.T) {
+		errNetwork := errors.New("network error")
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock docker. Only mock the image inspect call that
+		// CreateShadowDatabase makes; do NOT mock the pg_dump container so
+		// the test fails loudly if pg_dump is still invoked.
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Config.Db.Image) + "/json").
+			ReplyError(errNetwork)
+		// Setup mock postgres (no local migrations -> initial pull path)
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(migration.LIST_MIGRATION_VERSION).
+			Reply("SELECT 0")
+		// Run test with usePgDeltaDiff=true
+		err := run(context.Background(), nil, "0_test.sql", conn.MockClient(t), true, diff.DiffPgDelta, fsys)
+		// Failure must come from shadow-creation image inspect (proving we
+		// reached the diff step), not from pg_dump.
+		assert.ErrorIs(t, err, errNetwork)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+		exists, err := afero.Exists(fsys, "0_test.sql")
+		assert.NoError(t, err)
+		assert.False(t, exists, "pg_dump should be skipped for pg-delta diff engine")
+	})
+
 	t.Run("throws error on diff failure", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -105,6 +133,43 @@ func TestPullSchema(t *testing.T) {
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+}
+
+func TestInitialPullInSync(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	path := "0_test.sql"
+
+	t.Run("swallows errInSync when pg_dump already wrote migration content", func(t *testing.T) {
+		require.NoError(t, afero.WriteFile(fsys, path, []byte("create table t(id int);"), 0644))
+		err := swallowInitialInSync(errInSync, fsys, path)
+		assert.NoError(t, err)
+	})
+
+	t.Run("returns errInSync for pg-delta initial pull with no migration file", func(t *testing.T) {
+		err := swallowInitialInSync(errInSync, fsys, "missing.sql")
+		assert.ErrorIs(t, err, errInSync)
+	})
+
+	t.Run("returns errInSync when migration file is empty", func(t *testing.T) {
+		require.NoError(t, afero.WriteFile(fsys, "empty.sql", []byte{}, 0644))
+		err := swallowInitialInSync(errInSync, fsys, "empty.sql")
+		assert.ErrorIs(t, err, errInSync)
+	})
+}
+
+func TestEnsureMigrationWritten(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+
+	t.Run("passes when migration file has content", func(t *testing.T) {
+		path := "0_test.sql"
+		require.NoError(t, afero.WriteFile(fsys, path, []byte("create table t(id int);"), 0644))
+		assert.NoError(t, ensureMigrationWritten(fsys, path))
+	})
+
+	t.Run("returns errInSync when migration file is missing", func(t *testing.T) {
+		err := ensureMigrationWritten(fsys, "missing.sql")
+		assert.ErrorIs(t, err, errInSync)
 	})
 }
 
