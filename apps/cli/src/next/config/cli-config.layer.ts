@@ -7,7 +7,9 @@ const SUPABASE_API_URL = "https://api.supabase.com";
 const SUPABASE_DASHBOARD_URL = "https://supabase.com/dashboard";
 const SUPABASE_PROJECT_HOST = "supabase.co";
 const SUPABASE_TELEMETRY_POSTHOG_HOST = "https://eu.i.posthog.com";
-const SUPABASE_TELEMETRY_POSTHOG_KEY = "phc_ihjC3EeB2wXCt87yccX5idgIgeZsub7WG0XR5hGFhJz";
+// Injected at build time via `bun build --define` (apps/cli/scripts/build.ts) from the
+// POSTHOG_API_KEY release secret; empty outside a release build so telemetry no-ops.
+const SUPABASE_TELEMETRY_POSTHOG_KEY = process.env.SUPABASE_CLI_POSTHOG_KEY ?? "";
 
 function readEnv(
   env: Readonly<Record<string, string | undefined>>,

@@ -51,7 +51,7 @@ export const analyticsLayer = Layer.effect(
     const aiTool = yield* AiTool;
     const posthogKey = cliConfig.telemetryPosthogKey;
 
-    if (runtime.consent !== "granted") {
+    if (runtime.consent !== "granted" || posthogKey === "") {
       return Analytics.of({
         capture: () => Effect.void,
         identify: () => Effect.void,

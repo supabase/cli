@@ -1,9 +1,12 @@
 // PostHog connection config shared by both shells' analytics layers.
-// Defaults match apps/cli-go/internal/utils/misc.go PostHogAPIKey / PostHogEndpoint
-// (set via Go's -ldflags at build time, hard-coded here for the TS build).
+// The host is constant (both PostHog projects share the instance). The key is
+// injected at build time by apps/cli/scripts/build.ts via
+// `bun build --define "process.env.SUPABASE_CLI_POSTHOG_KEY=..."` from the
+// POSTHOG_API_KEY release secret; outside a release build it is empty and
+// telemetry no-ops.
 
 const DEFAULT_HOST = "https://eu.i.posthog.com";
-const DEFAULT_KEY = "phc_ihjC3EeB2wXCt87yccX5idgIgeZsub7WG0XR5hGFhJz";
+const DEFAULT_KEY = process.env.SUPABASE_CLI_POSTHOG_KEY ?? "";
 
 export const posthogConfig: {
   readonly host: string;

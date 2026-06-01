@@ -113,7 +113,7 @@ async function buildTarget(target: (typeof TARGETS)[number]) {
   const libc = libcForBunTarget(target.bunTarget);
 
   console.log(`[${target.pkg}] Compiling Bun CLI...`);
-  await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --define=SUPABASE_LIBC=${JSON.stringify(libc)} --outfile=${outfile}`;
+  await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --define=SUPABASE_LIBC=${JSON.stringify(libc)} --define=process.env.SUPABASE_CLI_POSTHOG_KEY=${JSON.stringify(process.env.POSTHOG_API_KEY ?? "")} --outfile=${outfile}`;
   console.log(`[${target.pkg}] Done.`);
 }
 
@@ -184,7 +184,7 @@ async function buildMuslBinaries() {
       const outfile = path.join(binDir, "supabase");
       const libc = libcForBunTarget(target.bunTarget);
       console.log(`[${target.pkg}] Compiling Bun CLI (musl)...`);
-      await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --define=SUPABASE_LIBC=${JSON.stringify(libc)} --outfile=${outfile}`;
+      await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --define=SUPABASE_LIBC=${JSON.stringify(libc)} --define=process.env.SUPABASE_CLI_POSTHOG_KEY=${JSON.stringify(process.env.POSTHOG_API_KEY ?? "")} --outfile=${outfile}`;
 
       if (shell === "legacy") {
         // Go binary is CGO_ENABLED=0 (fully static), so the glibc Linux build works on

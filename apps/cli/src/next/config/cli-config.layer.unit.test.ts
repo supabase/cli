@@ -158,12 +158,12 @@ describe("cliConfigLayer", () => {
     );
   });
 
-  it.live("falls back to the shipped PostHog key when no env override is set", () => {
+  it.live("falls back to an empty no-op PostHog key when nothing is injected or overridden", () => {
     const tempDir = makeTempDir();
     return Effect.gen(function* () {
       const cliConfig = yield* CliConfig;
 
-      expect(cliConfig.telemetryPosthogKey).toMatch(/^phc_/);
+      expect(cliConfig.telemetryPosthogKey).toBe("");
     }).pipe(
       Effect.provide(buildLayer({ cwd: tempDir })),
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),

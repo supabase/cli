@@ -140,7 +140,7 @@ export const legacyAnalyticsLayer = Layer.effect(
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
 
-    if (runtime.consent !== "granted") {
+    if (runtime.consent !== "granted" || posthogConfig.key === "") {
       return Analytics.of({
         capture: () => Effect.void,
         identify: () => Effect.void,
