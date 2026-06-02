@@ -241,6 +241,10 @@ func TestDatabaseStart(t *testing.T) {
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
 			JSON([]storage.BucketResponse{})
+		gock.New(utils.Config.Api.ExternalUrl).
+			Post("/storage/v1/vector/ListVectorBuckets").
+			Reply(http.StatusOK).
+			JSON(storage.ListVectorBucketsResponse{})
 		// Run test
 		err = run(ctx, fsys, []string{}, pgconn.Config{Host: utils.DbId}, conn.Intercept)
 		// Check error
