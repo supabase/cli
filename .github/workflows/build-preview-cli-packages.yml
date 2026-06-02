@@ -1,0 +1,27 @@
+name: Build Preview CLI Packages
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+    branches:
+      - develop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.event.pull_request.draft == false
+    name: Build preview CLI packages
+    uses: ./.github/workflows/build-cli-artifacts.yml
+    with:
+      version: 0.0.0-pr.${{ github.event.pull_request.number }}
+      shell: legacy

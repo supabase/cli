@@ -1,113 +1,51 @@
 name: Smoke Test (PR)
 
 on:
-  pull_request:
-    types:
-      - opened
-      - synchronize
-      - reopened
-      - ready_for_review
-    branches:
-      - develop
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Preview version to build and smoke test
+        required: false
+        type: string
+        default: 0.0.0-smoke
+      shell:
+        description: CLI shell to package as the shipped supabase binary
+        required: false
+        type: choice
+        options:
+          - legacy
+          - next
+        default: legacy
+      npm_tag:
+        description: npm tag to use for local package smoke tests
+        required: false
+        type: choice
+        options:
+          - latest
+          - alpha
+          - beta
+        default: beta
 
 permissions:
-  # release-shared.yml's `publish` job declares `contents: write` and
-  # `id-token: write`. Even though that job is gated by `!inputs.dry_run`
-  # and never runs here, GitHub validates nested-workflow permissions at
-  # startup and rejects the run if the caller grants less than any
-  # nested job requests. Granting the superset here is safe because (a)
-  # `dry_run: true` short-circuits the privileged jobs at runtime and
-  # (b) for fork PRs GitHub still issues a read-only GITHUB_TOKEN
-  # regardless of the declared scope.
+  # release-shared.yml declares privileged publish jobs. They are gated by
+  # dry_run here, but GitHub validates nested-workflow permissions at startup.
   contents: write
   id-token: write
-  actions: read
-  pull-requests: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
-  detect:
-    if: github.event.pull_request.draft == false
-    name: Detect release smoke changes
-    runs-on: ubuntu-latest
-    outputs:
-      should_run: ${{ steps.detect.outputs.should_run }}
-    env:
-      GH_TOKEN: ${{ github.token }}
-      PR_NUMBER: ${{ github.event.pull_request.number }}
-      REPOSITORY: ${{ github.repository }}
-    steps:
-      - id: detect
-        run: |
-          set -euo pipefail
-
-          should_run=false
-          while IFS= read -r file; do
-            case "${file}" in
-              apps/cli/scripts/build.ts|\
-              apps/cli/scripts/sync-versions.ts|\
-              apps/cli/src/*|\
-              apps/cli/tests/smoke-test*.ts|\
-              apps/cli/tests/helpers/*|\
-              apps/cli/package.json|\
-              apps/cli-go/*|\
-              packages/cli-*/*|\
-              package.json|\
-              pnpm-lock.yaml|\
-              pnpm-workspace.yaml|\
-              .github/actions/setup/*|\
-              .github/workflows/release-shared.yml|\
-              .github/workflows/smoke-test-pr.yml)
-                should_run=true
-                break
-                ;;
-            esac
-          done < <(gh pr diff "${PR_NUMBER}" --repo "${REPOSITORY}" --name-only)
-
-          echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
-          echo "Release smoke required: ${should_run}"
-
   smoke:
-    needs: detect
-    if: needs.detect.outputs.should_run == 'true'
+    name: Run release smoke tests
     uses: ./.github/workflows/release-shared.yml
     with:
-      # PR-scoped version so each PR has one preview package while every
-      # approved commit can update that package.
-      version: 0.0.0-pr.${{ github.event.pull_request.number }}
-      shell: legacy
-      npm_tag: latest
+      version: ${{ inputs.version }}
+      shell: ${{ inputs.shell }}
+      npm_tag: ${{ inputs.npm_tag }}
       channel: beta
       prerelease: true
       dry_run: true
-    # release-shared.yml's publish/homebrew/scoop jobs reference
-    # `secrets.APP_ID` and `secrets.GH_APP_PRIVATE_KEY`. They are gated by
-    # `!inputs.dry_run` and never execute here, but GitHub validates secret
-    # references at startup, so the called workflow needs the secrets bag
-    # propagated even when the jobs that use them are skipped.
     secrets:
       GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
-
-  smoke-summary:
-    if: always() && github.event.pull_request.draft == false
-    name: Run release smoke tests
-    needs: [detect, smoke]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Verify release smoke result
-        run: |
-          if [ "${{ needs.detect.outputs.should_run }}" != "true" ]; then
-            echo "No release smoke-relevant changes detected."
-            exit 0
-          fi
-
-          if [ "${{ needs.smoke.result }}" = "success" ]; then
-            echo "All release smoke jobs succeeded."
-            exit 0
-          fi
-
-          echo "::error ::Release smoke workflow result: ${{ needs.smoke.result }}"
-          exit 1
