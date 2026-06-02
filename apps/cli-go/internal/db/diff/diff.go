@@ -230,7 +230,7 @@ func migrateBaseDatabase(ctx context.Context, config pgconn.Config, migrations [
 }
 
 func diffWithStream(ctx context.Context, env []string, script string, stdout io.Writer) error {
-	cmd := []string{"edge-runtime", "start", "--main-service=."}
+	cmd := utils.EdgeRuntimeStartCmd()
 	if viper.GetBool("DEBUG") {
 		cmd = append(cmd, "--verbose")
 	}
