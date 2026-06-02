@@ -263,6 +263,73 @@ describe("legacyProjectRefLayer", () => {
     });
   });
 
+  describe("resolveForLink", () => {
+    it.effect("prefers the --project-ref flag", () => {
+      const { layer } = makeLayer({ workdir: tempRoot, projectId: ANOTHER_REF });
+      return Effect.gen(function* () {
+        const { resolveForLink } = yield* LegacyProjectRefResolver;
+        const ref = yield* resolveForLink(Option.some(VALID_REF));
+        expect(ref).toBe(VALID_REF);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("uses SUPABASE_PROJECT_ID when the flag is unset", () => {
+      const { layer } = makeLayer({ workdir: tempRoot, projectId: VALID_REF });
+      return Effect.gen(function* () {
+        const { resolveForLink } = yield* LegacyProjectRefResolver;
+        const ref = yield* resolveForLink(Option.none());
+        expect(ref).toBe(VALID_REF);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("skips the ref file (Go MemMapFs) and fails off-TTY with no flag/projectId", () => {
+      // A ref file is present, but link must ignore it and fail like cobra's
+      // required-flag check would.
+      writeRefFile(tempRoot, VALID_REF);
+      const { layer } = makeLayer({ workdir: tempRoot });
+      return Effect.gen(function* () {
+        const { resolveForLink } = yield* LegacyProjectRefResolver;
+        const exit = yield* Effect.exit(resolveForLink(Option.none()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const errorJson = JSON.stringify(exit.cause);
+          expect(errorJson).toContain("LegacyProjectRefRequiredError");
+          expect(errorJson).toContain(`required flag(s) \\"project-ref\\" not set`);
+        }
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("prompts via Output.promptSelect on a TTY with no other source", () => {
+      const projects = [
+        { id: VALID_REF, name: "alpha", organization_slug: "acme", region: "us-east-1" },
+      ];
+      const { layer, out } = makeLayer({
+        workdir: tempRoot,
+        stdinIsTty: true,
+        projects,
+        promptSelectResponses: [VALID_REF],
+      });
+      return Effect.gen(function* () {
+        const { resolveForLink } = yield* LegacyProjectRefResolver;
+        const ref = yield* resolveForLink(Option.none());
+        expect(ref).toBe(VALID_REF);
+        expect(out.promptSelectCalls[0]?.message).toBe("Select a project:");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("rejects an invalid --project-ref flag", () => {
+      const { layer } = makeLayer({ workdir: tempRoot });
+      return Effect.gen(function* () {
+        const { resolveForLink } = yield* LegacyProjectRefResolver;
+        const exit = yield* Effect.exit(resolveForLink(Option.some("BADREF")));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidProjectRefError");
+        }
+      }).pipe(Effect.provide(layer));
+    });
+  });
+
   describe("promptProjectRef", () => {
     it.effect("prompts with the given title, returns the choice, and echoes it", () => {
       const projects = [

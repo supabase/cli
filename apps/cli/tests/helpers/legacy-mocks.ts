@@ -14,6 +14,7 @@ import * as UrlParams from "effect/unstable/http/UrlParams";
 import { afterEach, beforeEach } from "vitest";
 
 import { LegacyCredentials } from "../../src/legacy/auth/legacy-credentials.service.ts";
+import { LegacyCredentialDeleteError } from "../../src/legacy/auth/legacy-errors.ts";
 import { LegacyPlatformApi } from "../../src/legacy/auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../src/legacy/config/legacy-cli-config.service.ts";
 import { legacyProjectRefLayer } from "../../src/legacy/config/legacy-project-ref.layer.ts";
@@ -59,7 +60,44 @@ export const mockLegacyCredentialsLayer = Layer.succeed(LegacyCredentials, {
   getAccessToken: Effect.sync(() => Option.none()),
   saveAccessToken: () => Effect.die("unexpected legacy credentials write in test"),
   deleteAccessToken: Effect.die("unexpected legacy credentials delete in test"),
+  deleteProjectCredential: () => Effect.die("unexpected legacy project-credential delete in test"),
 });
+
+/**
+ * Tracked `LegacyCredentials` mock for `supabase unlink` tests. Records the
+ * project refs passed to `deleteProjectCredential` and lets the test choose the
+ * outcome: `true`/`false` (deleted / not found) or a `LegacyCredentialDeleteError`
+ * (e.g. permission-denied keyring failure).
+ */
+export function mockLegacyCredentialsTracked(opts: { readonly deleteFails?: boolean } = {}): {
+  readonly layer: Layer.Layer<LegacyCredentials>;
+  readonly deletedRefs: ReadonlyArray<string>;
+} {
+  const deletedRefs: string[] = [];
+  const layer = Layer.succeed(LegacyCredentials, {
+    getAccessToken: Effect.sync(() => Option.none()),
+    saveAccessToken: () => Effect.die("unexpected legacy credentials write in test"),
+    deleteAccessToken: Effect.die("unexpected legacy credentials delete in test"),
+    deleteProjectCredential: (projectRef: string) =>
+      Effect.gen(function* () {
+        deletedRefs.push(projectRef);
+        if (opts.deleteFails === true) {
+          return yield* Effect.fail(
+            new LegacyCredentialDeleteError({
+              message: "failed to delete project credential: permission denied",
+            }),
+          );
+        }
+        return true;
+      }),
+  });
+  return {
+    layer,
+    get deletedRefs() {
+      return deletedRefs;
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // State-tracking factories — for PersistentPostRun-parity assertions

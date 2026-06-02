@@ -4,12 +4,32 @@ import { Context } from "effect";
 import type {
   LegacyInvalidProjectRefError,
   LegacyProjectNotLinkedError,
+  LegacyProjectRefRequiredError,
 } from "./legacy-project-ref.errors.ts";
 
 interface LegacyProjectRefResolverShape {
   readonly resolve: (
     flagValue: Option.Option<string>,
   ) => Effect.Effect<string, LegacyProjectNotLinkedError | LegacyInvalidProjectRefError, never>;
+  /**
+   * Resolution chain used by `supabase link` (`apps/cli-go/cmd/link.go:30` calls
+   * `flags.ParseProjectRef` with an **empty in-memory FS**, so the on-disk
+   * `project-ref` file is deliberately skipped):
+   *
+   *   flag → `cliConfig.projectId` (env `SUPABASE_PROJECT_ID`) → (TTY) prompt.
+   *
+   * On a non-TTY with neither the flag nor `PROJECT_ID` set, fails with
+   * `LegacyProjectRefRequiredError`, reproducing the cobra
+   * `required flag(s) "project-ref" not set` error that link's `PreRunE`
+   * triggers via `cmd.MarkFlagRequired("project-ref")` (`link.go:23-27`).
+   */
+  readonly resolveForLink: (
+    flagValue: Option.Option<string>,
+  ) => Effect.Effect<
+    string,
+    LegacyProjectNotLinkedError | LegacyInvalidProjectRefError | LegacyProjectRefRequiredError,
+    never
+  >;
   /**
    * Soft resolution chain (flag -> `cliConfig.projectId` -> ref file) with **no
    * prompt and no failure**. Mirrors Go's `flags.LoadProjectRef` as used by

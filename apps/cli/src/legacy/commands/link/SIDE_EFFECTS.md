@@ -1,72 +1,96 @@
 # `supabase link`
 
+Native TypeScript port of Go's `internal/link`. Writes flat state files under
+`<workdir>/supabase/.temp/` — it does **not** use the `next/` `.supabase/project.json` model.
+
 ## Files Read
 
-| Path                       | Format                    | When                                                       |
-| -------------------------- | ------------------------- | ---------------------------------------------------------- |
-| `~/.supabase/access-token` | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable |
-| `.supabase/config.json`    | JSON                      | when present, to load existing local config                |
-| `supabase/config.toml`     | TOML                      | to load project configuration for the link operation       |
+| Path                       | Format              | When                                                                                              |
+| -------------------------- | ------------------- | ------------------------------------------------------------------------------------------------- |
+| `supabase/config.toml`     | TOML (`project_id`) | for ref resolution when `--project-ref` / `SUPABASE_PROJECT_ID` are unset (via `LegacyCliConfig`) |
+| `~/.supabase/access-token` | plain text          | when `SUPABASE_ACCESS_TOKEN` is unset and the keyring is unavailable                              |
+
+> The on-disk `supabase/.temp/project-ref` file is **not** read for ref resolution — Go passes an
+> empty in-memory FS to `ParseProjectRef` (`cmd/link.go:30`), so `link` never falls back to it.
 
 ## Files Written
 
-| Path                     | Format | When                                                    |
-| ------------------------ | ------ | ------------------------------------------------------- |
-| `.supabase/project.json` | JSON   | always on success; stores linked project ref and config |
-| `supabase/config.toml`   | TOML   | when config differs from remote; updated with remote    |
+All under `<workdir>/supabase/.temp/` (plain text, created with parent dirs as needed):
+
+| Path                  | When                                                                                                  |
+| --------------------- | ----------------------------------------------------------------------------------------------------- |
+| `project-ref`         | always, after services link (mandatory — a write failure fails the command)                           |
+| `postgres-version`    | when the project status is 200 and `database.version` is non-empty                                    |
+| `storage-migration`   | best-effort — storage config `migrationVersion`                                                       |
+| `pooler-url`          | best-effort — processed PRIMARY pooler connection string; **removed** when `--skip-pooler`            |
+| `rest-version`        | best-effort — PostgREST swagger `info.version`, prefixed `v`                                          |
+| `gotrue-version`      | best-effort — GoTrue `/auth/v1/health` version                                                        |
+| `storage-version`     | best-effort — Storage `/storage/v1/version` body, prefixed `v`                                        |
+| `linked-project.json` | best-effort — `{ref,name,organization_id,organization_slug}` (only for a resolvable, non-404 project) |
 
 ## API Routes
 
-| Method | Path                                          | Auth         | Request body | Response (used fields)                      |
-| ------ | --------------------------------------------- | ------------ | ------------ | ------------------------------------------- |
-| `GET`  | `/v1/projects/{ref}`                          | Bearer token | none         | `{status, database.host, database.version}` |
-| `GET`  | `/v1/projects/{ref}/api-keys`                 | Bearer token | none         | `[{name, api_key}]`                         |
-| `GET`  | `/v1/projects/{ref}/config/database/postgres` | Bearer token | none         | `{max_connections, ...}`                    |
+Management API (base `LegacyCliConfig.apiUrl`, `Authorization: Bearer <access-token>`):
+
+| Method | Path                                        | When                                       |
+| ------ | ------------------------------------------- | ------------------------------------------ |
+| `GET`  | `/v1/projects/{ref}`                        | always (404 tolerated for branch projects) |
+| `GET`  | `/v1/projects/{ref}/api-keys?reveal=true`   | always                                     |
+| `GET`  | `/v1/projects/{ref}/config/storage`         | best-effort                                |
+| `GET`  | `/v1/projects/{ref}/config/database/pooler` | best-effort (unless `--skip-pooler`)       |
+| `GET`  | `/v1/projects`                              | only when prompting on a TTY               |
+
+Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` + `Authorization: Bearer <service-key>`):
+
+| Method | Path                  | When        |
+| ------ | --------------------- | ----------- |
+| `GET`  | `/rest/v1/`           | best-effort |
+| `GET`  | `/auth/v1/health`     | best-effort |
+| `GET`  | `/storage/v1/version` | best-effort |
+
+> The discarded Go config probes (`/config/database/postgres`, `/postgrest`, `/config/auth`,
+> `/network-restrictions`) are **omitted**: they only populated in-process config that standalone
+> `link` discards, and they emit nothing observable.
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                               |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)             |
-| `PROJECT_ID`            | override `--project-ref` flag                        | no                                                      |
-| `DB_PASSWORD`           | database password (bound from `--password` flag)     | no                                                      |
+| Variable                | Purpose                                                                                                                      |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_PROJECT_ID`   | project-ref resolution (flag → env → TTY prompt)                                                                             |
+| `SUPABASE_ACCESS_TOKEN` | Management API bearer auth (env → keyring → `~/.supabase/access-token`)                                                      |
+| `SUPABASE_DB_PASSWORD`  | bound to `--password`; **accepted but a no-op** for `link` (the DB-connection path that would consume it is dead code in Go) |
 
 ## Exit Codes
 
-| Code | Condition                                                        |
-| ---- | ---------------------------------------------------------------- |
-| `0`  | success — project linked, prints "Finished supabase link."       |
-| `1`  | authentication error — no valid token found                      |
-| `1`  | project not found — API returns 404                              |
-| `1`  | project not active or unhealthy                                  |
-| `1`  | missing `--project-ref` in non-TTY mode without `PROJECT_ID` env |
-| `1`  | network / connection failure                                     |
+| Code | Condition                                                                                          |
+| ---- | -------------------------------------------------------------------------------------------------- |
+| `0`  | success — project linked (incl. the 404 branch path); prints `Finished supabase link.`             |
+| `1`  | non-TTY with no `--project-ref` / `SUPABASE_PROJECT_ID` (`required flag(s) "project-ref" not set`) |
+| `1`  | malformed project ref                                                                              |
+| `1`  | project paused (`INACTIVE`)                                                                        |
+| `1`  | project status non-200/404                                                                         |
+| `1`  | api-keys auth failure / missing key                                                                |
+| `1`  | `project-ref` file write failure                                                                   |
+
+> Best-effort service-link and telemetry errors never affect the exit code.
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text` (Go-compatible)
 
-On success, prints a confirmation message:
+- stderr: `Selected project: <ref>` (prompt path); `WARNING: Project status is <status> instead of Active Healthy. Some operations might fail.`; the dashboard unpause suggestion on a paused project.
+- stdout: `Finished supabase link.`
 
-```
-Finished supabase link.
-```
+### `--output-format json` / `stream-json`
 
-Interactive mode may prompt for project selection and database password.
+Emits a structured success (`{ project_ref }`) and suppresses the human `Finished` line. Warnings still go to stderr.
 
-### `--output-format json`
+## Known divergence
 
-Not applicable — link is an interactive command.
-
-### `--output-format stream-json`
-
-Not applicable — link is an interactive command.
-
-## Notes
-
-- In non-TTY mode without `PROJECT_ID` env, `--project-ref` is required.
-- The `--skip-pooler` flag uses a direct database connection instead of the connection pooler.
-- The `--password` flag sets the database password, bound to `DB_PASSWORD` viper key.
-- After linking, the project ref is written to `.supabase/project.json` (and legacy `.supabase/` state).
-- The `PostRun` hook always prints "Finished supabase link." to stdout on success.
+- The cosmetic `WARNING: Local database version differs from the linked project.` message (Go's
+  `linkPostgresVersion`) is **not** reproduced: it requires loading the local `config.toml`
+  `[db].major_version` with CLI defaults, which the legacy shell does not surface. The
+  `postgres-version` file (the meaningful side effect) is still written.
+- The `Finished supabase link.` line is emitted as **plain text**; Go renders `supabase link` in
+  ANSI cyan via `utils.Aqua`. This matches the established legacy-port convention (color helpers are
+  rendered plain); ANSI-stripping scripts are unaffected.

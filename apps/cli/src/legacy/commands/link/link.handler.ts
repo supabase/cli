@@ -1,12 +1,303 @@
-import { Effect, Option } from "effect";
-import { LegacyGoProxy } from "../../../shared/legacy/go-proxy.service.ts";
+import type { ApiClient } from "@supabase/api/effect";
+import { Effect, FileSystem, Option, Path } from "effect";
+import type { PlatformError } from "effect/PlatformError";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
+
+import { LegacyPlatformApi } from "../../auth/legacy-platform-api.service.ts";
+import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
+import { LegacyProjectRefResolver } from "../../config/legacy-project-ref.service.ts";
+import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
+import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
+import { Output } from "../../../shared/output/output.service.ts";
+import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
+import { withAnalyticsContext } from "../../../shared/telemetry/analytics-context.ts";
+import {
+  EventProjectLinked,
+  GroupOrganization,
+  GroupProject,
+} from "../../../shared/telemetry/event-catalog.ts";
+import { legacyDashboardUrl } from "../../shared/legacy-profile.ts";
+import { mapLegacyHttpError, sanitizeLegacyErrorBody } from "../../shared/legacy-http-errors.ts";
+import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
+import {
+  legacyFetchGotrueVersion,
+  legacyFetchPostgrestVersion,
+  legacyFetchStorageVersion,
+} from "../../shared/legacy-tenant-versions.ts";
+import {
+  LegacyLinkApiKeysNetworkError,
+  LegacyLinkAuthTokenError,
+  LegacyLinkMissingKeyError,
+  LegacyLinkProjectStatusError,
+  LegacyLinkProjectStatusNetworkError,
+  LegacyProjectPausedError,
+} from "./link.errors.ts";
 import type { LegacyLinkFlags } from "./link.command.ts";
 
-export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkFlags) {
-  const proxy = yield* LegacyGoProxy;
-  const args: string[] = ["link"];
-  if (Option.isSome(flags.projectRef)) args.push("--project-ref", flags.projectRef.value);
-  if (Option.isSome(flags.password)) args.push("--password", flags.password.value);
-  if (flags.skipPooler) args.push("--skip-pooler");
-  yield* proxy.exec(args);
+type LegacyLinkProject = Effect.Success<ReturnType<ApiClient["v1"]["getProject"]>>;
+
+// Classify a `getProject` failure: a 404 means the project is a branch (resolve
+// to `None`, link continues); any other status surfaces the body; transport
+// failures surface a network error. Mirrors `checkRemoteProjectStatus`
+// (`link.go:240-253`).
+const classifyProjectError = (
+  cause: unknown,
+): Effect.Effect<
+  Option.Option<LegacyLinkProject>,
+  LegacyLinkProjectStatusError | LegacyLinkProjectStatusNetworkError
+> => {
+  if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
+    const status = cause.response.status;
+    if (status === 404) {
+      return Effect.succeedNone;
+    }
+    return cause.response.text.pipe(
+      Effect.orElseSucceed(() => ""),
+      // Cap + strip control chars, matching `mapLegacyHttpError`'s defence-in-depth
+      // so an oversized / control-char body can't bloat JSON output or inject ANSI.
+      Effect.map(sanitizeLegacyErrorBody),
+      Effect.flatMap((body) =>
+        Effect.fail(
+          new LegacyLinkProjectStatusError({
+            status,
+            body,
+            message: `Unexpected error retrieving remote project status: ${body}`,
+          }),
+        ),
+      ),
+    );
+  }
+  return Effect.fail(
+    new LegacyLinkProjectStatusNetworkError({
+      message: `failed to retrieve remote project status: ${String(cause)}`,
+    }),
+  );
+};
+
+interface ApiKeyEntry {
+  readonly api_key?: string | null;
+  readonly type?: string | null;
+  readonly name: string;
+  readonly secret_jwt_template?: Record<string, unknown> | null;
+}
+
+type WriteTempFile = (filePath: string, content: string) => Effect.Effect<void, PlatformError>;
+
+// Mirrors `tenant.NewApiKey` (`apps/cli-go/internal/utils/tenant/client.go:28-57`):
+// publishable -> anon, secret w/ role=service_role -> service_role, else legacy
+// name-based fallback (`anon` / `service_role`).
+function extractServiceKeys(keys: ReadonlyArray<ApiKeyEntry>): {
+  anon: string;
+  serviceRole: string;
+} {
+  let anon = "";
+  let serviceRole = "";
+  for (const key of keys) {
+    const value = key.api_key;
+    if (value === undefined || value === null) continue;
+    if (key.type === "publishable") {
+      anon = value;
+      continue;
+    }
+    if (key.type === "secret") {
+      const role = key.secret_jwt_template?.["role"];
+      if (typeof role === "string" && role.toLowerCase() === "service_role") {
+        serviceRole = value;
+      }
+      continue;
+    }
+    if (key.name === "anon" && anon.length === 0) {
+      anon = value;
+    } else if (key.name === "service_role" && serviceRole.length === 0) {
+      serviceRole = value;
+    }
+  }
+  return { anon, serviceRole };
+}
+
+const mapApiKeysError = mapLegacyHttpError({
+  networkError: LegacyLinkApiKeysNetworkError,
+  statusError: LegacyLinkAuthTokenError,
+  networkMessage: (cause) => `failed to get api keys: ${cause}`,
+  statusMessage: (_status, body) =>
+    `Authorization failed for the access token and project ref pair: ${body}`,
 });
+
+export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkFlags) {
+  const output = yield* Output;
+  const api = yield* LegacyPlatformApi;
+  const cliConfig = yield* LegacyCliConfig;
+  const resolver = yield* LegacyProjectRefResolver;
+  const linkedProjectCache = yield* LegacyLinkedProjectCache;
+  const telemetryState = yield* LegacyTelemetryState;
+  const analytics = yield* Analytics;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  const ref = yield* resolver.resolveForLink(flags.projectRef);
+  const paths = legacyTempPaths(path, cliConfig.workdir);
+
+  const writeTempFile: WriteTempFile = (filePath, content) =>
+    fs
+      .makeDirectory(path.dirname(filePath), { recursive: true })
+      .pipe(Effect.andThen(() => fs.writeFileString(filePath, content)));
+
+  // Mirror Go's PersistentPostRun (`apps/cli-go/cmd/root.go:176`): persist the
+  // linked-project cache and telemetry state whether the link succeeds or fails.
+  // `link` itself writes `linked-project.json` on success (below), so `cache`
+  // only fires for the failure / 404 paths.
+  yield* Effect.gen(function* () {
+    // 1. Check remote project status (404 tolerated for branch projects).
+    const project = yield* api.v1
+      .getProject({ ref })
+      .pipe(Effect.asSome, Effect.catch(classifyProjectError));
+
+    if (Option.isSome(project)) {
+      const status = project.value.status;
+      if (status === "INACTIVE") {
+        return yield* Effect.fail(
+          new LegacyProjectPausedError({
+            message: "project is paused",
+            suggestion: `An admin must unpause it from the Supabase dashboard at ${legacyDashboardUrl(
+              cliConfig.profile,
+            )}/project/${ref}`,
+          }),
+        );
+      }
+      if (status !== "ACTIVE_HEALTHY") {
+        yield* output.raw(
+          `WARNING: Project status is ${status} instead of Active Healthy. Some operations might fail.\n`,
+          "stderr",
+        );
+      }
+      // Update postgres image version to match the remote project (link.go:269).
+      const version = project.value.database.version;
+      if (version.length > 0) {
+        yield* writeTempFile(paths.postgresVersion, version);
+      }
+    }
+
+    // 2. Resolve service keys (auth check).
+    const keys = yield* api.v1
+      .getProjectApiKeys({ ref, reveal: true })
+      .pipe(Effect.catch(mapApiKeysError));
+    const { anon, serviceRole } = extractServiceKeys(keys);
+    if (anon.length === 0 && serviceRole.length === 0) {
+      return yield* Effect.fail(new LegacyLinkMissingKeyError({ message: "Anon key not found." }));
+    }
+
+    // 3. Link services — best-effort. Every error is swallowed so a single
+    // unreachable service never fails the link (link.go:91-100).
+    yield* linkStorageMigration(api, ref, paths.storageMigration, writeTempFile);
+    yield* linkPooler({
+      api,
+      ref,
+      skipPooler: flags.skipPooler,
+      fs,
+      poolerUrlPath: paths.poolerUrl,
+      writeTempFile,
+    });
+    const tenantOpts = {
+      ref,
+      projectHost: cliConfig.projectHost,
+      serviceKey: serviceRole,
+      userAgent: cliConfig.userAgent,
+    };
+    yield* legacyFetchPostgrestVersion(tenantOpts).pipe(
+      Effect.flatMap((v) =>
+        Option.isSome(v) ? writeTempFile(paths.restVersion, v.value) : Effect.void,
+      ),
+      Effect.ignore,
+    );
+    yield* legacyFetchGotrueVersion(tenantOpts).pipe(
+      Effect.flatMap((v) =>
+        Option.isSome(v) ? writeTempFile(paths.gotrueVersion, v.value) : Effect.void,
+      ),
+      Effect.ignore,
+    );
+    yield* legacyFetchStorageVersion(tenantOpts).pipe(
+      Effect.flatMap((v) =>
+        Option.isSome(v) ? writeTempFile(paths.storageVersion, v.value) : Effect.void,
+      ),
+      Effect.ignore,
+    );
+
+    // 4. Save project ref (mandatory — a write failure fails the command).
+    yield* writeTempFile(paths.projectRef, ref);
+
+    // 5. Telemetry + linked-project cache (only for resolvable projects, i.e.
+    // not the 404 branch path). `link.go:40-67`.
+    if (Option.isSome(project)) {
+      const p = project.value;
+      // SaveLinkedProject — best-effort (debug-logged in Go, never fatal).
+      yield* writeTempFile(
+        paths.linkedProjectCache,
+        JSON.stringify({
+          ref: p.ref,
+          name: p.name,
+          organization_id: p.organization_id,
+          organization_slug: p.organization_slug,
+        }),
+      ).pipe(Effect.ignore);
+
+      const groups = { organization: p.organization_id, project: p.ref } as const;
+      if (p.organization_id.length > 0) {
+        yield* analytics.groupIdentify(GroupOrganization, p.organization_id, {
+          organization_slug: p.organization_slug,
+        });
+      }
+      if (p.ref.length > 0) {
+        yield* analytics.groupIdentify(GroupProject, p.ref, {
+          name: p.name,
+          organization_slug: p.organization_slug,
+        });
+      }
+      yield* analytics.capture(EventProjectLinked, {}).pipe(withAnalyticsContext({ groups }));
+    }
+
+    // 6. PostRun: `Finished supabase link.` to stdout (text), structured success
+    // otherwise.
+    if (output.format === "text") {
+      yield* output.raw("Finished supabase link.\n");
+    } else {
+      yield* output.success("", { project_ref: ref });
+    }
+  }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
+});
+
+const linkStorageMigration = (
+  api: ApiClient,
+  ref: string,
+  storageMigrationPath: string,
+  writeTempFile: WriteTempFile,
+) =>
+  api.v1.getStorageConfig({ ref }).pipe(
+    Effect.flatMap((config) => writeTempFile(storageMigrationPath, config.migrationVersion)),
+    Effect.ignore,
+  );
+
+const linkPooler = (opts: {
+  api: ApiClient;
+  ref: string;
+  skipPooler: boolean;
+  fs: FileSystem.FileSystem;
+  poolerUrlPath: string;
+  writeTempFile: WriteTempFile;
+}) =>
+  Effect.gen(function* () {
+    if (opts.skipPooler) {
+      // Use direct connection: drop any cached pooler URL (link.go:81-84).
+      yield* opts.fs.remove(opts.poolerUrlPath, { recursive: true }).pipe(Effect.ignore);
+      return;
+    }
+    const configs = yield* opts.api.v1.getPoolerConfig({ ref: opts.ref });
+    const primary = configs.find((c) => c.database_type === "PRIMARY");
+    if (primary === undefined) return;
+    // Strip the [YOUR-PASSWORD] placeholder; force session mode 5432 unless the
+    // pooler already reports session mode (link.go:221-229).
+    let connectionString = primary.connection_string.replaceAll(":[YOUR-PASSWORD]", "");
+    if (primary.pool_mode !== "session") {
+      connectionString = connectionString.replaceAll(":6543/", ":5432/");
+    }
+    yield* opts.writeTempFile(opts.poolerUrlPath, connectionString);
+  }).pipe(Effect.ignore);
