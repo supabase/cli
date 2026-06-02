@@ -6,11 +6,7 @@ import path from "node:path";
 import { Effect, Layer } from "effect";
 import { Command } from "effect/unstable/cli";
 
-import {
-  mockAnalytics,
-  mockOutput,
-  processEnvLayer,
-} from "../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import { legacyTelemetryCommand } from "./telemetry.command.ts";
 
 function makeTempDir(): string {
@@ -137,34 +133,40 @@ describe("legacy telemetry integration", () => {
     ) as Effect.Effect<void>;
   });
 
-  it.live("status treats malformed typed fields as a corrupted file and regenerates identity", () => {
-    const dir = makeTempDir();
-    const { out, layer } = setup(dir);
+  it.live(
+    "status treats malformed typed fields as a corrupted file and regenerates identity",
+    () => {
+      const dir = makeTempDir();
+      const { out, layer } = setup(dir);
 
-    writeFileSync(
-      telemetryPath(dir),
-      JSON.stringify({
-        enabled: false,
-        device_id: "device-123",
-        session_id: "session-123",
-        session_last_active: "not-a-time",
-        distinct_id: "user-123",
-        schema_version: 1,
-      }),
-    );
+      writeFileSync(
+        telemetryPath(dir),
+        JSON.stringify({
+          enabled: false,
+          device_id: "device-123",
+          session_id: "session-123",
+          session_last_active: "not-a-time",
+          distinct_id: "user-123",
+          schema_version: 1,
+        }),
+      );
 
-    return Effect.gen(function* () {
-      yield* Command.runWith(legacyTestRoot(), { version: "0.0.0-test" })(["telemetry", "status"]);
-      expect(out.stdoutText).toBe("Telemetry is enabled.\n");
-      const config = readTelemetryConfig(dir);
-      expect(config.enabled).toBe(true);
-      expect(config.device_id).not.toBe("device-123");
-      expect(config.session_id).not.toBe("session-123");
-      expect(config.distinct_id).toBeUndefined();
-      expect(config.schema_version).toBe(1);
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
-    ) as Effect.Effect<void>;
-  });
+      return Effect.gen(function* () {
+        yield* Command.runWith(legacyTestRoot(), { version: "0.0.0-test" })([
+          "telemetry",
+          "status",
+        ]);
+        expect(out.stdoutText).toBe("Telemetry is enabled.\n");
+        const config = readTelemetryConfig(dir);
+        expect(config.enabled).toBe(true);
+        expect(config.device_id).not.toBe("device-123");
+        expect(config.session_id).not.toBe("session-123");
+        expect(config.distinct_id).toBeUndefined();
+        expect(config.schema_version).toBe(1);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+      ) as Effect.Effect<void>;
+    },
+  );
 });

@@ -15,7 +15,7 @@ interface State {
 const SCHEMA_VERSION = 1;
 const SESSION_ROTATION_MS = 30 * 60 * 1000;
 
-export function legacyTelemetryPath(
+function legacyTelemetryPath(
   env: Record<string, string | undefined>,
   pathSvc: Path.Path,
 ): string {

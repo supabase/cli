@@ -2,8 +2,8 @@
 
 ## Files Read
 
-| Path                      | Format | When                                                                         |
-| ------------------------- | ------ | ---------------------------------------------------------------------------- |
+| Path                         | Format | When                                                                        |
+| ---------------------------- | ------ | --------------------------------------------------------------------------- |
 | `~/.supabase/telemetry.json` | JSON   | when the file exists, to preserve prior identity fields before rewriting it |
 
 When `SUPABASE_HOME` is set, the command uses `$SUPABASE_HOME/telemetry.json`
@@ -11,8 +11,8 @@ instead of `~/.supabase/telemetry.json`.
 
 ## Files Written
 
-| Path                         | Format | When    |
-| ---------------------------- | ------ | ------- |
+| Path                         | Format | When   |
+| ---------------------------- | ------ | ------ |
 | `~/.supabase/telemetry.json` | JSON   | always |
 
 ## API Routes
@@ -21,15 +21,15 @@ instead of `~/.supabase/telemetry.json`.
 
 ## Environment Variables
 
-| Variable         | Purpose                                    | Required?                                 |
-| ---------------- | ------------------------------------------ | ----------------------------------------- |
-| `SUPABASE_HOME`  | override the telemetry state-file location | no (defaults to `~/.supabase`)            |
+| Variable        | Purpose                                    | Required?                      |
+| --------------- | ------------------------------------------ | ------------------------------ |
+| `SUPABASE_HOME` | override the telemetry state-file location | no (defaults to `~/.supabase`) |
 
 ## Exit Codes
 
-| Code | Condition                                                             |
-| ---- | --------------------------------------------------------------------- |
-| `0`  | success                                                               |
+| Code | Condition                                                                 |
+| ---- | ------------------------------------------------------------------------- |
+| `0`  | success                                                                   |
 | `1`  | filesystem read/write failure while loading or persisting telemetry state |
 
 ## Telemetry Events Fired

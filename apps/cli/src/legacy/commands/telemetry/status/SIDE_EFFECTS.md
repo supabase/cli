@@ -2,8 +2,8 @@
 
 ## Files Read
 
-| Path                      | Format | When                                                                 |
-| ------------------------- | ------ | -------------------------------------------------------------------- |
+| Path                         | Format | When                                                               |
+| ---------------------------- | ------ | ------------------------------------------------------------------ |
 | `~/.supabase/telemetry.json` | JSON   | when the file exists, to load the current state before printing it |
 
 When `SUPABASE_HOME` is set, the command uses `$SUPABASE_HOME/telemetry.json`
@@ -11,8 +11,8 @@ instead of `~/.supabase/telemetry.json`.
 
 ## Files Written
 
-| Path                         | Format | When                                                                                 |
-| ---------------------------- | ------ | ------------------------------------------------------------------------------------ |
+| Path                         | Format | When                                                                                   |
+| ---------------------------- | ------ | -------------------------------------------------------------------------------------- |
 | `~/.supabase/telemetry.json` | JSON   | always, because `status` refreshes `session_last_active` and recreates malformed state |
 
 ## API Routes
@@ -27,9 +27,9 @@ instead of `~/.supabase/telemetry.json`.
 
 ## Exit Codes
 
-| Code | Condition                                                             |
-| ---- | --------------------------------------------------------------------- |
-| `0`  | success                                                               |
+| Code | Condition                                                                 |
+| ---- | ------------------------------------------------------------------------- |
+| `0`  | success                                                                   |
 | `1`  | filesystem read/write failure while loading or persisting telemetry state |
 
 Malformed JSON does not fail the command; it is treated as missing state and
