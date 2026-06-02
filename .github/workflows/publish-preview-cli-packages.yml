@@ -1,0 +1,214 @@
+name: Publish Preview CLI Packages
+
+on:
+  workflow_run:
+    workflows:
+      - Test
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_sha || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  resolve:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    name: Resolve preview build context
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+    outputs:
+      should_build: ${{ steps.context.outputs.should_build }}
+      pr_number: ${{ steps.context.outputs.pr_number }}
+      pr_head_sha: ${{ steps.context.outputs.pr_head_sha }}
+      preview_version: ${{ steps.context.outputs.preview_version }}
+    steps:
+      - name: Resolve PR context
+        id: context
+        run: |
+          set -euo pipefail
+
+          should_build=false
+          pr_number="$(jq -r '.workflow_run.pull_requests[0].number // ""' "$GITHUB_EVENT_PATH")"
+          pr_head_sha="$(jq -r '.workflow_run.head_sha // ""' "$GITHUB_EVENT_PATH")"
+          pr_head_branch="$(jq -r '.workflow_run.head_branch // ""' "$GITHUB_EVENT_PATH")"
+
+          if [[ -z "${pr_head_sha}" ]]; then
+            echo "Workflow run has no head SHA; skipping."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ -z "${pr_number}" && -n "${pr_head_branch}" ]]; then
+            pr_number="$(
+              gh pr list \
+                --repo "${REPOSITORY}" \
+                --head "${pr_head_branch}" \
+                --state open \
+                --json number,headRefOid \
+                --jq 'map(select(.headRefOid == "'"${pr_head_sha}"'")) | .[0].number // ""'
+            )"
+          fi
+
+          if [[ -z "${pr_number}" ]]; then
+            echo "Test run is not associated with an open pull request; skipping."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          pr_json="$(gh api "repos/${REPOSITORY}/pulls/${pr_number}")"
+          current_head_sha="$(jq -r '.head.sha' <<< "${pr_json}")"
+          state="$(jq -r '.state' <<< "${pr_json}")"
+          draft="$(jq -r '.draft' <<< "${pr_json}")"
+          head_repo="$(jq -r '.head.repo.full_name' <<< "${pr_json}")"
+          base_repo="$(jq -r '.base.repo.full_name' <<< "${pr_json}")"
+
+          if [[ "${state}" != "open" ]]; then
+            echo "PR #${pr_number} is ${state}; skipping."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "${draft}" == "true" ]]; then
+            echo "PR #${pr_number} is draft; skipping."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "${head_repo}" != "${base_repo}" ]]; then
+            echo "PR #${pr_number} comes from fork ${head_repo}; skipping."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "${pr_head_sha}" != "${current_head_sha}" ]]; then
+            echo "Test SHA ${pr_head_sha} is stale; current PR head is ${current_head_sha}. Skipping."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          preview_version="0.0.0-pr.${pr_number}"
+          should_build=true
+
+          {
+            echo "should_build=${should_build}"
+            echo "pr_number=${pr_number}"
+            echo "pr_head_sha=${pr_head_sha}"
+            echo "preview_version=${preview_version}"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve
+    if: needs.resolve.outputs.should_build == 'true'
+    name: Build preview CLI packages
+    uses: ./.github/workflows/build-cli-artifacts.yml
+    with:
+      version: ${{ needs.resolve.outputs.preview_version }}
+      shell: legacy
+      ref: ${{ needs.resolve.outputs.pr_head_sha }}
+
+  publish:
+    needs: [resolve, build]
+    if: needs.resolve.outputs.should_build == 'true' && needs.build.result == 'success'
+    name: Publish preview package
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PREVIEW_VERSION: ${{ needs.resolve.outputs.preview_version }}
+      PR_HEAD_SHA: ${{ needs.resolve.outputs.pr_head_sha }}
+      PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+      REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.resolve.outputs.pr_head_sha }}
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Download preview build artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cli-build-legacy-${{ needs.resolve.outputs.preview_version }}
+
+      - name: Prepare package files
+        run: |
+          set -euo pipefail
+          pnpm exec bun apps/cli/scripts/sync-versions.ts --version "${PREVIEW_VERSION}"
+          pnpm --dir apps/cli build:shim
+          find packages -path '*/bin/supabase*' -type f -exec chmod +x {} +
+
+      - name: Publish preview package
+        run: |
+          pnpm exec pkg-pr-new publish \
+            --pnpm \
+            --bin \
+            --comment=off \
+            --json pkg-pr-new.json \
+            --no-template \
+            './packages/cli-darwin-arm64' \
+            './packages/cli-darwin-x64' \
+            './packages/cli-linux-arm64' \
+            './packages/cli-linux-arm64-musl' \
+            './packages/cli-linux-x64' \
+            './packages/cli-linux-x64-musl' \
+            './packages/cli-windows-arm64' \
+            './packages/cli-windows-x64' \
+            './apps/cli'
+
+      - name: Smoke test preview command
+        run: |
+          set -euo pipefail
+          preview_url="https://pkg.pr.new/supabase@${PR_NUMBER}"
+          npx --yes "${preview_url}" --version
+
+      - name: Update PR comment
+        run: |
+          set -euo pipefail
+          preview_url="https://pkg.pr.new/supabase@${PR_NUMBER}"
+          short_sha="${PR_HEAD_SHA:0:7}"
+          marker="<!-- pkg-pr-new-preview -->"
+          cat > comment.md <<EOF
+          ${marker}
+          ## pkg.pr.new preview
+
+          Published version \`${PREVIEW_VERSION}\` from commit [\`${short_sha}\`](https://github.com/${REPOSITORY}/commit/${PR_HEAD_SHA}) after tests passed.
+
+          \`\`\`sh
+          npx ${preview_url}
+          \`\`\`
+
+          \`\`\`sh
+          npx ${preview_url} --version
+          \`\`\`
+          EOF
+
+          jq -n --rawfile body comment.md '{ body: $body }' > comment.json
+          comment_id="$(
+            gh api "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --paginate \
+              --jq '.[] | select(.body | contains("'"${marker}"'")) | .id' \
+              | head -n1
+          )"
+
+          if [[ -n "${comment_id}" ]]; then
+            gh api --method PATCH "repos/${REPOSITORY}/issues/comments/${comment_id}" --input comment.json >/dev/null
+          else
+            gh api --method POST "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" --input comment.json >/dev/null
+          fi

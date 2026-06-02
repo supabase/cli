@@ -53,75 +53,27 @@ on:
         required: false
 jobs:
   build:
-    runs-on: blacksmith-32vcpu-ubuntu-2404
-    env:
-      BUN_SHELL: ${{ inputs.shell }}
-      VERSION: ${{ inputs.version }}
+    name: Build CLI artifacts
+    uses: ./.github/workflows/build-cli-artifacts.yml
+    with:
+      version: ${{ inputs.version }}
+      shell: ${{ inputs.shell }}
+    secrets:
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
       POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Setup
-        uses: ./.github/actions/setup
-
-      - name: Setup Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
-        with:
-          go-version-file: apps/cli-go/go.mod
-          cache: true
-          cache-dependency-path: apps/cli-go/go.sum
-
-      - name: Pre-download Go modules
-        working-directory: apps/cli-go
-        run: go mod download -x
-
-      - name: Install nfpm
-        run: |
-          echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
-          sudo apt-get update
-          sudo apt-get install -y nfpm
-
-      - name: Sync versions
-        run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version "${VERSION}"
-
-      - name: Build selected shell
-        run: pnpm exec bun apps/cli/scripts/build.ts --version "${VERSION}" --shell "${BUN_SHELL}"
-
-      - name: Verify build artifacts
-        run: |
-          for pkg in cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-arm64-musl cli-linux-x64 cli-linux-x64-musl cli-windows-arm64 cli-windows-x64; do
-            echo "Checking packages/$pkg/bin/..."
-            ls -la "packages/$pkg/bin/"
-          done
-          echo "Checking dist/..."
-          ls -la dist/
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
-          path: |
-            packages/cli-*/bin/
-            dist/
 
   smoke-test:
     needs: build
     strategy:
       fail-fast: false
-      # macos-15-intel is the slowest smoke leg and the only one not on
-      # Blacksmith (Blacksmith macOS is ARM-only). Drop it from the matrix
-      # on prereleases (PR smoke + develop -> beta) so beta wall-clock isn't
-      # gated by it; stable releases on main still run the full matrix.
-      # The matrix list is built via fromJSON because GitHub Actions does
-      # not allow the `matrix` context in a job-level `if:` (matrix
-      # expansion happens after job conditions are evaluated).
       matrix:
-        runner: ${{ fromJSON(inputs.prerelease && '["blacksmith-8vcpu-ubuntu-2404","blacksmith-6vcpu-macos-latest","blacksmith-8vcpu-windows-2025"]' || '["blacksmith-8vcpu-ubuntu-2404","blacksmith-6vcpu-macos-latest","macos-15-intel","blacksmith-8vcpu-windows-2025"]') }}
+        runner:
+          - blacksmith-8vcpu-ubuntu-2404
+          - blacksmith-6vcpu-macos-latest
+          - macos-15-intel
+          - blacksmith-8vcpu-windows-2025
+          - windows-11-arm
     runs-on: ${{ matrix.runner }}
     env:
       NPM_TAG: ${{ inputs.npm_tag }}

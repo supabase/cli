@@ -17,6 +17,7 @@
     "@swc-node/register": "catalog:",
     "@swc/core": "catalog:",
     "nx": "catalog:",
+    "pkg-pr-new": "0.0.75",
     "verdaccio": "^6.7.2"
   }
 }
