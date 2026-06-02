@@ -26,12 +26,22 @@ vi.mock("@napi-rs/keyring", () => ({
   Entry: class Entry {
     service: string;
     account: string;
-    constructor(service: string, account: string) {
+    target?: string;
+    constructor(service: string, account: string, target?: string) {
       this.service = service;
       this.account = account;
+      this.target = target;
+    }
+    static withTarget(target: string, service: string, account: string) {
+      return new this(service, account, target);
+    }
+    key(): string {
+      return this.target === undefined
+        ? `${this.service}/${this.account}`
+        : `${this.target}/${this.service}/${this.account}`;
     }
     getPassword(): string | null {
-      const key = `${this.service}/${this.account}`;
+      const key = this.key();
       if (throwOnGetPasswordAccounts.has(key)) {
         throw new Error("Keyring unavailable");
       }
@@ -39,10 +49,10 @@ vi.mock("@napi-rs/keyring", () => ({
     }
     setPassword(value: string): void {
       if (throwOnSetPassword) throw new Error("Keyring unavailable");
-      passwords.set(`${this.service}/${this.account}`, value);
+      passwords.set(this.key(), value);
     }
     deleteCredential(): boolean {
-      const key = `${this.service}/${this.account}`;
+      const key = this.key();
       if (!passwords.has(key)) throw new Error("not found");
       passwords.delete(key);
       return true;
@@ -90,6 +100,7 @@ const VALID_TOKEN = "sbp_" + "a".repeat(40);
 const VALID_OAUTH_TOKEN = "sbp_oauth_" + "b".repeat(40);
 const encodeGoKeyringBase64 = (token: string) =>
   `go-keyring-base64:${Buffer.from(token).toString("base64")}`;
+const goWindowsKey = (account: string) => `Supabase CLI:${account}/Supabase CLI/${account}`;
 
 const expectSomeToken = (token: Option.Option<Redacted.Redacted<string>>, expected: string) => {
   expect(Option.isSome(token)).toBe(true);
@@ -119,6 +130,15 @@ describe("legacyCredentialsLayer.getAccessToken", () => {
 
   it.effect("decodes Go keyring base64 values from the keyring profile account", () => {
     passwords.set("Supabase CLI/supabase", encodeGoKeyringBase64(VALID_TOKEN));
+    return Effect.gen(function* () {
+      const { getAccessToken } = yield* LegacyCredentials;
+      const token = yield* getAccessToken;
+      expectSomeToken(token, VALID_TOKEN);
+    }).pipe(Effect.provide(makeLayer()));
+  });
+
+  it.effect("reads Windows credentials created by Go keyring", () => {
+    passwords.set(goWindowsKey("supabase"), VALID_TOKEN);
     return Effect.gen(function* () {
       const { getAccessToken } = yield* LegacyCredentials;
       const token = yield* getAccessToken;
@@ -224,6 +244,7 @@ describe("legacyCredentialsLayer.deleteAccessToken", () => {
   it.effect("removes both keyring entries plus the filesystem file", () => {
     passwords.set("Supabase CLI/supabase", VALID_TOKEN);
     passwords.set("Supabase CLI/access-token", VALID_OAUTH_TOKEN);
+    passwords.set(goWindowsKey("supabase"), VALID_TOKEN);
     const supaDir = join(tempHome, ".supabase");
     mkdirSync(supaDir, { recursive: true });
     writeFileSync(join(supaDir, "access-token"), VALID_TOKEN, { mode: 0o600 });
@@ -232,6 +253,7 @@ describe("legacyCredentialsLayer.deleteAccessToken", () => {
       expect(yield* deleteAccessToken).toBe(true);
       expect(passwords.has("Supabase CLI/supabase")).toBe(false);
       expect(passwords.has("Supabase CLI/access-token")).toBe(false);
+      expect(passwords.has(goWindowsKey("supabase"))).toBe(false);
       expect(existsSync(join(supaDir, "access-token"))).toBe(false);
     }).pipe(Effect.provide(makeLayer()));
   });
