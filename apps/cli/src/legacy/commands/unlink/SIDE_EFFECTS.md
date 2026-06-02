@@ -31,13 +31,13 @@ None beyond `--workdir` / `SUPABASE_WORKDIR` resolution.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                     |
-| ---- | ------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — project unlinked; prints `Finished supabase unlink.`                                                |
-| `1`  | not linked — `supabase/.temp/project-ref` absent (`Cannot find project ref. Have you run \`supabase link\`?`) |
-| `1`  | project-ref read error                                                                                        |
-| `1`  | temp-dir removal error                                                                                        |
-| `1`  | keyring delete error other than not-found (e.g. permission denied)                                            |
+| Code | Condition                                                                                                 |
+| ---- | --------------------------------------------------------------------------------------------------------- |
+| `0`  | success — project unlinked; prints `Finished supabase unlink.`                                            |
+| `1`  | not linked — `supabase/.temp/project-ref` absent (`Cannot find project ref. Have you run supabase link?`) |
+| `1`  | project-ref read error                                                                                    |
+| `1`  | temp-dir removal error                                                                                    |
+| `1`  | keyring delete error other than not-found (e.g. permission denied)                                        |
 
 ## Output
 
