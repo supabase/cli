@@ -129,6 +129,14 @@ const VALID_OAUTH_TOKEN = "sbp_oauth_" + "b".repeat(40);
 const encodeGoKeyringBase64 = (token: string) =>
   `go-keyring-base64:${Buffer.from(token).toString("base64")}`;
 const goWindowsKey = (account: string) => `Supabase CLI:${account}/Supabase CLI/${account}`;
+const encodeGoWindowsPassword = (token: string) => {
+  const bytes = Buffer.from(token, "utf8");
+  let encoded = "";
+  for (let index = 0; index < bytes.length; index += 2) {
+    encoded += String.fromCharCode(bytes[index]! | ((bytes[index + 1] ?? 0) << 8));
+  }
+  return encoded;
+};
 
 const expectSomeToken = (token: Option.Option<Redacted.Redacted<string>>, expected: string) => {
   expect(Option.isSome(token)).toBe(true);
@@ -166,7 +174,7 @@ describe("legacyCredentialsLayer.getAccessToken", () => {
   });
 
   it.effect("reads Windows credentials created by Go keyring", () => {
-    passwords.set(goWindowsKey("supabase"), VALID_TOKEN);
+    passwords.set(goWindowsKey("supabase"), encodeGoWindowsPassword(VALID_TOKEN));
     return Effect.gen(function* () {
       const { getAccessToken } = yield* LegacyCredentials;
       const token = yield* getAccessToken;

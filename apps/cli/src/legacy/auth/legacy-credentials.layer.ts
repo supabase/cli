@@ -111,10 +111,24 @@ function readGoWindowsTarget(module: KeyringModule, account: string): string | n
   try {
     const credentials = module.findCredentials(KEYRING_SERVICE, goWindowsCredentialTarget(account));
     const credential = credentials.find((item) => item.account === account);
-    return credential?.password ?? null;
+    return credential ? normalizeGoWindowsPassword(credential.password) : null;
   } catch {
     return null;
   }
+}
+
+function normalizeGoWindowsPassword(value: string): string {
+  const direct = normalizeKeyringToken(value);
+  if (ACCESS_TOKEN_PATTERN.test(direct)) return direct;
+
+  const bytes: number[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    bytes.push(code & 0xff);
+    const high = (code >> 8) & 0xff;
+    if (high !== 0) bytes.push(high);
+  }
+  return Buffer.from(bytes).toString("utf8");
 }
 
 function writeGoWindowsTarget(module: KeyringModule, account: string, token: string): boolean {
