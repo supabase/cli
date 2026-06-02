@@ -51,6 +51,7 @@ jobs:
       version: 0.0.0-pr-${{ github.event.pull_request.number }}
       shell: legacy
       npm_tag: latest
+      channel: beta
       prerelease: true
       dry_run: true
     # release-shared.yml's publish/homebrew/scoop jobs reference
