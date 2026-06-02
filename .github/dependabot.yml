@@ -42,7 +42,7 @@ updates:
     directory: "/apps/cli-go/pkg/config/templates"
     schedule:
       interval: "cron"
-      cronjob: "0 * * * *"
+      cronjob: "0 0 * * *"
     commit-message:
       prefix: "fix(docker): "
     groups:
