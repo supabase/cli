@@ -1,4 +1,4 @@
-name: Build Preview CLI Packages
+name: Publish Preview CLI Packages
 
 on:
   workflow_run:
@@ -99,29 +99,12 @@ jobs:
           preview_version="0.0.0-pr.${pr_number}"
           should_build=true
 
-          jq -n \
-            --arg pr_number "${pr_number}" \
-            --arg pr_head_sha "${pr_head_sha}" \
-            --arg preview_version "${preview_version}" \
-            '{
-              pr_number: $pr_number,
-              pr_head_sha: $pr_head_sha,
-              preview_version: $preview_version
-            }' > preview-context.json
-
           {
             echo "should_build=${should_build}"
             echo "pr_number=${pr_number}"
             echo "pr_head_sha=${pr_head_sha}"
             echo "preview_version=${preview_version}"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Upload preview context
-        if: steps.context.outputs.should_build == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: preview-context
-          path: preview-context.json
 
   build:
     needs: resolve
@@ -132,3 +115,96 @@ jobs:
       version: ${{ needs.resolve.outputs.preview_version }}
       shell: legacy
       ref: ${{ needs.resolve.outputs.pr_head_sha }}
+
+  publish:
+    needs: [resolve, build]
+    if: needs.resolve.outputs.should_build == 'true' && needs.build.result == 'success'
+    name: Publish preview package
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PREVIEW_VERSION: ${{ needs.resolve.outputs.preview_version }}
+      PR_HEAD_SHA: ${{ needs.resolve.outputs.pr_head_sha }}
+      PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+      REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.resolve.outputs.pr_head_sha }}
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Download preview build artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cli-build-legacy-${{ needs.resolve.outputs.preview_version }}
+
+      - name: Prepare package files
+        run: |
+          set -euo pipefail
+          pnpm exec bun apps/cli/scripts/sync-versions.ts --version "${PREVIEW_VERSION}"
+          pnpm --dir apps/cli build:shim
+          find packages -path '*/bin/supabase*' -type f -exec chmod +x {} +
+
+      - name: Publish preview package
+        run: |
+          pnpm exec pkg-pr-new publish \
+            --pnpm \
+            --bin \
+            --comment=off \
+            --json pkg-pr-new.json \
+            --no-template \
+            './packages/cli-darwin-arm64' \
+            './packages/cli-darwin-x64' \
+            './packages/cli-linux-arm64' \
+            './packages/cli-linux-arm64-musl' \
+            './packages/cli-linux-x64' \
+            './packages/cli-linux-x64-musl' \
+            './packages/cli-windows-arm64' \
+            './packages/cli-windows-x64' \
+            './apps/cli'
+
+      - name: Smoke test preview command
+        run: |
+          set -euo pipefail
+          preview_url="https://pkg.pr.new/supabase@${PR_NUMBER}"
+          npx --yes "${preview_url}" --version
+
+      - name: Update PR comment
+        run: |
+          set -euo pipefail
+          preview_url="https://pkg.pr.new/supabase@${PR_NUMBER}"
+          short_sha="${PR_HEAD_SHA:0:7}"
+          marker="<!-- pkg-pr-new-preview -->"
+          cat > comment.md <<EOF
+          ${marker}
+          ## pkg.pr.new preview
+
+          Published version \`${PREVIEW_VERSION}\` from commit [\`${short_sha}\`](https://github.com/${REPOSITORY}/commit/${PR_HEAD_SHA}) after the PR test and preview build workflows passed.
+
+          \`\`\`sh
+          npx ${preview_url}
+          \`\`\`
+          EOF
+
+          jq -n --rawfile body comment.md '{ body: $body }' > comment.json
+          comment_id="$(
+            gh api "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --paginate \
+              --jq '.[] | select(.body | contains("'"${marker}"'")) | .id' \
+              | head -n1
+          )"
+
+          if [[ -n "${comment_id}" ]]; then
+            gh api --method PATCH "repos/${REPOSITORY}/issues/comments/${comment_id}" --input comment.json >/dev/null
+          else
+            gh api --method POST "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" --input comment.json >/dev/null
+          fi
