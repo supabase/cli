@@ -1,10 +1,10 @@
-name: Smoke Test (PR)
+name: Release Smoke Test
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Preview version to build and smoke test
+        description: Version to build and smoke test
         required: false
         type: string
         default: 0.0.0-smoke
