@@ -1,0 +1,82 @@
+name: Publish Preview CLI Packages
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+    branches:
+      - develop
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.event.pull_request.draft == false
+    name: Build preview CLI packages
+    uses: ./.github/workflows/build-cli-artifacts.yml
+    with:
+      version: 0.0.0-pr.${{ github.event.pull_request.number }}
+      shell: legacy
+
+  publish:
+    needs: build
+    if: github.event.pull_request.draft == false && needs.build.result == 'success'
+    name: Publish preview package
+    runs-on: ubuntu-latest
+    env:
+      PREVIEW_VERSION: 0.0.0-pr.${{ github.event.pull_request.number }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Download preview build artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cli-build-legacy-${{ env.PREVIEW_VERSION }}
+
+      - name: Prepare package files
+        run: |
+          set -euo pipefail
+          pnpm exec bun apps/cli/scripts/sync-versions.ts --version "${PREVIEW_VERSION}"
+          pnpm --dir apps/cli build:shim
+          find packages -path '*/bin/supabase*' -type f -exec chmod +x {} +
+
+      - name: Publish preview package
+        run: |
+          pnpm exec pkg-pr-new publish \
+            --pnpm \
+            --bin \
+            --comment=off \
+            --json pkg-pr-new.json \
+            --no-template \
+            './packages/cli-darwin-arm64' \
+            './packages/cli-darwin-x64' \
+            './packages/cli-linux-arm64' \
+            './packages/cli-linux-arm64-musl' \
+            './packages/cli-linux-x64' \
+            './packages/cli-linux-x64-musl' \
+            './packages/cli-windows-arm64' \
+            './packages/cli-windows-x64' \
+            './apps/cli'
+
+      - name: Smoke test preview command
+        run: |
+          set -euo pipefail
+          preview_url="https://pkg.pr.new/supabase@${PR_NUMBER}"
+          echo "Preview command: npx ${preview_url}"
+          npx --yes "${preview_url}" --version
