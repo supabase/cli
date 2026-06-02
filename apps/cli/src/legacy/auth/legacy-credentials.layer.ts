@@ -15,6 +15,7 @@ const ACCESS_TOKEN_PATTERN = /^sbp_(oauth_)?[a-f0-9]{40}$/;
 const INVALID_TOKEN_MESSAGE = "Invalid access token format. Must be like `sbp_0102...1920`.";
 
 type KeyringModule = typeof import("@napi-rs/keyring");
+type KeyringEntry = InstanceType<KeyringModule["Entry"]>;
 
 const detectWsl = (fs: FileSystem.FileSystem): Effect.Effect<boolean> =>
   Effect.gen(function* () {
@@ -32,11 +33,14 @@ const tryKeyringRead = (
 ): Effect.Effect<Option.Option<string>> =>
   Effect.try({
     try: () => {
-      const entry = new module.Entry(KEYRING_SERVICE, account);
-      const value = entry.getPassword();
-      return value && value.length > 0
-        ? Option.some(normalizeKeyringToken(value))
-        : Option.none<string>();
+      for (const entry of [
+        new module.Entry(KEYRING_SERVICE, account),
+        module.Entry.withTarget(`${KEYRING_SERVICE}:${account}`, KEYRING_SERVICE, account),
+      ]) {
+        const value = readEntryPassword(entry);
+        if (value && value.length > 0) return Option.some(normalizeKeyringToken(value));
+      }
+      return Option.none<string>();
     },
     catch: () => Option.none<string>(),
   }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
@@ -58,14 +62,28 @@ const tryKeyringWrite = (
 const tryKeyringDelete = (module: KeyringModule, account: string): Effect.Effect<boolean> =>
   Effect.try({
     try: () => {
-      const entry = new module.Entry(KEYRING_SERVICE, account);
-      const value = entry.getPassword();
-      if (!value) return false;
-      entry.deleteCredential();
-      return true;
+      let deleted = false;
+      for (const entry of [
+        new module.Entry(KEYRING_SERVICE, account),
+        module.Entry.withTarget(`${KEYRING_SERVICE}:${account}`, KEYRING_SERVICE, account),
+      ]) {
+        const value = readEntryPassword(entry);
+        if (!value) continue;
+        entry.deleteCredential();
+        deleted = true;
+      }
+      return deleted;
     },
     catch: () => false,
   }).pipe(Effect.orElseSucceed(() => false));
+
+function readEntryPassword(entry: KeyringEntry): string | null {
+  try {
+    return entry.getPassword();
+  } catch {
+    return null;
+  }
+}
 
 const makeLegacyCredentials = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
