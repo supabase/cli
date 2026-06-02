@@ -1,49 +1,32 @@
-import { dirname } from "node:path";
-import {
-  PROJECT_CONFIG_SCHEMA_URL,
-  ProjectConfigSchema,
-  ProjectConfigStore,
-} from "@supabase/config";
 import { Effect } from "effect";
-import { Schema } from "effect";
-import { ensureProjectStateIgnored } from "../../config/project-gitignore.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import { initProject, type ProjectInitOptions } from "../../../shared/init/project-init.ts";
+import { InitExperimentalRequiredError } from "../../../shared/init/project-init.errors.ts";
 
-const emptyConfig = Schema.decodeUnknownSync(ProjectConfigSchema)({});
-const projectRootForConfigPath = (configPath: string): string => dirname(dirname(configPath));
-
-export const init = Effect.fnUntraced(function* () {
+export const init = Effect.fnUntraced(function* (
+  flags: Omit<ProjectInitOptions, "cwd" | "withVscodeSettings" | "withIntellijSettings"> & {
+    readonly experimental: boolean;
+  },
+) {
   const output = yield* Output;
   const runtimeInfo = yield* RuntimeInfo;
-  const projectConfigStore = yield* ProjectConfigStore;
 
-  yield* output.intro("Initialize local Supabase project");
-
-  const existingConfig = yield* projectConfigStore.load(runtimeInfo.cwd);
-  if (existingConfig !== null) {
-    yield* ensureProjectStateIgnored(projectRootForConfigPath(existingConfig.path));
-    yield* output.success("Supabase project already initialized.", {
-      config_path: existingConfig.path,
-      schema_ref: existingConfig.schemaRef,
-      created: false,
-    });
-    yield* output.outro(`Using existing config at ${existingConfig.path}.`);
-    return;
+  if (flags.useOrioledb && !flags.experimental) {
+    return yield* Effect.fail(
+      new InitExperimentalRequiredError({
+        detail: "--use-orioledb is only available when experimental features are enabled.",
+        suggestion: "Rerun the command with `supabase init --experimental --use-orioledb`.",
+      }),
+    );
   }
 
-  const saved = yield* projectConfigStore.save({
+  yield* initProject({
     cwd: runtimeInfo.cwd,
-    config: emptyConfig,
-    format: "json",
-    schemaRef: PROJECT_CONFIG_SCHEMA_URL,
+    ...flags,
+    withVscodeSettings: false,
+    withIntellijSettings: false,
   });
-  yield* ensureProjectStateIgnored(projectRootForConfigPath(saved.path));
 
-  yield* output.success("Initialized Supabase project.", {
-    config_path: saved.path,
-    schema_ref: saved.schemaRef,
-    created: true,
-  });
-  yield* output.outro(`Created ${saved.path}.`);
+  yield* output.raw("Finished supabase init.\n");
 });
