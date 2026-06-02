@@ -121,6 +121,9 @@ function normalizeGoWindowsPassword(value: string): string {
   const direct = normalizeKeyringToken(value);
   if (ACCESS_TOKEN_PATTERN.test(direct)) return direct;
 
+  // Go writes Windows CredentialBlob values as raw UTF-8 bytes. The TS keyring
+  // search API can surface those bytes packed into UTF-16 code units, so unpack
+  // each code unit back into the original byte sequence before validation.
   const bytes: number[] = [];
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
