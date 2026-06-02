@@ -1,0 +1,47 @@
+name: Release Smoke Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to build and smoke test
+        required: false
+        type: string
+        default: 0.0.0-smoke
+      shell:
+        description: CLI shell to package as the shipped supabase binary
+        required: false
+        type: choice
+        options:
+          - legacy
+          - next
+        default: legacy
+      npm_tag:
+        description: npm tag to use for local package smoke tests
+        required: false
+        type: choice
+        options:
+          - latest
+          - alpha
+          - beta
+        default: beta
+
+permissions:
+  # release-shared.yml declares privileged publish jobs. They are gated by
+  # dry_run here, but GitHub validates nested-workflow permissions at startup.
+  contents: write
+  id-token: write
+
+jobs:
+  smoke:
+    name: Run release smoke tests
+    uses: ./.github/workflows/release-shared.yml
+    with:
+      version: ${{ inputs.version }}
+      shell: ${{ inputs.shell }}
+      npm_tag: ${{ inputs.npm_tag }}
+      channel: beta
+      prerelease: true
+      dry_run: true
+    secrets:
+      GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
