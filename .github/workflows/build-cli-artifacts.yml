@@ -11,6 +11,11 @@ on:
         description: CLI shell to package as the shipped supabase binary
         required: true
         type: string
+      ref:
+        description: Optional git ref or SHA to check out before building
+        required: false
+        type: string
+        default: ""
     secrets:
       SENTRY_DSN:
         required: false
@@ -36,6 +41,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       - name: Setup

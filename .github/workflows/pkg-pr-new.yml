@@ -3,7 +3,6 @@ name: pkg.pr.new
 on:
   workflow_run:
     workflows:
-      - Test
       - Build Preview CLI Packages
     types:
       - completed
@@ -23,9 +22,7 @@ jobs:
   publish:
     name: Publish preview package
     runs-on: ubuntu-latest
-    if: >-
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.conclusion == 'success'
+    if: github.event.workflow_run.conclusion == 'success'
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -37,45 +34,20 @@ jobs:
           set -euo pipefail
 
           should_publish=false
-          pr_number=""
-          pr_head_sha=""
-          preview_build_run_id=""
-          test_run_id=""
+          preview_build_run_id="$(jq -r '.workflow_run.id' "$GITHUB_EVENT_PATH")"
 
-          pr_number="$(jq -r '.workflow_run.pull_requests[0].number // ""' "$GITHUB_EVENT_PATH")"
-          pr_head_sha="$(jq -r '.workflow_run.head_sha // ""' "$GITHUB_EVENT_PATH")"
-          pr_head_branch="$(jq -r '.workflow_run.head_branch // ""' "$GITHUB_EVENT_PATH")"
-          triggering_workflow="$(jq -r '.workflow_run.name // ""' "$GITHUB_EVENT_PATH")"
-
-          if [[ -z "${pr_head_sha}" ]]; then
-            echo "Workflow run has no head SHA; skipping."
+          if ! gh run download "${preview_build_run_id}" --name preview-context --dir preview-context; then
+            echo "No preview context artifact found on Build Preview CLI Packages run ${preview_build_run_id}; skipping."
             echo "should_publish=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if [[ -z "${pr_number}" && -n "${pr_head_branch}" ]]; then
-            pr_number="$(
-              gh pr list \
-                --repo "${REPOSITORY}" \
-                --head "${pr_head_branch}" \
-                --state open \
-                --json number,headRefOid \
-                --jq 'map(select(.headRefOid == "'"${pr_head_sha}"'")) | .[0].number // ""'
-            )"
-          fi
+          pr_number="$(jq -r '.pr_number // ""' preview-context/preview-context.json)"
+          pr_head_sha="$(jq -r '.pr_head_sha // ""' preview-context/preview-context.json)"
+          preview_version="$(jq -r '.preview_version // ""' preview-context/preview-context.json)"
 
-          if [[ -z "${pr_number}" ]]; then
-            echo "Workflow run is not associated with an open pull request; skipping."
-            echo "should_publish=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [[ "${triggering_workflow}" == "Build Preview CLI Packages" ]]; then
-            preview_build_run_id="$(jq -r '.workflow_run.id' "$GITHUB_EVENT_PATH")"
-          elif [[ "${triggering_workflow}" == "Test" ]]; then
-            test_run_id="$(jq -r '.workflow_run.id' "$GITHUB_EVENT_PATH")"
-          else
-            echo "Unexpected triggering workflow: ${triggering_workflow}; skipping."
+          if [[ -z "${pr_number}" || -z "${pr_head_sha}" || -z "${preview_version}" ]]; then
+            echo "Preview context artifact is missing required data; skipping."
             echo "should_publish=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -111,42 +83,6 @@ jobs:
             exit 0
           fi
 
-          if [[ -z "${preview_build_run_id}" ]]; then
-            preview_build_run_id="$(
-              gh run list \
-                --workflow build-preview-cli-packages.yml \
-                --event pull_request \
-                --commit "${pr_head_sha}" \
-                --status success \
-                --json databaseId,conclusion,headSha \
-                --jq 'map(select(.headSha == "'"${pr_head_sha}"'" and .conclusion == "success")) | .[0].databaseId // ""'
-            )"
-          fi
-
-          if [[ -z "${test_run_id}" ]]; then
-            test_run_id="$(
-              gh run list \
-                --workflow test.yml \
-                --event pull_request \
-                --commit "${pr_head_sha}" \
-                --status success \
-                --json databaseId,conclusion,headSha \
-                --jq 'map(select(.headSha == "'"${pr_head_sha}"'" and .conclusion == "success")) | .[0].databaseId // ""'
-            )"
-          fi
-
-          if [[ -z "${preview_build_run_id}" ]]; then
-            echo "No successful Build Preview CLI Packages run found for ${pr_head_sha}; skipping."
-            echo "should_publish=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [[ -z "${test_run_id}" ]]; then
-            echo "No successful Test run found for ${pr_head_sha}; skipping."
-            echo "should_publish=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
           artifact_name="$(
             gh api "repos/${REPOSITORY}/actions/runs/${preview_build_run_id}/artifacts" \
               --paginate \
@@ -160,7 +96,13 @@ jobs:
             exit 0
           fi
 
-          preview_version="${artifact_name#cli-build-legacy-}"
+          artifact_version="${artifact_name#cli-build-legacy-}"
+          if [[ "${artifact_version}" != "${preview_version}" ]]; then
+            echo "Preview context version ${preview_version} does not match artifact version ${artifact_version}; skipping."
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           should_publish=true
 
           {
