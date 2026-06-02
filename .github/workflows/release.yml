@@ -223,6 +223,26 @@ jobs:
       needs.plan.outputs.channel == 'stable'
     uses: ./.github/workflows/slack-notify.yml
     with:
+      status: success
+      version: ${{ needs.plan.outputs.version }}
+      channel: ${{ needs.plan.outputs.channel }}
+    secrets:
+      SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
+
+  # Reports a broken release on every channel. `failure()` evaluates against the
+  # `needs` chain, so this fires whenever `plan` or `release` (and anything in
+  # the reusable release-shared workflow) fails. Skipped jobs — e.g. the
+  # fast-forward path or a release that never started — don't count as failures,
+  # so this stays quiet there. Dry runs are excluded; an operator running one is
+  # already watching it live. When `plan` fails its outputs are empty, so the
+  # message falls back to the workflow run link as the actionable detail.
+  notify-slack-failure:
+    name: Notify Slack (failure)
+    needs: [plan, release]
+    if: failure() && needs.plan.outputs.dry_run != 'true'
+    uses: ./.github/workflows/slack-notify.yml
+    with:
+      status: failure
       version: ${{ needs.plan.outputs.version }}
       channel: ${{ needs.plan.outputs.channel }}
     secrets:
