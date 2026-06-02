@@ -188,10 +188,14 @@ jobs:
           ${marker}
           ## pkg.pr.new preview
 
-          Published version \`${PREVIEW_VERSION}\` from commit [\`${short_sha}\`](https://github.com/${REPOSITORY}/commit/${PR_HEAD_SHA}) after the PR test and preview build workflows passed.
+          Published version \`${PREVIEW_VERSION}\` from commit [\`${short_sha}\`](https://github.com/${REPOSITORY}/commit/${PR_HEAD_SHA}) after tests passed.
 
           \`\`\`sh
           npx ${preview_url}
+          \`\`\`
+
+          \`\`\`sh
+          npx ${preview_url} --version
           \`\`\`
           EOF
 
