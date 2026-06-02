@@ -292,6 +292,7 @@ jobs:
             dist/supabase_linux_amd64.tar.gz
             dist/supabase_windows_arm64.tar.gz
             dist/supabase_windows_amd64.tar.gz
+            install
 
       - name: Publish GitHub Release (immutable)
         env:

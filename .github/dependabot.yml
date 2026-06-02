@@ -42,7 +42,7 @@ updates:
     directory: "/apps/cli-go/pkg/config/templates"
     schedule:
       interval: "cron"
-      cronjob: "0 0 * * *"
+      cronjob: "0 * * * *"
     commit-message:
       prefix: "fix(docker): "
     groups:
@@ -57,3 +57,5 @@ updates:
       - dependency-name: "timberio/vector"
     cooldown:
       default-days: 7
+      exclude:
+        - "supabase/*"
