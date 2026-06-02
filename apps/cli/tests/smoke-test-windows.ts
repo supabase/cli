@@ -1,4 +1,6 @@
 import { $ } from "bun";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
@@ -19,6 +21,10 @@ if (tag !== "latest" && tag !== "alpha" && tag !== "beta") {
 }
 const root = path.resolve(import.meta.dir, "../../..");
 
+async function gitBashPath(filePath: string) {
+  return process.platform === "win32" ? (await $`cygpath -u ${filePath}`.text()).trim() : filePath;
+}
+
 interface TestResult {
   name: string;
   status: "pass" | "fail";
@@ -32,9 +38,11 @@ console.log(`\n${"=".repeat(60)}`);
 console.log("Native binary tests");
 console.log("=".repeat(60));
 
+const arch = process.arch === "arm64" ? "arm64" : "x64";
+
 {
-  const name = "native-windows-x64";
-  const binPath = path.join(root, "packages", "cli-windows-x64", "bin", "supabase.exe");
+  const name = `native-windows-${arch}`;
+  const binPath = path.join(root, "packages", `cli-windows-${arch}`, "bin", "supabase.exe");
 
   console.log(`[${name}] Running ${binPath} --version...`);
   try {
@@ -48,6 +56,38 @@ console.log("=".repeat(60));
   } catch (e) {
     console.log(`[${name}] FAIL — ${e}`);
     results.push({ name, status: "fail" });
+  }
+}
+
+// --- Release tarball ---
+
+console.log(`\n${"=".repeat(60)}`);
+console.log("Release tarball test");
+console.log("=".repeat(60));
+
+{
+  const archiveArch = arch === "arm64" ? "arm64" : "amd64";
+  const name = `windows-${archiveArch}-tarball`;
+  const archivePath = path.join(root, "dist", `supabase_${version}_windows_${archiveArch}.tar.gz`);
+  const extractDir = await mkdtemp(path.join(tmpdir(), "supabase-windows-tarball-"));
+
+  console.log(`[${name}] Extracting ${archivePath}...`);
+  try {
+    await $`tar -xzf ${await gitBashPath(archivePath)} -C ${await gitBashPath(extractDir)}`;
+    const binPath = path.join(extractDir, "supabase.exe");
+    const output = await $`${binPath} --version`.text();
+    const trimmed = output.trim();
+    const shellCheck = await verifyExpectedShell(binPath);
+    const passed = /^\d+\.\d+\.\d+/.test(trimmed) && shellCheck.passed;
+
+    console.log(`[${name}] ${passed ? "PASS" : "FAIL"} — ${trimmed}`);
+    console.log(`[${name}] ${shellCheck.detail}`);
+    results.push({ name, status: passed ? "pass" : "fail" });
+  } catch (e) {
+    console.error(`[${name}] Error: ${e}`);
+    results.push({ name, status: "fail" });
+  } finally {
+    await rm(extractDir, { recursive: true, force: true });
   }
 }
 
