@@ -33,13 +33,15 @@ const tryKeyringRead = (
 ): Effect.Effect<Option.Option<string>> =>
   Effect.try({
     try: () => {
-      for (const entry of [
-        new module.Entry(KEYRING_SERVICE, account),
-        module.Entry.withTarget(`${KEYRING_SERVICE}:${account}`, KEYRING_SERVICE, account),
-      ]) {
-        const value = readEntryPassword(entry);
-        if (value && value.length > 0) return Option.some(normalizeKeyringToken(value));
+      const entry = new module.Entry(KEYRING_SERVICE, account);
+      const value = readEntryPassword(entry);
+      if (value && value.length > 0) return Option.some(normalizeKeyringToken(value));
+
+      const goWindowsValue = readGoWindowsTarget(module, account);
+      if (goWindowsValue && goWindowsValue.length > 0) {
+        return Option.some(normalizeKeyringToken(goWindowsValue));
       }
+
       return Option.none<string>();
     },
     catch: () => Option.none<string>(),
@@ -63,15 +65,18 @@ const tryKeyringDelete = (module: KeyringModule, account: string): Effect.Effect
   Effect.try({
     try: () => {
       let deleted = false;
-      for (const entry of [
-        new module.Entry(KEYRING_SERVICE, account),
-        module.Entry.withTarget(`${KEYRING_SERVICE}:${account}`, KEYRING_SERVICE, account),
-      ]) {
-        const value = readEntryPassword(entry);
-        if (!value) continue;
+
+      const entry = new module.Entry(KEYRING_SERVICE, account);
+      const value = readEntryPassword(entry);
+      if (value) {
         entry.deleteCredential();
         deleted = true;
       }
+
+      if (deleteGoWindowsTarget(module, account)) {
+        deleted = true;
+      }
+
       return deleted;
     },
     catch: () => false,
@@ -82,6 +87,31 @@ function readEntryPassword(entry: KeyringEntry): string | null {
     return entry.getPassword();
   } catch {
     return null;
+  }
+}
+
+function readGoWindowsTarget(module: KeyringModule, account: string): string | null {
+  try {
+    const target = `${KEYRING_SERVICE}:${account}`;
+    const credentials = module.findCredentials(KEYRING_SERVICE, target);
+    const credential = credentials.find((item) => item.account === account);
+    return credential?.password ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function deleteGoWindowsTarget(module: KeyringModule, account: string): boolean {
+  try {
+    const targetEntry = module.Entry.withTarget(
+      `${KEYRING_SERVICE}:${account}`,
+      KEYRING_SERVICE,
+      account,
+    );
+    targetEntry.deleteCredential();
+    return true;
+  } catch {
+    return false;
   }
 }
 

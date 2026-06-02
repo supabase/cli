@@ -23,6 +23,15 @@ let throwOnSetPassword = false;
 const throwOnGetPasswordAccounts = new Set<string>();
 
 vi.mock("@napi-rs/keyring", () => ({
+  findCredentials: (service: string, target?: string) =>
+    Array.from(passwords.entries())
+      .filter(([key]) =>
+        target === undefined ? key.startsWith(`${service}/`) : key.startsWith(`${target}/`),
+      )
+      .map(([key, password]) => ({
+        account: key.split("/").at(-1)!,
+        password,
+      })),
   Entry: class Entry {
     service: string;
     account: string;
