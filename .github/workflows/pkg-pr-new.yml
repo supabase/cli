@@ -7,9 +7,6 @@ on:
       - Smoke Test (PR)
     types:
       - completed
-  pull_request_review:
-    types:
-      - submitted
 
 permissions:
   actions: read
@@ -19,7 +16,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: pkg-pr-new-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.run_id }}
+  group: pkg-pr-new-${{ github.event.workflow_run.head_sha || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -27,24 +24,14 @@ jobs:
     name: Publish preview package
     runs-on: ubuntu-latest
     if: >-
-      (
-        github.event_name == 'workflow_run' &&
-        github.event.workflow_run.event == 'pull_request' &&
-        github.event.workflow_run.conclusion == 'success'
-      ) ||
-      (
-        github.event_name == 'pull_request_review' &&
-        github.event.review.state == 'approved' &&
-        github.event.pull_request.draft == false &&
-        github.event.pull_request.head.repo.full_name == github.event.pull_request.base.repo.full_name
-      )
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Resolve publish context
         id: context
         env:
-          EVENT_NAME: ${{ github.event_name }}
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -55,47 +42,42 @@ jobs:
           smoke_run_id=""
           test_run_id=""
 
-          if [[ "${EVENT_NAME}" == "workflow_run" ]]; then
-            pr_number="$(jq -r '.workflow_run.pull_requests[0].number // ""' "$GITHUB_EVENT_PATH")"
-            pr_head_sha="$(jq -r '.workflow_run.head_sha // ""' "$GITHUB_EVENT_PATH")"
-            pr_head_branch="$(jq -r '.workflow_run.head_branch // ""' "$GITHUB_EVENT_PATH")"
-            triggering_workflow="$(jq -r '.workflow_run.name // ""' "$GITHUB_EVENT_PATH")"
+          pr_number="$(jq -r '.workflow_run.pull_requests[0].number // ""' "$GITHUB_EVENT_PATH")"
+          pr_head_sha="$(jq -r '.workflow_run.head_sha // ""' "$GITHUB_EVENT_PATH")"
+          pr_head_branch="$(jq -r '.workflow_run.head_branch // ""' "$GITHUB_EVENT_PATH")"
+          triggering_workflow="$(jq -r '.workflow_run.name // ""' "$GITHUB_EVENT_PATH")"
 
-            if [[ -z "${pr_head_sha}" ]]; then
-              echo "Workflow run has no head SHA; skipping."
-              echo "should_publish=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
+          if [[ -z "${pr_head_sha}" ]]; then
+            echo "Workflow run has no head SHA; skipping."
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-            if [[ -z "${pr_number}" && -n "${pr_head_branch}" ]]; then
-              pr_number="$(
-                gh pr list \
-                  --repo "${REPOSITORY}" \
-                  --head "${pr_head_branch}" \
-                  --state open \
-                  --json number,headRefOid \
-                  --jq 'map(select(.headRefOid == "'"${pr_head_sha}"'")) | .[0].number // ""'
-              )"
-            fi
+          if [[ -z "${pr_number}" && -n "${pr_head_branch}" ]]; then
+            pr_number="$(
+              gh pr list \
+                --repo "${REPOSITORY}" \
+                --head "${pr_head_branch}" \
+                --state open \
+                --json number,headRefOid \
+                --jq 'map(select(.headRefOid == "'"${pr_head_sha}"'")) | .[0].number // ""'
+            )"
+          fi
 
-            if [[ -z "${pr_number}" ]]; then
-              echo "Workflow run is not associated with an open pull request; skipping."
-              echo "should_publish=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
+          if [[ -z "${pr_number}" ]]; then
+            echo "Workflow run is not associated with an open pull request; skipping."
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-            if [[ "${triggering_workflow}" == "Smoke Test (PR)" ]]; then
-              smoke_run_id="$(jq -r '.workflow_run.id' "$GITHUB_EVENT_PATH")"
-            elif [[ "${triggering_workflow}" == "Test" ]]; then
-              test_run_id="$(jq -r '.workflow_run.id' "$GITHUB_EVENT_PATH")"
-            else
-              echo "Unexpected triggering workflow: ${triggering_workflow}; skipping."
-              echo "should_publish=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
+          if [[ "${triggering_workflow}" == "Smoke Test (PR)" ]]; then
+            smoke_run_id="$(jq -r '.workflow_run.id' "$GITHUB_EVENT_PATH")"
+          elif [[ "${triggering_workflow}" == "Test" ]]; then
+            test_run_id="$(jq -r '.workflow_run.id' "$GITHUB_EVENT_PATH")"
           else
-            pr_number="$(jq -r '.pull_request.number' "$GITHUB_EVENT_PATH")"
-            pr_head_sha="$(jq -r '.pull_request.head.sha' "$GITHUB_EVENT_PATH")"
+            echo "Unexpected triggering workflow: ${triggering_workflow}; skipping."
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
           pr_json="$(gh api "repos/${REPOSITORY}/pulls/${pr_number}")"
@@ -125,29 +107,6 @@ jobs:
 
           if [[ "${pr_head_sha}" != "${current_head_sha}" ]]; then
             echo "Workflow SHA ${pr_head_sha} is stale; current PR head is ${current_head_sha}. Skipping."
-            echo "should_publish=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          review_decision="$(
-            gh api graphql \
-              -f owner="${REPOSITORY%/*}" \
-              -f repo="${REPOSITORY#*/}" \
-              -F number="${pr_number}" \
-              -f query='
-                query($owner: String!, $repo: String!, $number: Int!) {
-                  repository(owner: $owner, name: $repo) {
-                    pullRequest(number: $number) {
-                      reviewDecision
-                    }
-                  }
-                }
-              ' \
-              --jq '.data.repository.pullRequest.reviewDecision // ""'
-          )"
-
-          if [[ "${review_decision}" != "APPROVED" ]]; then
-            echo "PR #${pr_number} review decision is ${review_decision:-<none>}; skipping."
             echo "should_publish=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
