@@ -16,6 +16,7 @@ const INVALID_TOKEN_MESSAGE = "Invalid access token format. Must be like `sbp_01
 
 type KeyringModule = typeof import("@napi-rs/keyring");
 type KeyringEntry = InstanceType<KeyringModule["Entry"]>;
+type RuntimePlatform = NodeJS.Platform;
 
 const detectWsl = (fs: FileSystem.FileSystem): Effect.Effect<boolean> =>
   Effect.gen(function* () {
@@ -30,6 +31,7 @@ const detectWsl = (fs: FileSystem.FileSystem): Effect.Effect<boolean> =>
 const tryKeyringRead = (
   module: KeyringModule,
   account: string,
+  platform: RuntimePlatform,
 ): Effect.Effect<Option.Option<string>> =>
   Effect.try({
     try: () => {
@@ -37,9 +39,11 @@ const tryKeyringRead = (
       const value = readEntryPassword(entry);
       if (value && value.length > 0) return Option.some(normalizeKeyringToken(value));
 
-      const goWindowsValue = readGoWindowsTarget(module, account);
-      if (goWindowsValue && goWindowsValue.length > 0) {
-        return Option.some(normalizeKeyringToken(goWindowsValue));
+      if (platform === "win32") {
+        const goWindowsValue = readGoWindowsTarget(module, account);
+        if (goWindowsValue && goWindowsValue.length > 0) {
+          return Option.some(normalizeKeyringToken(goWindowsValue));
+        }
       }
 
       return Option.none<string>();
@@ -51,9 +55,14 @@ const tryKeyringWrite = (
   module: KeyringModule,
   account: string,
   token: string,
+  platform: RuntimePlatform,
 ): Effect.Effect<boolean> =>
   Effect.try({
     try: () => {
+      if (platform === "win32") {
+        return writeGoWindowsTarget(module, account, token);
+      }
+
       const entry = new module.Entry(KEYRING_SERVICE, account);
       entry.setPassword(token);
       return true;
@@ -61,7 +70,11 @@ const tryKeyringWrite = (
     catch: () => false,
   }).pipe(Effect.orElseSucceed(() => false));
 
-const tryKeyringDelete = (module: KeyringModule, account: string): Effect.Effect<boolean> =>
+const tryKeyringDelete = (
+  module: KeyringModule,
+  account: string,
+  platform: RuntimePlatform,
+): Effect.Effect<boolean> =>
   Effect.try({
     try: () => {
       let deleted = false;
@@ -73,8 +86,8 @@ const tryKeyringDelete = (module: KeyringModule, account: string): Effect.Effect
         deleted = true;
       }
 
-      if (deleteGoWindowsTarget(module, account)) {
-        deleted = true;
+      if (platform === "win32" && readGoWindowsTarget(module, account)) {
+        deleted = deleteGoWindowsTarget(module, account) || deleted;
       }
 
       return deleted;
@@ -90,10 +103,13 @@ function readEntryPassword(entry: KeyringEntry): string | null {
   }
 }
 
+function goWindowsCredentialTarget(account: string): string {
+  return `${KEYRING_SERVICE}:${account}`;
+}
+
 function readGoWindowsTarget(module: KeyringModule, account: string): string | null {
   try {
-    const target = `${KEYRING_SERVICE}:${account}`;
-    const credentials = module.findCredentials(KEYRING_SERVICE, target);
+    const credentials = module.findCredentials(KEYRING_SERVICE, goWindowsCredentialTarget(account));
     const credential = credentials.find((item) => item.account === account);
     return credential?.password ?? null;
   } catch {
@@ -101,15 +117,28 @@ function readGoWindowsTarget(module: KeyringModule, account: string): string | n
   }
 }
 
-function deleteGoWindowsTarget(module: KeyringModule, account: string): boolean {
+function writeGoWindowsTarget(module: KeyringModule, account: string, token: string): boolean {
   try {
-    const targetEntry = module.Entry.withTarget(
-      `${KEYRING_SERVICE}:${account}`,
+    const entry = module.Entry.withTarget(
+      goWindowsCredentialTarget(account),
       KEYRING_SERVICE,
       account,
     );
-    targetEntry.deleteCredential();
+    entry.setSecret(Buffer.from(token, "utf8"));
     return true;
+  } catch {
+    return false;
+  }
+}
+
+function deleteGoWindowsTarget(module: KeyringModule, account: string): boolean {
+  try {
+    const entry = module.Entry.withTarget(
+      goWindowsCredentialTarget(account),
+      KEYRING_SERVICE,
+      account,
+    );
+    return entry.deleteCredential();
   } catch {
     return false;
   }
@@ -138,9 +167,13 @@ const makeLegacyCredentials = Effect.gen(function* () {
 
   const readKeyring = Effect.gen(function* () {
     if (Option.isNone(keyringModule)) return Option.none<string>();
-    const profileResult = yield* tryKeyringRead(keyringModule.value, profileAccount);
+    const profileResult = yield* tryKeyringRead(
+      keyringModule.value,
+      profileAccount,
+      runtimeInfo.platform,
+    );
     if (Option.isSome(profileResult)) return profileResult;
-    return yield* tryKeyringRead(keyringModule.value, LEGACY_KEYRING_ACCOUNT);
+    return yield* tryKeyringRead(keyringModule.value, LEGACY_KEYRING_ACCOUNT, runtimeInfo.platform);
   });
 
   const readFile = Effect.gen(function* () {
@@ -180,7 +213,12 @@ const makeLegacyCredentials = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* validate(token);
         if (Option.isSome(keyringModule)) {
-          const ok = yield* tryKeyringWrite(keyringModule.value, profileAccount, token);
+          const ok = yield* tryKeyringWrite(
+            keyringModule.value,
+            profileAccount,
+            token,
+            runtimeInfo.platform,
+          );
           if (ok) return;
         }
         yield* fs.makeDirectory(fallbackDir, { recursive: true, mode: 0o700 }).pipe(Effect.orDie);
@@ -190,8 +228,14 @@ const makeLegacyCredentials = Effect.gen(function* () {
     deleteAccessToken: Effect.gen(function* () {
       let anyDeleted = false;
       if (Option.isSome(keyringModule)) {
-        if (yield* tryKeyringDelete(keyringModule.value, profileAccount)) anyDeleted = true;
-        if (yield* tryKeyringDelete(keyringModule.value, LEGACY_KEYRING_ACCOUNT)) anyDeleted = true;
+        if (yield* tryKeyringDelete(keyringModule.value, profileAccount, runtimeInfo.platform)) {
+          anyDeleted = true;
+        }
+        if (
+          yield* tryKeyringDelete(keyringModule.value, LEGACY_KEYRING_ACCOUNT, runtimeInfo.platform)
+        ) {
+          anyDeleted = true;
+        }
       }
       const exists = yield* fs.exists(fallbackPath).pipe(Effect.orElseSucceed(() => false));
       if (exists) {
