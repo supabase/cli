@@ -1,0 +1,98 @@
+name: Apply release notes
+
+# Approval-based publish. When a member of the supabase/cli team approves a
+# release-notes PR (head ref `release-notes/v<VERSION>`), this workflow pushes
+# the proposed notes to the GitHub Release body for the corresponding tag,
+# comments the release URL on the PR, and closes the PR without merging. The
+# release-notes file never lands on `main`.
+#
+# Mirrors the fast-forward job in release.yml, which already gates on a
+# `pull_request_review` + `approved` event.
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    # `state == 'open'` makes re-approvals on an already-closed PR a no-op
+    # (a reviewer can re-approve from the GitHub UI even after close).
+    if: |
+      github.event.review.state == 'approved' &&
+      startsWith(github.event.pull_request.head.ref, 'release-notes/') &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.state == 'open'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # App token: needs `orgs/.../teams/.../memberships` read (the org-installed
+      # App has it), repo write to edit the release, and PR write to comment
+      # and close. Matches release.yml's fast-forward step.
+      - id: app-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+
+      - name: Authorize approver against supabase/cli team
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APPROVER: ${{ github.event.review.user.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        # Fail closed: any response other than an active membership means the
+        # approval is ignored. We post a comment so the reviewer sees why their
+        # approval didn't apply, then exit 0 so the workflow isn't flagged red.
+        run: |
+          set -euo pipefail
+          status=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            "orgs/supabase/teams/cli/memberships/${APPROVER}" \
+            --jq '.state' 2>/dev/null || true)
+          if [ "$status" != "active" ]; then
+            echo "Approver @${APPROVER} is not an active supabase/cli team member (state='${status:-none}'); ignoring approval." >&2
+            gh pr comment "$PR_NUMBER" --repo "${{ github.repository }}" --body \
+              "@${APPROVER} is not an active \`supabase/cli\` team member, so this approval was ignored. Ask a team member to approve to publish the notes."
+            exit 0
+          fi
+          echo "AUTHORIZED=true" >> "$GITHUB_ENV"
+
+      # Checkout the PR head so any reviewer edits made in the GitHub UI before
+      # approval are captured. apply-release-notes.ts reads from the working
+      # tree.
+      - if: env.AUTHORIZED == 'true'
+        uses: useblacksmith/checkout@41cdeedae8edb2e684ba22896a5fd2a3cb85db6b # v1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - if: env.AUTHORIZED == 'true'
+        uses: ./.github/actions/setup
+
+      - name: Apply notes, comment, and close
+        if: env.AUTHORIZED == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          APPROVER: ${{ github.event.review.user.login }}
+        # The branch is named `release-notes/v<VERSION>`, so the tag is just
+        # the basename. apply-release-notes.ts validates the file's existence.
+        run: |
+          set -euo pipefail
+          tag="${HEAD_REF##release-notes/}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(beta|alpha)\.[0-9]+)?$ ]]; then
+            echo "Unexpected head ref '$HEAD_REF'; cannot derive tag." >&2
+            exit 1
+          fi
+          echo "==> Applying notes for $tag"
+          pnpm exec bun apps/cli/scripts/apply-release-notes.ts --tag "$tag"
+          release_url="https://github.com/${{ github.repository }}/releases/tag/${tag}"
+          gh pr comment "$PR_NUMBER" --repo "${{ github.repository }}" --body \
+            "Applied to [${tag}](${release_url}) after approval by @${APPROVER}."
+          gh pr close "$PR_NUMBER" --repo "${{ github.repository }}" --delete-branch
