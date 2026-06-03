@@ -86,7 +86,7 @@ jobs:
         run: |
           set -euo pipefail
           tag="${HEAD_REF##release-notes/}"
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(beta|alpha)\.[0-9]+)?$ ]]; then
             echo "Unexpected head ref '$HEAD_REF'; cannot derive tag." >&2
             exit 1
           fi

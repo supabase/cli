@@ -6,7 +6,9 @@ name: Propose release notes
 # adding release-notes/v<VERSION>.md. Merging the PR triggers
 # apply-release-notes.yml, which pushes the file's contents to the GH Release.
 #
-# Stable releases only — prerelease tags (-beta./-alpha.) keep the raw body.
+# Stable releases only on the automatic release pipeline — prerelease tags
+# (-beta./-alpha.) keep the raw body unless this workflow is triggered
+# manually from the Actions tab (workflow_dispatch).
 
 on:
   workflow_call:
@@ -23,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to propose notes for (e.g. v2.101.0)
+        description: Release tag to propose notes for (e.g. v2.101.0 or v2.99.0-beta.1)
         required: true
         type: string
 
@@ -32,9 +34,9 @@ permissions:
 
 jobs:
   propose:
-    # Belt-and-suspenders: the script also refuses prerelease tags, but cheap
-    # to short-circuit here so we never pay for an LLM call we'd discard.
-    if: ${{ !contains(inputs.tag, '-beta.') && !contains(inputs.tag, '-alpha.') }}
+    # workflow_call (release pipeline): skip prereleases. workflow_dispatch:
+    # allow any tag so reviewers can opt in for beta/alpha from the Actions tab.
+    if: ${{ github.event_name == 'workflow_dispatch' || (!contains(inputs.tag, '-beta.') && !contains(inputs.tag, '-alpha.')) }}
     runs-on: ubuntu-latest
     continue-on-error: ${{ inputs.non_blocking }}
     permissions:

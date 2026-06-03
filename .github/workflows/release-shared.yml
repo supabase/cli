@@ -325,9 +325,9 @@ jobs:
 
   # Once the raw semantic-release block is in the release body, ask Claude to
   # rewrite it into user-centric notes and open a PR for human approval. Stable
-  # releases only — prereleases keep the raw body. Non-blocking so an LLM
-  # hiccup never gates a published release; reviewers can always rerun the
-  # workflow by hand from the Actions tab.
+  # releases only on this path — prereleases keep the raw body. Non-blocking so
+  # an LLM hiccup never gates a published release; reviewers can propose beta/
+  # alpha notes manually from the Actions tab (workflow_dispatch).
   propose-release-notes:
     uses: ./.github/workflows/propose-release-notes.yml
     needs: backfill-release-notes

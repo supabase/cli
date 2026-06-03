@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Generate a user-centric GitHub Release body for a stable Supabase CLI tag
+// Generate a user-centric GitHub Release body for a Supabase CLI tag
 // by running the Claude Agent SDK against tools/release/release-notes-prompt.md
 // with the raw semantic-release block substituted in.
 //
@@ -25,8 +25,7 @@
 //   bun apps/cli/scripts/propose-release-notes.ts --tag v2.101.0 --dry-run
 //   bun apps/cli/scripts/propose-release-notes.ts --tag v2.101.0 --apply
 //
-//   --tag      Required. Stable release tag (e.g. v2.101.0). Prerelease tags
-//              (-beta./-alpha.) are rejected per the prompt's scope rules.
+//   --tag      Required. Release tag (e.g. v2.101.0 or v2.99.0-beta.1).
 //   --dry-run  Print the proposed notes to stdout. Does not write any files,
 //              does not touch git.
 //   --apply    Write release-notes/v<VERSION>.md, commit on a branch, push,
@@ -59,13 +58,6 @@ const tag = values.tag;
 if (!tag) {
   console.error("--tag is required (e.g. --tag v2.101.0)");
   process.exit(2);
-}
-if (tag.includes("-beta.") || tag.includes("-alpha.")) {
-  console.error(
-    `Refusing to propose notes for ${tag}: prereleases keep the raw ` +
-      `semantic-release body (see tools/release/release-notes-prompt.md).`,
-  );
-  process.exit(0);
 }
 const version = tag.replace(/^v/, "");
 const apply = values.apply === true && values["dry-run"] !== true;
