@@ -1,0 +1,136 @@
+name: External PR Gate
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  issues: read
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  main:
+    if: |
+      !startsWith(github.event.pull_request.head.ref, 'release-notes/') &&
+      github.event.pull_request.draft == false
+    name: Check accepted issue
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require accepted issue for external PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          owner="${REPOSITORY%/*}"
+          repo="${REPOSITORY#*/}"
+
+          pr_json="$(gh api graphql \
+            -F owner="$owner" \
+            -F repo="$repo" \
+            -F number="$PR_NUMBER" \
+            -f query='
+              query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $number) {
+                    authorAssociation
+                    closingIssuesReferences(first: 20) {
+                      nodes {
+                        number
+                        url
+                        labels(first: 50) {
+                          nodes {
+                            name
+                          }
+                        }
+                        comments(last: 100) {
+                          nodes {
+                            body
+                            authorAssociation
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ')"
+
+          author_association="$(jq -r '.data.repository.pullRequest.authorAssociation' <<<"$pr_json")"
+
+          case "$author_association" in
+            OWNER|MEMBER|COLLABORATOR)
+              echo "Maintainer or collaborator PR; skipping external issue gate."
+              exit 0
+              ;;
+          esac
+
+          accepted_issue_urls="$(
+            jq -r '
+              .data.repository.pullRequest.closingIssuesReferences.nodes[]
+              | select(any(.labels.nodes[]?;
+                  .name == "🐛 Bug" or
+                  .name == "✨ Feature" or
+                  .name == "📘 Docs"
+                ))
+              | select(any(.comments.nodes[]?;
+                  (.authorAssociation == "OWNER" or
+                   .authorAssociation == "MEMBER" or
+                   .authorAssociation == "COLLABORATOR") and
+                  (.body | test("(^|\\n)\\s*/accept-issue\\s*($|\\n)"))
+                ))
+              | .url
+            ' <<<"$pr_json"
+          )"
+
+          if [[ -n "$accepted_issue_urls" ]]; then
+            echo "Found accepted issue:"
+            echo "$accepted_issue_urls"
+            exit 0
+          fi
+
+          existing_comment="$(gh api \
+            "repos/$REPOSITORY/issues/$PR_NUMBER/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- external-pr-gate -->"))) | .id' \
+            | head -n 1)"
+
+          if [[ -z "$existing_comment" ]]; then
+            comment_body="$(mktemp)"
+            cat >"$comment_body" <<'COMMENT'
+          <!-- external-pr-gate -->
+
+          Thanks for opening this PR. External PRs need to link an accepted issue before maintainers can review them.
+
+          Please open or link a `🐛 Bug`, `✨ Feature`, or `📘 Docs` issue, wait for a maintainer to accept it by commenting `/accept-issue` on that issue, then link it from this PR with a closing keyword such as `Closes #123`.
+
+          After that, push a new commit or edit the PR description to rerun this check.
+          COMMENT
+
+            gh pr comment "$PR_NUMBER" \
+              --repo "$REPOSITORY" \
+              --body-file "$comment_body"
+          else
+            echo "External PR gate guidance comment already exists."
+          fi
+
+          cat <<'EOF' >&2
+          External PRs must link an accepted issue.
+
+          To satisfy this check:
+          1. Open a bug, feature, or docs issue.
+          2. Wait for a maintainer to accept it by commenting `/accept-issue` on that issue.
+          3. Link the accepted issue from this PR with a closing keyword such as `Closes #123`.
+
+          EOF
+          exit 1
