@@ -51,6 +51,8 @@ on:
         required: false
       GH_APP_PRIVATE_KEY:
         required: false
+      ANTHROPIC_API_KEY:
+        required: false
 jobs:
   build:
     name: Build CLI artifacts
@@ -335,7 +337,9 @@ jobs:
     with:
       tag: v${{ inputs.version }}
       non_blocking: true
-    secrets: inherit
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
 
   publish-homebrew:
     needs: publish
