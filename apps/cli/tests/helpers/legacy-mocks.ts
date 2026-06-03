@@ -14,8 +14,23 @@ import * as UrlParams from "effect/unstable/http/UrlParams";
 import { afterEach, beforeEach } from "vitest";
 
 import { LegacyCredentials } from "../../src/legacy/auth/legacy-credentials.service.ts";
-import { LegacyCredentialDeleteError } from "../../src/legacy/auth/legacy-errors.ts";
+import {
+  LegacyCredentialDeleteError,
+  LegacyDeleteTokenError,
+  LegacyInvalidAccessTokenError,
+  LegacyNotLoggedInError,
+} from "../../src/legacy/auth/legacy-errors.ts";
 import { LegacyPlatformApi } from "../../src/legacy/auth/legacy-platform-api.service.ts";
+import {
+  LegacyLoginApi,
+  type LegacyLoginSessionResponse,
+} from "../../src/legacy/commands/login/login-api.service.ts";
+import { LegacyLoginCrypto } from "../../src/legacy/commands/login/login-crypto.service.ts";
+import {
+  LegacyLoginCryptoError,
+  LegacyLoginDecryptError,
+  LegacyLoginVerificationError,
+} from "../../src/legacy/commands/login/login.errors.ts";
 import { LegacyCliConfig } from "../../src/legacy/config/legacy-cli-config.service.ts";
 import { legacyProjectRefLayer } from "../../src/legacy/config/legacy-project-ref.layer.ts";
 import { LegacyLinkedProjectCache } from "../../src/legacy/telemetry/legacy-linked-project-cache.service.ts";
@@ -49,6 +64,8 @@ export const mockLegacyLinkedProjectCacheLayer = Layer.succeed(LegacyLinkedProje
 
 export const mockLegacyTelemetryStateLayer = Layer.succeed(LegacyTelemetryState, {
   flush: Effect.void,
+  stitchLogin: () => Effect.void,
+  clearDistinctId: Effect.void,
 });
 
 // Default LegacyCredentials mock. `mockLegacyCliConfig` defaults to an env-set
@@ -60,24 +77,67 @@ export const mockLegacyCredentialsLayer = Layer.succeed(LegacyCredentials, {
   getAccessToken: Effect.sync(() => Option.none()),
   saveAccessToken: () => Effect.die("unexpected legacy credentials write in test"),
   deleteAccessToken: Effect.die("unexpected legacy credentials delete in test"),
+  deleteAllProjectCredentials: Effect.die("unexpected legacy project-credential sweep in test"),
   deleteProjectCredential: () => Effect.die("unexpected legacy project-credential delete in test"),
 });
 
 /**
- * Tracked `LegacyCredentials` mock for `supabase unlink` tests. Records the
- * project refs passed to `deleteProjectCredential` and lets the test choose the
- * outcome: `true`/`false` (deleted / not found) or a `LegacyCredentialDeleteError`
- * (e.g. permission-denied keyring failure).
+ * Tracked `LegacyCredentials` mock for `unlink` / `login` / `logout` tests.
+ *
+ * - `deleteProjectCredential` (unlink): records refs in `deletedRefs`; `deleteFails`
+ *   makes it raise `LegacyCredentialDeleteError`.
+ * - `saveAccessToken` (login): records the saved token in `savedToken`; `saveFails`
+ *   raises `LegacyInvalidAccessTokenError` (the token-path "cannot save" branch).
+ * - `deleteAccessToken` (logout): `deleteOutcome` selects success (`"ok"`),
+ *   `LegacyNotLoggedInError` (`"notLoggedIn"`), or `LegacyDeleteTokenError`
+ *   (`"deleteError"`).
+ * - `deleteAllProjectCredentials` (logout): flips `deletedAll`.
  */
-export function mockLegacyCredentialsTracked(opts: { readonly deleteFails?: boolean } = {}): {
+export function mockLegacyCredentialsTracked(
+  opts: {
+    readonly deleteFails?: boolean;
+    readonly saveFails?: boolean;
+    readonly deleteOutcome?: "ok" | "notLoggedIn" | "deleteError";
+  } = {},
+): {
   readonly layer: Layer.Layer<LegacyCredentials>;
   readonly deletedRefs: ReadonlyArray<string>;
+  readonly savedToken: string | undefined;
+  readonly deletedAll: boolean;
 } {
   const deletedRefs: string[] = [];
+  let savedToken: string | undefined;
+  let deletedAll = false;
+
+  const deleteAccessToken =
+    opts.deleteOutcome === "notLoggedIn"
+      ? Effect.fail(
+          new LegacyNotLoggedInError({ message: "You were not logged in, nothing to do." }),
+        )
+      : opts.deleteOutcome === "deleteError"
+        ? Effect.fail(
+            new LegacyDeleteTokenError({
+              message: "failed to remove access token file: permission denied",
+            }),
+          )
+        : Effect.void;
+
   const layer = Layer.succeed(LegacyCredentials, {
     getAccessToken: Effect.sync(() => Option.none()),
-    saveAccessToken: () => Effect.die("unexpected legacy credentials write in test"),
-    deleteAccessToken: Effect.die("unexpected legacy credentials delete in test"),
+    saveAccessToken: (token: string) =>
+      opts.saveFails === true
+        ? Effect.fail(
+            new LegacyInvalidAccessTokenError({
+              message: "Invalid access token format. Must be like `sbp_0102...1920`.",
+            }),
+          )
+        : Effect.sync(() => {
+            savedToken = token;
+          }),
+    deleteAccessToken,
+    deleteAllProjectCredentials: Effect.sync(() => {
+      deletedAll = true;
+    }),
     deleteProjectCredential: (projectRef: string) =>
       Effect.gen(function* () {
         deletedRefs.push(projectRef);
@@ -96,6 +156,100 @@ export function mockLegacyCredentialsTracked(opts: { readonly deleteFails?: bool
     get deletedRefs() {
       return deletedRefs;
     },
+    get savedToken() {
+      return savedToken;
+    },
+    get deletedAll() {
+      return deletedAll;
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Login crypto / API mocks. The crypto mock returns a dummy ECDH handle (the
+// browser-flow integration tests never reach a real decrypt — the API mock
+// supplies the ciphertext and the crypto mock returns the decrypted token).
+// ---------------------------------------------------------------------------
+
+export function mockLegacyLoginCrypto(
+  opts: {
+    readonly publicKeyHex?: string;
+    readonly sessionId?: string;
+    readonly tokenName?: string;
+    readonly decryptedToken?: string;
+    readonly decryptFails?: boolean;
+    readonly keygenFails?: boolean;
+  } = {},
+): { readonly layer: Layer.Layer<LegacyLoginCrypto> } {
+  const layer = Layer.succeed(LegacyLoginCrypto, {
+    generateKeyPair: opts.keygenFails
+      ? Effect.fail(new LegacyLoginCryptoError({ message: "cannot generate crypto keys: boom" }))
+      : Effect.succeed({
+          ecdh: {} as import("node:crypto").ECDH,
+          publicKeyHex: opts.publicKeyHex ?? "04abcd",
+        }),
+    generateSessionId: Effect.sync(() => opts.sessionId ?? "test-session-id"),
+    defaultTokenName: Effect.sync(() => opts.tokenName ?? "cli_test@host_123"),
+    decryptToken: () =>
+      opts.decryptFails
+        ? Effect.fail(
+            new LegacyLoginDecryptError({
+              message: "cannot decrypt access token: cipher: message authentication failed",
+            }),
+          )
+        : Effect.succeed(opts.decryptedToken ?? LEGACY_VALID_TOKEN),
+  });
+  return { layer };
+}
+
+export function mockLegacyLoginApi(
+  opts: {
+    readonly sessionResponse?: Partial<LegacyLoginSessionResponse>;
+    // Number of `fetchLoginSession` failures before it succeeds (drives the
+    // verification retry loop).
+    readonly failTimes?: number;
+    // `gotrue_id` returned by `fetchGotrueId` (Some); `profileFails` returns None.
+    readonly gotrueId?: string;
+    readonly profileFails?: boolean;
+  } = {},
+): {
+  readonly layer: Layer.Layer<LegacyLoginApi>;
+  readonly loginCallCount: number;
+  readonly gotrueCallCount: number;
+} {
+  let loginCallCount = 0;
+  let gotrueCallCount = 0;
+  const failTimes = opts.failTimes ?? 0;
+  const session: LegacyLoginSessionResponse = {
+    access_token: "656e6372797074656420746f6b656e",
+    public_key: "04abcd",
+    nonce: "0102030405060708090a0b0c",
+    ...opts.sessionResponse,
+  };
+  const layer = Layer.succeed(LegacyLoginApi, {
+    fetchLoginSession: () => {
+      loginCallCount += 1;
+      if (loginCallCount <= failTimes) {
+        return Effect.fail(
+          new LegacyLoginVerificationError({ message: "Error status 404: not found" }),
+        );
+      }
+      return Effect.succeed(session);
+    },
+    fetchGotrueId: () => {
+      gotrueCallCount += 1;
+      if (opts.profileFails === true) return Effect.succeed(Option.none<string>());
+      return Effect.succeed(Option.some(opts.gotrueId ?? "gotrue-user-123"));
+    },
+  });
+  return {
+    layer,
+    get loginCallCount() {
+      return loginCallCount;
+    },
+    get gotrueCallCount() {
+      return gotrueCallCount;
+    },
   };
 }
 
@@ -108,12 +262,25 @@ export function mockLegacyCredentialsTracked(opts: { readonly deleteFails?: bool
 export function mockLegacyTelemetryStateTracked(): {
   readonly layer: Layer.Layer<LegacyTelemetryState>;
   readonly flushed: boolean;
+  readonly stitchedDistinctId: string | undefined;
+  readonly clearedDistinctId: boolean;
 } {
   let flushed = false;
+  let stitchedDistinctId: string | undefined;
+  let clearedDistinctId = false;
   const layer = Layer.succeed(LegacyTelemetryState, {
     get flush() {
       return Effect.sync(() => {
         flushed = true;
+      });
+    },
+    stitchLogin: (distinctId: string) =>
+      Effect.sync(() => {
+        stitchedDistinctId = distinctId;
+      }),
+    get clearDistinctId() {
+      return Effect.sync(() => {
+        clearedDistinctId = true;
       });
     },
   });
@@ -121,6 +288,12 @@ export function mockLegacyTelemetryStateTracked(): {
     layer,
     get flushed() {
       return flushed;
+    },
+    get stitchedDistinctId() {
+      return stitchedDistinctId;
+    },
+    get clearedDistinctId() {
+      return clearedDistinctId;
     },
   };
 }

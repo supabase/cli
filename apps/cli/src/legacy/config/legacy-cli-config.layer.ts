@@ -5,6 +5,7 @@ import { LegacyProfileFlag, LegacyWorkdirFlag } from "../../shared/legacy/global
 import { legacyProjectHost } from "../shared/legacy-profile.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { LegacyCliConfig, type LegacyProfileName } from "./legacy-cli-config.service.ts";
+import { readLegacyProfileFile } from "./legacy-profile-file.ts";
 
 interface ResolvedProfile {
   readonly name: string;
@@ -51,6 +52,10 @@ function safeParseYaml(
  * Resolves the profile that produces the API URL. Mirrors Go's `LoadProfile`
  * (`apps/cli-go/internal/utils/profile.go:96-118`):
  *
+ * Profile-name precedence mirrors Go's `getProfileName` (`profile.go:121-136`):
+ * `--profile` flag (when not the default) → `SUPABASE_PROFILE` env → the
+ * persisted `~/.supabase/profile` file → `supabase`. The resolved token is then:
+ *
  * 1. If the token matches a built-in profile name, use that.
  * 2. Otherwise treat the token as a path to a YAML config file with `api_url:`.
  * 3. Fall back to the `supabase` built-in if the file is missing or malformed.
@@ -64,9 +69,21 @@ function resolveProfile(
   flagValue: string,
   envValue: string | undefined,
   fs: FileSystem.FileSystem,
+  path: Path.Path,
+  homeDir: string,
 ): Effect.Effect<ResolvedProfile> {
   return Effect.gen(function* () {
-    const token = flagValue !== "supabase" ? flagValue : (envValue ?? "supabase");
+    let token: string;
+    if (flagValue !== "supabase") {
+      token = flagValue;
+    } else if (envValue !== undefined && envValue.length > 0) {
+      token = envValue;
+    } else {
+      // Lowest precedence: the persisted `~/.supabase/profile` file (Go's
+      // `getProfileName` file fallback, `profile.go:129-131`).
+      const fileName = yield* readLegacyProfileFile(fs, path, homeDir);
+      token = Option.getOrElse(fileName, () => "supabase");
+    }
 
     if (isBuiltinProfileName(token)) {
       return resolvedBuiltin(token);
@@ -137,7 +154,13 @@ export const legacyCliConfigLayer = Layer.unwrap(
           name: profile,
           apiUrl,
           projectHost,
-        } = yield* resolveProfile(profileFlag, env["SUPABASE_PROFILE"], fs);
+        } = yield* resolveProfile(
+          profileFlag,
+          env["SUPABASE_PROFILE"],
+          fs,
+          path,
+          runtimeInfo.homeDir,
+        );
 
         const rawAccessToken = env["SUPABASE_ACCESS_TOKEN"];
         const accessToken =

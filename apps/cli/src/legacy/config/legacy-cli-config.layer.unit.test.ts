@@ -17,13 +17,14 @@ function makeLayer(opts: {
   workdirFlag?: Option.Option<string>;
   env?: Record<string, string | undefined>;
   cwd?: string;
+  home?: string;
 }) {
   const profileFlag = opts.profileFlag ?? "supabase";
   const workdirFlag = opts.workdirFlag ?? Option.none<string>();
   return legacyCliConfigLayer.pipe(
     Layer.provide(Layer.succeed(LegacyProfileFlag, profileFlag)),
     Layer.provide(Layer.succeed(LegacyWorkdirFlag, workdirFlag)),
-    Layer.provide(mockRuntimeInfo({ cwd: opts.cwd ?? "/test/cwd" })),
+    Layer.provide(mockRuntimeInfo({ cwd: opts.cwd ?? "/test/cwd", homeDir: opts.home })),
     Layer.provide(BunServices.layer),
     Layer.provide(processEnvLayer(opts.env ?? {})),
   );
@@ -74,6 +75,31 @@ describe("legacyCliConfigLayer", () => {
       expect(config.projectHost).toBe("snapcloud.dev");
     }).pipe(Effect.provide(makeLayer({ profileFlag: "snap", cwd: tempRoot }))),
   );
+
+  it.effect("reads the persisted ~/.supabase/profile file when no flag/env is set", () => {
+    const home = join(tempRoot, "home");
+    mkdirSync(join(home, ".supabase"), { recursive: true });
+    writeFileSync(join(home, ".supabase", "profile"), "supabase-staging\n");
+    return Effect.gen(function* () {
+      const config = yield* LegacyCliConfig;
+      expect(config.profile).toBe("supabase-staging");
+    }).pipe(Effect.provide(makeLayer({ home, cwd: tempRoot })));
+  });
+
+  it.effect("flag and env take precedence over the persisted profile file", () => {
+    const home = join(tempRoot, "home");
+    mkdirSync(join(home, ".supabase"), { recursive: true });
+    writeFileSync(join(home, ".supabase", "profile"), "supabase-staging");
+    return Effect.gen(function* () {
+      const config = yield* LegacyCliConfig;
+      // SUPABASE_PROFILE wins over the file.
+      expect(config.profile).toBe("supabase-local");
+    }).pipe(
+      Effect.provide(
+        makeLayer({ home, cwd: tempRoot, env: { SUPABASE_PROFILE: "supabase-local" } }),
+      ),
+    );
+  });
 
   it.effect(
     "falls back to supabase profile when SUPABASE_PROFILE is neither a known name nor a readable file",

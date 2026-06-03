@@ -35,7 +35,8 @@ function mockCredentials(token: Option.Option<string>) {
   return Layer.succeed(LegacyCredentials, {
     getAccessToken: Effect.succeed(Option.map(token, Redacted.make)),
     saveAccessToken: () => Effect.void,
-    deleteAccessToken: Effect.succeed(false),
+    deleteAccessToken: Effect.void,
+    deleteAllProjectCredentials: Effect.void,
     deleteProjectCredential: () => Effect.succeed(false),
   });
 }
