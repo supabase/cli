@@ -295,6 +295,81 @@ describe("init handler", () => {
     );
   });
 
+  it.live("merges into a JSONC settings file with comments and trailing commas", () => {
+    const tempDir = makeTempDir();
+    const settingsPath = join(tempDir, ".vscode", "settings.json");
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => mkdir(join(tempDir, ".vscode"), { recursive: true }));
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          settingsPath,
+          [
+            "{",
+            "  // editor preferences",
+            '  "editor.tabSize": 4, // keep four spaces',
+            "  /* a block comment */",
+            '  "files.eol": "\\n",',
+            "}",
+          ].join("\n"),
+        ),
+      );
+      const { layer } = buildLayer(tempDir, {
+        interactive: true,
+        stdinIsTty: true,
+        promptConfirmResponses: [true],
+      });
+
+      yield* init({
+        interactive: true,
+        experimental: false,
+        useOrioledb: false,
+        force: false,
+      }).pipe(Effect.provide(layer));
+
+      const settings = JSON.parse(
+        yield* Effect.tryPromise(() => readFile(settingsPath, "utf8")),
+      ) as Record<string, unknown>;
+
+      expect(settings["editor.tabSize"]).toBe(4);
+      expect(settings["files.eol"]).toBe("\n");
+      expect(settings["deno.enablePaths"]).toBeDefined();
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live(
+    "fails with InitParseSettingsError on a malformed settings file without clobbering it",
+    () => {
+      const tempDir = makeTempDir();
+      const settingsPath = join(tempDir, ".vscode", "settings.json");
+      const malformed = '{ "editor.tabSize": ';
+
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => mkdir(join(tempDir, ".vscode"), { recursive: true }));
+        yield* Effect.tryPromise(() => writeFile(settingsPath, malformed));
+        const { layer } = buildLayer(tempDir, {
+          interactive: true,
+          stdinIsTty: true,
+          promptConfirmResponses: [true],
+        });
+
+        const exit = yield* init({
+          interactive: true,
+          experimental: false,
+          useOrioledb: false,
+          force: false,
+        }).pipe(Effect.provide(layer), Effect.exit);
+
+        expectFailureTag(exit, "InitParseSettingsError");
+        expect(yield* Effect.tryPromise(() => readFile(settingsPath, "utf8"))).toBe(malformed);
+      }).pipe(
+        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+      );
+    },
+  );
+
   it.live("does not prompt for IDE settings when stdin is not a TTY", () => {
     const tempDir = makeTempDir();
 

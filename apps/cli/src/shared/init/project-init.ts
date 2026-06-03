@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Path, Schema } from "effect";
 import { Output } from "../output/output.service.ts";
 import { Tty } from "../runtime/tty.service.ts";
 import {
@@ -8,7 +8,7 @@ import {
   VSCODE_SETTINGS_TEMPLATE,
   renderProjectConfigTemplate,
 } from "./project-init.templates.ts";
-import { InitAlreadyExistsError } from "./project-init.errors.ts";
+import { InitAlreadyExistsError, InitParseSettingsError } from "./project-init.errors.ts";
 
 const invalidProjectId = /[^a-zA-Z0-9_.-]+/g;
 const maxProjectIdLength = 40;
@@ -22,20 +22,106 @@ function sanitizeProjectId(src: string): string {
   return truncateText(sanitized, maxProjectIdLength);
 }
 
+// Mirrors Go's `jsonc.ToJSONInPlace` (github.com/tidwall/jsonc): strips line and
+// block comments and trailing commas while preserving string contents, so an
+// existing JSONC settings file parses exactly as it does in the Go CLI.
 function stripJsonComments(contents: string): string {
-  return contents
-    .replace(/^\uFEFF/, "")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^\s*\/\/.*$/gm, "");
+  const src = contents.replace(/^\uFEFF/, "");
+  const out: Array<string> = [];
+  let pendingCommaIndex = -1;
+  let i = 0;
+  while (i < src.length) {
+    const char = src.charAt(i);
+
+    // String literal \u2014 copy verbatim, honoring escape sequences.
+    if (char === '"') {
+      pendingCommaIndex = -1;
+      out.push(char);
+      i++;
+      while (i < src.length) {
+        const stringChar = src.charAt(i);
+        out.push(stringChar);
+        i++;
+        if (stringChar === "\\") {
+          if (i < src.length) {
+            out.push(src.charAt(i));
+            i++;
+          }
+        } else if (stringChar === '"') {
+          break;
+        }
+      }
+      continue;
+    }
+
+    // Line comment.
+    if (char === "/" && src.charAt(i + 1) === "/") {
+      i += 2;
+      while (i < src.length && src.charAt(i) !== "\n") {
+        i++;
+      }
+      continue;
+    }
+
+    // Block comment.
+    if (char === "/" && src.charAt(i + 1) === "*") {
+      i += 2;
+      while (i < src.length && !(src.charAt(i) === "*" && src.charAt(i + 1) === "/")) {
+        i++;
+      }
+      i += 2;
+      continue;
+    }
+
+    // A comma is "trailing" if the next significant token is a closing brace or
+    // bracket; drop it in that case to match jsonc's trailing-comma handling.
+    if (char === ",") {
+      pendingCommaIndex = out.length;
+      out.push(char);
+      i++;
+      continue;
+    }
+
+    if (char === "}" || char === "]") {
+      if (pendingCommaIndex >= 0) {
+        out[pendingCommaIndex] = "";
+        pendingCommaIndex = -1;
+      }
+      out.push(char);
+      i++;
+      continue;
+    }
+
+    if (char === " " || char === "\t" || char === "\n" || char === "\r") {
+      out.push(char);
+      i++;
+      continue;
+    }
+
+    pendingCommaIndex = -1;
+    out.push(char);
+    i++;
+  }
+  return out.join("");
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+const decodeJsonObject = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
 
-function parseJsonObject(contents: string): Record<string, unknown> {
-  const parsed = JSON.parse(stripJsonComments(contents));
-  return isObject(parsed) ? parsed : {};
+// Parses a settings file through a Schema boundary so malformed JSON surfaces as
+// a typed `InitParseSettingsError` (recoverable, never a fiber defect) and a
+// non-object document is rejected \u2014 matching Go's `json.Decoder` into a map.
+function parseJsonObject(pathname: string, contents: string) {
+  return decodeJsonObject(stripJsonComments(contents)).pipe(
+    Effect.mapError(
+      (error) =>
+        new InitParseSettingsError({
+          detail: `Could not parse JSON in ${pathname}: ${error.message}`,
+          suggestion: `Fix or remove ${pathname}, then rerun \`supabase init\`.`,
+        }),
+    ),
+  );
 }
 
 export interface ProjectInitOptions {
@@ -70,8 +156,8 @@ function updateJsonFile(pathname: string, template: string) {
     }
 
     const merged = {
-      ...parseJsonObject(existing),
-      ...parseJsonObject(template),
+      ...(yield* parseJsonObject(pathname, existing)),
+      ...(yield* parseJsonObject(pathname, template)),
     };
     yield* writeJsonFile(pathname, merged);
   });

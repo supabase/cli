@@ -19,3 +19,12 @@ export class InitExperimentalRequiredError extends Data.TaggedError(
     return "The --use-orioledb flag requires --experimental.";
   }
 }
+
+export class InitParseSettingsError extends Data.TaggedError("InitParseSettingsError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  override get message() {
+    return "Failed to parse existing IDE settings file.";
+  }
+}
