@@ -1,0 +1,65 @@
+name: Feature request
+description: Suggest an improvement or new capability for the Supabase CLI.
+title: ""
+labels:
+  - ✨ Feature
+body:
+  - type: checkboxes
+    id: existing-issues
+    attributes:
+      label: Existing issues
+      description: Please search existing issues before opening a new request.
+      options:
+        - label: I have searched the existing issues.
+          required: true
+
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Affected area
+      options:
+        - Auth
+        - Database
+        - Edge Functions
+        - Migrations
+        - Storage
+        - Local development
+        - Docker
+        - Seeding
+        - Realtime
+        - Installation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What workflow is difficult, missing, or confusing today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed solution
+      description: Describe the CLI behavior, command, flag, output, or workflow you would like to see.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe workarounds or other designs you have considered.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Add links, examples, screenshots, or related issues.
+    validations:
+      required: false

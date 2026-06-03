@@ -1,0 +1,52 @@
+name: Documentation
+description: Suggest an improvement to Supabase CLI documentation.
+title: ""
+labels:
+  - 📘 Docs
+body:
+  - type: input
+    id: link
+    attributes:
+      label: Documentation link
+      description: Link to the page, section, README, or command reference that needs improvement.
+      placeholder: https://supabase.com/docs/reference/cli/...
+    validations:
+      required: false
+
+  - type: dropdown
+    id: issue-type
+    attributes:
+      label: Issue type
+      options:
+        - Missing documentation
+        - Incorrect documentation
+        - Confusing documentation
+        - Outdated documentation
+        - Typo or formatting
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is missing, incorrect, confusing, or outdated?
+    validations:
+      required: true
+
+  - type: textarea
+    id: improvement
+    attributes:
+      label: Suggested improvement
+      description: Describe the change you would like to see.
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Add screenshots, examples, related issues, or command output if relevant.
+    validations:
+      required: false
