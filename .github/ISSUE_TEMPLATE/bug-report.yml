@@ -51,7 +51,8 @@ body:
     attributes:
       label: Installation method
       options:
-        - Homebrew
+        - brew
+        - bun
         - npm
         - pnpm
         - yarn
