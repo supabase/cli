@@ -19,7 +19,9 @@
 //      `release-notes/v<VERSION>` and opens a PR. Approving the PR (as a
 //      supabase/cli team member) triggers apply-release-notes.yml, which
 //      pushes the file's contents to the GH release body and closes the PR
-//      without merging — the file never lands on `main`.
+//      without merging. The PR targets `develop` (not `main`) so an
+//      accidental merge can never rewrite `main`'s history; in practice the
+//      file never lands on any branch.
 //
 // Usage:
 //   bun apps/cli/scripts/propose-release-notes.ts --tag v2.101.0 --dry-run
@@ -145,10 +147,17 @@ await writeFile(notesPath, normalized);
 console.error(`==> Wrote ${path.relative(repoRoot, notesPath)}`);
 
 const branch = `release-notes/v${version}`;
-const currentBranch = (await $`git rev-parse --abbrev-ref HEAD`.cwd(repoRoot).text()).trim();
-if (currentBranch !== branch) {
-  await $`git checkout -B ${branch}`.cwd(repoRoot);
-}
+// Always cut the notes branch from origin/develop — the PR base. The workflow
+// can be dispatched from an arbitrary feature branch that has diverged from
+// the base by many commits; branching off the checked-out ref would drag
+// every one of those commits into the PR (so the PR shows N changed files
+// instead of just the proposed notes). The notes file is untracked at this
+// point, so resetting HEAD to origin/develop leaves it untouched in the
+// working tree. We target `develop` rather than `main` so that an accidental
+// merge of this approval-only PR lands on the integration branch instead of
+// rewriting `main`'s history.
+await $`git fetch --no-tags origin develop`.cwd(repoRoot).nothrow();
+await $`git checkout -B ${branch} origin/develop`.cwd(repoRoot);
 await $`git add ${notesPath}`.cwd(repoRoot);
 const commitMessage = `docs(release): propose user-facing notes for ${tag}`;
 await $`git commit -m ${commitMessage}`.cwd(repoRoot);
@@ -194,7 +203,7 @@ Approve this PR as a \`supabase/cli\` team member. The \`.github/workflows/apply
 2. Comment the release URL on this PR.
 3. Close this PR and delete the \`${branch}\` branch.
 
-**This PR is not merged** — the \`do not merge\` label is a reminder. Nothing lands on \`main\`.
+**This PR is not merged** — the \`do not merge\` label is a reminder. It targets \`develop\` so that even an accidental merge never rewrites \`main\`. Nothing is meant to land on any branch.
 
 Approvals from anyone outside the \`supabase/cli\` team are ignored; the workflow will post a comment explaining that and leave the release untouched.
 
@@ -207,7 +216,7 @@ Close the PR without approving. The auto-generated semantic-release body for \`$
 After this PR is closed, rerun the **Propose release notes** workflow from the Actions tab against \`${tag}\` to get a fresh proposal.
 `;
 
-await $`gh pr create --title ${`docs(release): notes for ${tag}`} --body ${prBody} --base main --head ${branch} --label ${labelName}`.cwd(
+await $`gh pr create --title ${`docs(release): notes for ${tag}`} --body ${prBody} --base develop --head ${branch} --label ${labelName}`.cwd(
   repoRoot,
 );
 console.error(`==> PR opened for ${branch}`);

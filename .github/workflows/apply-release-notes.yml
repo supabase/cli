@@ -4,7 +4,8 @@ name: Apply release notes
 # release-notes PR (head ref `release-notes/v<VERSION>`), this workflow pushes
 # the proposed notes to the GitHub Release body for the corresponding tag,
 # comments the release URL on the PR, and closes the PR without merging. The
-# release-notes file never lands on `main`.
+# release-notes PR targets `develop` (not `main`) so an accidental merge can
+# never rewrite `main`'s history; the file is not meant to land on any branch.
 #
 # Mirrors the fast-forward job in release.yml, which already gates on a
 # `pull_request_review` + `approved` event.
@@ -23,7 +24,7 @@ jobs:
     if: |
       github.event.review.state == 'approved' &&
       startsWith(github.event.pull_request.head.ref, 'release-notes/') &&
-      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.base.ref == 'develop' &&
       github.event.pull_request.state == 'open'
     runs-on: ubuntu-latest
     permissions:
