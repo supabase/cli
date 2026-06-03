@@ -107,6 +107,37 @@ describe("project discovery and lazy env resolution", () => {
     }
   });
 
+  test("leaves [api].auto_expose_new_tables unset by default and round-trips an explicit value", async () => {
+    const cwd = makeTempProject();
+    const projectRoot = join(cwd, "repo");
+
+    try {
+      await mkdir(join(projectRoot, "supabase"), { recursive: true });
+      await writeFile(join(projectRoot, "supabase", "config.toml"), `project_id = "ref_123"\n`);
+
+      const defaultLoaded = await runConfigEffect(loadProjectConfig(projectRoot));
+      // Field is intentionally optional today so the implicit default can flip on 2026-05-30
+      // without losing track of users who explicitly opted in either direction.
+      expect(defaultLoaded!.config.api.auto_expose_new_tables).toBeUndefined();
+
+      await writeFile(
+        join(projectRoot, "supabase", "config.toml"),
+        `project_id = "ref_123"\n\n[api]\nauto_expose_new_tables = false\n`,
+      );
+      const explicitFalse = await runConfigEffect(loadProjectConfig(projectRoot));
+      expect(explicitFalse!.config.api.auto_expose_new_tables).toBe(false);
+
+      await writeFile(
+        join(projectRoot, "supabase", "config.toml"),
+        `project_id = "ref_123"\n\n[api]\nauto_expose_new_tables = true\n`,
+      );
+      const explicitTrue = await runConfigEffect(loadProjectConfig(projectRoot));
+      expect(explicitTrue!.config.api.auto_expose_new_tables).toBe(true);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("loads raw config without resolving explicit env() references", async () => {
     const cwd = makeTempProject();
     const projectRoot = join(cwd, "repo");
@@ -220,7 +251,7 @@ jwt_secret = "env(PREVIEW_JWT_SECRET)"
     }
   });
 
-  test("resolveProjectValue fails when an explicit env() reference is missing", async () => {
+  test("resolveProjectValue preserves env() literal when the env var is missing (Go parity)", async () => {
     const cwd = makeTempProject();
     const projectRoot = join(cwd, "repo");
 
@@ -238,21 +269,20 @@ jwt_secret = "env(MISSING_SECRET)"
       const loaded = await runConfigEffect(loadProjectConfig(projectRoot));
       const projectEnv = await runConfigEffect(loadProjectEnvironment({ cwd: projectRoot }));
 
-      await expect(
-        runConfigEffect(
-          resolveProjectValue(loaded!.config.auth.jwt_secret, projectEnv!, "auth.jwt_secret"),
-        ),
-      ).rejects.toMatchObject({
-        _tag: "MissingProjectEnvVarError",
-        configPath: "auth.jwt_secret",
-        envName: "MISSING_SECRET",
-      });
+      const resolved = await runConfigEffect(
+        resolveProjectValue(loaded!.config.auth.jwt_secret, projectEnv!, "auth.jwt_secret"),
+      );
+
+      // Secret paths are normally redacted, but unresolved env() literals pass
+      // through as plain strings so callers can see the missing reference.
+      expect(Redacted.isRedacted(resolved)).toBe(false);
+      expect(resolved).toBe("env(MISSING_SECRET)");
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
   });
 
-  test("resolveProjectSubtree fails when the selected subtree contains a missing env()", async () => {
+  test("resolveProjectSubtree preserves env() literals nested inside the selected subtree", async () => {
     const cwd = makeTempProject();
     const projectRoot = join(cwd, "repo");
 
@@ -271,15 +301,11 @@ auth_token = "env(MISSING_SECRET)"
       const loaded = await runConfigEffect(loadProjectConfig(projectRoot));
       const projectEnv = await runConfigEffect(loadProjectEnvironment({ cwd: projectRoot }));
 
-      await expect(
-        runConfigEffect(
-          resolveProjectSubtree(loaded!.config.auth.sms.twilio, projectEnv!, "auth.sms.twilio"),
-        ),
-      ).rejects.toMatchObject({
-        _tag: "MissingProjectEnvVarError",
-        configPath: "auth.sms.twilio.auth_token",
-        envName: "MISSING_SECRET",
-      });
+      const resolved = await runConfigEffect(
+        resolveProjectSubtree(loaded!.config.auth.sms.twilio, projectEnv!, "auth.sms.twilio"),
+      );
+
+      expect(resolved.auth_token).toBe("env(MISSING_SECRET)");
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

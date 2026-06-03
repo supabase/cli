@@ -52,17 +52,20 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 		c.DbURL: fmt.Sprintf("postgresql://%s@%s:%d/postgres", url.UserPassword("postgres", utils.Config.Db.Password), utils.Config.Hostname, utils.Config.Db.Port),
 	}
 
-	apiEnabled := utils.Config.Api.Enabled && !slices.Contains(exclude, utils.RestId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.Api.Image))
+	kongEnabled := utils.Config.Api.Enabled && !slices.Contains(exclude, utils.KongId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.Api.KongImage))
+	postgrestEnabled := kongEnabled && !slices.Contains(exclude, utils.RestId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.Api.Image))
 	studioEnabled := utils.Config.Studio.Enabled && !slices.Contains(exclude, utils.StudioId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.Studio.Image))
 	authEnabled := utils.Config.Auth.Enabled && !slices.Contains(exclude, utils.GotrueId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.Auth.Image))
 	inbucketEnabled := utils.Config.Inbucket.Enabled && !slices.Contains(exclude, utils.InbucketId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.Inbucket.Image))
 	storageEnabled := utils.Config.Storage.Enabled && !slices.Contains(exclude, utils.StorageId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.Storage.Image))
 	functionsEnabled := utils.Config.EdgeRuntime.Enabled && !slices.Contains(exclude, utils.EdgeRuntimeId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.EdgeRuntime.Image))
 
-	if apiEnabled {
+	if kongEnabled {
 		values[c.ApiURL] = utils.Config.Api.ExternalUrl
-		values[c.RestURL] = utils.GetApiUrl("/rest/v1")
-		values[c.GraphqlURL] = utils.GetApiUrl("/graphql/v1")
+		if postgrestEnabled {
+			values[c.RestURL] = utils.GetApiUrl("/rest/v1")
+			values[c.GraphqlURL] = utils.GetApiUrl("/graphql/v1")
+		}
 		if functionsEnabled {
 			values[c.FunctionsURL] = utils.GetApiUrl("/functions/v1")
 		}

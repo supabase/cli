@@ -86,10 +86,11 @@ jobs:
       - settings
       - merge_manifest
     # Call workflow explicitly because events from actions cannot trigger more actions
-    uses: ./.github/workflows/mirror-image.yml
+    uses: ./.github/workflows/cli-go-mirror-image.yml
     with:
       image: ${{ needs.settings.outputs.image_tag }}
-    secrets: inherit
+    secrets:
+      PROD_AWS_ROLE: ${{ secrets.PROD_AWS_ROLE }}
 defaults:
   run:
     working-directory: apps/cli-go

@@ -2,7 +2,11 @@ import * as Schema from "effect/Schema";
 
 // non-recursive definitions
 export const BranchResponse = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   name: Schema.String,
   project_ref: Schema.String,
   parent_project_ref: Schema.String,
@@ -22,7 +26,9 @@ export const BranchResponse = Schema.Struct({
     "MIGRATIONS_FAILED",
     "FUNCTIONS_DEPLOYED",
     "FUNCTIONS_FAILED",
-  ]),
+  ]).annotate({
+    description: "This field is deprecated. List action runs to get branch status instead.",
+  }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
   review_requested_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
@@ -154,7 +160,11 @@ export const V1ServiceHealthResponse = Schema.Struct({
   error: Schema.optionalKey(Schema.String),
 });
 export const ThirdPartyAuth = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   type: Schema.String,
   oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -323,7 +333,11 @@ export const V1AuthorizeJitAccessInput = Schema.Struct({
   rhost: Schema.String.check(Schema.isMinLength(1)),
 });
 export const V1AuthorizeJitAccessOutput = Schema.Struct({
-  user_id: Schema.String.annotate({ format: "uuid" }),
+  user_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   user_role: Schema.Struct({
     role: Schema.String.check(Schema.isMinLength(1)),
     expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
@@ -333,10 +347,15 @@ export const V1AuthorizeJitAccessOutput = Schema.Struct({
         allowed_cidrs_v6: Schema.optionalKey(Schema.Array(Schema.Struct({ cidr: Schema.String }))),
       }),
     ),
+    branches_only: Schema.optionalKey(Schema.Boolean),
   }),
 });
 export const V1AuthorizeUserInput = Schema.Struct({
-  client_id: Schema.String.annotate({ format: "uuid" }),
+  client_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   response_type: Schema.Literals(["code", "token", "id_token token"]),
   redirect_uri: Schema.String,
   scope: Schema.optionalKey(Schema.String),
@@ -486,7 +505,11 @@ export const V1CreateABranchInput = Schema.Struct({
   ),
 });
 export const V1CreateABranchOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   name: Schema.String,
   project_ref: Schema.String,
   parent_project_ref: Schema.String,
@@ -506,7 +529,9 @@ export const V1CreateABranchOutput = Schema.Struct({
     "MIGRATIONS_FAILED",
     "FUNCTIONS_DEPLOYED",
     "FUNCTIONS_FAILED",
-  ]),
+  ]).annotate({
+    description: "This field is deprecated. List action runs to get branch status instead.",
+  }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
   review_requested_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
@@ -729,6 +754,17 @@ export const V1CreateASsoProviderInput = Schema.Struct({
         Schema.Struct({
           name: Schema.optionalKey(Schema.String),
           names: Schema.optionalKey(Schema.Array(Schema.String)),
+          default: Schema.optionalKey(
+            Schema.Union(
+              [
+                Schema.Struct({}),
+                Schema.Number.check(Schema.isFinite()),
+                Schema.String,
+                Schema.Boolean,
+              ],
+              { mode: "oneOf" },
+            ),
+          ),
           array: Schema.optionalKey(Schema.Boolean),
         }),
       ),
@@ -758,6 +794,17 @@ export const V1CreateASsoProviderOutput = Schema.Struct({
             Schema.Struct({
               name: Schema.optionalKey(Schema.String),
               names: Schema.optionalKey(Schema.Array(Schema.String)),
+              default: Schema.optionalKey(
+                Schema.Union(
+                  [
+                    Schema.Struct({}),
+                    Schema.Number.check(Schema.isFinite()),
+                    Schema.String,
+                    Schema.Boolean,
+                  ],
+                  { mode: "oneOf" },
+                ),
+              ),
               array: Schema.optionalKey(Schema.Boolean),
             }),
           ),
@@ -802,7 +849,11 @@ export const V1CreateLegacySigningKeyInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1CreateLegacySigningKeyOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
   public_jwk: Schema.optionalKey(Schema.Union([Schema.Unknown, Schema.Null])),
@@ -865,7 +916,11 @@ export const V1CreateProjectClaimTokenOutput = Schema.Struct({
   token_alias: Schema.String,
   expires_at: Schema.String,
   created_at: Schema.String,
-  created_by: Schema.String.annotate({ format: "uuid" }),
+  created_by: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
 });
 export const V1CreateProjectSigningKeyInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -877,7 +932,15 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
     Schema.Union(
       [
         Schema.Struct({
-          kid: Schema.optionalKey(Schema.String.annotate({ format: "uuid" })),
+          kid: Schema.optionalKey(
+            Schema.String.annotate({ format: "uuid" }).check(
+              Schema.isPattern(
+                new RegExp(
+                  "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                ),
+              ),
+            ),
+          ),
           use: Schema.optionalKey(Schema.Literal("sig")),
           key_ops: Schema.optionalKey(
             Schema.Array(Schema.Literals(["sign", "verify"]))
@@ -897,7 +960,15 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
           qi: Schema.String,
         }),
         Schema.Struct({
-          kid: Schema.optionalKey(Schema.String.annotate({ format: "uuid" })),
+          kid: Schema.optionalKey(
+            Schema.String.annotate({ format: "uuid" }).check(
+              Schema.isPattern(
+                new RegExp(
+                  "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                ),
+              ),
+            ),
+          ),
           use: Schema.optionalKey(Schema.Literal("sig")),
           key_ops: Schema.optionalKey(
             Schema.Array(Schema.Literals(["sign", "verify"]))
@@ -913,7 +984,15 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
           d: Schema.String,
         }),
         Schema.Struct({
-          kid: Schema.optionalKey(Schema.String.annotate({ format: "uuid" })),
+          kid: Schema.optionalKey(
+            Schema.String.annotate({ format: "uuid" }).check(
+              Schema.isPattern(
+                new RegExp(
+                  "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                ),
+              ),
+            ),
+          ),
           use: Schema.optionalKey(Schema.Literal("sig")),
           key_ops: Schema.optionalKey(
             Schema.Array(Schema.Literals(["sign", "verify"]))
@@ -928,7 +1007,15 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
           d: Schema.String,
         }),
         Schema.Struct({
-          kid: Schema.optionalKey(Schema.String.annotate({ format: "uuid" })),
+          kid: Schema.optionalKey(
+            Schema.String.annotate({ format: "uuid" }).check(
+              Schema.isPattern(
+                new RegExp(
+                  "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                ),
+              ),
+            ),
+          ),
           use: Schema.optionalKey(Schema.Literal("sig")),
           key_ops: Schema.optionalKey(
             Schema.Array(Schema.Literals(["sign", "verify"]))
@@ -946,7 +1033,11 @@ export const V1CreateProjectSigningKeyInput = Schema.Struct({
   ),
 });
 export const V1CreateProjectSigningKeyOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
   public_jwk: Schema.optionalKey(Schema.Union([Schema.Unknown, Schema.Null])),
@@ -962,7 +1053,11 @@ export const V1CreateProjectTpaIntegrationInput = Schema.Struct({
   custom_jwks: Schema.optionalKey(Schema.Unknown),
 });
 export const V1CreateProjectTpaIntegrationOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   type: Schema.String,
   oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -992,6 +1087,7 @@ export const V1DeleteHostnameConfigInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  remove_addon: Schema.optionalKey(Schema.Boolean),
 });
 export const V1DeleteABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union(
@@ -1000,7 +1096,13 @@ export const V1DeleteABranchInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }),
+      Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
+        ),
+      ),
     ],
     { mode: "oneOf" },
   ),
@@ -1027,7 +1129,11 @@ export const V1DeleteASsoProviderInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  provider_id: Schema.String.annotate({ format: "uuid" }),
+  provider_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
 });
 export const V1DeleteASsoProviderOutput = Schema.Struct({
   id: Schema.String,
@@ -1044,6 +1150,17 @@ export const V1DeleteASsoProviderOutput = Schema.Struct({
             Schema.Struct({
               name: Schema.optionalKey(Schema.String),
               names: Schema.optionalKey(Schema.Array(Schema.String)),
+              default: Schema.optionalKey(
+                Schema.Union(
+                  [
+                    Schema.Struct({}),
+                    Schema.Number.check(Schema.isFinite()),
+                    Schema.String,
+                    Schema.Boolean,
+                  ],
+                  { mode: "oneOf" },
+                ),
+              ),
               array: Schema.optionalKey(Schema.Boolean),
             }),
           ),
@@ -1076,7 +1193,11 @@ export const V1DeleteJitAccessInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  user_id: Schema.String.annotate({ format: "uuid" }),
+  user_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
 });
 export const V1DeleteLoginRolesInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -1102,7 +1223,11 @@ export const V1DeleteProjectApiKeyInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   reveal: Schema.optionalKey(Schema.Boolean),
   was_compromised: Schema.optionalKey(Schema.Boolean),
   reason: Schema.optionalKey(Schema.String),
@@ -1135,10 +1260,18 @@ export const V1DeleteProjectTpaIntegrationInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  tpa_id: Schema.String.annotate({ format: "uuid" }),
+  tpa_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
 });
 export const V1DeleteProjectTpaIntegrationOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   type: Schema.String,
   oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -1188,7 +1321,13 @@ export const V1DiffABranchInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }),
+      Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
+        ),
+      ),
     ],
     { mode: "oneOf" },
   ),
@@ -1214,7 +1353,15 @@ export const V1EnableDatabaseWebhookInput = Schema.Struct({
 export const V1ExchangeOauthTokenInput = Schema.Struct({
   body: Schema.Struct({
     grant_type: Schema.optionalKey(Schema.Literals(["authorization_code", "refresh_token"])),
-    client_id: Schema.optionalKey(Schema.String.annotate({ format: "uuid" })),
+    client_id: Schema.optionalKey(
+      Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
+        ),
+      ),
+    ),
     client_secret: Schema.optionalKey(Schema.String),
     code: Schema.optionalKey(Schema.String),
     code_verifier: Schema.optionalKey(Schema.String),
@@ -1249,7 +1396,11 @@ export const V1GetABranchInput = Schema.Struct({
   name: Schema.String,
 });
 export const V1GetABranchOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   name: Schema.String,
   project_ref: Schema.String,
   parent_project_ref: Schema.String,
@@ -1269,7 +1420,9 @@ export const V1GetABranchOutput = Schema.Struct({
     "MIGRATIONS_FAILED",
     "FUNCTIONS_DEPLOYED",
     "FUNCTIONS_FAILED",
-  ]),
+  ]).annotate({
+    description: "This field is deprecated. List action runs to get branch status instead.",
+  }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
   review_requested_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
@@ -1303,7 +1456,13 @@ export const V1GetABranchConfigInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }),
+      Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
+        ),
+      ),
     ],
     { mode: "oneOf" },
   ),
@@ -1377,7 +1536,13 @@ export const V1GetAMigrationOutput = Schema.Struct({
   created_by: Schema.optionalKey(Schema.String),
   idempotency_key: Schema.optionalKey(Schema.String),
 });
-export const V1GetASnippetInput = Schema.Struct({ id: Schema.String.annotate({ format: "uuid" }) });
+export const V1GetASnippetInput = Schema.Struct({
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
+});
 export const V1GetASnippetOutput = Schema.Struct({
   id: Schema.String,
   inserted_at: Schema.String,
@@ -1407,7 +1572,11 @@ export const V1GetASsoProviderInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  provider_id: Schema.String.annotate({ format: "uuid" }),
+  provider_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
 });
 export const V1GetASsoProviderOutput = Schema.Struct({
   id: Schema.String,
@@ -1424,6 +1593,17 @@ export const V1GetASsoProviderOutput = Schema.Struct({
             Schema.Struct({
               name: Schema.optionalKey(Schema.String),
               names: Schema.optionalKey(Schema.Array(Schema.String)),
+              default: Schema.optionalKey(
+                Schema.Union(
+                  [
+                    Schema.Struct({}),
+                    Schema.Number.check(Schema.isFinite()),
+                    Schema.String,
+                    Schema.Boolean,
+                  ],
+                  { mode: "oneOf" },
+                ),
+              ),
               array: Schema.optionalKey(Schema.Boolean),
             }),
           ),
@@ -1801,6 +1981,10 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   mfa_phone_verify_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mfa_web_authn_enroll_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mfa_web_authn_verify_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
+  passkey_enabled: Schema.Boolean,
+  webauthn_rp_display_name: Schema.Union([Schema.String, Schema.Null]),
+  webauthn_rp_id: Schema.Union([Schema.String, Schema.Null]),
+  webauthn_rp_origins: Schema.Union([Schema.String, Schema.Null]),
   mfa_phone_otp_length: Schema.Number.check(Schema.isInt()),
   mfa_phone_template: Schema.Union([Schema.String, Schema.Null]),
   mfa_phone_max_frequency: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
@@ -1987,6 +2171,20 @@ export const V1GetAvailableRegionsOutput = Schema.Struct({
     ),
   }),
 });
+export const V1GetBackupScheduleInput = Schema.Struct({
+  ref: Schema.String.check(Schema.isMinLength(20))
+    .check(Schema.isMaxLength(20))
+    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+});
+export const V1GetBackupScheduleOutput = Schema.Struct({
+  schedule_for: Schema.String.annotate({
+    description: "Time of day to schedule daily backups, in UTC. Format: HH:MM:SS.",
+  }),
+  updated_at: Schema.String.annotate({
+    description: "Timestamp of when the backup schedule was last updated.",
+    format: "date-time",
+  }),
+});
 export const V1GetDatabaseDiskInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
@@ -2100,7 +2298,11 @@ export const V1GetJitAccessInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1GetJitAccessOutput = Schema.Struct({
-  user_id: Schema.String.annotate({ format: "uuid" }),
+  user_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   user_roles: Schema.Array(
     Schema.Struct({
       role: Schema.String.check(Schema.isMinLength(1)),
@@ -2113,6 +2315,7 @@ export const V1GetJitAccessOutput = Schema.Struct({
           ),
         }),
       ),
+      branches_only: Schema.optionalKey(Schema.Boolean),
     }),
   ),
 });
@@ -2121,30 +2324,34 @@ export const V1GetJitAccessConfigInput = Schema.Struct({
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
-export const V1GetJitAccessConfigOutput = Schema.Struct({
-  user_id: Schema.String.annotate({ format: "uuid" }),
-  user_roles: Schema.Array(
+export const V1GetJitAccessConfigOutput = Schema.Union(
+  [
     Schema.Struct({
-      role: Schema.String.check(Schema.isMinLength(1)),
-      expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
-      allowed_networks: Schema.optionalKey(
-        Schema.Struct({
-          allowed_cidrs: Schema.optionalKey(Schema.Array(Schema.Struct({ cidr: Schema.String }))),
-          allowed_cidrs_v6: Schema.optionalKey(
-            Schema.Array(Schema.Struct({ cidr: Schema.String })),
-          ),
-        }),
-      ),
+      state: Schema.Literals(["enabled", "disabled"]),
+      appliedSuccessfully: Schema.optionalKey(Schema.Boolean),
     }),
-  ),
-});
+    Schema.Struct({
+      state: Schema.Literal("unavailable"),
+      unavailableReason: Schema.Literals([
+        "manual_migration_required",
+        "postgres_upgrade_required",
+        "temporarily_unavailable",
+      ]),
+    }),
+  ],
+  { mode: "oneOf" },
+);
 export const V1GetLegacySigningKeyInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1GetLegacySigningKeyOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
   public_jwk: Schema.optionalKey(Schema.Union([Schema.Unknown, Schema.Null])),
@@ -2200,6 +2407,7 @@ export const V1GetOrganizationEntitlementsOutput = Schema.Struct({
           "security.audit_logs_days",
           "security.questionnaire",
           "security.soc2_report",
+          "security.iso27001_certificate",
           "security.private_link",
           "security.enforce_mfa",
           "log.retention_days",
@@ -2208,6 +2416,7 @@ export const V1GetOrganizationEntitlementsOutput = Schema.Struct({
           "ipv4",
           "pitr.available_variants",
           "log_drains",
+          "audit_log_drains",
           "branching_limit",
           "branching_persistent",
           "auth.mfa_phone",
@@ -2222,8 +2431,10 @@ export const V1GetOrganizationEntitlementsOutput = Schema.Struct({
           "auth.advanced_auth_settings",
           "auth.performance_settings",
           "auth.password_hibp",
+          "auth.custom_oauth.max_providers",
           "backup.retention_days",
           "backup.restore_to_new_project",
+          "backup.schedule",
           "function.max_count",
           "function.size_limit_mb",
           "realtime.max_concurrent_users",
@@ -2285,7 +2496,11 @@ export const V1GetOrganizationProjectClaimOutput = Schema.Struct({
   }),
   expires_at: Schema.String,
   created_at: Schema.String,
-  created_by: Schema.String.annotate({ format: "uuid" }),
+  created_by: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
 });
 export const V1GetPerformanceAdvisorsInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -2508,9 +2723,16 @@ export const V1GetPostgresUpgradeEligibilityOutput = Schema.Struct({
           type: Schema.Literal("active_replication_slot"),
           slot_name: Schema.String,
         }),
+        Schema.Struct({ type: Schema.Literal("x86_architecture") }),
+        Schema.Struct({ type: Schema.Literal("project_hibernating") }),
       ],
       { mode: "oneOf" },
     ),
+  ),
+  warnings: Schema.Array(
+    Schema.Union([Schema.Struct({ type: Schema.Literal("pg_graphql_introspection_change") })], {
+      mode: "oneOf",
+    }),
   ),
 });
 export const V1GetPostgresUpgradeStatusInput = Schema.Struct({
@@ -2626,7 +2848,11 @@ export const V1GetProjectApiKeyInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   reveal: Schema.optionalKey(Schema.Boolean),
 });
 export const V1GetProjectApiKeyOutput = Schema.Struct({
@@ -2664,7 +2890,11 @@ export const V1GetProjectClaimTokenOutput = Schema.Struct({
   token_alias: Schema.String,
   expires_at: Schema.String,
   created_at: Schema.String,
-  created_by: Schema.String.annotate({ format: "uuid" }),
+  created_by: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
 });
 export const V1GetProjectDiskAutoscaleConfigInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -2782,13 +3012,21 @@ export const V1GetProjectPgbouncerConfigOutput = Schema.Struct({
   reserve_pool_size: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
 });
 export const V1GetProjectSigningKeyInput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1GetProjectSigningKeyOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
   public_jwk: Schema.optionalKey(Schema.Union([Schema.Unknown, Schema.Null])),
@@ -2803,7 +3041,13 @@ export const V1GetProjectSigningKeysInput = Schema.Struct({
 export const V1GetProjectSigningKeysOutput = Schema.Struct({
   keys: Schema.Array(
     Schema.Struct({
-      id: Schema.String.annotate({ format: "uuid" }),
+      id: Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
+        ),
+      ),
       algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
       status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
       public_jwk: Schema.optionalKey(Schema.Union([Schema.Unknown, Schema.Null])),
@@ -2816,10 +3060,18 @@ export const V1GetProjectTpaIntegrationInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  tpa_id: Schema.String.annotate({ format: "uuid" }),
+  tpa_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
 });
 export const V1GetProjectTpaIntegrationOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   type: Schema.String,
   oidc_issuer_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   jwks_url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -3192,6 +3444,7 @@ export const V1ListAllBackupsOutput = Schema.Struct({
   pitr_enabled: Schema.Boolean,
   backups: Schema.Array(
     Schema.Struct({
+      id: Schema.Number.check(Schema.isInt()),
       is_physical_backup: Schema.Boolean,
       status: Schema.Literals([
         "COMPLETED",
@@ -3313,6 +3566,17 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
                 Schema.Struct({
                   name: Schema.optionalKey(Schema.String),
                   names: Schema.optionalKey(Schema.Array(Schema.String)),
+                  default: Schema.optionalKey(
+                    Schema.Union(
+                      [
+                        Schema.Struct({}),
+                        Schema.Number.check(Schema.isFinite()),
+                        Schema.String,
+                        Schema.Boolean,
+                      ],
+                      { mode: "oneOf" },
+                    ),
+                  ),
                   array: Schema.optionalKey(Schema.Boolean),
                 }),
               ),
@@ -3365,7 +3629,13 @@ export const V1ListJitAccessInput = Schema.Struct({
 export const V1ListJitAccessOutput = Schema.Struct({
   items: Schema.Array(
     Schema.Struct({
-      user_id: Schema.String.annotate({ format: "uuid" }),
+      user_id: Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
+        ),
+      ),
       user_roles: Schema.Array(
         Schema.Struct({
           role: Schema.String.check(Schema.isMinLength(1)),
@@ -3380,6 +3650,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
               ),
             }),
           ),
+          branches_only: Schema.optionalKey(Schema.Boolean),
         }),
       ),
     }),
@@ -3535,7 +3806,13 @@ export const V1MergeABranchInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }),
+      Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
+        ),
+      ),
     ],
     { mode: "oneOf" },
   ),
@@ -3572,7 +3849,11 @@ export const V1OauthAuthorizeProjectClaimInput = Schema.Struct({
   project_ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  client_id: Schema.String.annotate({ format: "uuid" }),
+  client_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   response_type: Schema.Literals(["code", "token", "id_token token"]),
   redirect_uri: Schema.String,
   state: Schema.optionalKey(Schema.String),
@@ -3643,7 +3924,13 @@ export const V1PushABranchInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }),
+      Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
+        ),
+      ),
     ],
     { mode: "oneOf" },
   ),
@@ -3700,13 +3987,21 @@ export const V1RemoveProjectAddonInput = Schema.Struct({
   ),
 });
 export const V1RemoveProjectSigningKeyInput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1RemoveProjectSigningKeyOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
   public_jwk: Schema.optionalKey(Schema.Union([Schema.Unknown, Schema.Null])),
@@ -3720,7 +4015,13 @@ export const V1ResetABranchInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }),
+      Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
+        ),
+      ),
     ],
     { mode: "oneOf" },
   ),
@@ -3737,7 +4038,13 @@ export const V1RestoreABranchInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }),
+      Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
+        ),
+      ),
     ],
     { mode: "oneOf" },
   ),
@@ -3750,6 +4057,12 @@ export const V1RestoreAProjectInput = Schema.Struct({
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
+export const V1RestorePhysicalBackupInput = Schema.Struct({
+  ref: Schema.String.check(Schema.isMinLength(20))
+    .check(Schema.isMaxLength(20))
+    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  id: Schema.Number.check(Schema.isInt()),
+});
 export const V1RestorePitrBackupInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
@@ -3759,7 +4072,11 @@ export const V1RestorePitrBackupInput = Schema.Struct({
     .check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export const V1RevokeTokenInput = Schema.Struct({
-  client_id: Schema.String.annotate({ format: "uuid" }),
+  client_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   client_secret: Schema.String,
   refresh_token: Schema.String,
 });
@@ -3820,7 +4137,13 @@ export const V1UpdateABranchConfigInput = Schema.Struct({
         .check(Schema.isMinLength(20))
         .check(Schema.isMaxLength(20))
         .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-      Schema.String.annotate({ format: "uuid" }),
+      Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          ),
+        ),
+      ),
     ],
     { mode: "oneOf" },
   ),
@@ -3852,7 +4175,11 @@ export const V1UpdateABranchConfigInput = Schema.Struct({
   ),
 });
 export const V1UpdateABranchConfigOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   name: Schema.String,
   project_ref: Schema.String,
   parent_project_ref: Schema.String,
@@ -3872,7 +4199,9 @@ export const V1UpdateABranchConfigOutput = Schema.Struct({
     "MIGRATIONS_FAILED",
     "FUNCTIONS_DEPLOYED",
     "FUNCTIONS_FAILED",
-  ]),
+  ]).annotate({
+    description: "This field is deprecated. List action runs to get branch status instead.",
+  }),
   created_at: Schema.String.annotate({ format: "date-time" }),
   updated_at: Schema.String.annotate({ format: "date-time" }),
   review_requested_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
@@ -3942,7 +4271,11 @@ export const V1UpdateASsoProviderInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  provider_id: Schema.String.annotate({ format: "uuid" }),
+  provider_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   metadata_xml: Schema.optionalKey(Schema.String),
   metadata_url: Schema.optionalKey(Schema.String),
   domains: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -3953,6 +4286,17 @@ export const V1UpdateASsoProviderInput = Schema.Struct({
         Schema.Struct({
           name: Schema.optionalKey(Schema.String),
           names: Schema.optionalKey(Schema.Array(Schema.String)),
+          default: Schema.optionalKey(
+            Schema.Union(
+              [
+                Schema.Struct({}),
+                Schema.Number.check(Schema.isFinite()),
+                Schema.String,
+                Schema.Boolean,
+              ],
+              { mode: "oneOf" },
+            ),
+          ),
           array: Schema.optionalKey(Schema.Boolean),
         }),
       ),
@@ -3982,6 +4326,17 @@ export const V1UpdateASsoProviderOutput = Schema.Struct({
             Schema.Struct({
               name: Schema.optionalKey(Schema.String),
               names: Schema.optionalKey(Schema.Array(Schema.String)),
+              default: Schema.optionalKey(
+                Schema.Union(
+                  [
+                    Schema.Struct({}),
+                    Schema.Number.check(Schema.isFinite()),
+                    Schema.String,
+                    Schema.Boolean,
+                  ],
+                  { mode: "oneOf" },
+                ),
+              ),
               array: Schema.optionalKey(Schema.Boolean),
             }),
           ),
@@ -4493,6 +4848,10 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   mfa_totp_verify_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   mfa_web_authn_enroll_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   mfa_web_authn_verify_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
+  passkey_enabled: Schema.optionalKey(Schema.Boolean),
+  webauthn_rp_display_name: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  webauthn_rp_id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  webauthn_rp_origins: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   mfa_phone_enroll_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   mfa_phone_verify_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   mfa_phone_max_frequency: Schema.optionalKey(
@@ -4703,6 +5062,10 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   mfa_phone_verify_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mfa_web_authn_enroll_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mfa_web_authn_verify_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
+  passkey_enabled: Schema.Boolean,
+  webauthn_rp_display_name: Schema.Union([Schema.String, Schema.Null]),
+  webauthn_rp_id: Schema.Union([Schema.String, Schema.Null]),
+  webauthn_rp_origins: Schema.Union([Schema.String, Schema.Null]),
   mfa_phone_otp_length: Schema.Number.check(Schema.isInt()),
   mfa_phone_template: Schema.Union([Schema.String, Schema.Null]),
   mfa_phone_max_frequency: Schema.Union([Schema.Number.check(Schema.isInt()), Schema.Null]),
@@ -4788,6 +5151,23 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   custom_oauth_enabled: Schema.Boolean,
   custom_oauth_max_providers: Schema.Number.check(Schema.isInt()),
 });
+export const V1UpdateBackupScheduleInput = Schema.Struct({
+  ref: Schema.String.check(Schema.isMinLength(20))
+    .check(Schema.isMaxLength(20))
+    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  schedule_for: Schema.String.annotate({
+    description: "Time of day to schedule daily backups, in UTC. Format: HH:MM:SS.",
+  }),
+});
+export const V1UpdateBackupScheduleOutput = Schema.Struct({
+  schedule_for: Schema.String.annotate({
+    description: "Time of day to schedule daily backups, in UTC. Format: HH:MM:SS.",
+  }),
+  updated_at: Schema.String.annotate({
+    description: "Timestamp of when the backup schedule was last updated.",
+    format: "date-time",
+  }),
+});
 export const V1UpdateDatabasePasswordInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
@@ -4841,7 +5221,13 @@ export const V1UpdateJitAccessInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  user_id: Schema.String.annotate({ format: "uuid" }).check(Schema.isMinLength(1)),
+  user_id: Schema.String.annotate({ format: "uuid" })
+    .check(Schema.isMinLength(1))
+    .check(
+      Schema.isPattern(
+        new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+      ),
+    ),
   roles: Schema.Array(
     Schema.Struct({
       role: Schema.String.check(Schema.isMinLength(1)),
@@ -4854,11 +5240,16 @@ export const V1UpdateJitAccessInput = Schema.Struct({
           ),
         }),
       ),
+      branches_only: Schema.optionalKey(Schema.Boolean),
     }),
   ),
 });
 export const V1UpdateJitAccessOutput = Schema.Struct({
-  user_id: Schema.String.annotate({ format: "uuid" }),
+  user_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   user_roles: Schema.Array(
     Schema.Struct({
       role: Schema.String.check(Schema.isMinLength(1)),
@@ -4871,6 +5262,7 @@ export const V1UpdateJitAccessOutput = Schema.Struct({
           ),
         }),
       ),
+      branches_only: Schema.optionalKey(Schema.Boolean),
     }),
   ),
 });
@@ -4878,25 +5270,25 @@ export const V1UpdateJitAccessConfigInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  state: Schema.Literals(["enabled", "disabled", "unavailable"]),
+  state: Schema.Literals(["enabled", "disabled"]),
 });
-export const V1UpdateJitAccessConfigOutput = Schema.Struct({
-  user_id: Schema.String.annotate({ format: "uuid" }),
-  user_roles: Schema.Array(
+export const V1UpdateJitAccessConfigOutput = Schema.Union(
+  [
     Schema.Struct({
-      role: Schema.String.check(Schema.isMinLength(1)),
-      expires_at: Schema.optionalKey(Schema.Number.check(Schema.isFinite())),
-      allowed_networks: Schema.optionalKey(
-        Schema.Struct({
-          allowed_cidrs: Schema.optionalKey(Schema.Array(Schema.Struct({ cidr: Schema.String }))),
-          allowed_cidrs_v6: Schema.optionalKey(
-            Schema.Array(Schema.Struct({ cidr: Schema.String })),
-          ),
-        }),
-      ),
+      state: Schema.Literals(["enabled", "disabled"]),
+      appliedSuccessfully: Schema.optionalKey(Schema.Boolean),
     }),
-  ),
-});
+    Schema.Struct({
+      state: Schema.Literal("unavailable"),
+      unavailableReason: Schema.Literals([
+        "manual_migration_required",
+        "postgres_upgrade_required",
+        "temporarily_unavailable",
+      ]),
+    }),
+  ],
+  { mode: "oneOf" },
+);
 export const V1UpdateNetworkRestrictionsInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
@@ -5114,7 +5506,11 @@ export const V1UpdateProjectApiKeyInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   reveal: Schema.optionalKey(Schema.Boolean),
   name: Schema.optionalKey(
     Schema.String.check(Schema.isMinLength(4))
@@ -5153,14 +5549,22 @@ export const V1UpdateProjectLegacyApiKeysInput = Schema.Struct({
 });
 export const V1UpdateProjectLegacyApiKeysOutput = Schema.Struct({ enabled: Schema.Boolean });
 export const V1UpdateProjectSigningKeyInput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
 });
 export const V1UpdateProjectSigningKeyOutput = Schema.Struct({
-  id: Schema.String.annotate({ format: "uuid" }),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+    ),
+  ),
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
   public_jwk: Schema.optionalKey(Schema.Union([Schema.Unknown, Schema.Null])),
@@ -5370,6 +5774,7 @@ export const V1ReadOnlyQueryOutput = Schema.Void;
 export const V1RemoveAReadReplicaOutput = Schema.Void;
 export const V1RemoveProjectAddonOutput = Schema.Void;
 export const V1RestoreAProjectOutput = Schema.Void;
+export const V1RestorePhysicalBackupOutput = Schema.Void;
 export const V1RestorePitrBackupOutput = Schema.Void;
 export const V1RevokeTokenOutput = Schema.Void;
 export const V1RollbackMigrationsOutput = Schema.Void;
@@ -5439,6 +5844,7 @@ export const openApiOperationIdMap = {
   "v1-get-an-organization": "v1GetAnOrganization",
   "v1-get-auth-service-config": "v1GetAuthServiceConfig",
   "v1-get-available-regions": "v1GetAvailableRegions",
+  "v1-get-backup-schedule": "v1GetBackupSchedule",
   "v1-get-database-disk": "v1GetDatabaseDisk",
   "v1-get-database-metadata": "v1GetDatabaseMetadata",
   "v1-get-database-openapi": "v1GetDatabaseOpenapi",
@@ -5512,6 +5918,7 @@ export const openApiOperationIdMap = {
   "v1-reset-a-branch": "v1ResetABranch",
   "v1-restore-a-branch": "v1RestoreABranch",
   "v1-restore-a-project": "v1RestoreAProject",
+  "v1-restore-physical-backup": "v1RestorePhysicalBackup",
   "v1-restore-pitr-backup": "v1RestorePitrBackup",
   "v1-revoke-token": "v1RevokeToken",
   "v1-rollback-migrations": "v1RollbackMigrations",
@@ -5525,6 +5932,7 @@ export const openApiOperationIdMap = {
   "v1-update-a-sso-provider": "v1UpdateASsoProvider",
   "v1-update-action-run-status": "v1UpdateActionRunStatus",
   "v1-update-auth-service-config": "v1UpdateAuthServiceConfig",
+  "v1-update-backup-schedule": "v1UpdateBackupSchedule",
   "v1-update-database-password": "v1UpdateDatabasePassword",
   "v1-update-hostname-config": "v1UpdateHostnameConfig",
   "v1-update-jit-access": "v1UpdateJitAccess",
@@ -5975,7 +6383,7 @@ export const operationDefinitions = {
     method: "DELETE",
     path: "/v1/projects/{ref}/custom-hostname",
     pathParams: ["ref"],
-    queryParams: [],
+    queryParams: ["remove_addon"],
     headerParams: [],
     requestBody: { kind: "none" },
     response: { kind: "void" },
@@ -6378,6 +6786,19 @@ export const operationDefinitions = {
     inputSchema: V1GetAvailableRegionsInput,
     outputSchema: V1GetAvailableRegionsOutput,
   },
+  v1GetBackupSchedule: {
+    id: "v1GetBackupSchedule",
+    description: "Gets the backup schedule for a project",
+    method: "GET",
+    path: "/v1/projects/{ref}/database/backups/schedule",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V1GetBackupScheduleInput,
+    outputSchema: V1GetBackupScheduleOutput,
+  },
   v1GetDatabaseDisk: {
     id: "v1GetDatabaseDisk",
     description: "Get database disk attributes",
@@ -6460,7 +6881,7 @@ export const operationDefinitions = {
   },
   v1GetJitAccessConfig: {
     id: "v1GetJitAccessConfig",
-    description: "[Beta] Get project's just-in-time access configuration.",
+    description: "[Beta] Get project's temporary access configuration.",
     method: "GET",
     path: "/v1/projects/{ref}/jit-access",
     pathParams: ["ref"],
@@ -7026,8 +7447,7 @@ export const operationDefinitions = {
   },
   v1ListAllProjects: {
     id: "v1ListAllProjects",
-    description:
-      "Returns a list of all projects you've previously created.\n\nUse `/v1/organizations/{slug}/projects` instead when possible to get more precise results and pagination support.",
+    description: "Returns a list of all projects you've previously created.",
     method: "GET",
     path: "/v1/projects",
     pathParams: [],
@@ -7349,6 +7769,19 @@ export const operationDefinitions = {
     response: { kind: "void" },
     inputSchema: V1RestoreAProjectInput,
     outputSchema: V1RestoreAProjectOutput,
+  },
+  v1RestorePhysicalBackup: {
+    id: "v1RestorePhysicalBackup",
+    description: "Restores a physical backup for a database",
+    method: "POST",
+    path: "/v1/projects/{ref}/database/backups/restore",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["id"] },
+    response: { kind: "void" },
+    inputSchema: V1RestorePhysicalBackupInput,
+    outputSchema: V1RestorePhysicalBackupOutput,
   },
   v1RestorePitrBackup: {
     id: "v1RestorePitrBackup",
@@ -7777,6 +8210,10 @@ export const operationDefinitions = {
         "mfa_totp_verify_enabled",
         "mfa_web_authn_enroll_enabled",
         "mfa_web_authn_verify_enabled",
+        "passkey_enabled",
+        "webauthn_rp_display_name",
+        "webauthn_rp_id",
+        "webauthn_rp_origins",
         "mfa_phone_enroll_enabled",
         "mfa_phone_verify_enabled",
         "mfa_phone_max_frequency",
@@ -7793,6 +8230,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V1UpdateAuthServiceConfigInput,
     outputSchema: V1UpdateAuthServiceConfigOutput,
+  },
+  v1UpdateBackupSchedule: {
+    id: "v1UpdateBackupSchedule",
+    description:
+      "Sets the time at which the daily backup runs. The change takes effect on the next backup window that includes the new time. If the new time has already passed for today, the first backup at the new time will occur the following day. It can only be updated 3 times per 24 hours.",
+    method: "PATCH",
+    path: "/v1/projects/{ref}/database/backups/schedule",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["schedule_for"] },
+    response: { kind: "json" },
+    inputSchema: V1UpdateBackupScheduleInput,
+    outputSchema: V1UpdateBackupScheduleOutput,
   },
   v1UpdateDatabasePassword: {
     id: "v1UpdateDatabasePassword",
@@ -7835,7 +8286,7 @@ export const operationDefinitions = {
   },
   v1UpdateJitAccessConfig: {
     id: "v1UpdateJitAccessConfig",
-    description: "[Beta] Update project's just-in-time access configuration.",
+    description: "[Beta] Update project's temporary access configuration.",
     method: "PUT",
     path: "/v1/projects/{ref}/jit-access",
     pathParams: ["ref"],

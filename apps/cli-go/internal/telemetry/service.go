@@ -137,9 +137,6 @@ func (s *Service) StitchLogin(distinctID string) error {
 		if err := s.analytics.Alias(distinctID, s.state.DeviceID); err != nil {
 			return err
 		}
-		if err := s.analytics.Identify(distinctID, nil); err != nil {
-			return err
-		}
 	}
 	s.state.DistinctID = distinctID
 	return SaveState(s.state, s.fsys)
@@ -154,7 +151,11 @@ func (s *Service) ClearDistinctID() error {
 }
 
 func (s *Service) NeedsIdentityStitch() bool {
-	return s != nil && s.state.DistinctID == "" && s.canSend()
+	return s != nil && s.state.DistinctID == "" && s.canSend() && !s.isEphemeralIdentityRuntime()
+}
+
+func (s *Service) isEphemeralIdentityRuntime() bool {
+	return s.isCI || (s.isFirstRun && !s.isTTY)
 }
 
 func (s *Service) GroupIdentify(groupType string, groupKey string, properties map[string]any) error {

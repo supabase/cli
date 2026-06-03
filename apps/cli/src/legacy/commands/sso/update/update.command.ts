@@ -1,5 +1,9 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacySsoUpdate } from "./update.handler.ts";
 
 const NAME_ID_FORMATS = [
@@ -47,7 +51,7 @@ const config = {
   ),
   skipUrlValidation: Flag.boolean("skip-url-validation").pipe(
     Flag.withDescription(
-      "Whether local validation of the SAML 2.0 Metadata URL should not be performed.",
+      "Skip local validation of the SAML 2.0 Metadata URL (HTTPS requirement, live GET probe, and UTF-8 body decode). Use in air-gapped CI where the IDP is not reachable from the build agent.",
     ),
   ),
   attributeMappingFile: Flag.string("attribute-mapping-file").pipe(
@@ -69,8 +73,11 @@ const config = {
 export type LegacySsoUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const legacySsoUpdateCommand = Command.make("update", config).pipe(
+  // Mirrors Go's long description verbatim, including the `of a already added`
+  // grammar slip in `apps/cli-go/cmd/sso.go`. Strict 1:1 port — file a Go-side
+  // fix upstream rather than diverging here.
   Command.withDescription(
-    "Update the configuration settings of an already added SSO identity provider.",
+    "Update the configuration settings of a already added SSO identity provider.",
   ),
   Command.withShortDescription("Update information about an SSO identity provider"),
   Command.withExamples([
@@ -80,5 +87,11 @@ export const legacySsoUpdateCommand = Command.make("update", config).pipe(
       description: "Update an SSO provider's domains",
     },
   ]),
-  Command.withHandler((flags) => legacySsoUpdate(flags)),
+  Command.withHandler((flags) =>
+    legacySsoUpdate(flags).pipe(
+      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyManagementApiRuntimeLayer(["sso", "update"])),
 );

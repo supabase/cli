@@ -47,7 +47,10 @@ interface OutputShape {
     opts?: { validate?: (v: string) => string | undefined; defaultValue?: string },
   ) => Effect.Effect<string, NonInteractiveError>;
   readonly promptPassword: (message: string) => Effect.Effect<string, NonInteractiveError>;
-  readonly promptConfirm: (message: string) => Effect.Effect<boolean, NonInteractiveError>;
+  readonly promptConfirm: (
+    message: string,
+    opts?: { defaultValue?: boolean },
+  ) => Effect.Effect<boolean, NonInteractiveError>;
   readonly promptSelect: (
     message: string,
     options: ReadonlyArray<OutputSelectOption>,
@@ -74,6 +77,14 @@ interface OutputShape {
     readonly detail?: string;
     readonly suggestion?: string;
   }) => Effect.Effect<void>;
+  /**
+   * Writes a raw chunk to stdout or stderr without framing.
+   *
+   * Reserved for byte-exact parity output (legacy Go-format encoders, Glamour-styled tables)
+   * where structured framing would change the bytes on the wire. Routes through the active
+   * output layer so tests can capture it without monkey-patching `process.stdout` / `process.stderr`.
+   */
+  readonly raw: (text: string, stream?: "stdout" | "stderr") => Effect.Effect<void>;
 }
 
 /**

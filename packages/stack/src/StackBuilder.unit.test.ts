@@ -56,6 +56,7 @@ const baseConfig: ResolvedStackConfig = {
     port: 5432,
     dataDir: "/tmp/pg-data",
     version: DEFAULT_VERSIONS.postgres,
+    autoExposeNewTables: true,
   },
   postgrest: {
     port: 3001,

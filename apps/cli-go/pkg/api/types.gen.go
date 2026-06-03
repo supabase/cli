@@ -3327,9 +3327,24 @@ type PgsodiumConfigResponse struct {
 // PostgresConfigResponse defines model for PostgresConfigResponse.
 type PostgresConfigResponse struct {
 	// CheckpointTimeout Default unit: s
-	CheckpointTimeout             *string                                       `json:"checkpoint_timeout,omitempty"`
-	EffectiveCacheSize            *string                                       `json:"effective_cache_size,omitempty"`
-	HotStandbyFeedback            *bool                                         `json:"hot_standby_feedback,omitempty"`
+	CheckpointTimeout  *string `json:"checkpoint_timeout,omitempty"`
+	CronLogStatement   *bool   `json:"cron.log_statement,omitempty"`
+	EffectiveCacheSize *string `json:"effective_cache_size,omitempty"`
+	HotStandbyFeedback *bool   `json:"hot_standby_feedback,omitempty"`
+
+	// LogAutovacuumMinDuration Default unit: ms
+	LogAutovacuumMinDuration *string `json:"log_autovacuum_min_duration,omitempty"`
+	LogCheckpoints           *bool   `json:"log_checkpoints,omitempty"`
+	LogConnections           *bool   `json:"log_connections,omitempty"`
+	LogDisconnections        *bool   `json:"log_disconnections,omitempty"`
+	LogDuration              *bool   `json:"log_duration,omitempty"`
+	LogLockWaits             *bool   `json:"log_lock_waits,omitempty"`
+	LogRecoveryConflictWaits *bool   `json:"log_recovery_conflict_waits,omitempty"`
+	LogReplicationCommands   *bool   `json:"log_replication_commands,omitempty"`
+
+	// LogStartupProgressInterval Default unit: ms
+	LogStartupProgressInterval    *string                                       `json:"log_startup_progress_interval,omitempty"`
+	LogTempFiles                  *string                                       `json:"log_temp_files,omitempty"`
 	LogicalDecodingWorkMem        *string                                       `json:"logical_decoding_work_mem,omitempty"`
 	MaintenanceWorkMem            *string                                       `json:"maintenance_work_mem,omitempty"`
 	MaxConnections                *int                                          `json:"max_connections,omitempty"`
@@ -4229,9 +4244,24 @@ type UpdatePgsodiumConfigBody struct {
 // UpdatePostgresConfigBody defines model for UpdatePostgresConfigBody.
 type UpdatePostgresConfigBody struct {
 	// CheckpointTimeout Default unit: s
-	CheckpointTimeout             *string                                         `json:"checkpoint_timeout,omitempty"`
-	EffectiveCacheSize            *string                                         `json:"effective_cache_size,omitempty"`
-	HotStandbyFeedback            *bool                                           `json:"hot_standby_feedback,omitempty"`
+	CheckpointTimeout  *string `json:"checkpoint_timeout,omitempty"`
+	CronLogStatement   *bool   `json:"cron.log_statement,omitempty"`
+	EffectiveCacheSize *string `json:"effective_cache_size,omitempty"`
+	HotStandbyFeedback *bool   `json:"hot_standby_feedback,omitempty"`
+
+	// LogAutovacuumMinDuration Default unit: ms
+	LogAutovacuumMinDuration *string `json:"log_autovacuum_min_duration,omitempty"`
+	LogCheckpoints           *bool   `json:"log_checkpoints,omitempty"`
+	LogConnections           *bool   `json:"log_connections,omitempty"`
+	LogDisconnections        *bool   `json:"log_disconnections,omitempty"`
+	LogDuration              *bool   `json:"log_duration,omitempty"`
+	LogLockWaits             *bool   `json:"log_lock_waits,omitempty"`
+	LogRecoveryConflictWaits *bool   `json:"log_recovery_conflict_waits,omitempty"`
+	LogReplicationCommands   *bool   `json:"log_replication_commands,omitempty"`
+
+	// LogStartupProgressInterval Default unit: ms
+	LogStartupProgressInterval    *string                                         `json:"log_startup_progress_interval,omitempty"`
+	LogTempFiles                  *string                                         `json:"log_temp_files,omitempty"`
 	LogicalDecodingWorkMem        *string                                         `json:"logical_decoding_work_mem,omitempty"`
 	MaintenanceWorkMem            *string                                         `json:"maintenance_work_mem,omitempty"`
 	MaxConnections                *int                                            `json:"max_connections,omitempty"`

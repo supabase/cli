@@ -6,7 +6,7 @@ interface CliConfigShape {
   readonly dashboardUrl: string;
   readonly projectHost: string;
   readonly telemetryPosthogHost: string;
-  readonly telemetryPosthogKey: string;
+  readonly telemetryPosthogKey: Option.Option<string>;
   readonly accessToken: Option.Option<Redacted.Redacted<string>>;
   readonly noKeyring: Option.Option<string>;
   readonly supabaseHome: string;

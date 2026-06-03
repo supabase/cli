@@ -36,7 +36,7 @@ export type BinaryResolution =
   | { readonly found: string }
   | { readonly notFound: ReadonlyArray<string> };
 
-function resolveBinary(): BinaryResolution {
+export function resolveBinary(): BinaryResolution {
   const tried: string[] = [];
 
   const envBin = process.env["SUPABASE_GO_BINARY"];

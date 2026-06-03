@@ -1,9 +1,13 @@
-export type ConsentState = "granted" | "denied";
+import { Schema } from "effect";
 
-export type TelemetryConfig = {
-  consent: ConsentState;
-  device_id: string;
-  session_id: string;
-  session_last_active: number;
-  distinct_id?: string;
-};
+const ConsentStateSchema = Schema.Literals(["granted", "denied"] as const);
+export type ConsentState = Schema.Schema.Type<typeof ConsentStateSchema>;
+
+export const TelemetryConfigSchema = Schema.Struct({
+  consent: ConsentStateSchema,
+  device_id: Schema.String,
+  session_id: Schema.String,
+  session_last_active: Schema.Number,
+  distinct_id: Schema.optionalKey(Schema.String),
+});
+export type TelemetryConfig = Schema.Schema.Type<typeof TelemetryConfigSchema>;

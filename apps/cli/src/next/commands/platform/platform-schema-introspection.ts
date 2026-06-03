@@ -21,7 +21,9 @@ function humanizeFieldName(name: string): string {
 }
 
 function isSensitiveField(name: string): boolean {
-  return /(pass(word)?|secret|token|jwt|private[_-]?key|db[_-]?pass)/i.test(name);
+  return /(pass(word)?|secret|token|jwt|private[_-]?key|api[_-]?key|access[_-]?key|root[_-]?key|db[_-]?pass)/i.test(
+    name,
+  );
 }
 
 function enumValuesFor(schema: PlatformOpenApiSchema): ReadonlyArray<string> | undefined {
@@ -77,8 +79,10 @@ function stringOnlyUnionMetadataFor(
         variant,
       ): variant is
         | { readonly kind: "string" }
-        | { readonly kind: "enum"; readonly enumValues: ReadonlyArray<string> } =>
-        variant !== undefined,
+        | {
+            readonly kind: "enum";
+            readonly enumValues: ReadonlyArray<string>;
+          } => variant !== undefined,
     );
 
   if (variantMetadata.length !== variants.length) {

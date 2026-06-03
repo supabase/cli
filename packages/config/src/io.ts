@@ -2,7 +2,9 @@ import { Effect, FileSystem, Path, Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { ProjectConfigSchema, type ProjectConfig } from "./base.ts";
 import { ProjectConfigParseError } from "./errors.ts";
+import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
 import { findProjectPaths } from "./paths.ts";
+import { loadProjectEnvironment } from "./project.ts";
 
 const projectConfigSchemaKey = "$schema";
 
@@ -203,18 +205,37 @@ function encodeProjectConfigToTomlDocument(
   return `${SmolToml.stringify(toConfigDocument(config, schemaRef))}\n`;
 }
 
-export const loadProjectConfigFile = Effect.fnUntraced(function* (path: string) {
+export const loadProjectConfigFile = Effect.fnUntraced(function* (filePath: string) {
   const fs = yield* FileSystem.FileSystem;
-  const format = path.endsWith(".json") ? "json" : "toml";
-  const content = yield* fs.readFileString(path);
+  const path = yield* Path.Path;
+  const format = filePath.endsWith(".json") ? "json" : "toml";
+  const content = yield* fs.readFileString(filePath);
   const document = yield* Effect.try({
     try: () => parseProjectConfigDocument(content, format),
-    catch: (cause) => new ProjectConfigParseError({ path, format, cause }),
+    catch: (cause) => new ProjectConfigParseError({ path: filePath, format, cause }),
   });
-  const config = yield* parseProjectConfig(document, format, path);
+
+  // Substitute `env(VAR)` references against `.env`/`.env.local`/ambient env
+  // before schema decode. Required for numeric/boolean fields, which would
+  // otherwise crash the strict decoder with `Expected number` (CLI-1489).
+  // The config file lives at `<projectRoot>/supabase/config.{toml,json}`, so
+  // walking two directories up gives us the project root that
+  // `loadProjectEnvironment` expects.
+  const projectRoot = path.dirname(path.dirname(filePath));
+  const projectEnv = yield* loadProjectEnvironment({
+    cwd: projectRoot,
+    baseEnv: process.env,
+  });
+  const interpolated = interpolateEnvReferencesAgainstSchema(
+    document,
+    projectEnv?.values ?? {},
+    ProjectConfigSchema,
+  );
+
+  const config = yield* parseProjectConfig(interpolated, format, filePath);
 
   return {
-    path,
+    path: filePath,
     format,
     config,
     schemaRef: getSchemaRef(document),

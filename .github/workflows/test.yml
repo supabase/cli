@@ -28,12 +28,14 @@ jobs:
     runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Setup
         uses: ./.github/actions/setup
       - name: Setup Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version-file: apps/cli-go/go.mod
           cache-dependency-path: apps/cli-go/go.sum
@@ -41,7 +43,7 @@ jobs:
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest &&
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Unlock keyring (for cli-go keyring tests)
-        uses: t1m0thyj/unlock-keyring@cbcf205c879ebd86add70bab3a6abfcce59a5cae
+        uses: t1m0thyj/unlock-keyring@cbcf205c879ebd86add70bab3a6abfcce59a5cae # v1.2.0
 
       - name: Check code quality
         run: pnpm run check:all
@@ -52,12 +54,14 @@ jobs:
     runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Setup
         uses: ./.github/actions/setup
       - name: Setup Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version-file: apps/cli-go/go.mod
           cache-dependency-path: apps/cli-go/go.sum
@@ -65,7 +69,7 @@ jobs:
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest &&
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Unlock keyring (for cli-go keyring tests)
-        uses: t1m0thyj/unlock-keyring@cbcf205c879ebd86add70bab3a6abfcce59a5cae
+        uses: t1m0thyj/unlock-keyring@cbcf205c879ebd86add70bab3a6abfcce59a5cae # v1.2.0
 
       - name: Run unit and integration tests
         run: pnpm run test:core
@@ -80,13 +84,13 @@ jobs:
         shard: [ 1, 2, 3 ]
     steps:
       - name: Checkout
-        uses: useblacksmith/checkout@41cdeedae8edb2e684ba22896a5fd2a3cb85db6b # v1
+        uses: useblacksmith/checkout@41cdeedae8edb2e684ba22896a5fd2a3cb85db6b # v1.0.0-beta
         with:
           fetch-depth: 0
 
       - name: Set base and head SHAs for affected
         if: github.event_name == 'pull_request'
-        uses: nrwl/nx-set-shas@v4
+        uses: nrwl/nx-set-shas@3e9ad7370203c1e93d109be57f3b72eb0eb511b1 # v4.4.0
 
       - name: Setup
         uses: ./.github/actions/setup
@@ -114,7 +118,7 @@ jobs:
       - name: Cache Go CLI binary
         if: steps.detect.outputs.cli_e2e == 'true'
         id: cache-go-binary
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: apps/cli-go/supabase-go
           key: go-cli-${{ runner.os }}-${{ hashFiles('apps/cli-go/**/*.go',
@@ -123,7 +127,7 @@ jobs:
       - name: Setup Go
         if: steps.detect.outputs.cli_e2e == 'true' &&
           steps.cache-go-binary.outputs.cache-hit != 'true'
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version-file: apps/cli-go/go.mod
           cache-dependency-path: apps/cli-go/go.sum

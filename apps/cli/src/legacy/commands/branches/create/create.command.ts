@@ -1,5 +1,9 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyBranchesCreate } from "./create.handler.ts";
 
 const BRANCH_REGIONS = [
@@ -62,11 +66,18 @@ const config = {
     Flag.withDescription("Select a desired instance size for the branch database."),
     Flag.optional,
   ),
+  // Optional so the handler can distinguish "flag explicitly set false"
+  // from "flag absent" — mirrors Go's `cmdFlags.Changed("persistent")` check
+  // in `apps/cli-go/cmd/branches.go:53`. Effect CLI surface: `--persistent`
+  // sets `Option.some(true)`, `--no-persistent` sets `Option.some(false)`,
+  // absent stays `Option.none()`.
   persistent: Flag.boolean("persistent").pipe(
     Flag.withDescription("Whether to create a persistent branch."),
+    Flag.optional,
   ),
   withData: Flag.boolean("with-data").pipe(
     Flag.withDescription("Whether to clone production data to the branch database."),
+    Flag.optional,
   ),
   notifyUrl: Flag.string("notify-url").pipe(
     Flag.withDescription("URL to notify when branch is active healthy."),
@@ -79,5 +90,11 @@ export type LegacyBranchesCreateFlags = CliCommand.Command.Config.Infer<typeof c
 export const legacyBranchesCreateCommand = Command.make("create", config).pipe(
   Command.withDescription("Create a preview branch for the linked project."),
   Command.withShortDescription("Create a preview branch"),
-  Command.withHandler((flags) => legacyBranchesCreate(flags)),
+  Command.withHandler((flags) =>
+    legacyBranchesCreate(flags).pipe(
+      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyManagementApiRuntimeLayer(["branches", "create"])),
 );

@@ -48,12 +48,12 @@ jobs:
     steps:
       - name: Install Supabase CLI via setup-cli@v1
         if: matrix.major-version == 'v1'
-        uses: supabase/setup-cli@v1
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
         with:
           version: ${{ inputs.version }}
       - name: Install Supabase CLI via setup-cli@v2
         if: matrix.major-version == 'v2'
-        uses: supabase/setup-cli@v2
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2.1.1
         with:
           version: ${{ inputs.version }}
       - name: Verify supabase --version matches the expected version
@@ -100,12 +100,12 @@ jobs:
         run: apk add --no-cache bash curl tar
       - name: Install Supabase CLI via setup-cli@v1
         if: matrix.major-version == 'v1'
-        uses: supabase/setup-cli@v1
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
         with:
           version: ${{ inputs.version }}
       - name: Install Supabase CLI via setup-cli@v2
         if: matrix.major-version == 'v2'
-        uses: supabase/setup-cli@v2
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2.1.1
         with:
           version: ${{ inputs.version }}
       - name: Verify supabase --version matches the expected version

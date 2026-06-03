@@ -11,12 +11,12 @@ import { TelemetryRuntime } from "./runtime.service.ts";
 
 const CI_ENV_VARS = ["CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "JENKINS_URL", "BUILDKITE"];
 
-function identityFromConfig(config: TelemetryConfig | null) {
-  if (config !== null) {
+function identityFromConfig(config: Option.Option<TelemetryConfig>) {
+  if (Option.isSome(config)) {
     return {
-      deviceId: config.device_id,
-      sessionId: config.session_id,
-      distinctId: config.distinct_id,
+      deviceId: config.value.device_id,
+      sessionId: config.value.session_id,
+      distinctId: config.value.distinct_id,
       isFirstRun: false,
     } as const;
   }
@@ -45,7 +45,7 @@ export const telemetryRuntimeLayer = Layer.effect(
 
     let identity;
     if (consent === "granted") {
-      if (config === null && isTty) {
+      if (Option.isNone(config) && isTty) {
         yield* Effect.sync(() =>
           note(
             "Supabase collects anonymous usage data to improve the CLI.\nYou can opt out at any time:\n\n  supabase telemetry disable\n\nLearn more: https://supabase.com/docs/guides/local-development/cli/getting-started#telemetry",

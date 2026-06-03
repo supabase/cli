@@ -1,5 +1,4 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
-import { withHidden, withHiddenFromConfig } from "../../../../shared/cli/hidden-flag.ts";
 import { legacyFunctionsDeploy } from "./deploy.handler.ts";
 
 const config = {
@@ -29,20 +28,19 @@ const config = {
     Flag.withDescription("Maximum number of parallel jobs."),
     Flag.optional,
   ),
-  useDocker: withHidden(
-    Flag.boolean("use-docker").pipe(
-      Flag.withDescription("Use Docker to bundle functions locally."),
-    ),
+  useDocker: Flag.boolean("use-docker").pipe(
+    Flag.withDescription("Use Docker to bundle functions locally."),
+    Flag.withHidden,
   ),
-  legacyBundle: withHidden(
-    Flag.boolean("legacy-bundle").pipe(Flag.withDescription("Use legacy bundling.")),
+  legacyBundle: Flag.boolean("legacy-bundle").pipe(
+    Flag.withDescription("Use legacy bundling."),
+    Flag.withHidden,
   ),
 } as const;
 
 export const legacyFunctionsDeployCommand = Command.make("deploy", config).pipe(
   Command.withDescription("Deploy a Function to the linked Supabase project."),
   Command.withShortDescription("Deploy a Function to Supabase"),
-  withHiddenFromConfig(config),
   Command.withHandler((flags) =>
     legacyFunctionsDeploy({
       functionNames: flags.functionNames.map(String),

@@ -16,8 +16,9 @@ func GetGitBranchOrDefault(def string, fsys afero.Fs) string {
 	if len(head) > 0 {
 		return head
 	}
-	opts := &git.PlainOpenOptions{DetectDotGit: true}
-	if repo, err := git.PlainOpenWithOptions(".", opts); err == nil {
+	if root, err := findGitRoot("."); err != nil {
+		return def
+	} else if repo, err := git.PlainOpen(root); err == nil {
 		if ref, err := repo.Head(); err == nil {
 			return ref.Name().Short()
 		}

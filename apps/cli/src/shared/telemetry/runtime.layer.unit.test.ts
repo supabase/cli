@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Effect, Layer } from "effect";
@@ -68,6 +68,38 @@ describe("telemetryRuntimeLayer", () => {
   it.live("marks the actual first granted invocation as first run", () => {
     const homeDir = makeTempDir();
     const configPath = path.join(homeDir, "telemetry.json");
+
+    return Effect.gen(function* () {
+      const runtime = yield* TelemetryRuntime;
+      expect(runtime.consent).toBe("granted");
+      expect(runtime.isFirstRun).toBe(true);
+      expect(existsSync(configPath)).toBe(true);
+    }).pipe(
+      Effect.provide(buildLayer({ homeDir })),
+      Effect.ensuring(Effect.sync(() => rmSync(homeDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("treats a malformed telemetry.json as a fresh first run instead of crashing", () => {
+    const homeDir = makeTempDir();
+    const configPath = path.join(homeDir, "telemetry.json");
+    writeFileSync(configPath, "");
+
+    return Effect.gen(function* () {
+      const runtime = yield* TelemetryRuntime;
+      expect(runtime.consent).toBe("granted");
+      expect(runtime.isFirstRun).toBe(true);
+      expect(existsSync(configPath)).toBe(true);
+    }).pipe(
+      Effect.provide(buildLayer({ homeDir })),
+      Effect.ensuring(Effect.sync(() => rmSync(homeDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("silently ignores structurally invalid telemetry.json instead of crashing", () => {
+    const homeDir = makeTempDir();
+    const configPath = path.join(homeDir, "telemetry.json");
+    writeFileSync(configPath, JSON.stringify({ consent: "granted" }));
 
     return Effect.gen(function* () {
       const runtime = yield* TelemetryRuntime;

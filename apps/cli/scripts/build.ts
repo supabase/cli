@@ -12,7 +12,7 @@ const MUSL_TARGETS = [
     nfpmArch: "arm64",
   },
   {
-    bunTarget: "bun-linux-x64-musl",
+    bunTarget: "bun-linux-x64-musl-baseline",
     pkg: "cli-linux-x64-musl",
     nfpmArch: "amd64",
   },
@@ -62,14 +62,14 @@ const TARGETS = [
     ext: "",
   },
   {
-    bunTarget: "bun-linux-x64",
+    bunTarget: "bun-linux-x64-baseline",
     pkg: "cli-linux-x64",
     archive: `supabase_${version}_linux_amd64.tar.gz`,
     nfpmArch: "amd64",
     ext: "",
   },
   {
-    bunTarget: "bun-windows-x64",
+    bunTarget: "bun-windows-x64-baseline",
     pkg: "cli-windows-x64",
     archive: `supabase_${version}_windows_amd64.zip`,
     ext: ".exe",
@@ -86,6 +86,10 @@ const root = path.resolve(import.meta.dir, "../../..");
 const entrypoint = path.join(root, "apps/cli/src", shell, "main.ts");
 const distDir = path.join(root, "dist");
 const goSource = path.resolve(root, "apps/cli-go");
+const posthogBuildDefines = [
+  `--define=process.env.SUPABASE_CLI_POSTHOG_KEY=${JSON.stringify(process.env.POSTHOG_API_KEY ?? "")}`,
+  `--define=process.env.SUPABASE_CLI_POSTHOG_HOST=${JSON.stringify(process.env.POSTHOG_ENDPOINT ?? "")}`,
+] as const;
 
 type BunTarget = (typeof TARGETS)[number]["bunTarget"];
 
@@ -93,8 +97,8 @@ const GO_TARGETS: Record<BunTarget, { goos: string; goarch: string }> = {
   "bun-darwin-arm64": { goos: "darwin", goarch: "arm64" },
   "bun-darwin-x64": { goos: "darwin", goarch: "amd64" },
   "bun-linux-arm64": { goos: "linux", goarch: "arm64" },
-  "bun-linux-x64": { goos: "linux", goarch: "amd64" },
-  "bun-windows-x64": { goos: "windows", goarch: "amd64" },
+  "bun-linux-x64-baseline": { goos: "linux", goarch: "amd64" },
+  "bun-windows-x64-baseline": { goos: "windows", goarch: "amd64" },
   "bun-windows-arm64": { goos: "windows", goarch: "arm64" },
 };
 
@@ -102,7 +106,7 @@ function libcForBunTarget(target: string): "glibc" | "musl" | "" {
   if (!target.startsWith("bun-linux-")) {
     return "";
   }
-  return target.endsWith("-musl") ? "musl" : "glibc";
+  return target.includes("-musl") ? "musl" : "glibc";
 }
 
 async function buildTarget(target: (typeof TARGETS)[number]) {
@@ -113,7 +117,7 @@ async function buildTarget(target: (typeof TARGETS)[number]) {
   const libc = libcForBunTarget(target.bunTarget);
 
   console.log(`[${target.pkg}] Compiling Bun CLI...`);
-  await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --define=SUPABASE_LIBC=${JSON.stringify(libc)} --outfile=${outfile}`;
+  await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --define=SUPABASE_LIBC=${JSON.stringify(libc)} ${posthogBuildDefines} --outfile=${outfile}`;
   console.log(`[${target.pkg}] Done.`);
 }
 
@@ -184,7 +188,7 @@ async function buildMuslBinaries() {
       const outfile = path.join(binDir, "supabase");
       const libc = libcForBunTarget(target.bunTarget);
       console.log(`[${target.pkg}] Compiling Bun CLI (musl)...`);
-      await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --define=SUPABASE_LIBC=${JSON.stringify(libc)} --outfile=${outfile}`;
+      await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --define=SUPABASE_LIBC=${JSON.stringify(libc)} ${posthogBuildDefines} --outfile=${outfile}`;
 
       if (shell === "legacy") {
         // Go binary is CGO_ENABLED=0 (fully static), so the glibc Linux build works on
