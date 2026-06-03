@@ -97,7 +97,6 @@ const makeLegacyPlatformApiServices = Effect.gen(function* () {
       stitchAttempted = true;
 
       yield* analytics.alias(gotrueId, runtime.deviceId);
-      yield* analytics.identify(gotrueId);
 
       const state: LegacyTelemetryState = {
         enabled,

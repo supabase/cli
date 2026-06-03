@@ -367,6 +367,18 @@ yield * creating.clear(); // dismiss without a message
 yield * creating.succeed("Branch created");
 ```
 
+### Invariant: `-o json|yaml|toml|env` must suppress the spinner (CLI-1546)
+
+The Go-compat `-o`/`--output` flag (`LegacyOutputFlag`, values `env|pretty|json|toml|yaml`) is **independent** of `--output-format`. It does not change `output.format`, so a command run with `-o json` (and no `--output-format`) keeps `output.format === "text"` and the spinner gate `output.format === "text"` stays `true`. If the plain `textOutputLayer` is active, clack writes spinner ANSI (e.g. the hide-cursor `\x1b[?25l`) to **stdout** and corrupts the machine payload the handler emits via `output.raw` — exactly the CLI-1546 regression (`branches list -o json` → broken `JSON.parse`).
+
+`legacy/cli/root.ts` therefore selects **`legacyQuietProgressTextOutputLayer`** (in `legacy/output/`) for any Go machine format (`json|yaml|toml|env`). It is a legacy-only wrapper over the shared `textOutputLayer` that no-ops only `task` and `progress`; everything else — `format: "text"`, `raw`, logs, and error rendering (red text on **stderr**) — delegates unchanged, so Go output parity is preserved exactly.
+
+Rules:
+
+- **stdout is payload-only whenever a machine format is requested** (`-o json|yaml|toml|env` or `--output-format json|stream-json`). All progress/diagnostic output goes to stderr.
+- **Do not** fix spinner-on-stdout by routing the shared spinner to stderr or otherwise editing `shared/output/output.layer.ts` — that changes `next/` text rendering. Keep the fix legacy-scoped.
+- A handler reaching this path still emits its machine payload through the Go encoder (`output.raw(encodeGoJson(...))` etc.), checked **before** the `output.format` branch, so output stays byte-identical to before — minus the spinner.
+
 ---
 
 ## Testing

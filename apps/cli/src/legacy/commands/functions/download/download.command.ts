@@ -1,6 +1,5 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { withHidden, withHiddenFromConfig } from "../../../../shared/cli/hidden-flag.ts";
 import { legacyFunctionsDownload } from "./download.handler.ts";
 
 const config = {
@@ -15,13 +14,13 @@ const config = {
   useApi: Flag.boolean("use-api").pipe(
     Flag.withDescription("Unbundle functions server-side without using Docker."),
   ),
-  useDocker: withHidden(
-    Flag.boolean("use-docker").pipe(
-      Flag.withDescription("Use Docker to unbundle functions locally."),
-    ),
+  useDocker: Flag.boolean("use-docker").pipe(
+    Flag.withDescription("Use Docker to unbundle functions locally."),
+    Flag.withHidden,
   ),
-  legacyBundle: withHidden(
-    Flag.boolean("legacy-bundle").pipe(Flag.withDescription("Use legacy bundling.")),
+  legacyBundle: Flag.boolean("legacy-bundle").pipe(
+    Flag.withDescription("Use legacy bundling."),
+    Flag.withHidden,
   ),
 } as const;
 
@@ -32,6 +31,5 @@ export const legacyFunctionsDownloadCommand = Command.make("download", config).p
     "Download the source code for a Function from the linked Supabase project. If no function name is provided, downloads all functions.",
   ),
   Command.withShortDescription("Download a Function from Supabase"),
-  withHiddenFromConfig(config),
   Command.withHandler((flags) => legacyFunctionsDownload(flags)),
 );

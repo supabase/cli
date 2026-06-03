@@ -3,10 +3,12 @@ import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
+import { legacyTempPaths } from "../shared/legacy-temp-paths.ts";
 import { LegacyCliConfig } from "./legacy-cli-config.service.ts";
 import {
   LegacyInvalidProjectRefError,
   LegacyProjectNotLinkedError,
+  LegacyProjectRefRequiredError,
 } from "./legacy-project-ref.errors.ts";
 import {
   INVALID_PROJECT_REF_MESSAGE,
@@ -34,7 +36,7 @@ export const legacyProjectRefLayer = Layer.effect(
     const output = yield* Output;
     const api = yield* LegacyPlatformApi;
 
-    const refPath = path.join(cliConfig.workdir, "supabase", ".temp", "project-ref");
+    const refPath = legacyTempPaths(path, cliConfig.workdir).projectRef;
 
     const readRefFile = Effect.gen(function* () {
       const exists = yield* fs.exists(refPath).pipe(Effect.orElseSucceed(() => false));
@@ -44,7 +46,7 @@ export const legacyProjectRefLayer = Layer.effect(
       return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
     });
 
-    const promptForProjectRef = Effect.gen(function* () {
+    const promptForProjectRef = Effect.fnUntraced(function* (title: string) {
       const projects = yield* api.v1.listAllProjects().pipe(
         Effect.mapError(
           (cause) =>
@@ -60,7 +62,7 @@ export const legacyProjectRefLayer = Layer.effect(
         label: project.id,
         hint: `name: ${project.name}, org: ${project.organization_slug}, region: ${project.region}`,
       }));
-      const chosen = yield* output.promptSelect("Select a project:", options).pipe(
+      const chosen = yield* output.promptSelect(title, options).pipe(
         Effect.mapError(
           (cause) =>
             new LegacyProjectNotLinkedError({
@@ -88,13 +90,43 @@ export const legacyProjectRefLayer = Layer.effect(
             return yield* assertValid(fileValue.value);
           }
           if (tty.stdinIsTty && output.interactive) {
-            const chosen = yield* promptForProjectRef;
+            const chosen = yield* promptForProjectRef("Select a project:");
             return yield* assertValid(chosen);
           }
           return yield* Effect.fail(
             new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
           );
         }),
+      resolveForLink: (flagValue) =>
+        Effect.gen(function* () {
+          if (Option.isSome(flagValue) && flagValue.value.length > 0) {
+            return yield* assertValid(flagValue.value);
+          }
+          if (Option.isSome(cliConfig.projectId)) {
+            return yield* assertValid(cliConfig.projectId.value);
+          }
+          // Go skips the ref-file fallback for link (MemMapFs at link.go:30).
+          if (tty.stdinIsTty && output.interactive) {
+            const chosen = yield* promptForProjectRef("Select a project:");
+            return yield* assertValid(chosen);
+          }
+          return yield* Effect.fail(
+            new LegacyProjectRefRequiredError({
+              message: `required flag(s) "project-ref" not set`,
+            }),
+          );
+        }),
+      resolveOptional: (flagValue) =>
+        Effect.gen(function* () {
+          if (Option.isSome(flagValue) && flagValue.value.length > 0) {
+            return Option.some(flagValue.value);
+          }
+          if (Option.isSome(cliConfig.projectId)) {
+            return cliConfig.projectId;
+          }
+          return yield* readRefFile;
+        }),
+      promptProjectRef: promptForProjectRef,
     });
   }),
 );

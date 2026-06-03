@@ -5,16 +5,22 @@ updates:
     schedule:
       interval: "cron"
       cronjob: "0 0 * * *"
+    commit-message:
+      prefix: "chore(ci): "
     groups:
       actions-major:
         patterns:
           - "*"
+    ignore:
+      - dependency-name: "supabase/setup-cli"
+        update-types:
+          - "version-update:semver-major"
     cooldown:
       default-days: 7
   - package-ecosystem: "gomod"
     directories:
-      - "/"
-      - "pkg"
+      - "/apps/cli-go"
+      - "/apps/cli-go/pkg"
     schedule:
       interval: "cron"
       cronjob: "0 0 * * *"
@@ -57,3 +63,5 @@ updates:
       - dependency-name: "timberio/vector"
     cooldown:
       default-days: 7
+      exclude:
+        - "supabase/*"

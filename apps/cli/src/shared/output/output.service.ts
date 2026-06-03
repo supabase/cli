@@ -47,7 +47,10 @@ interface OutputShape {
     opts?: { validate?: (v: string) => string | undefined; defaultValue?: string },
   ) => Effect.Effect<string, NonInteractiveError>;
   readonly promptPassword: (message: string) => Effect.Effect<string, NonInteractiveError>;
-  readonly promptConfirm: (message: string) => Effect.Effect<boolean, NonInteractiveError>;
+  readonly promptConfirm: (
+    message: string,
+    opts?: { defaultValue?: boolean },
+  ) => Effect.Effect<boolean, NonInteractiveError>;
   readonly promptSelect: (
     message: string,
     options: ReadonlyArray<OutputSelectOption>,

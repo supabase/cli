@@ -1,5 +1,8 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyProjectsApiKeys } from "./api-keys.handler.ts";
 
 const config = {
@@ -19,5 +22,11 @@ export const legacyProjectsApiKeysCommand = Command.make("api-keys", config).pip
       description: "List all API keys for a project",
     },
   ]),
-  Command.withHandler((flags) => legacyProjectsApiKeys(flags)),
+  Command.withHandler((flags) =>
+    legacyProjectsApiKeys(flags).pipe(
+      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyManagementApiRuntimeLayer(["projects", "api-keys"])),
 );

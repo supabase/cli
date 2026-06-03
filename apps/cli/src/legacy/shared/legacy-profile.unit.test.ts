@@ -7,6 +7,7 @@ describe("legacyProjectHost", () => {
     expect(legacyProjectHost("supabase")).toBe("supabase.co");
     expect(legacyProjectHost("supabase-staging")).toBe("supabase.red");
     expect(legacyProjectHost("supabase-local")).toBe("supabase.red");
+    expect(legacyProjectHost("snap")).toBe("snapcloud.dev");
   });
 
   it("falls back to supabase.co for unknown / YAML-mode profiles", () => {

@@ -145,7 +145,7 @@ max_catalogs = 2
 
 # Store vector embeddings in S3 for large and durable datasets
 [storage.vector]
-enabled = false
+enabled = true
 max_buckets = 10
 max_indexes = 5
 

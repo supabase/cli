@@ -151,8 +151,7 @@ func TestServiceStitchLoginPersistsDistinctID(t *testing.T) {
 	require.Len(t, analytics.aliases, 1)
 	assert.Equal(t, "user-123", analytics.aliases[0].distinctID)
 	assert.Equal(t, deviceID, analytics.aliases[0].alias)
-	require.Len(t, analytics.identifies, 1)
-	assert.Equal(t, "user-123", analytics.identifies[0].distinctID)
+	assert.Empty(t, analytics.identifies)
 	require.Len(t, analytics.captures, 1)
 	assert.Equal(t, "user-123", analytics.captures[0].distinctID)
 

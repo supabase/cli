@@ -1,9 +1,10 @@
 import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
+import { normalizeKeyringToken } from "../../shared/auth/keyring-token.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { LegacyCredentials } from "./legacy-credentials.service.ts";
-import { LegacyInvalidAccessTokenError } from "./legacy-errors.ts";
+import { LegacyCredentialDeleteError, LegacyInvalidAccessTokenError } from "./legacy-errors.ts";
 
 const KEYRING_SERVICE = "Supabase CLI";
 const LEGACY_KEYRING_ACCOUNT = "access-token";
@@ -14,6 +15,8 @@ const ACCESS_TOKEN_PATTERN = /^sbp_(oauth_)?[a-f0-9]{40}$/;
 const INVALID_TOKEN_MESSAGE = "Invalid access token format. Must be like `sbp_0102...1920`.";
 
 type KeyringModule = typeof import("@napi-rs/keyring");
+type KeyringEntry = InstanceType<KeyringModule["Entry"]>;
+type RuntimePlatform = NodeJS.Platform;
 
 const detectWsl = (fs: FileSystem.FileSystem): Effect.Effect<boolean> =>
   Effect.gen(function* () {
@@ -28,12 +31,22 @@ const detectWsl = (fs: FileSystem.FileSystem): Effect.Effect<boolean> =>
 const tryKeyringRead = (
   module: KeyringModule,
   account: string,
+  platform: RuntimePlatform,
 ): Effect.Effect<Option.Option<string>> =>
   Effect.try({
     try: () => {
       const entry = new module.Entry(KEYRING_SERVICE, account);
-      const value = entry.getPassword();
-      return value && value.length > 0 ? Option.some(value) : Option.none<string>();
+      const value = readEntryPassword(entry);
+      if (value && value.length > 0) return Option.some(normalizeKeyringToken(value));
+
+      if (platform === "win32") {
+        const goWindowsValue = readGoWindowsTarget(module, account);
+        if (goWindowsValue && goWindowsValue.length > 0) {
+          return Option.some(normalizeKeyringToken(goWindowsValue));
+        }
+      }
+
+      return Option.none<string>();
     },
     catch: () => Option.none<string>(),
   }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
@@ -42,9 +55,14 @@ const tryKeyringWrite = (
   module: KeyringModule,
   account: string,
   token: string,
+  platform: RuntimePlatform,
 ): Effect.Effect<boolean> =>
   Effect.try({
     try: () => {
+      if (platform === "win32") {
+        return writeGoWindowsTarget(module, account, token);
+      }
+
       const entry = new module.Entry(KEYRING_SERVICE, account);
       entry.setPassword(token);
       return true;
@@ -52,17 +70,154 @@ const tryKeyringWrite = (
     catch: () => false,
   }).pipe(Effect.orElseSucceed(() => false));
 
-const tryKeyringDelete = (module: KeyringModule, account: string): Effect.Effect<boolean> =>
+const tryKeyringDelete = (
+  module: KeyringModule,
+  account: string,
+  platform: RuntimePlatform,
+): Effect.Effect<boolean> =>
   Effect.try({
     try: () => {
+      let deleted = false;
+
       const entry = new module.Entry(KEYRING_SERVICE, account);
-      const value = entry.getPassword();
-      if (!value) return false;
-      entry.deleteCredential();
-      return true;
+      const value = readEntryPassword(entry);
+      if (value) {
+        entry.deleteCredential();
+        deleted = true;
+      }
+
+      if (platform === "win32" && readGoWindowsTarget(module, account)) {
+        deleted = deleteGoWindowsTarget(module, account) || deleted;
+      }
+
+      return deleted;
     },
     catch: () => false,
   }).pipe(Effect.orElseSucceed(() => false));
+
+function readEntryPassword(entry: KeyringEntry): string | null {
+  try {
+    return entry.getPassword();
+  } catch {
+    return null;
+  }
+}
+
+function goWindowsCredentialTarget(account: string): string {
+  return `${KEYRING_SERVICE}:${account}`;
+}
+
+function readGoWindowsTarget(module: KeyringModule, account: string): string | null {
+  try {
+    const credentials = module.findCredentials(KEYRING_SERVICE, goWindowsCredentialTarget(account));
+    const credential = credentials.find((item) => item.account === account);
+    return credential ? normalizeGoWindowsPassword(credential.password) : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeGoWindowsPassword(value: string): string {
+  const direct = normalizeKeyringToken(value);
+  if (ACCESS_TOKEN_PATTERN.test(direct)) return direct;
+
+  // Go writes Windows CredentialBlob values as raw UTF-8 bytes. The TS keyring
+  // search API can surface those bytes packed into UTF-16 code units, so unpack
+  // each code unit back into the original byte sequence before validation.
+  const bytes: number[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    bytes.push(code & 0xff);
+    const high = (code >> 8) & 0xff;
+    if (high !== 0) bytes.push(high);
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+
+function writeGoWindowsTarget(module: KeyringModule, account: string, token: string): boolean {
+  try {
+    const entry = module.Entry.withTarget(
+      goWindowsCredentialTarget(account),
+      KEYRING_SERVICE,
+      account,
+    );
+    entry.setSecret(Buffer.from(token, "utf8"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function deleteGoWindowsTarget(module: KeyringModule, account: string): boolean {
+  try {
+    const entry = module.Entry.withTarget(
+      goWindowsCredentialTarget(account),
+      KEYRING_SERVICE,
+      account,
+    );
+    return entry.deleteCredential();
+  } catch {
+    return false;
+  }
+}
+// Delete the project database-password entry (keyed by project ref), surfacing a
+// real failure while ignoring the "nothing to delete" cases — mirroring Go's
+// unlink, which ignores both `keyring.ErrNotFound` AND `credentials.ErrNotSupported`
+// (backend unavailable) and only surfaces other errors (`unlink.go:36-40`).
+//
+// The plain `Entry(service, projectRef)` is the macOS/Linux form and the Windows
+// default. On Windows, Go also writes a separate target-shaped credential; it is
+// detected via `findCredentials` (a plain `getPassword` does not read the Go
+// target reliably) and deleted through the `withTarget` entry. The `withTarget`
+// entry is only constructed on Windows — on macOS its first argument is an
+// invalid keychain domain and throws.
+//
+// Each entry is probed before `deleteCredential()`: on macOS deleting an absent
+// entry blocks on a Keychain authorization prompt, and an absent read means
+// there is nothing to delete (ignorable, per Go). Only a real delete failure is
+// surfaced as `LegacyCredentialDeleteError`.
+const deleteKeyringEntryStrict = (
+  module: KeyringModule,
+  account: string,
+  platform: RuntimePlatform,
+): Effect.Effect<boolean, LegacyCredentialDeleteError> =>
+  Effect.gen(function* () {
+    let deleted = false;
+
+    const plain = new module.Entry(KEYRING_SERVICE, account);
+    if (readEntryPassword(plain)) {
+      yield* Effect.try({
+        try: () => {
+          plain.deleteCredential();
+        },
+        catch: (cause) =>
+          new LegacyCredentialDeleteError({
+            message: `failed to delete project credential: ${String(cause)}`,
+          }),
+      });
+      deleted = true;
+    }
+
+    if (platform === "win32" && readGoWindowsTarget(module, account)) {
+      const target = module.Entry.withTarget(
+        goWindowsCredentialTarget(account),
+        KEYRING_SERVICE,
+        account,
+      );
+      yield* Effect.try({
+        try: () => {
+          target.deleteCredential();
+        },
+        catch: (cause) =>
+          new LegacyCredentialDeleteError({
+            message: `failed to delete project credential: ${String(cause)}`,
+          }),
+      });
+      deleted = true;
+    }
+
+    return deleted;
+  });
 
 const makeLegacyCredentials = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -75,10 +230,16 @@ const makeLegacyCredentials = Effect.gen(function* () {
   const fallbackDir = path.join(runtimeInfo.homeDir, ".supabase");
   const fallbackPath = path.join(fallbackDir, "access-token");
 
+  // `SUPABASE_NO_KEYRING=1` disables the OS keyring entirely (matches `next/`'s
+  // credentials layer and the cli-e2e harness, which sets it). Without this, any
+  // unconditional keyring access — e.g. `unlink`'s credential delete — blocks on a
+  // Keychain authorization prompt in non-interactive / CI contexts.
+  const noKeyring = process.env["SUPABASE_NO_KEYRING"] === "1";
   const wsl = yield* detectWsl(fs);
-  const keyringModule = wsl
-    ? Option.none<KeyringModule>()
-    : yield* Effect.tryPromise(() => import("@napi-rs/keyring")).pipe(Effect.option);
+  const keyringModule =
+    wsl || noKeyring
+      ? Option.none<KeyringModule>()
+      : yield* Effect.tryPromise(() => import("@napi-rs/keyring")).pipe(Effect.option);
 
   const validate = (token: string): Effect.Effect<string, LegacyInvalidAccessTokenError> =>
     ACCESS_TOKEN_PATTERN.test(token)
@@ -87,9 +248,13 @@ const makeLegacyCredentials = Effect.gen(function* () {
 
   const readKeyring = Effect.gen(function* () {
     if (Option.isNone(keyringModule)) return Option.none<string>();
-    const profileResult = yield* tryKeyringRead(keyringModule.value, profileAccount);
+    const profileResult = yield* tryKeyringRead(
+      keyringModule.value,
+      profileAccount,
+      runtimeInfo.platform,
+    );
     if (Option.isSome(profileResult)) return profileResult;
-    return yield* tryKeyringRead(keyringModule.value, LEGACY_KEYRING_ACCOUNT);
+    return yield* tryKeyringRead(keyringModule.value, LEGACY_KEYRING_ACCOUNT, runtimeInfo.platform);
   });
 
   const readFile = Effect.gen(function* () {
@@ -129,7 +294,12 @@ const makeLegacyCredentials = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* validate(token);
         if (Option.isSome(keyringModule)) {
-          const ok = yield* tryKeyringWrite(keyringModule.value, profileAccount, token);
+          const ok = yield* tryKeyringWrite(
+            keyringModule.value,
+            profileAccount,
+            token,
+            runtimeInfo.platform,
+          );
           if (ok) return;
         }
         yield* fs.makeDirectory(fallbackDir, { recursive: true, mode: 0o700 }).pipe(Effect.orDie);
@@ -139,8 +309,14 @@ const makeLegacyCredentials = Effect.gen(function* () {
     deleteAccessToken: Effect.gen(function* () {
       let anyDeleted = false;
       if (Option.isSome(keyringModule)) {
-        if (yield* tryKeyringDelete(keyringModule.value, profileAccount)) anyDeleted = true;
-        if (yield* tryKeyringDelete(keyringModule.value, LEGACY_KEYRING_ACCOUNT)) anyDeleted = true;
+        if (yield* tryKeyringDelete(keyringModule.value, profileAccount, runtimeInfo.platform)) {
+          anyDeleted = true;
+        }
+        if (
+          yield* tryKeyringDelete(keyringModule.value, LEGACY_KEYRING_ACCOUNT, runtimeInfo.platform)
+        ) {
+          anyDeleted = true;
+        }
       }
       const exists = yield* fs.exists(fallbackPath).pipe(Effect.orElseSucceed(() => false));
       if (exists) {
@@ -149,6 +325,17 @@ const makeLegacyCredentials = Effect.gen(function* () {
       }
       return anyDeleted;
     }),
+
+    deleteProjectCredential: (projectRef: string) =>
+      Effect.gen(function* () {
+        // WSL / no keyring module: treated as `ErrNotSupported` — a no-op success.
+        if (Option.isNone(keyringModule)) return false;
+        return yield* deleteKeyringEntryStrict(
+          keyringModule.value,
+          projectRef,
+          runtimeInfo.platform,
+        );
+      }),
   });
 });
 

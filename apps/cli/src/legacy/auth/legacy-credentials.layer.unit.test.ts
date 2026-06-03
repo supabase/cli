@@ -20,18 +20,40 @@ import { LegacyInvalidAccessTokenError } from "./legacy-errors.ts";
 
 const passwords = new Map<string, string>();
 let throwOnSetPassword = false;
+let throwOnSetSecret = false;
 const throwOnGetPasswordAccounts = new Set<string>();
+const withTargetCalls: string[] = [];
 
 vi.mock("@napi-rs/keyring", () => ({
+  findCredentials: (service: string, target?: string) =>
+    Array.from(passwords.entries())
+      .filter(([key]) =>
+        target === undefined ? key.startsWith(`${service}/`) : key.startsWith(`${target}/`),
+      )
+      .map(([key, password]) => ({
+        account: key.split("/").at(-1)!,
+        password,
+      })),
   Entry: class Entry {
     service: string;
     account: string;
-    constructor(service: string, account: string) {
+    target?: string;
+    constructor(service: string, account: string, target?: string) {
       this.service = service;
       this.account = account;
+      this.target = target;
+    }
+    static withTarget(target: string, service: string, account: string) {
+      withTargetCalls.push(`${target}/${service}/${account}`);
+      return new this(service, account, target);
+    }
+    key(): string {
+      return this.target === undefined
+        ? `${this.service}/${this.account}`
+        : `${this.target}/${this.service}/${this.account}`;
     }
     getPassword(): string | null {
-      const key = `${this.service}/${this.account}`;
+      const key = this.key();
       if (throwOnGetPasswordAccounts.has(key)) {
         throw new Error("Keyring unavailable");
       }
@@ -39,10 +61,14 @@ vi.mock("@napi-rs/keyring", () => ({
     }
     setPassword(value: string): void {
       if (throwOnSetPassword) throw new Error("Keyring unavailable");
-      passwords.set(`${this.service}/${this.account}`, value);
+      passwords.set(this.key(), value);
+    }
+    setSecret(value: Uint8Array): void {
+      if (throwOnSetSecret) throw new Error("Keyring unavailable");
+      passwords.set(this.key(), Buffer.from(value).toString("utf8"));
     }
     deleteCredential(): boolean {
-      const key = `${this.service}/${this.account}`;
+      const key = this.key();
       if (!passwords.has(key)) throw new Error("not found");
       passwords.delete(key);
       return true;
@@ -56,10 +82,20 @@ vi.mock("@napi-rs/keyring", () => ({
 
 let tempHome: string;
 
-function makeLayer(opts: { env?: Record<string, string | undefined>; home?: string } = {}) {
+function makeLayer(
+  opts: {
+    env?: Record<string, string | undefined>;
+    home?: string;
+    platform?: NodeJS.Platform;
+  } = {},
+) {
   const home = opts.home ?? tempHome;
   const env = { HOME: home, ...opts.env };
-  const runtimeInfoLayer = mockRuntimeInfo({ homeDir: home, cwd: home });
+  const runtimeInfoLayer = mockRuntimeInfo({
+    homeDir: home,
+    cwd: home,
+    platform: opts.platform,
+  });
   const cliConfigLayer = legacyCliConfigLayer.pipe(
     Layer.provide(Layer.succeed(LegacyProfileFlag, "supabase")),
     Layer.provide(Layer.succeed(LegacyWorkdirFlag, Option.none<string>())),
@@ -78,7 +114,9 @@ function makeLayer(opts: { env?: Record<string, string | undefined>; home?: stri
 beforeEach(() => {
   passwords.clear();
   throwOnSetPassword = false;
+  throwOnSetSecret = false;
   throwOnGetPasswordAccounts.clear();
+  withTargetCalls.length = 0;
   tempHome = mkdtempSync(join(tmpdir(), "supabase-legacy-creds-"));
 });
 
@@ -88,6 +126,17 @@ afterEach(() => {
 
 const VALID_TOKEN = "sbp_" + "a".repeat(40);
 const VALID_OAUTH_TOKEN = "sbp_oauth_" + "b".repeat(40);
+const encodeGoKeyringBase64 = (token: string) =>
+  `go-keyring-base64:${Buffer.from(token).toString("base64")}`;
+const goWindowsKey = (account: string) => `Supabase CLI:${account}/Supabase CLI/${account}`;
+const encodeGoWindowsPassword = (token: string) => {
+  const bytes = Buffer.from(token, "utf8");
+  let encoded = "";
+  for (let index = 0; index < bytes.length; index += 2) {
+    encoded += String.fromCharCode(bytes[index]! | ((bytes[index + 1] ?? 0) << 8));
+  }
+  return encoded;
+};
 
 const expectSomeToken = (token: Option.Option<Redacted.Redacted<string>>, expected: string) => {
   expect(Option.isSome(token)).toBe(true);
@@ -113,6 +162,35 @@ describe("legacyCredentialsLayer.getAccessToken", () => {
       const token = yield* getAccessToken;
       expectSomeToken(token, VALID_TOKEN);
     }).pipe(Effect.provide(makeLayer()));
+  });
+
+  it.effect("decodes Go keyring base64 values from the keyring profile account", () => {
+    passwords.set("Supabase CLI/supabase", encodeGoKeyringBase64(VALID_TOKEN));
+    return Effect.gen(function* () {
+      const { getAccessToken } = yield* LegacyCredentials;
+      const token = yield* getAccessToken;
+      expectSomeToken(token, VALID_TOKEN);
+    }).pipe(Effect.provide(makeLayer()));
+  });
+
+  it.effect("reads Windows credentials created by Go keyring", () => {
+    passwords.set(goWindowsKey("supabase"), encodeGoWindowsPassword(VALID_TOKEN));
+    return Effect.gen(function* () {
+      const { getAccessToken } = yield* LegacyCredentials;
+      const token = yield* getAccessToken;
+      expectSomeToken(token, VALID_TOKEN);
+      expect(withTargetCalls).toEqual([]);
+    }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
+  });
+
+  it.effect("does not search Go Windows targets on other platforms", () => {
+    passwords.set(goWindowsKey("supabase"), VALID_TOKEN);
+    return Effect.gen(function* () {
+      const { getAccessToken } = yield* LegacyCredentials;
+      const token = yield* getAccessToken;
+      expect(token).toEqual(Option.none());
+      expect(withTargetCalls).toEqual([]);
+    }).pipe(Effect.provide(makeLayer({ platform: "linux" })));
   });
 
   it.effect("falls through to the legacy access-token keyring entry", () => {
@@ -191,6 +269,27 @@ describe("legacyCredentialsLayer.saveAccessToken", () => {
     }).pipe(Effect.provide(makeLayer())),
   );
 
+  it.effect("writes Windows credentials where Go keyring reads them", () =>
+    Effect.gen(function* () {
+      const { saveAccessToken } = yield* LegacyCredentials;
+      yield* saveAccessToken(VALID_TOKEN);
+      expect(passwords.get(goWindowsKey("supabase"))).toBe(VALID_TOKEN);
+      expect(passwords.has("Supabase CLI/supabase")).toBe(false);
+    }).pipe(Effect.provide(makeLayer({ platform: "win32" }))),
+  );
+
+  it.effect("falls back to the shared token file when Windows target writes fail", () => {
+    throwOnSetSecret = true;
+    return Effect.gen(function* () {
+      const { saveAccessToken } = yield* LegacyCredentials;
+      yield* saveAccessToken(VALID_TOKEN);
+      expect(passwords.has(goWindowsKey("supabase"))).toBe(false);
+      expect(passwords.has("Supabase CLI/supabase")).toBe(false);
+      const content = readFileSync(join(tempHome, ".supabase", "access-token"), "utf-8");
+      expect(content).toBe(VALID_TOKEN);
+    }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
+  });
+
   it.effect("falls back to the filesystem when the keyring write throws", () => {
     throwOnSetPassword = true;
     return Effect.gen(function* () {
@@ -213,6 +312,7 @@ describe("legacyCredentialsLayer.deleteAccessToken", () => {
   it.effect("removes both keyring entries plus the filesystem file", () => {
     passwords.set("Supabase CLI/supabase", VALID_TOKEN);
     passwords.set("Supabase CLI/access-token", VALID_OAUTH_TOKEN);
+    passwords.set(goWindowsKey("supabase"), VALID_TOKEN);
     const supaDir = join(tempHome, ".supabase");
     mkdirSync(supaDir, { recursive: true });
     writeFileSync(join(supaDir, "access-token"), VALID_TOKEN, { mode: 0o600 });
@@ -221,8 +321,9 @@ describe("legacyCredentialsLayer.deleteAccessToken", () => {
       expect(yield* deleteAccessToken).toBe(true);
       expect(passwords.has("Supabase CLI/supabase")).toBe(false);
       expect(passwords.has("Supabase CLI/access-token")).toBe(false);
+      expect(passwords.has(goWindowsKey("supabase"))).toBe(false);
       expect(existsSync(join(supaDir, "access-token"))).toBe(false);
-    }).pipe(Effect.provide(makeLayer()));
+    }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
   });
 });
 

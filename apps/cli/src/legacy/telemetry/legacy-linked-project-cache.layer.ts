@@ -4,6 +4,7 @@ import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
 import { LegacyCredentials } from "../auth/legacy-credentials.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { legacyTempPaths } from "../shared/legacy-temp-paths.ts";
 import { LegacyLinkedProjectCache } from "./legacy-linked-project-cache.service.ts";
 
 function readString(obj: unknown, key: string): string {
@@ -42,12 +43,7 @@ export const legacyLinkedProjectCacheLayer = Layer.effect(
     return LegacyLinkedProjectCache.of({
       cache: (ref: string) =>
         Effect.gen(function* () {
-          const cachePath = path.join(
-            cliConfig.workdir,
-            "supabase",
-            ".temp",
-            "linked-project.json",
-          );
+          const cachePath = legacyTempPaths(path, cliConfig.workdir).linkedProjectCache;
           const exists = yield* fs.exists(cachePath).pipe(Effect.orElseSucceed(() => false));
           if (exists) return;
 

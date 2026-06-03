@@ -11,6 +11,11 @@ on:
         description: Release channel (alpha | beta | stable), used to label the message
         required: false
         type: string
+      status:
+        description: Notification kind (success | failure). Failure messages report a broken release on any channel.
+        required: false
+        type: string
+        default: success
     secrets:
       SLACK_RELEASE_WEBHOOK:
         required: true
@@ -26,6 +31,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           CHANNEL: ${{ inputs.channel }}
+          STATUS: ${{ inputs.status }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           SHA: ${{ github.sha }}
@@ -34,16 +40,50 @@ jobs:
           set -euo pipefail
 
           SHORT_SHA="${SHA:0:7}"
-          HEADER="🚀 Supabase CLI v${VERSION} released"
-          if [[ "$CHANNEL" == "beta" ]]; then
-            HEADER="🚀 Supabase CLI v${VERSION} released (beta)"
-          fi
-
-          CHANGELOG_URL="https://github.com/${REPO}/releases/tag/v${VERSION}"
           COMMIT_URL="https://github.com/${REPO}/commit/${SHA}"
           RUN_URL="https://github.com/${REPO}/actions/runs/${RUN_ID}"
 
-          payload=$(cat <<EOF
+          if [[ "$STATUS" == "failure" ]]; then
+            # Failure pings fire on every channel. version/channel may be empty
+            # when the planning step itself failed, so fall back gracefully and
+            # lean on the workflow run link as the actionable detail.
+            HEADER="❌ Supabase CLI release failed (${CHANNEL:-unknown} channel)"
+            FALLBACK_TEXT="❌ Supabase CLI release failed on the ${CHANNEL:-unknown} channel"
+            DETAILS="*Channel:* ${CHANNEL:-unknown}\n*Commit:* <${COMMIT_URL}|${SHORT_SHA}>\n*Workflow run:* <${RUN_URL}|view failed run>"
+            if [[ -n "$VERSION" ]]; then
+              DETAILS="*Version:* v${VERSION}\n${DETAILS}"
+            fi
+            payload=$(cat <<EOF
+          {
+            "text": "${FALLBACK_TEXT}",
+            "blocks": [
+              {
+                "type": "header",
+                "text": { "type": "plain_text", "text": "${HEADER}", "emoji": true }
+              },
+              {
+                "type": "section",
+                "text": { "type": "mrkdwn", "text": "${DETAILS}" }
+              },
+              {
+                "type": "context",
+                "elements": [
+                  { "type": "mrkdwn", "text": "${REPO}" }
+                ]
+              }
+            ]
+          }
+          EOF
+            )
+          else
+            HEADER="🚀 Supabase CLI v${VERSION} released"
+            if [[ "$CHANNEL" == "beta" ]]; then
+              HEADER="🚀 Supabase CLI v${VERSION} released (beta)"
+            fi
+
+            CHANGELOG_URL="https://github.com/${REPO}/releases/tag/v${VERSION}"
+
+            payload=$(cat <<EOF
           {
             "text": "🚀 Supabase CLI Version ${VERSION} has been released",
             "blocks": [
@@ -67,6 +107,7 @@ jobs:
             ]
           }
           EOF
-          )
+            )
+          fi
 
           curl -fsSL -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK"

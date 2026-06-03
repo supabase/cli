@@ -53,75 +53,27 @@ on:
         required: false
 jobs:
   build:
-    runs-on: blacksmith-32vcpu-ubuntu-2404
-    env:
-      BUN_SHELL: ${{ inputs.shell }}
-      VERSION: ${{ inputs.version }}
+    name: Build CLI artifacts
+    uses: ./.github/workflows/build-cli-artifacts.yml
+    with:
+      version: ${{ inputs.version }}
+      shell: ${{ inputs.shell }}
+    secrets:
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
       POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Setup
-        uses: ./.github/actions/setup
-
-      - name: Setup Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
-        with:
-          go-version-file: apps/cli-go/go.mod
-          cache: true
-          cache-dependency-path: apps/cli-go/go.sum
-
-      - name: Pre-download Go modules
-        working-directory: apps/cli-go
-        run: go mod download -x
-
-      - name: Install nfpm
-        run: |
-          echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
-          sudo apt-get update
-          sudo apt-get install -y nfpm
-
-      - name: Sync versions
-        run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version "${VERSION}"
-
-      - name: Build selected shell
-        run: pnpm exec bun apps/cli/scripts/build.ts --version "${VERSION}" --shell "${BUN_SHELL}"
-
-      - name: Verify build artifacts
-        run: |
-          for pkg in cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-arm64-musl cli-linux-x64 cli-linux-x64-musl cli-windows-arm64 cli-windows-x64; do
-            echo "Checking packages/$pkg/bin/..."
-            ls -la "packages/$pkg/bin/"
-          done
-          echo "Checking dist/..."
-          ls -la dist/
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
-          path: |
-            packages/cli-*/bin/
-            dist/
 
   smoke-test:
     needs: build
     strategy:
       fail-fast: false
-      # macos-15-intel is the slowest smoke leg and the only one not on
-      # Blacksmith (Blacksmith macOS is ARM-only). Drop it from the matrix
-      # on prereleases (PR smoke + develop -> beta) so beta wall-clock isn't
-      # gated by it; stable releases on main still run the full matrix.
-      # The matrix list is built via fromJSON because GitHub Actions does
-      # not allow the `matrix` context in a job-level `if:` (matrix
-      # expansion happens after job conditions are evaluated).
       matrix:
-        runner: ${{ fromJSON(inputs.prerelease && '["blacksmith-8vcpu-ubuntu-2404","blacksmith-6vcpu-macos-latest","blacksmith-8vcpu-windows-2025"]' || '["blacksmith-8vcpu-ubuntu-2404","blacksmith-6vcpu-macos-latest","macos-15-intel","blacksmith-8vcpu-windows-2025"]') }}
+        runner:
+          - blacksmith-8vcpu-ubuntu-2404
+          - blacksmith-6vcpu-macos-latest
+          - macos-15-intel
+          - blacksmith-8vcpu-windows-2025
+          - windows-11-arm
     runs-on: ${{ matrix.runner }}
     env:
       NPM_TAG: ${{ inputs.npm_tag }}
@@ -136,7 +88,7 @@ jobs:
         uses: ./.github/actions/setup
 
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
 
@@ -156,7 +108,7 @@ jobs:
 
       - name: Setup QEMU for cross-platform Docker
         if: runner.os == 'Linux'
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
 
       # Cache the smoke-test base images across runs. Without this, eight
       # parallel `docker run` calls in smoke-test-linux.ts race on first-time
@@ -166,7 +118,7 @@ jobs:
       - name: Cache smoke-test docker images
         if: runner.os == 'Linux'
         id: smoke-docker-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.cache/smoke-docker-images.tar
           key: smoke-docker-images-debian-bookworm-slim-amazonlinux-2023-alpine-3.21-v1
@@ -234,16 +186,26 @@ jobs:
       contents: write
       id-token: write
     steps:
+      - name: Generate release repository token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: true
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Setup
         uses: ./.github/actions/setup
 
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
 
@@ -252,6 +214,11 @@ jobs:
 
       - name: Publish to npm
         run: pnpm exec bun apps/cli/scripts/publish.ts --tag "${NPM_TAG}"
+
+      - name: Configure git for release pushes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       # Push the version tag to origin as soon as npm has the bytes, before any
       # downstream step that can fail. Without this, a failure in the GH-release
@@ -264,8 +231,6 @@ jobs:
         run: |
           set -euo pipefail
           tag="v${VERSION}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if git ls-remote --tags origin "refs/tags/${tag}" | grep -q .; then
             echo "Tag ${tag} already on origin; skipping push."
           else
@@ -312,7 +277,7 @@ jobs:
           done
 
       - name: Create draft GitHub Release
-        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2.6.1
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
           tag_name: v${{ inputs.version }}
           name: v${{ inputs.version }}
@@ -340,6 +305,7 @@ jobs:
             dist/supabase_linux_amd64.tar.gz
             dist/supabase_windows_arm64.tar.gz
             dist/supabase_windows_amd64.tar.gz
+            install
 
       - name: Publish GitHub Release (immutable)
         env:
@@ -356,6 +322,20 @@ jobs:
       tag: v${{ inputs.version }}
       apply: true
       non_blocking: true
+
+  # Once the raw semantic-release block is in the release body, ask Claude to
+  # rewrite it into user-centric notes and open a PR for human approval. Stable
+  # releases only on this path — prereleases keep the raw body. Non-blocking so
+  # an LLM hiccup never gates a published release; reviewers can propose beta/
+  # alpha notes manually from the Actions tab (workflow_dispatch).
+  propose-release-notes:
+    uses: ./.github/workflows/propose-release-notes.yml
+    needs: backfill-release-notes
+    if: ${{ !inputs.dry_run && !inputs.prerelease && needs.backfill-release-notes.result == 'success' }}
+    with:
+      tag: v${{ inputs.version }}
+      non_blocking: true
+    secrets: inherit
 
   publish-homebrew:
     needs: publish
@@ -374,13 +354,13 @@ jobs:
         uses: ./.github/actions/setup
 
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
 
       - name: Generate Homebrew tap token
         id: app-token
-        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.GH_APP_CLIENT_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
@@ -419,13 +399,13 @@ jobs:
         uses: ./.github/actions/setup
 
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
 
       - name: Generate Scoop bucket token
         id: app-token
-        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.GH_APP_CLIENT_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}

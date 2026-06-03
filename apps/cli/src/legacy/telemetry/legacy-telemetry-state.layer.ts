@@ -15,18 +15,12 @@ interface State {
 const SCHEMA_VERSION = 1;
 const SESSION_ROTATION_MS = 30 * 60 * 1000;
 
-function telemetryPath(env: Record<string, string | undefined>, pathSvc: Path.Path): string {
+function legacyTelemetryPath(env: Record<string, string | undefined>, pathSvc: Path.Path): string {
   const supabaseHome = env["SUPABASE_HOME"]?.trim();
   if (supabaseHome !== undefined && supabaseHome.length > 0) {
     return pathSvc.join(supabaseHome, "telemetry.json");
   }
   return pathSvc.join(homedir(), ".supabase", "telemetry.json");
-}
-
-function isStringField(value: unknown, key: string): boolean {
-  if (typeof value !== "object" || value === null) return false;
-  const field = (value as Record<string, unknown>)[key];
-  return typeof field === "string" && field.length > 0;
 }
 
 interface PriorState {
@@ -37,24 +31,94 @@ interface PriorState {
   distinct_id?: string;
 }
 
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
 function readExistingState(text: string): PriorState | undefined {
   try {
     const parsed = JSON.parse(text);
     if (typeof parsed !== "object" || parsed === null) return undefined;
     const record = parsed as Record<string, unknown>;
     const out: PriorState = {};
-    if (typeof record.enabled === "boolean") out.enabled = record.enabled;
-    if (isStringField(parsed, "device_id")) out.device_id = record.device_id as string;
-    if (isStringField(parsed, "session_id")) out.session_id = record.session_id as string;
-    if (isStringField(parsed, "session_last_active")) {
-      out.session_last_active = record.session_last_active as string;
+    if (hasOwn(record, "enabled")) {
+      if (typeof record.enabled !== "boolean") return undefined;
+      out.enabled = record.enabled;
     }
-    if (isStringField(parsed, "distinct_id")) out.distinct_id = record.distinct_id as string;
+    if (hasOwn(record, "device_id")) {
+      if (typeof record.device_id !== "string") return undefined;
+      out.device_id = record.device_id;
+    }
+    if (hasOwn(record, "session_id")) {
+      if (typeof record.session_id !== "string") return undefined;
+      out.session_id = record.session_id;
+    }
+    if (hasOwn(record, "session_last_active")) {
+      if (typeof record.session_last_active !== "string") return undefined;
+      const parsedTime = new Date(record.session_last_active).getTime();
+      if (!Number.isFinite(parsedTime)) return undefined;
+      out.session_last_active = record.session_last_active;
+    }
+    if (hasOwn(record, "distinct_id")) {
+      if (typeof record.distinct_id !== "string") return undefined;
+      out.distinct_id = record.distinct_id;
+    }
+    if (hasOwn(record, "schema_version")) {
+      if (!Number.isInteger(record.schema_version)) return undefined;
+    }
     return out;
   } catch {
     return undefined;
   }
 }
+
+export const loadOrCreateLegacyTelemetryState = Effect.fn("legacy.telemetry.loadOrCreateState")(
+  function* (opts: { readonly now?: Date } = {}) {
+    const fs = yield* FileSystem.FileSystem;
+    const pathSvc = yield* Path.Path;
+    const filePath = legacyTelemetryPath(process.env, pathSvc);
+    const exists = yield* fs.exists(filePath);
+    const existing = exists ? yield* fs.readFileString(filePath) : undefined;
+    const prior = existing !== undefined ? readExistingState(existing) : undefined;
+    const now = opts.now ?? new Date();
+    const nowIso = now.toISOString();
+
+    const priorActive =
+      prior?.session_last_active !== undefined ? new Date(prior.session_last_active).getTime() : 0;
+    const expired =
+      !Number.isFinite(priorActive) || now.getTime() - priorActive > SESSION_ROTATION_MS;
+
+    const state: State = {
+      enabled: prior?.enabled ?? true,
+      device_id: prior?.device_id ?? crypto.randomUUID(),
+      session_id:
+        !expired && prior?.session_id !== undefined ? prior.session_id : crypto.randomUUID(),
+      session_last_active: nowIso,
+      ...(prior?.distinct_id !== undefined ? { distinct_id: prior.distinct_id } : {}),
+      schema_version: SCHEMA_VERSION,
+    };
+
+    yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
+    yield* fs.writeFileString(filePath, JSON.stringify(state));
+    return state;
+  },
+);
+
+export const setLegacyTelemetryEnabled = Effect.fn("legacy.telemetry.setEnabled")(function* (
+  enabled: boolean,
+  opts: { readonly now?: Date } = {},
+) {
+  const state = yield* loadOrCreateLegacyTelemetryState(opts);
+  if (state.enabled === enabled) return state;
+
+  const fs = yield* FileSystem.FileSystem;
+  const pathSvc = yield* Path.Path;
+  const nextState: State = { ...state, enabled };
+  const filePath = legacyTelemetryPath(process.env, pathSvc);
+  yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
+  yield* fs.writeFileString(filePath, JSON.stringify(nextState));
+  return nextState;
+});
 
 /**
  * Writes `<SUPABASE_HOME or ~/.supabase>/telemetry.json` on every command run.
@@ -77,41 +141,13 @@ export const legacyTelemetryStateLayer = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const pathSvc = yield* Path.Path;
-    const env = process.env;
-
     return LegacyTelemetryState.of({
-      flush: Effect.gen(function* () {
-        const filePath = telemetryPath(env, pathSvc);
-
-        const existing = yield* fs.readFileString(filePath).pipe(
-          Effect.option,
-          Effect.map((opt) => (opt._tag === "Some" ? opt.value : undefined)),
-        );
-        const prior = existing !== undefined ? readExistingState(existing) : undefined;
-
-        const now = new Date();
-        const nowIso = now.toISOString();
-
-        const priorActive =
-          prior?.session_last_active !== undefined
-            ? new Date(prior.session_last_active).getTime()
-            : 0;
-        const expired =
-          !Number.isFinite(priorActive) || now.getTime() - priorActive > SESSION_ROTATION_MS;
-
-        const state: State = {
-          enabled: prior?.enabled ?? true,
-          device_id: prior?.device_id ?? crypto.randomUUID(),
-          session_id:
-            !expired && prior?.session_id !== undefined ? prior.session_id : crypto.randomUUID(),
-          session_last_active: nowIso,
-          ...(prior?.distinct_id !== undefined ? { distinct_id: prior.distinct_id } : {}),
-          schema_version: SCHEMA_VERSION,
-        };
-
-        yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
-        yield* fs.writeFileString(filePath, JSON.stringify(state));
-      }).pipe(Effect.ignore),
+      flush: loadOrCreateLegacyTelemetryState().pipe(
+        Effect.asVoid,
+        Effect.ignore,
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, pathSvc),
+      ),
     });
   }),
 );

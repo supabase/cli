@@ -25,6 +25,7 @@ const BUILT_IN: Readonly<Record<string, LegacyProfileEndpoints>> = {
     projectHost: "supabase.red",
     dashboardUrl: "http://localhost:8082",
   },
+  snap: { projectHost: "snapcloud.dev", dashboardUrl: "https://cloud.snap.com/dashboard" },
 };
 
 const DEFAULT_ENDPOINTS: LegacyProfileEndpoints = BUILT_IN.supabase!;
