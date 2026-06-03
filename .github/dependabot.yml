@@ -9,6 +9,10 @@ updates:
       actions-major:
         patterns:
           - "*"
+    ignore:
+      - dependency-name: "supabase/setup-cli"
+        update-types:
+          - "version-update:semver-major"
     cooldown:
       default-days: 7
   - package-ecosystem: "gomod"
