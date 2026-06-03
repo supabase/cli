@@ -11,7 +11,7 @@ body:
       description: Please search existing issues before opening a new request.
       options:
         - label: I have searched the existing issues.
-          required: true
+          required: false
 
   - type: dropdown
     id: affected-area
@@ -30,7 +30,7 @@ body:
         - Installation
         - Other
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: problem
@@ -38,7 +38,7 @@ body:
       label: Problem to solve
       description: What workflow is difficult, missing, or confusing today?
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: proposed-solution
@@ -46,7 +46,7 @@ body:
       label: Proposed solution
       description: Describe the CLI behavior, command, flag, output, or workflow you would like to see.
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: alternatives
