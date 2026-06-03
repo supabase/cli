@@ -80,3 +80,65 @@ jobs:
           preview_url="https://pkg.pr.new/supabase@${PR_NUMBER}"
           echo "Preview command: npx ${preview_url}"
           npx --yes "${preview_url}" --version
+
+  comment:
+    needs: publish
+    if: github.event.pull_request.draft == false && needs.publish.result == 'success'
+    name: Post preview command comment
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Post preview command comment
+        run: |
+          set -euo pipefail
+
+          marker="<!-- supabase-cli-preview-package -->"
+          preview_url="https://pkg.pr.new/supabase@${PR_NUMBER}"
+          short_sha="${HEAD_SHA:0:7}"
+          comment_file="$(mktemp)"
+
+          cat > "${comment_file}" <<EOF
+          ${marker}
+          ## Supabase CLI preview
+
+          \`\`\`sh
+          npx --yes ${preview_url}
+          \`\`\`
+
+          _Preview package for commit [\`${short_sha}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${HEAD_SHA})._
+          EOF
+
+          if ! comment_id="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"${marker}\"))) | .id" \
+              | head -n 1
+          )"; then
+            echo "::warning::Unable to list PR comments. The preview package was published, but this workflow token cannot update the PR comment."
+            exit 0
+          fi
+
+          if [ -n "${comment_id}" ]; then
+            if ! gh api \
+              --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
+              --field "body=@${comment_file}" \
+              >/dev/null; then
+              echo "::warning::Unable to update the preview package PR comment."
+              exit 0
+            fi
+          else
+            if ! gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --field "body=@${comment_file}" \
+              >/dev/null; then
+              echo "::warning::Unable to create the preview package PR comment."
+              exit 0
+            fi
+          fi
