@@ -4,7 +4,8 @@ name: Apply release notes
 # release-notes PR (head ref `release-notes/v<VERSION>`), this workflow pushes
 # the proposed notes to the GitHub Release body for the corresponding tag,
 # comments the release URL on the PR, and closes the PR without merging. The
-# release-notes file never lands on `main`.
+# release-notes PR targets `develop` (not `main`) so an accidental merge can
+# never rewrite `main`'s history; the file is not meant to land on any branch.
 #
 # Mirrors the fast-forward job in release.yml, which already gates on a
 # `pull_request_review` + `approved` event.
@@ -17,29 +18,31 @@ permissions:
   contents: read
 
 jobs:
-  apply:
+  authorize:
     # `state == 'open'` makes re-approvals on an already-closed PR a no-op
     # (a reviewer can re-approve from the GitHub UI even after close).
     if: |
       github.event.review.state == 'approved' &&
       startsWith(github.event.pull_request.head.ref, 'release-notes/') &&
-      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.base.ref == 'develop' &&
       github.event.pull_request.state == 'open'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
       pull-requests: write
+    outputs:
+      authorized: ${{ steps.check.outputs.authorized }}
     steps:
       # App token: needs `orgs/.../teams/.../memberships` read (the org-installed
       # App has it), repo write to edit the release, and PR write to comment
       # and close. Matches release.yml's fast-forward step.
       - id: app-token
-        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.APP_ID }}
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
 
       - name: Authorize approver against supabase/cli team
+        id: check
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           APPROVER: ${{ github.event.review.user.login }}
@@ -57,25 +60,37 @@ jobs:
             echo "Approver @${APPROVER} is not an active supabase/cli team member (state='${status:-none}'); ignoring approval." >&2
             gh pr comment "$PR_NUMBER" --repo "${{ github.repository }}" --body \
               "@${APPROVER} is not an active \`supabase/cli\` team member, so this approval was ignored. Ask a team member to approve to publish the notes."
+            echo "authorized=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "AUTHORIZED=true" >> "$GITHUB_ENV"
+          echo "authorized=true" >> "$GITHUB_OUTPUT"
+
+  apply:
+    needs: authorize
+    if: needs.authorize.outputs.authorized == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
 
       # Checkout the PR head so any reviewer edits made in the GitHub UI before
       # approval are captured. apply-release-notes.ts reads from the working
       # tree.
-      - if: env.AUTHORIZED == 'true'
-        uses: useblacksmith/checkout@41cdeedae8edb2e684ba22896a5fd2a3cb85db6b # v1
+      - uses: useblacksmith/checkout@41cdeedae8edb2e684ba22896a5fd2a3cb85db6b # v1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
           persist-credentials: false
 
-      - if: env.AUTHORIZED == 'true'
-        uses: ./.github/actions/setup
+      - uses: ./.github/actions/setup
 
       - name: Apply notes, comment, and close
-        if: env.AUTHORIZED == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}

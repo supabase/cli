@@ -22,6 +22,11 @@ on:
         required: false
         type: boolean
         default: false
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+      GH_APP_PRIVATE_KEY:
+        required: true
   workflow_dispatch:
     inputs:
       tag:
@@ -38,7 +43,7 @@ jobs:
     # allow any tag so reviewers can opt in for beta/alpha from the Actions tab.
     if: ${{ github.event_name == 'workflow_dispatch' || (!contains(inputs.tag, '-beta.') && !contains(inputs.tag, '-alpha.')) }}
     runs-on: ubuntu-latest
-    continue-on-error: ${{ inputs.non_blocking }}
+    continue-on-error: ${{ inputs.non_blocking || false }}
     permissions:
       contents: write
       pull-requests: write
@@ -49,9 +54,9 @@ jobs:
       # App token gets us push to a protected default branch *and* PR creation
       # under the App identity, matching the rest of release.yml.
       - id: app-token
-        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.APP_ID }}
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
 
       - uses: useblacksmith/checkout@41cdeedae8edb2e684ba22896a5fd2a3cb85db6b # v1
