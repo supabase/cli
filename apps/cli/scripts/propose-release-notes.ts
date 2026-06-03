@@ -104,11 +104,11 @@ const options: Options = {
   // authenticated GitHub queries instead of HTML scraping. Edit/Write are
   // intentionally excluded — the script owns the final file output.
   allowedTools: ["WebFetch", "WebSearch", "Bash"],
-  permissionMode: "bypassPermissions",
   // Don't load the repo's CLAUDE.md or settings.json — the prompt is
   // self-contained and we don't want unrelated agent context bleeding in.
   settingSources: [],
   cwd: repoRoot,
+  effort: "low",
 };
 
 let finalText = "";
