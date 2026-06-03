@@ -24,6 +24,9 @@ interface DockerStorageOptions {
 
 const STORAGE_DATA_DIR = "/var/lib/storage";
 
+export const LOCAL_S3_PROTOCOL_ACCESS_KEY_ID = "local";
+export const LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET = "local-secret";
+
 const orphanCleanup = (opts: DockerStorageOptions) =>
   opts.cleanupDataDirOnExit ? removePathOnOrphanCleanup(opts.dataDir, { recursive: true }) : [];
 
@@ -66,8 +69,8 @@ export const makeStorageServiceDocker = (opts: DockerStorageOptions): ServiceDef
       IMGPROXY_URL: opts.imgproxyUrl,
       TUS_URL_PATH: "/storage/v1/upload/resumable",
       S3_PROTOCOL_ENABLED: String(opts.s3ProtocolEnabled),
-      S3_PROTOCOL_ACCESS_KEY_ID: "local",
-      S3_PROTOCOL_ACCESS_KEY_SECRET: "local-secret",
+      S3_PROTOCOL_ACCESS_KEY_ID: LOCAL_S3_PROTOCOL_ACCESS_KEY_ID,
+      S3_PROTOCOL_ACCESS_KEY_SECRET: LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET,
       S3_PROTOCOL_PREFIX: "/storage/v1",
       UPLOAD_FILE_SIZE_LIMIT: "52428800000",
       UPLOAD_FILE_SIZE_LIMIT_STANDARD: "5242880000",
