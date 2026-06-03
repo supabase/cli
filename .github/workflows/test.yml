@@ -1,5 +1,7 @@
 name: Test
 
+# Release-notes PRs (head ref `release-notes/*`) only add markdown under
+# `release-notes/` and are published via approval — skip the full CI suite.
 on:
   push:
     branches:
@@ -23,7 +25,9 @@ concurrency:
 
 jobs:
   check:
-    if: github.event.pull_request.draft == false || github.event_name == 'push'
+    if: |
+      !startsWith(github.head_ref, 'release-notes/') &&
+      (github.event.pull_request.draft == false || github.event_name == 'push')
     name: Check code quality
     runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
@@ -49,7 +53,9 @@ jobs:
         run: pnpm run check:all
 
   test-core:
-    if: github.event.pull_request.draft == false || github.event_name == 'push'
+    if: |
+      !startsWith(github.head_ref, 'release-notes/') &&
+      (github.event.pull_request.draft == false || github.event_name == 'push')
     name: Run unit and integration tests
     runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
@@ -75,7 +81,9 @@ jobs:
         run: pnpm run test:core
 
   test-e2e:
-    if: github.event.pull_request.draft == false || github.event_name == 'push'
+    if: |
+      !startsWith(github.head_ref, 'release-notes/') &&
+      (github.event.pull_request.draft == false || github.event_name == 'push')
     name: Run end-to-end tests (shard ${{ matrix.shard }}/3)
     runs-on: blacksmith-8vcpu-ubuntu-2404
     strategy:
@@ -173,8 +181,10 @@ jobs:
   # branch protection rules already require.  It succeeds iff every shard
   # succeeded (or skipped — `success()` is true for skipped jobs).
   test-e2e-summary:
-    if: always() && (github.event.pull_request.draft == false || github.event_name
-      == 'push')
+    if: |
+      always() &&
+      !startsWith(github.head_ref, 'release-notes/') &&
+      (github.event.pull_request.draft == false || github.event_name == 'push')
     name: Run end-to-end tests
     needs: test-e2e
     runs-on: ubuntu-latest

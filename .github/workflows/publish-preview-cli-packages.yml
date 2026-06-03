@@ -1,5 +1,7 @@
 name: Publish Preview CLI Packages
 
+# Release-notes PRs (head ref `release-notes/*`) are markdown-only and are not
+# meant to produce installable preview packages.
 on:
   pull_request:
     types:
@@ -20,7 +22,9 @@ concurrency:
 
 jobs:
   build:
-    if: github.event.pull_request.draft == false
+    if: |
+      !startsWith(github.head_ref, 'release-notes/') &&
+      github.event.pull_request.draft == false
     name: Build preview CLI packages
     uses: ./.github/workflows/build-cli-artifacts.yml
     with:
@@ -29,7 +33,10 @@ jobs:
 
   publish:
     needs: build
-    if: github.event.pull_request.draft == false && needs.build.result == 'success'
+    if: |
+      !startsWith(github.head_ref, 'release-notes/') &&
+      github.event.pull_request.draft == false &&
+      needs.build.result == 'success'
     name: Publish preview package
     runs-on: ubuntu-latest
     env:
@@ -83,7 +90,10 @@ jobs:
 
   comment:
     needs: publish
-    if: github.event.pull_request.draft == false && needs.publish.result == 'success'
+    if: |
+      !startsWith(github.head_ref, 'release-notes/') &&
+      github.event.pull_request.draft == false &&
+      needs.publish.result == 'success'
     name: Post preview command comment
     runs-on: ubuntu-latest
     permissions:
