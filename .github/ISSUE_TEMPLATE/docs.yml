@@ -25,7 +25,7 @@ body:
         - Typo or formatting
         - Other
     validations:
-      required: false
+      required: true
 
   - type: textarea
     id: problem
@@ -33,7 +33,7 @@ body:
       label: Problem
       description: What is missing, incorrect, confusing, or outdated?
     validations:
-      required: false
+      required: true
 
   - type: textarea
     id: improvement
@@ -41,7 +41,7 @@ body:
       label: Suggested improvement
       description: Describe the change you would like to see.
     validations:
-      required: false
+      required: true
 
   - type: textarea
     id: additional-context

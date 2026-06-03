@@ -30,7 +30,7 @@ body:
         - Installation
         - Other
     validations:
-      required: false
+      required: true
 
   - type: textarea
     id: problem
@@ -38,7 +38,7 @@ body:
       label: Problem to solve
       description: What workflow is difficult, missing, or confusing today?
     validations:
-      required: false
+      required: true
 
   - type: textarea
     id: proposed-solution
@@ -46,7 +46,7 @@ body:
       label: Proposed solution
       description: Describe the CLI behavior, command, flag, output, or workflow you would like to see.
     validations:
-      required: false
+      required: true
 
   - type: textarea
     id: alternatives

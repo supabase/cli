@@ -27,7 +27,7 @@ body:
         - Installation
         - Other
     validations:
-      required: false
+      required: true
 
   - type: input
     id: cli-version
@@ -36,7 +36,7 @@ body:
       description: Run `supabase --version`.
       placeholder: v2.23.4
     validations:
-      required: false
+      required: true
 
   - type: input
     id: os
@@ -44,7 +44,7 @@ body:
       label: Operating system
       placeholder: macOS 15.5, Ubuntu 24.04, Windows 11, etc.
     validations:
-      required: false
+      required: true
 
   - type: dropdown
     id: install-method
@@ -69,7 +69,7 @@ body:
       render: shell
       placeholder: supabase db push
     validations:
-      required: false
+      required: true
 
   - type: textarea
     id: actual-output
@@ -78,7 +78,7 @@ body:
       description: Paste the full error, log output, or terminal output. Remove secrets before submitting.
       render: shell
     validations:
-      required: false
+      required: true
 
   - type: textarea
     id: expected-behavior
@@ -86,7 +86,7 @@ body:
       label: Expected behavior
       description: What did you expect the CLI to do instead?
     validations:
-      required: false
+      required: true
 
   - type: textarea
     id: reproduce
@@ -99,7 +99,7 @@ body:
         3. Run ...
         4. See ...
     validations:
-      required: false
+      required: true
 
   - type: input
     id: ticket-id
