@@ -4,7 +4,7 @@ import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { normalizeKeyringToken } from "../../shared/auth/keyring-token.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { LegacyCredentials } from "./legacy-credentials.service.ts";
-import { LegacyInvalidAccessTokenError } from "./legacy-errors.ts";
+import { LegacyCredentialDeleteError, LegacyInvalidAccessTokenError } from "./legacy-errors.ts";
 
 const KEYRING_SERVICE = "Supabase CLI";
 const LEGACY_KEYRING_ACCOUNT = "access-token";
@@ -160,6 +160,64 @@ function deleteGoWindowsTarget(module: KeyringModule, account: string): boolean 
     return false;
   }
 }
+// Delete the project database-password entry (keyed by project ref), surfacing a
+// real failure while ignoring the "nothing to delete" cases — mirroring Go's
+// unlink, which ignores both `keyring.ErrNotFound` AND `credentials.ErrNotSupported`
+// (backend unavailable) and only surfaces other errors (`unlink.go:36-40`).
+//
+// The plain `Entry(service, projectRef)` is the macOS/Linux form and the Windows
+// default. On Windows, Go also writes a separate target-shaped credential; it is
+// detected via `findCredentials` (a plain `getPassword` does not read the Go
+// target reliably) and deleted through the `withTarget` entry. The `withTarget`
+// entry is only constructed on Windows — on macOS its first argument is an
+// invalid keychain domain and throws.
+//
+// Each entry is probed before `deleteCredential()`: on macOS deleting an absent
+// entry blocks on a Keychain authorization prompt, and an absent read means
+// there is nothing to delete (ignorable, per Go). Only a real delete failure is
+// surfaced as `LegacyCredentialDeleteError`.
+const deleteKeyringEntryStrict = (
+  module: KeyringModule,
+  account: string,
+  platform: RuntimePlatform,
+): Effect.Effect<boolean, LegacyCredentialDeleteError> =>
+  Effect.gen(function* () {
+    let deleted = false;
+
+    const plain = new module.Entry(KEYRING_SERVICE, account);
+    if (readEntryPassword(plain)) {
+      yield* Effect.try({
+        try: () => {
+          plain.deleteCredential();
+        },
+        catch: (cause) =>
+          new LegacyCredentialDeleteError({
+            message: `failed to delete project credential: ${String(cause)}`,
+          }),
+      });
+      deleted = true;
+    }
+
+    if (platform === "win32" && readGoWindowsTarget(module, account)) {
+      const target = module.Entry.withTarget(
+        goWindowsCredentialTarget(account),
+        KEYRING_SERVICE,
+        account,
+      );
+      yield* Effect.try({
+        try: () => {
+          target.deleteCredential();
+        },
+        catch: (cause) =>
+          new LegacyCredentialDeleteError({
+            message: `failed to delete project credential: ${String(cause)}`,
+          }),
+      });
+      deleted = true;
+    }
+
+    return deleted;
+  });
 
 const makeLegacyCredentials = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -172,10 +230,16 @@ const makeLegacyCredentials = Effect.gen(function* () {
   const fallbackDir = path.join(runtimeInfo.homeDir, ".supabase");
   const fallbackPath = path.join(fallbackDir, "access-token");
 
+  // `SUPABASE_NO_KEYRING=1` disables the OS keyring entirely (matches `next/`'s
+  // credentials layer and the cli-e2e harness, which sets it). Without this, any
+  // unconditional keyring access — e.g. `unlink`'s credential delete — blocks on a
+  // Keychain authorization prompt in non-interactive / CI contexts.
+  const noKeyring = process.env["SUPABASE_NO_KEYRING"] === "1";
   const wsl = yield* detectWsl(fs);
-  const keyringModule = wsl
-    ? Option.none<KeyringModule>()
-    : yield* Effect.tryPromise(() => import("@napi-rs/keyring")).pipe(Effect.option);
+  const keyringModule =
+    wsl || noKeyring
+      ? Option.none<KeyringModule>()
+      : yield* Effect.tryPromise(() => import("@napi-rs/keyring")).pipe(Effect.option);
 
   const validate = (token: string): Effect.Effect<string, LegacyInvalidAccessTokenError> =>
     ACCESS_TOKEN_PATTERN.test(token)
@@ -261,6 +325,17 @@ const makeLegacyCredentials = Effect.gen(function* () {
       }
       return anyDeleted;
     }),
+
+    deleteProjectCredential: (projectRef: string) =>
+      Effect.gen(function* () {
+        // WSL / no keyring module: treated as `ErrNotSupported` — a no-op success.
+        if (Option.isNone(keyringModule)) return false;
+        return yield* deleteKeyringEntryStrict(
+          keyringModule.value,
+          projectRef,
+          runtimeInfo.platform,
+        );
+      }),
   });
 });
 

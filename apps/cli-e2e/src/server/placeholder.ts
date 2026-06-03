@@ -61,6 +61,33 @@ export function applyPlaceholders(input: string): { output: string } {
   return { output };
 }
 
+// The project-ref placeholder (`__PROJECT_REF__`) is 15 characters, but the
+// Management API schema constrains project refs to `^[a-z]{20}$` (minLength 20).
+// The Go CLI doesn't validate response bodies, so it tolerates the short
+// placeholder; the TS port decodes responses against the generated schema and
+// rejects it (e.g. `link` calling `getProject`). When serving a recorded
+// response we therefore substitute any field whose value is *exactly* the
+// placeholder back to a valid 20-char ref. Substring occurrences such as
+// `db.__PROJECT_REF__.supabase.red` are left untouched so tests that assert on
+// the literal placeholder host keep matching.
+const PROJECT_REF_VALUE = /"__PROJECT_REF__"/g;
+const PLACEHOLDER_PROJECT_REF = "abcdefghijklmnopqrst";
+
+/** Extract the 20-char project ref from a `/v1/projects/<ref>` request path,
+ *  falling back to a stable placeholder ref for refless endpoints (e.g. the
+ *  project list). */
+export function projectRefFromPath(urlPath: string): string {
+  const match = urlPath.match(/\/projects\/([a-z]{20})(?:\/|$)/);
+  return match?.[1] ?? PLACEHOLDER_PROJECT_REF;
+}
+
+/** Replace exact-match `__PROJECT_REF__` string values in a serialized JSON
+ *  body with a schema-valid 20-char ref. Operates on the JSON string so only
+ *  full quoted values are rewritten, never substrings. */
+export function restoreProjectRef(json: string, ref: string): string {
+  return json.replace(PROJECT_REF_VALUE, `"${ref}"`);
+}
+
 /** Normalize dynamic segments in a URL path to stable unnumbered placeholders.
  *  Apply this to both the stored fixture path and the incoming request path so
  *  both sides of a scenario comparison transform identically. */
