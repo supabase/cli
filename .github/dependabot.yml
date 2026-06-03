@@ -5,6 +5,8 @@ updates:
     schedule:
       interval: "cron"
       cronjob: "0 0 * * *"
+    commit-message:
+      prefix: "chore(ci): "
     groups:
       actions-major:
         patterns:
