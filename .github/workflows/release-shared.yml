@@ -186,10 +186,19 @@ jobs:
       contents: write
       id-token: write
     steps:
+      - name: Generate release repository token
+        id: app-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          persist-credentials: true
+          persist-credentials: false
 
       - name: Setup
         uses: ./.github/actions/setup
@@ -205,6 +214,14 @@ jobs:
       - name: Publish to npm
         run: pnpm exec bun apps/cli/scripts/publish.ts --tag "${NPM_TAG}"
 
+      - name: Configure git for release pushes
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh auth setup-git
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
       # Push the version tag to origin as soon as npm has the bytes, before any
       # downstream step that can fail. Without this, a failure in the GH-release
       # step (or anything after) leaves origin with no tag for the version that
@@ -216,8 +233,6 @@ jobs:
         run: |
           set -euo pipefail
           tag="v${VERSION}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if git ls-remote --tags origin "refs/tags/${tag}" | grep -q .; then
             echo "Tag ${tag} already on origin; skipping push."
           else
