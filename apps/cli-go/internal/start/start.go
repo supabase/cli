@@ -1107,29 +1107,7 @@ EOF
 			ctx,
 			container.Config{
 				Image: utils.Config.Studio.Image,
-				Env: []string{
-					"CURRENT_CLI_VERSION=" + utils.Version,
-					"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
-					"POSTGRES_PASSWORD=" + dbConfig.Password,
-					"SUPABASE_URL=http://" + utils.KongId + ":8000",
-					"SUPABASE_PUBLIC_URL=" + utils.Config.Studio.ApiUrl,
-					"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
-					"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey.Value,
-					"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
-					"LOGFLARE_PRIVATE_ACCESS_TOKEN=" + utils.Config.Analytics.ApiKey,
-					"OPENAI_API_KEY=" + utils.Config.Studio.OpenaiApiKey.Value,
-					"PGRST_DB_SCHEMAS=" + strings.Join(utils.Config.Api.Schemas, ","),
-					"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(utils.Config.Api.ExtraSearchPath, ","),
-					fmt.Sprintf("PGRST_DB_MAX_ROWS=%d", utils.Config.Api.MaxRows),
-					fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
-					fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
-					fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
-					"EDGE_FUNCTIONS_MANAGEMENT_FOLDER=" + utils.ToDockerPath(filepath.Join(workdir, utils.FunctionsDir)),
-					"SNIPPETS_MANAGEMENT_FOLDER=" + containerSnippetsPath,
-					// Ref: https://github.com/vercel/next.js/issues/51684#issuecomment-1612834913
-					"HOSTNAME=0.0.0.0",
-					"POSTGRES_USER_READ_WRITE=postgres",
-				},
+				Env:   buildStudioEnv(dbConfig, workdir, containerSnippetsPath),
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD-SHELL", `node --eval="fetch('http://127.0.0.1:3000/api/platform/profile').then((r) => {if (!r.ok) throw new Error(r.status)})"`},
 					Interval: 10 * time.Second,
@@ -1277,6 +1255,36 @@ func formatMapForEnvConfig(input map[string]string, output *bytes.Buffer) {
 		if i < numOfKeyPairs {
 			output.WriteString(",")
 		}
+	}
+}
+
+func buildStudioEnv(dbConfig pgconn.Config, workdir, containerSnippetsPath string) []string {
+	return []string{
+		"CURRENT_CLI_VERSION=" + utils.Version,
+		"STUDIO_PG_META_URL=http://" + utils.PgmetaId + ":8080",
+		"POSTGRES_PASSWORD=" + dbConfig.Password,
+		"SUPABASE_URL=http://" + utils.KongId + ":8000",
+		"SUPABASE_PUBLIC_URL=" + utils.Config.Studio.ApiUrl,
+		"AUTH_JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
+		"SUPABASE_ANON_KEY=" + utils.Config.Auth.AnonKey.Value,
+		"SUPABASE_SERVICE_KEY=" + utils.Config.Auth.ServiceRoleKey.Value,
+		"SUPABASE_PUBLISHABLE_KEY=" + utils.Config.Auth.PublishableKey.Value,
+		"SUPABASE_SECRET_KEY=" + utils.Config.Auth.SecretKey.Value,
+		"S3_PROTOCOL_ACCESS_KEY_ID=" + utils.Config.Storage.S3Credentials.AccessKeyId,
+		"S3_PROTOCOL_ACCESS_KEY_SECRET=" + utils.Config.Storage.S3Credentials.SecretAccessKey,
+		"LOGFLARE_PRIVATE_ACCESS_TOKEN=" + utils.Config.Analytics.ApiKey,
+		"OPENAI_API_KEY=" + utils.Config.Studio.OpenaiApiKey.Value,
+		"PGRST_DB_SCHEMAS=" + strings.Join(utils.Config.Api.Schemas, ","),
+		"PGRST_DB_EXTRA_SEARCH_PATH=" + strings.Join(utils.Config.Api.ExtraSearchPath, ","),
+		fmt.Sprintf("PGRST_DB_MAX_ROWS=%d", utils.Config.Api.MaxRows),
+		fmt.Sprintf("LOGFLARE_URL=http://%v:4000", utils.LogflareId),
+		fmt.Sprintf("NEXT_PUBLIC_ENABLE_LOGS=%v", utils.Config.Analytics.Enabled),
+		fmt.Sprintf("NEXT_ANALYTICS_BACKEND_PROVIDER=%v", utils.Config.Analytics.Backend),
+		"EDGE_FUNCTIONS_MANAGEMENT_FOLDER=" + utils.ToDockerPath(filepath.Join(workdir, utils.FunctionsDir)),
+		"SNIPPETS_MANAGEMENT_FOLDER=" + containerSnippetsPath,
+		// Ref: https://github.com/vercel/next.js/issues/51684#issuecomment-1612834913
+		"HOSTNAME=0.0.0.0",
+		"POSTGRES_USER_READ_WRITE=postgres",
 	}
 }
 
