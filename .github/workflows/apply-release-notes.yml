@@ -1,14 +1,24 @@
 name: Apply release notes
 
-# Approval-based publish. When a member of the supabase/cli team approves a
-# release-notes PR (head ref `release-notes/v<VERSION>`), this workflow pushes
-# the proposed notes to the GitHub Release body for the corresponding tag,
-# comments the release URL on the PR, and closes the PR without merging. The
-# release-notes PR targets `develop` (not `main`) so an accidental merge can
-# never rewrite `main`'s history; the file is not meant to land on any branch.
+# Approval-based publish. When a `supabase` org member approves a release-notes
+# PR (head ref `release-notes/v<VERSION>`), this workflow pushes the proposed
+# notes to the GitHub Release body for the corresponding tag, comments the
+# release URL on the PR, and closes the PR without merging. The release-notes
+# PR targets `develop` (not `main`) so an accidental merge can never rewrite
+# `main`'s history; the file is not meant to land on any branch.
 #
-# Mirrors the fast-forward job in release.yml, which already gates on a
-# `pull_request_review` + `approved` event.
+# Authorization uses the review's `author_association` (computed by GitHub and
+# part of the trusted event payload — not user-spoofable) rather than an
+# `orgs/.../teams/cli/memberships` API call. CODEOWNERS for this repo is the
+# `@supabase/cli` team, but expanding a team requires the org `members:read`
+# permission, which the App token does not have. `MEMBER` restricts publishing
+# to `supabase` org members (the `cli` team is a subset of them); `OWNER` is an
+# org-repo no-op kept only for completeness. Outside collaborators
+# (`COLLABORATOR`) and everyone else (`CONTRIBUTOR`, `NONE`, …) are ignored.
+# This needs zero API calls.
+#
+# Mirrors the fast-forward job in release.yml, which also gates purely on the
+# `pull_request_review` + `approved` event with no extra API call.
 
 on:
   pull_request_review:
@@ -18,56 +28,19 @@ permissions:
   contents: read
 
 jobs:
-  authorize:
+  apply:
+    # Authorize purely from the trusted event payload (zero API calls):
+    #   - approved review on an open release-notes/* PR targeting develop
+    #   - approver's author_association is a supabase org member (MEMBER/OWNER);
+    #     outside collaborators are intentionally excluded
     # `state == 'open'` makes re-approvals on an already-closed PR a no-op
     # (a reviewer can re-approve from the GitHub UI even after close).
     if: |
       github.event.review.state == 'approved' &&
       startsWith(github.event.pull_request.head.ref, 'release-notes/') &&
       github.event.pull_request.base.ref == 'develop' &&
-      github.event.pull_request.state == 'open'
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-    outputs:
-      authorized: ${{ steps.check.outputs.authorized }}
-    steps:
-      # App token: needs `orgs/.../teams/.../memberships` read (the org-installed
-      # App has it), repo write to edit the release, and PR write to comment
-      # and close. Matches release.yml's fast-forward step.
-      - id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.GH_APP_CLIENT_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-
-      - name: Authorize approver against supabase/cli team
-        id: check
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          APPROVER: ${{ github.event.review.user.login }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        # Fail closed: any response other than an active membership means the
-        # approval is ignored. We post a comment so the reviewer sees why their
-        # approval didn't apply, then exit 0 so the workflow isn't flagged red.
-        run: |
-          set -euo pipefail
-          status=$(gh api \
-            -H "Accept: application/vnd.github+json" \
-            "orgs/supabase/teams/cli/memberships/${APPROVER}" \
-            --jq '.state' 2>/dev/null || true)
-          if [ "$status" != "active" ]; then
-            echo "Approver @${APPROVER} is not an active supabase/cli team member (state='${status:-none}'); ignoring approval." >&2
-            gh pr comment "$PR_NUMBER" --repo "${{ github.repository }}" --body \
-              "@${APPROVER} is not an active \`supabase/cli\` team member, so this approval was ignored. Ask a team member to approve to publish the notes."
-            echo "authorized=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "authorized=true" >> "$GITHUB_OUTPUT"
-
-  apply:
-    needs: authorize
-    if: needs.authorize.outputs.authorized == 'true'
+      github.event.pull_request.state == 'open' &&
+      contains(fromJSON('["OWNER", "MEMBER"]'), github.event.review.author_association)
     runs-on: ubuntu-latest
     permissions:
       contents: write
