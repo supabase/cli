@@ -14,7 +14,7 @@ describe("supabase init", () => {
       const { stdout, exitCode } = await runSupabase(["init"], { cwd: tempDir });
 
       expect(exitCode).toBe(0);
-      expect(stdout).toContain("Finished supabase init.");
+      expect(stdout).toContain("Initialized Supabase project.");
 
       const content = await readFile(join(tempDir, "supabase", "config.toml"), "utf8");
       expect(content).toContain("major_version = 17");

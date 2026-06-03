@@ -8,7 +8,7 @@ import {
   VSCODE_SETTINGS_TEMPLATE,
   renderProjectConfigTemplate,
 } from "./project-init.templates.ts";
-import { InitAlreadyExistsError, InitParseSettingsError } from "./project-init.errors.ts";
+import { InitParseSettingsError } from "./project-init.errors.ts";
 
 const invalidProjectId = /[^a-zA-Z0-9_.-]+/g;
 const maxProjectIdLength = 40;
@@ -254,6 +254,14 @@ const ensureSupabaseGitignore = Effect.fnUntraced(function* (cwd: string) {
   yield* fs.writeFileString(gitignorePath, INIT_GITIGNORE_TEMPLATE);
 });
 
+/**
+ * Scaffolds the local project files (config.toml, .gitignore, optional IDE
+ * settings). This owns the mechanical filesystem work only — it does not decide
+ * how an already-initialized project is reported. When `config.toml` already
+ * exists and `force` is not set it short-circuits with `created: false` and
+ * writes nothing, leaving each shell free to treat that as a hard error (legacy
+ * Go parity) or a graceful no-op (next).
+ */
 export const initProject = Effect.fnUntraced(function* (options: ProjectInitOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -265,12 +273,7 @@ export const initProject = Effect.fnUntraced(function* (options: ProjectInitOpti
   const existingToml = yield* fs.exists(configTomlPath);
 
   if (existingToml && !options.force) {
-    return yield* Effect.fail(
-      new InitAlreadyExistsError({
-        detail: `Config already exists at ${configTomlPath}.`,
-        suggestion: "Run `supabase init --force` to overwrite the existing config.",
-      }),
-    );
+    return { created: false, configPath: configTomlPath };
   }
 
   const projectId = sanitizeProjectId(path.basename(options.cwd)) || "supabase";
@@ -293,7 +296,5 @@ export const initProject = Effect.fnUntraced(function* (options: ProjectInitOpti
     yield* writeIntelliJConfig(options.cwd);
   }
 
-  return {
-    configPath: configTomlPath,
-  } as const;
+  return { created: true, configPath: configTomlPath };
 });

@@ -21,12 +21,29 @@ export const init = Effect.fnUntraced(function* (
     );
   }
 
-  yield* initProject({
+  yield* output.intro("Initialize local Supabase project");
+
+  // The next shell does not expose the hidden IDE compat flags; editor settings
+  // are only generated when the user opts in through interactive mode.
+  const result = yield* initProject({
     cwd: runtimeInfo.cwd,
     ...flags,
     withVscodeSettings: false,
     withIntellijSettings: false,
   });
 
-  yield* output.raw("Finished supabase init.\n");
+  if (!result.created) {
+    yield* output.success("Supabase project already initialized.", {
+      config_path: result.configPath,
+      created: false,
+    });
+    yield* output.outro(`Using existing config at ${result.configPath}.`);
+    return;
+  }
+
+  yield* output.success("Initialized Supabase project.", {
+    config_path: result.configPath,
+    created: true,
+  });
+  yield* output.outro(`Created ${result.configPath}.`);
 });

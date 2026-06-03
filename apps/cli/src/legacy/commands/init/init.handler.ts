@@ -2,7 +2,10 @@ import { resolve } from "node:path";
 import { Effect, Option } from "effect";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { initProject } from "../../../shared/init/project-init.ts";
-import { InitExperimentalRequiredError } from "../../../shared/init/project-init.errors.ts";
+import {
+  InitAlreadyExistsError,
+  InitExperimentalRequiredError,
+} from "../../../shared/init/project-init.errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { LegacyExperimentalFlag, LegacyWorkdirFlag } from "../../../shared/legacy/global-flags.ts";
 import type { LegacyInitFlags } from "./init.command.ts";
@@ -22,7 +25,7 @@ export const legacyInit = Effect.fn("legacy.init")(function* (flags: LegacyInitF
     );
   }
 
-  yield* initProject({
+  const result = yield* initProject({
     cwd: Option.isSome(workdir) ? resolve(runtimeInfo.cwd, workdir.value) : runtimeInfo.cwd,
     force: flags.force,
     useOrioledb: flags.useOrioledb,
@@ -30,6 +33,15 @@ export const legacyInit = Effect.fn("legacy.init")(function* (flags: LegacyInitF
     withVscodeSettings: flags.withVscodeWorkspace || flags.withVscodeSettings,
     withIntellijSettings: flags.withIntellijSettings,
   });
+
+  if (!result.created) {
+    return yield* Effect.fail(
+      new InitAlreadyExistsError({
+        detail: `Config already exists at ${result.configPath}.`,
+        suggestion: "Run `supabase init --force` to overwrite the existing config.",
+      }),
+    );
+  }
 
   yield* output.raw("Finished supabase init.\n");
 });

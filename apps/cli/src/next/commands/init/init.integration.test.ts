@@ -117,29 +117,41 @@ describe("init handler", () => {
       expect(
         yield* Effect.tryPromise(() => readFile(join(tempDir, "supabase", ".gitignore"), "utf8")),
       ).toBe(INIT_GITIGNORE_TEMPLATE);
-      expect(out.stdoutText).toBe("Finished supabase init.\n");
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "success",
+          message: "Initialized Supabase project.",
+          data: expect.objectContaining({ config_path: configPath, created: true }),
+        }),
+      );
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );
   });
 
-  it.live("fails when a config already exists without force", () => {
+  it.live("reports an already-initialized project without overwriting it", () => {
     const tempDir = makeTempDir();
     const configPath = join(tempDir, "supabase", "config.toml");
 
     return Effect.gen(function* () {
       yield* Effect.tryPromise(() => mkdir(join(tempDir, "supabase"), { recursive: true }));
       yield* Effect.tryPromise(() => writeFile(configPath, 'project_id = "existing"\n'));
-      const { layer } = buildLayer(tempDir);
+      const { layer, out } = buildLayer(tempDir);
 
-      const exit = yield* init({
+      yield* init({
         interactive: false,
         experimental: false,
         useOrioledb: false,
         force: false,
-      }).pipe(Effect.provide(layer), Effect.exit);
+      }).pipe(Effect.provide(layer));
 
-      expectFailureTag(exit, "InitAlreadyExistsError");
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "success",
+          message: "Supabase project already initialized.",
+          data: expect.objectContaining({ config_path: configPath, created: false }),
+        }),
+      );
       expect(yield* Effect.tryPromise(() => readFile(configPath, "utf8"))).toBe(
         'project_id = "existing"\n',
       );
@@ -243,7 +255,9 @@ describe("init handler", () => {
         yield* Effect.tryPromise(() => readFile(join(tempDir, ".vscode", "settings.json"), "utf8")),
       ).toContain('"deno.enablePaths"');
       expect(out.stdoutText).toContain("Generated VS Code settings in .vscode/settings.json.");
-      expect(out.stdoutText).toContain("Finished supabase init.");
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({ type: "success", message: "Initialized Supabase project." }),
+      );
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );
@@ -387,7 +401,10 @@ describe("init handler", () => {
         force: false,
       }).pipe(Effect.provide(layer));
 
-      expect(out.stdoutText).toBe("Finished supabase init.\n");
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({ type: "success", message: "Initialized Supabase project." }),
+      );
+      expect(out.stdoutText).not.toContain("Generated VS Code settings");
       expect(
         yield* Effect.tryPromise(async () => {
           try {
