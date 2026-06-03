@@ -13,8 +13,8 @@ updates:
       default-days: 7
   - package-ecosystem: "gomod"
     directories:
-      - "/"
-      - "pkg"
+      - "/apps/cli-go"
+      - "/apps/cli-go/pkg"
     schedule:
       interval: "cron"
       cronjob: "0 0 * * *"
