@@ -87,7 +87,7 @@ jobs:
     name: Post preview command comment
     runs-on: ubuntu-latest
     permissions:
-      issues: write
+      pull-requests: write
     env:
       GH_TOKEN: ${{ github.token }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
