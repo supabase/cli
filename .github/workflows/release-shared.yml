@@ -198,7 +198,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          persist-credentials: false
+          persist-credentials: true
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Setup
         uses: ./.github/actions/setup
@@ -215,10 +216,7 @@ jobs:
         run: pnpm exec bun apps/cli/scripts/publish.ts --tag "${NPM_TAG}"
 
       - name: Configure git for release pushes
-        env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          gh auth setup-git
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
