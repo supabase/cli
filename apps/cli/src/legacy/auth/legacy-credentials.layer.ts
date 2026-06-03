@@ -283,7 +283,17 @@ const deleteProfileKeyringEntry = (
 // the project database-password credentials `link` writes. Mirrors Go's
 // `keyring.DeleteAll(namespace)` (`store.go:71`). Never fails: per-entry delete
 // errors are swallowed so a single stuck credential can't abort logout.
-const deleteAllKeyringEntries = (module: KeyringModule): Effect.Effect<void> =>
+//
+// On Windows, Go stores credentials under the target-shaped name
+// `Supabase CLI:<account>` rather than the plain `Entry(service, account)` form
+// (see `writeGoWindowsTarget`). So each discovered account is deleted in BOTH
+// forms — the plain entry and, on win32, the Go target entry — mirroring the
+// individual deletes in `deleteProfileKeyringEntry`. Without this, a Go-written
+// project credential would survive `logout` on Windows.
+const deleteAllKeyringEntries = (
+  module: KeyringModule,
+  platform: RuntimePlatform,
+): Effect.Effect<void> =>
   Effect.sync(() => {
     let entries: ReadonlyArray<{ account: string }>;
     try {
@@ -296,6 +306,9 @@ const deleteAllKeyringEntries = (module: KeyringModule): Effect.Effect<void> =>
         new module.Entry(KEYRING_SERVICE, account).deleteCredential();
       } catch {
         // best-effort per entry
+      }
+      if (platform === "win32" && readGoWindowsTarget(module, account)) {
+        deleteGoWindowsTarget(module, account);
       }
     }
   });
@@ -431,7 +444,7 @@ const makeLegacyCredentials = Effect.gen(function* () {
 
     deleteAllProjectCredentials: Effect.gen(function* () {
       if (Option.isNone(keyringModule)) return;
-      yield* deleteAllKeyringEntries(keyringModule.value);
+      yield* deleteAllKeyringEntries(keyringModule.value, runtimeInfo.platform);
     }),
 
     deleteProjectCredential: (projectRef: string) =>

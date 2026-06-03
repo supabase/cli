@@ -33,7 +33,13 @@ vi.mock("@napi-rs/keyring", () => ({
   findCredentials: (service: string, target?: string) =>
     Array.from(passwords.entries())
       .filter(([key]) =>
-        target === undefined ? key.startsWith(`${service}/`) : key.startsWith(`${target}/`),
+        // No target → model the Windows `CredEnumerate("<service>*")` sweep,
+        // which matches both the plain (`<service>/…`) and the Go target-shaped
+        // (`<service>:<account>/…`) entries by the leading segment. With a
+        // target → narrow to that specific Go target (used by readGoWindowsTarget).
+        target === undefined
+          ? key.split("/")[0]!.startsWith(service)
+          : key.startsWith(`${target}/`),
       )
       .map(([key, password]) => ({
         account: key.split("/").at(-1)!,
@@ -476,6 +482,17 @@ describe("legacyCredentialsLayer.deleteAllProjectCredentials", () => {
       yield* deleteAllProjectCredentials;
       expect(passwords.has("Supabase CLI/abcdefghijklmnopqrs1")).toBe(true);
     }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_NO_KEYRING: "1" } })));
+  });
+
+  it.effect("win32: deletes Go target-shaped project credentials", () => {
+    // Go stores Windows project credentials under `Supabase CLI:<ref>`, not the
+    // plain `Supabase CLI/<ref>` form. The sweep must delete the target form too.
+    passwords.set(goWindowsKey("abcdefghijklmnopqrs1"), "secret-1");
+    return Effect.gen(function* () {
+      const { deleteAllProjectCredentials } = yield* LegacyCredentials;
+      yield* deleteAllProjectCredentials;
+      expect(passwords.has(goWindowsKey("abcdefghijklmnopqrs1"))).toBe(false);
+    }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
   });
 
   it.effect("never fails even when an individual delete throws", () => {
