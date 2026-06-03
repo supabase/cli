@@ -32,11 +32,11 @@ None.
 
 ## Exit Codes
 
-| Code | Condition                                                            |
-| ---- | -------------------------------------------------------------------- |
-| `0`  | success - prints "Finished supabase init."                           |
-| `1`  | `supabase/config.toml` already exists and `--force` was not provided |
-| `1`  | permission denied writing config file                                |
+| Code | Condition                                                                            |
+| ---- | ------------------------------------------------------------------------------------ |
+| `0`  | success - prints "Finished supabase init."                                           |
+| `1`  | `supabase/config.toml` already exists and `--force` was not provided                 |
+| `1`  | permission denied writing config file                                                |
 | `1`  | an existing `.vscode/settings.json` / `.vscode/extensions.json` is not valid JSON(C) |
 
 ## Output
