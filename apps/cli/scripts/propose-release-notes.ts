@@ -133,7 +133,7 @@ if (!finalText.trim()) {
 }
 
 // Append the raw notes to the final text to ensure the output is complete.
-const normalized = finalText.endsWith("\n") ? `${finalText}\n\n## Semantic Release Notes:\n${rawNotes}\n` : `${finalText}\n\n## Semantic Release Notes:\n${rawNotes}\n`;
+const normalized = finalText.endsWith("\n") ? finalText : `${finalText}\n`;
 console.error(`==> Agent finished (cost ~$${cost.toFixed(4)})`);
 
 if (!apply) {
