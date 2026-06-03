@@ -374,7 +374,7 @@ export function mockOutput(
         };
       })(),
       promptPassword: () => Effect.succeed(promptPasswordResponses.shift() ?? ""),
-      promptConfirm: () =>
+      promptConfirm: (_message, _opts) =>
         Effect.succeed(
           promptConfirmResponses.shift() ?? opts.confirmLogout ?? opts.confirmRelogin ?? true,
         ),
