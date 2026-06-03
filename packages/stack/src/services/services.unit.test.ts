@@ -14,6 +14,8 @@ import {
 import { makePostgresService, makePostgresServiceDocker } from "./postgres.ts";
 import { makePostgrestService } from "./postgrest.ts";
 import { makePoolerServiceDocker, poolerContainerPorts } from "./pooler.ts";
+import { LOCAL_S3_PROTOCOL_ACCESS_KEY_ID, LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET } from "./storage.ts";
+import { makeStudioServiceDocker } from "./studio.ts";
 import { makeVectorServiceDocker } from "./vector.ts";
 import { DEFAULT_VERSIONS, dockerImageForService } from "../versions.ts";
 
@@ -78,6 +80,39 @@ describe("analyticsDockerRuntimeNetwork", () => {
       listenPort: 4000,
       nodeHost: "0.0.0.0",
     });
+  });
+});
+
+describe("makeStudioServiceDocker", () => {
+  it("injects legacy keys, opaque keys, and S3 protocol credentials", () => {
+    const def = makeStudioServiceDocker({
+      image: dockerImageForService("studio", DEFAULT_VERSIONS.studio),
+      apiPort: API_PORT,
+      port: 54323,
+      apiUrl: "http://host.docker.internal:54321",
+      publicApiUrl: "http://127.0.0.1:54321",
+      pgmetaUrl: "http://host.docker.internal:54322",
+      publishableKey: "sb_publishable_test",
+      secretKey: "sb_secret_test",
+      s3ProtocolAccessKeyId: LOCAL_S3_PROTOCOL_ACCESS_KEY_ID,
+      s3ProtocolAccessKeySecret: LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET,
+      jwtSecret: JWT_SECRET,
+      analyticsEnabled: true,
+      analyticsBackend: "postgres",
+      analyticsUrl: "http://host.docker.internal:54327",
+      analyticsApiKey: "test-api-key",
+      networkArgs: ["-p", "54323:54323"],
+      dependencies: [{ service: "pgmeta", condition: "healthy" }],
+    });
+
+    expect(def.args).toContain("SUPABASE_ANON_KEY=sb_publishable_test");
+    expect(def.args).toContain("SUPABASE_SERVICE_KEY=sb_secret_test");
+    expect(def.args).toContain("SUPABASE_PUBLISHABLE_KEY=sb_publishable_test");
+    expect(def.args).toContain("SUPABASE_SECRET_KEY=sb_secret_test");
+    expect(def.args).toContain(`S3_PROTOCOL_ACCESS_KEY_ID=${LOCAL_S3_PROTOCOL_ACCESS_KEY_ID}`);
+    expect(def.args).toContain(
+      `S3_PROTOCOL_ACCESS_KEY_SECRET=${LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET}`,
+    );
   });
 });
 
