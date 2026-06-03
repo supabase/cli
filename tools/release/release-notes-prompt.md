@@ -8,13 +8,25 @@ auto-generated GitHub Release body (see
 
 ---
 
+## Output
+
+Now generate the release notes for **supabase/cli** based on the pasted
+semantic-release block, following all of the above. The result replaces the
+pasted block — it does not extend it.
+
+IMPORTANT: Only output the release notes, no reasoning or any extra output about investigation results.
+Only the plain markdown release notes generated as a result.
+No
+- `Now I have everything...` or anything similar.
+- ```markdown escaping
+
 ## Inputs
 
 ```
 REPO:           supabase/cli
 PRODUCT_NAME:   Supabase CLI
 AUDIENCE:       developers using the Supabase CLI locally and in CI
-TONE:           clear, direct, lightly informal — no marketing fluff
+TONE:           clear, direct, lightly informal, no marketing fluff
 ```
 
 **Semantic-release changelog block** (paste between the fences — this is the raw
@@ -445,9 +457,3 @@ to, not just the first 100. (#5318)*
   user-facing notes.
 
 ---
-
-## Output
-
-Now generate the release notes for **supabase/cli** based on the pasted
-semantic-release block, following all of the above. The result replaces the
-pasted block — it does not extend it.

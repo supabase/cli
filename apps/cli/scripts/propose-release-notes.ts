@@ -35,7 +35,7 @@
 //   --render-only  Print the rendered prompt (template + raw notes block)
 //              and exit before any LLM call. Useful for prompt iteration
 //              and for verifying the pipeline shape without spending tokens.
-//   --model    Optional. Override the Claude model (default: claude-opus-4-7).
+//   --model    Optional. Override the Claude model (default: claude-haiku-4-5-20251001).
 import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
 import { $ } from "bun";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -50,7 +50,7 @@ const { values } = parseArgs({
     "dry-run": { type: "boolean", default: false },
     apply: { type: "boolean", default: false },
     "render-only": { type: "boolean", default: false },
-    model: { type: "string", default: "claude-opus-4-7" },
+    model: { type: "string", default: "claude-haiku-4-5-20251001" },
   },
   strict: true,
 });
@@ -132,7 +132,8 @@ if (!finalText.trim()) {
   process.exit(1);
 }
 
-const normalized = finalText.endsWith("\n") ? finalText : `${finalText}\n`;
+// Append the raw notes to the final text to ensure the output is complete.
+const normalized = finalText.endsWith("\n") ? `${finalText}\n\n## Semantic Release Notes:\n${rawNotes}\n` : `${finalText}\n\n## Semantic Release Notes:\n${rawNotes}\n`;
 console.error(`==> Agent finished (cost ~$${cost.toFixed(4)})`);
 
 if (!apply) {
